@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ToolMode as ToolModeType } from '../types.js';
+import type { ToolMode as ToolModeType, TurnFailureReason } from '../types.js';
 import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-schemas.js';
 
 /**
@@ -24,6 +24,28 @@ import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-
 const TOOL_MODES = ['off', 'all', 'new', 'verbose'] as const satisfies readonly ToolModeType[];
 export const ToolMode = z.enum(TOOL_MODES);
 export type ToolMode = ToolModeType;
+
+/**
+ * The reasons `hooks.turnFailed.continue.on` accepts — TurnFailureReason in types.ts, which is the
+ * authority. Checked both ways: `satisfies` refuses a word that is not a reason, and the assertion
+ * below refuses a reason missing from the list, so an operator can always name every one.
+ */
+export const TURN_FAILURE_REASONS = [
+  'service',
+  'limit',
+  'connection',
+  'access',
+  'request',
+  'provider',
+  'hung',
+  'startup',
+  'preLaunch',
+  'restart',
+  'other',
+] as const satisfies readonly TurnFailureReason[];
+type _EveryReasonListed = Exclude<TurnFailureReason, (typeof TURN_FAILURE_REASONS)[number]> extends never ? true : never;
+const _everyReasonListed: _EveryReasonListed = true;
+void _everyReasonListed;
 
 /** Session scope: which agent session an inbound message belongs to (global default, overridable by route use.scope). */
 export const SessionScope = z.enum(['per_thread', 'per_channel', 'per_user', 'shared']);
@@ -78,6 +100,45 @@ export const AgentDefSchema = z
          * timeout fails the startup, so the agent never starts on a half-prepared machine.
          */
         preLaunch: z.string().min(1).optional(),
+        /**
+         * What happens when one of this agent's turns fails (daemon/turn-outcomes.ts). Absent = what
+         * always happened: the ❌ and the reason in the chat, and nothing more.
+         */
+        turnFailed: z
+          .object({
+            /**
+             * Continue automatically: after a failure whose reason is in `on`, wait and then send
+             * `message` to the agent as a turn of its own, up to `max` times in a row. The wait is
+             * `backoffMs`, doubling with each attempt (capped at ten minutes). Anything the user
+             * sends meanwhile, `/stop`, `/new` or `/kill` calls it off; a turn that ends normally
+             * resets the count. Every continue is announced in the chat before it is sent.
+             *
+             * `message` is put in front of the agent as though the user had typed it — which is
+             * why it is the operator's text and nothing the gateway composes (see AGENTS.md,
+             * "Nothing of the gateway's in the agent's prompt").
+             */
+            continue: z
+              .object({
+                on: z
+                  .array(z.enum(TURN_FAILURE_REASONS))
+                  .min(1)
+                  .default(['service', 'connection', 'limit', 'hung', 'restart']),
+                message: z.string().min(1).max(2_000).default('continue'),
+                max: z.number().int().min(1).max(10).default(3),
+                backoffMs: z.number().int().min(1_000).max(600_000).default(30_000),
+              })
+              .strict()
+              .optional(),
+            /**
+             * A `bash -lc` command run after every failed turn, on the agent's own machine, with
+             * the failure as JSON in `TALKCODE_TURN_FAILURE` — to alert someone, write a log, page
+             * a phone. It only reports: whether the turn continues is `continue`'s decision.
+             * Bounded at a minute, and its outcome is logged, never shown in the chat.
+             */
+            command: z.string().min(1).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),

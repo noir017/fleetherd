@@ -915,6 +915,11 @@ export class Daemon {
     // Each remote agent's directory list, read now so the first bare `/cc` has a menu to offer.
     this.registry.warmRemoteScans();
     await this.ipc.start();
+    // Turns the last daemon never finished — a drain that ran out of time, or a crash. After the
+    // platforms are up (each gets a line where it ran) and after IPC (a continue it schedules needs
+    // its agent's reverse commands to work).
+    const interrupted = this.registry.recoverInterruptedTurns();
+    if (interrupted > 0) console.log(`[daemon] ${interrupted} turn(s) were cut off by the last shutdown`);
     // After the platforms and IPC are up: a run that is due right away (a catch-up after the update
     // that restarted us) needs somewhere to post, and an agent run needs its reverse commands.
     this.schedules?.scheduler.start();

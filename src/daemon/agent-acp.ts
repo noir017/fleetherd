@@ -39,11 +39,13 @@ import type {
   ReclaimState,
   RunTurnInput,
 } from './agent.js';
+import { TurnFailure } from './agent.js';
 import { harnessLogProbe, readHarnessErrors } from './harness-log.js';
 import { readSteerOutcome, STEER_METHOD, steeringModeOf, steerParams, type SteeringMode } from './acp-steering.js';
 import {
   describeSessionFailure,
   failureNoticeKey,
+  failureReasonOf,
   readSessionFailure,
   SESSION_FAILURE_CAPABILITY_META,
   type SessionFailure,
@@ -284,7 +286,11 @@ export function createAcpAgentFactory(cfg: Config, socketPath: string, store?: C
 }
 
 /** Thrown by the per-turn silence watchdog so runTurn can reap the hung subprocess before rethrowing. */
-class TurnTimeoutError extends Error {}
+class TurnTimeoutError extends TurnFailure {
+  constructor(message: string) {
+    super(message, 'hung');
+  }
+}
 
 /**
  * How long a burst of out-of-turn output may stay silent before it is sealed and decorated.
@@ -1454,7 +1460,7 @@ function createAcpSession(
             .filter(Boolean)
             .join(' / ');
           const how = methods ? `(available login methods: ${methods})` : '(e.g. run `claude /login` to complete subscription login)';
-          throw new Error(`agent "${def.id}" must be logged in before use ${how}, then retry this turn.`);
+          throw new TurnFailure(`agent "${def.id}" must be logged in before use ${how}, then retry this turn.`, 'access');
         }
         throw err;
       }
@@ -1467,8 +1473,9 @@ function createAcpSession(
           timer = setTimeout(
             () =>
               reject(
-                new Error(
-                  `agent "${def.id}" startup timed out (${START_TIMEOUT_MS}ms). Make sure the launch command is executable on PATH: ${command} ${args.join(' ')}`
+                new TurnFailure(
+                  `agent "${def.id}" startup timed out (${START_TIMEOUT_MS}ms). Make sure the launch command is executable on PATH: ${command} ${args.join(' ')}`,
+                  'startup'
                 )
               ),
             START_TIMEOUT_MS
@@ -1482,9 +1489,12 @@ function createAcpSession(
       const failed = spawnError();
       if (failed) {
         const where = place ? ` on host "${place.host.id}"` : '';
-        throw new Error(`agent "${def.id}" could not start${where}: ${failed.message}`);
+        throw new TurnFailure(`agent "${def.id}" could not start${where}: ${failed.message}`, 'startup');
       }
-      throw err;
+      // initialize or session/new refused: still a startup that did not happen. Classified rather
+      // than rethrown bare so hooks.turnFailed can tell it from a turn the provider failed.
+      if (err instanceof TurnFailure) throw err;
+      throw new TurnFailure(err instanceof Error ? err.message : String(err), 'startup');
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -2190,7 +2200,7 @@ function createAcpSession(
         // with the failure in `_meta`, where an older contract rejected the prompt. Thrown before
         // the tools are flushed, exactly as a rejection was, so the two read the same downstream.
         const failure = readSessionFailure(response._meta);
-        if (failure?.severity === 'error') throw new Error(describeSessionFailure(failure));
+        if (failure?.severity === 'error') throw new TurnFailure(describeSessionFailure(failure), failureReasonOf(failure));
         flushPendingTools(state);
       } catch (err) {
         if (aborting) return; // intentional abort is not an error

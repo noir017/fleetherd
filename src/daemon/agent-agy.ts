@@ -12,6 +12,7 @@ import type {
   ReclaimState,
   RunTurnInput,
 } from './agent.js';
+import { TurnFailure } from './agent.js';
 import type { QuotaPool } from '../types.js';
 import type { ConversationStore } from './conversation-store.js';
 import {
@@ -1033,7 +1034,7 @@ function createAgySession(
           initWaiters.push({ res, rej });
         }),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(startupTimeoutMessage(def.id))), START_TIMEOUT_MS);
+          timer = setTimeout(() => reject(new TurnFailure(startupTimeoutMessage(def.id), 'startup')), START_TIMEOUT_MS);
         }),
       ]);
     } catch (err) {
@@ -1404,7 +1405,9 @@ export function translateAgyEvent(msg: AgyEvent, st: AgyTurnState): boolean {
     // CANCELED/INTERRUPTED are our own doing (abort); the session layer treats them as non-errors and
     // runTurn's `aborting` check swallows them, so surfacing them as errors here is still correct.
     if (status !== 'SUCCESS') {
-      throw new Error(`agy turn ended with status ${status}${msg.result?.error ? `: ${msg.result.error}` : ''}`);
+      // agy reports a provider's refusal or outage here and nothing finer, so `provider` is as close
+      // as the gateway can name it — hooks.turnFailed can still choose to continue after it.
+      throw new TurnFailure(`agy turn ended with status ${status}${msg.result?.error ? `: ${msg.result.error}` : ''}`, 'provider');
     }
     return true;
   }

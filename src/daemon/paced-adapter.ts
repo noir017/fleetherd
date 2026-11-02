@@ -69,6 +69,12 @@ const PACING = {
   // already throttles it. Queueing a status behind a platform's flood pause would only show a
   // stale one later.
   setStatus: 'unpaced',
+  // Same: state drawn in the page's own topic list, pushed only at a turn's start and end.
+  setActivity: 'unpaced',
+  // A read of what the page reported; nothing is sent anywhere.
+  seenAt: 'unpaced',
+  // Opens or retires a lane — metadata, like createThread, and called at startup and on /reload.
+  dispatchLane: 'unpaced',
   measureRendered: 'unpaced',
   registerCommands: 'unpaced',
   onMessage: 'unpaced',

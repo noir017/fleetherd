@@ -71,6 +71,13 @@ export interface ConversationRecord {
   lane?: { platform: string; channel: string; thread?: string };
   /** When a turn last started here (epoch ms). Orders the channel list; absent on older records. */
   lastAt?: number;
+  /**
+   * Set while a turn is running here (epoch ms it started), cleared when it ends. A record still
+   * carrying one when the daemon starts is a turn the last daemon never finished — a drain that ran
+   * out of time, or a crash — which is the only way that can be found out afterwards: nothing in the
+   * harness's own history says the gateway stopped listening. See TurnOutcomes.recoverInterrupted.
+   */
+  inFlight?: number;
 }
 
 export class ConversationStore {
@@ -235,6 +242,18 @@ export class ConversationStore {
     this.flush();
   }
 
+  /**
+   * Mark a turn as running here (`at`) or as over (undefined). See ConversationRecord.inFlight. A
+   * no-op for a conversation with no record: a turn never starts before its binding is written.
+   */
+  setInFlight(key: string, at: number | undefined): void {
+    const rec = this.map.get(key);
+    if (!rec || rec.inFlight === at) return;
+    if (at === undefined) delete rec.inFlight;
+    else rec.inFlight = at;
+    this.flush();
+  }
+
   /** Every record, in insertion order (oldest conversation first). Read-only use: `channels`. */
   entries(): Array<[string, ConversationRecord]> {
     return [...this.map.entries()];
@@ -273,6 +292,7 @@ function toRecord(v: unknown): ConversationRecord | null {
     titlePinned?: unknown;
     lane?: unknown;
     lastAt?: unknown;
+    inFlight?: unknown;
   };
   if (typeof o.agent !== 'string' || !o.agent) return null;
   const sessions: Record<string, string> = {};
@@ -292,6 +312,7 @@ function toRecord(v: unknown): ConversationRecord | null {
     // Listing metadata, same tolerance again: the next turn writes both afresh.
     ...(lane ? { lane } : {}),
     ...(typeof o.lastAt === 'number' && Number.isFinite(o.lastAt) ? { lastAt: o.lastAt } : {}),
+    ...(typeof o.inFlight === 'number' && Number.isFinite(o.inFlight) ? { inFlight: o.inFlight } : {}),
   };
 }
 

@@ -40,7 +40,7 @@ import type {
 } from '../types.js';
 import type { ConversationWorkdir, PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentUsage } from './agent.js';
-import type { EffortSelector, ModelSelector } from '../types.js';
+import type { EffortSelector, ModelSelector, TopicActivity } from '../types.js';
 import {
   effortAmbiguousText,
   effortChoiceText,
@@ -101,8 +101,9 @@ import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
 import { InboundMerger, type SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
-import { SCHEDULED_SENDER, TurnRunner } from './turn-runner.js';
+import { CONTINUE_SENDER, SCHEDULED_SENDER, TurnRunner } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
+import { TurnOutcomes } from './turn-outcomes.js';
 import type { RespawnCounts } from './config-reload.js';
 import {
   claudeProjectsDir,
@@ -445,6 +446,11 @@ export class ConversationRegistry {
    */
   private readonly status: StatusBoard;
   /**
+   * What each conversation's last turn left for the person, and what happens after a failed one
+   * (`hooks.turnFailed`, interrupted turns). See turn-outcomes.ts.
+   */
+  private readonly outcomes: TurnOutcomes;
+  /**
    * The `/setting` writer: validates a value, patches config.yaml, applies it to this live Config.
    *
    * Owned here rather than by the daemon because the registry is the side that holds the Config and
@@ -621,6 +627,11 @@ export class ConversationRegistry {
       onScheduleSetting?(id: ConversationId, msg: InboundMessage, args: string[], canMenu: boolean): void;
       /** One line for the text `/setting` list pointing at the scheduled tasks; absent = no line. */
       scheduleSummary?(): string | undefined;
+      /**
+       * A conversation has something for the person now — a finished reply, a failure that will not
+       * be continued (TurnOutcomes). The dispatcher listens (daemon/dispatcher.ts).
+       */
+      onNeedsPerson?(id: ConversationId): void;
     },
     /** Persistent conversation state (agent binding + each agent's own session id). */
     private readonly store?: ConversationStore,
@@ -694,9 +705,23 @@ export class ConversationRegistry {
         // reply inside it continues here instead of starting an empty one (see adoptThread).
         adoptThread: (id, address, platformId) => this.adoptThread(id, address, platformId),
         nameConversation: (id, seed) => this.nameConversation(id, seed),
+        recordTurnStart: (id) => this.outcomes.turnStarted(id),
+        recordTurnEnd: (id, end) => this.outcomes.turnEnded(id, end),
       },
       this.hooks
     );
+    this.outcomes = new TurnOutcomes({
+      config: this.config,
+      clock: this.clock,
+      platforms: this.platforms,
+      store: this.store,
+      // laneFor, not laneOf: after a restart a conversation has no in-memory lane until its next turn,
+      // and an interrupted turn's notice and outcome are exactly what has to reach it before then.
+      laneOf: (id) => this.laneFor(id),
+      agentIdOf: (id) => this.boundAgentOf(id) ?? this.agentIdOf(id),
+      runContinue: (id, text) => this.runContinue(id, text),
+      onNeedsPerson: (id) => this.hooks?.onNeedsPerson?.(id),
+    });
 
     // `/setting idle` has to re-arm the sweeper, not just change the number (see setIdleTimeout).
     this.settings = new SettingsStore(this.config, {
@@ -1038,6 +1063,9 @@ export class ConversationRegistry {
     // typing /help or /stop keeps a conversation warm too — a user in the middle of driving one is
     // the last person whose agent should be reclaimed out from under them.
     this.touch(key);
+    // …and the person is driving it: a continue waiting to be sent after a failure is called off
+    // (hooks.turnFailed — "send anything to call it off" is what its notice says).
+    this.outcomes.personActed(key);
 
     // Commands the gateway answers itself, before any agent sees them.
     if (this.answerDaemonCommand(key, msg, address, choice.agentId)) return;
@@ -3274,6 +3302,52 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
+   * Send `hooks.turnFailed.continue.message` to the agent as a turn of its own (TurnOutcomes): queued
+   * behind anything running and interrupting nothing, like a scheduled prompt, but ATTENDED — it
+   * carries CONTINUE_SENDER rather than SCHEDULED_SENDER, so a `permissions: ask` agent still asks
+   * the person. False when it cannot run here: no lane to answer in, or the conversation is now
+   * answered by an agent that no longer exists.
+   */
+  private runContinue(id: ConversationId, text: string): boolean {
+    const lane = this.laneFor(id);
+    const agentId = this.boundAgentOf(id);
+    if (!lane || !agentId || !findAgent(this.config, agentId)) return false;
+    const state = this.ensureState(id, lane.platformId, agentId);
+    state.reclaimOnIdle = false;
+    this.touch(id);
+    void state.merger.enqueueSolo({
+      conversation: {
+        platform: lane.platformId,
+        channel: lane.address.channel,
+        ...(lane.address.thread ? { thread: lane.address.thread } : {}),
+        kind: 'direct',
+        user: CONTINUE_SENDER,
+      },
+      messageId: '',
+      content: text,
+      timestamp: this.clock.now(),
+    });
+    return true;
+  }
+
+  /**
+   * Turns the last daemon never finished (see TurnOutcomes.recoverInterrupted). Called once by the
+   * daemon after its platforms are up. Returns how many were found.
+   */
+  recoverInterruptedTurns(): number {
+    return this.outcomes.recoverInterrupted((id, platform, agentId) => {
+      if (!findAgent(this.config, agentId)) return false;
+      this.ensureState(id, platform, agentId);
+      return true;
+    });
+  }
+
+  /** What a conversation's last turn left (TurnOutcomes), for a list built on this side. */
+  activityOf(id: ConversationId): TopicActivity | undefined {
+    return this.outcomes.activityOf(id);
+  }
+
+  /**
    * Where a new-session run happens: a new topic in the target when the platform can open one — so
    * the run is a conversation the user can carry on in — else a throwaway conversation that posts
    * into the target and is forgotten after the run (`ephemeral`, see releaseScheduled).
@@ -3386,6 +3460,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const agentId = this.conversations.get(id)?.agentId ?? this.store?.boundAgent(id);
     this.agents.dispose(id);
     this.store?.clear(id);
+    // What the last turn left is part of the context just thrown away.
+    this.outcomes.forget(id);
     const state = this.conversations.get(id);
     if (state) {
       state.headerSent = false;
@@ -3417,6 +3493,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * output belongs to the turn, so there is no burst to stop and asking would only race the abort.
    */
   stopConversation(id: ConversationId): StopOutcome {
+    this.outcomes.personActed(id);
     const state = this.conversations.get(id);
     if (!state) return 'idle';
     const outcome = state.merger.interrupt();
@@ -3464,6 +3541,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.cancelSweep?.();
     this.cancelSweep = null;
     this.status.dispose();
+    this.outcomes.dispose();
     for (const key of [...this.conversations.keys()]) {
       this.releaseState(key);
       this.agents.dispose(key);
