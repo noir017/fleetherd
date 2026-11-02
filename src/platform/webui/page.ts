@@ -207,20 +207,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* A failed last turn, when nothing else is going on: the one state that stays until something runs
    again, so the dot keeps saying it after the reply has been read. */
 .topic-dot.failed{background:#f87171}
-/* What needs the operator, above the list: a question waiting (amber), a failure (red), a reply not
-   yet read (green) — each with the line that says what. Healthy topics take no room here, which is
-   the point of it: with a dozen topics open, this is the part of the sidebar that is read. Its own
-   element rather than rows in #topics, which holds topic rows and nothing else. */
-#needs{display:flex;flex-direction:column;gap:2px;padding:8px 8px 6px;border-bottom:1px solid var(--line);max-height:40%;overflow-y:auto;flex-shrink:0}
-#needs[hidden]{display:none}
-.needs-head{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);padding:0 9px 3px}
-.needs-item{display:flex;gap:8px;align-items:flex-start;width:100%;padding:5px 9px;border:0;border-radius:5px;background:none;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
-.needs-item:hover{background:#222}
-.needs-item .topic-dot{margin-top:5px}
-.needs-item .topic-dot.review{background:#4ade80}
-.needs-main{flex:1;min-width:0;display:flex;flex-direction:column}
-.needs-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.needs-line{font-size:11px;line-height:1.35;color:#8b98a6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* What needs the person — a question waiting, a failure, a reply not yet read — is the topic's own
+   row, first in the list and green (page script: needsYou). The dot still says which of the three. */
+#topics .topic-item.needs{--row-bg:#14231a}
+#topics .topic-item.needs:hover{--row-bg:#1a2e21}
+/* :not(.on) for the weight, not the meaning (a topic on screen is never one of these): the idle and
+   live greys above are four classes deep, and a lighter rule lost to them on an idle agent. */
+#topics .topic-item.needs:not(.on) .topic-title{color:#4ade80}
+.topic-dot.review{background:#4ade80}
 #notify-toggle{display:block;width:100%;background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;transition:color .15s,background .15s}
 #notify-toggle:hover{color:var(--fg);background:var(--field)}
 #notify-toggle[hidden]{display:none}
@@ -631,7 +625,7 @@ const SCRIPT = `
       chips=$('chips'), hints=$('hints'), typing=$('typing'), note=$('note'), picker=$('picker'),
       bar=$('topics'), sidebar=$('sidebar'), collapseBtn=$('collapse-sidebar'),
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
-      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), needsEl=$('needs'), notifyBtn=$('notify-toggle'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
+      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), notifyBtn=$('notify-toggle'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
@@ -1625,7 +1619,7 @@ const SCRIPT = `
     }
     var open={}, up=byId[topic], hops=0;
     while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
-    var rows=[], seen={};
+    var rows=[], seen={}, dividers={};
     function state(t, depth){
       var ch=kids[t.id]||[], s='';
       for(var k=0;k<ch.length && depth<32;k++){
@@ -1646,6 +1640,10 @@ const SCRIPT = `
       if(shut) return;
       for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
     }
+    // What needs the person first (needsYou), most pressing first, each with the topics it opened.
+    var pinned=topics.filter(needsYou).sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+    for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
+    var afterPinned=rows.length;
     var starred=[], rest=[];
     for(i=0;i<roots.length;i++) (roots[i].starred?starred:rest).push(roots[i]);
     for(i=0;i<starred.length;i++) walk(starred[i], 0);
@@ -1657,7 +1655,44 @@ const SCRIPT = `
       while(a && a.parent && byId[a.parent] && n++<32){ if(seen[a.parent] && folded[a.parent] && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
       if(!seen[topics[i].id] && !hidden) walk(topics[i], 0);
     }
-    return {rows:rows, divider:starred.length && firstRest<rows.length ? firstRest : -1, stars:starred.length};
+    if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
+    if(firstRest>afterPinned && firstRest<rows.length) dividers[firstRest]=true;
+    return {rows:rows, dividers:dividers, stars:starred.length};
+  }
+
+  /**
+   * What needs the person: every topic but the one on screen whose stage is a question, a failure,
+   * or a reply not yet read — the daemon decides the stage (core/topic-stage.ts) and sends it with
+   * the list. Drawn as the topic's own row, first in the list and green (paintTopics). It was a
+   * separate "Needs you" block above the list through 2.19.1, which put every such topic on screen
+   * twice — the same title, two rows — and read as two conversations.
+   *
+   * A sub-agent's topic (one with a parent) counts only for a question of its own: its replies and
+   * failures go to the agent that opened it, which says what comes of them (room.ts operatorStage,
+   * the same rule for notifications).
+   */
+  /** Whether a topic this one opened, or one of theirs, is working or asking. */
+  function busyBelow(id){
+    var stack=[id], seenB={}, n=0;
+    while(stack.length && n++<256){
+      var p=stack.pop();
+      if(seenB[p]) continue;
+      seenB[p]=true;
+      for(var i=0;i<topics.length;i++){
+        var t=topics[i];
+        if(t.parent!==p) continue;
+        if(t.running || t.asking) return true;
+        stack.push(t.id);
+      }
+    }
+    return false;
+  }
+
+  var NEEDS_ORDER = {answer:0, failed:1, review:2};
+  var NEEDS_WHAT = {answer:'Waiting on your answer', failed:'Failed', review:'Finished'};
+  function needsYou(t){
+    if(t.id===topic || NEEDS_ORDER[t.stage]===undefined) return false;
+    return !t.parent || t.stage==='answer';
   }
 
   function paintTopics(){
@@ -1665,7 +1700,6 @@ const SCRIPT = `
     var cur=null;
     var painted=topicRows();
     var stars=painted.stars;
-    paintNeeds();
     for(var i=0;i<painted.rows.length;i++){
       var row=painted.rows[i];
       var t=row.t;
@@ -1688,10 +1722,13 @@ const SCRIPT = `
       }
       var unread=isCur?0:Math.max(0, count - readCounts[t.id]);
       var cls='topic-item '+(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
-        +(t.starred?' starred':'')+(i===painted.divider?' after-stars':'')
-        +(row.depth?' sub d'+Math.min(row.depth,3):'');
+        +(t.starred?' starred':'')+(painted.dividers[i]?' after-stars':'')
+        +(row.depth?' sub d'+Math.min(row.depth,3):'')
+        +(needsYou(t)?' needs':'');
       var isFailed=t.stage==='failed';
-      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(isLive?' live':''))));
+      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'?' review':(isLive?' live':'')))));
+      // What the Needs-you block used to say on a second line, now on hover: the row keeps its shape.
+      var says=needsYou(t)?' title="'+text(NEEDS_WHAT[t.stage]+(t.line?': '+t.line:''))+'"':'';
       var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
       // Not "a shell is alive over there" — the daemon only sees the connection, so this says a
       // page has that topic's terminal open (shown or minimized). See terminal-sessions.ts.
@@ -1713,7 +1750,7 @@ const SCRIPT = `
          + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
          + ' title="'+(row.shut?'Show':'Hide')+' the '+row.kids+' topic'+(row.kids>1?'s':'')+' its agent opened">'
          + (row.shut?'▸':'▾')+' '+row.kids+'</button>':'';
-      h += '<div class="'+cls+'" data-topic="'+text(t.id)+'" role="button" tabindex="0">'
+      h += '<div class="'+cls+'" data-topic="'+text(t.id)+'" role="button" tabindex="0"'+says+'>'
          + '<span class="'+dotCls+'"></span>'
          + '<span class="topic-main">'
          + '<span class="topic-title">'+text(t.title || 'Untitled')+'</span>'
@@ -1750,47 +1787,17 @@ const SCRIPT = `
     // the power button while a process is resident. Hiding beats disabling — a greyed-out control
     // asks to be explained, and "nothing is running" is already what an unlit dot says.
     killBtn.hidden = !(cur && cur.live);
-    stopBtn.hidden = !(cur && (cur.running || cur.asking));
+    // Also over a topic whose own turn is over while the sub-agents it started still work — the
+    // usual state of a /super job, and the one where there was nothing to press: /stop there stops
+    // them too (Delegation.stopOpened).
+    var below = cur ? busyBelow(cur.id) : false;
+    stopBtn.hidden = !(cur && (cur.running || cur.asking || below));
+    stopBtn.title = below
+      ? 'Stop this topic and the sub-agents it started — their conversations are kept (/stop)'
+      : 'Stop what the agent is doing — the conversation is kept (/stop)';
     // The window's title bar names the same topic this row does, so a rename lands on both in
     // the same frame rather than leaving the bar holding the old name until the next switch.
     if(TERM_OK) paintFrames();
-  }
-
-  /**
-   * What needs the operator, above the list (#needs): every topic but the one on screen whose stage
-   * is a question, a failure, or a reply not yet read — the daemon decides the stage
-   * (core/topic-stage.ts) and sends it with the list; this only draws it. Hidden when there is none:
-   * a healthy state takes no room.
-   *
-   * A sub-agent's topic (one with a parent) is listed only for a question of its own: its replies and
-   * failures go to the agent that opened it, which says what comes of them (room.ts operatorStage,
-   * the same rule for notifications).
-   */
-  var NEEDS_ORDER = {answer:0, failed:1, review:2};
-  function paintNeeds(){
-    var list=[];
-    for(var i=0;i<topics.length;i++){
-      var t=topics[i];
-      if(t.id===topic) continue;
-      if(NEEDS_ORDER[t.stage]===undefined) continue;
-      if(t.parent && t.stage!=='answer') continue;
-      list.push(t);
-    }
-    list.sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
-    if(!list.length){ needsEl.hidden=true; needsEl.innerHTML=''; return; }
-    var h='<div class="needs-head">Needs you ('+list.length+')</div>';
-    for(var k=0;k<list.length;k++){
-      var n=list[k];
-      var dot=n.stage==='answer'?'asking':(n.stage==='failed'?'failed':'review');
-      var what=n.stage==='answer'?'Waiting on your answer':(n.stage==='failed'?'Failed':'Finished');
-      h += '<button type="button" class="needs-item" data-topic="'+text(n.id)+'">'
-         + '<span class="topic-dot '+dot+'"></span>'
-         + '<span class="needs-main"><span class="needs-title">'+text(n.title || 'Untitled')+'</span>'
-         + '<span class="needs-line">'+text(n.line ? what+': '+n.line : what)+'</span></span>'
-         + '</button>';
-    }
-    needsEl.innerHTML=h;
-    needsEl.hidden=false;
   }
 
   /**
@@ -1889,14 +1896,6 @@ const SCRIPT = `
     }
   });
 
-  needsEl.addEventListener('click', function(e){
-    var b = e.target.closest ? e.target.closest('[data-topic]') : null;
-    if(!b) return;
-    var id = b.getAttribute('data-topic');
-    if(!id || id===topic) return;
-    switchTopic(id);
-    if(narrow()) setSidebar(false);
-  });
 
   // ── Terminal ───────────────────────────────────────────────────────────────
   // A window over the transcript, one per topic. The iframe holds ttyd's own terminal, which is
@@ -3539,7 +3538,6 @@ __GATE__
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
       <button type="button" class="btn-icon" id="collapse-sidebar" title="Collapse sidebar">◀</button>
     </div>
-    <div id="needs" hidden></div>
     <div id="topics"></div>
     <div id="sidebar-footer">
       <button type="button" id="notify-toggle" hidden title="Notify this device when something needs you">Notifications: off</button>
