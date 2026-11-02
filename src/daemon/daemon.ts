@@ -867,6 +867,8 @@ export class Daemon {
       // What a turn left for the person (and a question asked, see askButtons): in a sub-agent's
       // topic, the agent that opened it is told.
       onNeedsPerson: (id) => this.delegation.childChanged(id),
+      // `/stop` in a topic that opened sub-agents stops them too.
+      stopSubAgents: (id) => this.delegation.stopOpened(id),
     }, store, workdirUsage);
     this.delegation = new Delegation({
       config,

@@ -129,6 +129,10 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
       calls.push(['stop', k]);
       return 'stopped' as const;
     },
+    stopWithPending: (k: string) => {
+      calls.push(['stop', k]);
+      return { outcome: busy.has(k) ? ('running' as const) : ('idle' as const), calledOff: 0, transcripts: 0 };
+    },
     runScheduledPrompt: async (o: unknown) => {
       calls.push(['prompt', o]);
       return { kind: 'ran' };
@@ -296,6 +300,31 @@ describe('Delegation: acting on the topics it opened, and only those', () => {
     r.bound.set('web#main#bbbbbbbb', 'cx');
     await expect(r.d.handle(P, { kind: 'task-send', topic: 'bbbbbbbb', text: 'x' })).rejects.toThrow(/not a topic this conversation opened/);
     await expect(r.d.handle('web#main#c1000000', { kind: 'task-stop', topic: 'c1000000' })).rejects.toThrow(/not a topic/);
+  });
+});
+
+describe('Delegation: /stop in the topic that opened them', () => {
+  it('stops every sub-agent still at work, theirs too, and says so in each', () => {
+    const r = rig();
+    const [c1, c2, c3] = ['web#main#c1000000', 'web#main#c2000000', 'web#main#c3000000'];
+    r.parents.set(c1, P);
+    r.parents.set(c2, c1);
+    r.parents.set(c3, P);
+    for (const k of [c1, c2, c3]) r.bound.set(k, 'cx');
+    r.busy.add(c1);
+    r.busy.add(c2);
+
+    expect(r.d.stopOpened(P)).toBe(2);
+    expect(r.calls.filter(([what]) => what === 'stop').map(([, k]) => k)).toEqual([c1, c2, c3]);
+    expect(r.posted.filter((p) => p.text.startsWith('⏹')).map((p) => p.to)).toEqual([c1, c2]);
+    expect(r.posted.find((p) => p.to === c1)?.text).toBe('⏹ Stopped with /stop in [Release](?t=aaaaaaaa).');
+  });
+
+  it('stops nothing where topics do not nest, or where none were opened', () => {
+    const r = rig();
+    expect(r.d.stopOpened('tg#1#2')).toBe(0);
+    expect(r.d.stopOpened(P)).toBe(0);
+    expect(r.calls).toEqual([]);
   });
 });
 

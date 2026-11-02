@@ -7,10 +7,23 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Stop a whole /super job from where it started.** `/stop` (and Stop) in a topic now also stops
+  every sub-agent it started that is still working, theirs included, and each says where it was
+  stopped from. Stop is shown there while any of them works. The agent's own turn ends as soon as
+  it has handed the parts out, so until now there was nothing to press: Stop was hidden, `/stop`
+  answered "Nothing is running here", and stopping the job meant opening every sub-agent's topic.
+
 - **The web UI's sidebar can be resized.** Drag its right edge; the width is kept in the browser,
   and a double-click on the edge puts the default back. At a fixed 240px most topic titles were cut
   off after a few words — "[ag2] 状态：小说与内容…" — which made topics of the same agent hard to
   tell apart. On a phone the sidebar is still a drawer the width of the screen.
+
+### Changed
+
+- **What needs you is the topic's own row, moved to the top and in green**, instead of a separate
+  "Needs you" block above the list. The block repeated each topic's title, so a topic waiting on you
+  was on screen twice and read as two conversations. The order is unchanged — questions, failures,
+  unread replies — the dot still says which, and hovering a row shows the line the block used to.
 
 ## [2.19.1] - 2026-11-02
 

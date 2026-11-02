@@ -347,8 +347,10 @@ leaves 148.
 Each topic in the list carries a `stage` and a `line` (core/topic-stage.ts), computed on every list
 from three things: the room's own `typing` and live buttons, the outcome the daemon pushes
 (`setActivity`: how the last turn ended, and any scheduled continue), and `seenAt`, when the
-operator last looked. The page draws **Needs you** from them: answer, failed, review — and nothing
-for a healthy topic, which is the point. The outcome and `seenAt` are persisted in the topic file
+operator last looked. The page moves those topics to the top of the list and colours them green
+(`needsYou`, `topicRows`): answer, failed, review — and nothing for a healthy topic, which is the
+point. Through 2.19.1 they were a separate "Needs you" block above the list, which showed each of
+them twice — the same title in two places read as two conversations. The outcome and `seenAt` are persisted in the topic file
 ("you have not read this" has to survive the restart that an update is); a scheduled continue is not
 (its timer dies with the daemon).
 
@@ -361,11 +363,11 @@ compare a server's with. Posting only on `review` keeps the traffic to one reque
 persisted, and the only record of the relation (`parentOf` / `childrenOf` on the adapter read it back).
 `TopicStore.orphan` drops a `parent` that names a topic no longer there, on load and after every
 delete or sweep, so the × on a parent never takes its children with it. The page nests them
-(`topicRows`: each root, starred first, followed by what it opened, depth-first; drawn as `sub d1`–`d3`
+(`topicRows`: what needs you first, then each root, starred first, followed by what it opened, depth-first; drawn as `sub d1`–`d3`
 classes rather than a `--depth` in a style attribute, which the CSP refuses) and folds them per
 browser (`aa_folded` in localStorage); the topic on screen is never folded away, and a `parent` chain
 that loops is drawn as roots rather than lost. A sub-agent topic is in Needs you, and notifies, only
-for a question of its own (`operatorStage`, and the same rule in the page's `paintNeeds`): its
+for a question of its own (`operatorStage`, and the same rule in the page's `needsYou`): its
 replies and failures are its parent agent's to read.
 
 A link to another topic is `?t=<id>` — the one relative link `web-markdown.ts` keeps — rendered with

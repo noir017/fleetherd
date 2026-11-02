@@ -624,6 +624,11 @@ export class ConversationRegistry {
       /** `/stop` / `/new`: call off every transcript here, returning how many there were. */
       cancelPendingVoice?(id: ConversationId, reason: string): number;
       /**
+       * `/stop`: stop the sub-agents this conversation opened that are still at work (and theirs),
+       * returning how many were stopped — Delegation.stopOpened.
+       */
+      stopSubAgents?(id: ConversationId): number;
+      /**
        * `/setting schedule [pause|resume|delete <id>]`. The tasks live on the daemon (schedule-service),
        * so the registry only recognises the key and says whether this platform can carry a menu.
        */
@@ -1842,14 +1847,29 @@ export class ConversationRegistry {
    * so answering "nothing is running" to the person who just called one off would be flatly untrue.
    */
   private stopAndReport(key: ConversationId, conv: ConversationRef): string {
-    const calledOff = this.hooks?.cancelPendingAsks?.(key, 'stopped') ?? 0;
+    const { outcome, calledOff, transcripts } = this.stopWithPending(key, 'stopped');
+    // A /super job's turn ends once it has handed the work out, so stopping "this" while its
+    // sub-agents work used to stop nothing at all — and the person had to open each of them.
+    const subs = this.hooks?.stopSubAgents?.(key) ?? 0;
+    console.log(`[conversation] ${key} /stop by ${conv.platform}:${conv.user} → ${outcome}${subs ? ` (+${subs} sub-agent(s))` : ''}`);
+    const also = subs ? `${subs} sub-agent${subs === 1 ? '' : 's'} it started` : '';
+    if (outcome === 'idle' && calledOff > 0) return also ? `${STOP_ACK_QUESTION}\n⏹ Stopped ${also}.` : STOP_ACK_QUESTION;
+    if (outcome === 'idle' && transcripts > 0) return also ? `${STOP_ACK_VOICE}\n⏹ Stopped ${also}.` : STOP_ACK_VOICE;
+    if (outcome === 'idle' && also) return `⏹ Stopped the ${also}. Their conversations are kept — a message in one carries on from it.`;
+    return also ? `${STOP_ACK[outcome]}\n⏹ Also stopped the ${also}.` : STOP_ACK[outcome];
+  }
+
+  /**
+   * What `/stop` does to a conversation, without saying so: the questions and transcripts waiting
+   * there are called off, then the turn or background work is stopped. Public for the sub-agents a
+   * `/stop` reaches from the topic that opened them (Delegation.stopOpened), which must leave no
+   * question live either.
+   */
+  stopWithPending(key: ConversationId, reason: string): { outcome: StopOutcome; calledOff: number; transcripts: number } {
+    const calledOff = this.hooks?.cancelPendingAsks?.(key, reason) ?? 0;
     // A transcript waiting for its tap is queued input like any other, and /stop drops the queue.
-    const transcripts = this.hooks?.cancelPendingVoice?.(key, 'stopped') ?? 0;
-    const outcome = this.stopConversation(key);
-    console.log(`[conversation] ${key} /stop by ${conv.platform}:${conv.user} → ${outcome}`);
-    if (outcome === 'idle' && calledOff > 0) return STOP_ACK_QUESTION;
-    if (outcome === 'idle' && transcripts > 0) return STOP_ACK_VOICE;
-    return STOP_ACK[outcome];
+    const transcripts = this.hooks?.cancelPendingVoice?.(key, reason) ?? 0;
+    return { outcome: this.stopConversation(key), calledOff, transcripts };
   }
 
   /** `/kill`: end the agent process here and say what that did (see killConversation). */

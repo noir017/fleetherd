@@ -29,16 +29,20 @@ in parallel, and come back with one report — so you follow one topic instead o
 A sub-agent's topic is an ordinary topic: open it, read it, write in it, `/stop` it. A turn you
 start there is yours, so the agent that opened the topic is not told about it.
 
-Questions: one a sub-agent asks with buttons waits for you, and is listed under Needs you and
-notified. One about what its task meant is answered by the agent that started it; anything you
+To stop the whole job, use **Stop** (or `/stop`) in the topic you started it from: it stops that
+topic and every sub-agent it started that is still working, theirs included. Stop is shown there
+while any of them works, even after the agent's own turn has ended. Each conversation is kept.
+
+Questions: one a sub-agent asks with buttons waits for you, moves to the top of the topic list
+and is notified. One about what its task meant is answered by the agent that started it; anything you
 need to decide — scope, merging, releasing, deleting — is passed to you.
 
 ## In the sidebar
 
 - Sub-agent topics are indented under the topic that opened them. **▾ 3** folds them away; folded,
   it takes the colour of the most pressing state among them (a question, a failure, work).
-- Needs you and notifications leave out a sub-agent's finished replies and failures: the agent that
-  started it reads those and reports. Its questions are listed.
+- A sub-agent's finished replies and failures do not move it to the top or notify you: the agent
+  that started it reads those and reports. Its questions do.
 - Deleting a topic keeps the topics it opened, as ordinary topics.
 
 ## Notes

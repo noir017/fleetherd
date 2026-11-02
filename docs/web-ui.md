@@ -57,13 +57,13 @@ which were closed. Each conversation is kept, and the next message in a topic st
 again where it left off. A topic that starts working in the meantime is left running, and
 starred topics are closed like the rest.
 
-**What needs you.** Above the topics, **Needs you** lists every topic waiting on you, with one
-line each: a question to answer (amber), a turn that failed (red), or a reply you have not read
-yet (green). Its first line is shown, which is usually the conclusion. A reply leaves the list once
-you have looked at it. A failure stays until the next turn runs, and its dot in the list stays red.
-Working and idle topics are not listed, so the list is empty when nothing needs you.
-[Sub-agent](sub-agents.md) topics are nested under the topic that opened them, and are listed here
-only for a question of their own — the agent that opened them reads the rest. A link to a topic in a
+**What needs you.** Every topic waiting on you moves to the top of the list, its title in green,
+with a line under the group: a question to answer first (amber dot), then a turn that failed (red
+dot), then a reply you have not read yet (green dot). Hover a row for what it is — a reply's first
+line, which is usually the conclusion. A reply goes back to its place once you have looked at it. A
+failure stays until the next turn runs, and its dot stays red after that. Working and idle topics
+stay where they are. [Sub-agent](sub-agents.md) topics are nested under the topic that opened
+them, and move up only for a question of their own — the agent that opened them reads the rest. A link to a topic in a
 reply opens it in place.
 
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here

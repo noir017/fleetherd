@@ -4002,18 +4002,16 @@ describe('webui page: what needs you, and sub-agent topics', () => {
   const D = 'd15a7c40';
   const rows = (h: Harness): Array<string | null> =>
     Array.from(h.el('topics').querySelectorAll('[data-topic]')).map((r) => r.getAttribute('data-topic'));
-  const needs = (h: Harness): Array<[string | null, string | undefined]> =>
-    Array.from(h.el('needs').querySelectorAll('.needs-item')).map((r) => [
-      r.getAttribute('data-topic'),
-      r.querySelector('.needs-line')?.textContent ?? undefined,
-    ]);
+  /** The rows marked as needing you, in order, with what each says on hover. */
+  const needs = (h: Harness): Array<[string | null, string | null]> =>
+    Array.from(h.el('topics').querySelectorAll('.topic-item.needs')).map((r) => [r.getAttribute('data-topic'), r.getAttribute('title')]);
   const list = (extra: Record<string, Record<string, unknown>>): Array<Record<string, unknown>> =>
     [A, B, C, D].map((id, i) => ({ id, title: `T ${id}`, lastAt: 1000 - i, msgCount: 0, stage: 'idle', ...(extra[id] ?? {}) }));
 
-  it('lists what needs you above the topics — questions, then failures, then unread replies — and nothing else', async () => {
+  it('puts what needs you first, in green — questions, then failures, then unread replies — and nothing else', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
-    expect(h.el('needs').hidden).toBe(true);
+    expect(needs(h)).toEqual([]);
 
     await h.emit({
       t: 'topics',
@@ -4024,25 +4022,45 @@ describe('webui page: what needs you, and sub-agent topics', () => {
         [D]: { stage: 'answer', line: 'Merge now?' },
       }),
     });
-    expect(h.el('needs').hidden).toBe(false);
-    expect(h.el('needs').querySelector('.needs-head')?.textContent).toBe('Needs you (3)');
     expect(needs(h)).toEqual([
       [D, 'Waiting on your answer: Merge now?'],
       [C, 'Failed: upstream 503'],
       [B, 'Finished: Done: shipped 2.18.0'],
     ]);
+    // Each topic once: the rows themselves move up, with a line under them, rather than a second
+    // copy of each in a block of their own (which read as two conversations).
+    expect(rows(h)).toEqual([D, C, B, A]);
+    expect(h.doc.querySelector(`#topics [data-topic="${A}"]`)?.classList.contains('after-stars')).toBe(true);
+    expect(h.doc.getElementById('needs')).toBeNull();
+    // The dot still says which of the three it is.
+    expect(h.doc.querySelector(`#topics [data-topic="${B}"] .topic-dot`)?.className).toBe('topic-dot review');
 
     // Working, retrying and idle take no room; and the topic on screen is not listed as news.
     await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' }, [B]: { stage: 'working' }, [C]: { stage: 'retrying' } }) });
-    expect(h.el('needs').hidden).toBe(true);
+    expect(needs(h)).toEqual([]);
+    expect(rows(h)).toEqual([A, B, C, D]);
   });
 
-  it('opens the topic a needs-you row is about', async () => {
+  it('opens a topic that needs you like any other row', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'topics', topics: list({ [C]: { stage: 'failed', line: 'x' } }) });
-    await h.click(`#needs [data-topic="${C}"]`);
+    await h.click(`#topics .topic-item.needs[data-topic="${C}"]`);
     expect(h.live().url).toBe(`api/events?t=${C}`);
+  });
+
+  it('offers Stop over a topic whose sub-agents still work after its own turn ended', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    const stop = h.el('stop-turn') as HTMLButtonElement;
+    await h.emit({ t: 'topics', topics: list({ [B]: { parent: A } , [C]: { parent: B, running: true } }) });
+    expect(stop.hidden).toBe(false);
+    expect(stop.title).toContain('sub-agents it started');
+    await h.click('#stop-turn');
+    expect(h.calls.find((c) => c.path === 'api/send')?.body.text).toBe('/stop');
+
+    await h.emit({ t: 'topics', topics: list({ [B]: { parent: A }, [C]: { parent: B } }) });
+    expect(stop.hidden).toBe(true);
   });
 
   it('nests a sub-agent’s topic under the one that opened it, starred roots first', async () => {
@@ -4087,7 +4105,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     expect(h.doc.querySelector(`#topics [data-fold="${D}"]`)?.textContent).toBe('▾ 1');
   });
 
-  it('lists a sub-agent’s topic in Needs you only for a question of its own', async () => {
+  it('puts a sub-agent’s topic first only for a question of its own', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
     await h.emit({
@@ -4099,6 +4117,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
       }),
     });
     expect(needs(h)).toEqual([[C, 'Waiting on your answer: Which branch?']]);
+    expect(rows(h)[0]).toBe(C);
   });
 
   it('marks a failed topic’s dot red when nothing else is going on', async () => {

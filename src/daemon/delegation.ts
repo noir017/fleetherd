@@ -94,6 +94,7 @@ type Registry = Pick<
   | 'activityOf'
   | 'replyExcerptOf'
   | 'stopConversation'
+  | 'stopWithPending'
   | 'runScheduledPrompt'
   | 'workdirOf'
   | 'boundAgentOf'
@@ -380,6 +381,33 @@ export class Delegation {
       topic,
       result: outcome === 'idle' ? 'Nothing was running there.' : 'Stopped. Its context is kept; a message there carries on from it.',
     };
+  }
+
+  /**
+   * `/stop` in a conversation: stop every sub-agent it opened that is still at work, and the ones
+   * those opened, saying so in each. Returns how many were stopped.
+   *
+   * The person stopping a /super job means the job. Its own turn ends as soon as the parts are
+   * handed out, so a `/stop` that reached only that turn stopped nothing while every sub-agent ran
+   * on — and the only way to stop them was to open each one. Each is stopped as its own `/stop`
+   * would (questions called off too); its conversation is kept.
+   */
+  stopOpened(key: ConversationId, seen: Set<ConversationId> = new Set()): number {
+    const here = this.place(key);
+    if (!here || seen.has(key) || !commandSurface(here.adapter).nested) return 0;
+    seen.add(key);
+    let stopped = 0;
+    for (const c of this.childrenOf(here)) {
+      const { outcome, calledOff, transcripts } = this.deps.registry.stopWithPending(c.key, 'stopped from the topic that opened it');
+      if (outcome !== 'idle' || calledOff + transcripts > 0) {
+        stopped++;
+        void c.adapter
+          .sendMessage(c.address, `⏹ Stopped with /stop in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`)
+          .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
+      }
+      stopped += this.stopOpened(c.key, seen);
+    }
+    return stopped;
   }
 
   /** What a sub-agent's topic shows above what it is handed: whose words these are, linked. */

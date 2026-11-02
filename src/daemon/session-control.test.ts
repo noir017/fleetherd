@@ -394,7 +394,7 @@ describe('ConversationRegistry /stop', () => {
   };
   const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
 
-  function stopRig(opts: { turnsSettle?: boolean } = {}) {
+  function stopRig(opts: { turnsSettle?: boolean; subAgents?: number } = {}) {
     const parsed = parseConfig({
       platforms: { discord: { type: 'discord', token: 't' } },
       agents: [{ id: 'cc', harness: 'claude' }],
@@ -448,8 +448,15 @@ describe('ConversationRegistry /stop', () => {
       dispose: (id) => void sessions.delete(id),
     };
 
-    const reg = new ConversationRegistry(cfg, new Map([['discord', platform]]), factory, realClock);
-    return { reg, sent, created, aborts, background };
+    const subStops: string[] = [];
+    const hooks = {
+      stopSubAgents: (id: string) => {
+        subStops.push(id);
+        return opts.subAgents ?? 0;
+      },
+    };
+    const reg = new ConversationRegistry(cfg, new Map([['discord', platform]]), factory, realClock, hooks);
+    return { reg, sent, created, aborts, background, subStops };
   }
 
   it('mid-turn: aborts the agent and says what it stopped', async () => {
@@ -502,6 +509,24 @@ describe('ConversationRegistry /stop', () => {
     expect(background.stops).toBe(1);
     expect(aborts).toEqual([]); // there was no turn, so nothing for abort() to do
     expect(sent.some((t) => t.startsWith('⏹ Stopped the background work.'))).toBe(true);
+  });
+
+  it('a /super job whose own turn is over: stops the sub-agents it started, and says how many', async () => {
+    const { reg, sent, subStops } = stopRig({ subAgents: 2 });
+    reg.route(inbound('/stop', 'm1'));
+    await drain();
+    expect(subStops).toHaveLength(1);
+    expect(sent).toEqual(['⏹ Stopped the 2 sub-agents it started. Their conversations are kept — a message in one carries on from it.']);
+  });
+
+  it('mid-turn with sub-agents at work: both, in one answer', async () => {
+    const { reg, sent } = stopRig({ subAgents: 1 });
+    reg.route(inbound('long task', 'm1'));
+    await drain();
+    sent.length = 0;
+    reg.route(inbound('/stop', 'm2'));
+    await drain();
+    expect(sent.at(-1)).toMatch(/^⏹ Stopped\. .*\n⏹ Also stopped the 1 sub-agent it started\.$/s);
   });
 
   it('after the background work is done: back to nothing running', async () => {
