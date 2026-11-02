@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.19.2] - 2026-11-02
+
 ### Added
 
 - **Stop a whole /super job from where it started.** `/stop` (and Stop) in a topic now also stops
