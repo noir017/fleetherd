@@ -146,6 +146,27 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
   z
     .object({ kind: z.literal('schedule-op'), id: z.string().min(1), op: z.enum(['remove', 'pause', 'resume', 'run']) })
     .strict(),
+  // The dispatcher's commands (daemon/dispatcher.ts). None takes a channelId: each names the
+  // conversation it acts on as `topic`, and the daemon refuses all of them to any conversation but
+  // the dispatcher's own. Bounds are generous but present — `text` is a person's request, verbatim.
+  z.object({ kind: z.literal('task-agents') }).strict(),
+  z.object({ kind: z.literal('task-list'), limit: z.number().int().positive().max(200).optional() }).strict(),
+  z
+    .object({
+      kind: z.literal('task-new'),
+      agent: z.string().min(1).max(100),
+      text: z.string().min(1).max(20_000),
+      cwd: z.string().min(1).max(4_096).optional(),
+      title: z.string().min(1).max(200).optional(),
+    })
+    .strict(),
+  z
+    .object({ kind: z.literal('task-send'), topic: z.string().min(1).max(200), text: z.string().min(1).max(20_000) })
+    .strict(),
+  z
+    .object({ kind: z.literal('task-read'), topic: z.string().min(1).max(200), limit: z.number().int().positive().max(100).optional() })
+    .strict(),
+  z.object({ kind: z.literal('task-stop'), topic: z.string().min(1).max(200) }).strict(),
 ]);
 
 const IpcRequestSchema = z
@@ -197,7 +218,13 @@ export type IpcAction =
     }
   | { kind: 'schedule-list'; id?: string }
   | { kind: 'reload-config' }
-  | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run' };
+  | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run' }
+  | { kind: 'task-agents' }
+  | { kind: 'task-list'; limit?: number }
+  | { kind: 'task-new'; agent: string; text: string; cwd?: string; title?: string }
+  | { kind: 'task-send'; topic: string; text: string }
+  | { kind: 'task-read'; topic: string; limit?: number }
+  | { kind: 'task-stop'; topic: string };
 
 // Compile-time alignment: the zod-inferred type must equal the hand-written union;
 // if either side drifts, this type errors.
@@ -299,4 +326,62 @@ export interface ScheduleTaskView {
 /** Response body for schedule-list. */
 export interface ScheduleListResult {
   tasks: ScheduleTaskView[];
+}
+
+/**
+ * The dispatcher's view of one conversation (`task-list`, and what `task-new` returns). Flat, so a
+ * list renders as one TOON table.
+ */
+export interface TaskRow {
+  /** What every other task command takes as `topic`: the conversation's `--channel` id. */
+  topic: string;
+  title: string;
+  agent: string;
+  /** The directory it works in, short (`~/workspace/talkcode`); empty when unknown. */
+  cwd: string;
+  /** TopicStage: answer | failed | review | retrying | working | idle. */
+  stage: string;
+  /** The line beside it: the question, the failure, or the reply's first line. */
+  line: string;
+  /** When it last did anything, ISO. */
+  lastAt: string;
+  /** A link that opens it on the platform it is on, where there is one (the web UI's `?t=<topic>`). */
+  link?: string;
+}
+
+/** Response body for task-list. */
+export interface TaskListResult {
+  tasks: TaskRow[];
+  /** How many conversations there were before `limit`. */
+  total: number;
+}
+
+/** One agent the dispatcher can hand work to (task-agents). */
+export interface TaskAgentRow {
+  id: string;
+  harness: string;
+  /** Where it runs: `agents[].group`, its host, or `this machine`. */
+  where: string;
+  model: string;
+  /** Its configured working directory. */
+  root: string;
+  /** Projects one level inside it, most used first (what `/cd` offers). */
+  dirs: string[];
+}
+
+/** Response body for task-agents. */
+export interface TaskAgentsResult {
+  agents: TaskAgentRow[];
+}
+
+/** Response body for task-read: one conversation's recent messages, oldest first. */
+export interface TaskReadResult {
+  topic: string;
+  messages: Array<{ from: 'person' | 'agent'; at: string; text: string }>;
+}
+
+/** Response body for task-send and task-stop: what happened, in a sentence for the dispatcher. */
+export interface TaskActionResult {
+  topic: string;
+  result: string;
 }

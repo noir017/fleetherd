@@ -4,7 +4,18 @@ import { encode } from '@toon-format/toon';
 import { loadConfig, resolveSocketPath } from '../config/load.js';
 import { callDaemon } from '../ipc/client.js';
 import { DEFAULT_FETCH_FIELDS } from '../ipc/commands.js';
-import type { IpcAction, ListChannelsResult, ScheduleListResult, ScheduleTaskView, VoiceLogResult } from '../ipc/protocol.js';
+import type {
+  IpcAction,
+  ListChannelsResult,
+  ScheduleListResult,
+  ScheduleTaskView,
+  TaskActionResult,
+  TaskAgentsResult,
+  TaskListResult,
+  TaskReadResult,
+  TaskRow,
+  VoiceLogResult,
+} from '../ipc/protocol.js';
 import { ASK_CLIENT_TIMEOUT_MARGIN_MS, DEFAULT_ASK_TIMEOUT_MS } from '../ipc/protocol.js';
 import type { InboundMessage } from '../types.js';
 
@@ -333,7 +344,55 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown) => string
   'schedule-list': renderScheduleList,
   // Already a sentence written for a person (it is also the reply to /reload in chat).
   'reload-config': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
+  'task-agents': renderTaskAgents,
+  'task-list': renderTaskList,
+  'task-new': renderTaskOpened,
+  'task-read': renderTaskRead,
+  'task-send': renderTaskAction,
+  'task-stop': renderTaskAction,
 };
+
+/** task-agents: one row per agent; the directories joined, since a nested list breaks the table. */
+function renderTaskAgents(data: unknown): string {
+  const agents = (data as TaskAgentsResult | undefined)?.agents ?? [];
+  if (agents.length === 0) return toon({ count: 0, note: 'no agents are configured' });
+  return toon({
+    agents: agents.map((a) => ({ ...a, dirs: a.dirs.join(', ') })),
+    help: ['task-new --agent <id> [--cwd <dir>] "<the request>" hands work to one of these. --cwd is the root or one of its dirs.'],
+  });
+}
+
+/** task-list: the table, and the one thing worth knowing about the stages. */
+function renderTaskList(data: unknown): string {
+  const result = (data as TaskListResult | undefined) ?? { tasks: [], total: 0 };
+  if (result.tasks.length === 0) return toon({ count: 0, note: 'no conversations yet' });
+  const help = ['answer, failed and review need the person; retrying and working are under way; idle needs nothing.'];
+  if (result.total > result.tasks.length) help.push(`Showing the ${result.tasks.length} most recent of ${result.total}; raise --limit for more.`);
+  return toon({ tasks: result.tasks, help });
+}
+
+/** task-new: the conversation it opened. */
+function renderTaskOpened(data: unknown): string {
+  const task = (data as { task?: TaskRow } | undefined)?.task;
+  if (!task) return toon({ ok: true });
+  return toon({
+    task,
+    help: [`Opened. Its agent has the request; you will be told in [topic updates] when it has something for the person. Its topic id is ${task.topic}.`],
+  });
+}
+
+/** task-read: the messages, as a table. */
+function renderTaskRead(data: unknown): string {
+  const result = data as TaskReadResult | undefined;
+  if (!result || result.messages.length === 0) return toon({ count: 0, note: 'nothing has been said there yet' });
+  return toon({ topic: result.topic, messages: result.messages });
+}
+
+/** task-send / task-stop: what happened. */
+function renderTaskAction(data: unknown): string {
+  const result = data as TaskActionResult | undefined;
+  return toon(result ? { topic: result.topic, result: result.result } : { ok: true });
+}
 
 /**
  * Wrap low-level socket errnos like "can't connect to daemon" into an actionable structured

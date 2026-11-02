@@ -24,6 +24,7 @@
  */
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import type { TopicStage, TurnOutcome } from '../../types.js';
 
 /** One topic, as the page lists it. */
 export interface Topic {
@@ -89,6 +90,27 @@ export interface Topic {
    * address: two agents of one harness on two hosts both work in `workspace`.
    */
   dir?: { name: string; path: string; host?: string };
+  /**
+   * The dispatcher's topic (daemon/dispatcher.ts): pinned, never evicted or swept, never deleted.
+   * Persisted, because it is the daemon's decision rather than a reading — though the daemon makes it
+   * again on every start (`dispatchLane`), and a topic that stops being one is simply a topic.
+   */
+  dispatcher?: boolean;
+  /**
+   * When the operator last looked at this topic, by this server's clock (`api/seen`). Persisted:
+   * "you have not read this reply" has to survive the restart that an update is.
+   */
+  seenAt?: number;
+  /** How its last turn ended, as the daemon pushed it (TopicActivity.outcome). Persisted, for the same reason. */
+  outcome?: TurnOutcome;
+  /** An automatic continue is scheduled (TopicActivity.retry). Not persisted: the timer dies with the daemon. */
+  retry?: { attempt: number; max: number; at: number };
+  /**
+   * Where it stands for the operator (core/topic-stage.ts) and the line that goes with it — derived on
+   * every list, never persisted. The page's "Needs you" list is the topics whose stage needs a person.
+   */
+  stage?: TopicStage;
+  line?: string;
 }
 
 /**
@@ -164,7 +186,7 @@ export class TopicStore {
   evictable(inUse: (topic: Topic) => boolean): Topic | undefined {
     let oldest: Topic | undefined;
     for (const topic of this.topics.values()) {
-      if (topic.starred || (oldest && topic.lastAt >= oldest.lastAt)) continue;
+      if (topic.starred || topic.dispatcher || (oldest && topic.lastAt >= oldest.lastAt)) continue;
       if (!inUse(topic)) oldest = topic;
     }
     return oldest;
@@ -180,6 +202,54 @@ export class TopicStore {
     this.topics.set(topic.id, topic);
     this.flush();
     return topic;
+  }
+
+  /**
+   * Make sure a topic with this exact id exists — the dispatcher's, whose id is fixed so that its
+   * conversation (and the agent session in it) is the same one across restarts. Creates it past the
+   * cap if it must: the caller makes room first when it can, and one topic over is better than no
+   * dispatcher.
+   */
+  ensure(id: string, title: string): Topic {
+    const found = this.topics.get(id);
+    if (found) return found;
+    const topic: Topic = { id, title, lastAt: Date.now() };
+    this.topics.set(id, topic);
+    this.flush();
+    return topic;
+  }
+
+  /** Mark a topic as the dispatcher's, or as an ordinary one again. False when there is no such topic. */
+  setDispatcher(id: string, on: boolean): boolean {
+    const topic = this.topics.get(id);
+    if (!topic) return false;
+    if (Boolean(topic.dispatcher) === on) return true;
+    if (on) topic.dispatcher = true;
+    else delete topic.dispatcher;
+    this.flush();
+    return true;
+  }
+
+  /** Record how a topic's last turn ended, and any scheduled continue. Persists the outcome only. */
+  setActivity(id: string, outcome: TurnOutcome | undefined, retry: Topic['retry']): boolean {
+    const topic = this.topics.get(id);
+    if (!topic) return false;
+    const changed = JSON.stringify(topic.outcome) !== JSON.stringify(outcome);
+    if (outcome) topic.outcome = outcome;
+    else delete topic.outcome;
+    if (retry) topic.retry = retry;
+    else delete topic.retry;
+    if (changed) this.flush();
+    return true;
+  }
+
+  /** The operator looked at a topic now (`at`, this server's clock). Never moves backwards. */
+  markSeen(id: string, at: number): boolean {
+    const topic = this.topics.get(id);
+    if (!topic || (topic.seenAt ?? 0) >= at) return false;
+    topic.seenAt = at;
+    this.flush();
+    return true;
   }
 
   /** Name a topic. This is what `renameThread` lands on, i.e. what the harness decided. */
@@ -228,7 +298,7 @@ export class TopicStore {
   clear(): number {
     let gone = 0;
     for (const [id, topic] of this.topics) {
-      if (topic.starred) continue;
+      if (topic.starred || topic.dispatcher) continue;
       this.topics.delete(id);
       gone += 1;
     }
@@ -269,7 +339,14 @@ export class TopicStore {
   private flush(): void {
     const out: Record<string, Omit<Topic, 'id'>> = {};
     for (const [id, t] of this.topics) {
-      out[id] = { title: t.title, lastAt: t.lastAt, ...(t.starred ? { starred: true } : {}) };
+      out[id] = {
+        title: t.title,
+        lastAt: t.lastAt,
+        ...(t.starred ? { starred: true } : {}),
+        ...(t.dispatcher ? { dispatcher: true } : {}),
+        ...(t.seenAt !== undefined ? { seenAt: t.seenAt } : {}),
+        ...(t.outcome ? { outcome: t.outcome } : {}),
+      };
     }
     try {
       fs.mkdirSync(dirOf(this.file), { recursive: true });
@@ -290,10 +367,34 @@ function dirOf(file: string): string {
 /** Validate one persisted entry; anything malformed is dropped rather than trusted. */
 function toTopic(id: string, value: unknown): Topic | undefined {
   if (!/^[0-9a-f]{8}$/.test(id) || typeof value !== 'object' || value === null) return undefined;
-  const rec = value as { title?: unknown; lastAt?: unknown; starred?: unknown };
+  const rec = value as { title?: unknown; lastAt?: unknown; starred?: unknown; dispatcher?: unknown; seenAt?: unknown; outcome?: unknown };
   const title = typeof rec.title === 'string' ? rec.title : '';
   const lastAt = typeof rec.lastAt === 'number' && Number.isFinite(rec.lastAt) ? rec.lastAt : 0;
+  const outcome = toOutcome(rec.outcome);
   // `=== true` and nothing looser: a star is what exempts a topic from every sweep, so a file
   // that says `"starred": "no"` must not be read as one.
-  return { id, title, lastAt, ...(rec.starred === true ? { starred: true } : {}) };
+  return {
+    id,
+    title,
+    lastAt,
+    ...(rec.starred === true ? { starred: true } : {}),
+    ...(rec.dispatcher === true ? { dispatcher: true } : {}),
+    ...(typeof rec.seenAt === 'number' && Number.isFinite(rec.seenAt) ? { seenAt: rec.seenAt } : {}),
+    ...(outcome ? { outcome } : {}),
+  };
+}
+
+/** A persisted outcome, field by field; anything malformed is dropped (the next turn writes one afresh). */
+function toOutcome(v: unknown): TurnOutcome | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as { kind?: unknown; at?: unknown; line?: unknown; reason?: unknown };
+  if ((o.kind !== 'done' && o.kind !== 'failed') || typeof o.at !== 'number' || !Number.isFinite(o.at)) return undefined;
+  return {
+    kind: o.kind,
+    at: o.at,
+    ...(typeof o.line === 'string' ? { line: o.line.slice(0, 200) } : {}),
+    // Not checked against the reason list: platform/ cannot import the config's, and the page only
+    // ever shows the line, never the reason.
+    ...(typeof o.reason === 'string' ? { reason: o.reason as TurnOutcome['reason'] } : {}),
+  };
 }

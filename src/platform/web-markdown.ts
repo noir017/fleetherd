@@ -443,12 +443,22 @@ function scanCode(s: string, i: number): Match | null {
  */
 const SAFE_URL_RE = /^(?:https?:\/\/|mailto:)/i;
 
+/**
+ * The one relative link that is kept: another topic of this page, `?t=<topic id>` — what the
+ * dispatcher links a topic with (daemon/dispatcher.ts). Exactly eight hex digits, the only shape a
+ * topic id has, so nothing else relative slips through; rendered without `target` and marked
+ * `data-goto`, so the page switches to the topic in place instead of loading itself again.
+ */
+const TOPIC_LINK_RE = /^\?t=([0-9a-f]{8})$/;
+
 function scanLink(s: string, i: number): Match | null {
   if (s[i] !== '[') return null;
   const m = /^\[([^\]]*)\]\(\s*([^\s)]*)\s*\)/.exec(s.slice(i));
   if (!m) return null;
   const url = m[2] ?? '';
   const label = inline(m[1] ?? '');
+  const topic = TOPIC_LINK_RE.exec(url)?.[1];
+  if (topic) return { html: `<a href="?t=${topic}" data-goto="${topic}">${label}</a>`, next: i + m[0].length };
   // An unsafe or relative href is dropped, not rendered as a dead link: the label is kept so
   // no text is lost, and nothing clickable is produced that this file cannot vouch for.
   if (!SAFE_URL_RE.test(url)) return { html: label, next: i + m[0].length };

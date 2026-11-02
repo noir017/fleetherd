@@ -94,14 +94,15 @@ import { scanWorkdirs, isDirectory, workdirScanFrom, type WorkdirScan } from './
 import { agentCatalog, agentGroups, agentListText, agentPlaceOf, matchAgent, type AgentGroup } from '../core/agent-menu.js';
 import { rankByFrecency } from '../core/frecency.js';
 import type { WorkdirUsageStore } from './workdir-usage.js';
-import { expandRemoteHome, resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
+import { expandHome, expandRemoteHome, resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
+import { join } from 'node:path';
 import { formatAgyCliOutput, runAgyCliCommand, runAgyCliFor } from './agent-agy.js';
 import { formatRuntimeFooter, formatTokens } from '../core/runtime-footer.js';
 import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
 import { InboundMerger, type SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
-import { CONTINUE_SENDER, SCHEDULED_SENDER, TurnRunner } from './turn-runner.js';
+import { CONTINUE_SENDER, DISPATCH_SENDER, SCHEDULED_SENDER, TurnRunner } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 import type { RespawnCounts } from './config-reload.js';
@@ -632,6 +633,11 @@ export class ConversationRegistry {
        * be continued (TurnOutcomes). The dispatcher listens (daemon/dispatcher.ts).
        */
       onNeedsPerson?(id: ConversationId): void;
+      /**
+       * Whether a conversation is the dispatcher's (daemon/dispatcher.ts). It keeps the agent and the
+       * directory the configuration gives it: `/cc`, `/agent` and `/cd` are refused there.
+       */
+      isDispatcher?(id: ConversationId): boolean;
     },
     /** Persistent conversation state (agent binding + each agent's own session id). */
     private readonly store?: ConversationStore,
@@ -1068,7 +1074,7 @@ export class ConversationRegistry {
     this.outcomes.personActed(key);
 
     // Commands the gateway answers itself, before any agent sees them.
-    if (this.answerDaemonCommand(key, msg, address, choice.agentId)) return;
+    if (this.answerDaemonCommand(key, msg, address, choice)) return;
 
     // A topic keeps the agent it started with (see refuseAgentSwitch). After the daemon commands,
     // so `/oc /new` still clears the topic — the one route to choosing again — and before the
@@ -1701,6 +1707,27 @@ export class ConversationRegistry {
   }
 
   /**
+   * Refuse, in the dispatcher's topic, what would move it: naming another agent (`/cc`, `/agent`) or
+   * another directory (`/cd`). Its agent is `dispatcher.agent` and its directory is its own (see
+   * dispatcher-home.ts), both by configuration — and a dispatcher quietly turned into an ordinary
+   * agent in some project is the one thing that topic must never become. `/new` still works there.
+   */
+  private refuseInDispatcher(key: ConversationId, choice: AgentChoice, msg: InboundMessage, address: ConversationAddress): boolean {
+    if (!this.hooks?.isDispatcher?.(key)) return false;
+    const name = parseTextCommand(msg.content)?.name;
+    if (!choice.explicit && name !== 'cd' && name !== 'agent') return false;
+    const agent = this.boundAgentOf(key) ?? this.config.dispatcher?.agent ?? '?';
+    void this.platforms
+      .get(msg.conversation.platform)
+      ?.sendMessage(
+        address,
+        `📥 This is the dispatcher's topic: it is always answered by \`${agent}\` (\`dispatcher.agent\` in config.yaml), in a directory of its own. Ask here for work and it opens a topic for it — or open one yourself with +.`
+      )
+      .catch((e) => console.warn('[conversation] failed to answer in the dispatcher topic:', e instanceof Error ? e.message : e));
+    return true;
+  }
+
+  /**
    * The commands this gateway answers itself (DAEMON_COMMANDS in core/command-translate.ts), all
    * intercepted before the merger and none ever forwarded to an agent. Returns true when one of
    * them answered, in which case no turn runs.
@@ -1716,8 +1743,12 @@ export class ConversationRegistry {
     key: ConversationId,
     msg: InboundMessage,
     address: ConversationAddress,
-    fallbackAgent: string
+    choice: AgentChoice
   ): boolean {
+    // First: the dispatcher's topic keeps the agent and directory the configuration gives it, so
+    // `/cd` there is refused rather than answered below (and so is naming another agent).
+    if (this.refuseInDispatcher(key, choice, msg, address)) return true;
+    const fallbackAgent = choice.agentId;
     const text = msg.content.trim();
     const conv = msg.conversation;
     const ack = (what: string, body: string): void => {
@@ -2719,6 +2750,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
   agentCatalogForRef(ref: ConversationRef): AgentCatalog | undefined {
     if (this.config.agents.length < 2) return undefined;
     const id = this.idForRef(ref);
+    // The dispatcher's topic has its agent by configuration; offering a choice would offer a refusal.
+    if (this.hooks?.isDispatcher?.(id)) return undefined;
     const current = this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
     if (this.store?.agentSession(id, current) !== undefined) return undefined;
     return agentCatalog(agentGroups(this.config.agents), current);
@@ -3301,6 +3334,149 @@ ${formatTokens(left)} left before compaction — ${name}`;
     return state.merger.enqueueSolo(msg);
   }
 
+  // ── The dispatcher's hands (daemon/dispatcher.ts) ────────────────────────────────────────────
+
+  /**
+   * Make `agentId` the one answering the dispatcher's conversation. A different agent bound there
+   * before (`dispatcher.agent` changed, then `/reload`) is not switched in place — that is what a
+   * topic refuses everywhere else too — but started over, the way `/new` would: the conversation it
+   * had was another agent's.
+   */
+  bindDispatcher(key: ConversationId, platformId: string, agentId: string): void {
+    const bound = this.boundAgentOf(key);
+    if (bound === agentId) return;
+    if (bound !== undefined) this.resetConversation(key);
+    this.agents.dispose(key);
+    this.store?.bind(key, agentId);
+    const state = this.conversations.get(key);
+    if (state) {
+      state.agentId = agentId;
+      state.headerSent = false;
+    }
+    console.log(`[dispatcher] ${key} on "${platformId}" is answered by "${agentId}"${bound ? ` (was "${bound}")` : ''}`);
+  }
+
+  /**
+   * Open a conversation of its own for a piece of work (`task-new`): a new topic on `platform` next
+   * to `root`, bound to `agentId`, started in `cwd`, and handed `text` as its first message.
+   *
+   * Throws a sentence for the dispatcher when it cannot: a platform that cannot open topics (it would
+   * have to post into the chat itself, which is not a conversation of its own), an unknown agent, a
+   * directory that is not there.
+   */
+  async openTask(opts: {
+    platform: string;
+    root: ConversationAddress;
+    agentId: string;
+    text: string;
+    cwd?: string;
+    title?: string;
+  }): Promise<{ key: ConversationId; address: ConversationAddress }> {
+    const adapter = this.platforms.get(opts.platform);
+    if (!adapter?.capabilities.thread) {
+      throw new Error(`platform instance "${opts.platform}" cannot open a conversation of its own here`);
+    }
+    const def = findAgent(this.config, opts.agentId);
+    if (!def) {
+      throw new Error(`no agent "${opts.agentId}" is configured; task-agents lists them: ${this.config.agents.map((a) => a.id).join(', ')}`);
+    }
+    if (this.draining) throw new Error('the gateway is restarting; open the task again in a minute');
+    const cwd = opts.cwd ? this.taskDirectory(def, opts.cwd) : undefined;
+    // Named now from the request when no title was given; the namer renames it from the same text
+    // once the turn starts (it names a conversation once, and nothing has named this one yet).
+    const name = formatLaneTitle(opts.agentId, opts.title ?? fallbackTitle(opts.text));
+    const opened = (await adapter.createThread({ address: opts.root, messageId: '' }, name)).address;
+    const conv = this.conversationAt(opts.platform, opened);
+    if (!conv) throw new Error('the new topic does not map to a conversation of its own under this deployment\'s scope');
+    this.ensureState(conv.key, opts.platform, opts.agentId, { fresh: true });
+    if (opts.title) this.store?.setConversationTitle(conv.key, opts.agentId, name);
+    if (cwd) {
+      const moved = this.setWorkdir(conv.key, opts.agentId, cwd);
+      if (moved.kind === 'missing') throw new Error(`no directory ${cwd} on the machine "${opts.agentId}" runs on`);
+      if (moved.kind === 'failed') throw new Error(moved.reason);
+    }
+    await this.handTo(conv.key, opts.platform, opened, opts.text);
+    return { key: conv.key, address: opened };
+  }
+
+  /**
+   * A task's directory as the dispatcher named it: absolute, `~`-relative, or a name inside the
+   * agent's own root (`talkcode` for `<root>/talkcode` — what task-agents lists).
+   */
+  private taskDirectory(def: AgentDef, given: string): string {
+    if (given.startsWith('/') || given === '~' || given.startsWith('~/')) {
+      return def.host ? given : expandHome(given);
+    }
+    const root = resolveAgentCwd(def);
+    return def.host ? `${root.replace(/\/$/, '')}/${given}` : join(root, given);
+  }
+
+  /**
+   * Hand `text` to a conversation's agent on the person's behalf — the dispatcher's `task-new` and
+   * `task-send`. It is shown there first as coming from the dispatcher (the reactions land on that
+   * bubble), then goes in like a message typed there: into the running turn when the harness takes
+   * one, else as the next turn. Answers which of the two.
+   *
+   * Counts as the person acting (TurnOutcomes.personActed): a continue waiting after a failure is
+   * called off, because someone is driving that conversation again.
+   */
+  async handTo(
+    key: ConversationId,
+    platformId: string,
+    address: ConversationAddress,
+    text: string
+  ): Promise<'joined' | 'started'> {
+    const agentId = this.boundAgentOf(key);
+    if (!agentId || !findAgent(this.config, agentId)) throw new Error('nobody answers that conversation yet; open it with task-new');
+    if (this.hooks?.isDispatcher?.(key)) throw new Error('that is the dispatcher topic itself');
+    const adapter = this.platforms.get(platformId);
+    if (!adapter) throw new Error(`platform instance "${platformId}" is not running`);
+    const state = this.ensureState(key, platformId, agentId);
+    if (this.draining && state.merger.isIdle()) throw new Error('the gateway is restarting; send it again in a minute');
+    const posted = await adapter.sendMessage(address, `**📥 From the dispatcher**\n\n${text}`);
+    const busy = !state.merger.isIdle();
+    this.outcomes.personActed(key);
+    this.touch(key);
+    state.reclaimOnIdle = false;
+    void state.merger.ingest({
+      conversation: {
+        platform: platformId,
+        channel: address.channel,
+        ...(address.thread ? { thread: address.thread } : {}),
+        kind: 'direct',
+        user: DISPATCH_SENDER,
+      },
+      messageId: posted.messageId,
+      content: text,
+      timestamp: this.clock.now(),
+    });
+    return busy ? 'joined' : 'started';
+  }
+
+  /** Whether a turn is running (or about to) in a conversation. */
+  isBusy(key: ConversationId): boolean {
+    const state = this.conversations.get(key);
+    return state !== undefined && !state.merger.isIdle();
+  }
+
+  /** Whether a question is waiting on the person in a conversation (an ask, an elicitation, a permission). */
+  isAsking(key: ConversationId): boolean {
+    return this.hooks?.hasPendingWork?.(key) ?? false;
+  }
+
+  /**
+   * One agent's directory choices, as `/cd` would offer them: its root first, then the projects in
+   * it, most used first. A remote agent's comes from the last listing of its host (warmRemoteScans).
+   */
+  workdirChoices(agentId: string): { root: string; dirs: string[] } | undefined {
+    const def = findAgent(this.config, agentId);
+    if (!def) return undefined;
+    const root = resolveAgentCwd(def);
+    const scan = this.rankedWorkdirs(def, root);
+    if (!scan.ok) return { root, dirs: [] };
+    return { root, dirs: scan.options.slice(1).map((o) => o.path) };
+  }
+
   /**
    * Send `hooks.turnFailed.continue.message` to the agent as a turn of its own (TurnOutcomes): queued
    * behind anything running and interrupting nothing, like a scheduled prompt, but ATTENDED — it
@@ -3345,6 +3521,11 @@ ${formatTokens(left)} left before compaction — ${name}`;
   /** What a conversation's last turn left (TurnOutcomes), for a list built on this side. */
   activityOf(id: ConversationId): TopicActivity | undefined {
     return this.outcomes.activityOf(id);
+  }
+
+  /** The head of a conversation's last finished reply, while it is the last thing that happened there. */
+  replyExcerptOf(id: ConversationId): string | undefined {
+    return this.outcomes.excerptOf(id);
   }
 
   /**

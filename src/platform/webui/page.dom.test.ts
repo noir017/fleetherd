@@ -3834,3 +3834,117 @@ describe('webui page: tool bubbles fold and open', () => {
     expect(html).toContain('.tl.open{display:block;white-space:pre-wrap;overflow-wrap:anywhere}');
   });
 });
+
+describe('webui page: what needs you, and the dispatcher topic', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const C = 'c3d4e5f6';
+  const D = 'd15a7c40';
+  const rows = (h: Harness): Array<string | null> =>
+    Array.from(h.el('topics').querySelectorAll('[data-topic]')).map((r) => r.getAttribute('data-topic'));
+  const needs = (h: Harness): Array<[string | null, string | undefined]> =>
+    Array.from(h.el('needs').querySelectorAll('.needs-item')).map((r) => [
+      r.getAttribute('data-topic'),
+      r.querySelector('.needs-line')?.textContent ?? undefined,
+    ]);
+  const list = (extra: Record<string, Record<string, unknown>>): Array<Record<string, unknown>> =>
+    [A, B, C, D].map((id, i) => ({ id, title: `T ${id}`, lastAt: 1000 - i, msgCount: 0, stage: 'idle', ...(extra[id] ?? {}) }));
+
+  it('lists what needs you above the topics — questions, then failures, then unread replies — and nothing else', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    expect(h.el('needs').hidden).toBe(true);
+
+    await h.emit({
+      t: 'topics',
+      topics: list({
+        A: {},
+        [B]: { stage: 'review', line: 'Done: shipped 2.18.0' },
+        [C]: { stage: 'failed', line: 'upstream 503' },
+        [D]: { stage: 'answer', line: 'Merge now?' },
+      }),
+    });
+    expect(h.el('needs').hidden).toBe(false);
+    expect(h.el('needs').querySelector('.needs-head')?.textContent).toBe('Needs you (3)');
+    expect(needs(h)).toEqual([
+      [D, 'Waiting on your answer: Merge now?'],
+      [C, 'Failed: upstream 503'],
+      [B, 'Finished: Done: shipped 2.18.0'],
+    ]);
+
+    // Working, retrying and idle take no room; and the topic on screen is not listed as news.
+    await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' }, [B]: { stage: 'working' }, [C]: { stage: 'retrying' } }) });
+    expect(h.el('needs').hidden).toBe(true);
+  });
+
+  it('opens the topic a needs-you row is about', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list({ [C]: { stage: 'failed', line: 'x' } }) });
+    await h.click(`#needs [data-topic="${C}"]`);
+    expect(h.live().url).toBe(`api/events?t=${C}`);
+  });
+
+  it('pins the dispatcher topic first, with neither a star nor a ×', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list({ [D]: { dispatcher: true, title: '📥 Dispatcher' }, [C]: { starred: true } }) });
+    expect(rows(h)).toEqual([D, C, A, B]);
+    const row = h.doc.querySelector(`#topics [data-topic="${D}"]`)!;
+    expect(row.classList.contains('dispatcher')).toBe(true);
+    expect(row.querySelector('[data-del]')).toBeNull();
+    expect(row.querySelector('[data-star]')).toBeNull();
+  });
+
+  it('marks a failed topic’s dot red when nothing else is going on', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list({ [C]: { stage: 'failed' }, [B]: { stage: 'failed', running: true } }) });
+    expect(h.doc.querySelector(`#topics [data-topic="${C}"] .topic-dot`)?.className).toBe('topic-dot failed');
+    expect(h.doc.querySelector(`#topics [data-topic="${B}"] .topic-dot`)?.className).toBe('topic-dot running');
+  });
+
+  it('tells the daemon a reply on screen was read — once, and not while the page is hidden', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    const seen = (): number => h.calls.filter((c) => c.path === 'api/seen').length;
+
+    await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' } }) });
+    expect(h.calls.find((c) => c.path === 'api/seen')?.body).toEqual({ topic: A });
+    await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' } }) });
+    expect(seen()).toBe(1);
+
+    // Another topic's unread reply is not this page's to mark.
+    await h.emit({ t: 'topics', topics: list({ [B]: { stage: 'review' } }) });
+    expect(seen()).toBe(1);
+
+    Object.defineProperty(h.doc, 'visibilityState', { value: 'hidden', configurable: true });
+    await new Promise((r) => setTimeout(r, 2_100));
+    await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' } }) });
+    expect(seen()).toBe(1);
+    Object.defineProperty(h.doc, 'visibilityState', { value: 'visible', configurable: true });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+    await tick();
+    expect(seen()).toBe(2);
+  });
+
+  it('switches to a topic a message links to, in place', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${D}` });
+    await h.emit(
+      sync(D, [message('w1', `<p>Done in <a href="?t=${C}" data-goto="${C}">quantlab</a>.</p>`)], [D, A, C])
+    );
+    const before = h.streams.length;
+    await h.click('#log a[data-goto]');
+    expect(h.live().url).toBe(`api/events?t=${C}`);
+    expect(h.streams.length).toBe(before + 1);
+    // Not a navigation: the page is the same page.
+    expect(h.window.location.search).toBe(`?t=${C}`);
+  });
+
+  it('ignores a link to a topic it does not have', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${D}` });
+    await h.emit(sync(D, [message('w1', '<p><a href="?t=99999999" data-goto="99999999">gone</a></p>')], [D, A]));
+    await h.click('#log a[data-goto]');
+    expect(h.live().url).toBe(`api/events?t=${D}`);
+  });
+});

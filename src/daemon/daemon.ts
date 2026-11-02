@@ -121,6 +121,7 @@ import {
 } from '../ipc/protocol.js';
 import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
+import { Dispatcher } from './dispatcher.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { DRAIN_LIMIT_MS, describeInProgress, nothingInProgress, whenIdle, type InProgress } from './restart-drain.js';
 import { taskListText } from '../core/schedule.js';
@@ -185,6 +186,10 @@ const GATEWAY_QUERY_KINDS = {
 } as const satisfies Partial<Record<IpcAction['kind'], true>>;
 type GatewayQuery = Extract<IpcAction, { kind: keyof typeof GATEWAY_QUERY_KINDS }>;
 const isGatewayQuery = (a: IpcAction): a is GatewayQuery => a.kind in GATEWAY_QUERY_KINDS;
+
+/** The dispatcher's commands (daemon/dispatcher.ts), handled before both switches. */
+type TaskAction = Extract<IpcAction, { kind: `task-${string}` }>;
+const isTaskAction = (a: IpcAction): a is TaskAction => a.kind.startsWith('task-');
 
 /** The verbs `/setting schedule <verb> <id>` accepts, onto the service's operations. */
 const SCHEDULE_TYPED_OPS: Record<string, 'pause' | 'resume' | 'remove' | 'run'> = {
@@ -761,6 +766,9 @@ export class Daemon {
   /** The IPC socket, which an agent on a remote host reaches through remoteHosts' CLI bridge. */
   private readonly socketPath: string;
 
+  /** The dispatcher topic and its task commands (daemon/dispatcher.ts). Inert without `dispatcher:`. */
+  private readonly dispatcher: Dispatcher;
+
   constructor(
     private readonly config: Config,
     platforms: Map<string, PlatformAdapter>,
@@ -851,7 +859,18 @@ export class Daemon {
       takeVoice: (id, msg) => this.voice.take(id, msg),
       supersedeVoice: (id) => this.voice.supersede(id),
       cancelPendingVoice: (id, reason) => this.voice.cancel(id, reason),
+      // What a turn left for the person (and a question asked, see askButtons) goes to the dispatcher,
+      // which tells them in its topic; that topic keeps its own agent and directory.
+      onNeedsPerson: (id) => this.dispatcher.needsPerson(id),
+      isDispatcher: (id) => this.dispatcher.isDispatcher(id),
     }, store, workdirUsage);
+    this.dispatcher = new Dispatcher({
+      config,
+      platforms: this.platforms,
+      registry: this.registry,
+      clock,
+      questionOf: (id) => this.questionOf(id),
+    });
     if (schedules) {
       // On the PACED adapters, like everything else: a scheduled run's notice and output wait their
       // turn on the chat's write budget.
@@ -912,6 +931,8 @@ export class Daemon {
     // The registered set is fixed and derived from config (see buildRegisteredSpecs), so it is
     // registered once here rather than re-derived whenever an agent reports its commands.
     await this.registerCommands();
+    // After the platforms are up: the dispatcher topic is opened BY a platform (dispatchLane).
+    this.dispatcher.configure();
     // Each remote agent's directory list, read now so the first bare `/cc` has a menu to offer.
     this.registry.warmRemoteScans();
     await this.ipc.start();
@@ -1039,6 +1060,7 @@ export class Daemon {
       }
     }
     this.pendingAsks.clear();
+    this.dispatcher.dispose();
     this.registry.dispose(); // release all mergers + agent sessions
     // The stop signals the line above sent to agents on other machines are still in their links;
     // give them a moment to leave before the connections go. A host this misses stops those agents
@@ -1105,6 +1127,8 @@ export class Daemon {
     // background job leaves that job reporting through this socket, into a conversation that from
     // the registry's side looks like nobody has said anything in an hour.
     if (this.lastResolvedConversationId) this.registry.touch(this.lastResolvedConversationId);
+    // The dispatcher's commands: refused to every conversation but its own (Dispatcher.handle).
+    if (isTaskAction(action)) return this.dispatcher.handle(conversation, action);
     // Questions for the gateway itself, not actions on a chat — answered before the chat switch.
     if (isGatewayQuery(action)) return this.handleGatewayQuery(action, address);
     switch (action.kind) {
@@ -1255,6 +1279,8 @@ export class Daemon {
     this.registry.warmRemoteScans();
 
     if (diff.sections.includes('session')) this.registry.idleTimeoutChanged();
+    // Idempotent, and cheap: re-read every time, since a changed agent can be the dispatcher's too.
+    this.dispatcher.configure();
     const respawn = this.registry.respawnAgents(new Set([...diff.agentsChanged, ...diff.agentsRemoved]));
     // Only when the set changed: re-registering is a platform API call per instance, and Telegram
     // and Discord rate-limit it.
@@ -1389,9 +1415,24 @@ export class Daemon {
             conversationId,
             ...(selected ? { selected } : {}),
           });
-          if (conversationId !== undefined) this.settleFromGap(reqId, conversationId, acceptsText);
+          if (conversationId !== undefined) {
+            this.settleFromGap(reqId, conversationId, acceptsText);
+            // A question waiting on the person is what the dispatcher exists to tell them about.
+            // Still pending after the dispatcher's gathering window, it goes on the card.
+            if (this.pendingAsks.has(reqId)) this.dispatcher.needsPerson(conversationId);
+          }
         })
     );
+  }
+
+  /** The question waiting on the person in a conversation, first line — for the dispatcher. */
+  private questionOf(conversationId: ConversationId): string | undefined {
+    for (const pending of this.pendingAsks.values()) {
+      if (pending.conversationId !== conversationId) continue;
+      const line = pending.prompt.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+      return line.length > 120 ? `${line.slice(0, 119)}…` : line || undefined;
+    }
+    return undefined;
   }
 
   /**

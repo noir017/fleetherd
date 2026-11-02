@@ -40,6 +40,12 @@ export const SCHEDULED_SENDER = 'schedule';
 export const CONTINUE_SENDER = 'continue';
 
 /**
+ * The sender of what the dispatcher hands a conversation (task-new, task-send — daemon/dispatcher.ts):
+ * the person's words, passed on. Attended like CONTINUE_SENDER, for the same reason.
+ */
+export const DISPATCH_SENDER = 'dispatcher';
+
+/**
  * The handlers a turn hands the agent. A scheduled run has nobody watching for a permission
  * request, so it is answered as `permissions: auto` would — asking would only hold the run for the
  * ask timeout and then decline it.

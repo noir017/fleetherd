@@ -65,7 +65,8 @@ export type HelpTopicName =
   | 'threads'
   | 'ask'
   | 'voice'
-  | 'config';
+  | 'config'
+  | 'tasks';
 
 export interface HelpTopic {
   name: HelpTopicName;
@@ -148,6 +149,16 @@ export const HELP_TOPICS: HelpTopic[] = [
     ],
   },
   {
+    name: 'tasks',
+    summary: 'Dispatcher only: hand work to other conversations, and follow it',
+    notes: [
+      'These run only in the dispatcher topic (`dispatcher:` in the gateway config); anywhere else they are refused.',
+      'A topic is the id `tasks` and `task-new` print — the same id `--channel` takes elsewhere.',
+      'task-new opens a conversation of its own for the work and hands the agent <text> as the first message, shown there as coming from the dispatcher. task-send does the same in an existing one: into the turn if one is running, else as the next turn.',
+      'When a conversation you started (or any other) has something for the person — a reply, a failure, a question — you are told in a message beginning `[topic updates]`.',
+    ],
+  },
+  {
     name: 'voice',
     summary: 'What a voice message actually said',
     notes: [
@@ -218,6 +229,14 @@ const intArg = (label: string) => (value: string): number => {
     throw new Error(`${label} must be an integer, got ${JSON.stringify(value)}`);
   }
   return n;
+};
+
+/**
+ * The task commands name the conversation they act on as a positional, and a `--channel` beside it
+ * would be a second, contradicting answer to the same question — refused, not ignored.
+ */
+const refuseChannel = (command: string, opts: Record<string, unknown>): void => {
+  if (str(opts.channel) !== undefined) throw new Error(`${command} names its conversation itself; --channel does not apply`);
 };
 
 /** Commander collect parser: accumulate a repeatable option (e.g. -o) into an array. */
@@ -508,6 +527,83 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '--timeout <duration>', description: 'add: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
     ],
     build: buildSchedule,
+  },
+  {
+    usage: 'task-agents',
+    topic: 'tasks',
+    description: 'The agents work can be handed to: where each runs, its model, and the project directories it can start in',
+    options: [],
+    build: (_positionals, opts) => {
+      refuseChannel('task-agents', opts);
+      return { kind: 'task-agents' };
+    },
+  },
+  {
+    usage: 'tasks',
+    topic: 'tasks',
+    description:
+      'Every conversation, most recent first: its agent, directory, stage (answer | failed | review | retrying | working | idle) and one line about it',
+    options: [{ flags: '-l, --limit <n>', description: 'how many (default 30)', parse: intArg('--limit') }],
+    build: (_positionals, opts) => {
+      refuseChannel('tasks', opts);
+      return { kind: 'task-list', limit: typeof opts.limit === 'number' ? opts.limit : undefined };
+    },
+  },
+  {
+    usage: 'task-new <text>',
+    topic: 'tasks',
+    description: "Open a new conversation with an agent and hand it <text> — the person's request, word for word",
+    options: [
+      { flags: '--agent <id>', description: 'who does the work: an id from task-agents (required)' },
+      { flags: '--cwd <dir>', description: "where it starts: a directory task-agents lists (default: the agent's own)" },
+      { flags: '--title <title>', description: 'the conversation’s name (default: named from <text>)' },
+    ],
+    build: (positionals, opts) => {
+      refuseChannel('task-new', opts);
+      const agent = str(opts.agent);
+      if (!agent) throw new Error('task-new needs --agent <id>; `talkcode task-agents` lists them');
+      return {
+        kind: 'task-new',
+        agent,
+        text: pos(positionals, 0, 'text'),
+        cwd: str(opts.cwd),
+        title: str(opts.title),
+      };
+    },
+  },
+  {
+    usage: 'task-send <topic> <text>',
+    topic: 'tasks',
+    description: "Hand <text> — the person's words — to the agent of an existing conversation",
+    options: [],
+    build: (positionals, opts) => {
+      refuseChannel('task-send', opts);
+      return { kind: 'task-send', topic: pos(positionals, 0, 'topic'), text: pos(positionals, 1, 'text') };
+    },
+  },
+  {
+    usage: 'task-read <topic>',
+    topic: 'tasks',
+    description: "A conversation's recent messages, oldest first, cut at 1500 characters each",
+    options: [{ flags: '-l, --limit <n>', description: 'how many messages (default 10)', parse: intArg('--limit') }],
+    build: (positionals, opts) => {
+      refuseChannel('task-read', opts);
+      return {
+        kind: 'task-read',
+        topic: pos(positionals, 0, 'topic'),
+        limit: typeof opts.limit === 'number' ? opts.limit : undefined,
+      };
+    },
+  },
+  {
+    usage: 'task-stop <topic>',
+    topic: 'tasks',
+    description: "Stop what a conversation's agent is doing — only when the person asked for it",
+    options: [],
+    build: (positionals, opts) => {
+      refuseChannel('task-stop', opts);
+      return { kind: 'task-stop', topic: pos(positionals, 0, 'topic') };
+    },
   },
   {
     usage: 'reload',

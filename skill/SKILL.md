@@ -33,6 +33,7 @@ current. `talkcode help` lists the topics.
 | `ask` | a question with buttons that blocks until answered — only without a question tool of your own |
 | `voice` | what a voice message actually said, when one reads like a mishearing |
 | `config` | applying an edited config.yaml without a restart |
+| `tasks` | handing work to other conversations — the dispatcher's commands, refused anywhere else |
 
 ## Output and errors
 

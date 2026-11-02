@@ -80,7 +80,13 @@ for (const spec of REVERSE_COMMANDS) {
 program
   .command('mcp', { hidden: true })
   .description('MCP server giving an agent session send_file and schedule as tools (started by the daemon)')
-  .action(() => import('./commands/mcp.js').then((m) => m.runMcp(version)));
+  // The dispatcher's session gets its task tools as well (ipc/tools.ts DISPATCH_TOOLS). A flag rather
+  // than an environment variable because the flag survives the remote-host shim, which carries argv
+  // back to this gateway and drops everything but a short allowlist of the environment.
+  .option('--dispatch', "also serve the dispatcher's task tools")
+  .action((opts: { dispatch?: boolean }) =>
+    import('./commands/mcp.js').then((m) => m.runMcp(version, { dispatch: opts.dispatch === true }))
+  );
 
 // `help [topic]` replaces commander's implicit `help [command]`: it is where the bundled skill sends an
 // agent (see HELP_TOPICS), so it answers by TOPIC — `help schedule` — and still falls back to

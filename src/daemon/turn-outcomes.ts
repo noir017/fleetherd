@@ -59,6 +59,9 @@ export interface TurnOutcomesDeps {
   onNeedsPerson?(id: ConversationId): void;
 }
 
+/** How much of a finished reply is kept for the dispatcher's card (see dispatcher.ts CARD_EXCERPT_CHARS). */
+const REPLY_EXCERPT_CHARS = 600;
+
 /** One conversation's automatic-continue bookkeeping. */
 interface Continuing {
   /** Continues already SENT in this run of failures. Reset by a normal end, a stop, or the person. */
@@ -69,9 +72,20 @@ interface Continuing {
 
 export class TurnOutcomes {
   private readonly activity = new Map<ConversationId, TopicActivity>();
+  /**
+   * The head of each conversation's last finished reply (REPLY_EXCERPT_CHARS), for the dispatcher's
+   * card. Kept here rather than pushed with the activity: a platform's list shows one line, and this
+   * is only ever read by the daemon.
+   */
+  private readonly excerpts = new Map<ConversationId, string>();
   private readonly continuing = new Map<ConversationId, Continuing>();
 
   constructor(private readonly deps: TurnOutcomesDeps) {}
+
+  /** The head of the conversation's last finished reply, while it is still the last thing that happened. */
+  excerptOf(id: ConversationId): string | undefined {
+    return this.activity.get(id)?.outcome?.kind === 'done' ? this.excerpts.get(id) : undefined;
+  }
 
   /** What is known about a conversation's last turn (for a list built on the daemon's side). */
   activityOf(id: ConversationId): TopicActivity | undefined {
@@ -99,6 +113,9 @@ export class TurnOutcomes {
     switch (end.kind) {
       case 'done': {
         this.continuing.delete(id);
+        const text = end.text.trim();
+        if (text) this.excerpts.set(id, text.length > REPLY_EXCERPT_CHARS ? `${text.slice(0, REPLY_EXCERPT_CHARS - 1)}…` : text);
+        else this.excerpts.delete(id);
         const line = replyLine(end.text);
         this.set(id, { outcome: { kind: 'done', at, ...(line ? { line } : {}) } });
         this.deps.onNeedsPerson?.(id);
@@ -140,6 +157,7 @@ export class TurnOutcomes {
   forget(id: ConversationId): void {
     this.personActed(id);
     this.activity.delete(id);
+    this.excerpts.delete(id);
     this.push(id, undefined);
   }
 

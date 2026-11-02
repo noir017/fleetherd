@@ -57,6 +57,7 @@ import {
   LoginRequestSchema,
   MAX_BODY_BYTES,
   SendRequestSchema,
+  SeenRequestSchema,
   StarTopicRequestSchema,
   parseBody,
   type WebEvent,
@@ -302,6 +303,7 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/topics/clear', run: clearTopics },
   { method: 'POST', path: '/api/topics/delete', run: deleteTopic },
   { method: 'POST', path: '/api/topics/star', run: starTopic },
+  { method: 'POST', path: '/api/seen', run: seen },
   { method: 'POST', path: '/api/topics/close-idle', run: closeIdle },
   { method: 'DELETE', path: '/api/topics', run: deleteTopic },
   { method: 'POST', path: '/api/logout', run: logout },
@@ -593,9 +595,20 @@ async function starTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
 async function deleteTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, DeleteTopicRequestSchema);
   if (!parsed) return;
+  if (ctx.room.topics.get(parsed.topic)?.dispatcher) {
+    return send(req, res, 409, { error: 'the dispatcher topic belongs to the configuration (dispatcher: in config.yaml) and cannot be deleted' });
+  }
   if (!ctx.room.deleteTopic(parsed.topic)) {
     return send(req, res, 404, { error: 'no such topic' });
   }
+  send(req, res, 200, { ok: true });
+}
+
+/** The page is showing a topic to someone (see WebRoom.markSeen). A topic that is gone is not an error. */
+async function seen({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, SeenRequestSchema);
+  if (!parsed) return;
+  ctx.room.markSeen(parsed.topic);
   send(req, res, 200, { ok: true });
 }
 

@@ -68,6 +68,7 @@ import {
 import { PreLaunchCancelled, runPreLaunchHook } from './agent-hooks.js';
 import { remoteHosts } from './remote-hosts.js';
 import { selfInvocation } from './reverse-cli-shim.js';
+import { dispatcherConversations, localDispatcherDir, remoteDispatcherDir } from './dispatcher-home.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 
@@ -149,14 +150,16 @@ export function acpMcpServers(
   sessionToken: string,
   socketPath: string,
   cwd: string,
-  self = selfInvocation()
+  self = selfInvocation(),
+  /** The dispatcher's session: its server serves the task tools too (`mcp --dispatch`). */
+  dispatch = false
 ): McpServer[] {
   if (!self) return [];
   return [
     {
       name: NATIVE_TOOLS_SERVER,
       command: self.command,
-      args: [...self.args, 'mcp'],
+      args: [...self.args, 'mcp', ...(dispatch ? ['--dispatch'] : [])],
       env: [
         { name: 'TALKCODE_TURN_TOKEN', value: sessionToken },
         { name: 'TALKCODE_SOCKET', value: socketPath },
@@ -167,17 +170,42 @@ export function acpMcpServers(
 }
 
 /**
+ * What a dispatcher's claude session is created and loaded with: no built-in tools at all — no
+ * Bash, no Read, no Edit, no Task — so its only tools are the native ones (`chat`, with the task
+ * tools added by `mcp --dispatch`).
+ *
+ * This is the structural half of the dispatcher, and the half its instructions cannot replace.
+ * DeepSeek's Super-agent write-up measured it (2026-10-31): a single session told neutrally to
+ * delegate did so in 0 of 5 runs, and told firmly, in 4 — the fifth judged the work small, did it
+ * itself, and became the slowest run. A dispatcher that can do the work will; so this one cannot.
+ *
+ * Read from claude-agent-acp 0.81.0's createSession (dist/acp-agent.js, 2026-11-02): an explicit
+ * `_meta.claudeCode.options.tools` replaces the `claude_code` preset, and `session/load` passes its
+ * `_meta` to the same createSession, so a resumed dispatcher is as bare as a new one. ⚠️ HYRUM'S
+ * LAW: that is the adapter's private pass-through of SDK options, not ACP; agent-acp.test.ts pins
+ * the shape we send, and the dispatcher's e2e checks that a Bash call is refused.
+ */
+export const DISPATCHER_SESSION_META = { claudeCode: { options: { tools: [] as string[] } } };
+
+/**
  * The same server for an agent on a remote host: the host's `talkcode` shim (on PATH there, but
  * named absolutely — a harness may start MCP servers with a stripped environment), which carries
  * the session back to this gateway's own `talkcode mcp` (remote-hosts.ts runCli). The socket it
  * dials is passed explicitly for the same reason.
  */
-export function remoteMcpServers(sessionToken: string, paths: { shim: string; socket: string }, cwd: string): McpServer[] {
+export function remoteMcpServers(
+  sessionToken: string,
+  paths: { shim: string; socket: string },
+  cwd: string,
+  dispatch = false
+): McpServer[] {
   return [
     {
       name: NATIVE_TOOLS_SERVER,
       command: paths.shim,
-      args: ['mcp'],
+      // A flag, not a variable: the host's shim carries argv back to this gateway, and only a short
+      // allowlist of the environment (remote/shim.go).
+      args: ['mcp', ...(dispatch ? ['--dispatch'] : [])],
       env: [
         { name: 'TALKCODE_TURN_TOKEN', value: sessionToken },
         { name: 'TALKCODE_REMOTE_SOCK', value: paths.socket },
@@ -774,6 +802,22 @@ function createAcpSession(
    * agree on one answer within a single startup.
    */
   let cwd = resolveConversationCwd(def, conversationId, store);
+  /** Whether this session's child answers the dispatcher topic (decided at spawn; see startSession). */
+  let dispatching = false;
+  /** The `_meta` a dispatcher's claude session is created and loaded with, else nothing. */
+  const sessionMeta = (): Record<string, unknown> | undefined =>
+    dispatching && def.harness === 'claude' ? DISPATCHER_SESSION_META : undefined;
+  /** `session/load`'s `_meta` field, when there is one to send. */
+  const loadMeta = (): { _meta?: Record<string, unknown> } => {
+    const meta = sessionMeta();
+    return meta ? { _meta: meta } : {};
+  };
+  /** `session/new`'s `_meta` field: the model hint (see below) and the dispatcher's, when either applies. */
+  const newSessionMeta = (): { _meta?: Record<string, unknown> } => {
+    const model = def.model ? { model: def.harness === 'dsh' ? dshModelSelectorValue(def.model) : def.model } : undefined;
+    const meta = sessionMeta();
+    return model || meta ? { _meta: { ...model, ...meta } } : {};
+  };
 
   /** Lazily-started connection handles; established on first turn, closed on dispose. */
   let proc: AgentChild | undefined;
@@ -1257,12 +1301,12 @@ function createAcpSession(
     if (!place) {
       return {
         child: spawn(command, args, { cwd, env: buildAgentEnv(def, sessionToken, socketPath) }),
-        mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd),
+        mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd, undefined, dispatching),
       };
     }
     return {
       child: place.host.spawn(command, args, { cwd, env: remoteAgentEnv(def, sessionToken) }),
-      mcpServers: () => remoteMcpServers(sessionToken, place.host.paths(place.welcome), cwd),
+      mcpServers: () => remoteMcpServers(sessionToken, place.host.paths(place.welcome), cwd, dispatching),
     };
   }
 
@@ -1295,6 +1339,22 @@ function createAcpSession(
     return () => spawnError;
   }
 
+  /**
+   * The dispatcher's conversation stands in a directory of its own, whatever the agent's is, and is
+   * given the task tools (see dispatcher-home.ts). Read at spawn, like the directory.
+   */
+  async function placeDispatcher(place: { host: RemoteHost; welcome: Welcome } | undefined): Promise<void> {
+    dispatching = dispatcherConversations.has(conversationId);
+    if (!dispatching) return;
+    cwd = place ? await remoteDispatcherDir(place.host, place.welcome) : localDispatcherDir();
+    if (def.harness !== 'claude') {
+      console.warn(
+        `[acp] "${def.id}" answers the dispatcher topic, but the gateway can take built-in tools away only from claude; ` +
+          `this ${def.harness} session keeps its own and relies on its instructions not to use them`
+      );
+    }
+  }
+
   /** Lazily start the ACP child and complete initialize + session/new. sessionToken is injected into its env here. */
   async function startSession(sessionToken: string): Promise<void> {
     if (active) return;
@@ -1304,6 +1364,8 @@ function createAcpSession(
     cwd = resolveConversationCwd(def, conversationId, store);
 
     const place = await placeOnHost();
+
+    await placeDispatcher(place);
 
     // The operator's preLaunch hook, inside the shared startup so concurrent callers run it once. A
     // failure throws from here, before there is a child or a connection to roll back.
@@ -1400,6 +1462,7 @@ function createAcpSession(
             sessionId: persistedId,
             cwd,
             mcpServers: mcpServers(),
+            ...loadMeta(),
           });
           active = resumed;
           // session/load reports the resumed session's config the same way session/new does.
@@ -1435,13 +1498,7 @@ function createAcpSession(
             // uses initialSelection(config)) — so the hint is kept well-formed (JSON-encoded like
             // set_config_option expects) in case a future version reads it; the real enforcement is
             // applyModelPreference below.
-            ...(def.model
-              ? {
-                  _meta: {
-                    model: def.harness === 'dsh' ? dshModelSelectorValue(def.model) : def.model,
-                  },
-                }
-              : {}),
+            ...newSessionMeta(),
           })
           .start();
         active = session; // active set = "ready": assigned last so a half-ready session isn't reused

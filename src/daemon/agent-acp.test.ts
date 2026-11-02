@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { CreateElicitationRequest, SessionConfigOption, SessionUpdate } from '@agentclientprotocol/sdk';
 import {
   acpMcpServers,
+  DISPATCHER_SESSION_META,
+  remoteMcpServers,
   dshModelDisplayValue,
   dshModelSelectorValue,
   effortSelectorOf,
@@ -999,6 +1001,20 @@ describe('what the agent is given', () => {
         ],
       },
     ]);
+  });
+
+  it('hands the dispatcher’s session the same server with the task tools switched on', () => {
+    const self = { command: '/usr/bin/node', args: ['/srv/aa/dist/cli.js'] };
+    const argsOf = (servers: unknown[]): unknown => (servers[0] as { args?: string[] } | undefined)?.args;
+    expect(argsOf(acpMcpServers('tok-1', '/run/aa.sock', '/work/p', self, true))).toEqual(['/srv/aa/dist/cli.js', 'mcp', '--dispatch']);
+    expect(argsOf(remoteMcpServers('tok-1', { shim: '/h/.talkcode/bin/talkcode', socket: '/h/s' }, '/w', true))).toEqual([
+      'mcp',
+      '--dispatch',
+    ]);
+  });
+
+  it('creates a dispatcher’s claude session with no built-in tools (claude-agent-acp’s SDK pass-through)', () => {
+    expect(DISPATCHER_SESSION_META).toEqual({ claudeCode: { options: { tools: [] } } });
   });
 
   it('hands none when this process cannot re-invoke itself (a test worker), rather than a broken entry', () => {

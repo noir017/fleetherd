@@ -40,7 +40,17 @@ import {
   type ConversationRef,
 } from '../../core/conversation.js';
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
-import type { AgentCatalog, AgentStatus, ButtonInteraction, InboundMessage, SlashCommandSpec } from '../../types.js';
+import { needsPerson, replyLine, topicStage } from '../../core/topic-stage.js';
+import type {
+  AgentCatalog,
+  AgentStatus,
+  ButtonInteraction,
+  InboundMessage,
+  SlashCommandSpec,
+  TopicActivity,
+  TopicStage,
+} from '../../types.js';
+import type { ConversationAddress } from '../../core/conversation.js';
 import type { ButtonSpec, ConversationWorkdir } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -60,6 +70,31 @@ export type WebuiInstance = WebuiPlatformConfig & { id: string };
  */
 export const CHANNEL = 'main';
 export const OWNER = 'owner';
+
+/**
+ * The dispatcher's topic id. Fixed, not random, because the topic IS a conversation
+ * (`<instance>#main#<id>`): the same id across restarts is the same agent session, and a new id on
+ * every start would be a dispatcher that forgot everything each time. Any eight hex digits would do.
+ */
+export const DISPATCH_TOPIC = 'd15a7c40';
+
+/** The dispatcher topic's name in the list. Not renamed by the harness: it is a place, not a subject. */
+export const DISPATCH_TITLE = '📥 Dispatcher';
+
+/**
+ * How long a topic must stay in a needs-you stage before a push notification goes out for it. The
+ * page reports what the operator is looking at (`api/seen`), and a reply that lands in the topic on
+ * screen is seen within a round trip — so the grace is what keeps the phone from buzzing about what
+ * the operator just read.
+ */
+const NOTIFY_GRACE_MS = 3_000;
+
+/** One push notification, before it is addressed (see `useNotifier`). */
+export interface TopicNotice {
+  topic: string;
+  title: string;
+  body: string;
+}
 
 /** How many messages a topic remembers across a page reload. Memory in a daemon that runs for weeks. */
 const MAX_MESSAGES = 500;
@@ -283,6 +318,12 @@ export class WebRoom {
   private catalog: ((ref: ConversationRef) => AgentCatalog | undefined) | null = null;
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
   private liveTimer: NodeJS.Timeout | null = null;
+  /** Sends a push notification (index.ts, webpush.ts); absent = nobody to notify. See `useNotifier`. */
+  private notifier: ((notice: TopicNotice) => void) | null = null;
+  /** The stage each topic was last announced in, to notice the moment one starts needing the operator. */
+  private readonly lastStage = new Map<string, TopicStage>();
+  /** Notifications waiting out NOTIFY_GRACE_MS, by topic. */
+  private readonly notifyTimers = new Map<string, NodeJS.Timeout>();
   /**
    * The flags of the last topic list actually sent, so the poll can stay silent when nothing
    * moved. Not a cache of the list itself: everything else announces unconditionally, because a
@@ -385,6 +426,9 @@ export class WebRoom {
 
   /** Delete a topic, disposing its room state and announcing the new list. */
   deleteTopic(id: string): boolean {
+    // The dispatcher's topic is the configuration's, not the operator's to throw away: deleting it
+    // would only have the daemon open it again on the next start, empty of the list it had.
+    if (this.topics.get(id)?.dispatcher) return false;
     this.disposeRoom(id);
     // A star defers to the ×, kept transcript and all.
     this.forgetKept(id);
@@ -410,7 +454,8 @@ export class WebRoom {
   clearTopics(): Topic {
     // The rooms as well as the list: a room is made on demand, so one can outlive its topic's row.
     for (const id of new Set([...this.rooms.keys(), ...this.topics.list().map((t) => t.id)])) {
-      if (this.topics.get(id)?.starred) continue;
+      const kept = this.topics.get(id);
+      if (kept?.starred || kept?.dispatcher) continue;
       this.disposeRoom(id);
       this.forgetKept(id);
     }
@@ -428,6 +473,104 @@ export class WebRoom {
       this.rooms.delete(id);
     }
     this.dirCache.delete(id);
+  }
+
+  // ── What needs the operator ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Open the dispatcher's topic (`on`) or let it be an ordinary topic again — see
+   * PlatformAdapter.dispatchLane. Returns its address while on.
+   */
+  dispatchLane(on: boolean): ConversationAddress | undefined {
+    if (!on) {
+      if (this.topics.get(DISPATCH_TOPIC)?.dispatcher) {
+        this.topics.setDispatcher(DISPATCH_TOPIC, false);
+        this.announceTopics();
+      }
+      return undefined;
+    }
+    if (!this.topics.has(DISPATCH_TOPIC)) {
+      if (this.topics.full()) {
+        try {
+          this.makeRoom();
+        } catch {
+          // Every topic held: the dispatcher's goes one over the cap rather than not at all.
+        }
+      }
+      this.topics.ensure(DISPATCH_TOPIC, DISPATCH_TITLE);
+    }
+    this.topics.setDispatcher(DISPATCH_TOPIC, true);
+    this.topics.rename(DISPATCH_TOPIC, DISPATCH_TITLE);
+    this.announceTopics();
+    return { channel: CHANNEL, thread: DISPATCH_TOPIC };
+  }
+
+  /** How a topic's last turn ended (PlatformAdapter.setActivity). */
+  setActivity(topicId: string, activity: TopicActivity | undefined): void {
+    if (!this.topics.setActivity(topicId, activity?.outcome, activity?.retry)) return;
+    this.announceTopics();
+  }
+
+  /**
+   * The operator is looking at a topic now (`api/seen`). Stamped with THIS clock, not the page's:
+   * it is compared against when a turn ended, which is this clock's too, and a phone's idea of the
+   * time is nothing to compare a server's with.
+   */
+  markSeen(topicId: string): boolean {
+    if (!this.topics.markSeen(topicId, Date.now())) return false;
+    this.announceTopics();
+    return true;
+  }
+
+  /** When the operator last looked at a topic (PlatformAdapter.seenAt). */
+  seenAt(topicId: string): number | undefined {
+    return this.topics.get(topicId)?.seenAt;
+  }
+
+  /**
+   * Accept a way to send a push notification. Without one the page is still told everything (the
+   * Needs-you list); nothing reaches a device whose page is not open.
+   */
+  useNotifier(notify: (notice: TopicNotice) => void): void {
+    this.notifier = notify;
+  }
+
+  /**
+   * Notice topics that have just started needing the operator, and notify for each that still does
+   * after NOTIFY_GRACE_MS. Which topics notify: with a dispatcher, only its topic — it is the one
+   * place the operator watches, and it is told about everything else; without one, any topic.
+   */
+  private watchStages(topics: Topic[]): void {
+    const viaDispatcher = topics.some((t) => t.dispatcher);
+    for (const t of topics) {
+      const stage = t.stage ?? 'idle';
+      const was = this.lastStage.get(t.id);
+      this.lastStage.set(t.id, stage);
+      if (stage === was || !needsPerson(stage)) continue;
+      if (viaDispatcher && !t.dispatcher) continue;
+      if (!this.notifier || this.notifyTimers.has(t.id)) continue;
+      const timer = setTimeout(() => {
+        this.notifyTimers.delete(t.id);
+        const now = this.topicList().find((x) => x.id === t.id);
+        if (!now?.stage || !needsPerson(now.stage)) return;
+        try {
+          this.notifier?.({ topic: now.id, title: now.title || 'Untitled', body: noticeBody(now.stage, now.line) });
+        } catch (e) {
+          console.warn('[webui] could not send a notification:', e instanceof Error ? e.message : e);
+        }
+      }, NOTIFY_GRACE_MS);
+      timer.unref?.();
+      this.notifyTimers.set(t.id, timer);
+    }
+  }
+
+  /** The first line of the question a topic is waiting on, for the Needs-you list. */
+  private questionLine(room: Room | undefined): string | undefined {
+    if (!room) return undefined;
+    let last: string | undefined;
+    for (const id of room.awaiting) last = id;
+    const text = last ? room.stored.get(last)?.text : undefined;
+    return text ? replyLine(text) : undefined;
   }
 
   /**
@@ -617,15 +760,26 @@ export class WebRoom {
     return this.topics.list().map((t) => {
       const room = this.rooms.get(t.id);
       const dir = this.dirOf(t.id);
+      const running = Boolean(room?.typing);
+      const asking = Boolean(room?.awaiting.size);
+      const stage = topicStage({
+        running,
+        asking,
+        activity: { ...(t.outcome ? { outcome: t.outcome } : {}), ...(t.retry ? { retry: t.retry } : {}) },
+        ...(t.seenAt !== undefined ? { seenAt: t.seenAt } : {}),
+      });
+      const line = stage === 'answer' ? this.questionLine(room) : t.outcome?.line;
       return {
         ...t,
-        running: Boolean(room?.typing),
+        running,
         // Before `running` in meaning, not just in this object: a question on screen holds the
         // turn open, so both are true at once and only this one says what is actually happening.
-        asking: Boolean(room?.awaiting.size),
+        asking,
         live: this.liveOf(t.id),
         term: Boolean(this.terminal?.has(t.id)),
         msgCount: room?.msgCount ?? 0,
+        stage,
+        ...(line ? { line } : {}),
         ...(dir ? { dir } : {}),
       };
     });
@@ -633,6 +787,7 @@ export class WebRoom {
 
   private announceTopics(): void {
     const topics = this.topicList();
+    this.watchStages(topics);
     this.sendTopics(topics, flagsOf(topics));
   }
 
@@ -1112,6 +1267,8 @@ export class WebRoom {
     this.writeKept();
     if (this.liveTimer) clearInterval(this.liveTimer);
     this.liveTimer = null;
+    for (const t of this.notifyTimers.values()) clearTimeout(t);
+    this.notifyTimers.clear();
   }
 
   // ── Inbound (page → daemon) ────────────────────────────────────────────────
@@ -1300,6 +1457,12 @@ export class WebRoom {
  * Only the three derived states the switcher paints a dot from, deliberately: the poll must not
  * notice a title, an order or an unread count, because whatever changed those already announced.
  */
+/** What a notification says under a topic's name. */
+function noticeBody(stage: TopicStage, line: string | undefined): string {
+  const what = stage === 'answer' ? 'Waiting on your answer' : stage === 'failed' ? 'Failed' : 'Finished';
+  return line ? `${what}: ${line}` : what;
+}
+
 function flagsOf(topics: Topic[]): string {
   // The directory too, so the poll is also what corrects a row whose move landed after the
   // announcement that followed it (a `/cd` on a host lists the directory over the link first):

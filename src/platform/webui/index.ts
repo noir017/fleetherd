@@ -332,6 +332,9 @@ type Outbound = Pick<
   | 'startTyping'
   | 'stopTyping'
   | 'setStatus'
+  | 'setActivity'
+  | 'seenAt'
+  | 'dispatchLane'
   | 'createThread'
   | 'renameThread'
   | 'measureRendered'
@@ -436,6 +439,18 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
      */
     setStatus(address, status) {
       room.setStatus(topicOf(address, 'setStatus'), status);
+    },
+    /** How a topic's last turn ended: what its row and the Needs-you list say about it. */
+    setActivity(address, activity) {
+      room.setActivity(topicOf(address, 'setActivity'), activity);
+    },
+    /** Read, so a topic that is gone answers "never seen" rather than throwing at the dispatcher. */
+    seenAt(address) {
+      return address.channel === CHANNEL && address.thread ? room.seenAt(address.thread) : undefined;
+    },
+    /** The 📥 topic (daemon/dispatcher.ts): opened and pinned while a dispatcher is configured. */
+    dispatchLane(on) {
+      return room.dispatchLane(on);
     },
     /**
      * Open a topic.

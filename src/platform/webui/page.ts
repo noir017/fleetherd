@@ -176,6 +176,31 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 }
 /* Starred rows are listed first; this line is where they end. A pseudo-element on the first row
    after them rather than a node of its own, so #topics holds rows and nothing else. */
+/* The dispatcher's topic (daemon/dispatcher.ts): always first, tinted, and with neither a star nor
+   a × — it is the configuration's, not the operator's to keep or throw away. */
+#topics .topic-item.dispatcher{--row-bg:#18202c}
+#topics .topic-item.dispatcher:hover{--row-bg:#1f2a39}
+#topics .topic-item.dispatcher.on{--row-bg:#223044}
+/* A failed last turn, when nothing else is going on: the one state that stays until something runs
+   again, so the dot keeps saying it after the reply has been read. */
+.topic-dot.failed{background:#f87171}
+/* What needs the operator, above the list: a question waiting (amber), a failure (red), a reply not
+   yet read (green) — each with the line that says what. Healthy topics take no room here, which is
+   the point of it: with a dozen topics open, this is the part of the sidebar that is read. Its own
+   element rather than rows in #topics, which holds topic rows and nothing else. */
+#needs{display:flex;flex-direction:column;gap:2px;padding:8px 8px 6px;border-bottom:1px solid var(--line);max-height:40%;overflow-y:auto;flex-shrink:0}
+#needs[hidden]{display:none}
+.needs-head{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);padding:0 9px 3px}
+.needs-item{display:flex;gap:8px;align-items:flex-start;width:100%;padding:5px 9px;border:0;border-radius:5px;background:none;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.needs-item:hover{background:#222}
+.needs-item .topic-dot{margin-top:5px}
+.needs-item .topic-dot.review{background:#4ade80}
+.needs-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.needs-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.needs-line{font-size:11px;line-height:1.35;color:#8b98a6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#notify-toggle{display:block;width:100%;background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;transition:color .15s,background .15s}
+#notify-toggle:hover{color:var(--fg);background:var(--field)}
+#notify-toggle[hidden]{display:none}
 #topics .topic-item.after-stars{margin-top:5px}
 #topics .topic-item.after-stars::before{content:'';position:absolute;left:9px;right:9px;top:-5px;border-top:1px solid var(--line)}
 /* Pinned under the list rather than beside the + in the header, and that is the whole reason it
@@ -580,7 +605,7 @@ const SCRIPT = `
       chips=$('chips'), hints=$('hints'), typing=$('typing'), note=$('note'), picker=$('picker'),
       bar=$('topics'), sidebar=$('sidebar'), collapseBtn=$('collapse-sidebar'),
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
-      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
+      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), needsEl=$('needs'), notifyBtn=$('notify-toggle'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
@@ -1509,14 +1534,18 @@ const SCRIPT = `
   function paintTopics(){
     var h='';
     var cur=null;
-    // Starred first, each half in the daemon's order (most recently active first). Only the
-    // painting is reordered: topics itself keeps the daemon's order, because topics[0] is read
-    // elsewhere as "the most recent topic" — where to land when the one on screen goes away.
-    var order=[], rest=[], stars=0;
+    // The dispatcher's topic first, then starred, each part in the daemon's order (most recently
+    // active first). Only the painting is reordered: topics itself keeps the daemon's order, because
+    // topics[0] is read elsewhere as "the most recent topic" — where to land when the one on screen
+    // goes away.
+    var order=[], rest=[], stars=0, pinned=[];
     for(var j=0;j<topics.length;j++){
-      if(topics[j].starred){ order.push(topics[j]); stars++; } else rest.push(topics[j]);
+      if(topics[j].dispatcher) pinned.push(topics[j]);
+      else if(topics[j].starred){ order.push(topics[j]); stars++; } else rest.push(topics[j]);
     }
-    order=order.concat(rest);
+    order=pinned.concat(order).concat(rest);
+    stars += pinned.length;
+    paintNeeds();
     for(var i=0;i<order.length;i++){
       var t=order[i];
       var isCur=(t.id===topic);
@@ -1538,8 +1567,9 @@ const SCRIPT = `
       }
       var unread=isCur?0:Math.max(0, count - readCounts[t.id]);
       var cls='topic-item '+(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
-        +(t.starred?' starred':'')+(stars && i===stars?' after-stars':'');
-      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isLive?' live':'')));
+        +(t.starred?' starred':'')+(t.dispatcher?' dispatcher':'')+(stars && i===stars?' after-stars':'');
+      var isFailed=t.stage==='failed';
+      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(isLive?' live':''))));
       var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
       // Not "a shell is alive over there" — the daemon only sees the connection, so this says a
       // page has that topic's terminal open (shown or minimized). See terminal-sessions.ts.
@@ -1564,10 +1594,10 @@ const SCRIPT = `
          + '</span>'
          + term
          + badge
-         + '<span class="topic-acts">'
+         + (t.dispatcher ? '' : '<span class="topic-acts">'
          + star
          + '<button type="button" class="btn-icon topic-del" data-del="'+text(t.id)+'" title="Delete topic">×</button>'
-         + '</span>'
+         + '</span>')
          + '</div>';
     }
     bar.innerHTML=h;
@@ -1598,6 +1628,66 @@ const SCRIPT = `
     // the same frame rather than leaving the bar holding the old name until the next switch.
     if(TERM_OK) paintFrames();
   }
+
+  /**
+   * What needs the operator, above the list (#needs): every topic but the one on screen whose stage
+   * is a question, a failure, or a reply not yet read — the daemon decides the stage
+   * (core/topic-stage.ts) and sends it with the list; this only draws it. Hidden when there is none:
+   * a healthy state takes no room.
+   */
+  var NEEDS_ORDER = {answer:0, failed:1, review:2};
+  function paintNeeds(){
+    var list=[];
+    for(var i=0;i<topics.length;i++){
+      var t=topics[i];
+      if(t.id===topic || t.dispatcher) continue;
+      if(NEEDS_ORDER[t.stage]===undefined) continue;
+      list.push(t);
+    }
+    list.sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+    if(!list.length){ needsEl.hidden=true; needsEl.innerHTML=''; return; }
+    var h='<div class="needs-head">Needs you ('+list.length+')</div>';
+    for(var k=0;k<list.length;k++){
+      var n=list[k];
+      var dot=n.stage==='answer'?'asking':(n.stage==='failed'?'failed':'review');
+      var what=n.stage==='answer'?'Waiting on your answer':(n.stage==='failed'?'Failed':'Finished');
+      h += '<button type="button" class="needs-item" data-topic="'+text(n.id)+'">'
+         + '<span class="topic-dot '+dot+'"></span>'
+         + '<span class="needs-main"><span class="needs-title">'+text(n.title || 'Untitled')+'</span>'
+         + '<span class="needs-line">'+text(n.line ? what+': '+n.line : what)+'</span></span>'
+         + '</button>';
+    }
+    needsEl.innerHTML=h;
+    needsEl.hidden=false;
+  }
+
+  /**
+   * Tell the daemon the operator is looking at the topic on screen, when that changes something: a
+   * reply it has not been told was read (stage review). It stamps its own clock (WebRoom.markSeen),
+   * and the stage — here, in the Needs-you list, and in what the dispatcher is told — moves on.
+   * Only while the page is actually visible, and at most every two seconds per topic.
+   */
+  var seenPosted={};
+  function reportSeen(){
+    if(!topic || document.visibilityState==='hidden') return;
+    var cur=null;
+    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
+    if(!cur || cur.stage!=='review') return;
+    var now=Date.now();
+    if(seenPosted[topic] && now-seenPosted[topic]<2000) return;
+    seenPosted[topic]=now;
+    post('api/seen',{topic:topic},0).catch(function(){});
+  }
+  document.addEventListener('visibilitychange', reportSeen);
+
+  needsEl.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('[data-topic]') : null;
+    if(!b) return;
+    var id = b.getAttribute('data-topic');
+    if(!id || id===topic) return;
+    switchTopic(id);
+    if(narrow()) setSidebar(false);
+  });
 
   // ── Terminal ───────────────────────────────────────────────────────────────
   // A window over the transcript, one per topic. The iframe holds ttyd's own terminal, which is
@@ -1732,6 +1822,7 @@ const SCRIPT = `
       }
     }
     paintTopics();
+    reportSeen();
     log.innerHTML='';
     data={};
     els={};
@@ -2023,6 +2114,7 @@ const SCRIPT = `
     else if(ev.t==='topics'){
       topics = ev.topics || [];
       paintTopics();
+      reportSeen();
       if(topic && !topics.some(function(t){ return t.id===topic; })){
         if(topics.length > 0){
           switchTopic(topics[0].id);
@@ -2337,6 +2429,18 @@ const SCRIPT = `
     // as downloading it. Checked first — a picture carries none of the attributes below.
     var shot = e.target.closest ? e.target.closest('img.shot') : null;
     if(shot) return openShot(shot);
+    // A link to another topic (the dispatcher's, see web-markdown.ts TOPIC_LINK_RE): switched to in
+    // place, not loaded as a page — the stream, the caches and the composer all stay as they are.
+    var go = e.target.closest ? e.target.closest('a[data-goto]') : null;
+    if(go){
+      e.preventDefault();
+      var goId = go.getAttribute('data-goto');
+      if(goId && topics.some(function(t){ return t.id===goId; })){
+        switchTopic(goId);
+        if(narrow()) setSidebar(false);
+      }
+      return;
+    }
     // A new topic's choice of agent: typed for the operator, so it is a message like any other.
     var card = e.target.closest ? e.target.closest('button[data-agent]') : null;
     if(card) return command('/agent '+card.getAttribute('data-agent'));
@@ -3193,8 +3297,10 @@ __GATE__
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
       <button type="button" class="btn-icon" id="collapse-sidebar" title="Collapse sidebar">◀</button>
     </div>
+    <div id="needs" hidden></div>
     <div id="topics"></div>
     <div id="sidebar-footer">
+      <button type="button" id="notify-toggle" hidden title="Notify this device when something needs you">Notifications: off</button>
       <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle agents</button>
       <button type="button" id="clear-topics" title="Forget every topic and start a new one">Clear all topics</button>
     </div>

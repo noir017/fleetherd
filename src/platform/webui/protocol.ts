@@ -81,6 +81,11 @@ export const DeleteTopicRequestSchema = z.object({ topic: TopicId }).strict();
  */
 export const StarTopicRequestSchema = z.object({ topic: TopicId, starred: z.boolean() }).strict();
 /**
+ * The operator is looking at a topic. Carries no time: the server stamps its own (WebRoom.markSeen),
+ * because what it is compared with — when a turn ended — is the server's time too.
+ */
+export const SeenRequestSchema = z.object({ topic: TopicId }).strict();
+/**
  * End one topic's terminal session.
  *
  * Same shape as deleting a topic and deliberately a schema of its own rather than a shared
@@ -116,6 +121,7 @@ export type ClickRequest = z.infer<typeof ClickRequestSchema>;
 export type CreateTopicRequest = z.infer<typeof CreateTopicRequestSchema>;
 export type DeleteTopicRequest = z.infer<typeof DeleteTopicRequestSchema>;
 export type StarTopicRequest = z.infer<typeof StarTopicRequestSchema>;
+export type SeenRequest = z.infer<typeof SeenRequestSchema>;
 export type EndTerminalRequest = z.infer<typeof EndTerminalRequestSchema>;
 export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;
