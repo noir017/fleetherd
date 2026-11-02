@@ -16,6 +16,7 @@ import { createWebServer, type WebServer } from './server.js';
 import { WebSso, type SsoOptions } from './sso.js';
 import { TerminalSessions } from './terminal-sessions.js';
 import { TopicStore } from './topics.js';
+import { WebPush } from './webpush.js';
 
 /**
  * These run a real server on a real (ephemeral, loopback) port.
@@ -64,7 +65,8 @@ async function boot(
     enabled: false,
     socket: '/nonexistent.sock',
   },
-  sso?: WebSso
+  sso?: WebSso,
+  push?: WebPush
 ): Promise<Booted> {
   const port = await freePort();
   const instance: WebuiInstance = {
@@ -84,7 +86,8 @@ async function boot(
     new WebAuth({ token: instance.token }),
     instance,
     { enabled: terminal.enabled, socket: terminal.socket, sessions },
-    sso
+    sso,
+    push
   );
   await server.start();
   running.push(server);
@@ -1342,5 +1345,79 @@ describe('webui server: terminal', () => {
       body: JSON.stringify({ topic }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('webui server: notifications and what the operator has seen', () => {
+  const P256 = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
+  const post = (base: string, cookie: string, route: string, body: unknown) =>
+    fetch(`${base}${route}`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
+
+  it('serves the service worker to anyone, uncached, with a CSP of its own; and lets the page register it', async () => {
+    const { base } = await boot();
+    const sw = await fetch(`${base}/sw.js`);
+    expect(sw.status).toBe(200);
+    expect(sw.headers.get('content-type')).toMatch(/javascript/);
+    expect(sw.headers.get('cache-control')).toBe('no-cache');
+    expect(sw.headers.get('content-security-policy')).toBe("default-src 'none'; img-src 'self'");
+    const body = await sw.text();
+    expect(body).toContain("addEventListener('push'");
+    // No fetch handler: a worker that cached the app would serve last week's page after an upgrade.
+    expect(body).not.toContain("'fetch'");
+    const page = await fetch(`${base}/`);
+    expect(page.headers.get('content-security-policy')).toContain("worker-src 'self'");
+    expect(page.headers.get('content-security-policy')).toContain("script-src 'unsafe-inline';");
+  });
+
+  it('hands out the push key only behind the session, and keeps a subscription to a real push service', async () => {
+    const push = new WebPush(path.join(dir, 'push'));
+    const { base } = await boot({}, undefined, undefined, push);
+    expect((await fetch(`${base}/api/push`)).status).toBe(401);
+    const cookie = await signIn(base);
+    const key = await fetch(`${base}/api/push`, { headers: { cookie } }).then((r) => r.json());
+    expect(key).toEqual({ enabled: true, key: push.publicKey });
+
+    const ok = await post(base, cookie, '/api/push/subscribe', {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      expirationTime: null,
+      keys: { p256dh: P256, auth: 'BTBZMqHH6r4Tts7J_aSIgg' },
+    });
+    expect(ok.status).toBe(200);
+    expect(push.has('https://fcm.googleapis.com/fcm/send/abc')).toBe(true);
+
+    await post(base, cookie, '/api/push/unsubscribe', { endpoint: 'https://fcm.googleapis.com/fcm/send/abc' });
+    expect(push.count).toBe(0);
+  });
+
+  it('refuses a subscription whose endpoint is not a push service — the server would POST to it', async () => {
+    const push = new WebPush(path.join(dir, 'push'));
+    const { base } = await boot({}, undefined, undefined, push);
+    const cookie = await signIn(base);
+    const res = await post(base, cookie, '/api/push/subscribe', {
+      endpoint: 'https://169.254.169.254/latest/meta-data',
+      keys: { p256dh: P256, auth: 'BTBZMqHH6r4Tts7J_aSIgg' },
+    });
+    expect(res.status).toBe(400);
+    expect(push.count).toBe(0);
+  });
+
+  it('says there are no notifications when the server has none', async () => {
+    const { base } = await boot();
+    const cookie = await signIn(base);
+    expect(await fetch(`${base}/api/push`, { headers: { cookie } }).then((r) => r.json())).toEqual({ enabled: false });
+  });
+
+  it('records what the operator has seen, and refuses to delete the dispatcher topic', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    room.setActivity(topic, { outcome: { kind: 'done', at: Date.now() - 5 } });
+    expect(room.topicList().find((t) => t.id === topic)?.stage).toBe('review');
+    expect((await post(base, cookie, '/api/seen', { topic })).status).toBe(200);
+    expect(room.topicList().find((t) => t.id === topic)?.stage).toBe('idle');
+
+    room.dispatchLane(true);
+    const del = await post(base, cookie, '/api/topics/delete', { topic: 'd15a7c40' });
+    expect(del.status).toBe(409);
+    expect((await del.json()).error).toMatch(/dispatcher topic/);
   });
 });

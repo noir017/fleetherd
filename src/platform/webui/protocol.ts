@@ -86,6 +86,19 @@ export const StarTopicRequestSchema = z.object({ topic: TopicId, starred: z.bool
  */
 export const SeenRequestSchema = z.object({ topic: TopicId }).strict();
 /**
+ * A device asking to be notified: `PushSubscription.toJSON()` as the browser makes it. Shape only
+ * here; whether the endpoint is a push service this server will POST to is webpush.ts's call
+ * (allowedEndpoint), because that is the check that matters and it must not live in two places.
+ */
+export const PushSubscribeSchema = z
+  .object({
+    endpoint: z.string().min(1).max(2_048),
+    expirationTime: z.number().nullable().optional(),
+    keys: z.object({ p256dh: z.string().min(1).max(256), auth: z.string().min(1).max(64) }).strict(),
+  })
+  .strict();
+export const PushUnsubscribeSchema = z.object({ endpoint: z.string().min(1).max(2_048) }).strict();
+/**
  * End one topic's terminal session.
  *
  * Same shape as deleting a topic and deliberately a schema of its own rather than a shared
@@ -122,6 +135,7 @@ export type CreateTopicRequest = z.infer<typeof CreateTopicRequestSchema>;
 export type DeleteTopicRequest = z.infer<typeof DeleteTopicRequestSchema>;
 export type StarTopicRequest = z.infer<typeof StarTopicRequestSchema>;
 export type SeenRequest = z.infer<typeof SeenRequestSchema>;
+export type PushSubscribeRequest = z.infer<typeof PushSubscribeSchema>;
 export type EndTerminalRequest = z.infer<typeof EndTerminalRequestSchema>;
 export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;

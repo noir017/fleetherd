@@ -57,6 +57,8 @@ import {
   LoginRequestSchema,
   MAX_BODY_BYTES,
   SendRequestSchema,
+  PushSubscribeSchema,
+  PushUnsubscribeSchema,
   SeenRequestSchema,
   StarTopicRequestSchema,
   parseBody,
@@ -67,6 +69,8 @@ import { inlineImageType, type WebRoom, type WebuiInstance } from './room.js';
 import type { SsoRefusal, WebSso } from './sso.js';
 import { proxyRequest, proxyUpgrade, type UpstreamSet } from './terminal-proxy.js';
 import type { TerminalSessions } from './terminal-sessions.js';
+import { SERVICE_WORKER } from './sw.js';
+import type { WebPush } from './webpush.js';
 
 export interface WebServer {
   start(): Promise<void>;
@@ -114,12 +118,13 @@ export function createWebServer(
   auth: WebAuth,
   instance: WebuiInstance,
   terminal: TerminalSettings,
-  sso?: WebSso
+  sso?: WebSso,
+  push?: WebPush
 ): WebServer {
   const sockets = new Set<Socket>();
   const streams = new Set<Stream>();
   const upstreams: UpstreamSet = new Set<Socket>();
-  const ctx: Ctx = { room, auth, instance, streams, terminal, upstreams, sso, warned: new Map() };
+  const ctx: Ctx = { room, auth, instance, streams, terminal, upstreams, sso, push, warned: new Map() };
 
   const server = createServer((req, res) => {
     void route(req, res, ctx).catch((e: unknown) => {
@@ -263,6 +268,8 @@ interface Ctx {
   sso?: WebSso;
   /** Last time each (reason, source) refusal was logged; see `noteRefusal`. */
   warned: Map<string, number>;
+  /** Push notifications (webpush.ts); absent in a test that does not care, which then offers none. */
+  push?: WebPush;
 }
 
 /** One request, already parsed as far as routing needs it. */
@@ -292,6 +299,9 @@ const OPEN: Route[] = [
   { method: 'GET', path: '/manifest.webmanifest', run: ({ req, res }, ctx) => sendManifest(req, res, ctx.instance) },
   { method: 'GET', path: '/icon.svg', run: ({ req, res }) => sendIcon(req, res, 'svg') },
   { method: 'GET', path: '/icon.png', run: ({ req, res }) => sendIcon(req, res, 'png') },
+  // Open for the reason the manifest is: the browser fetches it again on its own schedule to look
+  // for an update, with or without a live session, and it holds nothing but the script in sw.ts.
+  { method: 'GET', path: '/sw.js', run: ({ req, res }) => sendServiceWorker(req, res) },
 ];
 
 /** Everything else. */
@@ -304,6 +314,9 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/topics/delete', run: deleteTopic },
   { method: 'POST', path: '/api/topics/star', run: starTopic },
   { method: 'POST', path: '/api/seen', run: seen },
+  { method: 'GET', path: '/api/push', run: pushKey },
+  { method: 'POST', path: '/api/push/subscribe', run: pushSubscribe },
+  { method: 'POST', path: '/api/push/unsubscribe', run: pushUnsubscribe },
   { method: 'POST', path: '/api/topics/close-idle', run: closeIdle },
   { method: 'DELETE', path: '/api/topics', run: deleteTopic },
   { method: 'POST', path: '/api/logout', run: logout },
@@ -434,8 +447,12 @@ function sendPage(
     // the alternative buys nothing, because a cross-origin iframe would need
     // `allow-same-origin` to hold a session at all and that undoes the sandbox. The trade is
     // ttyd's terminal, with its IME and file transfer, against re-implementing all of it here.
+    //
+    // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
+    // It names where a WORKER may be loaded from and nothing else: the page's own scripts are still
+    // inline only, so no same-origin file — an agent's upload included — can run as one.
     'Content-Security-Policy':
-      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; form-action 'none'; base-uri 'none'",
+      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
   });
@@ -601,6 +618,49 @@ async function deleteTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
   if (!ctx.room.deleteTopic(parsed.topic)) {
     return send(req, res, 404, { error: 'no such topic' });
   }
+  send(req, res, 200, { ok: true });
+}
+
+/**
+ * The service worker. `no-cache`, so the browser asks again on every check — an old worker keeping
+ * an old notification handler alive across an upgrade is the kind of stale copy this page avoids —
+ * and a CSP of its own, which is the one a worker runs under: no network at all except this origin's
+ * icon.
+ */
+function sendServiceWorker(req: IncomingMessage, res: ServerResponse): void {
+  body(req, res, 200, Buffer.from(SERVICE_WORKER, 'utf8'), {
+    'Content-Type': 'text/javascript; charset=utf-8',
+    'Cache-Control': 'no-cache',
+    'Content-Security-Policy': "default-src 'none'; img-src 'self'",
+    'X-Content-Type-Options': 'nosniff',
+  });
+}
+
+/** Whether this server sends push notifications, and the key a browser subscribes with. */
+function pushKey({ req, res }: Req, ctx: Ctx): void {
+  if (!ctx.push) return send(req, res, 200, { enabled: false });
+  send(req, res, 200, { enabled: true, key: ctx.push.publicKey });
+}
+
+async function pushSubscribe({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, PushSubscribeSchema);
+  if (!parsed) return;
+  if (!ctx.push) return send(req, res, 404, { error: 'this server sends no notifications' });
+  try {
+    ctx.push.subscribe({ endpoint: parsed.endpoint, keys: parsed.keys });
+  } catch (e) {
+    const error = e instanceof Error ? e.message : 'refused';
+    console.warn(`[webui] refused a push subscription: ${error}`);
+    return send(req, res, 400, { error });
+  }
+  console.log(`[webui] "${ctx.instance.id}": a device subscribed to notifications (${ctx.push.count} now)`);
+  send(req, res, 200, { ok: true });
+}
+
+async function pushUnsubscribe({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, PushUnsubscribeSchema);
+  if (!parsed) return;
+  ctx.push?.unsubscribe(parsed.endpoint);
   send(req, res, 200, { ok: true });
 }
 

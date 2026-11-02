@@ -1680,6 +1680,83 @@ const SCRIPT = `
   }
   document.addEventListener('visibilitychange', reportSeen);
 
+  // ── Notifications ─────────────────────────────────────────────────────────
+  // Web Push (webpush.ts on the server, sw.ts the worker): what reaches this device when the page is
+  // closed or the phone is in a pocket. Off until the operator turns it on here, per device — the
+  // browser asks for permission, and a permission prompt nobody asked for is the fastest way to a
+  // "block". Only offered where the browser can do it at all: Chrome, Firefox, Edge, and Safari on
+  // iOS only once the page is installed as an app.
+  var PUSH_OK = Boolean(window.isSecureContext && navigator.serviceWorker && window.PushManager && window.Notification);
+  var pushKey = null, pushSub = null, notifyInit = false;
+  function keyBytes(s){
+    var b = atob((s + '==='.slice((s.length + 3) % 4)).replace(/-/g,'+').replace(/_/g,'/'));
+    var out = new Uint8Array(b.length);
+    for(var i=0;i<b.length;i++) out[i]=b.charCodeAt(i);
+    return out;
+  }
+  function paintNotify(){
+    if(!PUSH_OK || !pushKey){ notifyBtn.hidden=true; return; }
+    notifyBtn.hidden=false;
+    if(window.Notification.permission==='denied'){
+      notifyBtn.disabled=true;
+      notifyBtn.textContent='Notifications: blocked in this browser';
+      notifyBtn.title='Allow notifications for this site in the browser settings, then reload';
+      return;
+    }
+    notifyBtn.disabled=false;
+    notifyBtn.textContent = pushSub ? 'Notifications: on' : 'Notifications: off';
+    notifyBtn.title = pushSub
+      ? 'This device is notified when something needs you, even with the page closed. Click to stop.'
+      : 'Notify this device when something needs you, even with the page closed';
+  }
+  // Once the stream is open, i.e. once signed in: api/push is behind the session like every route.
+  function initNotify(){
+    if(!PUSH_OK || notifyInit) return;
+    notifyInit = true;
+    fetch('api/push', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.enabled || !d.key) return;
+      pushKey = d.key;
+      return navigator.serviceWorker.getRegistration('sw.js').then(function(reg){
+        return reg ? reg.pushManager.getSubscription() : null;
+      }).then(function(sub){ pushSub = sub; paintNotify(); });
+    }).catch(function(){});
+  }
+  notifyBtn.addEventListener('click', function(){
+    if(!pushKey) return;
+    notifyBtn.disabled = true;
+    if(pushSub){
+      var endpoint = pushSub.endpoint;
+      pushSub.unsubscribe().catch(function(){}).then(function(){
+        pushSub = null;
+        return post('api/push/unsubscribe', {endpoint:endpoint}, 1);
+      }).catch(function(){}).then(paintNotify);
+      return;
+    }
+    window.Notification.requestPermission().then(function(permission){
+      if(permission !== 'granted') return;
+      return navigator.serviceWorker.register('sw.js').then(function(){ return navigator.serviceWorker.ready; }).then(function(reg){
+        return reg.pushManager.getSubscription().then(function(old){
+          return old || reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:keyBytes(pushKey)});
+        });
+      }).then(function(sub){
+        return post('api/push/subscribe', sub.toJSON(), 1).then(function(r){
+          if(r.ok){ pushSub = sub; return; }
+          return r.json().then(function(d){ throw new Error((d && d.error) || ('HTTP '+r.status)); });
+        });
+      });
+    }).catch(function(e){
+      alert('Could not turn notifications on: ' + ((e && e.message) || e));
+    }).then(paintNotify);
+  });
+  // A notification tapped while this page is open: the worker asks it to show the topic.
+  if(PUSH_OK) navigator.serviceWorker.addEventListener('message', function(e){
+    var goId = e.data && e.data.goto;
+    if(goId && goId!==topic && topics.some(function(t){ return t.id===goId; })){
+      switchTopic(goId);
+      if(narrow()) setSidebar(false);
+    }
+  });
+
   needsEl.addEventListener('click', function(e){
     var b = e.target.closest ? e.target.closest('[data-topic]') : null;
     if(!b) return;
@@ -2141,7 +2218,7 @@ const SCRIPT = `
     stream.onmessage = function(e){ try{ handle(JSON.parse(e.data)); }catch(x){} };
     // Not focused on a phone: the keyboard would come up before a word has been read, and on
     // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
-    stream.onopen = function(){ gate.hidden=true; app.hidden=false; note.textContent=''; if(!narrow()) input.focus(); };
+    stream.onopen = function(){ gate.hidden=true; app.hidden=false; note.textContent=''; if(!narrow()) input.focus(); initNotify(); };
     stream.onerror = function(){
       if(done) return;
       if(stream.readyState === 2){
