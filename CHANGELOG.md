@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.19.3] - 2026-11-02
+
 ### Fixed
 
 - **A tool row says what the tool actually did, on CodeBuddy Code too.** Every cbc tool drew as
