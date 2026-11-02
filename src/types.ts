@@ -406,3 +406,36 @@ export interface AgentStatus {
   /** Usage-quota pools, in the order the harness listed them. */
   quota?: QuotaPool[];
 }
+
+/**
+ * The agents a conversation that has not started yet could be handed to, grouped by machine — what
+ * a page with room for it lays out instead of an empty transcript (the web UI's new topic).
+ *
+ * Built by `core/agent-menu.ts` agentCatalog from the same grouping the `/agent` menu uses, so the
+ * two cannot call one machine different things.
+ */
+export interface AgentCatalog {
+  /**
+   * The agent that answers if nobody chooses: the conversation's binding, else where it routes by
+   * default. The page marks it, because "just type" is an answer too and this is who it reaches.
+   */
+  current: string;
+  groups: AgentCatalogGroup[];
+}
+
+export interface AgentCatalogGroup {
+  /** The machine: `agents[].group`, else its host, else `LOCAL_GROUP`. */
+  name: string;
+  agents: AgentCatalogEntry[];
+}
+
+export interface AgentCatalogEntry {
+  /** The id `/agent <id>` takes. */
+  id: string;
+  /** `agents[].harness` as configured: a stable key to draw by, where `kind` is words to read. */
+  harness: string;
+  /** What it is, as its project names it (`Claude Code`), or the command for a custom harness. */
+  kind: string;
+  /** The model configured for it, when there is one — short, as the footer says it (no vendor prefix). */
+  model?: string;
+}

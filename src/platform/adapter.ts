@@ -1,5 +1,6 @@
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
 import type {
+  AgentCatalog,
   AgentStatus,
   ButtonInteraction,
   CommandInteraction,
@@ -195,6 +196,19 @@ export interface PlatformAdapter {
    * lists its conversations, which no chat app does.
    */
   useIdleReclaim?(reclaim: (ref: ConversationRef) => boolean): void;
+
+  /**
+   * Hand the platform a way to ask which agents the conversation at one of its addresses could still
+   * be given to — every configured agent, grouped by machine, and which of them answers if nobody
+   * picks. `undefined` when the question is closed: the conversation has started with its agent (a
+   * session is a binding `/agent` refuses to move), or there is only one agent to choose.
+   *
+   * Optional and web-UI-only for the reason the lookups above are: a new web UI topic is a blank page
+   * with room to lay the choice out, where a chat app has a message box and the `/agent` menu. A
+   * lookup rather than a pushed list because `/reload` changes the agents and a session closes the
+   * question, and the only moment the answer matters is when an empty topic is drawn.
+   */
+  useAgentCatalog?(lookup: (ref: ConversationRef) => AgentCatalog | undefined): void;
 
   /**
    * Show the agent's live status for the conversation at an address — model, context, cost, cache

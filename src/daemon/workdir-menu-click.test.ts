@@ -68,6 +68,8 @@ function rig(
   } = {}
 ) {
   const sent: string[] = [];
+  /** Both kinds of post, in the order they were made — which of an ack and a menu came first. */
+  const order: string[] = [];
   const buttonSends: Array<{ text: string; buttons: Array<{ id: string; label: string }> }> = [];
   const buttonEdits: Array<{ messageId: string; text: string; buttons: Array<{ id: string; label: string }> }> = [];
   const disposed: string[] = [];
@@ -121,6 +123,7 @@ function rig(
     },
     sendMessage: async (address: { channel: string }, text: string) => {
       sent.push(text);
+      order.push(`msg:${text}`);
       return { address, messageId: `m${sent.length}` };
     },
     sendButtons: async (
@@ -129,6 +132,7 @@ function rig(
       buttons: Array<{ id: string; label: string }>
     ) => {
       buttonSends.push({ text, buttons });
+      order.push(`btn:${text}`);
       return { address, messageId: MENU_MSG };
     },
     editButtons: async (
@@ -183,7 +187,7 @@ function rig(
 
   return {
     send, click, replies, menu, pickIds, navIds, modelIds,
-    buttonSends, buttonEdits, disposed, starts, store, key,
+    buttonSends, buttonEdits, disposed, starts, store, key, order,
     /** The live capabilities object, so a test can change what the platform claims mid-flight. */
     capabilities: platform.capabilities as { menuPageSize?: number },
   };
@@ -366,5 +370,55 @@ describe('choosing a model straight after choosing a directory', () => {
 
     await r.send('/model');
     expect(r.modelIds()).toHaveLength(2);
+  });
+});
+
+/**
+ * `/agent <id>` — typed, picked from the `/agent` menu, or tapped on the web UI's new topic, which
+ * types it — asks where the agent should work, as a bare `/cc` does. Before, choosing by id was the
+ * one way into a fresh conversation that skipped the question, so every agent chosen that way
+ * started in its root.
+ */
+describe('choosing an agent by id asks where it should work', () => {
+  it('posts the directory menu under the ack, in a conversation that has never run', async () => {
+    const r = rig();
+    await r.send('/agent oc');
+    expect(r.replies()).toContain('▸ opencode is answering this conversation now');
+    expect(r.menu().text).toContain('Working dir:');
+    // Under the line saying who it is for, not above it.
+    expect(r.order.map((o) => o.slice(0, 4))).toEqual(['msg:', 'btn:']);
+
+    await r.click(r.pickIds()[1]!);
+    expect(r.store.boundAgent(r.key)).toBe('oc');
+    expect(r.store.conversationCwd(r.key)).toBe(join(root, PROJECTS[0]!));
+  });
+
+  it('does the same for a pick from the /agent menu', async () => {
+    const r = rig();
+    await r.send('/agent');
+    const pick = r.menu().buttons.find((b) => b.label.includes('oc'))!;
+    await r.click(pick.id);
+    expect(r.buttonEdits.at(-1)?.text).toBe('▸ opencode is answering this conversation now');
+    expect(r.buttonSends).toHaveLength(2);
+    expect(r.menu().text).toContain('Working dir:');
+  });
+
+  it('does not ask once that agent has a session here: its directory is fixed', async () => {
+    const r = rig();
+    await r.send('/oc do some work');
+    r.store.setAgentSession(r.key, 'oc', 'acp-oc-1');
+    const menus = r.buttonSends.length;
+    await r.send('/agent oc');
+    expect(r.replies().at(-1)).toContain('already answering');
+    expect(r.buttonSends).toHaveLength(menus);
+  });
+
+  it('does not ask when the switch was refused', async () => {
+    const r = rig();
+    await r.send('hello'); // cc, by default
+    r.store.setAgentSession(r.key, 'cc', 'acp-cc-1');
+    await r.send('/agent oc');
+    expect(r.store.boundAgent(r.key)).toBe('cc');
+    expect(r.buttonSends).toHaveLength(0);
   });
 });

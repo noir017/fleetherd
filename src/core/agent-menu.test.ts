@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import {
+  agentCatalog,
   agentGroups,
+  agentKindOf,
   agentListText,
   buildAgentMenu,
   flatAgents,
@@ -79,5 +81,40 @@ describe('matchAgent and agentListText', () => {
   it('lists every agent under its group', () => {
     const text = agentListText(agentGroups(agents), 'cc-ua');
     expect(text).toContain('uniagent:\n  ● cc-ua — claude\n    oc-ua — opencode');
+  });
+});
+
+describe('agentCatalog (the web UI new topic lays this out)', () => {
+  it('keeps the menu grouping and order, says what each agent is, and names a model as the footer does', () => {
+    const catalog = agentCatalog(
+      agentGroups([...agents, agent('ag-box', { host: 'box', group: 'build', harness: 'agy', model: 'google/gemini-3-pro' })]),
+      'cc'
+    );
+    expect(catalog).toEqual({
+      current: 'cc',
+      groups: [
+        { name: LOCAL_GROUP, agents: [{ id: 'cc', harness: 'claude', kind: 'Claude Code' }] },
+        {
+          name: 'uniagent',
+          agents: [
+            { id: 'cc-ua', harness: 'claude', kind: 'Claude Code' },
+            { id: 'oc-ua', harness: 'opencode', kind: 'OpenCode' },
+          ],
+        },
+        {
+          name: 'build',
+          agents: [
+            { id: 'cx-box', harness: 'claude', kind: 'Claude Code' },
+            { id: 'ag-box', harness: 'agy', kind: 'Antigravity', model: 'gemini-3-pro' },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('names a custom harness by its command, not as "custom"', () => {
+    expect(agentKindOf(agent('cb', { harness: 'custom', command: '/usr/local/bin/codebuddy' }))).toBe('codebuddy');
+    expect(agentKindOf(agent('w', { harness: 'custom', command: 'C:\\tools\\agent.exe' }))).toBe('agent.exe');
+    expect(agentKindOf(agent('x', { harness: 'codex' }))).toBe('Codex');
   });
 });

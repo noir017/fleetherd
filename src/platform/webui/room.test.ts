@@ -982,6 +982,71 @@ describe('WebRoom: which files may be shown instead of downloaded', () => {
   });
 });
 
+describe('WebRoom: which agents an empty topic could be given to', () => {
+  const catalog = {
+    current: 'cc',
+    groups: [
+      {
+        name: 'devbox',
+        agents: [
+          { id: 'cc', harness: 'claude', kind: 'Claude Code' },
+          { id: 'cx', harness: 'codex', kind: 'Codex' },
+        ],
+      },
+    ],
+  };
+
+  it('rides on the sync of an empty room, asked at the address of that topic', () => {
+    const { room, topic } = attached();
+    const asked: Array<string | undefined> = [];
+    room.useAgentCatalog((ref) => {
+      asked.push(ref.thread);
+      return catalog;
+    });
+    const seen: Seen[] = [];
+    room.subscribe(topic, (id, ev) => seen.push({ id, ev }));
+    expect(seen[0]?.ev).toMatchObject({ t: 'sync', messages: [], agents: catalog });
+    expect(asked).toEqual([topic]);
+  });
+
+  it('is not asked for once anything is in the room: the transcript is the page from then on', () => {
+    const { room, topic } = attached();
+    let asked = 0;
+    room.useAgentCatalog(() => {
+      asked += 1;
+      return catalog;
+    });
+    room.post(topic, { own: false, html: '<p>said</p>' }, 'said');
+    const seen: Seen[] = [];
+    room.subscribe(topic, (id, ev) => seen.push({ id, ev }));
+    expect(seen[0]?.ev).not.toHaveProperty('agents');
+    expect(asked).toBe(0);
+  });
+
+  it('leaves the field off when the daemon closes the question, or never offered a lookup', () => {
+    const { room, topic } = attached();
+    const before: Seen[] = [];
+    room.subscribe(topic, (id, ev) => before.push({ id, ev }));
+    expect(before[0]?.ev).not.toHaveProperty('agents');
+
+    room.useAgentCatalog(() => undefined);
+    const after: Seen[] = [];
+    room.subscribe(topic, (id, ev) => after.push({ id, ev }));
+    expect(after[0]?.ev).not.toHaveProperty('agents');
+  });
+
+  it('still syncs when the lookup throws: the choice is decoration, the sync is not', () => {
+    const { room, topic } = attached();
+    room.useAgentCatalog(() => {
+      throw new Error('the config is gone');
+    });
+    const seen: Seen[] = [];
+    room.subscribe(topic, (id, ev) => seen.push({ id, ev }));
+    expect(seen[0]?.ev).toMatchObject({ t: 'sync', topic });
+    expect(seen[0]?.ev).not.toHaveProperty('agents');
+  });
+});
+
 describe('WebRoom: which directory a topic is working in', () => {
   it('lists nothing at all when the daemon never offered a lookup', () => {
     // Every deployment that is not the daemon — the tests above, a future embedder — must keep
@@ -1065,6 +1130,54 @@ describe('WebRoom: which directory a topic is working in', () => {
     expect(() => room.post(topic, { own: false, html: '<p>hi</p>' }, 'hi')).not.toThrow();
     expect(kinds(seen)).toContain('msg');
     expect(room.topicList().find((t) => t.id === topic)?.dir).toBeUndefined();
+  });
+
+  /** The row's label as the last topic list sent said it. */
+  const sentDir = (seen: Seen[], topic: string): string | undefined => {
+    const ev = lastOf(seen, 'topics') as { topics: Array<{ id: string; dir?: { name: string; host?: string } }> } | undefined;
+    const dir = ev?.topics.find((t) => t.id === topic)?.dir;
+    return dir ? `${dir.host ?? ''}·${dir.name}` : undefined;
+  };
+
+  it('reads the label again after the operator writes, so the answer to a /agent or /cd carries the move', () => {
+    // A new topic picked an agent on another machine (2026-11-02, the launcher): the ack and the
+    // directory menu both announced the list inside the TTL, and the row went on naming the default
+    // agent's machine until something happened to announce it again.
+    vi.useFakeTimers();
+    const { room, topic, seen } = attached();
+    let where = { path: '/home/u/workspace', host: 'uniagent' };
+    room.useWorkdirLookup(() => where);
+    room.topicList();
+
+    room.submit({ topic, text: '/agent oc2' });
+    where = { path: '/home/u/workspace', host: 'awsfree2' }; // what the daemon did with it
+    room.post(topic, { own: false, html: '<p>ack</p>' }, '▸ opencode is answering');
+    expect(sentDir(seen, topic)).toBe('awsfree2·workspace');
+
+    // And a tap, the other way the operator moves a topic: a `/cd` menu pick.
+    const menu = room.post(topic, { own: false, html: '', buttons: [{ id: 'wdr:r:1', label: 'quantlab' }] }, 'Working dir:');
+    room.click({ topic, messageId: menu.id, buttonId: 'wdr:r:1' });
+    where = { path: '/home/u/workspace/quantlab', host: 'awsfree2' };
+    room.revise(topic, menu.id, 'Now working in quantlab', []);
+    expect(sentDir(seen, topic)).toBe('awsfree2·quantlab');
+  });
+
+  it('is corrected by the liveness poll when a move lands after its own announcement', () => {
+    // A `/cd` on a host lists the directory over the link before it applies, so the list sent with
+    // the echo is already out of date and nothing else is coming. The poll reads the label fresh.
+    vi.useFakeTimers();
+    const { room, topic, seen } = attached();
+    let path = '/srv/a';
+    room.useWorkdirLookup(() => ({ path }));
+    room.useLivenessLookup(() => false);
+    seen.length = 0;
+
+    vi.advanceTimersByTime(60_000);
+    expect(kinds(seen)).not.toContain('topics'); // nothing moved, nothing sent
+
+    path = '/srv/b';
+    vi.advanceTimersByTime(60_000);
+    expect(sentDir(seen, topic)).toBe('·b');
   });
 });
 

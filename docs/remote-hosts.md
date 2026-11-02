@@ -100,7 +100,9 @@ and downloads nothing.
 `/cc`, `/oc` and the other agent commands name a harness, so with two Claude Code agents on two
 machines they reach only the first. `/agent` reaches any agent by id: it shows the machines, then the
 agents on the one you pick. `/agent cc-dev` chooses one directly. As with `/cc`, a topic that already
-has a session stays with its agent.
+has a session stays with its agent; in one that has not started yet, choosing an agent is followed by
+the directory menu, as a bare `/cc` is. In the web UI a new topic lays every agent out by machine,
+one tap each — see [Web UI](web-ui.md).
 
 Agents are grouped by `group:` if they have one, else by their host, else under "this machine":
 

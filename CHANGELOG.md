@@ -5,6 +5,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A new web UI topic lets you pick its agent.** It used to open on a blank page, and choosing
+  anything but the default agent meant knowing `/agent` and tapping through machines, then agents.
+  Now, with more than one agent configured, a new topic lays them all out, grouped by machine: each
+  card says what the agent is (Claude Code, Codex, OpenCode, Antigravity, or a custom agent's
+  command) and its model, if one is set. One tap and that agent answers the topic. Typing straight
+  away still works, and the card marked **default** is the agent it reaches. The cards go as soon as
+  anything is said.
+
+### Changed
+
+- **Choosing an agent with `/agent` asks where it should work**, on every platform, as `/cc` already
+  did. In a topic that has not started yet, `/agent oc2` — typed, picked from the `/agent` menu, or
+  tapped on the web UI's new topic — is now followed by the directory menu, where before the agent
+  simply started in its root folder.
+
+### Fixed
+
+- **The web UI's topic list shows a topic's new machine and directory straight away.** Under each
+  topic's title is where it works, and after `/agent` or `/cd` that line could keep naming the old
+  machine and folder until the next message, because the page was only told about the list while
+  the old answer was still remembered. It now follows within moments, and a change that lands
+  late — a `/cd` on a remote host lists the folder first — shows within 20 seconds.
+- **A web UI topic is no longer named after a command.** An unnamed topic takes its name from the
+  first thing said in it, which for a topic set up with `/agent oc2` or `/cd quantlab` was that
+  command. It is now named from the first message that is not a command.
+
 ## [2.16.0] - 2026-10-31
 
 ### Added

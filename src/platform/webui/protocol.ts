@@ -17,7 +17,7 @@
 import { z } from 'zod';
 
 import type { ButtonSpec } from '../adapter.js';
-import type { AgentStatus, SlashCommandSpec } from '../../types.js';
+import type { AgentCatalog, AgentStatus, SlashCommandSpec } from '../../types.js';
 import { MAX_TOPICS, type Topic } from './topics.js';
 
 /**
@@ -187,6 +187,13 @@ export type WebEvent =
       stale?: boolean;
       /** The topic's agent status as of this sync; absent when there is none to show. */
       status?: AgentStatus;
+      /**
+       * The agents this topic could be given to, for a room with nothing in it yet: the page lays
+       * them out in place of the empty transcript, and a tap sends `/agent <id>`. Only on a sync,
+       * and only for an empty room — once anything has been said the transcript is the page, and a
+       * topic that has started with its agent cannot move (see `PlatformAdapter.useAgentCatalog`).
+       */
+      agents?: AgentCatalog;
     }
   | { t: 'msg'; msg: WebMessage }
   | { t: 'del'; id: string }

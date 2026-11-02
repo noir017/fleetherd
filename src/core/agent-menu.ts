@@ -1,5 +1,7 @@
 import type { AgentDef } from '../config/schema.js';
+import type { AgentCatalog } from '../types.js';
 import { parseButtonId, formatButtonId } from './button-id.js';
+import { shortModelName } from './runtime-footer.js';
 import { pageCount, pageSlice, truncateLabel, wrapPage } from './paging.js';
 
 /**
@@ -141,6 +143,57 @@ export function buildAgentMenu(opts: {
   const where = groups.length > 1 ? ` on ${group.name}` : '';
   const pageNote = pages > 1 ? ` (${page + 1}/${pages})` : '';
   return { text: `Which agent${where} should answer this topic?${pageNote}`, buttons };
+}
+
+/**
+ * What an agent is, said the way a person choosing between them would say it: the harness as its own
+ * project spells it, since `opencode` and `agy` are config keys rather than names. A custom harness
+ * is whatever its command is — `codebuddy`, not `custom`, which says nothing about what will answer.
+ * The command's last path segment only: `/usr/local/bin/` is where it lives, not what it is.
+ */
+export function agentKindOf(def: AgentDef): string {
+  switch (def.harness) {
+    case 'claude':
+      return 'Claude Code';
+    case 'codex':
+      return 'Codex';
+    case 'opencode':
+      return 'OpenCode';
+    case 'agy':
+      return 'Antigravity';
+    case 'gemini':
+      return 'Gemini CLI';
+    case 'dsh':
+      return 'DeepSeek Harness';
+    case 'custom':
+      return def.command?.split(/[\\/]/).pop() || def.id;
+    default: {
+      const _exhaustive: never = def.harness;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Every agent, grouped as the `/agent` menu groups them, in the shape a page lays out as a choice
+ * (`AgentCatalog`). `current` is who answers if nobody picks.
+ *
+ * Not the menu's two levels: a page has room to show every machine at once, and a choice that
+ * takes one tap where the menu takes two is the reason for laying it out at all.
+ */
+export function agentCatalog(groups: readonly AgentGroup[], current: string): AgentCatalog {
+  return {
+    current,
+    groups: groups.map((g) => ({
+      name: g.name,
+      agents: g.agents.map((def) => {
+        // Short, as the footer and the status strip say it: on a card 150px wide the vendor prefix
+        // (`opencode/`) was all that fit, and it is the one part the kind line already says.
+        const model = def.model ? shortModelName(def.model) : undefined;
+        return { id: def.id, harness: def.harness, kind: agentKindOf(def), ...(model ? { model } : {}) };
+      }),
+    })),
+  };
 }
 
 /** Every agent in menu order — what a pick's index points into (see buildAgentMenu). */

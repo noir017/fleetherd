@@ -525,6 +525,70 @@ describe('workdirForRef (what a platform is told to display)', () => {
 });
 
 /**
+ * `agentCatalogForRef` — the lookup the web UI's empty topic lays out as a choice of agent
+ * (`PlatformAdapter.useAgentCatalog`). What it pins is when the question is still open: until the
+ * agent a first message would reach has a session here, since chooseAgent refuses to move one.
+ */
+describe('agentCatalogForRef (what a new topic offers)', () => {
+  const ref = { platform: 'discord', channel: 'c1', kind: 'direct' as const, user: 'u1' };
+
+  it('offers every agent, grouped, with the route default as the one that answers', () => {
+    const { reg } = rig();
+    expect(reg.agentCatalogForRef(ref)).toEqual({
+      current: 'cc',
+      groups: [
+        {
+          name: 'this machine',
+          agents: [
+            { id: 'cc', harness: 'claude', kind: 'Claude Code' },
+            { id: 'oc', harness: 'opencode', kind: 'OpenCode' },
+            { id: 'agy', harness: 'agy', kind: 'Antigravity' },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('follows a binding made before the first turn, and is still open there', async () => {
+    const { reg, send } = rig();
+    await send('/agent oc');
+    expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+  });
+
+  it('closes once the answering agent has a session here', async () => {
+    const { reg, send, store, key } = rig();
+    await send('hello');
+    store.setAgentSession(key, 'cc', 'acp-session-1');
+    expect(reg.agentCatalogForRef(ref)).toBeUndefined();
+    // Another lane of the same channel is another conversation, still open.
+    expect(reg.agentCatalogForRef({ ...ref, thread: 't7' })?.current).toBe('cc');
+  });
+
+  it('is never offered with a single agent: a choice of one is not a choice', () => {
+    const one = parseConfig({
+      platforms: { discord: { type: 'discord', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude', cwd: root }],
+      routing: { default: 'cc' },
+    });
+    const { reg } = rig({ config: one });
+    expect(reg.agentCatalogForRef(ref)).toBeUndefined();
+  });
+
+  it('names as default the agent a channel rule routes to, not routing.default', () => {
+    const ruled = parseConfig({
+      platforms: { discord: { type: 'discord', token: 't' } },
+      agents: [
+        { id: 'cc', harness: 'claude', cwd: root },
+        { id: 'oc', harness: 'opencode', cwd: root },
+      ],
+      routing: { default: 'cc', pipeline: [{ when: { platform: 'discord' }, use: { agent: 'oc' } }] },
+    });
+    const { reg } = rig({ config: ruled });
+    expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+  });
+});
+
+/**
  * An agent on a host (talkcode 2.9.0): its directories can only be listed over the link, which is
  * asynchronous, while the menu decides on the spot. Until 2.9.2 the menus on the side read ahead and
  * declined when nothing was listed yet — and the list lives in the process, so after every restart

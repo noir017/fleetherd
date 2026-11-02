@@ -480,6 +480,7 @@ function lifecycle(
   | 'useLivenessLookup'
   | 'useScheduleLookup'
   | 'useIdleReclaim'
+  | 'useAgentCatalog'
   | 'registerCommands'
   | 'start'
   | 'stop'
@@ -509,6 +510,11 @@ function lifecycle(
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".
      */
     useIdleReclaim: (reclaim) => room.useIdleReclaim(reclaim),
+    /**
+     * The only implementor because a new topic here is a blank page, with room to lay out every
+     * agent as one tap — where a chat app has a message box and the `/agent` menu's two levels.
+     */
+    useAgentCatalog: (lookup) => room.useAgentCatalog(lookup),
     /**
      * Accepted and never called.
      *

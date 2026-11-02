@@ -61,6 +61,15 @@ describe('TopicStore', () => {
     expect(store.get(t.id)?.title).toBe('fix the login timeout');
   });
 
+  it('is not seeded by a command, which says how the topic is set up rather than what it is about', () => {
+    const store = new TopicStore(file);
+    const t = store.create();
+    expect(store.seed(t.id, '/agent oc2')).toBe(false);
+    expect(store.get(t.id)?.title).toBe('');
+    expect(store.seed(t.id, 'fix the login timeout')).toBe(true);
+    expect(store.get(t.id)?.title).toBe('fix the login timeout');
+  });
+
   it('truncates a long seed rather than putting a paragraph in the switcher', () => {
     const store = new TopicStore(file);
     const t = store.create();
