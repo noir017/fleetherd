@@ -341,6 +341,15 @@ cuts the command and not the mark. A change to the suffix or to `formatDuration`
 `web-markdown.test.ts` rather than the page; the preview length itself is the larger of
 `tools.previewLimit` and the platform's `toolPreviewLimit` (the web UI asks for 2000).
 
+Two variants of the line, both read back by the same splitter. A preview that only repeats the
+name is left out (`💻 Bash`, not `💻 Bash: "Bash"`): harnesses that title a call with the tool's
+own name fall back to that title before the parameters stream. And `onToolStart` may arrive
+**twice for the same `index`** — a harness that announces a call before its parameters, then
+sends them — in which case the second rewrites the row in place instead of adding one. That is
+how a CodeBuddy Code row stops reading `Tool: "Bash"` and starts naming the command; under
+`separate` grouping there is no line set to rewrite, so the repeat is dropped rather than posted
+as a second run. See `daemon/agent-acp.ts` `upgradeToolRow` for what makes a call re-emit.
+
 A tool a **subagent** ran (`ToolEvent.agent` set) is drawn `↳ {subagent} · {emoji} {tool}:
 "{preview}"`, and the lines under it from the same subagent just `↳ {emoji} {tool}: "{preview}"`:
 the name is written once per run, and again wherever the owner changes and at the top of every

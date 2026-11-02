@@ -685,6 +685,12 @@ back into `AgentStreamHandlers`:
 | `session_info_update` | `onTitle` (renames the chat lane — see below) |
 | `session/request_permission` | **auto-approved** — see below |
 
+A `tool_call_update` can also reach `onToolStart`: a call is drawn as soon as its status
+advances, so a harness that announces the call before its parameters (CodeBuddy Code sends
+`{title:"Bash", kind:"other", rawInput:{}}` first, the command after) gets its row corrected in
+place by `upgradeToolRow` when the name or preview changes. Only a changed row re-emits, and
+nothing re-emits after the finish.
+
 **Subagents.** The `claude` adapter tags everything a subagent produces with
 `_meta.claudeCode.parentToolUseId` — the id of the Agent/Task call that spawned it — and marks
 that call with `_meta.claudeCode.subagent`. `translateUpdate` reads both (`claudeAttribution`):
