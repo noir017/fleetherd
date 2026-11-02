@@ -94,8 +94,15 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 
 #app{display:flex;flex-direction:row;height:100%;width:100%;margin:0;overflow:hidden}
 
-#sidebar{width:240px;flex:0 0 240px;background:#171717;border-right:1px solid var(--line);display:flex;flex-direction:column;height:100%;transition:margin-left .18s ease;z-index:10}
-#sidebar.collapsed{margin-left:-240px}
+#sidebar{width:var(--sbw,240px);flex:0 0 var(--sbw,240px);background:#171717;border-right:1px solid var(--line);display:flex;flex-direction:column;height:100%;transition:margin-left .18s ease;z-index:10;position:relative}
+#sidebar.collapsed{margin-left:calc(-1 * var(--sbw,240px))}
+/* The drag handle on the sidebar's right edge (--sbw, set from it and kept in localStorage):
+   topic titles are long — "[ag2] 状态：…" — and 240px cuts most of them. Straddles the border so
+   it is easy to hit without covering the scrollbar. Not under the narrow rules: there the sidebar
+   is a drawer whose width the screen decides. */
+#sidebar-resize{position:absolute;top:0;bottom:0;right:-4px;width:8px;cursor:col-resize;z-index:11;touch-action:none}
+#sidebar-resize:hover,#sidebar-resize.dragging{background:linear-gradient(90deg,transparent 3px,#3d3d3d 3px,#3d3d3d 5px,transparent 5px)}
+#sidebar.collapsed #sidebar-resize{display:none}
 /* Only ever on screen under the narrow-screen rules below, where the sidebar is an overlay
    rather than a column and there is otherwise nothing to tap to dismiss it. */
 #backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:5}
@@ -554,6 +561,7 @@ button:disabled{opacity:.5;cursor:default}
      still on screen. */
   #sidebar{position:fixed;top:0;bottom:0;left:0;height:auto;width:min(82vw,300px);flex-basis:min(82vw,300px);box-shadow:3px 0 12px rgba(0,0,0,.6)}
   #sidebar.collapsed{margin-left:-100%}
+  #sidebar-resize{display:none}
   #backdrop{display:block}
   #topics .topic-item{padding:10px 9px}
   /* The drawer runs to the bottom edge, so its last row needs the same home-indicator clearance
@@ -887,6 +895,46 @@ const SCRIPT = `
   expandBtn.addEventListener('click', function(){ setSidebar(true); });
   backdrop.addEventListener('click', function(){ setSidebar(false); });
   applySidebar();
+
+  /**
+   * The sidebar's width, dragged from its right edge and kept per browser. Clamped so the chat
+   * keeps room; double-click puts the default back. A drag listens on the document rather than
+   * the handle, because the pointer leaves an 8px handle on the first fast move.
+   */
+  var SB_MIN = 180;
+  function sbMax(){ return Math.max(SB_MIN, Math.min(640, window.innerWidth - 360)); }
+  function setSbWidth(w, keep){
+    if(w == null){
+      sidebar.style.removeProperty('--sbw');
+      try { localStorage.removeItem('aa_sb_w'); } catch(x){}
+      return;
+    }
+    w = Math.round(Math.max(SB_MIN, Math.min(sbMax(), w)));
+    sidebar.style.setProperty('--sbw', w+'px');
+    if(keep) try { localStorage.setItem('aa_sb_w', String(w)); } catch(x){}
+  }
+  var savedSbw = Number(localStorage.getItem('aa_sb_w'));
+  if(savedSbw > 0) setSbWidth(savedSbw, false);
+  var sbHandle = $('sidebar-resize'), sbDrag = null;
+  sbHandle.addEventListener('pointerdown', function(e){
+    if(narrow()) return;
+    e.preventDefault();
+    sbDrag = {left: sidebar.getBoundingClientRect().left};
+    sbHandle.className = 'dragging';
+    document.body.style.userSelect = 'none';
+  });
+  document.addEventListener('pointermove', function(e){
+    if(sbDrag) setSbWidth(e.clientX - sbDrag.left, false);
+  });
+  document.addEventListener('pointerup', function(){
+    if(!sbDrag) return;
+    sbDrag = null;
+    sbHandle.className = '';
+    document.body.style.userSelect = '';
+    var w = parseFloat(sidebar.style.getPropertyValue('--sbw'));
+    if(w > 0) setSbWidth(w, true);
+  });
+  sbHandle.addEventListener('dblclick', function(){ setSbWidth(null); });
 
   // Escapes for BOTH uses this page makes of it: element content, and the inside of a
   // double-quoted attribute. textContent alone covers the first and leaves the quote, which is
@@ -3498,6 +3546,7 @@ __GATE__
       <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle agents</button>
       <button type="button" id="clear-topics" title="Forget every topic and start a new one">Clear all topics</button>
     </div>
+    <div id="sidebar-resize" title="Drag to resize · double-click for the default width"></div>
   </aside>
   <div id="backdrop" hidden></div>
   <!-- Filled in and revealed when a picture in the log is tapped. One node reused for every

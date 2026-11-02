@@ -33,7 +33,8 @@ out to be about. `+` opens one; the agent can open one itself with
 `talkcode create-thread`, and write into one with `--channel main/<topic id>`. Under each
 title is the directory the topic works in, led by the machine when its agent runs on a
 [remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. On a narrow
-screen the sidebar becomes a drawer.
+screen the sidebar becomes a drawer. Drag its right edge to make it wider or narrower — the width
+is kept in this browser — and double-click the edge for the default.
 
 **Choosing an agent.** With more than one agent configured, a new topic opens on all of them,
 grouped by machine: each card shows the agent's id, what it is (Claude Code, Codex, OpenCode,
