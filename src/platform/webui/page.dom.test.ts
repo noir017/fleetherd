@@ -2078,6 +2078,38 @@ describe('webui page: the command list above the composer', () => {
   });
 });
 
+describe('webui page: the sidebar width', () => {
+  it('follows a drag of its edge, within bounds, keeps it, and goes back on a double-click', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    const sidebar = h.el('sidebar');
+    const handle = h.el('sidebar-resize');
+    const drag = async (x: number): Promise<void> => {
+      // MouseEvent under the pointer names: jsdom's sidebar sits at left 0, so x is the width.
+      handle.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientX: 240 }));
+      h.doc.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientX: x }));
+      h.doc.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientX: x }));
+      await tick();
+    };
+
+    await drag(400);
+    expect(sidebar.style.getPropertyValue('--sbw')).toBe('400px');
+    expect(h.window.localStorage.getItem('aa_sb_w')).toBe('400');
+
+    await drag(40);
+    expect(sidebar.style.getPropertyValue('--sbw')).toBe('180px');
+
+    handle.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
+    expect(sidebar.style.getPropertyValue('--sbw')).toBe('');
+    expect(h.window.localStorage.getItem('aa_sb_w')).toBeNull();
+  });
+
+  it('comes back at the width it was left at', async () => {
+    const h = await open({ storage: { aa_sb_w: '320' } });
+    expect(h.el('sidebar').style.getPropertyValue('--sbw')).toBe('320px');
+  });
+});
+
 describe('webui page: sending', () => {
   it('posts a button click back with the message and button it belongs to', async () => {
     const h = await open();

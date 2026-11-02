@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI's sidebar can be resized.** Drag its right edge; the width is kept in the browser,
+  and a double-click on the edge puts the default back. At a fixed 240px most topic titles were cut
+  off after a few words — "[ag2] 状态：小说与内容…" — which made topics of the same agent hard to
+  tell apart. On a phone the sidebar is still a drawer the width of the screen.
+
 ## [2.19.1] - 2026-11-02
 
 ### Fixed
