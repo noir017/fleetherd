@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.19.1] - 2026-11-02
+
 ### Fixed
 
 - **`/super` is in the web UI's command list.** 2.19.0 shipped it as a skill only, and the list
