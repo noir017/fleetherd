@@ -1,6 +1,7 @@
 import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { parseTarget, type ConversationAddress } from '../core/conversation.js';
+import type { CommandSurface } from '../core/command-translate.js';
 import { topicStage } from '../core/topic-stage.js';
 import type {
   IpcAction,
@@ -69,6 +70,16 @@ const PROPOSAL_TEXT_CHARS = 1_500;
 
 /** How much of each message `task-read` returns. */
 const READ_CHARS = 1_500;
+
+/**
+ * Whether a platform can hold sub-agents: the relation is the platform's own record of which topic
+ * opened which (`parentOf`/`childrenOf`), so one without it has nowhere to put them. The one test,
+ * shared by the refusal of a task command here, the slash menu (`/super` is registered only where
+ * this is true) and the refusal of a typed `/super` (ConversationRegistry.refusedForNesting).
+ */
+export function commandSurface(adapter: Pick<PlatformAdapter, 'parentOf' | 'childrenOf'>): CommandSurface {
+  return { nested: Boolean(adapter.parentOf && adapter.childrenOf) };
+}
 
 type Registry = Pick<
   ConversationRegistry,
@@ -163,7 +174,7 @@ export class Delegation {
   async handle(from: ConversationId | undefined, action: TaskAction): Promise<unknown> {
     const here = from ? this.place(from) : undefined;
     if (!here) throw new Error(`${action.kind} runs from a conversation's own turn, and this call came from none`);
-    if (!here.adapter.parentOf || !here.adapter.childrenOf) {
+    if (!commandSurface(here.adapter).nested) {
       throw new Error(
         `sub-agents are opened as topics nested under the one that asked, which only the web UI can show; ` +
           `this conversation is on "${here.platformId}" (${this.deps.config.platforms[here.platformId]?.type ?? 'unknown'})`

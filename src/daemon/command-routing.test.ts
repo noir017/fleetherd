@@ -82,7 +82,7 @@ const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
 function rig(
   cfg: Config = baseConfig,
   persistedAgent?: string,
-  opts: { persistedSessions?: Record<string, string>; startsSessions?: boolean } = {}
+  opts: { persistedSessions?: Record<string, string>; startsSessions?: boolean; nested?: boolean } = {}
 ) {
   const prompts: Array<{ sessionId: string; agentId: string; prompt: string }> = [];
   const sessions = new Map<string, AgentSession>();
@@ -121,6 +121,8 @@ function rig(
     startTyping: async () => {},
     stopTyping: async () => {},
     measureRendered: (t: string) => t.length,
+    // What makes a platform able to hold sub-agents (delegation.ts commandSurface); the web UI's.
+    ...(opts.nested ? { parentOf: () => undefined, childrenOf: () => [] } : {}),
   } as unknown as PlatformAdapter;
 
   const pickerCalls: Array<{ sessionId: ConversationId; agentId: string }> = [];
@@ -245,6 +247,37 @@ describe('generic command translation in route()', () => {
     await send('/new');
     expect(prompts).toEqual([]);
     expect(sent.some((t) => t.includes('Context cleared'))).toBe(true);
+  });
+});
+
+/**
+ * `/super`, the one generic command whose availability is the PLATFORM's: sub-agents open as topics
+ * nested under the one that asked, and only a platform that records which topic opened which (the
+ * web UI's parentOf/childrenOf) can show them.
+ */
+describe('/super depends on the platform, not the harness', () => {
+  it('is forwarded unchanged where topics nest — the skill of that name is what reads it', async () => {
+    const { send, prompts } = rig(baseConfig, undefined, { nested: true });
+    await send('/super split the upgrade across the two repos');
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!.agentId).toBe('cc');
+    expect(prompts[0]!.prompt).toContain('/super split the upgrade across the two repos');
+  });
+
+  it('is refused by name elsewhere, with no turn — every harness would end at the same refusal', async () => {
+    const { send, prompts, sent, headers } = rig();
+    await send('/super split the upgrade across the two repos');
+    expect(prompts).toEqual([]);
+    expect(headers()).toEqual([]);
+    expect(sent.at(-1)).toContain('/super works in the web UI only');
+  });
+
+  it('still says a harness that cannot read the skill does not support it, where topics nest', async () => {
+    const cfg = makeConfig({ agents: [{ id: 'cc', harness: 'claude' }, { id: 'gm', harness: 'gemini' }], routing: { default: 'gm' } });
+    const { send, prompts, sent } = rig(cfg, undefined, { nested: true });
+    await send('/super split it');
+    expect(prompts).toEqual([]);
+    expect(sent.at(-1)).toContain('gemini does not support /super');
   });
 });
 

@@ -18,6 +18,7 @@
 | `/reload` | 改完 config.yaml 后不重启直接生效，见[配置](configuration.md#守护进程运行时改配置) |
 | `/cc`、`/oc`、`/cx`、`/gm`、`/agy` | 每个已配置 harness 一个，见[下文](#智能体命令) |
 | `/compact`、`/context`、`/model`、`/effort`、`/usage`、`/doctor`、`/mcp`、`/init`、`/review` | 通用词表，按 harness 翻译成各自的原生拼写，见[下文](#通用命令) |
+| `/super <任务>` | 把一件活拆给几个智能体并行干，只在网页端可用，见[子代理](sub-agents.md) |
 
 智能体正在跑一轮时发 `/usage`、`/context`，由网关自己回答（上下文、目前的花费、这一轮跑了多久），
 不再转给智能体 —— 转过去要等这一轮跑完才会被处理。等这一轮结束再发一次，拿到的是智能体自己更完整的回答。

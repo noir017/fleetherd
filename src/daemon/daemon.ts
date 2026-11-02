@@ -17,6 +17,7 @@ import {
   routeCommandAgent,
   SLASH_DESC_MAX,
   SLASH_NAME_RE,
+  type CommandSurface,
 } from '../core/command-translate.js';
 import { parseButtonId } from '../core/button-id.js';
 import {
@@ -121,7 +122,7 @@ import {
 } from '../ipc/protocol.js';
 import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
-import { Delegation } from './delegation.js';
+import { commandSurface, Delegation } from './delegation.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { DRAIN_LIMIT_MS, describeInProgress, nothingInProgress, whenIdle, type InProgress } from './restart-drain.js';
 import { taskListText } from '../core/schedule.js';
@@ -297,9 +298,13 @@ export function agentCommandToSpec(cmd: AgentCommand): SlashCommandSpec | null {
  *    bare is the escape hatch to that agent's own commands, which are not registered globally
  *  - the names `routing.pipeline` gives particular agents (`when: { command: oc2 }`) — the same
  *    thing as an agent command, for an agent the harness table cannot name (a second opencode)
+ *
+ * `surface` is the one thing a platform changes: a generic command that needs topics nested under
+ * one another (`/super`) is registered only where they can be (see CommandSurface). Omitted, the
+ * set is the whole vocabulary — what a reload compares to tell whether anything changed.
  */
-export function buildRegisteredSpecs(cfg: Pick<Config, 'agents' | 'routing'>): SlashCommandSpec[] {
-  const specs = [...DAEMON_COMMANDS, ...genericCommandSpecs(), ...agentCommandSpecs(cfg), ...routeCommandSpecs(cfg)];
+export function buildRegisteredSpecs(cfg: Pick<Config, 'agents' | 'routing'>, surface?: CommandSurface): SlashCommandSpec[] {
+  const specs = [...DAEMON_COMMANDS, ...genericCommandSpecs(surface), ...agentCommandSpecs(cfg), ...routeCommandSpecs(cfg)];
   // Dedup defensively: a harness named like a generic command (or a future daemon command) must not
   // register twice — Telegram rejects the whole setMyCommands batch on a duplicate name.
   const seen = new Set<string>();
@@ -3028,7 +3033,6 @@ export class Daemon {
    * convenience over plain-text commands.
    */
   private async registerCommands(): Promise<void> {
-    const all = buildRegisteredSpecs(this.config);
     // Say which agent commands exist and who each one selects. Without this the only way to tell a
     // harness apart from a missing one was to try it in chat: an unconfigured `/agy` is not
     // registered, so it reaches the bound agent as plain text and dies as an unknown command of
@@ -3052,6 +3056,8 @@ export class Daemon {
         }
         continue;
       }
+      // Per instance, because what a platform can show decides part of it (`/super`).
+      const all = buildRegisteredSpecs(this.config, commandSurface(adapter));
       // Instance count cap (per-IM capability; unset = unlimited). The fixed set is far below every
       // real cap, but truncation is reported rather than silent if that ever stops being true.
       const cap = adapter.capabilities.maxSlashCommands ?? Infinity;

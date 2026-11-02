@@ -43,13 +43,16 @@ need to decide — scope, merging, releasing, deleting — is passed to you.
 
 ## Notes
 
-- Web UI only: the topics have to be nested somewhere you can see them. Elsewhere the commands are
-  refused.
+- Web UI only: the topics have to be nested somewhere you can see them. `/super` is in the web UI's
+  command list and nowhere else's; typed on another platform it is answered with that, and no turn
+  runs.
 - Any agent can propose sub-agents when you ask it to split work, without `/super`, and any
   configured agent can be one. The card still waits for your tap.
 - With agents on several [machines](remote-hosts.md), the agent prefers those on its own machine,
   which have the same checkouts and tools. A part that runs elsewhere shows `@ <host>` on the card.
 - `/super` is a skill the gateway links into each agent's skill directory, next to the `talkcode`
-  one. Claude Code offers it as a command; other agents pick it up from its description.
+  one. Claude Code offers it as a command; Codex, OpenCode and Antigravity pick it up from its
+  description. The `gemini` and `dsh` harnesses get no skills from the gateway, so `/super` there
+  says it is not supported.
 - A sub-agent whose turn a gateway restart cuts off says so in its own topic; the agent that
   started it is not told.

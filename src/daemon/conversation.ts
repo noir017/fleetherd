@@ -9,9 +9,11 @@ import {
   isCliAnsweredCommand,
   isGenericCommand,
   isSessionQuery,
+  needsNestedTopics,
   unconfiguredHarnessCommand,
   type CommandTranslation,
 } from '../core/command-translate.js';
+import { commandSurface } from './delegation.js';
 import {
   parseTextCommand,
   resolveAgent,
@@ -1901,10 +1903,10 @@ export class ConversationRegistry {
   ): void {
     const agentId = this.conversations.get(key)?.agentId ?? this.store?.boundAgent(key) ?? fallback;
     const def = findAgent(this.config, agentId);
+    const adapter = this.platforms.get(platformId);
     console.log(`[command] /help answered for ${key} (agent ${agentId})`);
-    void this.platforms
-      .get(platformId)
-      ?.sendMessage(address, buildHelpText(this.config, { agent: agentId, harness: def?.harness }))
+    void adapter
+      ?.sendMessage(address, buildHelpText(this.config, { agent: agentId, harness: def?.harness }, commandSurface(adapter)))
       .catch((e) => console.warn('[conversation] failed to send help:', e instanceof Error ? e.message : e));
   }
 
@@ -2136,6 +2138,7 @@ export class ConversationRegistry {
     if (!parsed) return msg;
     const def = findAgent(this.config, state.agentId);
     const name = agentDisplayName(def, state.agentId);
+    if (this.refusedForNesting(parsed.name, msg)) return undefined;
 
     const result = translateCommand(parsed.name, def?.harness);
     if (this.answersWhileBusy(state, parsed.name, result)) {
@@ -2181,6 +2184,25 @@ export class ConversationRegistry {
     const content = parsed.rest ? `/${result.native} ${parsed.rest}` : `/${result.native}`;
     console.log(`[command] /${parsed.name} → /${result.native} for ${state.agentId} (${name})`);
     return { ...msg, content };
+  }
+
+  /**
+   * Refuse a command that needs topics nested under one another (`/super`) on a platform without
+   * them, saying so; true when refused. Ahead of the translation because it holds for every
+   * harness: forwarded, the agent would read the skill, propose, and be refused by `task-new`
+   * (delegation.ts) — a turn spent arriving at this sentence.
+   */
+  private refusedForNesting(command: string, msg: InboundMessage): boolean {
+    const adapter = this.platforms.get(msg.conversation.platform);
+    if (!adapter || !needsNestedTopics(command) || commandSurface(adapter).nested) return false;
+    void adapter
+      .sendMessage(
+        addressOf(msg.conversation),
+        `/${command} works in the web UI only: its sub-agents open as topics nested under this one, and only the web UI can show them.`
+      )
+      .catch((e) => console.warn('[conversation] failed to report an unsupported command:', e instanceof Error ? e.message : e));
+    console.log(`[command] /${command} needs nested topics, which "${msg.conversation.platform}" has not; not forwarded`);
+    return true;
   }
 
   /**
