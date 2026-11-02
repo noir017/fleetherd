@@ -158,6 +158,37 @@ interface GenericCommand {
    * best that can be said without touching a session that is in the middle of something.
    */
   query?: true;
+  /**
+   * What the command expects after its name, for a menu to show while it is typed (`/super <job>`).
+   * Registered as the spec's one required option. Only where an empty invocation means nothing:
+   * `/model` alone opens a menu, `/super` alone splits no job.
+   */
+  arg?: { name: string; description: string };
+  /**
+   * Offered only on a platform that nests one topic under another — see CommandSurface. The
+   * capability is the platform's, not the harness's, so translateCommand cannot decide it.
+   */
+  nested?: true;
+}
+
+/**
+ * What a platform can show, as far as which commands are offered there.
+ *
+ * Exists because the generic vocabulary used to mean the same on every platform, and `/super` is
+ * the first entry that does not: its sub-agents open as topics nested under the one that asked
+ * (daemon/delegation.ts), which only a platform that draws its own topic list can show — the web
+ * UI. Registered on Telegram it would be a menu entry whose every tap ends in a refusal.
+ *
+ * Omitted, a caller means the whole vocabulary regardless of platform (what a reload compares).
+ */
+export interface CommandSurface {
+  /** Whether one topic can be nested under another (`PlatformAdapter.parentOf`). */
+  nested: boolean;
+}
+
+/** Whether a command is offered on `surface`; with no surface, every command is. */
+function offeredOn(cmd: GenericCommand, surface: CommandSurface | undefined): boolean {
+  return !cmd.nested || !surface || surface.nested;
 }
 
 /**
@@ -278,6 +309,26 @@ const GENERIC_COMMANDS: Record<string, GenericCommand> = {
     // codex also has review-branch and review-commit, which take arguments and stay reachable
     // through the `/cx` picker; only the bare form means the same thing on every harness.
     native: { claude: 'review', opencode: 'review', codex: 'review' },
+  },
+  super: {
+    description: 'Split a job across agents working in parallel (sub-agents)',
+    // Not a harness command anywhere: `super` is a skill this gateway ships (skill-super/) and links
+    // into each harness's skill directory (daemon/skill-link.ts). Forwarded unchanged, it reaches the
+    // agent as a message starting with `/super`, which is what the skill's description says to act
+    // on. Listed here so the menu offers it, and so the harnesses that cannot read the skill say so.
+    //
+    // Probed on 2026-11-02 against a test gateway (project-scripts/talkcode-super-menu/), one job
+    // per harness; every one read the skill and put up the card of sub-agents it proposed:
+    //   claude    Claude Code offers a skill as a slash command, so `/super` is one
+    //   codex     codex-acp passes an unknown slash on as text; codex read ~/.agents/skills/super
+    //   opencode  loaded it with its own `skill` tool
+    //   agy       launched with --disable-slash-commands, so the slash is text; read from
+    //             ~/.gemini/config/skills (the probe of agent-agy.ts had found such a slash harmless)
+    // gemini and dsh are absent because skill-link.ts places no skills for them: nothing would tell
+    // them what `/super` means, and an honest "not supported" beats a turn spent guessing.
+    native: { claude: 'super', codex: 'super', opencode: 'super', agy: 'super' },
+    arg: { name: 'job', description: 'The job to split up' },
+    nested: true,
   },
 };
 
@@ -473,10 +524,26 @@ export function isCliAnsweredCommand(name: string, harness: Harness | undefined)
   return HARNESS_CLI_ANSWERED[harness]?.includes(name.toLowerCase()) ?? false;
 }
 
-/** The generic commands as registrable slash specs, in a stable (alphabetical) order. */
-export function genericCommandSpecs(): SlashCommandSpec[] {
+/**
+ * Whether a command needs a platform that nests topics — see CommandSurface. A platform without it
+ * refuses the command by name rather than forwarding it into a turn that can only fail.
+ */
+export function needsNestedTopics(name: string): boolean {
+  return GENERIC_COMMANDS[name.toLowerCase()]?.nested === true;
+}
+
+/**
+ * The generic commands as registrable slash specs, in a stable (alphabetical) order — those offered
+ * on `surface`, or all of them when no surface is given.
+ */
+export function genericCommandSpecs(surface?: CommandSurface): SlashCommandSpec[] {
   return Object.entries(GENERIC_COMMANDS)
-    .map(([name, cmd]) => ({ name, description: cmd.description }))
+    .filter(([, cmd]) => offeredOn(cmd, surface))
+    .map(([name, cmd]) => {
+      const spec: SlashCommandSpec = { name, description: cmd.description };
+      if (cmd.arg) spec.options = [{ name: cmd.arg.name, description: cmd.arg.description, type: 'string', required: true }];
+      return spec;
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -614,10 +681,12 @@ export function routeCommandAgent(cfg: Pick<Config, 'routing'>, name: string): s
  * `harness` is the one currently answering the conversation: the generic vocabulary is filtered
  * to what that harness can actually do, because listing `/compact` to an agy user who will be
  * told "not supported" the moment they tap it is the silent-degradation this project avoids.
+ * `surface` filters it the same way by what the platform can show (`/super` only where topics nest).
  */
 export function buildHelpText(
   cfg: Pick<Config, 'agents' | 'routing'>,
-  current?: { agent: string; harness: Harness | undefined }
+  current?: { agent: string; harness: Harness | undefined },
+  surface?: CommandSurface
 ): string {
   const lines: string[] = [];
 
@@ -636,12 +705,15 @@ export function buildHelpText(
 
   // Generic names are translated to each harness's own spelling at invocation time, so what is
   // listed is what this harness will actually accept.
-  const generic = genericCommandSpecs().filter(
+  const generic = genericCommandSpecs(surface).filter(
     (spec) => translateCommand(spec.name, current?.harness).kind !== 'unsupported'
   );
   if (generic.length > 0) {
     lines.push('', '**Works on the current agent**');
-    for (const spec of generic) lines.push(`\`/${spec.name}\` — ${spec.description}`);
+    for (const spec of generic) {
+      const arg = spec.options?.[0];
+      lines.push(`\`/${spec.name}${arg ? ` <${arg.name}>` : ''}\` — ${spec.description}`);
+    }
   }
 
   if (current) {

@@ -463,6 +463,8 @@ button:disabled{opacity:.5;cursor:default}
 #bar{border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
 #hints{margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px}
 #hints button{font-size:12px}
+#hints .arg-hint{font-size:12px;color:var(--dim)}
+#hints .arg-hint b{color:var(--fg);font-weight:600}
 #chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .chip{background:var(--field);border:1px solid var(--line);border-radius:3px;padding:1px 6px;font-size:12px;color:var(--dim)}
 /* What is about to be sent, in the composer: a picture is shown, and anything can be taken back
@@ -3057,6 +3059,12 @@ const SCRIPT = `
 
   function suggest(){
     var v=input.value;
+    var picked=takesArg(v);
+    if(picked){
+      hints.innerHTML='<span class="arg-hint"><b>/'+text(picked.name)+' &lt;'+text(picked.options[0].name)+'&gt;</b> — '+text(picked.description)+'</span>';
+      hints.hidden=false;
+      return;
+    }
     if(v.charAt(0)!=='/' || v.indexOf(' ')>=0 || v.indexOf('\\n')>=0){ hints.hidden=true; hints.innerHTML=''; return; }
     var q=v.slice(1).toLowerCase();
     var hit=commands.filter(function(c){ return c.name.indexOf(q)===0; }).slice(0,8);
@@ -3064,6 +3072,22 @@ const SCRIPT = `
     var h='';
     for(var i=0;i<hit.length;i++) h += '<button type="button" data-cmd="'+text(hit[i].name)+'" title="'+text(hit[i].description)+'">/'+text(hit[i].name)+'</button>';
     hints.innerHTML=h; hints.hidden=false;
+  }
+
+  /**
+   * The command just chosen, when it takes an argument and nothing has been typed after it yet —
+   * "/super " and no job. The list it was picked from has gone by then, and with it the only place
+   * its description was (a button's title, which a phone never shows), so the hint row says what
+   * comes next instead. Gone at the first character typed.
+   */
+  function takesArg(v){
+    if(v.charAt(0)!=='/' || v.charAt(v.length-1)!==' ') return null;
+    var name=v.slice(1,-1);
+    for(var i=0;i<commands.length;i++){
+      var c=commands[i];
+      if(c.name===name && c.options && c.options.length) return c;
+    }
+    return null;
   }
 
   hints.addEventListener('click', function(e){

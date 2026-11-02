@@ -452,7 +452,10 @@ The fix, four layers, all fixed at startup from config alone:
    command whose effect outlives the conversation, because it writes config.yaml (see
    [`settings.ts`](#settingsts)).
 2. `GENERIC_COMMANDS` — a small fixed vocabulary meaning the same thing everywhere,
-   translated to the target harness's native spelling at invocation time.
+   translated to the target harness's native spelling at invocation time. One entry also depends
+   on the platform: `/super` (`nested`) needs topics nested under one another, so it is registered,
+   listed in `/help` and accepted only where the platform has them (`CommandSurface`, which
+   `daemon/delegation.ts` `commandSurface` reads off the adapter) — the web UI.
 3. `HARNESS_COMMANDS` — one agent command per configured harness (`/cc`, `/oc`, `/agy`).
    `/oc <prompt>` switches the conversation and asks; bare `/oc` switches and offers that
    agent's own commands, which are the ones not registered globally.

@@ -18,6 +18,7 @@ Discord, Slack), and equally usable as plain text everywhere else.
 | `/reload` | apply an edited config.yaml without restarting — see [Configuration](configuration.md#changing-it-while-the-daemon-runs) |
 | `/cc`, `/oc`, `/cx`, `/gm`, `/agy` | one per configured harness — see [below](#agent-commands) |
 | `/compact`, `/context`, `/model`, `/effort`, `/usage`, `/doctor`, `/mcp`, `/init`, `/review` | a generic vocabulary, translated to each harness's own spelling — see [below](#generic-commands) |
+| `/super <job>` | split a job across agents working in parallel — web UI only, see [Sub-agents](sub-agents.md) |
 
 `/usage` and `/context` sent while the agent is in the middle of a turn are answered by the
 gateway itself — context, cost so far, how long the turn has run — instead of being passed to the

@@ -2022,6 +2022,62 @@ describe('webui page: menus', () => {
   });
 });
 
+describe('webui page: the command list above the composer', () => {
+  // As registerCommands hands them over: `/super` carries its argument as the one required option
+  // (core/command-translate.ts genericCommandSpecs), `/new` carries none.
+  const commands = [
+    { name: 'new', description: 'Start a fresh conversation (clears context)' },
+    { name: 'stop', description: 'Stop the current turn' },
+    {
+      name: 'super',
+      description: 'Split a job across agents working in parallel (sub-agents)',
+      options: [{ name: 'job', description: 'The job to split up', type: 'string', required: true }],
+    },
+  ];
+  async function typed(h: Awaited<ReturnType<typeof open>>, value: string): Promise<void> {
+    const input = h.el('input') as HTMLTextAreaElement;
+    input.value = value;
+    input.dispatchEvent(new h.window.Event('input'));
+    await tick();
+  }
+
+  it('says what a command takes once it is chosen, and stops at the first character of it', async () => {
+    const h = await open();
+    await h.emit({ ...sync('a1b2c3d4', [], ['a1b2c3d4']), commands });
+    await typed(h, '/su');
+    expect(Array.from(h.el('hints').querySelectorAll('button')).map((b) => b.textContent)).toEqual(['/super']);
+
+    await h.click('#hints button[data-cmd="super"]');
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe('/super ');
+    // The list it was picked from is gone, and so is the button title that was the only place the
+    // description showed — never, on a phone. The row now says what comes next.
+    expect(h.el('hints').hidden).toBe(false);
+    expect(h.el('hints').querySelector('button')).toBeNull();
+    expect(h.el('hints').textContent).toBe('/super <job> — Split a job across agents working in parallel (sub-agents)');
+
+    await typed(h, '/super s');
+    expect(h.el('hints').hidden).toBe(true);
+  });
+
+  it('shows nothing after a command that takes nothing, as before', async () => {
+    const h = await open();
+    await h.emit({ ...sync('a1b2c3d4', [], ['a1b2c3d4']), commands });
+    await typed(h, '/ne');
+    await h.click('#hints button[data-cmd="new"]');
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe('/new ');
+    expect(h.el('hints').hidden).toBe(true);
+  });
+
+  it('offers only what the daemon registered here, which on a chat platform has no /super', async () => {
+    const h = await open();
+    await h.emit({ ...sync('a1b2c3d4', [], ['a1b2c3d4']), commands: commands.filter((c) => c.name !== 'super') });
+    await typed(h, '/s');
+    expect(Array.from(h.el('hints').querySelectorAll('button')).map((b) => b.textContent)).toEqual(['/stop']);
+    await typed(h, '/super ');
+    expect(h.el('hints').hidden).toBe(true);
+  });
+});
+
 describe('webui page: sending', () => {
   it('posts a button click back with the message and button it belongs to', async () => {
     const h = await open();

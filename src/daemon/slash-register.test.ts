@@ -90,6 +90,15 @@ describe('buildRegisteredSpecs', () => {
     expect(names).not.toContain('batch');
   });
 
+  it('registers /super only on a platform that can nest topics, with its argument', () => {
+    // Telegram's menu is one per bot, and a sub-agent cannot be opened there: an entry whose every
+    // tap ends in a refusal is worse than none. The web UI nests them, and shows the argument.
+    const c = cfg(agent('cc', 'claude'));
+    expect(buildRegisteredSpecs(c, { nested: false }).map((s) => s.name)).not.toContain('super');
+    const web = buildRegisteredSpecs(c, { nested: true }).find((s) => s.name === 'super');
+    expect(web?.options).toEqual([{ name: 'job', description: 'The job to split up', type: 'string', required: true }]);
+  });
+
   it('does not depend on what agents report, so the menu cannot churn', () => {
     // Same config → same set, whatever any agent has said and however often it says it. Previously
     // the menu was the union of those reports and whichever harness last built a session overwrote

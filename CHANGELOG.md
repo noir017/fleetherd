@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/super` is in the web UI's command list.** 2.19.0 shipped it as a skill only, and the list
+  above the composer offers the gateway's own commands, never an agent's skills — so the one way to
+  start sub-agents had to be typed from memory. It is now there, and once chosen the row says what
+  it takes (`/super <job>`) and what it does, which a phone never showed (the description was a
+  hover title). It forwards to Claude Code, Codex, OpenCode and Antigravity, each checked against a
+  real job; the `gemini` and `dsh` harnesses, which get no skills from the gateway, say it is not
+  supported. On Telegram and the other chat apps it stays out of the menu, and typed there it is
+  answered in one line instead of spending a turn on a refusal: sub-agents need the web UI's nested
+  topics.
+
 ## [2.19.0] - 2026-11-02
 
 ### Added

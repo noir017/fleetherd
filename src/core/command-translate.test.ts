@@ -12,6 +12,7 @@ import {
   harnessHasPicker,
   isGenericCommand,
   isSessionQuery,
+  needsNestedTopics,
   routeCommandAgent,
   routeCommandSpecs,
   translateCommand,
@@ -140,8 +141,44 @@ describe('genericNativeNames', () => {
   it('lists the native names already reachable generically', () => {
     expect(genericNativeNames('claude')).toContain('compact');
     expect(genericNativeNames('gemini')).toContain('compress'); // native spelling, not the generic one
-    expect(genericNativeNames('opencode')).toEqual(new Set(['init', 'review']));
+    expect(genericNativeNames('opencode')).toEqual(new Set(['init', 'review', 'super']));
     expect(genericNativeNames('custom')).toEqual(new Set());
+  });
+});
+
+describe('/super', () => {
+  it('forwards unchanged to every harness that was probed reading the skill', () => {
+    // Probed 2026-11-02 (see the table entry): each read skill-super/ and put up a card.
+    for (const h of ['claude', 'codex', 'opencode', 'agy'] as const) {
+      expect(translateCommand('super', h)).toEqual({ kind: 'translated', native: 'super' });
+    }
+  });
+
+  it('is unsupported where no skill is placed, and passes through for custom as everything does', () => {
+    // skill-link.ts skillHomes returns nothing for these two: nothing would tell them what it means.
+    expect(translateCommand('super', 'gemini')).toEqual({ kind: 'unsupported' });
+    expect(translateCommand('super', 'dsh')).toEqual({ kind: 'unsupported' });
+    expect(translateCommand('super', 'custom')).toEqual({ kind: 'passthrough' });
+  });
+
+  it('is the one generic command that needs nested topics', () => {
+    expect(needsNestedTopics('super')).toBe(true);
+    expect(needsNestedTopics('SUPER')).toBe(true);
+    expect(needsNestedTopics('compact')).toBe(false);
+    expect(needsNestedTopics('dataviz')).toBe(false);
+  });
+
+  it('is offered only on a surface where topics nest, with its argument named', () => {
+    expect(genericCommandSpecs({ nested: false }).map((s) => s.name)).not.toContain('super');
+    expect(genericCommandSpecs({ nested: true }).find((s) => s.name === 'super')).toEqual({
+      name: 'super',
+      description: 'Split a job across agents working in parallel (sub-agents)',
+      options: [{ name: 'job', description: 'The job to split up', type: 'string', required: true }],
+    });
+    // No surface: the whole vocabulary, which is what a reload compares.
+    expect(genericCommandSpecs().map((s) => s.name)).toContain('super');
+    // Taking nothing away from the rest.
+    expect(genericCommandSpecs({ nested: false })).toHaveLength(genericCommandSpecs().length - 1);
   });
 });
 
@@ -338,6 +375,15 @@ describe('buildHelpText', () => {
     // Every agent command in the menu appears in the help, by construction (same table).
     const text = buildHelpText(cfg);
     for (const spec of agentCommandSpecs(cfg)) expect(text).toContain(`/${spec.name}`);
+  });
+
+  it('lists /super, with what it takes, only where the platform can nest its topics', () => {
+    const here = { agent: 'cc', harness: 'claude' as const };
+    expect(buildHelpText(cfg, here, { nested: true })).toContain('`/super <job>` — Split a job across agents');
+    expect(buildHelpText(cfg, here, { nested: false })).not.toContain('/super');
+    // And by harness as before: gemini cannot read the skill, so it is not listed even in the web UI.
+    const gm = { agents: [agent('gm', 'gemini')], routing: { default: 'gm', pipeline: [] } };
+    expect(buildHelpText(gm, { agent: 'gm', harness: 'gemini' }, { nested: true })).not.toContain('/super');
   });
 
   it('lists the names routing.pipeline gives agents, by the agent they select', () => {
