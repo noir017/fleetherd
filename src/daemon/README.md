@@ -45,6 +45,10 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `restart-drain.ts` | A SIGTERM with turns or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `talkcode` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
 | `skill-link.ts` | Links the bundled skill into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
+| `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
+| `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-the-dispatcher) |
+| `dispatcher.ts` | The dispatcher: the 📥 topic's binding, the six task commands (refused to any other conversation), and the `[topic updates]` card |
+| `dispatcher-home.ts` | Which conversations are a dispatcher's (read by the runtimes at spawn), its directory, and the default `AGENTS.md` written there once |
 | `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `talkcode …` back here (the allowlisted bridge); placing the skill on a host |
 
 ## Inbound flow
@@ -555,6 +559,52 @@ looks the same until its own output starts; if that output is later than the gra
 still arrives, as a background update. The abandoned prompt is settled by the adapter at
 the next prompt, so a turn only ends on a `stop` carrying **its own** prompt's response —
 otherwise that late settlement would end the next turn before its reply was read.
+
+## What needs the person: outcomes and the dispatcher
+
+One person watching their agents is the ceiling on how many they can run (the numbers are in
+`dispatcher.ts`'s header). Three pieces answer it, and all three decide from facts, never from what
+a reply says — core/topic-stage.ts carries the reasoning, borrowed from DeepSeek's Super-agent
+prototype, which refuses to infer "waiting on a person" from prose.
+
+**TurnOutcomes** (`turn-outcomes.ts`) hears every turn's start and end from TurnRunner
+(`recordTurnStart` / `recordTurnEnd`, exactly one end per start, on every way out) and keeps what
+the last one left: a finished reply's first line and a 600-character excerpt, or a failure and its
+reason (`TurnFailure`, thrown by the runtimes wherever they know why; anything else is `other`). It
+pushes that to the platform (`PlatformAdapter.setActivity`) and tells the dispatcher. A start
+supersedes the last outcome; a `/stop` leaves none.
+
+- **`hooks.turnFailed.continue`** schedules the operator's message after a failure whose reason it
+  names, as a solo turn with `CONTINUE_SENDER` — attended, unlike a scheduled run, so a
+  `permissions: ask` agent still asks. The count of continues sent survives the continue's own turn
+  (it may fail too) and is reset by a normal end, a stop, or anything the person does
+  (`personActed`, called from `route()` for every accepted message, and from `/stop` `/new` `/kill`).
+  A turn that starts for any other reason calls a waiting continue off.
+- **Interrupted turns.** `conversations.json` marks a conversation `inFlight` from a turn's start to
+  its end. A mark still there when the daemon starts (`recoverInterruptedTurns`, after the platforms
+  and IPC) is a turn the last process never finished; it is said in its lane and handled as a failure
+  with reason `restart`. Two writes per turn, on top of the lane write that was already there.
+
+**The dispatcher** (`dispatcher.ts`) is any configured agent answering one conversation per platform
+that can hold it (`PlatformAdapter.dispatchLane`, today the web UI's fixed-id 📥 topic). What makes
+it a dispatcher is structural, and lives in three places:
+
+- the runtime reads `dispatcherConversations` at spawn: the session stands in
+  `~/.talkcode/dispatcher/` (its `AGENTS.md` is its instructions), its MCP server is started with
+  `mcp --dispatch` (a flag, because the remote shim carries argv and not the environment), and on
+  claude it is created AND loaded with no built-in tools (`DISPATCHER_SESSION_META`);
+- the task commands (`task-*`, handled before both reverse-command switches) answer only the
+  dispatcher's conversation;
+- the registry refuses `/cc`, `/agent` and `/cd` in that conversation (`refuseInDispatcher`, first
+  thing in `answerDaemonCommand` so `/cd` cannot be answered below it), never names it, and gives the
+  platform no directory for it.
+
+Work goes out through `ConversationRegistry.openTask` / `handTo`: the person's text is posted in the
+target lane as the dispatcher's (so the reactions land on it) and ingested like a typed message with
+`DISPATCH_SENDER` — into a running turn if the harness takes one. Updates come back through
+`needsPerson`: gathered for `CARD_DELAY_MS`, re-decided (a conversation the person read meanwhile —
+`PlatformAdapter.seenAt` — is not news), shown folded in 📥, then run there as a solo turn. A question
+asked anywhere (`askButtons`) reports too.
 
 ## The status strip (`status-board.ts`)
 

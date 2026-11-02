@@ -107,6 +107,16 @@ The rest stay CLI commands behind the skill:
 | `voice-log` | A confirmed voice transcript reaches the agent as the user's own typed words — the user read and approved them — so advertising that some messages were spoken would only invite second-guessing text that was already checked. It exists for the rare turn where a message reads like a mishearing. |
 | `ask` | On `claude` the model asks with its own question tool over ACP `elicitation/create`, rendered as the same buttons. `opencode` and `dsh` have no such tool (probed 2026-09-11: neither sends any reverse request); their models find `ask` through the skill, or ask in prose. |
 
+### The dispatcher's six
+
+`DISPATCH_TOOLS` (`task_agents`, `task_list`, `task_new`, `task_send`, `task_read`, `task_stop`) are
+listed only by a server started as `talkcode mcp --dispatch`, which only the dispatcher's session is
+(daemon/dispatcher.ts). The reasoning above runs the other way for it: these are its whole job, and on
+claude they are its only tools at all. Every other session never sees them, and the daemon refuses
+the `task-*` actions from any conversation but the dispatcher's regardless of what a server listed —
+listing is a convenience, the refusal is the boundary. They carry no `channel` parameter
+(`NativeTool.noChannel`): each names its conversation as `topic`, and their help page is `tasks`.
+
 ### How it got here
 
 Until 1.40 a `<system-reminder>` went in front of the first turn of every session. It started as

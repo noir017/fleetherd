@@ -1,3 +1,5 @@
+import type { TurnFailureReason } from '../types.js';
+
 /**
  * claude-agent-acp's typed failure records (its "AIR session failure" extension): the capability
  * that asks for them, and how one is read off the wire.
@@ -91,6 +93,24 @@ export function readSessionFailure(meta: unknown): SessionFailure | undefined {
 export function describeSessionFailure(f: SessionFailure): string {
   const extra = f.details && !f.title.includes(f.details) ? ` ${f.details}` : '';
   return `${f.title}${extra}`.replace(/\s+/g, ' ');
+}
+
+/**
+ * The turn-failure reason a terminal record stands for (TurnFailureReason): the adapter's own lane
+ * when it is one of the five it documents, else `provider` — the record came from the provider path
+ * whatever its lane is called, and an unrecognised lane must not read as the gateway's `other`.
+ */
+export function failureReasonOf(f: SessionFailure): TurnFailureReason {
+  switch (f.category) {
+    case 'service':
+    case 'limit':
+    case 'connection':
+    case 'access':
+    case 'request':
+      return f.category;
+    default:
+      return 'provider';
+  }
 }
 
 /**

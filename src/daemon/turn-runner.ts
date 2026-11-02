@@ -32,6 +32,20 @@ import { remoteHosts } from './remote-hosts.js';
 export const SCHEDULED_SENDER = 'schedule';
 
 /**
+ * The sender an automatic continue carries (hooks.turnFailed, see turn-outcomes.ts). Distinct from
+ * SCHEDULED_SENDER on purpose: a continue is the operator's own word sent on their behalf, and the
+ * person may well be watching — so a `permissions: ask` agent still asks them, where a scheduled run
+ * is answered as unattended.
+ */
+export const CONTINUE_SENDER = 'continue';
+
+/**
+ * The sender of what the dispatcher hands a conversation (task-new, task-send — daemon/dispatcher.ts):
+ * the person's words, passed on. Attended like CONTINUE_SENDER, for the same reason.
+ */
+export const DISPATCH_SENDER = 'dispatcher';
+
+/**
  * The handlers a turn hands the agent. A scheduled run has nobody watching for a permission
  * request, so it is answered as `permissions: auto` would — asking would only hold the run for the
  * ask timeout and then decline it.
@@ -175,7 +189,31 @@ export interface TurnRunnerDeps {
    * reclaim sweeper (no turn, no messages) and have its child stopped from under the job.
    */
   touch?(id: ConversationId): void;
+  /**
+   * A turn is starting here: whatever the last one left for a person (a reply to read, a failure) is
+   * superseded by it. Also the moment the registry marks the conversation as mid-turn on disk, so a
+   * gateway that goes down before the end can be found out on the next start (see recordTurnEnd).
+   */
+  recordTurnStart?(id: ConversationId): void;
+  /**
+   * How the turn ended — what the person's list of things to do is built from, and what
+   * `hooks.turnFailed` acts on. Called exactly once per recordTurnStart, on every way out.
+   */
+  recordTurnEnd?(id: ConversationId, end: TurnEnd): void;
 }
+
+/**
+ * How one turn ended, as TurnRunner saw it.
+ *
+ * `done` carries the reply's last segment of text — the part after the last tool, which is where an
+ * answer's conclusion is — so the registry can show its first line without asking the platform.
+ * `failed` carries what was thrown, unclassified: the registry reads the reason off it
+ * (turnFailureReason) and the message is what the chat was already told.
+ */
+export type TurnEnd =
+  | { kind: 'done'; text: string }
+  | { kind: 'failed'; error: unknown }
+  | { kind: 'stopped' };
 
 /**
  * One rendering context: the buffers and handlers that turn a stream of agent events into IM
@@ -219,6 +257,28 @@ interface TurnRef {
   model?: string;
   /** Reasoning effort the harness reports for this turn (see AgentStreamHandlers.onEffort). */
   effort?: string;
+  /**
+   * The text of the segment being written now, and of the last segment that had any. What a turn
+   * ends on is the segment after its last tool, but a turn can end ON a tool — so the last one with
+   * words in it is kept as well. Only the head of each is kept (REPLY_TEXT_KEEP): what reads them is
+   * a one-line summary and a card of a few hundred characters.
+   */
+  segmentText: string;
+  lastText: string;
+}
+
+/** How much of a segment's text a TurnRef keeps for TurnEnd (see TurnRef.segmentText). */
+const REPLY_TEXT_KEEP = 4_000;
+
+/** Close the segment being written: it becomes the last one with words, if it has any. */
+function rollSegment(ref: TurnRef): void {
+  if (ref.segmentText.trim()) ref.lastText = ref.segmentText;
+  ref.segmentText = '';
+}
+
+/** The text a turn ended on (see TurnRef.segmentText). */
+function finalText(ref: TurnRef): string {
+  return ref.segmentText.trim() ? ref.segmentText : ref.lastText;
 }
 
 /**
@@ -387,6 +447,9 @@ export class TurnRunner {
     // and removed only if it is still THIS turn, so a turn can never unregister its successor.
     const turn: RunningTurn = { agent, platformId, lanes: [addressOf(last.conversation), address] };
     this.running.set(conversationId, turn);
+    this.reportStart(conversationId);
+    // Exactly one end per start, whichever way out the turn takes (see TurnRunnerDeps.recordTurnEnd).
+    let end: TurnEnd = { kind: 'stopped' };
 
     try {
       await agent.runTurn(
@@ -402,6 +465,7 @@ export class TurnRunner {
         render.abort();
         await render.finalize('');
         console.log(`[turn] ${conversationId} turn stopped`);
+        end = { kind: 'stopped' };
       } else {
         // Final flush: footer only on the last stream (intermediate segments carry none).
         await render.finalize(this.buildFooter(conversationId, ref));
@@ -415,8 +479,10 @@ export class TurnRunner {
         // stayed silent — see recordTurnComplete.
         this.deps.recordTurnComplete?.(conversationId);
         console.log(`[turn] ${conversationId} turn complete`);
+        end = { kind: 'done', text: finalText(ref) };
       }
     } catch (err) {
+      end = { kind: 'failed', error: err };
       // Log error detail (InboundMerger only adds a ❌ reaction, keeping no reason).
       console.error(`[turn] ${conversationId} turn failed:`, err instanceof Error ? err.stack ?? err.message : err);
       // Deliver what the turn DID produce before saying it failed — the same clean finalize a
@@ -447,6 +513,27 @@ export class TurnRunner {
     } finally {
       if (this.running.get(conversationId) === turn) this.running.delete(conversationId);
       await releaseTyping();
+      // After typing is released, so a platform listing what needs a person sees the turn's end and
+      // its outcome together rather than "failed" over a dot that still says running.
+      this.reportEnd(conversationId, end);
+    }
+  }
+
+  /** recordTurnStart, never allowed to break the turn it reports on. */
+  private reportStart(conversationId: ConversationId): void {
+    try {
+      this.deps.recordTurnStart?.(conversationId);
+    } catch (e) {
+      console.error('[turn] recordTurnStart failed:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  /** recordTurnEnd, likewise. */
+  private reportEnd(conversationId: ConversationId, end: TurnEnd): void {
+    try {
+      this.deps.recordTurnEnd?.(conversationId, end);
+    } catch (e) {
+      console.error('[turn] recordTurnEnd failed:', e instanceof Error ? e.message : e);
     }
   }
 
@@ -508,9 +595,11 @@ export class TurnRunner {
     return {
       onText: (delta) => {
         if (delta) ref.producedOutput = true;
+        if (ref.segmentText.length < REPLY_TEXT_KEEP) ref.segmentText += delta;
         enqueue(() => ref.stream.push(delta));
       },
-      onToolStart: (evt) =>
+      onToolStart: (evt) => {
+        rollSegment(ref);
         // Before a tool: finish the current text as its own bubble (no footer: not the last segment), then
         // register the tool. Registering is synchronous — the bubble is delivered by the renderer's own
         // painter, off this chain, so a rate-limited chat cannot stall the reply behind a progress write.
@@ -524,16 +613,19 @@ export class TurnRunner {
           await ref.stream.complete();
           tools.onToolStart(evt);
           await tools.placed(BUBBLE_PLACEMENT_WAIT_MS);
-        }),
+        });
+      },
       onToolFinish: (evt) => enqueue(() => tools.onToolFinish(evt)),
-      onSegmentBreak: () =>
+      onSegmentBreak: () => {
+        rollSegment(ref);
         // Tool→text boundary: finish the current (pre-tool) buffer, reset the tool segment, then start a
         // fresh buffer so trailing text goes to a new message (intermediate segments carry no footer).
         enqueue(async () => {
           await ref.stream.complete();
           tools.resetSegment();
           ref.stream = makeStream();
-        }),
+        });
+      },
       // Agent reported available commands: forward to the daemon hook (feeds the harness pickers).
       // Non-blocking, errors swallowed.
       onAvailableCommands: (cmds) => {
@@ -633,6 +725,8 @@ export class TurnRunner {
     const ref: TurnRef = {
       stream: makeStream(),
       producedOutput: false,
+      segmentText: '',
+      lastText: '',
     };
 
     const tools = new ToolRenderer(

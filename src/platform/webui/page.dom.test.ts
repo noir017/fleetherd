@@ -86,6 +86,8 @@ interface Harness {
   recorders: FakeRecorder[];
   /** The delay of every timer the page armed for 10 s or more (only with `shortenLong`), in ms. */
   longTimers: number[];
+  /** What the page did with the push APIs (only with the `push` option). */
+  push: PushLog;
   el: (id: string) => HTMLElement;
   /** Messages currently painted in the transcript. */
   painted: () => number;
@@ -98,6 +100,70 @@ interface Harness {
   /** The "why is this room empty" notice, when one is on screen. */
   notice: () => string | null;
   click: (selector: string) => Promise<void>;
+}
+
+/** What a page did with a fake push-capable browser (see installPush). */
+interface PushLog {
+  registered?: string;
+  subscribedWith?: { userVisibleOnly: boolean; applicationServerKey: Uint8Array };
+  unsubscribed: boolean;
+  /** The worker's message listeners, so a test can play a tapped notification. */
+  listeners: Array<(e: { data: unknown }) => void>;
+}
+
+/**
+ * A browser that can do Web Push, installed before the page's script runs: a service-worker
+ * container whose registration's pushManager hands out one subscription, and a Notification whose
+ * permission prompt answers `answer`. jsdom has none of these.
+ */
+function installPush(
+  w: any,
+  opts: { permission?: string; answer?: string; subscribed?: boolean },
+  log: PushLog
+): void {
+  const sub = {
+    endpoint: 'https://fcm.googleapis.com/fcm/send/dev1',
+    toJSON() {
+      return { endpoint: this.endpoint, expirationTime: null, keys: { p256dh: 'P', auth: 'A' } };
+    },
+    unsubscribe: async () => {
+      log.unsubscribed = true;
+      current = null;
+      return true;
+    },
+  };
+  let current: typeof sub | null = opts.subscribed ? sub : null;
+  const reg = {
+    pushManager: {
+      getSubscription: async () => current,
+      subscribe: async (o: PushLog['subscribedWith']) => {
+        log.subscribedWith = o;
+        current = sub;
+        return sub;
+      },
+    },
+  };
+  Object.defineProperty(w, 'isSecureContext', { value: true, configurable: true });
+  Object.defineProperty(w.navigator, 'serviceWorker', {
+    configurable: true,
+    value: {
+      register: async (url: string) => {
+        log.registered = url;
+        return reg;
+      },
+      ready: Promise.resolve(reg),
+      getRegistration: async () => (current || log.registered ? reg : undefined),
+      addEventListener: (_t: string, fn: (e: { data: unknown }) => void) => log.listeners.push(fn),
+    },
+  });
+  w.PushManager = function PushManager() {};
+  w.Notification = {
+    permission: opts.permission ?? 'default',
+    requestPermission: async () => {
+      w.Notification.permission = opts.answer ?? 'granted';
+      return w.Notification.permission;
+    },
+  };
 }
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
@@ -282,6 +348,8 @@ async function open(
      * a test that takes 15 seconds. Off by default: only the tests about those limits want it.
      */
     shortenLong?: boolean;
+    /** A browser that can do Web Push (see installPush). Absent = jsdom as it is: no notifications offered. */
+    push?: { permission?: string; answer?: string; subscribed?: boolean };
   } = {}
 ): Promise<Harness> {
   const {
@@ -300,7 +368,9 @@ async function open(
     hang = [],
     held = {},
     shortenLong = false,
+    push,
   } = opts;
+  const pushLog: PushLog = { unsubscribed: false, listeners: [] };
   const streams: Stream[] = [];
   const recorders: FakeRecorder[] = [];
   const calls: Call[] = [];
@@ -354,6 +424,7 @@ async function open(
         alerts.push(String(s));
       };
       if (mic) installMic(w, mic, recorders);
+      if (push) installPush(w, push, pushLog);
       if (shortenLong) {
         const real = w.setTimeout.bind(w) as (fn: () => void, ms: number) => number;
         (w as any).setTimeout = (fn: () => void, ms: number): number => {
@@ -403,6 +474,7 @@ async function open(
     confirms,
     recorders,
     longTimers,
+    push: pushLog,
     cached: (topic) => readCache(idb, topic),
     emit: async (ev) => {
       live().onmessage?.({ data: JSON.stringify(ev) });
@@ -3832,5 +3904,208 @@ describe('webui page: tool bubbles fold and open', () => {
     expect(html).toContain('.tl-c{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}');
     expect(html).toContain('.tl-s{flex:none;white-space:pre}');
     expect(html).toContain('.tl.open{display:block;white-space:pre-wrap;overflow-wrap:anywhere}');
+  });
+});
+
+describe('webui page: what needs you, and the dispatcher topic', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const C = 'c3d4e5f6';
+  const D = 'd15a7c40';
+  const rows = (h: Harness): Array<string | null> =>
+    Array.from(h.el('topics').querySelectorAll('[data-topic]')).map((r) => r.getAttribute('data-topic'));
+  const needs = (h: Harness): Array<[string | null, string | undefined]> =>
+    Array.from(h.el('needs').querySelectorAll('.needs-item')).map((r) => [
+      r.getAttribute('data-topic'),
+      r.querySelector('.needs-line')?.textContent ?? undefined,
+    ]);
+  const list = (extra: Record<string, Record<string, unknown>>): Array<Record<string, unknown>> =>
+    [A, B, C, D].map((id, i) => ({ id, title: `T ${id}`, lastAt: 1000 - i, msgCount: 0, stage: 'idle', ...(extra[id] ?? {}) }));
+
+  it('lists what needs you above the topics — questions, then failures, then unread replies — and nothing else', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    expect(h.el('needs').hidden).toBe(true);
+
+    await h.emit({
+      t: 'topics',
+      topics: list({
+        A: {},
+        [B]: { stage: 'review', line: 'Done: shipped 2.18.0' },
+        [C]: { stage: 'failed', line: 'upstream 503' },
+        [D]: { stage: 'answer', line: 'Merge now?' },
+      }),
+    });
+    expect(h.el('needs').hidden).toBe(false);
+    expect(h.el('needs').querySelector('.needs-head')?.textContent).toBe('Needs you (3)');
+    expect(needs(h)).toEqual([
+      [D, 'Waiting on your answer: Merge now?'],
+      [C, 'Failed: upstream 503'],
+      [B, 'Finished: Done: shipped 2.18.0'],
+    ]);
+
+    // Working, retrying and idle take no room; and the topic on screen is not listed as news.
+    await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' }, [B]: { stage: 'working' }, [C]: { stage: 'retrying' } }) });
+    expect(h.el('needs').hidden).toBe(true);
+  });
+
+  it('opens the topic a needs-you row is about', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list({ [C]: { stage: 'failed', line: 'x' } }) });
+    await h.click(`#needs [data-topic="${C}"]`);
+    expect(h.live().url).toBe(`api/events?t=${C}`);
+  });
+
+  it('pins the dispatcher topic first, with neither a star nor a ×', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list({ [D]: { dispatcher: true, title: '📥 Dispatcher' }, [C]: { starred: true } }) });
+    expect(rows(h)).toEqual([D, C, A, B]);
+    const row = h.doc.querySelector(`#topics [data-topic="${D}"]`)!;
+    expect(row.classList.contains('dispatcher')).toBe(true);
+    expect(row.querySelector('[data-del]')).toBeNull();
+    expect(row.querySelector('[data-star]')).toBeNull();
+  });
+
+  it('marks a failed topic’s dot red when nothing else is going on', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list({ [C]: { stage: 'failed' }, [B]: { stage: 'failed', running: true } }) });
+    expect(h.doc.querySelector(`#topics [data-topic="${C}"] .topic-dot`)?.className).toBe('topic-dot failed');
+    expect(h.doc.querySelector(`#topics [data-topic="${B}"] .topic-dot`)?.className).toBe('topic-dot running');
+  });
+
+  it('tells the daemon a reply on screen was read — once, and not while the page is hidden', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    const seen = (): number => h.calls.filter((c) => c.path === 'api/seen').length;
+
+    await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' } }) });
+    expect(h.calls.find((c) => c.path === 'api/seen')?.body).toEqual({ topic: A });
+    await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' } }) });
+    expect(seen()).toBe(1);
+
+    // Another topic's unread reply is not this page's to mark.
+    await h.emit({ t: 'topics', topics: list({ [B]: { stage: 'review' } }) });
+    expect(seen()).toBe(1);
+
+    Object.defineProperty(h.doc, 'visibilityState', { value: 'hidden', configurable: true });
+    await new Promise((r) => setTimeout(r, 2_100));
+    await h.emit({ t: 'topics', topics: list({ [A]: { stage: 'review' } }) });
+    expect(seen()).toBe(1);
+    Object.defineProperty(h.doc, 'visibilityState', { value: 'visible', configurable: true });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+    await tick();
+    expect(seen()).toBe(2);
+  });
+
+  it('switches to a topic a message links to, in place', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${D}` });
+    await h.emit(
+      sync(D, [message('w1', `<p>Done in <a href="?t=${C}" data-goto="${C}">quantlab</a>.</p>`)], [D, A, C])
+    );
+    const before = h.streams.length;
+    await h.click('#log a[data-goto]');
+    expect(h.live().url).toBe(`api/events?t=${C}`);
+    expect(h.streams.length).toBe(before + 1);
+    // Not a navigation: the page is the same page.
+    expect(h.window.location.search).toBe(`?t=${C}`);
+  });
+
+  it('ignores a link to a topic it does not have', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${D}` });
+    await h.emit(sync(D, [message('w1', '<p><a href="?t=99999999" data-goto="99999999">gone</a></p>')], [D, A]));
+    await h.click('#log a[data-goto]');
+    expect(h.live().url).toBe(`api/events?t=${D}`);
+  });
+});
+
+describe('webui page: notifications on this device', () => {
+  const A = 'a1b2c3d4';
+  const C = 'c3d4e5f6';
+  const KEY = 'BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8';
+  const ready = async (h: Harness): Promise<void> => {
+    await h.emit(sync(A, [], [A, C]));
+    await until('the toggle is drawn', () => !h.el('notify-toggle').hidden);
+  };
+
+  it('is not offered by a browser that cannot do it', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}`, replies: { 'api/push': { enabled: true, key: KEY } } });
+    await h.emit(sync(A, [], [A]));
+    await tick();
+    expect(h.el('notify-toggle').hidden).toBe(true);
+    expect(h.calls.some((c) => c.path === 'api/push')).toBe(false);
+  });
+
+  it('is not offered when the server sends none', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}`, push: {}, replies: { 'api/push': { enabled: false } } });
+    await h.emit(sync(A, [], [A]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.el('notify-toggle').hidden).toBe(true);
+  });
+
+  it('turns on: asks permission, registers the worker, subscribes with the server key, and tells the server', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}`, push: {}, replies: { 'api/push': { enabled: true, key: KEY } } });
+    await ready(h);
+    expect(h.el('notify-toggle').textContent).toBe('Notifications: off');
+
+    await h.click('#notify-toggle');
+    await until('the subscription reached the server', () => h.calls.some((c) => c.path === 'api/push/subscribe'));
+    expect(h.push.registered).toBe('sw.js');
+    expect(h.push.subscribedWith?.userVisibleOnly).toBe(true);
+    expect(Buffer.from(h.push.subscribedWith!.applicationServerKey).toString('base64url')).toBe(KEY);
+    expect(h.calls.find((c) => c.path === 'api/push/subscribe')?.body).toEqual({
+      endpoint: 'https://fcm.googleapis.com/fcm/send/dev1',
+      expirationTime: null,
+      keys: { p256dh: 'P', auth: 'A' },
+    });
+    await until('the toggle says so', () => h.el('notify-toggle').textContent === 'Notifications: on');
+  });
+
+  it('turns off: unsubscribes here and on the server', async () => {
+    const h = await open({
+      url: `http://localhost:8787/?t=${A}`,
+      push: { permission: 'granted', subscribed: true },
+      replies: { 'api/push': { enabled: true, key: KEY } },
+    });
+    await ready(h);
+    await until('it knows it is on', () => h.el('notify-toggle').textContent === 'Notifications: on');
+    await h.click('#notify-toggle');
+    await until('the server was told', () => h.calls.some((c) => c.path === 'api/push/unsubscribe'));
+    expect(h.push.unsubscribed).toBe(true);
+    expect(h.calls.find((c) => c.path === 'api/push/unsubscribe')?.body).toEqual({ endpoint: 'https://fcm.googleapis.com/fcm/send/dev1' });
+    await until('the toggle says so', () => h.el('notify-toggle').textContent === 'Notifications: off');
+  });
+
+  it('says so when the browser blocks it, and asks nothing', async () => {
+    const h = await open({
+      url: `http://localhost:8787/?t=${A}`,
+      push: { permission: 'denied' },
+      replies: { 'api/push': { enabled: true, key: KEY } },
+    });
+    await ready(h);
+    expect(h.el('notify-toggle').textContent).toBe('Notifications: blocked in this browser');
+    expect((h.el('notify-toggle') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('a permission refused at the prompt subscribes nothing', async () => {
+    const h = await open({
+      url: `http://localhost:8787/?t=${A}`,
+      push: { answer: 'denied' },
+      replies: { 'api/push': { enabled: true, key: KEY } },
+    });
+    await ready(h);
+    await h.click('#notify-toggle');
+    await until('the toggle repaints', () => h.el('notify-toggle').textContent === 'Notifications: blocked in this browser');
+    expect(h.calls.some((c) => c.path === 'api/push/subscribe')).toBe(false);
+  });
+
+  it('a tapped notification brings the page to its topic', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}`, push: {}, replies: { 'api/push': { enabled: true, key: KEY } } });
+    await ready(h);
+    h.push.listeners.forEach((fn) => fn({ data: { goto: C } }));
+    await tick();
+    expect(h.live().url).toBe(`api/events?t=${C}`);
   });
 });

@@ -7,6 +7,7 @@ import type {
   InboundMessage,
   MessageRef,
   SlashCommandSpec,
+  TopicActivity,
 } from '../types.js';
 
 /**
@@ -228,6 +229,37 @@ export interface PlatformAdapter {
    * it having been shown.
    */
   setStatus?(address: ConversationAddress, status: AgentStatus | undefined): void;
+
+  /**
+   * Tell the platform how the conversation at an address last ended, and whether a turn is about to
+   * be continued automatically (see TopicActivity) — for a platform that lists its conversations and
+   * can say which of them need the person (core/topic-stage.ts). `undefined` forgets it (`/new`).
+   *
+   * Pushed for the reason setStatus is: it changes only at a turn's start and end, which the daemon
+   * sees. Optional and web-UI-only for the reason the lookups above are: a chat app's conversation
+   * list is the chat app's. Synchronous and best-effort.
+   */
+  setActivity?(address: ConversationAddress, activity: TopicActivity | undefined): void;
+
+  /**
+   * When the person last looked at the conversation at an address (epoch ms), as far as this
+   * platform can tell — undefined when it cannot tell at all, which every chat app is: none reports
+   * that a bot's message was read. The web UI can, because its page says so (`api/seen`).
+   *
+   * Asked by the dispatcher (daemon/dispatcher.ts) before telling it a conversation needs the
+   * person: one the person is already reading needs no telling.
+   */
+  seenAt?(address: ConversationAddress): number | undefined;
+
+  /**
+   * The lane the dispatcher topic lives in: opened (and pinned) when `on`, retired when not — the
+   * conversation `dispatcher.agent` answers, from which the person hands work to other conversations
+   * (daemon/dispatcher.ts). Returns its address while on.
+   *
+   * Optional and web-UI-only for now: a chat app's topics are the chat app's to create, name and
+   * pin, and the first platform to do this is the one that draws its own topic list.
+   */
+  dispatchLane?(on: boolean): ConversationAddress | undefined;
 
   /** Send a message with buttons (used by clarify). */
   sendButtons(

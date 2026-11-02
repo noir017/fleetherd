@@ -55,6 +55,8 @@ naming it, and they are all of them:
 | `reading.ts` | Which files the page can read in place, and the HTML it is given for one. Pure. |
 | `page.ts` | The whole page (HTML + CSS + JS) as a module-level string |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is one |
+| `webpush.ts` | Web Push, server half: the VAPID key, the subscribed devices, RFC 8291 encryption, the endpoint allowlist |
+| `sw.ts` | The service worker (`sw.js`) as a string: shows a push, opens the topic when it is tapped — and nothing else |
 | [`../web-markdown.ts`](../web-markdown.ts) | Markdown → escaped HTML; lives with the other converters |
 
 `room.ts` is deliberately free of HTTP so the adapter's behaviour is testable without opening
@@ -339,6 +341,58 @@ Layout was measured in Chromium against a real daemon with seven agents on two m
 line cut, and nothing wider than `#log`. The launcher is 720 px wide rather than less because
 "deepseek-v4.1-flash-free" needs 143 px in the UI face (159 px in monospace) and a desktop card
 leaves 148.
+
+## What needs the operator
+
+Each topic in the list carries a `stage` and a `line` (core/topic-stage.ts), computed on every list
+from three things: the room's own `typing` and live buttons, the outcome the daemon pushes
+(`setActivity`: how the last turn ended, and any scheduled continue), and `seenAt`, when the
+operator last looked. The page draws **Needs you** from them: answer, failed, review — and nothing
+for a healthy topic, which is the point. The outcome and `seenAt` are persisted in the topic file
+("you have not read this" has to survive the restart that an update is); a scheduled continue is not
+(its timer dies with the daemon).
+
+**`seenAt` is the server's clock, not the page's.** The page only says *now* (`api/seen {topic}`), and
+only when the topic on screen is in `review` and the page is visible; the room stamps `Date.now()`.
+It is compared with a turn's end, which is the daemon's time, and a phone's clock is nothing to
+compare a server's with. Posting only on `review` keeps the traffic to one request per reply read.
+
+**The dispatcher's topic** has a fixed id (`DISPATCH_TOPIC`) because it is a conversation: the same id
+across restarts is the same agent session. It is pinned first, never evicted or swept, cannot be
+deleted (`409` with a sentence, and the page draws no ×) or renamed, and the daemon gives it no
+directory label. `dispatchLane(false)` makes it an ordinary topic again; the daemon starts its
+conversation over, since its session was created without tools.
+
+A link to another topic is `?t=<id>` — the one relative link `web-markdown.ts` keeps — rendered with
+`data-goto`, which the page intercepts to switch in place.
+
+## Notifications
+
+A phone freezes the page the moment it is put down, so nothing the event stream carries reaches it
+(see [Every topic keeps its transcript](#every-topic-keeps-its-transcript)). Only a push service does,
+so the page offers Web Push (`webpush.ts`, `sw.ts`) behind a per-device toggle in the sidebar footer —
+never a permission prompt nobody asked for.
+
+- **What notifies** is decided in `room.ts` `watchStages`: a topic entering a needs-you stage, and
+  still in it after `NOTIFY_GRACE_MS` (the page marks a reply it is showing as seen within a round
+  trip, so the grace is what keeps the phone quiet about what was just read). With a dispatcher only
+  its topic notifies — it is told about the rest, and two notifications for one event is noise.
+- **No dependency.** RFC 8291 and RFC 8292 are a hundred lines over `node:crypto`; `webpush.test.ts`
+  checks the encryption byte for byte against RFC 8291's Appendix A and decrypts real messages as the
+  browser would. Verified end to end on 2026-11-02 in Chromium through FCM to the worker's
+  `getNotifications()` (`project-scripts/talkcode-dispatcher/push.mjs`).
+- **The endpoint allowlist is a security boundary** (AGENTS.md invariant 7): the server POSTs to a URL
+  a browser chose. Unbranded Chromium subscribes at `jmt17.google.com/fcm/send/…`, not
+  `fcm.googleapis.com` — found when the first real subscription was refused — so that entry is held to
+  the `/fcm/` path rather than all of google.com.
+- **The worker caches nothing.** It has no `fetch` handler, so every request goes to the network as if
+  it were not there; the [rule below](#installing-it-as-an-app) against a worker was about a cached
+  app shell, and still holds. `sw.js` is served open (the browser re-checks it on its own schedule),
+  `no-cache`, under a CSP of its own; the page's CSP gains `worker-src 'self'`, which names where a
+  worker may come from and lets no same-origin file run as a page script.
+- The key is made once and kept in `webui-push-<instance>/` (0700, files 0600): every subscription
+  names it, so a new key would orphan every device. A subscription the push service answers 404/410
+  for is dropped.
 
 ## Capabilities
 
@@ -1075,7 +1129,9 @@ user's, so recording must not cost it.
 `manifest.ts` is what makes a phone offer "install" rather than "bookmark", and the page's
 head carries the tags that go with it. Three things worth knowing before changing any of it.
 
-**There is no service worker, and adding one for installability would be a mistake.** Chrome
+**There is no service worker for installability, and adding one for that would be a mistake.** (There
+is one for [notifications](#notifications), registered only when the operator turns them on, and it
+caches nothing — which is the whole of the objection below.) Chrome
 dropped the service-worker-with-a-fetch-handler requirement — the check was a proxy for "has
 an offline story", sites defeated it with empty handlers, and it was removed rather than
 tightened ([Chrome for Developers](https://developer.chrome.com/blog/update-install-criteria),

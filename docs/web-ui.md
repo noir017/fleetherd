@@ -56,6 +56,14 @@ which were closed. Each conversation is kept, and the next message in a topic st
 again where it left off. A topic that starts working in the meantime is left running, and
 starred topics are closed like the rest.
 
+**What needs you.** Above the topics, **Needs you** lists every topic waiting on you, with one
+line each: a question to answer (amber), a turn that failed (red), or a reply you have not read
+yet (green). Its first line is shown, which is usually the conclusion. A reply leaves the list once
+you have looked at it. A failure stays until the next turn runs, and its dot in the list stays red.
+Working and idle topics are not listed, so the list is empty when nothing needs you.
+With a [dispatcher](dispatcher.md), its 📥 topic is pinned at the top; it hands work to other
+topics and tells you there when one needs you. A link to a topic in a reply opens it in place.
+
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here
 a row carries the whole command — up to 2000 characters — where a chat app gets the
 first 40 (`tools.previewLimit`). The row is cut at the edge of the bubble, so a wide
@@ -95,6 +103,26 @@ message says it is not confirmed until the page has checked; if the daemon never
 it turns red with **Retry**. Retry after a reload works for text; a message that carried
 files offers **Copy** and **Discard**, because the files themselves are not kept. The
 composer's draft is saved too, a second after you stop typing.
+
+## Notifications
+
+**Notifications: off** at the bottom of the topic list turns on push notifications for this
+device. The browser asks for permission once. After that the device is notified even when the
+page is closed or the phone is locked. Tapping a notification opens the topic.
+
+What notifies: with a dispatcher, its 📥 topic's replies, since that is where everything else is
+reported. Without one, any topic that starts needing you. A topic you are reading when it happens
+does not notify. Turn it on in each browser where you want notifications, and off the same way.
+
+- Chrome, Edge and Firefox on desktop and Android. On iPhone and iPad, only after **Add to Home
+  Screen** (iOS 16.4 or later), opened from the home-screen icon.
+- The page has to be served over HTTPS (or from `localhost`). A plain `http://` address on the
+  network cannot ask for notifications.
+- Notifications go through the browser maker's push service (Google, Mozilla or Apple). The
+  gateway needs to reach it over HTTPS. The content is encrypted for your device, and is only the
+  topic's name and one line.
+- The key and the devices are kept in `~/.config/talkcode/webui-push-<instance>/`. Deleting the
+  directory forgets every device, and each one has to turn notifications on again.
 
 ## Terminal
 

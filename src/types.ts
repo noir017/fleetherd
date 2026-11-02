@@ -439,3 +439,67 @@ export interface AgentCatalogEntry {
   /** The model configured for it, when there is one — short, as the footer says it (no vendor prefix). */
   model?: string;
 }
+
+/**
+ * Why a turn failed, as precisely as the runtime could tell. What `agents[].hooks.turnFailed`
+ * matches `continue.on` against, so the words are the operator's vocabulary as much as ours.
+ *
+ * The first five are claude-agent-acp's own failure lanes (its AIR `sessionFailure` category, see
+ * daemon/session-failure.ts) and are only ever reported for the `claude` harness — the others fail a
+ * turn with nothing but text, which is `other`. The rest are the gateway's:
+ *  - `provider` — the model provider failed in a lane the harness did not name;
+ *  - `hung`     — the silence watchdog gave up on the turn (session.turnTimeoutMs of nothing);
+ *  - `startup`  — the agent's child could not be started at all;
+ *  - `preLaunch`— the operator's `hooks.preLaunch` command failed;
+ *  - `restart`  — the gateway went down while the turn was running (found on the next start);
+ *  - `other`    — anything else.
+ */
+export type TurnFailureReason =
+  | 'service'
+  | 'limit'
+  | 'connection'
+  | 'access'
+  | 'request'
+  | 'provider'
+  | 'hung'
+  | 'startup'
+  | 'preLaunch'
+  | 'restart'
+  | 'other';
+
+/**
+ * How a conversation's last turn ended, for a surface that lists what is waiting on a person.
+ *
+ * Only the two endings that leave something for a person: a stopped turn leaves nothing (the person
+ * stopped it), and a turn still running has no ending yet.
+ */
+export interface TurnOutcome {
+  kind: 'done' | 'failed';
+  /** When it ended, epoch ms. Compared against when the person last looked (`TopicFacts.seenAt`). */
+  at: number;
+  /**
+   * One line to show beside the conversation's name: the reply's first line for `done` — replies
+   * here are written conclusion-first — and what went wrong for `failed`. Absent when there is none.
+   */
+  line?: string;
+  /** Only on `failed`. */
+  reason?: TurnFailureReason;
+}
+
+/**
+ * What the gateway knows about a conversation that a platform does not: how its last turn ended, and
+ * whether a turn is about to be continued automatically (`hooks.turnFailed.continue`). Pushed to a
+ * platform that lists its conversations (`PlatformAdapter.setActivity`); whether a turn is running
+ * or a question is on screen the platform already knows from typing and buttons.
+ */
+export interface TopicActivity {
+  outcome?: TurnOutcome;
+  /** An automatic continue is scheduled: which attempt, out of how many, due when (epoch ms). */
+  retry?: { attempt: number; max: number; at: number };
+}
+
+/**
+ * Where a conversation stands, from a person's point of view (core/topic-stage.ts). The first three
+ * of the `needs-you` ones are the only ones a list of things to do shows; see `needsPerson`.
+ */
+export type TopicStage = 'answer' | 'failed' | 'review' | 'retrying' | 'working' | 'idle';

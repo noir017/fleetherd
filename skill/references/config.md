@@ -47,7 +47,24 @@ session:
 access:
   allowFrom: []     # identities "<instance-id>:<userId>"; EMPTY = anyone can drive
                     # a full-tool-access agent — fill this in shared deployments
+
+dispatcher:         # optional — see below
+  agent: claude
 ```
+
+## `dispatcher`
+
+```yaml
+dispatcher:
+  agent: claude-light   # an agents[].id; any harness but agy
+```
+
+The agent that answers the pinned 📥 topic of the web UI: the person asks there, and it hands the
+work to other topics (`task_new`, `task_send`, …) and is told when one needs the person. On a
+`claude` agent it gets no built-in tools at all — it cannot run commands or edit files, only hand
+work out. It works in `~/.talkcode/dispatcher/` (on its own machine), whose `AGENTS.md` is its
+instructions: written once with defaults, never overwritten — edit it there. A cheaper model is
+usually enough. Applied by `talkcode reload`. See docs/dispatcher.md.
 
 ## `platforms.<id>` — per-platform entries
 
@@ -159,6 +176,13 @@ DMs always get a response regardless of `requireMention` (frozen behavior).
   permissions: auto     # auto (default) | ask — see below
   hooks:
     preLaunch: docker start my-agent   # bash -lc, run to completion before every spawn
+    turnFailed:                        # optional: what happens after a failed turn
+      continue:                        # absent = never continue automatically
+        on: [service, connection, limit, hung, restart]   # (default) which failures
+        message: continue              # (default) sent to the agent as the user's words
+        max: 3                         # (default) in a row, 1-10
+        backoffMs: 30000               # (default) first wait; doubles, capped at 10 min
+      command: notify-me.sh            # bash -lc after every failure; JSON in $TALKCODE_TURN_FAILURE
 ```
 
 Notes:
@@ -178,6 +202,11 @@ Notes:
   default mode; Codex and OpenCode did not ask when measured. Not available for `agy`.
 - `hooks.preLaunch` runs before every start of the agent's process; a non-zero exit or 60s
   without finishing fails the turn and the agent is not started. See docs/agents.md.
+- `hooks.turnFailed.continue.on` takes: `service`, `limit`, `connection`, `access`, `request`
+  (Claude Code's own failure kinds), `provider`, `hung` (silent past the turn timeout),
+  `startup`, `preLaunch`, `restart` (the gateway went down mid-turn), `other`. Each continue is
+  announced in the chat first; anything the user sends, `/stop`, `/new` or `/kill` calls it off,
+  and a turn that ends normally resets the count. See docs/agents.md.
 
 ## `routing`
 

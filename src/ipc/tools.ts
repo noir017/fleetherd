@@ -42,6 +42,12 @@ export interface NativeTool {
   positionals: Record<string, string>;
   /** Closed sets of accepted values, keyed by parameter name (positional or option). */
   enums?: Record<string, readonly string[]>;
+  /**
+   * Leave out the `channel` parameter every other tool has. For commands that name what they act on
+   * themselves (the task commands, which take `topic`), where `channel` would be a second answer to
+   * the same question that `build` refuses anyway — and a parameter the model pays for every request.
+   */
+  noChannel?: true;
 }
 
 export const NATIVE_TOOLS: readonly NativeTool[] = [
@@ -74,6 +80,65 @@ export const NATIVE_TOOLS: readonly NativeTool[] = [
   },
 ];
 
+/**
+ * The dispatcher's tools — given ONLY to the dispatcher's own session (`talkcode mcp --dispatch`,
+ * see daemon/dispatcher.ts), on top of the two above.
+ *
+ * The reasoning that keeps NATIVE_TOOLS at two runs the other way here. These are the dispatcher's
+ * whole job, and on claude they are its only tools at all (its built-in ones are taken away — see
+ * agent-acp.ts DISPATCHER_SESSION_META), so there is nothing to find them behind. Every other session
+ * never sees them: listing them everywhere would bill every request for six tools that only one
+ * conversation can use, and the daemon refuses them from any other conversation regardless.
+ */
+export const DISPATCH_TOOLS: readonly NativeTool[] = [
+  {
+    name: 'task_agents',
+    command: 'task-agents',
+    description: 'The agents work can be handed to: where each runs, its model, and the project directories it can start in.',
+    positionals: {},
+    noChannel: true,
+  },
+  {
+    name: 'task_list',
+    command: 'tasks',
+    description:
+      'Every conversation, most recent first, with its agent, directory, stage and one line. Stages: answer (a question ' +
+      'waits on the person), failed, review (a reply the person has not read), retrying, working, idle.',
+    positionals: {},
+    noChannel: true,
+  },
+  {
+    name: 'task_new',
+    command: 'task-new',
+    description:
+      "Open a new conversation for a piece of work and hand its agent the person's request, word for word, as the " +
+      "first message. Returns the conversation's topic id and a link to it.",
+    positionals: { text: "the person's request, verbatim" },
+    noChannel: true,
+  },
+  {
+    name: 'task_send',
+    command: 'task-send',
+    description: "Hand the person's words to the agent of an existing conversation (into its turn if one is running).",
+    positionals: { topic: 'the topic id from task_list or task_new', text: "the person's words, verbatim" },
+    noChannel: true,
+  },
+  {
+    name: 'task_read',
+    command: 'task-read',
+    description: "A conversation's recent messages, oldest first — to answer a question about it without asking its agent.",
+    positionals: { topic: 'the topic id from task_list or task_new' },
+    noChannel: true,
+  },
+  {
+    name: 'task_stop',
+    command: 'task-stop',
+    description: "Stop what a conversation's agent is doing. Only when the person asked for that conversation to stop.",
+    positionals: { topic: 'the topic id from task_list or task_new' },
+    noChannel: true,
+  },
+];
+
 /** A positional as the usage string declares it: `<name>` is required, `[name]` is not. */
 interface Positional {
   name: string;
@@ -103,8 +168,8 @@ export function optionKey(opt: ReverseOption): string {
   return long.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-function optionsOf(spec: ReverseCommandSpec): ReverseOption[] {
-  return [...spec.options, CHANNEL_OPTION];
+function optionsOf(spec: ReverseCommandSpec, tool: NativeTool): ReverseOption[] {
+  return tool.noChannel ? [...spec.options] : [...spec.options, CHANNEL_OPTION];
 }
 
 /** JSON Schema for a tool's arguments, as MCP `tools/list` carries it. */
@@ -121,7 +186,7 @@ export function toolInputSchema(tool: NativeTool): Record<string, unknown> {
     properties[p.name] = prop(p.name, tool.positionals[p.name]);
     if (p.required) required.push(p.name);
   }
-  for (const opt of optionsOf(spec)) {
+  for (const opt of optionsOf(spec, tool)) {
     const key = optionKey(opt);
     properties[key] = prop(key, opt.description);
   }
@@ -145,7 +210,7 @@ export function toolAction(tool: NativeTool, args: unknown): IpcAction {
   const given = input as Record<string, unknown>;
 
   const positionals = positionalsOf(spec);
-  const options = optionsOf(spec);
+  const options = optionsOf(spec, tool);
   const known = new Set([...positionals.map((p) => p.name), ...options.map(optionKey)]);
   const unknown = Object.keys(given).filter((k) => !known.has(k));
   if (unknown.length) {
@@ -184,6 +249,11 @@ export function toolAction(tool: NativeTool, args: unknown): IpcAction {
   return spec.build(pos, opts);
 }
 
-export function findNativeTool(name: string): NativeTool | undefined {
-  return NATIVE_TOOLS.find((t) => t.name === name);
+/** The tools a session's MCP server lists: the two, plus the dispatcher's own in its session. */
+export function toolsFor(dispatch: boolean): readonly NativeTool[] {
+  return dispatch ? [...NATIVE_TOOLS, ...DISPATCH_TOOLS] : NATIVE_TOOLS;
+}
+
+export function findNativeTool(name: string, dispatch = false): NativeTool | undefined {
+  return toolsFor(dispatch).find((t) => t.name === name);
 }

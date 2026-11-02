@@ -10,6 +10,7 @@ import type {
   SteerOutcome,
   ToolEvent,
   ToolFinishEvent,
+  TurnFailureReason,
 } from '../types.js';
 import type { PromptImageType } from '../core/attachment-ingest.js';
 // ModelSelector lives in types.ts rather than here: core/model-menu.ts renders it into a paginated
@@ -350,6 +351,32 @@ export interface AgentSession {
  * - `unresumable`— a child is up but its context exists only inside that process. Never reclaimed.
  */
 export type ReclaimState = 'no-child' | 'resumable' | 'unresumable';
+
+/**
+ * A turn failure the runtime could put a reason to (see TurnFailureReason for the vocabulary).
+ *
+ * Thrown by the runtimes in place of a plain Error wherever they know WHY, so that
+ * `hooks.turnFailed` can tell an upstream 5xx worth continuing after from a missing login that no
+ * amount of continuing fixes. The message is unchanged: it is still the sentence the chat shows.
+ * Anything thrown that is not one of these reads as `other` (turnFailureReason).
+ *
+ * Here, in the interfaces file, because both runtimes and the agent hooks throw it and the turn
+ * runner reads it — and this file imports nothing they could cycle through.
+ */
+export class TurnFailure extends Error {
+  constructor(
+    message: string,
+    readonly reason: TurnFailureReason
+  ) {
+    super(message);
+    this.name = 'TurnFailure';
+  }
+}
+
+/** The reason a turn failed with, `other` for anything a runtime did not classify. */
+export function turnFailureReason(err: unknown): TurnFailureReason {
+  return err instanceof TurnFailure ? err.reason : 'other';
+}
 
 /**
  * Session factory. getOrCreate gets/builds a session by (sessionId, agentId) — agentId selects which

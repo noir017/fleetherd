@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
+import { TurnFailure } from './agent.js';
 import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
 import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './schedule-bash.js';
@@ -86,7 +87,7 @@ export async function runPreLaunchHook(
     return;
   }
   console.warn(`[hook] ${failure} (after ${took}${output})`);
-  throw r.aborted ? new PreLaunchCancelled(failure) : new Error(failure);
+  throw r.aborted ? new PreLaunchCancelled(failure) : new TurnFailure(failure, 'preLaunch');
 }
 
 /** The chat-facing sentence for a run that did not succeed; undefined when it did. */
@@ -106,4 +107,58 @@ function describeFailure(agentId: string, r: BashRunResult, timeoutMs: number): 
 export function tailReason(output: string): string {
   const flat = output.replace(/\s+/g, ' ').trim();
   return flat.length > REASON_TAIL_CHARS ? `…${flat.slice(flat.length - (REASON_TAIL_CHARS - 1))}` : flat;
+}
+
+/**
+ * How long a `hooks.turnFailed.command` may run. It reports a failure; it does not repair one, so a
+ * minute is generous — and frozen for the reason PRE_LAUNCH_TIMEOUT_MS is: a hang detector.
+ */
+export const TURN_FAILED_TIMEOUT_MS = 60_000;
+
+/** What `hooks.turnFailed.command` is told, as JSON in `TALKCODE_TURN_FAILURE`. */
+export interface TurnFailedReport {
+  agent: string;
+  /** The conversation key (opaque, but stable: the same key every report from that conversation). */
+  conversation: string;
+  /** TurnFailureReason. */
+  reason: string;
+  /** The sentence the chat was shown. */
+  message: string;
+  /** Epoch ms. */
+  at: number;
+  /** Set when an automatic continue was scheduled for it: which attempt, out of how many. */
+  continuing?: { attempt: number; max: number };
+}
+
+/**
+ * Run `def.hooks.turnFailed.command`, if there is one. Never rejects and is never awaited by a turn:
+ * the turn has already failed and said so, and an alert that cannot be sent is a log line, not a
+ * second failure in the chat.
+ *
+ * On the agent's own machine like preLaunch, with the agent's environment minus the token, plus the
+ * report. Output goes to a log file per agent beside preLaunch's.
+ */
+export async function runTurnFailedHook(def: AgentDef, report: TurnFailedReport, opts: { cwd: string; logDir?: string }): Promise<void> {
+  const command = def.hooks?.turnFailed?.command;
+  if (!command) return;
+  const host = remoteHosts.hostFor(def);
+  const run = {
+    command,
+    cwd: opts.cwd,
+    timeoutMs: TURN_FAILED_TIMEOUT_MS,
+    logDir: opts.logDir ?? path.join(configDir(), 'hooks', def.id),
+    stamp: `failed-${new Date(report.at).toISOString().replace(/[:.]/g, '-')}`,
+    signal: new AbortController().signal,
+  };
+  const json = JSON.stringify(report);
+  try {
+    const r = host
+      ? await runRemoteBashCommand(host, { ...run, env: { ...remoteAgentEnv(def), TALKCODE_TURN_FAILURE: json } })
+      : await runBashCommand({ ...run, env: { ...buildHarnessEnv(def), TALKCODE_TURN_FAILURE: json }, settleOnExit: true });
+    const failure = r.spawnError ?? (r.timedOut ? 'timed out' : r.exitCode === 0 ? undefined : `exit ${r.exitCode ?? 'by a signal'}`);
+    if (failure) console.warn(`[hook] agent "${def.id}": turnFailed command ${failure}${r.logFile ? `; output: ${r.logFile}` : ''}`);
+    else console.log(`[hook] agent "${def.id}": turnFailed command ok${r.logFile ? `; output: ${r.logFile}` : ''}`);
+  } catch (e) {
+    console.warn(`[hook] agent "${def.id}": turnFailed command could not run:`, e instanceof Error ? e.message : e);
+  }
 }

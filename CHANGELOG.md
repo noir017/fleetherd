@@ -5,6 +5,41 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A dispatcher topic.** One person can only watch a few conversations at once: over a
+  month on this deployment, the topics written to in an hour were two at the median and four at the
+  90th percentile, and with five or more open, a reply to the one waiting took twice as long. So the
+  checking now has an owner. Set `dispatcher.agent` and that agent answers a pinned **📥 Dispatcher**
+  topic in the web UI. Tell it what you want: it opens a topic for each piece of work, hands it your
+  words exactly as written, and comes back in 📥 with a link when one has a result, a question or a
+  failure. Topics that are fine are not mentioned. On Claude Code it has no tools of its own — no
+  shell, no files — so it cannot drift into doing the work itself. Its instructions are an
+  `AGENTS.md` in a directory of its own that you can edit. See docs/dispatcher.md.
+- **The web UI lists what needs you.** Above the topics, **Needs you** shows each topic waiting on
+  an answer, a failure, or a reply you have not read, with its first line, and nothing else. A reply
+  leaves the list once you have looked at it; a failed topic's dot stays red until something runs
+  there again.
+- **Notifications on your phone, with the page closed.** The web UI can send push notifications to
+  any browser that turns them on (Chrome, Edge, Firefox; Safari once added to the home screen). A
+  phone puts the page to sleep the moment it is put down, so until now nothing reached it until it
+  was opened again. What notifies is what needs you; something you are reading when it happens does
+  not. The content is encrypted for the device and is a topic's name and one line.
+- **A failed turn can carry on by itself.** `agents[].hooks.turnFailed.continue` sends your own
+  words (say, 继续) after the failures you name — an upstream outage, a dropped connection, a hung
+  agent, a restart — with a doubling wait, up to a few times in a row, announcing each one first.
+  Anything you send calls it off. `turnFailed.command` runs a command of yours after every failure,
+  with the details as JSON, to alert you however you like.
+- **A turn cut off by a restart says so.** When the gateway stops in the middle of a turn — an
+  update that waited its 30 minutes, or a crash — the topic now says so when it is back, the topic
+  is listed as failed, and `turnFailed` can continue it. Before, the last thing it said was that the
+  restart would wait for it.
+
+### Changed
+
+- **MCP tool calls show the tool's name** (`send_file`, `task_new`) in their bubble instead of a
+  bare "Tool".
+
 ## [2.17.0] - 2026-11-02
 
 ### Added

@@ -50,6 +50,9 @@ session:
 
 access:
   allowFrom: ["discord-main:123456"]   # <instanceId>:userId; empty = anyone
+
+dispatcher:                   # optional: an agent that hands work out — see The dispatcher
+  agent: claude
 ```
 
 `${VAR}` expands from the environment plus a `<configDir>/.env` sidecar, so
@@ -63,8 +66,9 @@ the YAML can be committed.
 
 The rest is described where it is used: each harness's options in [Agents](agents.md), the web
 UI's `terminal:` and `sso:` in [Web UI](web-ui.md), `title:` in [Topic names](topic-names.md),
-`voice:` in [Voice messages](voice.md), and `hosts:` with `agents[].host` in
-[Remote hosts](remote-hosts.md). A handful of fields can also be changed from chat,
+`voice:` in [Voice messages](voice.md), `hosts:` with `agents[].host` in
+[Remote hosts](remote-hosts.md), `dispatcher:` in [The dispatcher](dispatcher.md), and
+`agents[].hooks` in [Agents](agents.md#pre-launch-hook). A handful of fields can also be changed from chat,
 without a restart — see [Settings from chat](settings.md).
 
 ## Changing it while the daemon runs

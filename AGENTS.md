@@ -71,7 +71,7 @@ Enforced facts, verifiable with grep:
   all of those are injected. This is what makes it unit-testable without mocks of the
   IM stack.
 - `platform/` imports only pure pieces of `core/` — `proxy.ts`, `conversation.ts`,
-  `outbound-errors.ts` — and never `daemon/`. Profiles never see the whole `Config`, only
+  `outbound-errors.ts`, `topic-stage.ts` — and never `daemon/`. Profiles never see the whole `Config`, only
   their own typed `platforms.<id>` entry. One platform also imports `config/load.ts`, for
   `configDir()` alone: `webui/` persists its topic list beside the daemon's own state files,
   and the alternative was a second copy of that path. The arrow already allows it
@@ -134,13 +134,23 @@ gateway puts in front of the work tells the model what kind of job this is befor
 job, and no wording avoids that. A change that adds text to what an agent receives needs to say
 why the harness could not carry it.
 
+Three things reach an agent that the person did not type in that conversation, each decided on
+2026-11-02 and each kept to the one place it is for. The **dispatcher** (`daemon/dispatcher.ts`)
+is told about other conversations in a `[topic updates]` card, because no harness can carry
+another conversation's state; it goes to the dispatcher's conversation only, never a worker's,
+and is shown folded in that topic before it is sent. Its role is an `AGENTS.md` in a directory of
+its own (`daemon/dispatcher-home.ts`), read by the harness's own project-instructions mechanism
+and the operator's to edit. And `hooks.turnFailed.continue.message` is sent after a failed turn
+— the operator's own words, announced in the chat first, off unless configured. A worker handed
+work by the dispatcher gets the person's text and nothing else.
+
 **Best-effort side effects don't break turns.** Reactions, headers, receipts, and menu
 edits are `void`-and-`catch`: a failure is logged and the turn continues.
 
 ## Testing
 
-Vitest, colocated: `foo.ts` is tested by `foo.test.ts` in the same directory. ~2680
-tests across 131 files. The Go half (`remote/`) has its own `go test`, colocated the same way.
+Vitest, colocated: `foo.ts` is tested by `foo.test.ts` in the same directory. ~2930
+tests across 141 files. The Go half (`remote/`) has its own `go test`, colocated the same way.
 
 ```bash
 npm test              # vitest run
@@ -210,6 +220,15 @@ Do not weaken these without saying so explicitly in the PR:
    here only the reverse commands, `mcp` and `help` (`daemon/remote-hosts.ts` isBridgedCommand),
    never `start`, `setup` or any other part of the gateway's administration — and what it runs
    still passes the IPC token check and `ipc/protocol.ts` validation like a local agent's command.
+6. **The dispatcher hands work out and does nothing else.** The task commands (`task-*`) are
+   refused to every conversation but the dispatcher's (`Dispatcher.handle`), and on claude its
+   session has no built-in tools at all (`DISPATCHER_SESSION_META`). What it hands a worker is the
+   person's text, verbatim. A dispatcher that could run commands, or a worker that could hand work
+   to others, would be an agent with powers nobody configured.
+7. **The web UI POSTs only to push services.** A push subscription's endpoint is a URL a browser
+   chose, and the server sends to it; `webui/webpush.ts` allowedEndpoint holds it to HTTPS on the
+   push services browsers use, at subscribe time and again before every send — the outbound twin
+   of invariant 3.
 
 ## Adding things
 

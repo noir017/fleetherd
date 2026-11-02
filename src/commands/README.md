@@ -6,10 +6,10 @@ commander; this module implements them.
 | Command | File | Purpose |
 |---|---|---|
 | `setup` | `setup.ts` | Interactive configuration wizard |
-| `doctor` | `doctor.ts` | Environment self-check — **the default command** |
+| `doctor` | `doctor.ts` | Environment self-check — **the default command**. `doctor-hosts.ts` is its probe of each remote host, in the PATH each agent will really have |
 | `start` | `start.ts` | Run the daemon |
 | *(reverse)* | `reverse.ts` | The agent-facing chat actions |
-| `mcp` *(hidden)* | `mcp.ts` | The same actions as native tools: an MCP server on stdio, started by the agent's harness |
+| `mcp` *(hidden)* | `mcp.ts` | The same actions as native tools: an MCP server on stdio, started by the agent's harness. `--dispatch` adds the dispatcher's task tools (only the dispatcher's session is started with it) |
 
 ## `doctor` is the default
 

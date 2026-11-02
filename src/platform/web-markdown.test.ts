@@ -272,3 +272,17 @@ describe('web-markdown: a tool bubble', () => {
     expect(renderWebToolLines('\n💻 Bash: "ls"\n\n')).toBe(`<div class="tools">${tl('💻 Bash: &quot;ls&quot;')}</div>`);
   });
 });
+
+describe('renderWebMarkdown: links to another topic', () => {
+  it('keeps `?t=<topic id>` as an in-page link the page switches to', () => {
+    expect(renderWebMarkdown('[quantlab](?t=3a9f0c12)')).toContain('<a href="?t=3a9f0c12" data-goto="3a9f0c12">quantlab</a>');
+  });
+
+  it('drops every other relative link, keeping its label', () => {
+    for (const url of ['?t=3a9f0c1', '?t=3a9f0c12&x=1', '/api/topics', '?topic=3a9f0c12', 'javascript:alert(1)']) {
+      const html = renderWebMarkdown(`[x](${url})`);
+      expect(html, url).not.toContain('<a');
+      expect(html, url).toContain('x');
+    }
+  });
+});

@@ -45,6 +45,7 @@ import {
 import { createWebServer, type WebServer } from './server.js';
 import { WebSso } from './sso.js';
 import { TerminalSessions } from './terminal-sessions.js';
+import { WebPush } from './webpush.js';
 
 export { WebRoom, TopicStore, type Topic, type WebuiInstance } from './room.js';
 
@@ -151,6 +152,12 @@ export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
   // renders a close button.
   const sessions = new TerminalSessions(instance.terminal.endCommand);
   room.useTerminalSessions(sessions);
+  // Push notifications to devices whose page is closed (webpush.ts). Beside the other per-instance
+  // state; the key is made on first start and kept, since every device's subscription names it.
+  const push = new WebPush(path.join(configDir(), `webui-push-${instance.id}`));
+  room.useNotifier((notice) => {
+    if (push.count > 0) void push.notifyAll(notice);
+  });
   const server = createWebServer(
     room,
     // Beside the topic file, per instance for the same reason. Persisted so that an upgrade —
@@ -170,7 +177,8 @@ export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
     },
     // Absent unless configured, and that absence is the whole of "SSO is off": the server has
     // no fallback path that half-trusts a header when there is nothing to verify it against.
-    instance.sso ? new WebSso(instance.sso) : undefined
+    instance.sso ? new WebSso(instance.sso) : undefined,
+    push
   );
   return { ...describe(instance), ...outbound(room, instance), ...lifecycle(room, server) };
 }
@@ -332,6 +340,9 @@ type Outbound = Pick<
   | 'startTyping'
   | 'stopTyping'
   | 'setStatus'
+  | 'setActivity'
+  | 'seenAt'
+  | 'dispatchLane'
   | 'createThread'
   | 'renameThread'
   | 'measureRendered'
@@ -436,6 +447,18 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
      */
     setStatus(address, status) {
       room.setStatus(topicOf(address, 'setStatus'), status);
+    },
+    /** How a topic's last turn ended: what its row and the Needs-you list say about it. */
+    setActivity(address, activity) {
+      room.setActivity(topicOf(address, 'setActivity'), activity);
+    },
+    /** Read, so a topic that is gone answers "never seen" rather than throwing at the dispatcher. */
+    seenAt(address) {
+      return address.channel === CHANNEL && address.thread ? room.seenAt(address.thread) : undefined;
+    },
+    /** The 📥 topic (daemon/dispatcher.ts): opened and pinned while a dispatcher is configured. */
+    dispatchLane(on) {
+      return room.dispatchLane(on);
     },
     /**
      * Open a topic.
