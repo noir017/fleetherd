@@ -842,9 +842,9 @@ export class Daemon {
       scheduleSummary: () =>
         this.schedules ? `⏰ \`/setting schedule\` — ${this.schedules.tasks().length} scheduled task(s)` : undefined,
       // A directory menu is wanted: `/cd`, a bare agent command in a conversation with no history,
-      // or a `/new` that just cleared one.
-      onWorkdirMenuRequest: (id, agentId, msg, menu) =>
-        this.onWorkdirMenuRequest(id, agentId, msg, menu),
+      // a `/new` that just cleared one, or an `/agent` pick before the first turn.
+      onWorkdirMenuRequest: (id, agentId, conv, menu) =>
+        this.onWorkdirMenuRequest(id, agentId, conv, menu),
       onAgentMenuRequest: (id, msg, menu) => this.onAgentMenuRequest(id, msg, menu),
       // A voice message is transcribed and confirmed before it becomes a prompt; typing drops a
       // transcript still waiting, and /stop and /new call them off.
@@ -903,6 +903,9 @@ export class Daemon {
       // ask which of them a scheduled task still posts into. Not decoration, unlike the two above:
       // a task whose topic was evicted fails every run after it.
       adapter.useScheduleLookup?.((ref) => this.schedules?.targets(ref) ?? false);
+      // …and one with room to lay out the agents a new conversation could be given to (the web UI's
+      // empty topic) gets a way to ask which, and who answers if nobody picks.
+      adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
       await adapter.start();
       console.log(`[daemon] platform instance "${id}" (${adapter.platformType}) started`);
     }
@@ -2320,10 +2323,10 @@ export class Daemon {
   private onWorkdirMenuRequest(
     conversationId: ConversationId,
     agentId: string,
-    msg: InboundMessage,
+    conv: ConversationRef,
     menu: { options: WorkdirOption[]; current: string; truncated: number }
   ): void {
-    const adapter = this.platforms.get(msg.conversation.platform);
+    const adapter = this.platforms.get(conv.platform);
     if (!adapter) return;
 
     // One live menu per conversation: retire the previous one before posting, so its buttons cannot
@@ -2337,7 +2340,7 @@ export class Daemon {
     const pending: PendingWorkdirMenu = {
       conversationId,
       agentId,
-      conversation: msg.conversation,
+      conversation: conv,
       options,
       current: menu.current,
       pageSize,
@@ -2357,7 +2360,7 @@ export class Daemon {
         ? `${view.text}\n(+${menu.truncated} more not shown — type part of a name instead.)`
         : view.text;
     void adapter
-      .sendButtons(addressOf(msg.conversation), text, view.buttons)
+      .sendButtons(addressOf(conv), text, view.buttons)
       .then((ref) => {
         // Keep the menu's own ref: page turns and the ack both edit THIS message, and the click
         // event's messageId is not a reliable stand-in on every platform.
@@ -2531,6 +2534,8 @@ export class Daemon {
     this.pendingAgentMenus.delete(click.reqId);
     const text = def ? this.registry.chooseAgent(menu.conversationId, def.id, menu.conversation) : 'That agent is no longer configured.';
     this.editAgentMenu(menu, text, []);
+    // Then where it should work, as a typed `/agent <id>` asks — a pick from the menu is the same choice.
+    if (def) this.registry.offerPlacement(menu.conversationId, def.id, menu.conversation);
   }
 
   /**

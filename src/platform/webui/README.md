@@ -186,6 +186,13 @@ lookup instead (`PlatformAdapter.useWorkdirLookup`), and `topicList()` asks it �
 `DIR_TTL_MS`, because the list is rebuilt on every posted message and the lookup stats the
 filesystem on the other side. A deployment that never offers one shows no second line at all.
 
+The memo is let go whenever the operator writes or taps in a topic (`submit`, `click`), because
+those are the only things that move one — `/agent`, `/cd`, `/new`, a menu pick — and the poll
+below compares the label too. Before 2.17.0 neither was true: a move was answered inside the TTL,
+the answer's announcement carried the old label, and nothing announced the list after it, so a new
+topic that chose an agent on another machine went on naming the default agent's machine until the
+next message. Checked in Chromium against a real daemon on 2026-11-02.
+
 The lookup answers with the machine as well as the path (`ConversationWorkdir`), and the row puts it
 first: `devbox · workspace`. Two agents of one harness on two hosts usually share a home layout,
 so without it their rows were identical and the agent id baked into the title was the only tell.
@@ -291,6 +298,47 @@ page until that entry is added — `doctor` checks for exactly this.
 **`access.allowFrom` identity is `<instance id>:owner`.** An existing config that already
 lists other identities will silently ignore every message typed into this page until that
 entry is added — `doctor` checks for exactly this.
+
+### A new topic offers its agents
+
+An empty topic used to be a blank page, and choosing who answers it meant knowing `/agent` and
+tapping through its two levels (machine, then agent). Since 2.17.0 the page lays every agent out
+there instead, by machine, one card each: the id, what it is (`core/agent-menu.ts` agentKindOf —
+the harness as its project names it, a custom harness's command), and its model, short as the
+footer says it. Five decisions in it:
+
+- **The daemon decides whether the question is open; the page only draws it.**
+  `PlatformAdapter.useAgentCatalog` → `ConversationRegistry.agentCatalogForRef` answers undefined
+  once the agent that would answer has a session here (chooseAgent refuses to move it then) and
+  when there is a single agent. `room.ts` asks only for the sync of an EMPTY room and puts the
+  answer in `sync.agents`; it is not polled, not announced and not in the backlog — the first
+  message replaces it, and a `/reload` shows on the next empty topic drawn.
+- **A tap types `/agent <id>`**, through `command()` like Stop and the power button, so the daemon
+  has one way to be told and the transcript records the choice. The bubble that send paints is a
+  message, and a message is what takes the cards away. Typing anything else is an answer too, which
+  is why the card of the agent it reaches is marked **default** — the binding, else
+  `resolveAgent` for this address (a channel rule can make that something other than
+  `routing.default`).
+- **Choosing by id asks for the directory**, as a bare `/cc` does in a conversation that has never
+  run (`ConversationRegistry.offerPlacement`, after the ack so the menu lands under the line naming
+  who it is for). This is not webui-only: a typed `/agent <id>` and a pick from the `/agent` menu
+  on any platform do the same. Without it the web UI's new topic, which chooses by id, would have
+  started every agent in its root.
+- **A command does not name the topic** (`topics.ts` seed). The first message seeds a blank title,
+  and with a tap that message is `/agent oc2` — most new topics were named after a command. The
+  next non-command message seeds it instead.
+- **Over the stale notice, not beside it.** An open choice means no agent has a session here, so
+  "the agent still has its context" would be untrue of that room.
+
+No online/offline mark on a machine, though one was considered: a host's link closes itself after
+five idle minutes (`remote/connection.ts` IDLE_CLOSE_MS), so "not connected" mostly means "not used
+lately", and marking it would grey out healthy machines.
+
+Layout was measured in Chromium against a real daemon with seven agents on two machines on
+2026-11-02: four cards to a row at 1280 px, two at 390 px (179×68 px each), no card's kind or model
+line cut, and nothing wider than `#log`. The launcher is 720 px wide rather than less because
+"deepseek-v4.1-flash-free" needs 143 px in the UI face (159 px in monospace) and a desktop card
+leaves 148.
 
 ## Capabilities
 

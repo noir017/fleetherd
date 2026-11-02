@@ -35,6 +35,13 @@ title is the directory the topic works in, led by the machine when its agent run
 [remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. On a narrow
 screen the sidebar becomes a drawer.
 
+**Choosing an agent.** With more than one agent configured, a new topic opens on all of them,
+grouped by machine: each card shows the agent's id, what it is (Claude Code, Codex, OpenCode,
+Antigravity, or a custom agent's command) and its model if one is set. Tap one and it answers
+this topic; the directory menu then asks where it should work, as a bare `/cc` does. Or just
+type — the card marked **default** is the agent that answers. The cards go away as soon as
+anything is said in the topic.
+
 **Stopping it.** While a reply is streaming, **Stop** beside Send ends the turn
 (`/stop`) — and the same goes for an agent reporting back on background work after
 its turn ended, which the topic shows as running too. While an agent process is up

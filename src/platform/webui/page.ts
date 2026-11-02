@@ -280,12 +280,53 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* All three of the above are decoration over content that is arriving anyway, which is exactly
    what this query is for: without motion the skeleton is still a placeholder, the dots still say
    the page is waiting on something, and a message still appears — instantly. */
-@media(prefers-reduced-motion:reduce){.m,.sk i,.syncing i{animation:none}}
+@media(prefers-reduced-motion:reduce){.m,.sk i,.syncing i,.launch{animation:none}.agent-card,.agent-card:hover{transition:none;transform:none}}
 /* Why an empty room is empty. A transcript lives in memory only while the topic LIST is
    persisted, so every restart leaves rows that open onto nothing — and an empty panel rendered
    faithfully is indistinguishable from a page that failed to load, which is how it was reported.
    Sized and centred like a system note rather than a message: it is about the room, not in it. */
 .empty{margin:28px auto;max-width:46ch;text-align:center;font-size:12.5px;line-height:1.6;color:var(--dim)}
+/* A new topic: every agent it could be given to, by machine, in place of a blank transcript (see
+   paintLaunch). A choice laid out rather than a message, so it is not in the transcript and leaves
+   the moment anything is — typing straight away is still an answer, and the card marked default is
+   who it reaches. Cards rather than menu cells: each says what the agent IS (the harness, its model)
+   as well as its id, which a one-line button cannot without truncating. The default is drawn in the
+   blue of a menu's current choice, the one other place this page marks "this is what you get". */
+.launch{max-width:720px;margin:7vh auto 24px;animation:fade .18s ease-out}
+.launch-head{text-align:center;margin-bottom:26px}
+.launch-title{font-size:19px;font-weight:600;color:var(--fg);letter-spacing:-.01em}
+.launch-sub{margin-top:5px;font-size:13px;color:var(--dim)}
+.launch-sub b{color:#a8a8a8;font-weight:600}
+.launch-group+.launch-group{margin-top:20px}
+/* The machine, as a rule with its name on it: the heading groups the cards without boxing them. */
+.launch-host{display:flex;align-items:center;gap:10px;margin:0 2px 9px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
+.launch-host::after{content:'';flex:1;border-top:1px solid var(--line)}
+.launch-host .n{font-weight:400;color:#5c5c5c;letter-spacing:0}
+.launch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px}
+.agent-card{display:flex;flex-direction:column;align-items:stretch;gap:3px;min-width:0;min-height:68px;padding:11px 13px 10px;background:#181818;border:1px solid var(--line);border-radius:8px;text-align:left;line-height:1.3;transition:background .12s,border-color .12s,transform .12s}
+.agent-card:hover{background:#1e1e1e;border-color:#3a3a3a;transform:translateY(-1px)}
+.agent-card:active{transform:none;background:#232323}
+.agent-card:focus-visible{outline:2px solid #38bdf8;outline-offset:2px}
+.agent-card.def{background:var(--own);border-color:var(--own-edge)}
+.agent-card.def:hover{background:#212a35;border-color:#4b78a8}
+.ac-top{display:flex;align-items:center;gap:8px}
+.ac-id{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ac-tag{flex:none;font-size:10.5px;line-height:1;padding:3px 6px;border-radius:9px;color:#8cc4ea;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.28)}
+.ac-kind{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#a3a3a3;overflow:hidden;white-space:nowrap}
+.ac-kind span{overflow:hidden;text-overflow:ellipsis}
+/* Which harness, at a glance, in a colour of its own: the eye finds "the Codex one" by colour
+   before it has read a word. Keyed on the configured harness, not the label, which is prose. */
+.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#6b6b6b}
+.ac-dot.h-claude{background:#d97757}
+.ac-dot.h-codex{background:#10a37f}
+.ac-dot.h-opencode{background:#e2e2e2}
+.ac-dot.h-agy{background:#4f8ff7}
+.ac-dot.h-gemini{background:#a78bfa}
+.ac-dot.h-dsh{background:#5b7cfa}
+/* The UI face rather than monospace, and 720px for the launcher rather than less: measured in
+   Chromium, "deepseek-v4.1-flash-free" is 159px in 11px monospace and 143px here, and a desktop card
+   at four to a row leaves 148px for it. A longer name still ends in an ellipsis, whole on hover. */
+.ac-model{font-size:11.5px;color:#737373;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* A rule and an indent were all that separated the two sides of the conversation, and at a
    glance down a long transcript that is not enough to find where your own question ended and
    the answer began. Own messages get a tinted panel instead — cool where the page is neutral,
@@ -517,6 +558,11 @@ button:disabled{opacity:.5;cursor:default}
   .files .view{padding:6px 12px}
   /* The idle-agents dialog's two answers, one of which ends processes: 34px tall at 390px before. */
   .idle-acts button{min-height:44px;padding:0 16px}
+  /* Closer to the top on a phone, where the keyboard will take the bottom half; two columns, which
+     at 390px leaves each card 170px — room for "DeepSeek Harness" without an ellipsis. */
+  .launch{margin-top:3vh}
+  .launch-head{margin-bottom:20px}
+  .launch-grid{grid-template-columns:repeat(auto-fill,minmax(136px,1fr))}
   /* The status strip's token counts, on a screen with no room for them: the percentage beside the
      meter says the same thing in four characters, and a tap brings the counts back. Without this
      the line clipped before the cache and quota — the parts that change. */
@@ -552,6 +598,9 @@ const SCRIPT = `
   // What the last sync said about this topic being older than the daemon, and the notice element
   // that says so. Both are per topic, so both are reset on the way into one.
   var stale=false, emptyEl=null;
+  // The agents the last sync said this topic could still be given to (null once it cannot, or
+  // when the daemon offered none), the element laying them out, and what it was drawn from.
+  var launch=null, launchEl=null, launchSig='';
   // Which run of the daemon the live stream belongs to, and whether this topic's first sync has
   // landed. 0 until one has: every message below is qualified by the generation it came from,
   // and before the first sync the only generations known are the ones out of the cache.
@@ -1235,6 +1284,8 @@ const SCRIPT = `
     // Emptying #log invalidates anything held by reference into it, and these are the only
     // things in there that are not messages.
     emptyEl = null;
+    launchEl = null;
+    launchSig = '';
     dividerEl = null;
     syncingEl = null;
   }
@@ -1257,7 +1308,11 @@ const SCRIPT = `
   }
 
   function syncEmptyNote(){
-    var want = stale && !hasMessages();
+    var empty = !hasMessages();
+    // The choice of agent first, and instead of the notice: while the choice is open no agent has a
+    // session here, so "the agent still has its context" would not be true of this room.
+    syncLaunch(Boolean(launch) && empty);
+    var want = stale && empty && !launchEl;
     if(want === Boolean(emptyEl)) return;
     if(want){
       clearSkeleton();
@@ -1269,6 +1324,56 @@ const SCRIPT = `
       if(emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
       emptyEl = null;
     }
+  }
+
+  /**
+   * A new topic: the agents it could be given to, laid out where its transcript is going to be.
+   *
+   * The daemon sends the choice on the sync of an empty room for as long as it is open — the agent
+   * that would answer has no session here yet — and it is drawn while the room stays empty. A tap
+   * sends /agent <id> the way typing it would (command), so the transcript records the choice and
+   * the daemon follows it with where that agent should work; the bubble that send paints is a
+   * message, and a message is what takes this away. Typing instead is an answer too, which is why
+   * the agent it would reach is marked. A send that fails and is discarded empties the room again,
+   * and the choice comes back with it.
+   */
+  function launchHtml(c){
+    var h = '<div class="launch-head"><div class="launch-title">Choose an agent</div>'
+      + '<div class="launch-sub">Or just type \u2014 <b>'+text(c.current)+'</b> answers by default.</div></div>';
+    // One machine needs no heading: it would name the only answer to a question nobody asked.
+    var many = c.groups.length > 1;
+    for(var i=0;i<c.groups.length;i++){
+      var g = c.groups[i];
+      h += '<section class="launch-group">';
+      if(many) h += '<h3 class="launch-host">'+text(g.name)+' <span class="n">'+g.agents.length+'</span></h3>';
+      h += '<div class="launch-grid">';
+      for(var j=0;j<g.agents.length;j++){
+        var a = g.agents[j], on = a.id === c.current;
+        h += '<button type="button" class="agent-card'+(on?' def':'')+'" data-agent="'+text(a.id)+'" title="/agent '+text(a.id)+'">'
+          + '<span class="ac-top"><span class="ac-id">'+text(a.id)+'</span>'+(on?'<span class="ac-tag">default</span>':'')+'</span>'
+          + '<span class="ac-kind"><i class="ac-dot h-'+text(a.harness)+'"></i><span>'+text(a.kind)+'</span></span>'
+          + (a.model ? '<span class="ac-model" title="'+text(a.model)+'">'+text(a.model)+'</span>' : '')
+          + '</button>';
+      }
+      h += '</div></section>';
+    }
+    return h;
+  }
+
+  /** Show the choice, or take it away; redrawn only when what it was drawn from changed. */
+  function syncLaunch(want){
+    var s = want ? JSON.stringify(launch) : '';
+    if(s === launchSig && want === Boolean(launchEl)) return;
+    if(launchEl && launchEl.parentNode) launchEl.parentNode.removeChild(launchEl);
+    launchEl = null;
+    launchSig = '';
+    if(!want) return;
+    clearSkeleton();
+    launchEl = document.createElement('div');
+    launchEl.className = 'launch';
+    launchEl.innerHTML = launchHtml(launch);
+    log.appendChild(launchEl);
+    launchSig = s;
   }
 
   /**
@@ -1638,6 +1743,9 @@ const SCRIPT = `
     // property of the daemon on the other end, not of the room being entered.
     stale=false;
     emptyEl=null;
+    launch=null;
+    launchEl=null;
+    launchSig='';
     dividerEl=null;
     syncingEl=null;
     // The strip describes the topic being left; the incoming sync says what the new one's is.
@@ -1845,6 +1953,8 @@ const SCRIPT = `
       // What the server says about this room BEFORE the transcript is reconciled, so the drops
       // that reconcile performs already know whether an emptied log needs explaining.
       stale = Boolean(ev.stale);
+      // Present only for a room that is empty and can still be given to an agent; absent clears it.
+      launch = ev.agents || null;
       repaintHistory();
       // Before the reconcile, which claims any of them whose echo this sync turns out to carry. A
       // visit that named no topic learns only now which ones are its own.
@@ -2227,6 +2337,9 @@ const SCRIPT = `
     // as downloading it. Checked first — a picture carries none of the attributes below.
     var shot = e.target.closest ? e.target.closest('img.shot') : null;
     if(shot) return openShot(shot);
+    // A new topic's choice of agent: typed for the operator, so it is a message like any other.
+    var card = e.target.closest ? e.target.closest('button[data-agent]') : null;
+    if(card) return command('/agent '+card.getAttribute('data-agent'));
     var view = e.target.closest ? e.target.closest('button[data-view]') : null;
     if(view) return openReader(view);
     // What a message that failed to send offers. Checked before the ordinary buttons: these are

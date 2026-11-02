@@ -17,6 +17,7 @@ import {
   resolveAgent,
   resolveScope,
   routeInputFromMessage,
+  routeInputFromRef,
   type AgentChoice,
 } from './routing.js';
 import {
@@ -28,6 +29,7 @@ import {
   type ConversationRef,
 } from '../core/conversation.js';
 import type {
+  AgentCatalog,
   AgentCommand,
   AgentElicitation,
   AgentPermissionRequest,
@@ -89,7 +91,7 @@ import {
   type WorkdirOption,
 } from '../core/workdir-menu.js';
 import { scanWorkdirs, isDirectory, workdirScanFrom, type WorkdirScan } from './workdir-scan.js';
-import { agentGroups, agentListText, agentPlaceOf, matchAgent, type AgentGroup } from '../core/agent-menu.js';
+import { agentCatalog, agentGroups, agentListText, agentPlaceOf, matchAgent, type AgentGroup } from '../core/agent-menu.js';
 import { rankByFrecency } from '../core/frecency.js';
 import type { WorkdirUsageStore } from './workdir-usage.js';
 import { expandRemoteHome, resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
@@ -552,9 +554,11 @@ export class ConversationRegistry {
       ): void;
       /**
        * A directory menu is wanted here (`/cd`, a bare agent command in a conversation with no
-       * history yet, or a `/new` that just cleared one). Same division of labour as the model menu:
-       * the registry decides WHAT is on offer — it holds the config, the store and the filesystem
-       * root — and the daemon posts, pages and acks the buttons.
+       * history yet, a `/new` that just cleared one, or an `/agent` pick before the first turn).
+       * Same division of labour as the model menu: the registry decides WHAT is on offer — it holds
+       * the config, the store and the filesystem root — and the daemon posts, pages and acks the
+       * buttons. The conversation rather than the message that asked, because an `/agent` menu
+       * pick is a click, and has none.
        *
        * `truncated` is how many directories did not fit the scan cap; the daemon says so on the
        * menu rather than showing a list that looks complete.
@@ -562,7 +566,7 @@ export class ConversationRegistry {
       onWorkdirMenuRequest?(
         id: ConversationId,
         agentId: string,
-        msg: InboundMessage,
+        conv: ConversationRef,
         menu: { options: WorkdirOption[]; current: string; truncated: number }
       ): void;
       /**
@@ -1567,7 +1571,9 @@ export class ConversationRegistry {
     const name = setting.name.toLowerCase();
     if (AGENT_NAMES.has(name)) {
       const answer = this.applyAgentCommand(key, setting.rest, fallbackAgent, msg);
-      if (answer !== undefined) ack('/agent', answer);
+      if (answer.text !== undefined) ack('/agent', answer.text);
+      // After the ack, so the menu lands under the line saying who it is for.
+      if (answer.chosen) this.offerPlacement(key, answer.chosen, msg.conversation);
       return true;
     }
     if (!WORKDIR_NAMES.has(name)) return false;
@@ -1588,9 +1594,15 @@ export class ConversationRegistry {
 
   /**
    * `/agent`: the grouped menu where buttons exist, the grouped list otherwise, or — with an
-   * argument — the agent it names. Returns the text to send, or undefined when a menu went out.
+   * argument — the agent it names. `text` is what to send (absent when a menu went out); `chosen`
+   * is the agent a named pick resolved to, whether or not the binding took (offerPlacement checks).
    */
-  private applyAgentCommand(key: ConversationId, rest: string | undefined, fallbackAgent: string, msg: InboundMessage): string | undefined {
+  private applyAgentCommand(
+    key: ConversationId,
+    rest: string | undefined,
+    fallbackAgent: string,
+    msg: InboundMessage
+  ): { text?: string; chosen?: string } {
     const groups = agentGroups(this.config.agents);
     const current = this.boundAgentFor(key, fallbackAgent);
     const query = rest?.trim();
@@ -1598,14 +1610,31 @@ export class ConversationRegistry {
       const caps = this.platforms.get(msg.conversation.platform)?.capabilities;
       if (caps?.buttons && this.hooks?.onAgentMenuRequest && this.config.agents.length > 1) {
         this.hooks.onAgentMenuRequest(key, msg, { groups, current });
-        return undefined;
+        return {};
       }
-      return agentListText(groups, current);
+      return { text: agentListText(groups, current) };
     }
     const match = matchAgent(this.config.agents, query);
-    if (match.kind === 'none') return `No agent matches "${query}".\n${agentListText(groups, current)}`;
-    if (match.kind === 'many') return `"${query}" matches ${match.ids.join(', ')} — which one?`;
-    return this.chooseAgent(key, match.def.id, msg.conversation);
+    if (match.kind === 'none') return { text: `No agent matches "${query}".\n${agentListText(groups, current)}` };
+    if (match.kind === 'many') return { text: `"${query}" matches ${match.ids.join(', ')} — which one?` };
+    return { text: this.chooseAgent(key, match.def.id, msg.conversation), chosen: match.def.id };
+  }
+
+  /**
+   * After `/agent` chose an agent — typed, or picked from its menu — ask where it should work, the
+   * way a bare `/cc` does in a conversation that has never run. Without this, choosing by id was the
+   * one way into a new topic that skipped the question, and the web UI's new topic, which chooses by
+   * id, would have had every agent start in its root.
+   *
+   * Asked only while the answer is free: the choice took (a refused switch leaves another agent
+   * bound) and that agent has no session here, because a session is pinned to its directory and
+   * moving would discard it. Declined silently when there is nothing to choose between, as after
+   * `/new` (see offerWorkdirMenu).
+   */
+  offerPlacement(key: ConversationId, agentId: string, conv: ConversationRef): void {
+    if (this.boundAgentFor(key, '') !== agentId) return;
+    if (this.store?.agentSession(key, agentId) !== undefined) return;
+    this.afterRemoteListing(findAgent(this.config, agentId), () => this.offerWorkdirMenu(key, agentId, conv));
   }
 
   /**
@@ -1687,7 +1716,7 @@ export class ConversationRegistry {
       // question costs nothing: there is no context to strand, and the previous topic's directory
       // is the least likely answer to still be right. Declined silently when there is nothing to
       // choose between (see offerWorkdirMenu) — a menu of one is not a question.
-      this.afterRemoteListing(findAgent(this.config, agentId), () => this.offerWorkdirMenu(key, agentId, msg));
+      this.afterRemoteListing(findAgent(this.config, agentId), () => this.offerWorkdirMenu(key, agentId, conv));
       return true;
     }
 
@@ -2037,7 +2066,7 @@ export class ConversationRegistry {
     msg: InboundMessage,
     offerMenu: boolean
   ): void {
-    if (offerMenu && this.offerWorkdirMenu(key, state.agentId, msg)) return;
+    if (offerMenu && this.offerWorkdirMenu(key, state.agentId, msg.conversation)) return;
 
     const def = findAgent(this.config, state.agentId);
     if (harnessHasPicker(def?.harness) && this.hooks?.onPickerRequest) {
@@ -2648,6 +2677,26 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
+   * Which agents the conversation at an ADDRESS could still be given to — the lookup handed to a
+   * platform that lays the choice out (`PlatformAdapter.useAgentCatalog`, the web UI's new topic).
+   *
+   * `current` is the agent a first message would reach: the binding, else the route's default for
+   * this address — resolveAgent rather than `routing.default`, since a rule matching the platform or
+   * channel is what decides that for an unbound conversation, and the page labels it "default".
+   *
+   * Closed (undefined) once that agent has a session here, because chooseAgent would refuse to move
+   * it, and when there is a single agent, because a choice of one is not a choice. Read off config
+   * as it stands, so a `/reload` that adds an agent shows it on the next empty topic drawn.
+   */
+  agentCatalogForRef(ref: ConversationRef): AgentCatalog | undefined {
+    if (this.config.agents.length < 2) return undefined;
+    const id = this.idForRef(ref);
+    const current = this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    if (this.store?.agentSession(id, current) !== undefined) return undefined;
+    return agentCatalog(agentGroups(this.config.agents), current);
+  }
+
+  /**
    * Whether the conversation at an ADDRESS still has an agent child resident — the lookup handed
    * to a platform that can show it (`PlatformAdapter.useLivenessLookup`).
    *
@@ -2830,8 +2879,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * (the harness command list, or nothing at all), because a menu offering one directory is not a
    * question, and an error about `agents[].cwd` is not an answer to `/cc`.
    */
-  private offerWorkdirMenu(id: ConversationId, agentId: string, msg: InboundMessage): boolean {
-    const caps = this.platforms.get(msg.conversation.platform)?.capabilities;
+  private offerWorkdirMenu(id: ConversationId, agentId: string, conv: ConversationRef): boolean {
+    const caps = this.platforms.get(conv.platform)?.capabilities;
     const def = findAgent(this.config, agentId);
     if (!this.store || !this.hooks?.onWorkdirMenuRequest || !caps || !def) return false;
 
@@ -2845,7 +2894,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const scan = this.rankedWorkdirs(def, root);
     if (!scan.ok || workdirMenuSurface(caps, scan.options.length) !== 'menu') return false;
 
-    this.hooks.onWorkdirMenuRequest(id, agentId, msg, {
+    this.hooks.onWorkdirMenuRequest(id, agentId, conv, {
       options: scan.options,
       current: this.workdirOf(id, agentId) ?? scan.options[0]!.path,
       truncated: scan.truncated,
@@ -2881,7 +2930,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const current = this.workdirOf(id, agentId) ?? root;
     const query = rest?.trim();
     if (!query) {
-      if (this.offerWorkdirMenu(id, agentId, msg)) return undefined;
+      if (this.offerWorkdirMenu(id, agentId, msg.conversation)) return undefined;
       const text = workdirSummaryText(current, scan.options);
       return scan.truncated > 0
         ? `${text}\n(+${scan.truncated} more not shown — type part of a name to reach one.)`

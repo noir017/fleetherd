@@ -242,12 +242,17 @@ export class TopicStore {
    * Without it a run of new topics reads as several identical blanks in the switcher, and the
    * harness's own name does not arrive until a turn has finished (and never at all when
    * `title.llm` is unconfigured). Only ever fills a blank — it must not overwrite a real name.
+   *
+   * Not from a slash command: `/agent oc2`, `/cd quantlab` and a bare `/cc` say what the topic is
+   * set up WITH, not what it is about, and since a new topic's choice of agent is a tap that types
+   * `/agent <id>` (2026-11-02), seeding from them named most new topics after a command. The next
+   * thing said seeds it instead.
    */
   seed(id: string, text: string): boolean {
     const topic = this.topics.get(id);
     if (!topic || topic.title) return false;
     const line = text.replace(/\s+/g, ' ').trim();
-    if (!line) return false;
+    if (!line || line.startsWith('/')) return false;
     topic.title = line.length > SEED_CHARS ? `${line.slice(0, SEED_CHARS)}…` : line;
     this.flush();
     return true;

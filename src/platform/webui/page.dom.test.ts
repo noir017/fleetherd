@@ -1705,6 +1705,150 @@ describe('webui page: a topic the daemon no longer has', () => {
   });
 });
 
+describe('webui page: choosing an agent for a new topic', () => {
+  /** Two machines, the shape `agentCatalog` builds: the live deployment's, give or take. */
+  const agents = {
+    current: 'cc',
+    groups: [
+      {
+        name: 'uniagent',
+        agents: [
+          { id: 'cc', harness: 'claude', kind: 'Claude Code' },
+          { id: 'oc', harness: 'opencode', kind: 'OpenCode', model: 'opencode/deepseek-v4.1-flash-free' },
+          { id: 'cx', harness: 'codex', kind: 'Codex' },
+        ],
+      },
+      {
+        name: 'awsfree2',
+        agents: [
+          { id: 'oc2', harness: 'opencode', kind: 'OpenCode' },
+          { id: 'cb', harness: 'custom', kind: 'codebuddy' },
+        ],
+      },
+    ],
+  };
+  const launch = (h: Harness): HTMLElement | null => h.el('log').querySelector('.launch');
+  const cards = (h: Harness): HTMLElement[] => Array.from(h.el('log').querySelectorAll<HTMLElement>('.agent-card'));
+
+  it('lays every agent out by machine in place of the empty transcript, the default marked', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+
+    expect(h.skeletons()).toBe(0);
+    expect(h.painted()).toBe(0);
+    expect(Array.from(launch(h)!.querySelectorAll('.launch-host')).map((e) => e.firstChild?.textContent?.trim())).toEqual([
+      'uniagent',
+      'awsfree2',
+    ]);
+    expect(cards(h).map((c) => c.getAttribute('data-agent'))).toEqual(['cc', 'oc', 'cx', 'oc2', 'cb']);
+    // What each one IS, not only its id — and the model, where one is configured.
+    expect(cards(h)[1]!.textContent).toContain('OpenCode');
+    expect(cards(h)[1]!.querySelector('.ac-model')?.textContent).toBe('opencode/deepseek-v4.1-flash-free');
+    expect(cards(h)[4]!.textContent).toContain('codebuddy');
+    // Coloured by the configured harness, which is a key, rather than by the label, which is prose.
+    expect(cards(h)[2]!.querySelector('.ac-dot')?.className).toContain('h-codex');
+    // Who "just type" reaches, said twice: on its card, and in the line above.
+    const def = h.el('log').querySelectorAll('.agent-card.def');
+    expect(Array.from(def).map((c) => c.getAttribute('data-agent'))).toEqual(['cc']);
+    expect(def[0]!.textContent).toContain('default');
+    expect(launch(h)!.querySelector('.launch-sub')?.textContent).toContain('cc answers by default');
+  });
+
+  it('names no machine when there is only one', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents: { current: 'cc', groups: [agents.groups[0]] } }));
+    expect(cards(h)).toHaveLength(3);
+    expect(launch(h)!.querySelector('.launch-host')).toBeNull();
+  });
+
+  it('a tap sends /agent <id> for this topic, and its bubble takes the choice away', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+    (h.el('input') as HTMLTextAreaElement).value = 'a draft';
+
+    await h.click('.agent-card[data-agent="oc2"]');
+
+    const sent = h.calls.filter((c) => c.path === 'api/send');
+    expect(sent.map((c) => [c.body.text, c.body.topic])).toEqual([['/agent oc2', 'a1b2c3d4']]);
+    expect(launch(h)).toBeNull();
+    expect(h.el('log').textContent).toContain('/agent oc2');
+    // A control, like Stop: what was in the composer is still there.
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe('a draft');
+  });
+
+  it('goes as soon as anything is said, typed or not, and comes back if the room empties again', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+
+    await h.emit({ t: 'msg', msg: message('w1', '<p>a scheduled task said this</p>') });
+    expect(launch(h)).toBeNull();
+
+    // Deleted again, and nothing has said the choice is closed: the room is what it was.
+    await h.emit({ t: 'del', id: 'w1' });
+    expect(cards(h)).toHaveLength(5);
+  });
+
+  it('follows the sync: a room that has started shows none, and a stale one shows the choice instead of the notice', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+    expect(launch(h)).not.toBeNull();
+
+    // A reconnect's sync for the same room, now carrying nothing: the daemon closed the question.
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    expect(launch(h)).toBeNull();
+
+    // Older than the daemon and still open: no agent has a session here, so "the agent still has its
+    // context" would be untrue — the choice is the honest thing to show.
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { stale: true, agents }));
+    expect(launch(h)).not.toBeNull();
+    expect(h.notice()).toBeNull();
+  });
+
+  it('is redrawn only when what it shows changed', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+    const first = launch(h);
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+    expect(launch(h)).toBe(first);
+
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents: { ...agents, current: 'cx' } }));
+    expect(launch(h)).not.toBe(first);
+    expect(h.el('log').querySelector('.agent-card.def')?.getAttribute('data-agent')).toBe('cx');
+  });
+
+  it('does not carry into the next topic', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5'], { agents }));
+    expect(launch(h)).not.toBeNull();
+
+    await h.click('[data-topic="b2c3d4e5"]');
+
+    // That room's own sync says whether it has a choice to offer; until then, placeholders.
+    expect(launch(h)).toBeNull();
+    expect(h.skeletons()).toBeGreaterThan(0);
+  });
+
+  it('lays it out again in the next new topic, though it offers the very same agents', async () => {
+    // The everyday path — + twice — and the one a cached "already drawn" would get wrong: the
+    // element went with the last topic's transcript, while what it was drawn from has not changed.
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5'], { agents }));
+    await h.click('[data-topic="b2c3d4e5"]');
+    await h.emit(sync('b2c3d4e5', [], ['a1b2c3d4', 'b2c3d4e5'], { agents }));
+
+    expect(cards(h)).toHaveLength(5);
+    expect(h.skeletons()).toBe(0);
+  });
+
+  it('escapes what it is given, which comes from config.yaml', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    const odd = { id: 'x"><img src=x>', harness: 'custom', kind: '<b>k</b>', model: '<i>m</i>' };
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents: { current: 'cc', groups: [{ name: '<u>g</u>', agents: [odd] }, agents.groups[0]] } }));
+    expect(h.el('log').querySelector('.launch img, .launch b:not(.launch-sub b), .launch i:not(.ac-dot), .launch u')).toBeNull();
+    expect(cards(h)[0]!.getAttribute('data-agent')).toBe('x"><img src=x>');
+  });
+});
+
 describe('webui page: menus', () => {
   /** A `/cd`-shaped menu: a root, the current directory, two more, and the page controls. */
   const menu = (): Record<string, unknown> => ({

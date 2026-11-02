@@ -40,7 +40,7 @@ import {
   type ConversationRef,
 } from '../../core/conversation.js';
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
-import type { AgentStatus, ButtonInteraction, InboundMessage, SlashCommandSpec } from '../../types.js';
+import type { AgentCatalog, AgentStatus, ButtonInteraction, InboundMessage, SlashCommandSpec } from '../../types.js';
 import type { ButtonSpec, ConversationWorkdir } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -279,6 +279,8 @@ export class WebRoom {
   private scheduled: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
+  /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
+  private catalog: ((ref: ConversationRef) => AgentCatalog | undefined) | null = null;
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
   private liveTimer: NodeJS.Timeout | null = null;
   /**
@@ -482,6 +484,30 @@ export class WebRoom {
   }
 
   /**
+   * Accept the daemon's way of asking which agents a topic could be given to, which the page lays
+   * out over an empty transcript. Not polled and not announced: it is read when an empty room is
+   * synced, which is when that page is drawn, and nothing about it is worth a push — the first
+   * message replaces it, and a `/reload` shows on the next empty topic opened.
+   */
+  useAgentCatalog(lookup: (ref: ConversationRef) => AgentCatalog | undefined): void {
+    this.catalog = lookup;
+  }
+
+  /**
+   * The agents for an empty room's sync, or nothing. Best-effort like the directory: a lookup that
+   * throws costs the page its choice of agent, never the sync that carries the transcript.
+   */
+  private catalogFor(topicId: string, room: Room): AgentCatalog | undefined {
+    if (!this.catalog || room.stored.size > 0) return undefined;
+    try {
+      return this.catalog(this.conversation(topicId));
+    } catch (e) {
+      console.warn(`[webui] agent catalog lookup failed for ${topicId}:`, e instanceof Error ? e.message : e);
+      return undefined;
+    }
+  }
+
+  /**
    * End the agent process behind each of these topics that is still idle, and say which were
    * ended. The page's "Close idle agents": `topicIds` is the list the operator confirmed, not a
    * fresh scan, so nothing is closed that they were not shown.
@@ -672,6 +698,7 @@ export class WebRoom {
   }
 
   private syncEvent(topicId: string, room: Room): WebEvent {
+    const agents = this.catalogFor(topicId, room);
     return {
       t: 'sync',
       topic: topicId,
@@ -684,6 +711,7 @@ export class WebRoom {
       epoch: this.startedAt,
       ...(this.isStale(topicId, room) ? { stale: true } : {}),
       ...(room.status ? { status: room.status } : {}),
+      ...(agents ? { agents } : {}),
     };
   }
 
@@ -1153,6 +1181,11 @@ export class WebRoom {
     const files = attachments.length > 0 ? ` (+${attachments.length} file${attachments.length === 1 ? '' : 's'})` : '';
     console.log(`[in] ${describeConversation(inbound.conversation)} @${OWNER}: ${text.slice(0, 50).replace(/\n/g, ' ')}${files}`);
     this.onMsg?.(inbound);
+    // What the operator says is what moves a topic — `/agent`, `/cd`, `/new`, a bare `/cc` — so the
+    // memoised directory label is let go here, and the announcement the daemon's answer makes reads
+    // the new one. Without this a new topic's first choice was answered under a row still naming the
+    // default agent's machine for the rest of the TTL, and nothing announced the list after it.
+    this.dirCache.delete(req.topic);
     return 'accepted';
   }
 
@@ -1170,6 +1203,8 @@ export class WebRoom {
       messageId: req.messageId,
       buttonId: req.buttonId,
     });
+    // A tap moves a topic as typing does (a `/cd` or `/agent` menu pick), so the same as `submit`.
+    this.dirCache.delete(req.topic);
     return true;
   }
 
@@ -1266,7 +1301,12 @@ export class WebRoom {
  * notice a title, an order or an unread count, because whatever changed those already announced.
  */
 function flagsOf(topics: Topic[]): string {
-  return topics.map((t) => `${t.id}${t.live ? 'L' : ''}${t.asking ? 'A' : ''}${t.running ? 'R' : ''}`).join(',');
+  // The directory too, so the poll is also what corrects a row whose move landed after the
+  // announcement that followed it (a `/cd` on a host lists the directory over the link first):
+  // the label is memoised for DIR_TTL_MS, shorter than the poll, so each poll reads it fresh.
+  return topics
+    .map((t) => `${t.id}${t.live ? 'L' : ''}${t.asking ? 'A' : ''}${t.running ? 'R' : ''}${t.dir ? `@${t.dir.host ?? ''}:${t.dir.path}` : ''}`)
+    .join(',');
 }
 
 /**
