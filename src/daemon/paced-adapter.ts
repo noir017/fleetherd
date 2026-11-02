@@ -73,8 +73,9 @@ const PACING = {
   setActivity: 'unpaced',
   // A read of what the page reported; nothing is sent anywhere.
   seenAt: 'unpaced',
-  // Opens or retires a lane — metadata, like createThread, and called at startup and on /reload.
-  dispatchLane: 'unpaced',
+  // Reads of the page's own topic list; nothing is sent anywhere.
+  parentOf: 'unpaced',
+  childrenOf: 'unpaced',
   measureRendered: 'unpaced',
   registerCommands: 'unpaced',
   onMessage: 'unpaced',

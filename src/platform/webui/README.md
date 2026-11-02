@@ -357,11 +357,16 @@ only when the topic on screen is in `review` and the page is visible; the room s
 It is compared with a turn's end, which is the daemon's time, and a phone's clock is nothing to
 compare a server's with. Posting only on `review` keeps the traffic to one request per reply read.
 
-**The dispatcher's topic** has a fixed id (`DISPATCH_TOPIC`) because it is a conversation: the same id
-across restarts is the same agent session. It is pinned first, never evicted or swept, cannot be
-deleted (`409` with a sentence, and the page draws no ×) or renamed, and the daemon gives it no
-directory label. `dispatchLane(false)` makes it an ordinary topic again; the daemon starts its
-conversation over, since its session was created without tools.
+**Sub-agent topics** (daemon/delegation.ts) carry `parent`, the topic whose agent opened them —
+persisted, and the only record of the relation (`parentOf` / `childrenOf` on the adapter read it back).
+`TopicStore.orphan` drops a `parent` that names a topic no longer there, on load and after every
+delete or sweep, so the × on a parent never takes its children with it. The page nests them
+(`topicRows`: each root, starred first, followed by what it opened, depth-first; drawn as `sub d1`–`d3`
+classes rather than a `--depth` in a style attribute, which the CSP refuses) and folds them per
+browser (`aa_folded` in localStorage); the topic on screen is never folded away, and a `parent` chain
+that loops is drawn as roots rather than lost. A sub-agent topic is in Needs you, and notifies, only
+for a question of its own (`operatorStage`, and the same rule in the page's `paintNeeds`): its
+replies and failures are its parent agent's to read.
 
 A link to another topic is `?t=<id>` — the one relative link `web-markdown.ts` keeps — rendered with
 `data-goto`, which the page intercepts to switch in place.
@@ -375,12 +380,12 @@ never a permission prompt nobody asked for.
 
 - **What notifies** is decided in `room.ts` `watchStages`: a topic entering a needs-you stage, and
   still in it after `NOTIFY_GRACE_MS` (the page marks a reply it is showing as seen within a round
-  trip, so the grace is what keeps the phone quiet about what was just read). With a dispatcher only
-  its topic notifies — it is told about the rest, and two notifications for one event is noise.
+  trip, so the grace is what keeps the phone quiet about what was just read). A sub-agent's topic
+  notifies only for a question of its own (`operatorStage`): its parent agent is told the rest.
 - **No dependency.** RFC 8291 and RFC 8292 are a hundred lines over `node:crypto`; `webpush.test.ts`
   checks the encryption byte for byte against RFC 8291's Appendix A and decrypts real messages as the
   browser would. Verified end to end on 2026-11-02 in Chromium through FCM to the worker's
-  `getNotifications()` (`project-scripts/talkcode-dispatcher/push.mjs`).
+  `getNotifications()` (`project-scripts/talkcode-dispatcher/push.mjs`, from the 2.18.0 dispatcher's run).
 - **The endpoint allowlist is a security boundary** (AGENTS.md invariant 7): the server POSTs to a URL
   a browser chose. Unbranded Chromium subscribes at `jmt17.google.com/fcm/send/…`, not
   `fcm.googleapis.com` — found when the first real subscription was refused — so that entry is held to

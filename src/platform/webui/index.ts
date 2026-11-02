@@ -342,7 +342,8 @@ type Outbound = Pick<
   | 'setStatus'
   | 'setActivity'
   | 'seenAt'
-  | 'dispatchLane'
+  | 'parentOf'
+  | 'childrenOf'
   | 'createThread'
   | 'renameThread'
   | 'measureRendered'
@@ -452,13 +453,19 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
     setActivity(address, activity) {
       room.setActivity(topicOf(address, 'setActivity'), activity);
     },
-    /** Read, so a topic that is gone answers "never seen" rather than throwing at the dispatcher. */
+    /** Read, so a topic that is gone answers "never seen" rather than throwing. */
     seenAt(address) {
       return address.channel === CHANNEL && address.thread ? room.seenAt(address.thread) : undefined;
     },
-    /** The 📥 topic (daemon/dispatcher.ts): opened and pinned while a dispatcher is configured. */
-    dispatchLane(on) {
-      return room.dispatchLane(on);
+    /** Topic.parent, read the same forgiving way: asked about conversations that may have gone. */
+    parentOf(address) {
+      const parent = address.channel === CHANNEL && address.thread ? room.parentOf(address.thread) : undefined;
+      return parent ? { channel: CHANNEL, thread: parent } : undefined;
+    },
+    childrenOf(address) {
+      return address.channel === CHANNEL && address.thread
+        ? room.childrenOf(address.thread).map((thread) => ({ channel: CHANNEL, thread }))
+        : [];
     },
     /**
      * Open a topic.
@@ -468,8 +475,9 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
      * `autoThread: 'perTurn'` never gets here — that path requires `kind: 'group'` and this
      * platform reports `'direct'`.
      */
-    async createThread(_r, name) {
-      const topic = room.createTopic(name);
+    async createThread(_r, name, opts) {
+      const under = opts?.under?.channel === CHANNEL ? opts.under.thread : undefined;
+      const topic = room.createTopic(name, under);
       return { address: { channel: CHANNEL, thread: topic.id } };
     },
     /** Name a topic. The string is `formatLaneTitle`'s `[agent] subject`. */

@@ -60,43 +60,6 @@ describe('tools/list', () => {
   });
 });
 
-describe('tools/list in the dispatcher’s session (mcp --dispatch)', () => {
-  it('adds the six task tools, none with a channel parameter', async () => {
-    const r = await result(req('tools/list'), { ...deps(), dispatch: true });
-    const tools = r.tools as { name: string; inputSchema: { properties: Record<string, unknown>; required: string[] } }[];
-    expect(tools.map((t) => t.name)).toEqual([
-      'send_file',
-      'schedule',
-      'task_agents',
-      'task_list',
-      'task_new',
-      'task_send',
-      'task_read',
-      'task_stop',
-    ]);
-    for (const t of tools.slice(2)) expect(t.inputSchema.properties, t.name).not.toHaveProperty('channel');
-    const create = tools.find((t) => t.name === 'task_new')!;
-    expect(create.inputSchema.required).toEqual(['text']);
-    expect(Object.keys(create.inputSchema.properties)).toEqual(['text', 'agent', 'cwd', 'title']);
-  });
-
-  it('turns a task tool call into the task action, and refuses one outside the dispatcher', async () => {
-    const d = { ...deps({ ok: true, data: { topic: 'web:main/aaaaaaaa', result: 'ok' } }), dispatch: true };
-    await result(req('tools/call', { name: 'task_send', arguments: { topic: 'aaaaaaaa', text: '开工' } }), d);
-    expect(d.sent).toEqual([{ kind: 'task-send', topic: 'aaaaaaaa', text: '开工' }]);
-    const r = (await handleMcpMessage(req('tools/call', { name: 'task_send', arguments: { topic: 'a', text: 'b' } }), deps())) as JsonRpcResponse;
-    expect(r.error?.message).toMatch(/Unknown tool: task_send/);
-  });
-
-  it('task_new without an agent is refused before the daemon is asked', async () => {
-    const d = { ...deps(), dispatch: true };
-    const r = await result(req('tools/call', { name: 'task_new', arguments: { text: 'do it' } }), d);
-    expect(r.isError).toBe(true);
-    expect(text(r)).toMatch(/needs --agent/);
-    expect(d.sent).toEqual([]);
-  });
-});
-
 describe('tools/call', () => {
   it('sends the action the CLI would, with a relative path resolved against the SESSION directory', async () => {
     const d = deps();

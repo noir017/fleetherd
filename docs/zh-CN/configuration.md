@@ -49,9 +49,6 @@ session:
 
 access:
   allowFrom: ["discord-main:123456"]   # <实例id>:userId；留空 = 任何人
-
-dispatcher:                   # 可选：一个负责分派工作的智能体，见调度智能体
-  agent: claude
 ```
 
 `${VAR}` 从环境变量及 `<配置目录>/.env` 展开，YAML 本身可以提交进仓库。
@@ -62,7 +59,7 @@ dispatcher:                   # 可选：一个负责分派工作的智能体，
 
 其余配置在用到它的地方讲：各 harness 的选项见[智能体](agents.md)，网页端的 `terminal:`、`sso:`
 见[网页端](web-ui.md)，`title:` 见[话题命名](topic-names.md)，`voice:` 见[语音消息](voice.md)，`hosts:` 和
-`agents[].host` 见[远程主机](remote-hosts.md)，`dispatcher:` 见[调度智能体](dispatcher.md)，`agents[].hooks` 见
+`agents[].host` 见[远程主机](remote-hosts.md)，`agents[].hooks` 见
 [智能体](agents.md#启动前钩子)。
 其中几项也能在聊天里直接改、不用重启——见[在聊天里改配置](settings.md)。
 

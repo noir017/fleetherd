@@ -13,7 +13,8 @@
   },
   "files": [
     "dist",
-    "skill"
+    "skill",
+    "skill-super"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/build-remote.mjs",

@@ -146,9 +146,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
   z
     .object({ kind: z.literal('schedule-op'), id: z.string().min(1), op: z.enum(['remove', 'pause', 'resume', 'run']) })
     .strict(),
-  // The dispatcher's commands (daemon/dispatcher.ts). None takes a channelId: each names the
-  // conversation it acts on as `topic`, and the daemon refuses all of them to any conversation but
-  // the dispatcher's own. Bounds are generous but present — `text` is a person's request, verbatim.
+  // Sub-agents (daemon/delegation.ts). None takes a channelId: they act from the asking conversation
+  // on the topics it opened, each named as `topic`, and the daemon refuses any other. Bounds are
+  // generous but present — `text` is a whole task, written for an agent that has seen nothing else.
   z.object({ kind: z.literal('task-agents') }).strict(),
   z.object({ kind: z.literal('task-list'), limit: z.number().int().positive().max(200).optional() }).strict(),
   z
@@ -329,8 +329,8 @@ export interface ScheduleListResult {
 }
 
 /**
- * The dispatcher's view of one conversation (`task-list`, and what `task-new` returns). Flat, so a
- * list renders as one TOON table.
+ * One sub-agent's topic as the agent that opened it sees it (`tasks`, and the updates it is sent).
+ * Flat, so a list renders as one TOON table.
  */
 export interface TaskRow {
   /** What every other task command takes as `topic`: the conversation's `--channel` id. */
@@ -356,12 +356,17 @@ export interface TaskListResult {
   total: number;
 }
 
-/** One agent the dispatcher can hand work to (task-agents). */
+/** One agent a sub-task can be handed to (task-agents). */
 export interface TaskAgentRow {
   id: string;
   harness: string;
-  /** Where it runs: `agents[].group`, its host, or `this machine`. */
+  /** The machine it runs on: its `host`, or `gateway` for the gateway's own. */
   where: string;
+  /**
+   * Whether it runs on the same machine as the agent asking. Listed first, and the ones to prefer:
+   * the same checkouts, the same tools, and no second copy of a repository to keep in step.
+   */
+  here: boolean;
   model: string;
   /** Its configured working directory. */
   root: string;
@@ -380,7 +385,13 @@ export interface TaskReadResult {
   messages: Array<{ from: 'person' | 'agent'; at: string; text: string }>;
 }
 
-/** Response body for task-send and task-stop: what happened, in a sentence for the dispatcher. */
+/** Response body for task-new: which line of the confirmation card it is, and what happens next. */
+export interface TaskNewResult {
+  item: number;
+  result: string;
+}
+
+/** Response body for task-send and task-stop: what happened, in a sentence for the agent that asked. */
 export interface TaskActionResult {
   topic: string;
   result: string;

@@ -737,24 +737,6 @@ export const ConfigSchema = z
         }),
       })
       .optional(),
-
-    /**
-     * The dispatcher: an agent that hands work to other conversations instead of doing it
-     * (daemon/dispatcher.ts). It answers one pinned topic of its own on each platform that can hold
-     * one (today the web UI's 📥), has no tools of its own on a harness that lets the gateway take
-     * them away (claude), and is told when a conversation it is not in needs the person.
-     *
-     * On the user side for the reason `voice` is: which agent, and whether there is one at all, is a
-     * per-deployment decision. Everything about how it behaves is the agent's own instructions — a
-     * file in its working directory the operator can edit, never text the gateway puts in a prompt.
-     */
-    dispatcher: z
-      .object({
-        /** The `agents[].id` that answers the dispatcher topic. Any harness but agy (it has no tools to give). */
-        agent: z.string().min(1),
-      })
-      .strict()
-      .optional(),
   })
   // Referential-integrity + cross-field checks (fail-fast at load). Otherwise a typo
   // would surface only when that agent/platform is used, as an obscure runtime error.
@@ -766,24 +748,6 @@ export const ConfigSchema = z
         path: ['routing', 'default'],
         message: `routing.default references a non-existent agent id "${cfg.routing.default}" (available: ${[...ids].join(', ')})`,
       });
-    }
-    if (cfg.dispatcher) {
-      const def = cfg.agents.find((a) => a.id === cfg.dispatcher?.agent);
-      if (!def) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['dispatcher', 'agent'],
-          message: `dispatcher.agent references a non-existent agent id "${cfg.dispatcher.agent}" (available: ${[...ids].join(', ')})`,
-        });
-      } else if (def.harness === 'agy') {
-        // agy speaks no ACP, so it cannot be given the dispatch tools, and its own shell cannot be
-        // taken away — a dispatcher that can do the work itself is the design this exists to avoid.
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['dispatcher', 'agent'],
-          message: `dispatcher.agent "${def.id}" is an agy agent; the dispatcher needs a harness that speaks ACP (claude recommended)`,
-        });
-      }
     }
     const hostIds = new Set(Object.keys(cfg.hosts ?? {}));
     cfg.agents.forEach((a, i) => {

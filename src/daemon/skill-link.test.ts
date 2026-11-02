@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { bundledSkillDir, ensureSkillLink, linkSkill, skillHomes } from './skill-link.js';
+import { BUNDLED_SKILLS, bundledSkillDir, ensureSkillLink, linkSkill, skillHomes } from './skill-link.js';
 
 /**
  * The skill link writes into SHARED directories (the operator's own `~/.claude/skills`), so these
@@ -83,5 +83,24 @@ describe('ensureSkillLink', () => {
 describe('bundledSkillDir', () => {
   it('is the package\'s skill/, where the SKILL.md ships', () => {
     expect(fs.existsSync(path.join(bundledSkillDir(), 'SKILL.md'))).toBe(true);
+  });
+});
+
+describe('BUNDLED_SKILLS', () => {
+  it('each ships a SKILL.md named as it is linked, in a directory the package publishes', () => {
+    const pkg = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { files: string[] };
+    for (const skill of BUNDLED_SKILLS) {
+      const md = fs.readFileSync(path.join(bundledSkillDir(skill.dir), 'SKILL.md'), 'utf8');
+      expect(md, skill.dir).toMatch(new RegExp(`^---\\nname: ${skill.name}\\n`));
+      expect(pkg.files, skill.dir).toContain(skill.dir);
+    }
+  });
+
+  it('links a second skill under its own name', () => {
+    const source = bundledSkillDir('skill-super');
+    fs.mkdirSync(path.join(home, '.claude'));
+    const r = linkSkill(source, { dir: path.join(home, '.claude', 'skills'), requires: path.join(home, '.claude') }, 'super');
+    expect(r).toEqual({ link: path.join(home, '.claude', 'skills', 'super'), outcome: 'linked' });
+    expect(fs.realpathSync(r.link)).toBe(fs.realpathSync(source));
   });
 });

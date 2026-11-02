@@ -40,10 +40,29 @@ export const SCHEDULED_SENDER = 'schedule';
 export const CONTINUE_SENDER = 'continue';
 
 /**
- * The sender of what the dispatcher hands a conversation (task-new, task-send — daemon/dispatcher.ts):
- * the person's words, passed on. Attended like CONTINUE_SENDER, for the same reason.
+ * The sender of what another conversation's agent hands a sub-agent (task-new once the person
+ * confirmed it, task-send — daemon/delegation.ts). Attended like CONTINUE_SENDER: the person is
+ * there, in the topic that opened this one, and a `permissions: ask` agent still asks them.
  */
-export const DISPATCH_SENDER = 'dispatcher';
+export const DELEGATE_SENDER = 'delegated';
+
+/**
+ * The sender of a `[sub-agent updates]` card (daemon/delegation.ts), run as a turn in the conversation
+ * that opened the sub-agents. Attended like DELEGATE_SENDER; set apart from it because such a turn
+ * names nothing — it is the gateway reporting, not anyone saying what the topic is about, and a
+ * `/super` topic, whose opening message is a command, would otherwise be named after the first card.
+ */
+export const UPDATE_SENDER = 'sub-agent-updates';
+
+/**
+ * The job a command carries, for the one command that carries one: `/super <job>` (the bundled
+ * `super` skill — daemon/skill-link.ts BUNDLED_SKILLS) is what its topic is about, where `/model
+ * opus` or `/compact` names nothing.
+ */
+export function jobInCommand(text: string): string | undefined {
+  const m = /^\/super\s+([\s\S]+)$/.exec(text.trim());
+  return m?.[1]?.trim() || undefined;
+}
 
 /**
  * The handlers a turn hands the agent. A scheduled run has nobody watching for a permission
@@ -424,7 +443,9 @@ export class TurnRunner {
     // something that failed. That reasoning was about the wrong text: the seed is the user's own
     // request, and a request is no less what the topic is about for the harness having failed to
     // answer it. Command turns are still skipped — `/model` names nothing.
-    if (!isCommandTurn) this.deps.nameConversation?.(conversationId, this.buildTitleSeed(batch));
+    // Nor are the gateway's own reports to an agent (UPDATE_SENDER), which say nothing about the topic.
+    const seed = this.titleSeedOf(batch, lastContent, isCommandTurn);
+    if (seed !== undefined) this.deps.nameConversation?.(conversationId, seed);
 
     // Typing keep-alive: Discord's typing indicator self-expires ~10s, so re-fire every typingIntervalMs
     // (fire-and-forget, never gates the turn). Released in finally — held rather than simply
@@ -1261,6 +1282,12 @@ export class TurnRunner {
    * Sender names are left out, as they are everywhere else in the prompt now. A summariser
    * given `[Alice] …` puts the speaker's name in the topic title.
    */
+  /** What a turn may name its topic from: the messages, a `/super` job, or nothing (see runTurn). */
+  private titleSeedOf(batch: InboundMessage[], last: string, isCommandTurn: boolean): string | undefined {
+    if (batch.every((m) => m.conversation.user === UPDATE_SENDER)) return undefined;
+    return isCommandTurn ? jobInCommand(last) : this.buildTitleSeed(batch);
+  }
+
   private buildTitleSeed(batch: InboundMessage[]): string {
     return batch
       .map((m) => m.content)

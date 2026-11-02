@@ -444,8 +444,8 @@ function scanCode(s: string, i: number): Match | null {
 const SAFE_URL_RE = /^(?:https?:\/\/|mailto:)/i;
 
 /**
- * The one relative link that is kept: another topic of this page, `?t=<topic id>` — what the
- * dispatcher links a topic with (daemon/dispatcher.ts). Exactly eight hex digits, the only shape a
+ * The one relative link that is kept: another topic of this page, `?t=<topic id>` — how the
+ * gateway and an agent link a sub-agent's topic and the one that opened it (daemon/delegation.ts). Exactly eight hex digits, the only shape a
  * topic id has, so nothing else relative slips through; rendered without `target` and marked
  * `data-goto`, so the page switches to the topic in place instead of loading itself again.
  */

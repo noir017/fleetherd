@@ -1407,17 +1407,20 @@ describe('webui server: notifications and what the operator has seen', () => {
     expect(await fetch(`${base}/api/push`, { headers: { cookie } }).then((r) => r.json())).toEqual({ enabled: false });
   });
 
-  it('records what the operator has seen, and refuses to delete the dispatcher topic', async () => {
+  it('records what the operator has seen', async () => {
     const { base, room, topic } = await boot();
     const cookie = await signIn(base);
     room.setActivity(topic, { outcome: { kind: 'done', at: Date.now() - 5 } });
     expect(room.topicList().find((t) => t.id === topic)?.stage).toBe('review');
     expect((await post(base, cookie, '/api/seen', { topic })).status).toBe(200);
     expect(room.topicList().find((t) => t.id === topic)?.stage).toBe('idle');
+  });
 
-    room.dispatchLane(true);
-    const del = await post(base, cookie, '/api/topics/delete', { topic: 'd15a7c40' });
-    expect(del.status).toBe(409);
-    expect((await del.json()).error).toMatch(/dispatcher topic/);
+  it('deleting a topic that opened others leaves them as topics of their own', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const child = room.createTopic('[cx] part', topic);
+    expect((await post(base, cookie, '/api/topics/delete', { topic })).status).toBe(200);
+    expect(room.topicList().find((t) => t.id === child.id)?.parent).toBeUndefined();
   });
 });

@@ -38,9 +38,6 @@ const RELOAD_KIND = {
   // Live: the daemon rebuilds its host table from it after a reload (remoteHosts.configure), and an
   // agent on a host whose entry changed counts as changed itself (diffConfig), so it is respawned.
   hosts: 'live',
-  // Live: the daemon re-reads it after a reload (Dispatcher.configure) — opening, moving or retiring
-  // the dispatcher topic — the same as a fresh start would.
-  dispatcher: 'live',
 } as const satisfies Record<keyof UserConfig, 'ignore' | 'restart' | 'agents' | 'live'>;
 
 type LiveSection = { [K in keyof typeof RELOAD_KIND]: (typeof RELOAD_KIND)[K] extends 'live' ? K : never }[keyof typeof RELOAD_KIND];

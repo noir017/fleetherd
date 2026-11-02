@@ -47,24 +47,7 @@ session:
 access:
   allowFrom: []     # identities "<instance-id>:<userId>"; EMPTY = anyone can drive
                     # a full-tool-access agent — fill this in shared deployments
-
-dispatcher:         # optional — see below
-  agent: claude
 ```
-
-## `dispatcher`
-
-```yaml
-dispatcher:
-  agent: claude-light   # an agents[].id; any harness but agy
-```
-
-The agent that answers the pinned 📥 topic of the web UI: the person asks there, and it hands the
-work to other topics (`task_new`, `task_send`, …) and is told when one needs the person. On a
-`claude` agent it gets no built-in tools at all — it cannot run commands or edit files, only hand
-work out. It works in `~/.talkcode/dispatcher/` (on its own machine), whose `AGENTS.md` is its
-instructions: written once with defaults, never overwritten — edit it there. A cheaper model is
-usually enough. Applied by `talkcode reload`. See docs/dispatcher.md.
 
 ## `platforms.<id>` — per-platform entries
 

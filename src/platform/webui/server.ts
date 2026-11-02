@@ -612,9 +612,6 @@ async function starTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
 async function deleteTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, DeleteTopicRequestSchema);
   if (!parsed) return;
-  if (ctx.room.topics.get(parsed.topic)?.dispatcher) {
-    return send(req, res, 409, { error: 'the dispatcher topic belongs to the configuration (dispatcher: in config.yaml) and cannot be deleted' });
-  }
   if (!ctx.room.deleteTopic(parsed.topic)) {
     return send(req, res, 404, { error: 'no such topic' });
   }

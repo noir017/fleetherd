@@ -150,12 +150,14 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
   {
     name: 'tasks',
-    summary: 'Dispatcher only: hand work to other conversations, and follow it',
+    summary: 'Hand parts of a job to other agents (sub-agents), in parallel, and follow them',
     notes: [
-      'These run only in the dispatcher topic (`dispatcher:` in the gateway config); anywhere else they are refused.',
-      'A topic is the id `tasks` and `task-new` print — the same id `--channel` takes elsewhere.',
-      'task-new opens a conversation of its own for the work and hands the agent <text> as the first message, shown there as coming from the dispatcher. task-send does the same in an existing one: into the turn if one is running, else as the next turn.',
-      'When a conversation you started (or any other) has something for the person — a reply, a failure, a question — you are told in a message beginning `[topic updates]`.',
+      'Web UI only: each sub-agent gets a topic of its own, nested under this one, where the person can also talk to it directly.',
+      'task-new proposes ONE sub-task; call it once per sub-task, back to back — the ones proposed within a few seconds of each other go on one card. Nothing starts until the person confirms the card. Then they all start at once and run in parallel. If the person writes instead, they want changes: propose again, and the new card replaces the old one.',
+      'A sub-agent sees nothing of this conversation: <text> is all it gets. Make it whole — the goal, the constraints, how to tell it is done — and leave the how to the agent.',
+      'Prefer agents with here=true in task-agents (your own machine). Agents on other machines work in their own checkouts.',
+      'When a sub-agent finishes, fails or asks something, you are told here in a message beginning `[sub-agent updates]`, which says how many are still working. Its questions are the person\'s to answer in its topic unless they are only about what your task meant.',
+      'A topic is the id `tasks` and the updates print. task-send, task-read and task-stop act only on topics this conversation opened.',
     ],
   },
   {
@@ -531,7 +533,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-agents',
     topic: 'tasks',
-    description: 'The agents work can be handed to: where each runs, its model, and the project directories it can start in',
+    description: 'The agents a sub-task can go to: the machine each runs on (here=true: yours), its model, and the project directories it can start in',
     options: [],
     build: (_positionals, opts) => {
       refuseChannel('task-agents', opts);
@@ -542,7 +544,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'tasks',
     topic: 'tasks',
     description:
-      'Every conversation, most recent first: its agent, directory, stage (answer | failed | review | retrying | working | idle) and one line about it',
+      'The sub-agent topics this conversation opened, most recent first: agent, directory, stage (review | answer | failed | retrying | working | idle) and one line',
     options: [{ flags: '-l, --limit <n>', description: 'how many (default 30)', parse: intArg('--limit') }],
     build: (_positionals, opts) => {
       refuseChannel('tasks', opts);
@@ -552,11 +554,11 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-new <text>',
     topic: 'tasks',
-    description: "Open a new conversation with an agent and hand it <text> — the person's request, word for word",
+    description: 'Propose a sub-task: <text> for one agent, in a topic of its own — started once the person confirms',
     options: [
       { flags: '--agent <id>', description: 'who does the work: an id from task-agents (required)' },
       { flags: '--cwd <dir>', description: "where it starts: a directory task-agents lists (default: the agent's own)" },
-      { flags: '--title <title>', description: 'the conversation’s name (default: named from <text>)' },
+      { flags: '--title <title>', description: 'the topic’s name (default: named from <text>)' },
     ],
     build: (positionals, opts) => {
       refuseChannel('task-new', opts);
@@ -574,7 +576,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-send <topic> <text>',
     topic: 'tasks',
-    description: "Hand <text> — the person's words — to the agent of an existing conversation",
+    description: "Send <text> to one of this conversation's sub-agents: into its turn if it is working, else as its next turn",
     options: [],
     build: (positionals, opts) => {
       refuseChannel('task-send', opts);
@@ -584,7 +586,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-read <topic>',
     topic: 'tasks',
-    description: "A conversation's recent messages, oldest first, cut at 1500 characters each",
+    description: "A sub-agent topic's recent messages, oldest first, cut at 1500 characters each",
     options: [{ flags: '-l, --limit <n>', description: 'how many messages (default 10)', parse: intArg('--limit') }],
     build: (positionals, opts) => {
       refuseChannel('task-read', opts);
@@ -598,7 +600,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-stop <topic>',
     topic: 'tasks',
-    description: "Stop what a conversation's agent is doing — only when the person asked for it",
+    description: "Stop what one of this conversation's sub-agents is doing; its topic and context stay",
     options: [],
     build: (positionals, opts) => {
       refuseChannel('task-stop', opts);

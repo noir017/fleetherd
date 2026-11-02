@@ -10,7 +10,7 @@ import { packageVersion, remoteBinary, sshTransport } from '../remote/binaries.j
 import type { Welcome } from '../remote/connection.js';
 import { RemoteHost, type CliBridge, type CliSession } from '../remote/host.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { bundledSkillDir, skillHomes, SKILL_LINK_NAME } from './skill-link.js';
+import { BUNDLED_SKILLS, bundledSkillDir, skillHomes } from './skill-link.js';
 
 /**
  * The daemon's remote hosts (`hosts:` in config.yaml): one RemoteHost per entry, shared by every
@@ -137,28 +137,34 @@ export class RemoteHosts {
   }
 
   /**
-   * Put the bundled skill where `harness` reads skills on the host (skill-link.ts says where, and
+   * Put the bundled skills where `harness` reads skills on the host (skill-link.ts says where, and
    * why only for a harness that has run there). The files go into the version's own directory, so
    * an upgrade retires them along with the old build, and the links are repointed by the next
-   * spawn. Best-effort, like the local link: an agent without the skill still has its tools.
+   * spawn. Best-effort, like the local link: an agent without the skills still has its tools.
    */
   async placeSkill(host: RemoteHost, harness: AgentDef['harness'], home: string, w: Welcome): Promise<void> {
     if (process.env.TALKCODE_NO_SKILL_LINK) return;
     const homes = skillHomes(harness, home);
     if (homes.length === 0) return;
-    const target = `${w.home}/.talkcode/remote/${w.version}/skill`;
+    const base = `${w.home}/.talkcode/remote/${w.version}`;
     const key = `${host.id}@${w.version}@${w.instance}`;
     try {
       if (!this.skillPlaced.has(key)) {
-        for (const rel of listFiles(bundledSkillDir())) {
-          await host.writeFile(`${target}/${rel}`, fs.readFileSync(path.join(bundledSkillDir(), rel)), 0o644);
+        for (const skill of BUNDLED_SKILLS) {
+          const source = bundledSkillDir(skill.dir);
+          for (const rel of listFiles(source)) {
+            await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
+          }
         }
         this.skillPlaced.add(key);
       }
-      for (const h of homes) {
-        const r = await host.ensureLink(target, `${h.dir}/${SKILL_LINK_NAME}`, h.requires);
-        if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[skill] ${host.id}: linked ${r.link} → ${target}`);
-        else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[skill] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
+      for (const skill of BUNDLED_SKILLS) {
+        const target = `${base}/${skill.dir}`;
+        for (const h of homes) {
+          const r = await host.ensureLink(target, `${h.dir}/${skill.name}`, h.requires);
+          if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[skill] ${host.id}: linked ${r.link} → ${target}`);
+          else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[skill] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
+        }
       }
     } catch (e) {
       console.warn(`[skill] ${host.id}: could not place the skill:`, e instanceof Error ? e.message : e);

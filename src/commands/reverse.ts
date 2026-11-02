@@ -12,8 +12,8 @@ import type {
   TaskActionResult,
   TaskAgentsResult,
   TaskListResult,
+  TaskNewResult,
   TaskReadResult,
-  TaskRow,
   VoiceLogResult,
 } from '../ipc/protocol.js';
 import { ASK_CLIENT_TIMEOUT_MARGIN_MS, DEFAULT_ASK_TIMEOUT_MS } from '../ipc/protocol.js';
@@ -346,7 +346,7 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown) => string
   'reload-config': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
   'task-agents': renderTaskAgents,
   'task-list': renderTaskList,
-  'task-new': renderTaskOpened,
+  'task-new': renderTaskProposed,
   'task-read': renderTaskRead,
   'task-send': renderTaskAction,
   'task-stop': renderTaskAction,
@@ -358,27 +358,26 @@ function renderTaskAgents(data: unknown): string {
   if (agents.length === 0) return toon({ count: 0, note: 'no agents are configured' });
   return toon({
     agents: agents.map((a) => ({ ...a, dirs: a.dirs.join(', ') })),
-    help: ['task-new --agent <id> [--cwd <dir>] "<the request>" hands work to one of these. --cwd is the root or one of its dirs.'],
+    help: [
+      'task-new --agent <id> [--cwd <dir>] "<the task>" proposes a sub-task for one of these; --cwd is the root or one of its dirs.',
+      'here=true: on the same machine as you — prefer these. Another machine has its own checkouts and tools; use one only when the work needs that machine.',
+    ],
   });
 }
 
 /** task-list: the table, and the one thing worth knowing about the stages. */
 function renderTaskList(data: unknown): string {
   const result = (data as TaskListResult | undefined) ?? { tasks: [], total: 0 };
-  if (result.tasks.length === 0) return toon({ count: 0, note: 'no conversations yet' });
-  const help = ['answer, failed and review need the person; retrying and working are under way; idle needs nothing.'];
+  if (result.tasks.length === 0) return toon({ count: 0, note: 'this conversation has opened no sub-agent topics' });
+  const help = ['review: finished. answer: waiting on a question (the person answers it in that topic). failed, retrying, working, idle.'];
   if (result.total > result.tasks.length) help.push(`Showing the ${result.tasks.length} most recent of ${result.total}; raise --limit for more.`);
   return toon({ tasks: result.tasks, help });
 }
 
-/** task-new: the conversation it opened. */
-function renderTaskOpened(data: unknown): string {
-  const task = (data as { task?: TaskRow } | undefined)?.task;
-  if (!task) return toon({ ok: true });
-  return toon({
-    task,
-    help: [`Opened. Its agent has the request; you will be told in [topic updates] when it has something for the person. Its topic id is ${task.topic}.`],
-  });
+/** task-new: where it went, and what happens next. */
+function renderTaskProposed(data: unknown): string {
+  const result = data as TaskNewResult | undefined;
+  return toon(result ? { item: result.item, result: result.result } : { ok: true });
 }
 
 /** task-read: the messages, as a table. */

@@ -5,6 +5,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Sub-agents: `/super <job>`.** The agent you are talking to splits the job, hands the parts to
+  other agents that work in parallel, checks what they did and reports once — so you follow one
+  topic instead of four. Each part gets a topic of its own, nested under the one that started it in
+  the web UI's sidebar (▾ folds them away), where you can read it and talk to that agent directly.
+  Nothing starts until you tap Start on a card that shows every part in full; to change it, say
+  what instead. With agents on several machines, it prefers the ones on its own. The agent that
+  started them is told when one finishes, fails or asks something (a folded 🔔 line shows exactly
+  what), but not about turns you start in a sub-agent's topic yourself; and a sub-agent's finished
+  replies and failures stay out of Needs you and notifications, since that agent reads them for
+  you. Any agent can do the same when asked to split work, without `/super`. Web UI only. See
+  docs/sub-agents.md.
+
+### Removed
+
+- **The dispatcher topic (📥), and `dispatcher:` in config.yaml**, added in 2.18.0. A standing
+  router earns its keep sorting a team's requests — whose is this, is it new, which repository — and
+  one person already knows which topic a message belongs in, so it mostly retold what the topics
+  had said, at the cost of a model turn each time. What it was for is now sub-agents, started from
+  the topic you are in. A config.yaml that still has `dispatcher:` no longer loads: delete the two
+  lines. Needs you, notifications and `hooks.turnFailed` stay as they were.
+
 ## [2.18.0] - 2026-11-02
 
 ### Added

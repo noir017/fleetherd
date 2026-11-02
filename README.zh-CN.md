@@ -47,7 +47,7 @@ Code、Codex、OpenCode，以及 Google 的 Antigravity CLI。给机器人发消
 - **话题即会话** —— Telegram 话题、飞书话题、Slack 线程、Discord 子区，各自绑定智能体、各自的[工作目录](docs/zh-CN/working-directory.md)，并[自动命名](docs/zh-CN/topic-names.md)。
 - **持久会话** —— 重启不丢；`/new`、`/stop`、`/kill`；闲置的智能体进程会释放，下一条消息再从原处恢复。[→](docs/zh-CN/chat-commands.md)
 - **在聊天中行动** —— 智能体可发文件、发按钮提问、引用回复、加回应、读历史。[→](docs/zh-CN/agent-actions.md)
-- **调度智能体和待办列表** —— 把要做的事告诉一个智能体：它为每件事开一个话题、交给一个智能体，某个话题有结果、有问题或出错时再告诉你。网页端列出所有在等你的事，还能推送到手机。[→](docs/zh-CN/dispatcher.md)
+- **子代理和待办列表** —— `/super <任务>`：智能体把活拆开，经你确认后交给几个智能体在挂在它下面的话题里同时干，再检查结果、汇报给你。网页端列出所有在等你的事，还能推送到手机。[→](docs/zh-CN/sub-agents.md)
 - **失败后自动继续** —— 上游故障导致一轮失败时，可以用你自己的话自动继续，并跑一条命令提醒你。[→](docs/zh-CN/agents.md#一轮失败之后)
 - **定时任务** —— 「每天早上 8 点……」会变成网关自己保存的任务，重启不丢。[→](docs/zh-CN/scheduled-tasks.md)
 - **语音消息** —— 自动转写，先给你看，确认后再发。[→](docs/zh-CN/voice.md)
@@ -124,7 +124,7 @@ access:
 | [在聊天里改配置](docs/zh-CN/settings.md) | `/setting`：不重启就改 config.yaml |
 | [语音消息](docs/zh-CN/voice.md) | 转写与确认 |
 | [定时任务](docs/zh-CN/scheduled-tasks.md) | 定时跑提示词或命令 |
-| [调度智能体](docs/zh-CN/dispatcher.md) | 一个负责分派工作、报告进展的智能体 |
+| [子代理](docs/zh-CN/sub-agents.md) | `/super`：把一件活拆给几个智能体并行干 |
 | [智能体能做什么](docs/zh-CN/agent-actions.md) | 按钮提问、发文件、内置 skill |
 
 ## 参与开发
