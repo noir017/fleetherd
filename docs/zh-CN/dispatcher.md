@@ -22,7 +22,7 @@ agents:
     cwd: ~/workspace
 ```
 
-`talkcode reload` 后生效（重启也行），📥 话题会出现在侧栏最上面。
+在任意聊天里发 `/reload` 后生效（重启也行），📥 话题会出现在侧栏最上面。
 
 ## 它做什么
 

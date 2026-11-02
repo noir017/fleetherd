@@ -24,8 +24,8 @@ agents:
     cwd: ~/workspace
 ```
 
-`talkcode reload` applies it (so does a restart). The 📥 topic appears at the top of the
-sidebar.
+Send `/reload` in any chat to apply it (so does a restart). The 📥 topic appears at the top of
+the sidebar.
 
 ## What it does
 
