@@ -2994,7 +2994,12 @@ function flushPendingTools(st: TurnState, ok = true): void {
  * Falls back to the truncated title when kind is absent. This keeps long content (commands/paths) only
  * in the truncated preview, leaving the bubble in the hermes `emoji shortname: "truncated args"` style.
  */
-function toolLabel(kind?: string, title?: string): string {
+export function toolLabel(kind?: string, title?: string): string {
+  // An MCP tool (`mcp__<server>__<tool>`, kind `other`) by its own name — `send_file`, `task_new` —
+  // rather than the bare "Tool" every one of them would otherwise share. The dispatcher's topic is
+  // nothing but such calls, and a column of identical "Tool" rows says nothing about what it did.
+  const mcp = title ? /^mcp__[^_]+(?:_[^_]+)*?__([A-Za-z0-9_-]+)$/.exec(title.trim()) : null;
+  if (mcp?.[1] && (!kind || kind === 'other')) return mcp[1];
   const byKind: Record<string, string> = {
     read: 'Read',
     edit: 'Edit',

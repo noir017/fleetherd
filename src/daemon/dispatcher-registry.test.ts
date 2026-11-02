@@ -46,13 +46,14 @@ function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' |
   };
 
   const sent: Array<{ to: string; text: string }> = [];
+  const renamed: Array<{ to: string; name: string }> = [];
   const activity: Array<{ to: string; a: TopicActivity | undefined }> = [];
   let seq = 0;
   let threads = 0;
   const where = (a: ConversationAddress) => `${a.channel}/${a.thread ?? ''}`;
   const platform = {
     platform: 'web',
-    capabilities: { thread: true, editMessage: true, maxMessageLength: 2000 },
+    capabilities: { thread: true, renameThread: true, editMessage: true, maxMessageLength: 2000 },
     measureRendered: (s: string) => s.length,
     sendMessage: async (address: ConversationAddress, text: string) => {
       sent.push({ to: where(address), text });
@@ -63,7 +64,7 @@ function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' |
     startTyping: async () => {},
     stopTyping: async () => {},
     createThread: async () => ({ address: { channel: 'main', thread: `new${++threads}` } }),
-    renameThread: async () => {},
+    renameThread: async (address: ConversationAddress, name: string) => renamed.push({ to: where(address), name }),
     setActivity: (address: ConversationAddress, a: TopicActivity | undefined) => activity.push({ to: where(address), a }),
   } as unknown as PlatformAdapter;
 
@@ -91,7 +92,7 @@ function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' |
   const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, {
     isDispatcher: (id) => id === dispatcherKey,
   });
-  return { registry, sent, prompts, activity };
+  return { registry, sent, prompts, activity, renamed };
 }
 
 let live: ConversationRegistry | undefined;
@@ -169,5 +170,18 @@ describe('the dispatcher’s hands', () => {
     await wait();
     expect(r.sent.filter((m) => m.text.startsWith("📥 This is the dispatcher's topic"))).toHaveLength(3);
     expect(r.prompts).toEqual([]);
+  });
+});
+
+describe('the dispatcher topic’s name', () => {
+  it('is never taken from its first message, where an ordinary topic’s is', async () => {
+    const r = rig({ dispatcherTopic: 'd15a7c40' });
+    live = r.registry;
+    r.registry.route(inbound('fix the bump and tell me', 'd15a7c40'));
+    r.registry.route(inbound('fix the bump and tell me', 'tt'));
+    await wait(200);
+    expect(r.prompts.map((p) => p.conversation).sort()).toEqual(['web#main#d15a7c40', 'web#main#tt']);
+    expect(r.renamed.map((x) => x.to)).not.toContain('main/d15a7c40');
+    expect(r.renamed.map((x) => x.to)).toContain('main/tt');
   });
 });

@@ -419,6 +419,8 @@ export class WebRoom {
 
   /** Name a topic — what `renameThread` lands on, i.e. what the harness decided it is about. */
   renameTopic(id: string, title: string): boolean {
+    // The dispatcher's topic keeps DISPATCH_TITLE: the daemon does not name it, and nothing else may.
+    if (this.topics.get(id)?.dispatcher) return false;
     if (!this.topics.rename(id, title)) return false;
     this.announceTopics();
     return true;

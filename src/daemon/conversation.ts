@@ -1283,6 +1283,8 @@ export class ConversationRegistry {
    * move the failure somewhere less obvious. `/title` and the setting are the ways to opt out.
    */
   private nameConversation(id: ConversationId, seed: string): void {
+    // The dispatcher's topic is a place, not a subject: it keeps the name its platform gave it.
+    if (this.hooks?.isDispatcher?.(id)) return;
     try {
       const lane = this.laneOf(id);
       if (!this.conversations.has(id) || !lane || !seed.trim()) return;
@@ -2729,6 +2731,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
    */
   workdirForRef(ref: ConversationRef): ConversationWorkdir | undefined {
     const id = this.idForRef(ref);
+    // The dispatcher works in a directory of its own (dispatcher-home.ts), not the agent's: no label
+    // is better than the wrong one, and which project it is in is not a question about it.
+    if (this.hooks?.isDispatcher?.(id)) return undefined;
     const def = findAgent(this.config, this.boundAgentFor(id, this.config.routing.default));
     if (!def) return undefined;
     const host = agentPlaceOf(def);

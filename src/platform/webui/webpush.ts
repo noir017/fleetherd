@@ -34,12 +34,19 @@ import path from 'node:path';
  * subscribe time, and checked again before every send.
  */
 
-/** The push services the major browsers use, by host suffix (checked 2026-11-02). */
-const PUSH_HOSTS = [
-  'fcm.googleapis.com', // Chrome, Edge (Chromium), Opera, Samsung Internet
-  'push.services.mozilla.com', // Firefox (updates.push.services.mozilla.com)
-  'push.apple.com', // Safari and installed iOS apps (web.push.apple.com)
-  'notify.windows.com', // legacy Edge (wns2-*.notify.windows.com)
+/**
+ * The push services the major browsers use: a host suffix, and where one is needed a path prefix
+ * that keeps a broad suffix to the push service alone (checked 2026-11-02).
+ */
+const PUSH_SERVICES: ReadonlyArray<{ host: string; path?: string }> = [
+  { host: 'fcm.googleapis.com' }, // Chrome, Edge (Chromium), Opera, Samsung Internet
+  // Chromium itself — unbranded builds, Playwright's included — subscribes at jmt17.google.com/fcm/send/…,
+  // found the hard way: the first real subscription in a test browser was refused. Held to /fcm/ so
+  // the rest of google.com stays out.
+  { host: 'google.com', path: '/fcm/' },
+  { host: 'push.services.mozilla.com' }, // Firefox (updates.push.services.mozilla.com)
+  { host: 'push.apple.com' }, // Safari and installed iOS apps (web.push.apple.com)
+  { host: 'notify.windows.com' }, // legacy Edge (wns2-*.notify.windows.com)
 ];
 
 /** How many devices may be subscribed. A person has a few; a runaway page should not fill a file. */
@@ -67,7 +74,7 @@ export function allowedEndpoint(endpoint: string): boolean {
   }
   if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) return false;
   const host = url.hostname.toLowerCase();
-  return PUSH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  return PUSH_SERVICES.some((s) => (host === s.host || host.endsWith(`.${s.host}`)) && (!s.path || url.pathname.startsWith(s.path)));
 }
 
 export function b64url(buf: Buffer | Uint8Array): string {

@@ -4,6 +4,7 @@ import {
   acpMcpServers,
   DISPATCHER_SESSION_META,
   remoteMcpServers,
+  toolLabel,
   dshModelDisplayValue,
   dshModelSelectorValue,
   effortSelectorOf,
@@ -1021,5 +1022,14 @@ describe('what the agent is given', () => {
     expect(acpMcpServers('tok-1', '/run/aa.sock', '/work/p', null)).toEqual([]);
     // And the default — this very process — is a vitest worker, so it must take the same path.
     expect(acpMcpServers('tok-1', '/run/aa.sock', '/work/p')).toEqual([]);
+  });
+});
+
+describe('toolLabel', () => {
+  it('names an MCP tool by its own name instead of the bare "Tool" every one would share', () => {
+    expect(toolLabel('other', 'mcp__chat__task_new')).toBe('task_new');
+    expect(toolLabel(undefined, 'mcp__tackle_twist__send_file')).toBe('send_file');
+    expect(toolLabel('other', 'something else')).toBe('Tool');
+    expect(toolLabel('execute', 'mcp__chat__x')).toBe('Bash');
   });
 });

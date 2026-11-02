@@ -72,6 +72,7 @@ describe('allowedEndpoint', () => {
   it('takes the push services browsers use, over HTTPS', () => {
     for (const ok of [
       'https://fcm.googleapis.com/fcm/send/abc',
+      'https://jmt17.google.com/fcm/send/abc',
       'https://updates.push.services.mozilla.com/wpush/v2/abc',
       'https://web.push.apple.com/QAbc',
       'https://wns2-par02p.notify.windows.com/w/?token=abc',
@@ -87,6 +88,8 @@ describe('allowedEndpoint', () => {
       'https://evilfcm.googleapis.com.example/x',
       'https://169.254.169.254/latest/meta-data',
       'https://localhost/x',
+      'https://jmt17.google.com/search?q=x',
+      'https://accounts.google.com/o/oauth2',
       'https://user:pw@fcm.googleapis.com/x',
       'https://fcm.googleapis.com:8443/x',
       'not a url',

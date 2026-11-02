@@ -94,6 +94,13 @@ describe('WebRoom: the dispatcher topic', () => {
     expect(store.evictable(() => false)?.id).not.toBe(DISPATCH_TOPIC);
   });
 
+  it('keeps its name: nothing renames it', () => {
+    const { room, row } = rig();
+    room.dispatchLane(true);
+    expect(room.renameTopic(DISPATCH_TOPIC, '[disp] whatever the first message said')).toBe(false);
+    expect(row(DISPATCH_TOPIC)?.title).toBe(DISPATCH_TITLE);
+  });
+
   it('opening it twice is the same topic; retiring it leaves an ordinary topic', () => {
     const { room, row } = rig();
     room.dispatchLane(true);
