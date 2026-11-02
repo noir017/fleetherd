@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-11-02
+
 ### Added
 
 - **A dispatcher topic.** One person can only watch a few conversations at once: over a
