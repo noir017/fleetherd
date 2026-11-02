@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-11-02
+
 ### Added
 
 - **Sub-agents: `/super <job>`.** The agent you are talking to splits the job, hands the parts to
