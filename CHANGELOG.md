@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-11-02
+
 ### Added
 
 - **A new web UI topic lets you pick its agent.** It used to open on a blank page, and choosing
