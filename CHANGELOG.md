@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tool row says what the tool actually did, on CodeBuddy Code too.** Every cbc tool drew as
+  `⚙️ Tool: "Bash"` — no command, no per-tool emoji — for its whole life, so a turn's tool list said
+  nothing about the turn. cbc announces each call before its parameters (`{title: "Bash", kind:
+  "other", rawInput: {}}`, already `in_progress`) and streams the command after, and the row was
+  drawn from that announcement and never redrawn. It now follows the call's later frames: the
+  command, the tool's real name (`ToolSearch`, `DeferExecuteTool`) and its emoji land as they
+  arrive, a parameter that has not streamed yet no longer shows as `{"command":""}`, and a call
+  whose title only repeats its name reads `💻 Bash` instead of `💻 Bash: "Bash"`.
+
 ## [2.19.2] - 2026-11-02
 
 ### Added

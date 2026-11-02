@@ -125,6 +125,20 @@ describe('formatDuration', () => {
 });
 
 describe('separate mode', () => {
+  it('a second start for the same index does not post the call twice', async () => {
+    // No line set here, so the row cannot be corrected — but a second bubble for one call would
+    // read as the tool having run twice. The first bubble, wrong as it is, stands.
+    const { sink, sends, flush } = makeSink({ withEdit: false });
+    const r = new ToolRenderer(makeOpts({ grouping: 'separate' }), sink);
+
+    r.onToolStart(start('Tool', 'Bash', 0));
+    await flush();
+    r.onToolStart(start('Bash', 'echo hi', 0));
+    await flush();
+
+    expect(sends).toEqual(['⚙️ Tool: "Bash"']);
+  });
+
   it('two different tools → two sendBubble calls, no editBubble', async () => {
     const { sink, sends, edits, flush } = makeSink({ withEdit: true });
     const r = new ToolRenderer(makeOpts({ grouping: 'separate' }), sink);
@@ -153,6 +167,38 @@ describe('separate mode', () => {
 });
 
 describe('accumulate mode', () => {
+  it('a second start for the same index rewrites that line instead of adding one', async () => {
+    // CodeBuddy Code announces a call before its parameters: `Tool: "Bash"`, then the same index
+    // again with the real kind and command. One row, corrected — not two rows, one of them wrong.
+    const { sink, sends, edits, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+
+    r.onToolStart(start('Tool', 'Bash', 0));
+    await flush();
+    r.onToolStart(start('Bash', 'echo hi', 0));
+    await flush();
+
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toBe('⚙️ Tool: "Bash"');
+    expect(edits).toHaveLength(1);
+    expect(edits[0]!.text).toBe('💻 Bash: "echo hi"');
+  });
+
+  it('an update to a finished line is ignored (its ✓ is the last word)', async () => {
+    const { sink, edits, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+
+    r.onToolStart(start('Bash', 'ls', 0));
+    r.onToolFinish(finish('Bash', true, 500, 0));
+    await flush();
+    const before = edits.length;
+    r.onToolStart(start('Bash', 'ls -la', 0));
+    await flush();
+
+    expect(edits).toHaveLength(before); // no edit, and no second row either
+    expect(edits[edits.length - 1]!.text).toContain('💻 Bash: "ls" ✓ 500ms');
+  });
+
   it('two starts → one sendBubble + one editBubble, bubble holds two lines', async () => {
     const { sink, sends, edits, flush } = makeSink({ withEdit: true });
     const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);

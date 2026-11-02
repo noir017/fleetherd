@@ -106,6 +106,50 @@ describe('translateUpdate tool state machine (ACP generic)', () => {
     expect(events[0]).toBe('start:do-thing|{"x":1}');
   });
 
+  /**
+   * CodeBuddy Code's own frame order, captured on the wire 2026-11-02 by
+   * project-scripts/cbc-acp-probe/probe.mjs (fields shortened, nothing renamed).
+   *
+   * It opens every call with a placeholder — `title:"Bash"`, `kind:"other"`, empty rawInput, and
+   * status ALREADY `in_progress` — which is enough for the readiness rule to draw it, and says
+   * nothing: the row read `⚙️ Tool: "Bash"` and the command never appeared. The parameters and the
+   * real kind arrive on the frames after, so a drawn row has to be able to follow them.
+   */
+  it('cbc: a placeholder row is corrected when the parameters stream in', () => {
+    const { st, events } = recorder();
+    feed(st, { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Bash', kind: 'other', rawInput: {}, status: 'in_progress' });
+    // The bare identifier in the title is the tool's name (see toolLabel), the preview repeats it.
+    expect(events).toEqual(['start:Bash|Bash']);
+    // command streaming: still empty, still nothing better to say
+    feed(st, { sessionUpdate: 'tool_call_update', toolCallId: 't1', rawInput: { command: '' } });
+    expect(events).toEqual(['start:Bash|Bash']);
+    // the command arrives — same index, rewritten
+    feed(st, { sessionUpdate: 'tool_call_update', toolCallId: 't1', rawInput: { command: 'echo hi', description: 'Print hi' } });
+    expect(events).toEqual(['start:Bash|Bash', 'start:Bash|echo hi']);
+    // and the call is re-sent whole, this time with the real kind and title — same row still
+    feed(st, {
+      sessionUpdate: 'tool_call',
+      toolCallId: 't1',
+      status: 'pending',
+      title: '`echo hi`',
+      kind: 'execute',
+      rawInput: { command: 'echo hi', description: 'Print hi' },
+    });
+    expect(events).toEqual(['start:Bash|Bash', 'start:Bash|echo hi']);
+    feed(st, { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed' });
+    expect(events).toEqual(['start:Bash|Bash', 'start:Bash|echo hi', 'finish:Bash|true']);
+  });
+
+  it('cbc: no re-render once the call has finished', () => {
+    const { st, events } = recorder();
+    feed(st, { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Bash', kind: 'other', rawInput: {}, status: 'in_progress' });
+    feed(st, { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed' });
+    const settled = [...events];
+    // A stray late frame must not reopen a row that already carries its ✓.
+    feed(st, { sessionUpdate: 'tool_call_update', toolCallId: 't1', kind: 'execute', rawInput: { command: 'echo hi' } });
+    expect(events).toEqual(settled);
+  });
+
   it('available_commands_update normalizes to {name,description,hint} for onAvailableCommands', () => {
     const { st, commands, events } = recorder();
     feed(st, {
@@ -1015,5 +1059,13 @@ describe('toolLabel', () => {
     expect(toolLabel(undefined, 'mcp__tackle_twist__send_file')).toBe('send_file');
     expect(toolLabel('other', 'something else')).toBe('Tool');
     expect(toolLabel('execute', 'mcp__chat__x')).toBe('Bash');
+  });
+
+  it('takes a bare identifier in the title as the tool name under kind "other"', () => {
+    // CodeBuddy Code's shape: the tool's own name, with the kind it always falls back to.
+    expect(toolLabel('other', 'ToolSearch')).toBe('ToolSearch');
+    expect(toolLabel('other', 'DeferExecuteTool')).toBe('DeferExecuteTool');
+    // A sentence is not a name — that stays the generic row.
+    expect(toolLabel('other', 'Update todos')).toBe('Tool');
   });
 });

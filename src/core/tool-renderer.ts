@@ -189,6 +189,13 @@ export class ToolRenderer {
   private placeWaiters: Array<() => void> = [];
   /** Standalone (separate-grouping) sends still in flight; each one is an unplaced bubble. */
   private standaloneInFlight = 0;
+  /**
+   * Indexes already sent under `separate` grouping, which has no line set to rewrite.
+   *
+   * Only used to tell a call's own update (drop it) from a new call (send it) — see onToolStart.
+   * Cleared with the segment, so it cannot grow across a long session.
+   */
+  private sentIndexes = new Set<number>();
   private aborted = false;
 
   constructor(
@@ -209,11 +216,22 @@ export class ToolRenderer {
   }
 
   /**
-   * A tool started.
+   * A tool started — or, with the same `index`, reported again.
    *
    * Returns as soon as the line set is updated; delivery happens on the painter. It used to be
    * awaited by the turn's side-effect chain, which meant every progress write sat between the
    * agent's text and the user — and, once the chat was rate-limited, blocked it.
+   *
+   * ── Why the same index can arrive twice ──────────────────────────────────────────────────────
+   *
+   * ACP lets a tool's later update replace its title/kind/rawInput, and some harnesses lean on
+   * that hard: CodeBuddy Code opens every call with `{title: "Bash", kind: "other", rawInput: {},
+   * status: "in_progress"}`, which is enough to be drawn (status advanced) and says nothing —
+   * the row reads `⚙️ Tool: "Bash"` — and only then streams `rawInput.command` and re-sends the
+   * call as `{kind: "execute", title: "`echo hi`"}`. Drawn once, that row stayed `Tool: "Bash"`
+   * for the whole call and the command never appeared (probed 2026-11-02, project-scripts/
+   * cbc-acp-probe). So a second start for an unfinished line REPLACES it in place — the line set
+   * is keyed by index, and an edit is how a row that is already on screen changes.
    */
   onToolStart(evt: ToolEvent): void {
     if (this.aborted) return;
@@ -224,6 +242,21 @@ export class ToolRenderer {
     // lost; either way it is not this segment's business.
     if (this.closeAtRev !== null) this.rotate();
 
+    const emoji = this.opts.emojiMap[evt.name] ?? this.opts.defaultEmoji;
+    const preview = this.truncate(evt.inputPreview, this.opts.previewLimit);
+    // No quoted preview when it only repeats the name: harnesses that title a call with the tool's
+    // own name (`Bash`, `ToolSearch`) fall back to that title before the parameters stream, and
+    // `💻 Bash: "Bash"` is a row that says one thing twice.
+    const body =
+      preview && preview !== evt.name ? `${emoji} ${evt.name}: "${preview}"` : `${emoji} ${evt.name}`;
+    const json =
+      this.opts.mode === 'verbose' && evt.input !== undefined
+        ? '```json\n' + safeJson(evt.input) + '\n```'
+        : undefined;
+
+    // An update to a call that is already on screen: rewrite its row, do not add a second one.
+    if (this.rewriteKnownRow(evt, body, json)) return;
+
     // A subagent's Bash right after the main agent's is a different call, not a repeat, so the
     // owner is part of what `new` compares.
     const dedupeKey = evt.agent === undefined ? evt.name : `${evt.agent}\u0000${evt.name}`;
@@ -232,17 +265,17 @@ export class ToolRenderer {
     }
     this.lastToolKey = dedupeKey;
 
-    const emoji = this.opts.emojiMap[evt.name] ?? this.opts.defaultEmoji;
-    const preview = this.truncate(evt.inputPreview, this.opts.previewLimit);
-    const body = `${emoji} ${evt.name}: "${preview}"`;
-    const json =
-      this.opts.mode === 'verbose' && evt.input !== undefined
-        ? '```json\n' + safeJson(evt.input) + '\n```'
-        : undefined;
-
     if (!this.accumulateActive) {
       // separate (incl. degraded accumulate): one new bubble per tool, no line set — and so no
       // line above to share a name with: every bubble names its owner in full.
+      //
+      // No line set means no row to rewrite, so an update for a call already sent has nowhere to
+      // go: dropping it is the honest answer (the bubble below still names the tool), and posting
+      // it again would read as a second run of the same command.
+      if (evt.index !== undefined) {
+        if (this.sentIndexes.has(evt.index)) return;
+        this.sentIndexes.add(evt.index);
+      }
       let text = this.ownerPrefix(evt.agent, undefined) + body;
       if (json) text += '\n' + json;
       // No line set to seal here, so an oversized bubble (verbose JSON) can only be clamped.
@@ -254,6 +287,26 @@ export class ToolRenderer {
     // accumulate: add the tool to the line set and re-render the whole bubble.
     this.lines.push({ index: evt.index, name: evt.name, agent: evt.agent, body, json });
     this.touch();
+  }
+
+  /**
+   * Rewrite the row of a call that is already in the line set, and say whether this event was that.
+   *
+   * Runs before the `new` dedupe in onToolStart, or an upgrade that keeps the name (same tool, its
+   * parameters finally streamed in) would be swallowed as a repeat. A row that already carries its
+   * ✓ is closed: a late frame for it is the harness catching up, and a second row would read as a
+   * second run of the same command.
+   */
+  private rewriteKnownRow(evt: ToolEvent, body: string, json: string | undefined): boolean {
+    if (evt.index === undefined) return false;
+    const line = this.lines.find((l) => l.index === evt.index);
+    if (!line) return false;
+    if (line.finish) return true; // closed; nothing to redraw
+    line.name = evt.name;
+    line.body = body;
+    line.json = json;
+    this.touch();
+    return true;
   }
 
   /**
@@ -303,6 +356,7 @@ export class ToolRenderer {
     this.bubbleEdits = 0;
     this.lastPaintedText = null;
     this.closeAtRev = null;
+    this.sentIndexes.clear();
     this.deliveredRev = this.rev;
     // Nothing is owed a send any more — the line set that would have needed one is gone.
     this.releasePlaceWaiters();

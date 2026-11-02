@@ -26,6 +26,7 @@ import type {
   ElicitQuestion,
   PermissionAnswer,
   SteerOutcome,
+  ToolEvent,
 } from '../types.js';
 import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
@@ -2633,6 +2634,8 @@ interface ToolRec {
   startAt: number;
   /** Whether onToolStart (bubble rendered) was already sent. */
   started: boolean;
+  /** What that bubble currently says, so a later frame that says something else can correct it. */
+  rendered?: { name: string; preview: string };
   /** Whether onToolFinish was already sent. */
   finished: boolean;
   /** Id of the Agent/Task call whose subagent ran this tool; undefined for the main agent's own. */
@@ -2864,10 +2867,14 @@ function subagentDescription(rec: ToolRec): string {
   return typeof input?.description === 'string' ? input.description.trim() : '';
 }
 
-/** Render the bubble once the tool is ready (only once). force = status advanced, render even if rawInput is still empty. */
+/** Render the bubble once the tool is ready (see upgradeToolRow for the later frames). force = status advanced, render even if rawInput is still empty. */
 function maybeStartTool(st: TurnState, id: string, force: boolean): void {
   const rec = st.toolLedger.get(id);
-  if (!rec || rec.started) return;
+  if (!rec) return;
+  if (rec.started) {
+    upgradeToolRow(st, rec);
+    return;
+  }
   if (!force && !isNonEmptyObject(rec.rawInput)) return; // params not streamed yet, keep waiting for update
   // An Agent/Task call also waits for its description, the name its subagent's bubbles will carry.
   // Drawn on the first streamed field instead, it read `{"subagent_type":"general-purpose"}`, and
@@ -2875,7 +2882,15 @@ function maybeStartTool(st: TurnState, id: string, force: boolean): void {
   if (!force && rec.spawns && !subagentDescription(rec)) return;
   rec.started = true;
   if (st.lastSegment === 'text') st.handlers.onSegmentBreak(); // text → tool boundary
-  st.handlers.onToolStart({
+  const evt = toolStartEvent(st, rec);
+  rec.rendered = { name: evt.name, preview: evt.inputPreview };
+  st.handlers.onToolStart(evt);
+  st.lastSegment = 'tool';
+}
+
+/** The row a call would draw now, from everything known about it. */
+function toolStartEvent(st: TurnState, rec: ToolRec): ToolEvent {
+  return {
     // name uses the short ACP kind (aligns with emojiMap); command/path detail only in the truncated preview.
     name: toolLabel(rec.kind, rec.title),
     inputPreview:
@@ -2884,8 +2899,33 @@ function maybeStartTool(st: TurnState, id: string, force: boolean): void {
     index: rec.index,
     // The spawning call always precedes its subagent's first tool, so its name is known by now.
     agent: rec.parent ? (st.subagents?.get(rec.parent) ?? UNNAMED_SUBAGENT) : undefined,
-  });
-  st.lastSegment = 'tool';
+  };
+}
+
+/**
+ * A call already on screen, whose later frame says something new about it: draw the row again.
+ *
+ * ── Why a drawn row is not final ────────────────────────────────────────────────────────────────
+ *
+ * `maybeStartTool` renders as soon as the status advances, which for a harness that announces the
+ * call before its parameters is the right trade — a row appears while the tool runs. But "status
+ * advanced" can mean only that: CodeBuddy Code opens EVERY call with `{title: "Bash", kind:
+ * "other", rawInput: {}}`, so the row is drawn as `⚙️ Tool: "Bash"` — no command, no per-tool
+ * emoji — and the parameters stream in on the frames after it, which the old code merged into a
+ * record it had already stopped drawing from. Every cbc tool read `Tool: "Bash"` (or
+ * `Tool: "ToolSearch"`) for its whole life; the command never appeared. Frames captured on the
+ * wire 2026-11-02 by project-scripts/cbc-acp-probe/probe.mjs.
+ *
+ * So the row is re-emitted whenever its identity changes, and the renderer rewrites that line in
+ * place (ToolRenderer.onToolStart, same index). Only the identity: a re-emit for an unchanged row
+ * would push an edit through the turn's side-effect chain for nothing.
+ */
+function upgradeToolRow(st: TurnState, rec: ToolRec): void {
+  if (rec.finished) return; // its ✓ is the last word; a redraw would race the finish line
+  const evt = toolStartEvent(st, rec);
+  if (rec.rendered?.name === evt.name && rec.rendered.preview === evt.inputPreview) return;
+  rec.rendered = { name: evt.name, preview: evt.inputPreview };
+  st.handlers.onToolStart(evt);
 }
 
 function finishTool(st: TurnState, id: string, ok: boolean): void {
@@ -2955,8 +2995,14 @@ export function toolLabel(kind?: string, title?: string): string {
     switch_mode: 'Mode',
     other: 'Tool',
   };
+  // `other` is the kind every adapter falls back to, so on its own it names nothing. CodeBuddy Code
+  // puts the tool's own name in the title instead — `ToolSearch`, `DeferExecuteTool` — and a bare
+  // identifier there is a name, not a sentence, so it beats the generic "Tool". A descriptive title
+  // ("Update todos") still reads as `Tool: "…"`, which is what it is.
+  const named = stripCode(title);
+  if (kind === 'other' && /^[A-Za-z][A-Za-z0-9_.-]*$/.test(named)) return truncateToolName(named);
   if (kind && byKind[kind]) return byKind[kind];
-  if (title) return truncateToolName(stripCode(title));
+  if (title) return truncateToolName(named);
   return 'tool';
 }
 

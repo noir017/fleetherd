@@ -304,15 +304,27 @@ const PREVIEW_KEYS = [
   'CommandLine', 'AbsolutePath', 'DirectoryPath', 'Query', 'SearchPath', 'TargetFile', 'Url',
 ];
 
-/** Short summary of a tool's raw input (ToolRenderer still truncates per previewLimit); empty object → "" (don't show "{}"). */
+/**
+ * Short summary of a tool's raw input (ToolRenderer still truncates per previewLimit); empty object → "" (don't show "{}").
+ *
+ * A parameter the harness is still streaming also reads as "" rather than as JSON. CodeBuddy Code
+ * sends `{command: ""}` a frame before `{command: "echo hi"}`, and a preview of `{"command":""}` in
+ * between is worse than none: it is the row the reader sees first, and it says nothing. The key
+ * being there is what distinguishes "not streamed yet" from a shape this function does not know,
+ * which still falls back to the JSON dump.
+ */
 export function buildInputPreview(input: unknown): string {
   if (input && typeof input === 'object') {
     const obj = input as Record<string, unknown>;
     if (Object.keys(obj).length === 0) return '';
+    let streaming = false;
     for (const key of PREVIEW_KEYS) {
       const v = obj[key];
-      if (typeof v === 'string' && v.length > 0) return v;
+      if (typeof v !== 'string') continue;
+      if (v.length > 0) return v;
+      streaming = true;
     }
+    if (streaming) return '';
     try {
       return JSON.stringify(obj);
     } catch {
