@@ -49,6 +49,51 @@ agents:
 The hook cannot be changed from chat (`/setting`). Doing that would be the same as
 running a shell command on your machine from chat.
 
+## When a turn fails
+
+By default a failed turn shows ❌ and the reason, and waits for you. `hooks.turnFailed` can do
+more: continue automatically after failures that usually pass on their own, and run a command
+to alert you.
+
+```yaml
+agents:
+  - id: cc
+    harness: claude
+    hooks:
+      turnFailed:
+        continue:
+          on: [service, connection, limit, hung, restart]   # the default
+          message: 继续          # sent to the agent as if you typed it (default: continue)
+          max: 3                # in a row (default 3)
+          backoffMs: 30000      # first wait; doubles each time, at most 10 minutes
+        command: curl -s -d "$TALKCODE_TURN_FAILURE" https://ntfy.sh/my-topic
+```
+
+What `on` can name:
+
+| reason | what happened |
+|---|---|
+| `service`, `limit`, `connection`, `access`, `request` | the model provider failed: an outage, a rate or usage limit, a dropped connection, a sign-in problem, a refused request. Reported by Claude Code only |
+| `provider` | the model provider failed in a way the agent did not classify |
+| `hung` | the agent sent nothing for 10 minutes |
+| `startup` | the agent's process could not be started |
+| `preLaunch` | the [pre-launch hook](#pre-launch-hook) failed |
+| `restart` | the gateway stopped while the turn was running (found when it starts again) |
+| `other` | anything else, including every failure of harnesses that report no kind |
+
+- Each continue is announced in the chat first (`↻ … sending "继续" in 30s (1/3)`), then sent as a
+  turn of its own. Anything you send meanwhile, `/stop`, `/new` or `/kill` calls it off.
+- A turn that ends normally resets the count. After `max` failures in a row the chat says it
+  will not continue again, and the topic is listed as failed.
+- `access` and `request` are not in the default list, because continuing does not fix a missing
+  sign-in or a request the provider refuses.
+- `command` runs after every failure, on the agent's own machine, under `bash -lc`. The failure is
+  in `$TALKCODE_TURN_FAILURE` as JSON: `agent`, `conversation`, `reason`, `message`, `at` and, when a
+  continue was scheduled, `continuing`. It does not affect the turn, and its output is kept in
+  `~/.config/talkcode/hooks/<agent-id>/`.
+- A turn cut off by a restart is said in its topic when the gateway is back (`⚠️ The gateway
+  restarted before this turn finished`), whether or not anything continues it.
+
 ## Permission requests
 
 Some agents ask before running a tool: Claude Code does for commands and file edits in its

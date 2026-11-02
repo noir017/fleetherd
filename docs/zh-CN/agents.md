@@ -46,6 +46,47 @@ agents:
 
 钩子不能在聊天里（`/setting`）修改，否则就等于允许从聊天里在你的机器上执行任意命令。
 
+## 一轮失败之后
+
+默认情况下，一轮失败会显示 ❌ 和原因，然后等你处理。`hooks.turnFailed` 可以多做两件事：
+对那些通常会自己恢复的失败自动继续，以及跑一条命令来提醒你。
+
+```yaml
+agents:
+  - id: cc
+    harness: claude
+    hooks:
+      turnFailed:
+        continue:
+          on: [service, connection, limit, hung, restart]   # 默认值
+          message: 继续          # 像你亲手输入一样发给智能体（默认：continue）
+          max: 3                # 最多连续几次（默认 3）
+          backoffMs: 30000      # 第一次等多久；每次翻倍，最多 10 分钟
+        command: curl -s -d "$TALKCODE_TURN_FAILURE" https://ntfy.sh/my-topic
+```
+
+`on` 可以写的原因：
+
+| 原因 | 发生了什么 |
+|---|---|
+| `service`、`limit`、`connection`、`access`、`request` | 模型服务出错：故障、频率或用量限制、连接断开、登录问题、请求被拒。只有 Claude Code 会报这几种 |
+| `provider` | 模型服务出错，但智能体没给出具体类型 |
+| `hung` | 智能体 10 分钟没有任何输出 |
+| `startup` | 智能体进程没能启动 |
+| `preLaunch` | [启动前钩子](#启动前钩子)失败 |
+| `restart` | 这一轮进行中网关停了（网关重新启动时发现） |
+| `other` | 其他所有情况，包括不报失败类型的 harness 的所有失败 |
+
+- 每次自动继续前都会先在聊天里说明（`↻ … sending "继续" in 30s (1/3)`），然后作为单独的一轮发出。
+  等待期间你发任何消息、`/stop`、`/new` 或 `/kill` 都会取消它。
+- 一轮正常结束会把计数清零。连续失败 `max` 次后，聊天里会说明不再继续，这个话题会被列为失败。
+- 默认列表里没有 `access` 和 `request`，因为没登录、请求被拒，继续多少次也没用。
+- `command` 在每次失败后运行，在智能体自己的机器上用 `bash -lc` 执行。失败信息以 JSON 放在
+  `$TALKCODE_TURN_FAILURE` 里：`agent`、`conversation`、`reason`、`message`、`at`，安排了自动继续时还有
+  `continuing`。它不影响这一轮，输出保存在 `~/.config/talkcode/hooks/<agent-id>/`。
+- 被重启打断的一轮，网关回来后会在它的话题里说明（`⚠️ The gateway restarted before this turn
+  finished`），不管有没有自动继续。
+
 ## 权限请求
 
 有的智能体在用工具前会先请求权限：Claude Code 在默认模式下，执行命令、改文件都会问。默认
