@@ -55,9 +55,21 @@ import { selfInvocation } from './reverse-cli-shim.js';
 /** The link's name, which is also the name harnesses list the skill under. */
 export const SKILL_LINK_NAME = 'talkcode';
 
-/** `skill/` at the package root: two levels above this file both in `dist/daemon/` and `src/daemon/`. */
-export function bundledSkillDir(): string {
-  return fileURLToPath(new URL('../../skill', import.meta.url));
+/**
+ * Every skill the package ships: the link name each is listed under, and its directory at the
+ * package root. `super` is `/super` (daemon/delegation.ts): a second skill rather than a page of the
+ * first because it is invoked by name — a harness that turns skills into slash commands (Claude
+ * Code) offers it as one — and its own directory rather than one inside `skill/`, because a harness
+ * that finds skills by walking for SKILL.md (opencode reads several trees) would list it twice.
+ */
+export const BUNDLED_SKILLS: ReadonlyArray<{ name: string; dir: string }> = [
+  { name: SKILL_LINK_NAME, dir: 'skill' },
+  { name: 'super', dir: 'skill-super' },
+];
+
+/** A skill directory at the package root (default `skill/`): two levels above this file in `dist/daemon/` and `src/daemon/`. */
+export function bundledSkillDir(dir = 'skill'): string {
+  return fileURLToPath(new URL(`../../${dir}`, import.meta.url));
 }
 
 /** A skills directory to link into, and the harness config directory that must exist first. */
@@ -98,9 +110,9 @@ export interface SkillLinkResult {
   detail?: string;
 }
 
-/** Make `<home.dir>/talkcode` a symlink to `source`. No guard — the tests drive this directly. */
-export function linkSkill(source: string, home: SkillHome): SkillLinkResult {
-  const link = path.join(home.dir, SKILL_LINK_NAME);
+/** Make `<home.dir>/<name>` a symlink to `source`. No guard — the tests drive this directly. */
+export function linkSkill(source: string, home: SkillHome, name = SKILL_LINK_NAME): SkillLinkResult {
+  const link = path.join(home.dir, name);
   try {
     if (!fs.existsSync(home.requires)) return { link, outcome: 'skipped', detail: `${home.requires} does not exist` };
     let previous: string | undefined;
@@ -125,30 +137,38 @@ export function linkSkill(source: string, home: SkillHome): SkillLinkResult {
 const warned = new Set<string>();
 
 /**
- * Link the bundled skill for one agent's harness under `home`. Best-effort: every outcome is logged
- * or silent, never thrown — an agent without the skill still has its tools and its shell.
+ * Link the bundled skills for one agent's harness under `home`. Best-effort: every outcome is logged
+ * or silent, never thrown — an agent without the skills still has its tools and its shell.
  */
 export function ensureSkillLink(harness: AgentDef['harness'], home: string): SkillLinkResult[] {
   if (process.env.TALKCODE_NO_SKILL_LINK) return [];
   if (!selfInvocation()) return [];
-  const source = bundledSkillDir();
-  if (!fs.existsSync(path.join(source, 'SKILL.md'))) {
-    if (!warned.has(source)) console.warn(`[skill] no bundled skill at ${source}; agents will not get it`);
-    warned.add(source);
-    return [];
-  }
-  const results = skillHomes(harness, home).map((h) => linkSkill(source, h));
-  for (const r of results) {
-    if (r.outcome === 'linked') console.log(`[skill] linked ${r.link} → ${source}`);
-    else if (r.outcome === 'relinked') console.log(`[skill] repointed ${r.link} → ${source} (was ${r.detail})`);
-    else if ((r.outcome === 'occupied' || r.outcome === 'failed') && !warned.has(r.link)) {
-      warned.add(r.link);
-      console.warn(
-        r.outcome === 'occupied'
-          ? `[skill] ${r.link} is ${r.detail}, not a link — leaving it alone; that copy is what agents will read`
-          : `[skill] could not link ${r.link}: ${r.detail}`
-      );
+  const results: SkillLinkResult[] = [];
+  for (const skill of BUNDLED_SKILLS) {
+    const source = bundledSkillDir(skill.dir);
+    if (!fs.existsSync(path.join(source, 'SKILL.md'))) {
+      if (!warned.has(source)) console.warn(`[skill] no bundled skill at ${source}; agents will not get it`);
+      warned.add(source);
+      continue;
+    }
+    for (const r of skillHomes(harness, home).map((h) => linkSkill(source, h, skill.name))) {
+      results.push(r);
+      report(r, source);
     }
   }
   return results;
+}
+
+/** Say what one link came to: a change once, a problem once per link, an unchanged link not at all. */
+function report(r: SkillLinkResult, source: string): void {
+  if (r.outcome === 'linked') console.log(`[skill] linked ${r.link} → ${source}`);
+  else if (r.outcome === 'relinked') console.log(`[skill] repointed ${r.link} → ${source} (was ${r.detail})`);
+  else if ((r.outcome === 'occupied' || r.outcome === 'failed') && !warned.has(r.link)) {
+    warned.add(r.link);
+    console.warn(
+      r.outcome === 'occupied'
+        ? `[skill] ${r.link} is ${r.detail}, not a link — leaving it alone; that copy is what agents will read`
+        : `[skill] could not link ${r.link}: ${r.detail}`
+    );
+  }
 }

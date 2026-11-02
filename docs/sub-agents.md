@@ -1,0 +1,55 @@
+# Sub-agents (`/super`)
+
+English | [简体中文](zh-CN/sub-agents.md)
+
+Some jobs split: two repositories to change, a fix and its review, three questions to look into.
+`/super` lets the agent you are talking to split the job, hand the parts to other agents that work
+in parallel, and come back with one report — so you follow one topic instead of four.
+
+```
+/super upgrade the API client in quantlab and quantlab-agents, and have cx review both
+```
+
+## What happens
+
+1. The agent reads what it needs and splits the job. For each part it picks an agent — one on its
+   own machine unless the part needs another — and writes the task that agent will get.
+2. A card lists every part: the agent, its machine, the directory, and the full text of the task.
+   **Nothing starts until you tap Start.** To change something, write what instead of tapping, and
+   it proposes again; the new card replaces the old one.
+3. Each part gets a topic of its own, nested under this one, and they all run at once. The first
+   message in each says which topic it came from.
+4. When a sub-agent finishes, fails or asks something, the agent that started it is told. A folded
+   🔔 line in its topic shows exactly what it was told. It checks the result itself — reads the
+   diff, runs the tests — and sends fixes where needed. When every part is done, it writes one
+   summary with a link to each topic.
+
+## Talking to a sub-agent
+
+A sub-agent's topic is an ordinary topic: open it, read it, write in it, `/stop` it. A turn you
+start there is yours, so the agent that opened the topic is not told about it.
+
+Questions: one a sub-agent asks with buttons waits for you, and is listed under Needs you and
+notified. One about what its task meant is answered by the agent that started it; anything you
+need to decide — scope, merging, releasing, deleting — is passed to you.
+
+## In the sidebar
+
+- Sub-agent topics are indented under the topic that opened them. **▾ 3** folds them away; folded,
+  it takes the colour of the most pressing state among them (a question, a failure, work).
+- Needs you and notifications leave out a sub-agent's finished replies and failures: the agent that
+  started it reads those and reports. Its questions are listed.
+- Deleting a topic keeps the topics it opened, as ordinary topics.
+
+## Notes
+
+- Web UI only: the topics have to be nested somewhere you can see them. Elsewhere the commands are
+  refused.
+- Any agent can propose sub-agents when you ask it to split work, without `/super`, and any
+  configured agent can be one. The card still waits for your tap.
+- With agents on several [machines](remote-hosts.md), the agent prefers those on its own machine,
+  which have the same checkouts and tools. A part that runs elsewhere shows `@ <host>` on the card.
+- `/super` is a skill the gateway links into each agent's skill directory, next to the `talkcode`
+  one. Claude Code offers it as a command; other agents pick it up from its description.
+- A sub-agent whose turn a gateway restart cuts off says so in its own topic; the agent that
+  started it is not told.

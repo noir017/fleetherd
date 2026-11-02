@@ -41,10 +41,7 @@ in `ConfigSchema`. A tuning knob for the streaming experience goes in `EXPERIENC
 destination, a key, a known_hosts file). The link's tuning — heartbeat, back-off, buffer cap,
 orphan timeout — is constants in `src/remote/` and `remote/`, not config.
 
-`dispatcher` is on the user side for the same reason: whether there is one, and which agent it is,
-is a per-deployment decision. Its timing (`CARD_DELAY_MS`) is a constant in `daemon/dispatcher.ts`, and
-its behaviour is an `AGENTS.md` the operator edits, not config. `agents[].hooks.turnFailed` is user-side
-like `hooks.preLaunch`, and kept out of `/setting` for the same reason: `command` is a shell command.
+`agents[].hooks.turnFailed` is user-side like `hooks.preLaunch`, and kept out of `/setting` for the same reason: `command` is a shell command.
 
 `voice` is on the user side because it is a credential and an endpoint (the transcriber), plus
 one decision — `confirm`, whether a transcript waits for a tap. Everything that tunes it (the

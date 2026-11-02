@@ -3907,7 +3907,7 @@ describe('webui page: tool bubbles fold and open', () => {
   });
 });
 
-describe('webui page: what needs you, and the dispatcher topic', () => {
+describe('webui page: what needs you, and sub-agent topics', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
   const C = 'c3d4e5f6';
@@ -3957,15 +3957,60 @@ describe('webui page: what needs you, and the dispatcher topic', () => {
     expect(h.live().url).toBe(`api/events?t=${C}`);
   });
 
-  it('pins the dispatcher topic first, with neither a star nor a ×', async () => {
+  it('nests a sub-agent’s topic under the one that opened it, starred roots first', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
-    await h.emit({ t: 'topics', topics: list({ [D]: { dispatcher: true, title: '📥 Dispatcher' }, [C]: { starred: true } }) });
-    expect(rows(h)).toEqual([D, C, A, B]);
-    const row = h.doc.querySelector(`#topics [data-topic="${D}"]`)!;
-    expect(row.classList.contains('dispatcher')).toBe(true);
-    expect(row.querySelector('[data-del]')).toBeNull();
-    expect(row.querySelector('[data-star]')).toBeNull();
+    await h.emit({ t: 'topics', topics: list({ [B]: { parent: D }, [C]: { parent: B }, [D]: { starred: true } }) });
+    expect(rows(h)).toEqual([D, B, C, A]);
+    const row = (id: string): Element => h.doc.querySelector(`#topics [data-topic="${id}"]`)!;
+    expect(row(D).className).not.toMatch(/\bsub\b/);
+    expect(row(B).className).toMatch(/\bsub d1\b/);
+    expect(row(C).className).toMatch(/\bsub d2\b/);
+    expect(row(A).classList.contains('after-stars')).toBe(true);
+    expect(row(D).querySelector('[data-fold]')?.textContent).toBe('▾ 1');
+    expect(row(A).querySelector('[data-fold]')).toBeNull();
+    // A child is a topic like any other: it can be starred and deleted.
+    expect(row(B).querySelector('[data-del]')).not.toBeNull();
+  });
+
+  it('folds a parent’s sub-agents away — remembered, colour kept, and without switching to it', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    const topics = list({ [B]: { parent: D }, [C]: { parent: D, asking: true } });
+    await h.emit({ t: 'topics', topics });
+    expect(rows(h)).toEqual([A, D, B, C]);
+    await h.click(`#topics [data-fold="${D}"]`);
+    expect(rows(h)).toEqual([A, D]);
+    const pill = h.doc.querySelector(`#topics [data-fold="${D}"]`)!;
+    expect(pill.textContent).toBe('▸ 2');
+    expect(pill.className).toContain('asking');
+    expect(pill.getAttribute('aria-expanded')).toBe('false');
+    expect(h.live().url).toBe(`api/events?t=${A}`);
+    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [D]: true });
+    await h.click(`#topics [data-fold="${D}"]`);
+    expect(rows(h)).toEqual([A, D, B, C]);
+  });
+
+  it('never folds away the topic on screen', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${C}`, storage: { aa_folded: JSON.stringify({ [D]: true }) } });
+    await h.emit(sync(C, [], [C]));
+    await h.emit({ t: 'topics', topics: list({ [C]: { parent: D } }) });
+    expect(rows(h)).toEqual([A, B, D, C]);
+    expect(h.doc.querySelector(`#topics [data-fold="${D}"]`)?.textContent).toBe('▾ 1');
+  });
+
+  it('lists a sub-agent’s topic in Needs you only for a question of its own', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: list({
+        [B]: { parent: A, stage: 'review', line: 'done' },
+        [C]: { parent: A, stage: 'answer', line: 'Which branch?' },
+        [D]: { parent: A, stage: 'failed', line: 'boom' },
+      }),
+    });
+    expect(needs(h)).toEqual([[C, 'Waiting on your answer: Which branch?']]);
   });
 
   it('marks a failed topic’s dot red when nothing else is going on', async () => {

@@ -53,6 +53,7 @@ it. Do not duplicate that content here.
 | `src/cli.ts` | Commander wiring. `start` is lazy-imported to keep `--help`/`doctor` fast. | — |
 | `scripts/` | Dev utilities (`stop.mjs` kills stray daemons, `probe.mjs` Discord gateway probe) | [README](scripts/README.md) |
 | `skill/` | The bundled agent skill: how an agent finds the reverse CLI. The daemon links it into each harness's skill directory (`daemon/skill-link.ts`) | [SKILL.md](skill/SKILL.md) |
+| `skill-super/` | The second bundled skill, `super`: how an agent splits a job across sub-agents (`/super`, `daemon/delegation.ts`). Linked the same way | [SKILL.md](skill-super/SKILL.md) |
 
 ## Layering
 
@@ -134,15 +135,16 @@ gateway puts in front of the work tells the model what kind of job this is befor
 job, and no wording avoids that. A change that adds text to what an agent receives needs to say
 why the harness could not carry it.
 
-Three things reach an agent that the person did not type in that conversation, each decided on
-2026-11-02 and each kept to the one place it is for. The **dispatcher** (`daemon/dispatcher.ts`)
-is told about other conversations in a `[topic updates]` card, because no harness can carry
-another conversation's state; it goes to the dispatcher's conversation only, never a worker's,
-and is shown folded in that topic before it is sent. Its role is an `AGENTS.md` in a directory of
-its own (`daemon/dispatcher-home.ts`), read by the harness's own project-instructions mechanism
-and the operator's to edit. And `hooks.turnFailed.continue.message` is sent after a failed turn
-— the operator's own words, announced in the chat first, off unless configured. A worker handed
-work by the dispatcher gets the person's text and nothing else.
+Two things reach an agent that the person did not type in that conversation, each decided on
+2026-11-02 and each kept to the one place it is for. An agent that started **sub-agents**
+(`daemon/delegation.ts`) is told what they did in a `[sub-agent updates]` card, because no harness
+can carry another conversation's state; it goes only to the conversation that opened those topics,
+only about turns it handed them, and is shown folded there before it is sent. And
+`hooks.turnFailed.continue.message` is sent after a failed turn — the operator's own words,
+announced in the chat first, off unless configured. A sub-agent gets the task text it was handed
+and nothing else; how to split a job and use the updates is the `super` skill's (`skill-super/`),
+read through the harness's own skill mechanism. (A standing dispatcher topic with an `AGENTS.md`
+of its own shipped in 2.18.0 and was removed the same day: see delegation.ts for why.)
 
 **Best-effort side effects don't break turns.** Reactions, headers, receipts, and menu
 edits are `void`-and-`catch`: a failure is logged and the turn continues.
@@ -220,11 +222,12 @@ Do not weaken these without saying so explicitly in the PR:
    here only the reverse commands, `mcp` and `help` (`daemon/remote-hosts.ts` isBridgedCommand),
    never `start`, `setup` or any other part of the gateway's administration — and what it runs
    still passes the IPC token check and `ipc/protocol.ts` validation like a local agent's command.
-6. **The dispatcher hands work out and does nothing else.** The task commands (`task-*`) are
-   refused to every conversation but the dispatcher's (`Dispatcher.handle`), and on claude its
-   session has no built-in tools at all (`DISPATCHER_SESSION_META`). What it hands a worker is the
-   person's text, verbatim. A dispatcher that could run commands, or a worker that could hand work
-   to others, would be an agent with powers nobody configured.
+6. **No sub-agent starts without the person.** `task-new` only proposes: every sub-task waits on
+   a card that shows it in full until the person taps Start (`Delegation.putUp`, buttons only — a
+   typed reply is the person's next message, never a yes), and nothing an agent says can start one.
+   A conversation acts only on the topics it opened (`Delegation.child`), so one agent cannot steer
+   or stop another's. Spawning agents is spending the operator's machines and money; an agent that
+   could do it unasked would be an agent with powers nobody granted.
 7. **The web UI POSTs only to push services.** A push subscription's endpoint is a URL a browser
    chose, and the server sends to it; `webui/webpush.ts` allowedEndpoint holds it to HTTPS on the
    push services browsers use, at subscribe time and again before every send — the outbound twin

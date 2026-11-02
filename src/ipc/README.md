@@ -107,15 +107,15 @@ The rest stay CLI commands behind the skill:
 | `voice-log` | A confirmed voice transcript reaches the agent as the user's own typed words — the user read and approved them — so advertising that some messages were spoken would only invite second-guessing text that was already checked. It exists for the rare turn where a message reads like a mishearing. |
 | `ask` | On `claude` the model asks with its own question tool over ACP `elicitation/create`, rendered as the same buttons. `opencode` and `dsh` have no such tool (probed 2026-09-11: neither sends any reverse request); their models find `ask` through the skill, or ask in prose. |
 
-### The dispatcher's six
+### The task commands are commands, not tools
 
-`DISPATCH_TOOLS` (`task_agents`, `task_list`, `task_new`, `task_send`, `task_read`, `task_stop`) are
-listed only by a server started as `talkcode mcp --dispatch`, which only the dispatcher's session is
-(daemon/dispatcher.ts). The reasoning above runs the other way for it: these are its whole job, and on
-claude they are its only tools at all. Every other session never sees them, and the daemon refuses
-the `task-*` actions from any conversation but the dispatcher's regardless of what a server listed —
-listing is a convenience, the refusal is the boundary. They carry no `channel` parameter
-(`NativeTool.noChannel`): each names its conversation as `topic`, and their help page is `tasks`.
+`task-agents`, `tasks`, `task-new`, `task-send`, `task-read` and `task-stop` (sub-agents —
+daemon/delegation.ts) are reverse commands on the `tasks` help page, found through the skills: the
+`talkcode` skill's table, and the `super` skill (`skill-super/`), which is what `/super` loads.
+2.18.0 served them as native tools to one dispatcher session (`mcp --dispatch`); with any agent able
+to start sub-agents, the same reasoning as above applies — six schemas on every request of every
+agent, for the few turns that split a job. They take no `--channel`: each acts from the asking
+conversation, on a topic it opened, named as `topic`.
 
 ### How it got here
 

@@ -47,7 +47,7 @@ was called `agent-anywhere` until 2.0.0.
 - **Topics are conversations** — a Telegram or Feishu topic, a Slack or Discord thread, each with its own agent, its own [directory](docs/working-directory.md) and an [automatic name](docs/topic-names.md).
 - **Persistent** — conversations survive restarts; `/new`, `/stop`, `/kill`; idle agents are released and resumed on the next message. [→](docs/chat-commands.md)
 - **The agent acts in the chat** — sends files, asks with buttons, replies, reacts, reads history. [→](docs/agent-actions.md)
-- **A dispatcher, and a list of what needs you** — tell one agent what you want: it opens a topic per piece of work, hands each to an agent, and tells you when one has a result, a question or a failure. The web UI lists what is waiting on you and can notify your phone. [→](docs/dispatcher.md)
+- **Sub-agents, and a list of what needs you** — `/super <job>`: the agent splits a job, hands the parts to other agents that work in parallel in topics nested under it — once you confirm — then checks and reports. The web UI lists what is waiting on you and can notify your phone. [→](docs/sub-agents.md)
 - **Failed turns can carry on** — continue automatically after an upstream outage, with your own words, and run a command to alert you. [→](docs/agents.md#when-a-turn-fails)
 - **Scheduled tasks** — "every morning at 8, …" becomes a task the gateway keeps, surviving restarts. [→](docs/scheduled-tasks.md)
 - **Voice messages** — transcribed, shown to you, and sent on once you confirm. [→](docs/voice.md)
@@ -127,7 +127,7 @@ is in [Configuration](docs/configuration.md).
 | [Settings from chat](docs/settings.md) | `/setting`: editing config.yaml without a restart |
 | [Voice messages](docs/voice.md) | transcription and confirmation |
 | [Scheduled tasks](docs/scheduled-tasks.md) | prompts and commands on a schedule |
-| [The dispatcher](docs/dispatcher.md) | an agent that hands work out and tells you what needs you |
+| [Sub-agents](docs/sub-agents.md) | `/super`: split a job across agents working in parallel |
 | [What the agent can do](docs/agent-actions.md) | button questions, sending files, the bundled skill |
 
 ## Contributing

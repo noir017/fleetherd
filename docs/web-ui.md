@@ -61,8 +61,9 @@ line each: a question to answer (amber), a turn that failed (red), or a reply yo
 yet (green). Its first line is shown, which is usually the conclusion. A reply leaves the list once
 you have looked at it. A failure stays until the next turn runs, and its dot in the list stays red.
 Working and idle topics are not listed, so the list is empty when nothing needs you.
-With a [dispatcher](dispatcher.md), its 📥 topic is pinned at the top; it hands work to other
-topics and tells you there when one needs you. A link to a topic in a reply opens it in place.
+[Sub-agent](sub-agents.md) topics are nested under the topic that opened them, and are listed here
+only for a question of their own — the agent that opened them reads the rest. A link to a topic in a
+reply opens it in place.
 
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here
 a row carries the whole command — up to 2000 characters — where a chat app gets the
@@ -110,9 +111,8 @@ composer's draft is saved too, a second after you stop typing.
 device. The browser asks for permission once. After that the device is notified even when the
 page is closed or the phone is locked. Tapping a notification opens the topic.
 
-What notifies: with a dispatcher, its 📥 topic's replies, since that is where everything else is
-reported. Without one, any topic that starts needing you. A topic you are reading when it happens
-does not notify. Turn it on in each browser where you want notifications, and off the same way.
+What notifies: any topic that starts needing you — for a sub-agent's topic, only a question of its
+own. A topic you are reading when it happens does not notify. Turn it on in each browser where you want notifications, and off the same way.
 
 - Chrome, Edge and Firefox on desktop and Android. On iPhone and iPad, only after **Add to Home
   Screen** (iOS 16.4 or later), opened from the home-screen icon.

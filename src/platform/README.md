@@ -126,16 +126,17 @@ forever for an answer that only moves while an agent is talking. The daemon's
 `status-board.ts` drops repeats and throttles before calling it; an implementation may treat every
 call as a change. It may throw on a bad address — the caller swallows that.
 
-`setActivity`, `seenAt` and `dispatchLane` are what one person running many conversations needs
-from a platform that lists them (daemon/turn-outcomes.ts, daemon/dispatcher.ts). `setActivity` is
-pushed like `setStatus`, and for the same reason: how a turn ended and whether a continue is
+`setActivity`, `seenAt`, `parentOf` and `childrenOf` are what one person running many conversations
+needs from a platform that lists them (daemon/turn-outcomes.ts, daemon/delegation.ts). `setActivity`
+is pushed like `setStatus`, and for the same reason: how a turn ended and whether a continue is
 scheduled change only at a turn's start and end. `seenAt` is a read — when the person last looked at
 a conversation, which only a platform that draws its own page can know (no chat app reports that a
-bot's message was read) — and it must not throw: the dispatcher asks it for conversations that may
-have gone. `dispatchLane` opens or retires the dispatcher's own lane; the web UI gives it a fixed
-topic id, because that lane is a conversation and a new id on every start would be a dispatcher that
-forgot everything each time. All three are web-UI-only today, and every caller treats their absence
-as "this platform cannot tell".
+bot's message was read). `parentOf` / `childrenOf` read back which conversation opened which
+(`createThread`'s `under`): the platform's record is the only one, so deleting a topic ends the
+relation, and both must not throw — they are asked about conversations that may have gone. All four
+are web-UI-only today. A missing `seenAt` reads as "cannot tell"; a missing `parentOf` means no
+sub-agents on that platform, and `task-new` there is refused rather than opening topics nobody could
+tell apart from the rest.
 
 **`toolPreviewLimit` only ever raises the preview.** Turn-runner hands the tool renderer the larger
 of it and the operator's `tools.previewLimit`, so a platform declares one only if it can fold a long

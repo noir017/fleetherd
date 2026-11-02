@@ -1,0 +1,590 @@
+import type { Config } from '../config/schema.js';
+import { findAgent } from '../config/schema.js';
+import { parseTarget, type ConversationAddress } from '../core/conversation.js';
+import { topicStage } from '../core/topic-stage.js';
+import type {
+  IpcAction,
+  TaskActionResult,
+  TaskAgentsResult,
+  TaskListResult,
+  TaskNewResult,
+  TaskReadResult,
+  TaskRow,
+} from '../ipc/protocol.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
+import type { ConversationId, TopicStage } from '../types.js';
+import type { ConversationRegistry } from './conversation.js';
+import { UPDATE_SENDER } from './turn-runner.js';
+
+/**
+ * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
+ * of its own nested under it, running in parallel — once the person has confirmed them — and is told
+ * when each one finishes, fails or asks something. `/super` (the bundled skill of that name) is the
+ * person asking for exactly that; any agent may do it unprompted, because nothing starts without the
+ * person's say-so.
+ *
+ * ── Why ─────────────────────────────────────────────────────────────────────────────────────────
+ * One person watching their agents is the ceiling on how many they can run: on this deployment's own
+ * month (2026-10-03 – 11-02), the conversations written to per active hour were 2 at the median and
+ * 4 at p90 (project-reports/talkcode-借鉴-super-agent-20261102.md). Splitting a job across agents
+ * without the person in the middle of every hand-off is the part of that an agent can take over.
+ * 2.18.0 tried it as a standing router topic (DeepSeek's Super-agent shape) and it was removed the
+ * same day: a router earns its keep triaging a team's inbox, and one person has no inbox to triage —
+ * they already know which topic a message belongs in. What one person does not have is a second pair
+ * of hands that splits a job, hands the pieces out and reads what comes back. That is this.
+ *
+ * ── What is structure and what is instruction ────────────────────────────────────────────────────
+ * Structure, enforced here: nothing starts until the person taps Start on the card that lists every
+ * sub-task in full (the agent cannot start one itself, whatever it is told); a conversation acts only
+ * on topics it opened; a sub-agent's topic is an ordinary topic the person can walk into; and the
+ * relation is the platform's own record (`PlatformAdapter.parentOf`), so deleting a topic ends it.
+ * Instruction, in the skills (`skill/`): how to split a job, which agent to prefer, what to do with
+ * the updates.
+ *
+ * ── The exception to "nothing of the gateway's in the prompt" ───────────────────────────────────
+ * The `[sub-agent updates]` card. It is how the agent that opened the topics learns what happened in
+ * them, and no harness mechanism can carry another conversation's state into a session. It goes only
+ * to the conversation that opened those topics, and is shown there (folded) before it is sent, so the
+ * person sees exactly what the agent was told. What a sub-agent receives is the task text and nothing
+ * else.
+ */
+
+/** How long `task-new` calls are gathered onto one card: an agent proposing three makes three calls. */
+export const PROPOSAL_GATHER_MS = 3_000;
+
+/**
+ * How long a card waits for the person. A day, not the hour a question gets: nothing is blocked on
+ * it (the agent's turn has ended), and the person may well come back to it tomorrow.
+ */
+export const PROPOSAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+/** How long sub-agent updates are gathered before the agent is told: a burst is one card. */
+export const CARD_DELAY_MS = 5_000;
+
+/** How much of a finished reply a card carries. */
+export const CARD_EXCERPT_CHARS = 600;
+
+/** How much of each sub-task's text the confirmation card shows. */
+const PROPOSAL_TEXT_CHARS = 1_500;
+
+/** How much of each message `task-read` returns. */
+const READ_CHARS = 1_500;
+
+type Registry = Pick<
+  ConversationRegistry,
+  | 'openTask'
+  | 'handTo'
+  | 'isBusy'
+  | 'isAsking'
+  | 'workdirChoices'
+  | 'listChannels'
+  | 'conversationAt'
+  | 'laneFor'
+  | 'activityOf'
+  | 'replyExcerptOf'
+  | 'stopConversation'
+  | 'runScheduledPrompt'
+  | 'workdirOf'
+  | 'boundAgentOf'
+>;
+
+export interface DelegationDeps {
+  config: Config;
+  platforms: Map<string, PlatformAdapter>;
+  registry: Registry;
+  clock: { now(): number; schedule(fn: () => void, ms: number): () => void };
+  /** The question waiting on the person in a conversation, when there is one (the daemon's asks). */
+  questionOf?(id: ConversationId): string | undefined;
+  /**
+   * Put the card up as a question with buttons, in the conversation that proposed it, and resolve
+   * with the label tapped — null when it was called off (`signal`, `/stop`, `/new`) or ran out of time.
+   */
+  confirm(opts: {
+    adapter: PlatformAdapter;
+    address: ConversationAddress;
+    conversation: ConversationId;
+    text: string;
+    labels: string[];
+    timeoutMs: number;
+    signal: AbortSignal;
+  }): Promise<string | null>;
+}
+
+/** A conversation where it lives, with its platform. */
+interface Place {
+  key: ConversationId;
+  platformId: string;
+  address: ConversationAddress;
+  adapter: PlatformAdapter;
+}
+
+/** One proposed sub-task. */
+interface Item {
+  agent: string;
+  text: string;
+  cwd?: string;
+  title?: string;
+}
+
+type TaskAction = Extract<IpcAction, { kind: `task-${string}` }>;
+
+export class Delegation {
+  /** Sub-tasks proposed and not yet on a card, per proposing conversation. */
+  private readonly gathering = new Map<ConversationId, { items: Item[]; cancel: () => void }>();
+  /** The card on screen per proposing conversation: a newer one replaces it. */
+  private readonly onScreen = new Map<ConversationId, AbortController>();
+  /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
+  private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void }>();
+  /**
+   * Sub-agent topics working on something their parent handed them (task-new, task-send) and not yet
+   * reported back. Only those turns are the parent's news: a turn the person starts by writing in a
+   * sub-agent's topic is theirs, and telling the parent about it would wake an agent to read a
+   * conversation it is not in. In memory only — a turn a restart cuts off is reported as failed in its
+   * own topic (TurnOutcomes), not to the parent.
+   */
+  private readonly handedOut = new Set<ConversationId>();
+
+  constructor(private readonly deps: DelegationDeps) {}
+
+  /** Shutdown: drop what is gathering, and take every card off the screen. */
+  dispose(): void {
+    for (const g of this.gathering.values()) g.cancel();
+    for (const u of this.updates.values()) u.cancel();
+    for (const c of this.onScreen.values()) c.abort();
+    this.gathering.clear();
+    this.updates.clear();
+    this.onScreen.clear();
+    this.handedOut.clear();
+  }
+
+  // ── The task commands ─────────────────────────────────────────────────────────────────────────
+
+  /** One task command from conversation `from`. */
+  async handle(from: ConversationId | undefined, action: TaskAction): Promise<unknown> {
+    const here = from ? this.place(from) : undefined;
+    if (!here) throw new Error(`${action.kind} runs from a conversation's own turn, and this call came from none`);
+    if (!here.adapter.parentOf || !here.adapter.childrenOf) {
+      throw new Error(
+        `sub-agents are opened as topics nested under the one that asked, which only the web UI can show; ` +
+          `this conversation is on "${here.platformId}" (${this.deps.config.platforms[here.platformId]?.type ?? 'unknown'})`
+      );
+    }
+    switch (action.kind) {
+      case 'task-agents':
+        return this.agents(here);
+      case 'task-list':
+        return this.list(here, action.limit ?? 30);
+      case 'task-new':
+        return this.propose(here, action);
+      case 'task-send':
+        return this.send(here, action.topic, action.text);
+      case 'task-read':
+        return this.read(here, action.topic, action.limit ?? 10);
+      case 'task-stop':
+        return this.stop(here, action.topic);
+      default: {
+        const _exhaustive: never = action;
+        throw new Error(`unknown task command: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
+
+  /** Every agent, the ones on the asking agent's own machine first. */
+  private agents(here: Place): TaskAgentsResult {
+    const mine = this.hostOf(here.key);
+    const rows = this.deps.config.agents.map((def) => {
+      const choices = this.deps.registry.workdirChoices(def.id);
+      return {
+        id: def.id,
+        harness: def.harness,
+        where: def.host ?? 'gateway',
+        here: (def.host ?? '') === mine,
+        model: def.model ?? '',
+        root: choices?.root ?? '',
+        // Names, not paths: task-new takes a name inside the root, and two dozen of them is plenty.
+        dirs: (choices?.dirs ?? []).slice(0, 24).map((d) => d.split('/').pop() ?? d),
+      };
+    });
+    // Stable: within each half, the configuration's own order.
+    return { agents: [...rows.filter((r) => r.here), ...rows.filter((r) => !r.here)] };
+  }
+
+  /** The machine a conversation's agent runs on: its `host`, or '' for the gateway's own. */
+  private hostOf(key: ConversationId): string {
+    const agent = this.deps.registry.boundAgentOf(key);
+    return (agent ? findAgent(this.deps.config, agent)?.host : undefined) ?? '';
+  }
+
+  /** The topics this conversation opened. */
+  private list(here: Place, limit: number): TaskListResult {
+    const rows = this.childrenOf(here).map((c) => this.row(c));
+    return { tasks: rows.slice(0, limit), total: rows.length };
+  }
+
+  /** Add one sub-task to the card being gathered for this conversation. */
+  private propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): TaskNewResult {
+    const def = findAgent(this.deps.config, a.agent);
+    if (!def) {
+      throw new Error(`no agent "${a.agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
+    }
+    const g = this.gathering.get(here.key) ?? { items: [], cancel: () => undefined };
+    g.cancel();
+    g.items.push({ agent: a.agent, text: a.text, ...(a.cwd ? { cwd: a.cwd } : {}), ...(a.title ? { title: a.title } : {}) });
+    g.cancel = this.deps.clock.schedule(() => void this.putUp(here.key), PROPOSAL_GATHER_MS);
+    this.gathering.set(here.key, g);
+    return {
+      item: g.items.length,
+      result:
+        `Sub-task ${g.items.length} is on the card the person is about to be asked to confirm; task-new calls in the next ` +
+        `few seconds join the same card. Nothing starts until they confirm. Then each gets a topic nested under this ` +
+        `one, all start at once, and you are told here as each finishes, fails or asks something.`,
+    };
+  }
+
+  /** Put the gathered sub-tasks up as one card, and start them all if the person says so. */
+  private async putUp(key: ConversationId): Promise<void> {
+    const g = this.gathering.get(key);
+    this.gathering.delete(key);
+    const here = this.place(key);
+    if (!g?.items.length || !here) return;
+    this.onScreen.get(key)?.abort();
+    const abort = new AbortController();
+    this.onScreen.set(key, abort);
+    const n = g.items.length;
+    const start = n === 1 ? 'Start it' : `Start all ${n}`;
+    let picked: string | null = null;
+    try {
+      picked = await this.deps.confirm({
+        adapter: here.adapter,
+        address: here.address,
+        conversation: key,
+        text: this.cardText(here, g.items),
+        labels: [start, 'Cancel'],
+        timeoutMs: PROPOSAL_TIMEOUT_MS,
+        signal: abort.signal,
+      });
+    } catch (e) {
+      console.warn(`[delegation] ${key}: could not put the sub-agents up for confirmation:`, e instanceof Error ? e.message : e);
+    } finally {
+      if (this.onScreen.get(key) === abort) this.onScreen.delete(key);
+    }
+    if (picked !== start) {
+      console.log(`[delegation] ${key}: ${n} sub-agent(s) not started (${picked ?? 'called off'})`);
+      return;
+    }
+    await this.start(here, g.items);
+  }
+
+  /** What the person is asked to confirm: every sub-task, whole enough to judge. */
+  private cardText(here: Place, items: Item[]): string {
+    const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
+    const lines = [`**${asker} wants to start ${items.length === 1 ? 'a sub-agent' : `${items.length} sub-agents`}** — each in a topic of its own under this one:`];
+    items.forEach((item, i) => {
+      const def = findAgent(this.deps.config, item.agent);
+      const where = def?.host ? ` @ ${def.host}` : '';
+      const dir = item.cwd ? ` · \`${item.cwd}\`` : '';
+      const title = item.title ? ` — ${item.title}` : '';
+      const text = item.text.length > PROPOSAL_TEXT_CHARS ? `${item.text.slice(0, PROPOSAL_TEXT_CHARS - 1)}…` : item.text;
+      lines.push('', `${i + 1}. **${item.agent}**${where}${dir}${title}`, ...text.split('\n').map((l) => `> ${l}`));
+    });
+    lines.push('', 'To change them, say what to change instead of tapping.');
+    return lines.join('\n');
+  }
+
+  /** Open every confirmed sub-task, say where they went, and tell the agent of any that could not start. */
+  private async start(here: Place, items: Item[]): Promise<void> {
+    const header = this.headerOf(here);
+    const opened: string[] = [];
+    const failed: string[] = [];
+    // One after another, not all at once: each is a topic created, named and bound, and the order
+    // they appear in under the parent is the order on the card. Their turns run in parallel all the
+    // same — handTo starts one and returns.
+    for (const [i, item] of items.entries()) {
+      try {
+        const { key, address } = await this.deps.registry.openTask({
+          platform: here.platformId,
+          parent: here.address,
+          agentId: item.agent,
+          text: item.text,
+          header,
+          ...(item.cwd ? { cwd: item.cwd } : {}),
+          ...(item.title ? { title: item.title } : {}),
+        });
+        this.handedOut.add(key);
+        const title = subjectOf(this.titleOf(key, { platformId: here.platformId, address }));
+        opened.push(`- [${title}](?t=${address.thread ?? ''}) — ${item.agent}`);
+        console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
+      } catch (e) {
+        const why = e instanceof Error ? e.message : String(e);
+        failed.push(`- ${i + 1}. ${item.agent}: ${why}`);
+        console.warn(`[delegation] ${here.key}: sub-task ${i + 1} for "${item.agent}" could not start: ${why}`);
+      }
+    }
+    const said = [
+      ...(opened.length ? [`Started ${opened.length}:`, ...opened] : []),
+      ...(failed.length ? [`${opened.length ? '\n' : ''}Could not start ${failed.length}:`, ...failed] : []),
+    ].join('\n');
+    await here.adapter
+      .sendMessage(here.address, said)
+      .catch((e) => console.warn('[delegation] could not say which sub-agents started:', e instanceof Error ? e.message : e));
+    if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${items.length} could not be started:`, ...failed], []);
+  }
+
+  private async send(here: Place, topic: string, text: string): Promise<TaskActionResult> {
+    const c = this.child(here, topic);
+    const header = this.headerOf(here);
+    const how = await this.deps.registry.handTo(c.key, c.platformId, c.address, text, header);
+    this.handedOut.add(c.key);
+    return {
+      topic,
+      result:
+        how === 'joined'
+          ? 'Sent to its agent, which was already working: it takes it into the turn it is running.'
+          : 'Sent to its agent, which is starting on it now.',
+    };
+  }
+
+  private async read(here: Place, topic: string, limit: number): Promise<TaskReadResult> {
+    const c = this.child(here, topic);
+    const messages = await c.adapter.fetchHistory(c.address, { limit });
+    return {
+      topic,
+      messages: messages.map((m) => ({
+        from: m.authorIsBot ? ('agent' as const) : ('person' as const),
+        at: new Date(m.timestamp).toISOString(),
+        text: m.content.length > READ_CHARS ? `${m.content.slice(0, READ_CHARS - 1)}…` : m.content,
+      })),
+    };
+  }
+
+  private stop(here: Place, topic: string): TaskActionResult {
+    const c = this.child(here, topic);
+    const outcome = this.deps.registry.stopConversation(c.key);
+    if (outcome !== 'idle') {
+      void c.adapter
+        .sendMessage(c.address, `⏹ Stopped by the agent in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`)
+        .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
+    }
+    return {
+      topic,
+      result: outcome === 'idle' ? 'Nothing was running there.' : 'Stopped. Its context is kept; a message there carries on from it.',
+    };
+  }
+
+  /** What a sub-agent's topic shows above what it is handed: whose words these are, linked. */
+  private headerOf(here: Place): string {
+    return `**↳ From [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''})**`;
+  }
+
+  /**
+   * One of this conversation's sub-agent topics, named the way `tasks` and the updates name it
+   * (`web:main/3a9f0c12`), or by its bare topic id. Refused when it is not one this conversation
+   * opened: a conversation acts on its own sub-agents and nobody else's.
+   */
+  private child(here: Place, topic: string): Place {
+    let address: ConversationAddress | undefined = /^[0-9a-f]{8}$/.test(topic) ? { channel: here.address.channel, thread: topic } : undefined;
+    if (!address) {
+      try {
+        const target = parseTarget(topic, new Set(Object.keys(this.deps.config.platforms)));
+        if ((target.platform ?? here.platformId) === here.platformId) address = target.address;
+      } catch {
+        address = undefined;
+      }
+    }
+    const parent = address ? here.adapter.parentOf?.(address) : undefined;
+    if (!address || !parent || parent.channel !== here.address.channel || parent.thread !== here.address.thread) {
+      throw new Error(`"${topic}" is not a topic this conversation opened; \`talkcode tasks\` lists the ones it did`);
+    }
+    const conv = this.deps.registry.conversationAt(here.platformId, address);
+    if (!conv?.agent) throw new Error(`nothing has happened in "${topic}" yet`);
+    return { key: conv.key, platformId: here.platformId, address, adapter: here.adapter };
+  }
+
+  /** The topics a conversation opened, as places. */
+  private childrenOf(here: Place): Place[] {
+    const out: Place[] = [];
+    for (const address of here.adapter.childrenOf?.(here.address) ?? []) {
+      const conv = this.deps.registry.conversationAt(here.platformId, address);
+      if (conv) out.push({ key: conv.key, platformId: here.platformId, address, adapter: here.adapter });
+    }
+    return out;
+  }
+
+  /** One sub-agent topic as the agent that opened it sees it. */
+  private row(c: Place): TaskRow {
+    const stage = this.stageOf(c);
+    const activity = this.deps.registry.activityOf(c.key);
+    const agent = this.deps.registry.boundAgentOf(c.key) ?? '';
+    const host = agent ? findAgent(this.deps.config, agent)?.host : undefined;
+    return {
+      topic: `${c.platformId}:${c.address.channel}${c.address.thread ? `/${c.address.thread}` : ''}`,
+      title: subjectOf(this.titleOf(c.key, c)),
+      agent: host ? `${agent} @ ${host}` : agent,
+      cwd: shortenHome(this.deps.registry.workdirOf(c.key) ?? ''),
+      stage,
+      line: stage === 'answer' ? (this.deps.questionOf?.(c.key) ?? 'a question is waiting') : (activity?.outcome?.line ?? ''),
+      lastAt: activity?.outcome ? new Date(activity.outcome.at).toISOString() : '',
+      ...(c.address.thread ? { link: `?t=${c.address.thread}` } : {}),
+    };
+  }
+
+  /**
+   * Where a sub-agent topic stands for the agent that opened it. Not read through `seenAt`: that the
+   * person has looked at a finished reply does not mean the agent that is waiting on it has.
+   */
+  private stageOf(c: Place): TopicStage {
+    return topicStage({
+      running: this.deps.registry.isBusy(c.key),
+      asking: this.deps.registry.isAsking(c.key),
+      activity: this.deps.registry.activityOf(c.key),
+    });
+  }
+
+  // ── Sub-agent updates ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * A conversation has something for the person (TurnOutcomes, or a question was asked). When it is
+   * a sub-agent's topic, the agent that opened it is told — gathered for CARD_DELAY_MS, so a burst of
+   * finishes is one card rather than one turn each.
+   */
+  childChanged(id: ConversationId): void {
+    if (!this.handedOut.has(id)) return;
+    const parent = this.parentOf(id);
+    if (!parent) return;
+    const u = this.updates.get(parent.key) ?? {
+      children: new Set<ConversationId>(),
+      cancel: this.deps.clock.schedule(() => this.sendUpdates(parent.key), CARD_DELAY_MS),
+    };
+    u.children.add(id);
+    this.updates.set(parent.key, u);
+  }
+
+  /** The conversation that opened this one, while both are still there. */
+  private parentOf(id: ConversationId): Place | undefined {
+    const lane = this.deps.registry.laneFor(id);
+    const adapter = lane ? this.deps.platforms.get(lane.platformId) : undefined;
+    const address = lane && adapter?.parentOf?.(lane.address);
+    const conv = address && lane ? this.deps.registry.conversationAt(lane.platformId, address) : undefined;
+    if (!lane || !adapter || !address || !conv) return undefined;
+    return { key: conv.key, platformId: lane.platformId, address, adapter };
+  }
+
+  /** Tell one conversation what its sub-agents did since it was last told. */
+  private sendUpdates(key: ConversationId): void {
+    const u = this.updates.get(key);
+    this.updates.delete(key);
+    const here = this.place(key);
+    if (!u || !here) return;
+    const entries: string[] = [];
+    const shown: string[] = [];
+    for (const id of u.children) {
+      const c = this.childrenOf(here).find((x) => x.key === id);
+      if (!c) continue;
+      const stage = this.stageOf(c);
+      // Started again since (someone wrote there): what it is doing now is news only when it ends.
+      if (stage === 'working' || stage === 'idle' || stage === 'retrying') continue;
+      // A question leaves the turn open; an end closes what the parent handed out.
+      if (stage !== 'answer') this.handedOut.delete(c.key);
+      const row = this.row(c);
+      entries.push(this.entry(c, row, stage));
+      shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage)}${row.line ? `: ${row.line}` : ''}`);
+    }
+    if (entries.length === 0) return;
+    this.tell(here, [`[sub-agent updates] ${this.tally(here)}`, ...entries], shown);
+  }
+
+  /** One sub-agent on the card: where it is, how it stands, and what it said. */
+  private entry(c: Place, row: TaskRow, stage: TopicStage): string {
+    const excerpt = stage === 'review' ? this.deps.registry.replyExcerptOf(c.key) : undefined;
+    const label = stage === 'answer' ? 'question' : stage === 'failed' ? 'failure' : 'first line';
+    return [
+      `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}`,
+      ...(row.line ? [`  ${label}: ${row.line}`] : []),
+      ...(excerpt ? [`  reply: ${excerpt.replace(/\s+/g, ' ').trim()}`] : []),
+      ...(row.link ? [`  link: ${row.link}`] : []),
+    ].join('\n');
+  }
+
+  /** "2 of 3 sub-agents have finished; 1 is still working." — so the agent knows whether to wait. */
+  private tally(here: Place): string {
+    const stages = this.childrenOf(here).map((c) => this.stageOf(c));
+    const busy = stages.filter((s) => s === 'working' || s === 'retrying').length;
+    const asking = stages.filter((s) => s === 'answer').length;
+    const done = stages.length - busy - asking;
+    return (
+      `${done} of ${stages.length} sub-agent${stages.length === 1 ? ' has' : 's have'} finished or stopped` +
+      (busy ? `; ${busy} still working` : '') +
+      (asking ? `; ${asking} waiting on a question for the person` : '') +
+      '.'
+    );
+  }
+
+  /** One card to one conversation: shown folded there, then put in front of its agent as a turn. */
+  private tell(here: Place, lines: string[], shown: string[]): void {
+    const agentId = this.deps.registry.boundAgentOf(here.key);
+    if (!agentId || !findAgent(this.deps.config, agentId)) return;
+    if (shown.length) {
+      void here.adapter
+        .sendMessage(here.address, shown.join('\n'), { kind: 'tools' })
+        .catch((e) => console.warn('[delegation] could not show a sub-agent update:', e instanceof Error ? e.message : e));
+    }
+    void this.deps.registry
+      .runScheduledPrompt({ key: here.key, platform: here.platformId, address: here.address, agentId, prompt: lines.join('\n'), user: UPDATE_SENDER })
+      .then((outcome) => {
+        if (typeof outcome === 'object') console.warn(`[delegation] sub-agent updates not delivered to ${here.key}: ${outcome.refused}`);
+      })
+      .catch((e) => console.warn('[delegation] sub-agent updates failed:', e instanceof Error ? e.message : e));
+    console.log(`[delegation] told ${here.key} about ${Math.max(shown.length, lines.length - 1)} sub-agent(s)`);
+  }
+
+  // ── Lookups ───────────────────────────────────────────────────────────────────────────────────
+
+  private place(key: ConversationId): Place | undefined {
+    const lane = this.deps.registry.laneFor(key);
+    const adapter = lane ? this.deps.platforms.get(lane.platformId) : undefined;
+    return lane && adapter ? { key, platformId: lane.platformId, address: lane.address, adapter } : undefined;
+  }
+
+  /** A conversation's name, from what `channels` knows. */
+  private titleOf(id: ConversationId, place: { platformId: string; address: ConversationAddress }): string {
+    const want = `${place.platformId}:${place.address.channel}${place.address.thread ? `/${place.address.thread}` : ''}`;
+    const ch = this.deps.registry.listChannels({ platform: place.platformId, limit: 200 }).channels.find((c) => c.id === want);
+    return ch?.title || id;
+  }
+}
+
+/** A stage in a sentence. */
+function describeStage(stage: TopicStage): string {
+  switch (stage) {
+    case 'answer':
+      return 'waiting on a question';
+    case 'failed':
+      return 'failed';
+    case 'review':
+      return 'finished';
+    case 'retrying':
+      return 'failed, continuing automatically';
+    case 'working':
+      return 'working';
+    case 'idle':
+      return 'idle';
+    default: {
+      const _exhaustive: never = stage;
+      return String(_exhaustive);
+    }
+  }
+}
+
+/**
+ * A topic's name without the `[agent] ` its lane title starts with (core formatLaneTitle), and with no
+ * square brackets left: it is handed to an agent that writes it as link text, `[title](?t=…)`, and
+ * the web UI's markdown does not take brackets inside link text. The agent is a column of its own.
+ */
+function subjectOf(title: string): string {
+  return title.replace(/^\[[^\]]*\]\s*/, '').replace(/[[\]]/g, '');
+}
+
+/** `/home/user/workspace/x` → `~/workspace/x`, for a column that is read, not used. */
+function shortenHome(p: string): string {
+  return p.replace(/^\/(home\/[^/]+|root)(?=\/|$)/, '~');
+}

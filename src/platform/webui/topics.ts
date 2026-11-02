@@ -91,11 +91,13 @@ export interface Topic {
    */
   dir?: { name: string; path: string; host?: string };
   /**
-   * The dispatcher's topic (daemon/dispatcher.ts): pinned, never evicted or swept, never deleted.
-   * Persisted, because it is the daemon's decision rather than a reading — though the daemon makes it
-   * again on every start (`dispatchLane`), and a topic that stops being one is simply a topic.
+   * The topic whose agent opened this one (`talkcode task-new`, started once the operator confirmed
+   * it — daemon/delegation.ts). The switcher nests it there, and the daemon reads it back to know
+   * whom to tell when this topic's agent finishes (`PlatformAdapter.parentOf`), so this field is the
+   * one record of the relation. Persisted, and dropped when the parent goes — deleted, evicted or
+   * swept — so a child is never nested under nothing, and keeps its work as a topic of its own.
    */
-  dispatcher?: boolean;
+  parent?: string;
   /**
    * When the operator last looked at this topic, by this server's clock (`api/seen`). Persisted:
    * "you have not read this reply" has to survive the restart that an update is.
@@ -142,6 +144,7 @@ export class TopicStore {
         const topic = toTopic(id, value);
         if (topic) this.topics.set(id, topic);
       }
+      this.orphan();
     } catch {
       /* first run or corrupt file: start with no topics, and create() makes the first one */
     }
@@ -186,48 +189,32 @@ export class TopicStore {
   evictable(inUse: (topic: Topic) => boolean): Topic | undefined {
     let oldest: Topic | undefined;
     for (const topic of this.topics.values()) {
-      if (topic.starred || topic.dispatcher || (oldest && topic.lastAt >= oldest.lastAt)) continue;
+      if (topic.starred || (oldest && topic.lastAt >= oldest.lastAt)) continue;
       if (!inUse(topic)) oldest = topic;
     }
     return oldest;
   }
 
-  create(title = ''): Topic {
+  create(title = '', parent?: string): Topic {
     if (this.full()) {
       throw new Error(`[webui] this instance already has ${MAX_TOPICS} topics; close one before opening another`);
     }
     // Hex, and never a character `formatAddress` gives meaning to: the id travels as the lane
     // half of `main/<id>`, which `parseAddress` splits on `/` and refuses to see twice.
-    const topic: Topic = { id: randomBytes(4).toString('hex'), title, lastAt: Date.now() };
+    const topic: Topic = {
+      id: randomBytes(4).toString('hex'),
+      title,
+      lastAt: Date.now(),
+      ...(parent !== undefined && this.topics.has(parent) ? { parent } : {}),
+    };
     this.topics.set(topic.id, topic);
     this.flush();
     return topic;
   }
 
-  /**
-   * Make sure a topic with this exact id exists — the dispatcher's, whose id is fixed so that its
-   * conversation (and the agent session in it) is the same one across restarts. Creates it past the
-   * cap if it must: the caller makes room first when it can, and one topic over is better than no
-   * dispatcher.
-   */
-  ensure(id: string, title: string): Topic {
-    const found = this.topics.get(id);
-    if (found) return found;
-    const topic: Topic = { id, title, lastAt: Date.now() };
-    this.topics.set(id, topic);
-    this.flush();
-    return topic;
-  }
-
-  /** Mark a topic as the dispatcher's, or as an ordinary one again. False when there is no such topic. */
-  setDispatcher(id: string, on: boolean): boolean {
-    const topic = this.topics.get(id);
-    if (!topic) return false;
-    if (Boolean(topic.dispatcher) === on) return true;
-    if (on) topic.dispatcher = true;
-    else delete topic.dispatcher;
-    this.flush();
-    return true;
+  /** The topics `id` opened (their `parent`), most recently active first. */
+  children(id: string): Topic[] {
+    return this.list().filter((t) => t.parent === id);
   }
 
   /** Record how a topic's last turn ended, and any scheduled continue. Persists the outcome only. */
@@ -272,13 +259,25 @@ export class TopicStore {
     return true;
   }
 
-  /** Delete a topic from the store and persist the list. */
+  /**
+   * Delete a topic from the store and persist the list. The topics it opened stay, as topics of
+   * their own: their work is not this one's to throw away, and the × on a parent is not a promise
+   * about anything nested under it.
+   */
   delete(id: string): boolean {
     const topic = this.topics.get(id);
     if (!topic) return false;
     this.topics.delete(id);
+    this.orphan();
     this.flush();
     return true;
+  }
+
+  /** Drop every `parent` that names a topic no longer here. Does not persist; its callers do. */
+  private orphan(): void {
+    for (const t of this.topics.values()) {
+      if (t.parent !== undefined && !this.topics.has(t.parent)) delete t.parent;
+    }
   }
 
   /**
@@ -298,11 +297,14 @@ export class TopicStore {
   clear(): number {
     let gone = 0;
     for (const [id, topic] of this.topics) {
-      if (topic.starred || topic.dispatcher) continue;
+      if (topic.starred) continue;
       this.topics.delete(id);
       gone += 1;
     }
-    if (gone > 0) this.flush();
+    if (gone > 0) {
+      this.orphan();
+      this.flush();
+    }
     return gone;
   }
 
@@ -343,7 +345,7 @@ export class TopicStore {
         title: t.title,
         lastAt: t.lastAt,
         ...(t.starred ? { starred: true } : {}),
-        ...(t.dispatcher ? { dispatcher: true } : {}),
+        ...(t.parent !== undefined ? { parent: t.parent } : {}),
         ...(t.seenAt !== undefined ? { seenAt: t.seenAt } : {}),
         ...(t.outcome ? { outcome: t.outcome } : {}),
       };
@@ -367,7 +369,7 @@ function dirOf(file: string): string {
 /** Validate one persisted entry; anything malformed is dropped rather than trusted. */
 function toTopic(id: string, value: unknown): Topic | undefined {
   if (!/^[0-9a-f]{8}$/.test(id) || typeof value !== 'object' || value === null) return undefined;
-  const rec = value as { title?: unknown; lastAt?: unknown; starred?: unknown; dispatcher?: unknown; seenAt?: unknown; outcome?: unknown };
+  const rec = value as { title?: unknown; lastAt?: unknown; starred?: unknown; parent?: unknown; seenAt?: unknown; outcome?: unknown };
   const title = typeof rec.title === 'string' ? rec.title : '';
   const lastAt = typeof rec.lastAt === 'number' && Number.isFinite(rec.lastAt) ? rec.lastAt : 0;
   const outcome = toOutcome(rec.outcome);
@@ -378,7 +380,7 @@ function toTopic(id: string, value: unknown): Topic | undefined {
     title,
     lastAt,
     ...(rec.starred === true ? { starred: true } : {}),
-    ...(rec.dispatcher === true ? { dispatcher: true } : {}),
+    ...(typeof rec.parent === 'string' && /^[0-9a-f]{8}$/.test(rec.parent) && rec.parent !== id ? { parent: rec.parent } : {}),
     ...(typeof rec.seenAt === 'number' && Number.isFinite(rec.seenAt) ? { seenAt: rec.seenAt } : {}),
     ...(outcome ? { outcome } : {}),
   };

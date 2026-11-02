@@ -39,8 +39,8 @@ CLI 给你弹按钮，模型通过内置 skill 找到它；再不行就用纯文
   `~/.claude/skills`，Codex 和 OpenCode 是 `~/.agents/skills`，Antigravity 是 `~/.gemini/config/skills`
   ——只给在这台机器上跑过的 harness。
   用到之前，它只占每个 skill 都占的那一行描述；正文指向 `talkcode help <主题>`——`files`、
-  `schedule`、`channels`、`history`、`messages`、`threads`、`ask`、`voice`——打印该主题的命令
-  和规则。
+  `schedule`、`channels`、`history`、`messages`、`threads`、`ask`、`voice`、`tasks`——打印该主题的命令
+  和规则。旁边还链着第二个 skill `super`：你发 `/super` 时，它告诉智能体怎样把活拆给[子代理](sub-agents.md)。
 
 Antigravity（`agy`）只有 skill：它没有按会话添加工具的途径，而网关不会去改它的全局 MCP 配置；
 同样的两件事在它的 skill 里以 CLI 命令的形式提供。为什么正好两个工具、被它替换掉的提示词注入

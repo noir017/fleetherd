@@ -176,11 +176,27 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 }
 /* Starred rows are listed first; this line is where they end. A pseudo-element on the first row
    after them rather than a node of its own, so #topics holds rows and nothing else. */
-/* The dispatcher's topic (daemon/dispatcher.ts): always first, tinted, and with neither a star nor
-   a × — it is the configuration's, not the operator's to keep or throw away. */
-#topics .topic-item.dispatcher{--row-bg:#18202c}
-#topics .topic-item.dispatcher:hover{--row-bg:#1f2a39}
-#topics .topic-item.dispatcher.on{--row-bg:#223044}
+/* A topic another topic's agent opened (Topic.parent — daemon/delegation.ts), under the one that
+   opened it. Classes rather than a --depth custom property in a style attribute, which the page's
+   CSP would refuse; deeper than three is drawn at three, since a 240px column has no room for a
+   staircase. The elbow is ::before, which is free on these rows: only a depth-0 row draws the
+   after-stars rule. */
+#topics .topic-item.sub{width:auto}
+#topics .topic-item.d1{margin-left:14px}
+#topics .topic-item.d2{margin-left:28px}
+#topics .topic-item.d3{margin-left:42px}
+#topics .topic-item.sub::before{content:'';position:absolute;left:-9px;top:50%;width:6px;border-top:1px solid #3a3a3a}
+/* How many topics this one opened, and the switch that folds them away. Folded, it takes the colour
+   of the most pressing state among them — a question, a failure, work — so folding hides the rows
+   and not the fact that one of them wants you. At the START of the row's second line, before the
+   directory: anywhere on the right, the star and × that float in on hover (.topic-acts) cover it,
+   and a click meant to fold lands on delete — which the first end-to-end run did. */
+.topic-line{display:flex;align-items:center;gap:6px;min-width:0}
+.topic-fold{flex-shrink:0;border:1px solid var(--line);background:none;color:var(--dim);border-radius:9px;padding:0 5px;font:inherit;font-size:10px;line-height:1.4;cursor:pointer;transition:color .15s,border-color .15s}
+.topic-fold:hover{color:var(--fg);border-color:#555}
+.topic-fold.asking{color:#fbbf24;border-color:rgba(251,191,36,.6)}
+.topic-fold.failed{color:#f87171;border-color:rgba(248,113,113,.6)}
+.topic-fold.running{color:#38bdf8;border-color:rgba(56,189,248,.5)}
 /* A failed last turn, when nothing else is going on: the one state that stays until something runs
    again, so the dot keeps saying it after the reply has been read. */
 .topic-dot.failed{background:#f87171}
@@ -656,6 +672,13 @@ const SCRIPT = `
 
   function saveReads(){
     try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
+  }
+
+  /** Parents whose sub-agent topics are folded away (paintTopics), per browser. Unfolded by default. */
+  var folded = {};
+  try { folded = JSON.parse(localStorage.getItem('aa_folded') || '{}') || {}; } catch(x){}
+  function saveFolded(){
+    try { localStorage.setItem('aa_folded', JSON.stringify(folded)); } catch(x){}
   }
 
   /**
@@ -1531,23 +1554,71 @@ const SCRIPT = `
     if(entering) land(); else if(stick) toBottom();
   }
 
+  /**
+   * The rows in the order they are painted: starred topics first, then the rest, each part in the
+   * daemon's order (most recently active first), and every topic followed by the ones its agent
+   * opened (Topic.parent), depth-first — unless it is folded. Only the painting is reordered: topics
+   * itself keeps the daemon's order, because topics[0] is read elsewhere as "the most recent topic" —
+   * where to land when the one on screen goes away.
+   *
+   * The topic on screen is never folded away: its ancestors are drawn open, without that being
+   * saved, so a link into a sub-agent's topic lands on a row you can see. A parent field that loops
+   * (only a hand-edited file could) leaves its topics unreachable from any root; they are drawn as
+   * roots rather than not at all.
+   */
+  function topicRows(){
+    var byId={}, kids={}, roots=[], i;
+    for(i=0;i<topics.length;i++) byId[topics[i].id]=topics[i];
+    for(i=0;i<topics.length;i++){
+      var p=topics[i].parent;
+      if(p && p!==topics[i].id && byId[p]) (kids[p]=kids[p]||[]).push(topics[i]); else roots.push(topics[i]);
+    }
+    var open={}, up=byId[topic], hops=0;
+    while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
+    var rows=[], seen={};
+    function state(t, depth){
+      var ch=kids[t.id]||[], s='';
+      for(var k=0;k<ch.length && depth<32;k++){
+        var c=ch[k];
+        var mine=c.asking?'asking':(c.stage==='failed'?'failed':(c.running?'running':''));
+        var deeper=state(c, depth+1);
+        var pick=[mine, deeper, s];
+        s=pick.indexOf('asking')>=0?'asking':(pick.indexOf('failed')>=0?'failed':(pick.indexOf('running')>=0?'running':''));
+      }
+      return s;
+    }
+    function walk(t, depth){
+      if(seen[t.id]) return;
+      seen[t.id]=true;
+      var ch=kids[t.id]||[];
+      var shut=ch.length>0 && Boolean(folded[t.id]) && !open[t.id];
+      rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
+      if(shut) return;
+      for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
+    }
+    var starred=[], rest=[];
+    for(i=0;i<roots.length;i++) (roots[i].starred?starred:rest).push(roots[i]);
+    for(i=0;i<starred.length;i++) walk(starred[i], 0);
+    var firstRest=rows.length;
+    for(i=0;i<rest.length;i++) walk(rest[i], 0);
+    for(i=0;i<topics.length;i++){
+      // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
+      var hidden=false, a=topics[i], n=0;
+      while(a && a.parent && byId[a.parent] && n++<32){ if(seen[a.parent] && folded[a.parent] && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
+      if(!seen[topics[i].id] && !hidden) walk(topics[i], 0);
+    }
+    return {rows:rows, divider:starred.length && firstRest<rows.length ? firstRest : -1, stars:starred.length};
+  }
+
   function paintTopics(){
     var h='';
     var cur=null;
-    // The dispatcher's topic first, then starred, each part in the daemon's order (most recently
-    // active first). Only the painting is reordered: topics itself keeps the daemon's order, because
-    // topics[0] is read elsewhere as "the most recent topic" — where to land when the one on screen
-    // goes away.
-    var order=[], rest=[], stars=0, pinned=[];
-    for(var j=0;j<topics.length;j++){
-      if(topics[j].dispatcher) pinned.push(topics[j]);
-      else if(topics[j].starred){ order.push(topics[j]); stars++; } else rest.push(topics[j]);
-    }
-    order=pinned.concat(order).concat(rest);
-    stars += pinned.length;
+    var painted=topicRows();
+    var stars=painted.stars;
     paintNeeds();
-    for(var i=0;i<order.length;i++){
-      var t=order[i];
+    for(var i=0;i<painted.rows.length;i++){
+      var row=painted.rows[i];
+      var t=row.t;
       var isCur=(t.id===topic);
       if(isCur) cur=t;
       var isRunning=Boolean(t.running);
@@ -1567,7 +1638,8 @@ const SCRIPT = `
       }
       var unread=isCur?0:Math.max(0, count - readCounts[t.id]);
       var cls='topic-item '+(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
-        +(t.starred?' starred':'')+(t.dispatcher?' dispatcher':'')+(stars && i===stars?' after-stars':'');
+        +(t.starred?' starred':'')+(i===painted.divider?' after-stars':'')
+        +(row.depth?' sub d'+Math.min(row.depth,3):'');
       var isFailed=t.stage==='failed';
       var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(isLive?' live':''))));
       var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
@@ -1586,18 +1658,23 @@ const SCRIPT = `
          + ' aria-pressed="'+(t.starred?'true':'false')+'"'
          + ' title="'+(t.starred?'Unstar':'Star: never removed to make room, and kept by Clear')+'">'
          + (t.starred?'★':'☆')+'</button>';
+      // Its own button, like the star: folding a parent is not a reason to switch to it.
+      var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
+         + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
+         + ' title="'+(row.shut?'Show':'Hide')+' the '+row.kids+' topic'+(row.kids>1?'s':'')+' its agent opened">'
+         + (row.shut?'▸':'▾')+' '+row.kids+'</button>':'';
       h += '<div class="'+cls+'" data-topic="'+text(t.id)+'" role="button" tabindex="0">'
          + '<span class="'+dotCls+'"></span>'
          + '<span class="topic-main">'
          + '<span class="topic-title">'+text(t.title || 'Untitled')+'</span>'
-         + dir
+         + (fold ? '<span class="topic-line">'+fold+dir+'</span>' : dir)
          + '</span>'
          + term
          + badge
-         + (t.dispatcher ? '' : '<span class="topic-acts">'
+         + '<span class="topic-acts">'
          + star
          + '<button type="button" class="btn-icon topic-del" data-del="'+text(t.id)+'" title="Delete topic">×</button>'
-         + '</span>')
+         + '</span>'
          + '</div>';
     }
     bar.innerHTML=h;
@@ -1634,14 +1711,19 @@ const SCRIPT = `
    * is a question, a failure, or a reply not yet read — the daemon decides the stage
    * (core/topic-stage.ts) and sends it with the list; this only draws it. Hidden when there is none:
    * a healthy state takes no room.
+   *
+   * A sub-agent's topic (one with a parent) is listed only for a question of its own: its replies and
+   * failures go to the agent that opened it, which says what comes of them (room.ts operatorStage,
+   * the same rule for notifications).
    */
   var NEEDS_ORDER = {answer:0, failed:1, review:2};
   function paintNeeds(){
     var list=[];
     for(var i=0;i<topics.length;i++){
       var t=topics[i];
-      if(t.id===topic || t.dispatcher) continue;
+      if(t.id===topic) continue;
       if(NEEDS_ORDER[t.stage]===undefined) continue;
+      if(t.parent && t.stage!=='answer') continue;
       list.push(t);
     }
     list.sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
@@ -1664,7 +1746,7 @@ const SCRIPT = `
   /**
    * Tell the daemon the operator is looking at the topic on screen, when that changes something: a
    * reply it has not been told was read (stage review). It stamps its own clock (WebRoom.markSeen),
-   * and the stage — here, in the Needs-you list, and in what the dispatcher is told — moves on.
+   * and the stage — here and in the Needs-you list — moves on.
    * Only while the page is actually visible, and at most every two seconds per topic.
    */
   var seenPosted={};
@@ -2239,6 +2321,17 @@ const SCRIPT = `
       if(delId) deleteTopic(delId);
       return;
     }
+    var fold = e.target.closest ? e.target.closest('[data-fold]') : null;
+    if(fold){
+      e.stopPropagation();
+      var foldId = fold.getAttribute('data-fold');
+      if(foldId){
+        if(folded[foldId]) delete folded[foldId]; else folded[foldId]=true;
+        saveFolded();
+        paintTopics();
+      }
+      return;
+    }
     // Before the row's own click, like the ×: starring a topic is not a reason to switch to it.
     var star = e.target.closest ? e.target.closest('[data-star]') : null;
     if(star){
@@ -2257,7 +2350,7 @@ const SCRIPT = `
 
   bar.addEventListener('keydown', function(e){
     if(e.key==='Enter' || e.key===' '){
-      if(e.target.closest && e.target.closest('[data-del],[data-star]')) return;
+      if(e.target.closest && e.target.closest('[data-del],[data-star],[data-fold]')) return;
       var b = e.target.closest ? e.target.closest('[data-topic]') : null;
       if(!b) return;
       e.preventDefault();
@@ -2506,7 +2599,7 @@ const SCRIPT = `
     // as downloading it. Checked first — a picture carries none of the attributes below.
     var shot = e.target.closest ? e.target.closest('img.shot') : null;
     if(shot) return openShot(shot);
-    // A link to another topic (the dispatcher's, see web-markdown.ts TOPIC_LINK_RE): switched to in
+    // A link to another topic (a sub-agent's, see web-markdown.ts TOPIC_LINK_RE): switched to in
     // place, not loaded as a page — the stream, the caches and the composer all stay as they are.
     var go = e.target.closest ? e.target.closest('a[data-goto]') : null;
     if(go){

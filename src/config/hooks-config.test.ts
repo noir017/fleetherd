@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseConfig } from './schema.js';
 
-/** `dispatcher:` and `agents[].hooks.turnFailed`, as config.yaml can state them. */
+/** `agents[].hooks.turnFailed`, as config.yaml can state it. */
 
 const base = {
   platforms: { web: { type: 'webui', token: 't' } },
@@ -11,22 +11,6 @@ const base = {
   ],
   routing: { default: 'cc', pipeline: [] },
 };
-
-describe('dispatcher', () => {
-  it('names a configured agent', () => {
-    expect(parseConfig({ ...base, dispatcher: { agent: 'cc' } }).dispatcher).toEqual({ agent: 'cc' });
-    expect(() => parseConfig({ ...base, dispatcher: { agent: 'nope' } })).toThrow(/dispatcher.agent references a non-existent agent id/);
-  });
-
-  it('refuses an agy agent: it has no tools to give and a shell nobody can take away', () => {
-    expect(() => parseConfig({ ...base, dispatcher: { agent: 'ag' } })).toThrow(/is an agy agent/);
-  });
-
-  it('is optional, and strict', () => {
-    expect(parseConfig(base).dispatcher).toBeUndefined();
-    expect(() => parseConfig({ ...base, dispatcher: { agent: 'cc', model: 'x' } })).toThrow();
-  });
-});
 
 describe('agents[].hooks.turnFailed', () => {
   const withHook = (turnFailed: unknown) =>

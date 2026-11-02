@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline';
 import { encode } from '@toon-format/toon';
 import { callDaemon } from '../ipc/client.js';
 import type { IpcAction, IpcResponse } from '../ipc/protocol.js';
-import { findNativeTool, toolAction, toolInputSchema, toolsFor } from '../ipc/tools.js';
+import { findNativeTool, NATIVE_TOOLS, toolAction, toolInputSchema } from '../ipc/tools.js';
 import { friendlyError, normalizeActionPaths, renderResult } from './reverse.js';
 
 /**
@@ -55,12 +55,6 @@ export interface McpDeps {
   socket: string;
   /** This CLI's version, reported as serverInfo. */
   version: string;
-  /**
-   * Serve the dispatcher's tools as well (`talkcode mcp --dispatch`, which the daemon names only in
-   * the dispatcher's own session — see ipc/tools.ts DISPATCH_TOOLS). Listing only: the daemon refuses
-   * a task command from any other conversation whatever this says.
-   */
-  dispatch?: boolean;
 }
 
 /** JSON-RPC error codes this server answers with (the spec's reserved range). */
@@ -106,9 +100,7 @@ async function dispatch(method: string, params: unknown, deps: McpDeps): Promise
       return { ok: {} };
     case 'tools/list':
       return {
-        ok: {
-          tools: toolsFor(deps.dispatch === true).map((t) => ({ name: t.name, description: t.description, inputSchema: toolInputSchema(t) })),
-        },
+        ok: { tools: NATIVE_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: toolInputSchema(t) })) },
       };
     case 'tools/call':
       return callTool(params, deps);
@@ -148,7 +140,7 @@ const toolText = (text: string, isError = false): Outcome => ({
  */
 async function callTool(params: unknown, deps: McpDeps): Promise<Outcome> {
   const p = (params ?? {}) as { name?: unknown; arguments?: unknown };
-  const tool = typeof p.name === 'string' ? findNativeTool(p.name, deps.dispatch === true) : undefined;
+  const tool = typeof p.name === 'string' ? findNativeTool(p.name) : undefined;
   if (!tool) return { error: { code: INVALID_PARAMS, message: `Unknown tool: ${String(p.name)}` } };
 
   let action: IpcAction;
@@ -164,12 +156,11 @@ async function callTool(params: unknown, deps: McpDeps): Promise<Outcome> {
 }
 
 /** Entry point for `talkcode mcp`: serve stdin → stdout until stdin closes. */
-export async function runMcp(version: string, opts: { dispatch?: boolean } = {}): Promise<void> {
+export async function runMcp(version: string): Promise<void> {
   const socket = process.env.TALKCODE_SOCKET ?? '';
   const deps: McpDeps = {
     socket,
     version,
-    dispatch: opts.dispatch === true,
     cwd: process.env.TALKCODE_CWD || process.cwd(),
     call: (action) =>
       socket

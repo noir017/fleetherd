@@ -44,7 +44,9 @@ it can do beyond answering reaches it the way any capability does, through its o
   `~/.gemini/config/skills` for Antigravity — once that harness has been run on the machine. Until it is
   needed, it costs the one line of description every skill costs. Its body points at
   `talkcode help <topic>` — `files`, `schedule`, `channels`, `history`, `messages`,
-  `threads`, `ask`, `voice` — which prints that topic's commands and rules.
+  `threads`, `ask`, `voice`, `tasks` — which prints that topic's commands and rules. A second
+  skill, `super`, is linked beside it: how to split a job across [sub-agents](sub-agents.md) when
+  you write `/super`.
 
 Antigravity (`agy`) gets the skill only: it has no per-session way to add tools, and the gateway
 will not edit its global MCP config. The same two commands are in its skill as CLI commands. See

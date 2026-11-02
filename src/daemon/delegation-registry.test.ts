@@ -8,9 +8,9 @@ import { TurnFailure } from './agent.js';
 import type { InboundMessage, TopicActivity } from '../types.js';
 
 /**
- * The turn-outcome and dispatcher wiring through a real registry, merger and turn runner, with a fake
- * agent: what a failed turn turns into when `hooks.turnFailed.continue` is set, and what the
- * dispatcher's hands (openTask, handTo, the topic refusal) do to real conversations.
+ * The turn-outcome and sub-agent wiring through a real registry, merger and turn runner, with a fake
+ * agent: what a failed turn turns into when `hooks.turnFailed.continue` is set, and what opening a
+ * sub-agent's topic (openTask, handTo — daemon/delegation.ts) does to real conversations.
  */
 
 const wait = (ms = 80): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -24,7 +24,7 @@ function inbound(content: string, thread = 'tt'): InboundMessage {
   };
 }
 
-function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' | 'ok'>; dispatcherTopic?: string } = {}) {
+function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' | 'ok'> } = {}) {
   const parsed = parseConfig({
     platforms: { web: { type: 'webui', token: 't' } },
     agents: [
@@ -48,6 +48,7 @@ function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' |
   const sent: Array<{ to: string; text: string }> = [];
   const renamed: Array<{ to: string; name: string }> = [];
   const activity: Array<{ to: string; a: TopicActivity | undefined }> = [];
+  const nested: Array<{ name: string; under: string }> = [];
   let seq = 0;
   let threads = 0;
   const where = (a: ConversationAddress) => `${a.channel}/${a.thread ?? ''}`;
@@ -63,7 +64,10 @@ function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' |
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
-    createThread: async () => ({ address: { channel: 'main', thread: `new${++threads}` } }),
+    createThread: async (_ref: unknown, name: string, o?: { under?: ConversationAddress }) => {
+      nested.push({ name, under: o?.under ? where(o.under) : '' });
+      return { address: { channel: 'main', thread: `new${++threads}` } };
+    },
     renameThread: async (address: ConversationAddress, name: string) => renamed.push({ to: where(address), name }),
     setActivity: (address: ConversationAddress, a: TopicActivity | undefined) => activity.push({ to: where(address), a }),
   } as unknown as PlatformAdapter;
@@ -88,11 +92,8 @@ function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' |
     dispose: () => {},
   };
 
-  const dispatcherKey = opts.dispatcherTopic ? `web#main#${opts.dispatcherTopic}` : undefined;
-  const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, {
-    isDispatcher: (id) => id === dispatcherKey,
-  });
-  return { registry, sent, prompts, activity, renamed };
+  const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock);
+  return { registry, sent, prompts, activity, renamed, nested };
 }
 
 let live: ConversationRegistry | undefined;
@@ -134,54 +135,33 @@ describe('hooks.turnFailed.continue through a real turn', () => {
   });
 });
 
-describe('the dispatcher’s hands', () => {
-  it('openTask opens a topic, binds it, shows the request as the dispatcher’s, and runs it verbatim', async () => {
+describe('a sub-agent’s topic (openTask, handTo)', () => {
+  const header = '**↳ From [Release](?t=aaaaaaaa)**';
+  const parent = { channel: 'main', thread: 'aaaaaaaa' };
+
+  it('openTask nests a topic under its parent, binds it, shows the header, and gives the agent the text alone', async () => {
     const r = rig();
     live = r.registry;
-    const opened = await r.registry.openTask({ platform: 'web', root: { channel: 'main' }, agentId: 'oc', text: '修一下 bump' });
+    const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: '修一下 bump', header });
     expect(opened).toEqual({ key: 'web#main#new1', address: { channel: 'main', thread: 'new1' } });
+    expect(r.nested).toEqual([{ name: expect.stringContaining('修一下 bump'), under: 'main/aaaaaaaa' }]);
     await wait();
     expect(r.registry.boundAgentOf(opened.key)).toBe('oc');
-    expect(r.sent).toContainEqual({ to: 'main/new1', text: '**📥 From the dispatcher**\n\n修一下 bump' });
+    expect(r.sent).toContainEqual({ to: 'main/new1', text: `${header}\n\n修一下 bump` });
     expect(r.prompts).toEqual([{ conversation: 'web#main#new1', prompt: '修一下 bump' }]);
   });
 
   it('openTask refuses an agent that is not configured, before opening anything', async () => {
     const r = rig();
     live = r.registry;
-    await expect(r.registry.openTask({ platform: 'web', root: { channel: 'main' }, agentId: 'zz', text: 'x' })).rejects.toThrow(
-      /no agent "zz"/
-    );
+    await expect(r.registry.openTask({ platform: 'web', parent, agentId: 'zz', text: 'x', header })).rejects.toThrow(/no agent "zz"/);
     expect(r.sent).toEqual([]);
+    expect(r.nested).toEqual([]);
   });
 
   it('handTo refuses a conversation nobody has answered yet', async () => {
     const r = rig();
     live = r.registry;
-    await expect(r.registry.handTo('web#main#never', 'web', { channel: 'main', thread: 'never' }, 'x')).rejects.toThrow(/nobody answers/);
-  });
-
-  it('the dispatcher topic refuses another agent and another directory', async () => {
-    const r = rig({ dispatcherTopic: 'd15a7c40' });
-    live = r.registry;
-    for (const cmd of ['/oc hello', '/agent oc', '/cd quantlab']) {
-      r.registry.route(inbound(cmd, 'd15a7c40'));
-    }
-    await wait();
-    expect(r.sent.filter((m) => m.text.startsWith("📥 This is the dispatcher's topic"))).toHaveLength(3);
-    expect(r.prompts).toEqual([]);
-  });
-});
-
-describe('the dispatcher topic’s name', () => {
-  it('is never taken from its first message, where an ordinary topic’s is', async () => {
-    const r = rig({ dispatcherTopic: 'd15a7c40' });
-    live = r.registry;
-    r.registry.route(inbound('fix the bump and tell me', 'd15a7c40'));
-    r.registry.route(inbound('fix the bump and tell me', 'tt'));
-    await wait(200);
-    expect(r.prompts.map((p) => p.conversation).sort()).toEqual(['web#main#d15a7c40', 'web#main#tt']);
-    expect(r.renamed.map((x) => x.to)).not.toContain('main/d15a7c40');
-    expect(r.renamed.map((x) => x.to)).toContain('main/tt');
+    await expect(r.registry.handTo('web#main#never', 'web', { channel: 'main', thread: 'never' }, 'x', header)).rejects.toThrow(/nobody answers/);
   });
 });

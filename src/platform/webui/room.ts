@@ -50,7 +50,6 @@ import type {
   TopicActivity,
   TopicStage,
 } from '../../types.js';
-import type { ConversationAddress } from '../../core/conversation.js';
 import type { ButtonSpec, ConversationWorkdir } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -70,16 +69,6 @@ export type WebuiInstance = WebuiPlatformConfig & { id: string };
  */
 export const CHANNEL = 'main';
 export const OWNER = 'owner';
-
-/**
- * The dispatcher's topic id. Fixed, not random, because the topic IS a conversation
- * (`<instance>#main#<id>`): the same id across restarts is the same agent session, and a new id on
- * every start would be a dispatcher that forgot everything each time. Any eight hex digits would do.
- */
-export const DISPATCH_TOPIC = 'd15a7c40';
-
-/** The dispatcher topic's name in the list. Not renamed by the harness: it is a place, not a subject. */
-export const DISPATCH_TITLE = '📥 Dispatcher';
 
 /**
  * How long a topic must stay in a needs-you stage before a push notification goes out for it. The
@@ -351,10 +340,12 @@ export class WebRoom {
    * Throws only when nothing can be given up — every topic starred or in use — and the message
    * says so, because the server hands it to the page verbatim and it is the only explanation the
    * operator will get for a + that did nothing.
+   *
+   * `parent` nests it under the topic whose agent opened it (Topic.parent).
    */
-  createTopic(title = ''): Topic {
+  createTopic(title = '', parent?: string): Topic {
     if (this.topics.full()) this.makeRoom();
-    const topic = this.topics.create(title);
+    const topic = this.topics.create(title, parent);
     this.announceTopics();
     return topic;
   }
@@ -419,8 +410,6 @@ export class WebRoom {
 
   /** Name a topic — what `renameThread` lands on, i.e. what the harness decided it is about. */
   renameTopic(id: string, title: string): boolean {
-    // The dispatcher's topic keeps DISPATCH_TITLE: the daemon does not name it, and nothing else may.
-    if (this.topics.get(id)?.dispatcher) return false;
     if (!this.topics.rename(id, title)) return false;
     this.announceTopics();
     return true;
@@ -428,9 +417,6 @@ export class WebRoom {
 
   /** Delete a topic, disposing its room state and announcing the new list. */
   deleteTopic(id: string): boolean {
-    // The dispatcher's topic is the configuration's, not the operator's to throw away: deleting it
-    // would only have the daemon open it again on the next start, empty of the list it had.
-    if (this.topics.get(id)?.dispatcher) return false;
     this.disposeRoom(id);
     // A star defers to the ×, kept transcript and all.
     this.forgetKept(id);
@@ -457,7 +443,7 @@ export class WebRoom {
     // The rooms as well as the list: a room is made on demand, so one can outlive its topic's row.
     for (const id of new Set([...this.rooms.keys(), ...this.topics.list().map((t) => t.id)])) {
       const kept = this.topics.get(id);
-      if (kept?.starred || kept?.dispatcher) continue;
+      if (kept?.starred) continue;
       this.disposeRoom(id);
       this.forgetKept(id);
     }
@@ -479,32 +465,15 @@ export class WebRoom {
 
   // ── What needs the operator ─────────────────────────────────────────────────────────────────
 
-  /**
-   * Open the dispatcher's topic (`on`) or let it be an ordinary topic again — see
-   * PlatformAdapter.dispatchLane. Returns its address while on.
-   */
-  dispatchLane(on: boolean): ConversationAddress | undefined {
-    if (!on) {
-      if (this.topics.get(DISPATCH_TOPIC)?.dispatcher) {
-        this.topics.setDispatcher(DISPATCH_TOPIC, false);
-        this.announceTopics();
-      }
-      return undefined;
-    }
-    if (!this.topics.has(DISPATCH_TOPIC)) {
-      if (this.topics.full()) {
-        try {
-          this.makeRoom();
-        } catch {
-          // Every topic held: the dispatcher's goes one over the cap rather than not at all.
-        }
-      }
-      this.topics.ensure(DISPATCH_TOPIC, DISPATCH_TITLE);
-    }
-    this.topics.setDispatcher(DISPATCH_TOPIC, true);
-    this.topics.rename(DISPATCH_TOPIC, DISPATCH_TITLE);
-    this.announceTopics();
-    return { channel: CHANNEL, thread: DISPATCH_TOPIC };
+  /** The topic that opened this one (Topic.parent), if it is still here. */
+  parentOf(topicId: string): string | undefined {
+    const parent = this.topics.get(topicId)?.parent;
+    return parent !== undefined && this.topics.has(parent) ? parent : undefined;
+  }
+
+  /** The topics this one opened (PlatformAdapter.childrenOf). */
+  childrenOf(topicId: string): string[] {
+    return this.topics.children(topicId).map((t) => t.id);
   }
 
   /** How a topic's last turn ended (PlatformAdapter.setActivity). */
@@ -539,24 +508,23 @@ export class WebRoom {
 
   /**
    * Notice topics that have just started needing the operator, and notify for each that still does
-   * after NOTIFY_GRACE_MS. Which topics notify: with a dispatcher, only its topic — it is the one
-   * place the operator watches, and it is told about everything else; without one, any topic.
+   * after NOTIFY_GRACE_MS (operatorStage: a sub-agent's topic only for a question of its own — the
+   * rest of what it does is its parent agent's to read).
    */
   private watchStages(topics: Topic[]): void {
-    const viaDispatcher = topics.some((t) => t.dispatcher);
     for (const t of topics) {
-      const stage = t.stage ?? 'idle';
+      const stage = operatorStage(t);
       const was = this.lastStage.get(t.id);
       this.lastStage.set(t.id, stage);
       if (stage === was || !needsPerson(stage)) continue;
-      if (viaDispatcher && !t.dispatcher) continue;
       if (!this.notifier || this.notifyTimers.has(t.id)) continue;
       const timer = setTimeout(() => {
         this.notifyTimers.delete(t.id);
         const now = this.topicList().find((x) => x.id === t.id);
-        if (!now?.stage || !needsPerson(now.stage)) return;
+        const nowStage = now ? operatorStage(now) : 'idle';
+        if (!now || !needsPerson(nowStage)) return;
         try {
-          this.notifier?.({ topic: now.id, title: now.title || 'Untitled', body: noticeBody(now.stage, now.line) });
+          this.notifier?.({ topic: now.id, title: now.title || 'Untitled', body: noticeBody(nowStage, now.line) });
         } catch (e) {
           console.warn('[webui] could not send a notification:', e instanceof Error ? e.message : e);
         }
@@ -1459,6 +1427,18 @@ export class WebRoom {
  * Only the three derived states the switcher paints a dot from, deliberately: the poll must not
  * notice a title, an order or an unread count, because whatever changed those already announced.
  */
+/**
+ * What a topic asks of the operator: its stage, except that a sub-agent's topic (one with a parent)
+ * asks only with a question of its own. Its reply and its failures go to the agent that opened it
+ * (daemon/delegation.ts), which says what comes of them; notifying for them as well would have the
+ * operator read every sub-agent's reply after all, which is the reading a parent agent is there to do.
+ * The page's Needs-you list applies the same rule (page.ts needsYou).
+ */
+export function operatorStage(t: Pick<Topic, 'stage' | 'parent'>): TopicStage {
+  const stage = t.stage ?? 'idle';
+  return t.parent !== undefined && stage !== 'answer' && needsPerson(stage) ? 'idle' : stage;
+}
+
 /** What a notification says under a topic's name. */
 function noticeBody(stage: TopicStage, line: string | undefined): string {
   const what = stage === 'answer' ? 'Waiting on your answer' : stage === 'failed' ? 'Failed' : 'Finished';

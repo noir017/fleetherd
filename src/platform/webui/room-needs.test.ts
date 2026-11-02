@@ -4,13 +4,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
-import { CHANNEL, DISPATCH_TITLE, DISPATCH_TOPIC, WebRoom, type TopicNotice, type WebuiInstance } from './room.js';
+import { WebRoom, type TopicNotice, type WebuiInstance } from './room.js';
 import { TopicStore } from './topics.js';
 
 /**
  * What the web UI says needs the operator: the stage each topic is in (core/topic-stage.ts, from the
- * outcome the daemon pushes and when the operator last looked), the dispatcher's pinned topic, and
- * the push notifications that go out when one starts needing them.
+ * outcome the daemon pushes and when the operator last looked), sub-agent topics nested under the
+ * topic that opened them, and the push notifications that go out when one starts needing them.
  */
 
 let dir = '';
@@ -83,32 +83,37 @@ describe('WebRoom: the stage of a topic', () => {
   });
 });
 
-describe('WebRoom: the dispatcher topic', () => {
-  it('is opened with a fixed id and name, pinned against eviction, clearing and deletion', () => {
-    const { room, store, row } = rig();
-    expect(room.dispatchLane(true)).toEqual({ channel: CHANNEL, thread: DISPATCH_TOPIC });
-    expect(row(DISPATCH_TOPIC)).toMatchObject({ title: DISPATCH_TITLE, dispatcher: true });
-    expect(room.deleteTopic(DISPATCH_TOPIC)).toBe(false);
+describe('WebRoom: sub-agent topics (Topic.parent)', () => {
+  it('nests a topic under the one that opened it, and lists the children', () => {
+    const { room, topic } = rig();
+    const child = room.createTopic('[cx] part', topic);
+    expect(room.parentOf(child.id)).toBe(topic);
+    expect(room.childrenOf(topic)).toEqual([child.id]);
+    expect(room.topicList().find((t) => t.id === child.id)?.parent).toBe(topic);
+  });
+
+  it('keeps the children as topics of their own when the parent is deleted, or swept', () => {
+    const { room, store, topic } = rig();
+    const child = room.createTopic('[cx] part', topic);
+    store.star(child.id, true);
+    room.deleteTopic(topic);
+    expect(store.get(child.id)?.parent).toBeUndefined();
+    const parent = room.createTopic('again');
+    const second = room.createTopic('[oc] part', parent.id);
+    store.star(second.id, true);
     room.clearTopics();
-    expect(store.has(DISPATCH_TOPIC)).toBe(true);
-    expect(store.evictable(() => false)?.id).not.toBe(DISPATCH_TOPIC);
+    expect(store.get(second.id)?.parent).toBeUndefined();
   });
 
-  it('keeps its name: nothing renames it', () => {
-    const { room, row } = rig();
-    room.dispatchLane(true);
-    expect(room.renameTopic(DISPATCH_TOPIC, '[disp] whatever the first message said')).toBe(false);
-    expect(row(DISPATCH_TOPIC)?.title).toBe(DISPATCH_TITLE);
-  });
-
-  it('opening it twice is the same topic; retiring it leaves an ordinary topic', () => {
-    const { room, row } = rig();
-    room.dispatchLane(true);
-    room.dispatchLane(true);
-    expect(room.topicList().filter((t) => t.dispatcher)).toHaveLength(1);
-    expect(room.dispatchLane(false)).toBeUndefined();
-    expect(row(DISPATCH_TOPIC)?.dispatcher).toBeUndefined();
-    expect(room.deleteTopic(DISPATCH_TOPIC)).toBe(true);
+  it('persists the relation, and drops one that names a topic no longer there', () => {
+    const { room, store, topic, file } = rig();
+    const child = room.createTopic('[cx] part', topic);
+    expect(new TopicStore(file).get(child.id)?.parent).toBe(topic);
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, { parent?: string }>;
+    raw[child.id]!.parent = 'deadbeef';
+    fs.writeFileSync(file, JSON.stringify(raw));
+    expect(new TopicStore(file).get(child.id)?.parent).toBeUndefined();
+    expect(store.get(child.id)?.parent).toBe(topic);
   });
 });
 
@@ -137,15 +142,15 @@ describe('WebRoom: push notifications', () => {
     expect(sent).toEqual([]);
   });
 
-  it('with a dispatcher, notify only for its topic — it is told about the rest', () => {
+  it('for a sub-agent’s topic, only a question of its own — its reply goes to the agent that opened it', () => {
     vi.useFakeTimers();
     const { room, topic } = rig();
     const sent: TopicNotice[] = [];
     room.useNotifier((n) => sent.push(n));
-    room.dispatchLane(true);
-    room.setActivity(topic, { outcome: { kind: 'failed', at: Date.now(), line: 'boom', reason: 'other' } });
-    room.setActivity(DISPATCH_TOPIC, { outcome: { kind: 'done', at: Date.now() + 1, line: 'cx failed on quantlab' } });
+    const child = room.createTopic('[cx] part', topic);
+    room.setActivity(child.id, { outcome: { kind: 'done', at: Date.now() + 1, line: 'done' } });
+    room.setActivity(topic, { outcome: { kind: 'done', at: Date.now() + 1, line: 'All three finished' } });
     vi.advanceTimersByTime(3_000);
-    expect(sent.map((n) => n.topic)).toEqual([DISPATCH_TOPIC]);
+    expect(sent.map((n) => n.topic)).toEqual([topic]);
   });
 });

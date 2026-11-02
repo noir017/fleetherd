@@ -54,12 +54,12 @@ export interface TurnOutcomesDeps {
   runContinue(id: ConversationId, text: string): boolean;
   /**
    * The conversation now has something for the person (a reply, a failure that will not be
-   * continued). The dispatcher listens here; absent = nobody does.
+   * continued). Delegation listens here, for a sub-agent's topic (daemon/delegation.ts); absent = nobody does.
    */
   onNeedsPerson?(id: ConversationId): void;
 }
 
-/** How much of a finished reply is kept for the dispatcher's card (see dispatcher.ts CARD_EXCERPT_CHARS). */
+/** How much of a finished reply is kept for a sub-agent update (see delegation.ts CARD_EXCERPT_CHARS). */
 const REPLY_EXCERPT_CHARS = 600;
 
 /** One conversation's automatic-continue bookkeeping. */
@@ -73,8 +73,8 @@ interface Continuing {
 export class TurnOutcomes {
   private readonly activity = new Map<ConversationId, TopicActivity>();
   /**
-   * The head of each conversation's last finished reply (REPLY_EXCERPT_CHARS), for the dispatcher's
-   * card. Kept here rather than pushed with the activity: a platform's list shows one line, and this
+   * The head of each conversation's last finished reply (REPLY_EXCERPT_CHARS), for a sub-agent
+   * update. Kept here rather than pushed with the activity: a platform's list shows one line, and this
    * is only ever read by the daemon.
    */
   private readonly excerpts = new Map<ConversationId, string>();

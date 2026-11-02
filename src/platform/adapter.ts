@@ -116,7 +116,14 @@ export interface PlatformAdapter {
   createThread(
     ref: MessageRef,
     name: string,
-    opts?: { autoArchiveMinutes?: 60 | 1440 | 4320 | 10080 }
+    opts?: {
+      autoArchiveMinutes?: 60 | 1440 | 4320 | 10080;
+      /**
+       * The conversation whose agent opened this one (daemon/delegation.ts): a platform that can
+       * show the relation (`parentOf`) nests the new lane under it. Ignored by every other.
+       */
+      under?: ConversationAddress;
+    }
   ): Promise<{ address: ConversationAddress }>;
 
   /**
@@ -246,20 +253,26 @@ export interface PlatformAdapter {
    * platform can tell — undefined when it cannot tell at all, which every chat app is: none reports
    * that a bot's message was read. The web UI can, because its page says so (`api/seen`).
    *
-   * Asked by the dispatcher (daemon/dispatcher.ts) before telling it a conversation needs the
-   * person: one the person is already reading needs no telling.
+   * Read by core/topic-stage.ts's callers: a reply the person has already read is not waiting on
+   * them.
    */
   seenAt?(address: ConversationAddress): number | undefined;
 
   /**
-   * The lane the dispatcher topic lives in: opened (and pinned) when `on`, retired when not — the
-   * conversation `dispatcher.agent` answers, from which the person hands work to other conversations
-   * (daemon/dispatcher.ts). Returns its address while on.
+   * The conversation that opened the one at `address` (`createThread`'s `under`), while both are
+   * still there — undefined for one nothing opened, or whose opener is gone. With `childrenOf`, the
+   * platform's own record of which agent handed work to which (daemon/delegation.ts): the daemon
+   * keeps no second copy, so deleting a topic on the page is the one way the relation ends.
    *
-   * Optional and web-UI-only for now: a chat app's topics are the chat app's to create, name and
-   * pin, and the first platform to do this is the one that draws its own topic list.
+   * Optional and web-UI-only: the relation is shown by nesting one lane under another in a list the
+   * platform draws itself, and a chat app's topic list is the chat app's. A platform without it
+   * cannot hold sub-agents at all — the daemon refuses `task-new` there rather than opening topics
+   * nobody could tell apart from the rest.
    */
-  dispatchLane?(on: boolean): ConversationAddress | undefined;
+  parentOf?(address: ConversationAddress): ConversationAddress | undefined;
+
+  /** The conversations the one at `address` opened, most recently active first. See `parentOf`. */
+  childrenOf?(address: ConversationAddress): ConversationAddress[];
 
   /** Send a message with buttons (used by clarify). */
   sendButtons(
