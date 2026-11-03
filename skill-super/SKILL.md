@@ -24,11 +24,13 @@ one in the web UI; the person confirms every start, and can talk to any of them 
 
 ## 2. Propose
 
-- `talkcode task-agents` lists the agents and where each runs. **Prefer `here=true`** — your own
-  machine, with the same checkouts and tools. Use another machine only when the part needs it
-  (a repository or a tool that only exists there), and say why on the card's title.
-- One `talkcode task-new --agent <id> [--cwd <dir>] --title "<short name>" "<text>"` per part,
-  back to back, so they land on one card.
+- `talkcode task-agents` lists the agents and where each runs. Its first row is the agent answering
+  this conversation; then come the others with `here=true` — your own machine, with the same
+  checkouts and tools. Prefer those. Use another machine only when the part needs it (a repository
+  or a tool that only exists there), and say why on the card's title.
+- One `talkcode task-new --agent <id> [--cwd <dir>] --title "<short name>" "<text>"` per part. They
+  all land on the card that is waiting for the person, however far apart you send them; only the
+  first one waits a few seconds for the rest.
 - The text is everything the sub-agent will see — it has not read this conversation. Give it the
   goal, the constraints, and how it will know it is done (a test that passes, a command whose
   output changes). Not the steps: it will read the code and choose them.

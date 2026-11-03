@@ -631,6 +631,13 @@ export class ConversationRegistry {
       takeVoice?(id: ConversationId, msg: InboundMessage): boolean;
       /** A typed message is about to reach the agent here: drop any transcript still waiting. */
       supersedeVoice?(id: ConversationId): number;
+      /**
+       * A message is about to reach the agent here: drop the sub-agent card still waiting for a tap
+       * (Delegation.personSpoke). The person writing instead of tapping is how a proposal is changed,
+       * and the agent's next `task-new` must start a fresh card rather than add to the one it meant
+       * to replace. Placed beside `supersedeVoice` in route(): past every gate, before the merger.
+       */
+      supersedeProposals?(id: ConversationId): void;
       /** `/stop` / `/new`: call off every transcript here, returning how many there were. */
       cancelPendingVoice?(id: ConversationId, reason: string): number;
       /**
@@ -1176,6 +1183,9 @@ export class ConversationRegistry {
     // Typing is how a transcript is corrected (its card says so): a typed message reaching the agent
     // drops whatever transcript is still waiting here, rather than leaving it to be sent as well.
     this.supersedeTranscripts(key, opts);
+    // Same for a sub-agent card: the words that just arrived are the person changing the proposal,
+    // and the card they did not tap must not be confirmed later.
+    this.hooks?.supersedeProposals?.(key);
     state.reclaimOnIdle = false;
     void state.merger.ingest(msg);
   }

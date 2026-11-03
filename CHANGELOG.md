@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `/super` proposal keeps every part, however far apart the calls are.** `task-new` calls were
+  batched by a three-second window, so an agent that made one call per step — the normal shape —
+  produced one card per call, each replacing the one before, and the person's Start covered only the
+  last one. On 2026-11-03 a three-part job ran as one part, twice. The card now stays open until the
+  person answers: a later call re-renders it with its item on it, and only Start, Cancel or a
+  message from the person ends the proposal. A message drops it too, so "use cbc instead" starts a
+  fresh card rather than appending to the items it means to replace.
+- **`task-agents` lists the agent answering the conversation first.** `task-new` has no default, and
+  the first usable row is what an agent takes — which was whatever the config listed first (`cc`
+  here), even in conversations cbc was answering. The conversation's own agent now leads the list,
+  already on this machine with the same checkouts and tools; the other agents on that machine follow.
+
 ## [2.24.1] - 2026-11-03
 
 ### Fixed

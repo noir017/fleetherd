@@ -54,7 +54,12 @@ import { UPDATE_SENDER } from './turn-runner.js';
  * else.
  */
 
-/** How long `task-new` calls are gathered onto one card: an agent proposing three makes three calls. */
+/**
+ * How long the first `task-new` of a burst waits for its siblings: an agent proposing three makes
+ * three calls, and the card should go up once rather than three times. Only the FIRST card waits —
+ * once it is on screen, a later `task-new` re-renders the same card instead of starting a second one,
+ * and nothing is lost if the agent takes a minute between calls.
+ */
 export const PROPOSAL_GATHER_MS = 3_000;
 
 /**
@@ -159,8 +164,12 @@ interface Item {
 type TaskAction = Extract<IpcAction, { kind: `task-${string}` }>;
 
 export class Delegation {
-  /** Sub-tasks proposed and not yet on a card, per proposing conversation. */
-  private readonly gathering = new Map<ConversationId, { items: Item[]; cancel: () => void }>();
+  /**
+   * Sub-tasks proposed and not yet confirmed, per proposing conversation. Kept until the person
+   * answers: a `task-new` arriving while the card is up joins this list and re-renders the card,
+   * rather than starting a second one that would replace the first.
+   */
+  private readonly gathering = new Map<ConversationId, { items: Item[]; cancel: () => void; card?: AbortController }>();
   /** The card on screen per proposing conversation: a newer one replaces it. */
   private readonly onScreen = new Map<ConversationId, AbortController>();
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
@@ -221,9 +230,18 @@ export class Delegation {
     }
   }
 
-  /** Every agent, the ones on the asking agent's own machine first. */
+  /**
+   * Every agent, the one answering this conversation first, then the ones on its own machine.
+   *
+   * The order is the whole of "which agent by default": `task-new` has no default of its own, and an
+   * agent reading the list takes the first row it can use. That used to be whatever the config listed
+   * first — `cc` here, on 2026-11-03, even in conversations cbc was answering — so the row for the
+   * conversation's own agent goes first. It is also the safest default: already running on this
+   * machine, with the same checkouts and tools.
+   */
   private agents(here: Place): TaskAgentsResult {
     const mine = this.hostOf(here.key);
+    const current = this.deps.registry.boundAgentOf(here.key);
     const rows = this.deps.config.agents.map((def) => {
       const choices = this.deps.registry.workdirChoices(def.id);
       return {
@@ -237,8 +255,11 @@ export class Delegation {
         dirs: (choices?.dirs ?? []).slice(0, 24).map((d) => d.split('/').pop() ?? d),
       };
     });
+    const rest = rows.filter((r) => r.id !== current);
     // Stable: within each half, the configuration's own order.
-    return { agents: [...rows.filter((r) => r.here), ...rows.filter((r) => !r.here)] };
+    return {
+      agents: [...rows.filter((r) => r.id === current), ...rest.filter((r) => r.here), ...rest.filter((r) => !r.here)],
+    };
   }
 
   /** The machine a conversation's agent runs on: its `host`, or '' for the gateway's own. */
@@ -253,7 +274,14 @@ export class Delegation {
     return { tasks: rows.slice(0, limit), total: rows.length };
   }
 
-  /** Add one sub-task to the card being gathered for this conversation. */
+  /**
+   * Add one sub-task to the proposal waiting in this conversation.
+   *
+   * The proposal lives until the person answers it: while the card is on screen, another `task-new`
+   * re-renders that same card with the new item on it. Batching used to be a 3-second window, so an
+   * agent that made its three calls a few seconds apart — the normal case, one tool call per step —
+   * got three cards, each replacing the one before, and the person's Start covered only the last.
+   */
   private propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): TaskNewResult {
     const def = findAgent(this.deps.config, a.agent);
     if (!def) {
@@ -262,27 +290,41 @@ export class Delegation {
     const g = this.gathering.get(here.key) ?? { items: [], cancel: () => undefined };
     g.cancel();
     g.items.push({ agent: a.agent, text: a.text, ...(a.cwd ? { cwd: a.cwd } : {}), ...(a.title ? { title: a.title } : {}) });
-    g.cancel = this.deps.clock.schedule(() => void this.putUp(here.key), PROPOSAL_GATHER_MS);
     this.gathering.set(here.key, g);
+    if (this.onScreen.has(here.key)) {
+      // A card is up and unanswered: re-render it now, so it shows every item proposed so far.
+      void this.putUp(here.key);
+    } else {
+      g.cancel = this.deps.clock.schedule(() => void this.putUp(here.key), PROPOSAL_GATHER_MS);
+    }
     return {
       item: g.items.length,
       result:
-        `Sub-task ${g.items.length} is on the card the person is about to be asked to confirm; task-new calls in the next ` +
-        `few seconds join the same card. Nothing starts until they confirm. Then each gets a topic nested under this ` +
-        `one, all start at once, and you are told here as each finishes, fails or asks something.`,
+        `Sub-task ${g.items.length} is on the card the person is about to be asked to confirm; more task-new calls ` +
+        `join the same card while it waits. Nothing starts until they confirm. Then each gets a topic nested under ` +
+        `this one, all start at once, and you are told here as each finishes, fails or asks something.`,
     };
   }
 
-  /** Put the gathered sub-tasks up as one card, and start them all if the person says so. */
+  /**
+   * Put the proposal up as one card, and start what it lists if the person says so.
+   *
+   * A newer card replaces this one (a `task-new` arrived, or the person wrote and `personSpoke` dropped
+   * the proposal), and an aborted confirm must not settle a list that is no longer its own — hence the
+   * two identity checks after the await. Items proposed while this card was up are not on it: they go
+   * on the next card, so a tap can never start something the person did not see.
+   */
   private async putUp(key: ConversationId): Promise<void> {
     const g = this.gathering.get(key);
-    this.gathering.delete(key);
     const here = this.place(key);
     if (!g?.items.length || !here) return;
+    const items = g.items.slice();
+    g.cancel();
     this.onScreen.get(key)?.abort();
     const abort = new AbortController();
+    g.card = abort;
     this.onScreen.set(key, abort);
-    const n = g.items.length;
+    const n = items.length;
     const start = n === 1 ? 'Start it' : `Start all ${n}`;
     let picked: string | null = null;
     try {
@@ -290,7 +332,7 @@ export class Delegation {
         adapter: here.adapter,
         address: here.address,
         conversation: key,
-        text: this.cardText(here, g.items),
+        text: this.cardText(here, items),
         labels: [start, 'Cancel'],
         timeoutMs: PROPOSAL_TIMEOUT_MS,
         signal: abort.signal,
@@ -300,11 +342,36 @@ export class Delegation {
     } finally {
       if (this.onScreen.get(key) === abort) this.onScreen.delete(key);
     }
+    // Superseded: a newer card owns the gathering now, or the person wrote and dropped it.
+    if (this.gathering.get(key) !== g || g.card !== abort) return;
     if (picked !== start) {
+      this.gathering.delete(key);
       console.log(`[delegation] ${key}: ${n} sub-agent(s) not started (${picked ?? 'called off'})`);
       return;
     }
-    await this.start(here, g.items);
+    // Confirmed. Anything proposed while this card was up was not on it, so it gets its own card.
+    g.items = g.items.filter((item) => !items.includes(item));
+    if (g.items.length) void this.putUp(key);
+    else this.gathering.delete(key);
+    await this.start(here, items);
+  }
+
+  /**
+   * The person wrote in this conversation: the card on screen is not the proposal to confirm any more.
+   *
+   * A typed reply is never a yes (the card's buttons are the only answer), and it is how a proposal is
+   * changed — "use cbc instead". So the pending list is dropped here, before the agent reads the
+   * message and proposes again; without this, the re-proposal would append to the very items it means
+   * to replace. `/stop` and `/new` already reach this through the question they call off; a plain
+   * message does not, because the card refuses text.
+   */
+  personSpoke(key: ConversationId): void {
+    const g = this.gathering.get(key);
+    if (!g) return;
+    this.gathering.delete(key);
+    g.cancel();
+    this.onScreen.get(key)?.abort();
+    console.log(`[delegation] ${key}: ${g.items.length} sub-agent(s) not started (the person wrote instead)`);
   }
 
   /** What the person is asked to confirm: every sub-task, whole enough to judge. */

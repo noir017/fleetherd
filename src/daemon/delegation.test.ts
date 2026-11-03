@@ -197,12 +197,14 @@ describe('Delegation: where the commands run', () => {
     await expect(r.d.handle('tg#1#2', { kind: 'task-agents' })).rejects.toThrow(/only the web UI can show.*telegram/);
   });
 
-  it('lists the agents on the asking agent’s own machine first, and marks them', async () => {
+  it('lists the agent answering this conversation first, then the rest of its machine', async () => {
     const r = rig();
+    // The conversation is answered by cx, not by the config's first agent: cx leads the list.
+    r.bound.set(P, 'cx');
     const res = (await r.d.handle(P, { kind: 'task-agents' })) as TaskAgentsResult;
     expect(res.agents.map((a) => [a.id, a.where, a.here])).toEqual([
-      ['cc', 'near', true],
       ['cx', 'near', true],
+      ['cc', 'near', true],
       ['oc2', 'far', false],
       ['local', 'gateway', false],
     ]);
@@ -254,15 +256,15 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
   });
 
-  it('replaces a card still on screen with the newer proposal', async () => {
+  it('adds a later proposal to the card already on screen, so Start covers both', async () => {
     const r = rig();
-    let release: (v: string | null) => void = () => undefined;
+    const releases: Array<(v: string | null) => void> = [];
     const d = new Delegation({
       ...(r.d as unknown as { deps: DelegationDeps }).deps,
       confirm: ({ text, labels, signal }) => {
         r.cards.push({ text, labels, signal });
         return new Promise((res) => {
-          release = res;
+          releases.push(res);
           signal.addEventListener('abort', () => res(null));
         });
       },
@@ -270,11 +272,49 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     await d.handle(P, task('cc', 'first'));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
-    await d.handle(P, task('cc', 'second'));
-    r.clock.advance(PROPOSAL_GATHER_MS);
+    expect(r.cards).toHaveLength(1);
+    // The second call arrives long after the first card went up — the case that used to make a
+    // second card and drop the first. It now re-renders the card with both items on it.
+    await d.handle(P, task('cx', 'second'));
     await settle();
     expect(r.cards.map((c) => c.signal.aborted)).toEqual([true, false]);
-    release('Start it');
+    expect(r.cards[1]!.labels).toEqual(['Start all 2', 'Cancel']);
+    expect(r.cards[1]!.text).toContain('1. **cc**');
+    expect(r.cards[1]!.text).toContain('2. **cx**');
+    releases[1]!('Start all 2');
+    await settle();
+    await settle();
+    expect(r.calls.filter(([c]) => c === 'openTask').map(([, o]) => (o as { text: string }).text)).toEqual(['first', 'second']);
+  });
+
+  it('drops the card when the person writes instead, so the re-proposal starts a fresh one', async () => {
+    const r = rig();
+    const releases: Array<(v: string | null) => void> = [];
+    const d = new Delegation({
+      ...(r.d as unknown as { deps: DelegationDeps }).deps,
+      confirm: ({ text, labels, signal }) => {
+        r.cards.push({ text, labels, signal });
+        return new Promise((res) => {
+          releases.push(res);
+          signal.addEventListener('abort', () => res(null));
+        });
+      },
+    });
+    await d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    // "use cx instead" — the agent is about to read it and propose again.
+    d.personSpoke(P);
+    await settle();
+    expect(r.cards[0]!.signal.aborted).toBe(true);
+    await d.handle(P, task('cx', 'second'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(2);
+    expect(r.cards[1]!.labels).toEqual(['Start it', 'Cancel']);
+    expect(r.cards[1]!.text).toContain('cx');
+    expect(r.cards[1]!.text).not.toContain('first');
+    releases[1]!('Start it');
     await settle();
     await settle();
     expect(r.calls.filter(([c]) => c === 'openTask').map(([, o]) => (o as { text: string }).text)).toEqual(['second']);

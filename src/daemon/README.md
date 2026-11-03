@@ -594,9 +594,14 @@ topic of its own nested under the asking one — on a platform that records that
 (`PlatformAdapter.parentOf` / `childrenOf`, today the web UI's `Topic.parent`), which is the only copy
 of it: the daemon keeps none, so deleting a topic on the page is what ends it. Three structural rules:
 
-- `task-new` only proposes. Calls a few seconds apart are gathered (`PROPOSAL_GATHER_MS`) onto one
-  card put up through the daemon's `askButtons` with `acceptsText: false`: a typed reply is the
-  person's next message to the agent, never a yes. A newer card aborts the one on screen (`signal`).
+- `task-new` only proposes. The proposal stays open until the person answers: the first card goes up
+  after `PROPOSAL_GATHER_MS`, and a later call while that card is on screen re-renders it with the new
+  item on it, so a burst is one card however far apart the calls are. It is put up through the
+  daemon's `askButtons` with `acceptsText: false`: a typed reply is the person's next message to the
+  agent, never a yes — and it drops the proposal (`supersedeProposals` → `personSpoke`), so the
+  re-proposal that follows starts a fresh card rather than appending to the one it means to replace.
+  A newer card aborts the one on screen (`signal`). `task-agents` lists the conversation's own agent
+  first: `task-new` has no default, and the first usable row is what an agent picks.
   Start opens each part with `ConversationRegistry.openTask` (`createThread` with `under`), whose
   `handTo` shows the text under a `↳ From [parent]` header and ingests it with `DELEGATE_SENDER`.
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).

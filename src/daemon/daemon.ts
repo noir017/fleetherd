@@ -859,6 +859,9 @@ export class Daemon {
       // `/stop` and `/new` abandon whatever is still being asked here, so nothing is left pinned,
       // clickable, or able to swallow the next message.
       cancelPendingAsks: (id, reason) => this.cancelPendingAsks(id, reason),
+      // A message that reaches the agent here replaces a sub-agent card still waiting for a tap: the
+      // person writing is how they change the proposal, and the agent proposes again from scratch.
+      supersedeProposals: (id) => this.delegation.personSpoke(id),
       // A bare `/model` on a platform that can carry (and later edit) buttons.
       onModelMenuRequest: (id, agentId, msg, selector) =>
         this.onModelMenuRequest(id, agentId, msg, selector),
