@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A web UI topic you are still setting up no longer asks for attention.** Picking an agent in a new
+  topic is a tap that types `/agent`, and the daemon answers with the directory menu — which the page
+  counted as a question. So a topic with no agent in it yet pinned itself to the top of the sidebar in
+  green, turned its dot amber, and pushed "Waiting on your answer", all while you were choosing a
+  directory in it. The menu is a control for your own next step, not something an agent is blocked
+  on, so it no longer puts the topic in the needs-you list or notifies. A real question still does.
+- **The sidebar's agent tag no longer eats the topic's name.** A remote agent's id is `<id>@<host>`,
+  and the tag in front of every title is that id — 15 characters of a 240px column spent naming a
+  machine the line below already names, which left rows reading `[cbc@uniagent] Oracle A…`. The row
+  now shows just the agent's id, dimmed, and keeps the whole name on hover. A tag whose machine the
+  directory line does not name keeps its host: it is the only place on the row that says it.
+
 ## [2.23.0] - 2026-11-03
 
 ### Added

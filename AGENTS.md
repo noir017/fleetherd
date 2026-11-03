@@ -72,8 +72,9 @@ Enforced facts, verifiable with grep:
   all of those are injected. This is what makes it unit-testable without mocks of the
   IM stack.
 - `platform/` imports only pure pieces of `core/` — `proxy.ts`, `conversation.ts`,
-  `outbound-errors.ts`, `topic-stage.ts` — and never `daemon/`. Profiles never see the whole `Config`, only
-  their own typed `platforms.<id>` entry. One platform also imports `config/load.ts`, for
+  `outbound-errors.ts`, `topic-stage.ts`, `workdir-menu.ts` — and never `daemon/`. Profiles never
+  see the whole `Config`, only their own typed `platforms.<id>` entry. One platform also imports
+  `config/load.ts`, for
   `configDir()` alone: `webui/` persists its topic list beside the daemon's own state files,
   and the alternative was a second copy of that path. The arrow already allows it
   (`platform ──► core ──► config`); it is named here because nothing else in `platform/`

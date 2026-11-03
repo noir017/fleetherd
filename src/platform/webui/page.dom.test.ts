@@ -1144,6 +1144,57 @@ describe('webui page: topics', () => {
     ]);
   });
 
+  it('shortens a host-qualified agent tag once the row already names the machine', async () => {
+    // A remote agent's id is `<id>@<host>`, and `formatLaneTitle` puts that id in front of every
+    // topic name. Left whole it is 15 characters of a 240px column spent on a machine the
+    // directory line repeats, which left rows reading "[cbc@uniagent] Oracle A…" (reported
+    // 2026-11-03). The part before the `@` is what the operator types to bind the agent.
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: 'a1b2c3d4', title: '[cbc@uniagent] Oracle A…', lastAt: 1000, msgCount: 0, dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' } },
+        // No directory known, so the second line cannot say which machine this is: the tag keeps
+        // its host, because it is the only place on the row that names it.
+        { id: 'b2c3d4e5', title: '[ag@devbox] 你好', lastAt: 999, msgCount: 0 },
+      ],
+    });
+
+    const titles = Array.from(h.doc.querySelectorAll('.topic-title'));
+    expect(titles.map((t) => t.textContent)).toEqual(['[cbc] Oracle A…', '[ag@devbox] 你好']);
+    // Nothing is lost: the name the tag was cut from is on the tag itself, where the abbreviation
+    // is, so the row's own tooltip (what a needs-you row says) still covers the rest of the row.
+    expect(titles[0]!.querySelector('.topic-tag')?.getAttribute('title')).toBe('[cbc@uniagent] Oracle A…');
+    expect(titles[1]!.querySelector('.topic-tag')?.getAttribute('title')).toBeNull();
+  });
+
+  it('leaves the needs-you tooltip alone on a row whose tag was shortened', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: 'a1b2c3d4', title: 'on screen', lastAt: 1000, msgCount: 0 },
+        {
+          id: 'b2c3d4e5',
+          title: '[cbc@uniagent] Oracle A…',
+          lastAt: 999,
+          msgCount: 0,
+          stage: 'answer',
+          line: 'Ship 2.23.0?',
+          dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
+        },
+      ],
+    });
+
+    const row = h.doc.querySelector('.topic-item.needs');
+    expect(row?.getAttribute('title')).toBe('Waiting on your answer: Ship 2.23.0?');
+    expect(row?.querySelector('.topic-title')?.hasAttribute('title')).toBe(false);
+  });
+
   it('leaves the row alone for a daemon that offered no directory', async () => {
     // Every `topics` event before this feature existed, and every deployment whose adapter does
     // not implement the lookup: the second line is absent, not blank.

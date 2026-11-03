@@ -359,6 +359,17 @@ only when the topic on screen is in `review` and the page is visible; the room s
 It is compared with a turn's end, which is the daemon's time, and a phone's clock is nothing to
 compare a server's with. Posting only on `review` keeps the traffic to one request per reply read.
 
+**A menu is not a question** (`awaitingQuestion`). The room's `awaiting` set is "messages with live
+buttons", which was the same thing while every such message was an ask. Since a new topic's choice of
+agent is a tap that types `/agent` (2026-11-02), the daemon also posts the *directory* menu into a
+conversation that has not started — and that menu, counted as a question, pinned the topic to the top
+in green and pushed "Waiting on your answer" about a topic with no agent in it, which the operator had
+just been looking at. The menu is a control for the operator's own next step, so `topicList` asks
+`awaitingQuestion` instead: a message whose buttons are all a directory menu's (`core/workdir-menu.ts`)
+does not make the topic `answer`. `awaiting` itself still holds it, because `inUse` must not evict a
+topic with a clickable menu and idle reclaim must not close the agent under one. Unrecognised buttons
+count as a question, so a new kind of ask is announced rather than silently missed.
+
 **Sub-agent topics** (daemon/delegation.ts) carry `parent`, the topic whose agent opened them —
 persisted, and the only record of the relation (`parentOf` / `childrenOf` on the adapter read it back).
 `TopicStore.orphan` drops a `parent` that names a topic no longer there, on load and after every
