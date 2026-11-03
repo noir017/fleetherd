@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.22.0] - 2026-11-03
+
 ### Added
 
 - **An agent can add a machine to the gateway: `talkcode pod-add`.** Adding a host meant editing
