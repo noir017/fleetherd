@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Low attention, for a web UI with several agents working at once.** Turned on in the sidebar's
+  new Settings menu, a running topic's dot stays bright blue but stops pulsing, and unread counts
+  turn from a bright blue pill to grey. With a few agents running, the list never stopped moving —
+  a pulse per running topic, and counts climbing with every message a turn posted — and none of it
+  was anything to act on. What is left standing out is what needs you: a question (its amber dot
+  still pulses), a failed turn and an unread reply, still moved to the top in green. Kept per
+  browser, and off until turned on.
+
+### Changed
+
+- **The web UI's sidebar footer is one row**: ⚙ Settings, and Close idle (N) while any agent is
+  idle. Notifications, Low attention and Clear all topics are in the Settings menu. The footer was
+  a column of full-width buttons, three rows already and a fourth on the way, for things set once
+  per device or used rarely; Close idle stays outside because its count is worth seeing at a glance.
+
 ## [2.19.2] - 2026-11-02
 
 ### Added

@@ -51,7 +51,7 @@ conversation is kept, and the next message picks up where it left off. Both simp
 send the command, so a draft in the composer is left where it is.
 
 **Closing idle agents.** An agent process stays up after its turn until the daemon's idle
-timeout reclaims it (the dim blue dot). **Close idle agents (N)** at the bottom of the topic
+timeout reclaims it (the dim blue dot). **Close idle (N)** at the bottom of the topic
 list ends all of them at once: it lists the topics it is about to close, asks, and then says
 which were closed. Each conversation is kept, and the next message in a topic starts its agent
 again where it left off. A topic that starts working in the meantime is left running, and
@@ -65,6 +65,14 @@ failure stays until the next turn runs, and its dot stays red after that. Workin
 stay where they are. [Sub-agent](sub-agents.md) topics are nested under the topic that opened
 them, and move up only for a question of their own — the agent that opened them reads the rest. A link to a topic in a
 reply opens it in place.
+
+**Low attention.** With several agents working at once the list keeps moving: every running
+topic's dot pulses, and its unread count climbs in a bright blue pill with each message. Turn on
+**Low attention** in **⚙ Settings** at the bottom of the topic list and that stops: a running
+topic's dot stays bright blue but holds still, and unread counts turn grey. A question waiting on
+you (its amber dot still pulses), a failed turn and a reply you have not read still move to the
+top in green, so they are the only things that stand out. The setting is kept in this browser
+only. Notifications and **Clear all topics** are in the same menu.
 
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here
 a row carries the whole command — up to 2000 characters — where a chat app gets the
@@ -108,8 +116,8 @@ composer's draft is saved too, a second after you stop typing.
 
 ## Notifications
 
-**Notifications: off** at the bottom of the topic list turns on push notifications for this
-device. The browser asks for permission once. After that the device is notified even when the
+**Notifications** in **⚙ Settings** at the bottom of the topic list turns on push notifications
+for this device. The browser asks for permission once. After that the device is notified even when the
 page is closed or the phone is locked. Tapping a notification opens the topic.
 
 What notifies: any topic that starts needing you — for a sub-agent's topic, only a question of its

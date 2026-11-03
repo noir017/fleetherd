@@ -246,8 +246,8 @@ for Stop mid-reply has in there. The power button does not wait out the poll to 
 daemon ends the child synchronously before it sends the ack (`answerDaemonCommand`), and the ack
 is a posted message, which announces the list.
 
-**"Close idle agents" ends every dim-blue topic's process at once** (since 2.16.0), from the
-sidebar footer above Clear; it shows the count and is hidden at zero. Unlike the power button it is
+**"Close idle" ends every dim-blue topic's process at once** (since 2.16.0), from the
+sidebar footer beside Settings; it shows the count and is hidden at zero. Unlike the power button it is
 not a typed command, and that is deliberate: a `/kill` per topic would leave an echo and an ack in
 every room it touched, twenty messages for ten topics. Instead `POST api/topics/close-idle` carries
 the ids, `WebRoom.closeIdle` hands each to the daemon (`PlatformAdapter.useIdleReclaim`), and the
@@ -373,11 +373,24 @@ replies and failures are its parent agent's to read.
 A link to another topic is `?t=<id>` — the one relative link `web-markdown.ts` keeps — rendered with
 `data-goto`, which the page intercepts to switch in place.
 
+**Low attention** (2.20.0) is the same list drawn quieter, per browser (`aa_calm` in localStorage,
+applied as the script starts so a reload does not flash the pulse back): `#app.calm` stops the
+running dot's pulse and turns the unread count grey, and touches nothing that needs the person — the
+amber dot still pulses, and the green rows above are unchanged. It is CSS over the same markup on
+purpose: `page.dom.test.ts` checks that the rows are identical either way and that the stylesheet's
+`#app.calm` rules are exactly those two, so a rule that quiets a question or a failure fails there.
+
+**The sidebar footer is one row** (2.20.0): ⚙ Settings, and Close idle while there is anything to
+close. Notifications, Low attention and Clear are in the Settings menu, which opens upward over the
+list and closes on any click outside it (the drawer's backdrop included) or Escape. They are things
+set once per device or used rarely; Close idle stayed outside because its count is worth seeing. The
+footer is a size container so the word "Settings" drops at the narrowest sidebar (`SB_MIN`).
+
 ## Notifications
 
 A phone freezes the page the moment it is put down, so nothing the event stream carries reaches it
 (see [Every topic keeps its transcript](#every-topic-keeps-its-transcript)). Only a push service does,
-so the page offers Web Push (`webpush.ts`, `sw.ts`) behind a per-device toggle in the sidebar footer —
+so the page offers Web Push (`webpush.ts`, `sw.ts`) behind a per-device toggle in the sidebar's Settings menu —
 never a permission prompt nobody asked for.
 
 - **What notifies** is decided in `room.ts` `watchStages`: a topic entering a needs-you stage, and
