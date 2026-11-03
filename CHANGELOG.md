@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.24.0] - 2026-11-03
+
 ### Fixed
 
 - **CodeBuddy Code gets the bundled skills, and the dead link it was left with is swept away.**
