@@ -329,16 +329,17 @@ describe('/reload in a running daemon', () => {
 });
 
 describe('talkcode reload', () => {
-  it('prints the same summary /reload posts', () => {
+  // Answered once the hosts' pods have been read again (daemon.ts reloadAll), hence awaited.
+  it('prints the same summary /reload posts', async () => {
     const r = rig();
     edit('default: cc', 'default: oc');
-    const data = r.daemon.handleGatewayQuery({ kind: 'reload-config' }, { channel: 'c1' });
+    const data = await r.daemon.handleGatewayQuery({ kind: 'reload-config' }, { channel: 'c1' });
     expect(renderResult({ kind: 'reload-config' }, data).stdout).toContain('applied: routing');
   });
 
-  it('fails — non-zero exit for the agent — when the file does not load', () => {
+  it('fails — non-zero exit for the agent — when the file does not load', async () => {
     const r = rig();
     edit('harness: opencode', 'harness: nonsense');
-    expect(() => r.daemon.handleGatewayQuery({ kind: 'reload-config' }, { channel: 'c1' })).toThrow(/nothing changed/);
+    await expect(r.daemon.handleGatewayQuery({ kind: 'reload-config' }, { channel: 'c1' })).rejects.toThrow(/nothing changed/);
   });
 });

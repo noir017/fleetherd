@@ -13,6 +13,7 @@ nothing else from the project.
 | `load.ts` | Path resolution (`configDir`/`configPath`/`defaultSocketPath`), `loadConfig`, `readConfig` (validate without committing, for a live reload), `saveConfig`, `saveConfigPatch` |
 | `env-expand.ts` | `${VAR}` expansion over the parsed tree + the `.env` sidecar loader |
 | `migrate.ts` | v0 (`platform:` object) → v1 (`platforms:` map). Disposable by design. |
+| `pods.ts` | `pods.json` — the agents each host's pod declared, as the daemon last read them (daemon/pods.ts) — and how they join `agents`: `<id>@<host>`, in the order of `hosts:`, never over an id config.yaml defines, a bad entry left out rather than failing the load |
 
 ## The central design decision: a small user surface
 
@@ -82,10 +83,18 @@ Order matters and is fixed:
 ```
 read file → YAML parse → v0 migration (in memory, warns)
           → ${VAR} expansion  ← happens ONCE, here
+          → + the pods' agents (pods.json)
           → ConfigSchema.parse (zod, + superRefine cross-checks)
           → withExperienceDefaults
           → Config
 ```
+
+The pods' agents join after expansion and before validation, both on purpose. After: an agent's
+`env` is expanded once more when it is started (`daemon/agent-common.ts` expandEnv), from this
+process's environment, so a pod's text must never go through expansion — `PodAgentSchema` refuses
+`${` in it outright. Before: routing may name a pod's agent, and is checked like any other. That
+is also why pods.json is a file and not the daemon's memory: routing has to resolve at startup,
+before any host answers.
 
 Expansion sits after parse and before validation for a reason: `setup` and
 `saveConfig` operate on the **raw, unexpanded** object, so an expanded secret is never

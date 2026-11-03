@@ -116,6 +116,19 @@ export class ScheduleStore {
     }
   }
 
+  /** Give agents new ids (agent-renames.ts) in the tasks that run them. Returns how many changed. */
+  renameAgents(renames: ReadonlyMap<string, string>): number {
+    let changed = 0;
+    for (const t of this.tasks.values()) {
+      const next = t.run.kind === 'agent' ? renames.get(t.run.agent) : undefined;
+      if (t.run.kind !== 'agent' || !next) continue;
+      t.run.agent = next;
+      changed++;
+    }
+    if (changed) this.flush();
+    return changed;
+  }
+
   list(): ScheduleTask[] {
     return [...this.tasks.values()].sort((a, b) => a.createdAt - b.createdAt);
   }

@@ -54,6 +54,49 @@ agents:
 
 主机必须是 x86-64 或 arm64 的 Linux，并且有 POSIX `sh`。其他什么都不用装。
 
+## 主机自己声明的智能体：`~/.talkcode/pod.yaml`
+
+主机可以自己说明它有哪些智能体，不必在 config.yaml 里一个个列出来。这样 config.yaml 只需要写 `hosts:`：
+
+```yaml
+# ~/.talkcode/pod.yaml，放在主机上
+agents:
+  - id: oc
+    harness: opencode
+    model: opencode/deepseek-v4.1-flash-free
+    cwd: ~/workspace
+  - id: cbc
+    harness: custom
+    command: codebuddy
+    args: [--acp]
+```
+
+- 每个智能体的名字是 `<id>@<主机>`：`devbox` 上的 `oc` 就是 `oc@devbox`，routing、`/agent` 和
+  `talkcode task-new` 都用这个名字。主机不能占用 config.yaml 或别的主机已经在用的 id。
+- 字段和 config.yaml 里智能体的字段一样，只是没有 `host`。值按原样使用：不接受 `${VAR}`，因为它会从网关的
+  环境变量里取值，而那里放着网关的各种 token。智能体要用的变量请放在主机的登录环境里。
+- **没有这个文件时：** 网关会在主机的登录 PATH 上查找 `claude-agent-acp`、`codex-acp`、`opencode`、`agy`
+  和 `codebuddy`，把找到的分别以 `cc`、`cx`、`oc`、`ag`、`cbc` 提供出来，用默认设置。文件为空表示这台主机
+  没有智能体。config.yaml 里已经放了智能体的主机，除非有这个文件，否则不会去查找——查找会把它们每个再提供一遍。
+- **什么时候读：** 网关启动时，以及每次 `/reload`（或 `talkcode reload`）时。改完文件再 reload 即可。读到的内容
+  会存在配置目录的 `pods.json` 里，所以连不上的主机会保留它原有的智能体；文件写错的主机也一样保留，
+  reload 的回复里会说明哪里写错了。
+- `/setting model` 改不了这类智能体：它的定义在主机上。去改那个文件，或者用 `/model` 只改当前会话。
+
+### 给智能体改名
+
+会话和定时任务是按 id 记住自己属于哪个智能体的。只在 config.yaml 里改 id，这个智能体的所有话题都会回到默认智能体，
+并且开一个新会话。要改名，就在配置目录里放一个 `agent-renames.json`，写上新旧名字的对应关系，然后重启网关：
+
+```json
+{ "oc2": "oc@devbox", "cc": "cc@devbox" }
+```
+
+启动时，config.yaml（`agents`、`routing`）、每个会话和定时任务里的 id 会一起改掉；改之前先把这三个文件复制成
+`*.bak-renames-<时间>`，对应表随后改名为 `agent-renames.json.applied-<时间>`。要把一个智能体从 config.yaml
+挪到主机的 `pod.yaml` 里：先用这个办法把它改名为 `<id>@<主机>`，在主机上写好文件，再删掉 config.yaml 里那一项并
+`/reload`。
+
 ## 各件事在哪里发生
 
 | | 对配了 `host:` 的智能体 |

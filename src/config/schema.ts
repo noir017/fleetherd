@@ -60,7 +60,7 @@ export type SessionScope = z.infer<typeof SessionScope>;
  * no ACP mode at all and is driven over its own stream-json protocol by daemon/agent-agy.ts; the
  * factory picks the runtime from this field.
  */
-export const AgentDefSchema = z
+const AgentDefFields = z
   .object({
     /** Unique id referenced by routing. */
     id: z.string().min(1),
@@ -163,18 +163,61 @@ export const AgentDefSchema = z
      * agent's host id, or no group for an agent on this machine.
      */
     group: z.string().min(1).max(64).optional(),
-  })
-  .refine((a) => a.harness !== 'custom' || (a.command && a.command.length > 0), {
-    message: 'command is required when harness=custom',
-    path: ['command'],
-  })
-  // agy speaks no ACP and is launched with --dangerously-skip-permissions (agent-agy.ts): there is
-  // no request for the gateway to put to anyone, so `ask` would be a promise silently not kept.
-  .refine((a) => a.harness !== 'agy' || a.permissions !== 'ask', {
-    message: 'permissions: ask is not available for agy — it has no permission requests the gateway can answer',
-    path: ['permissions'],
   });
+
+/** The cross-field rules every agent definition obeys, wherever it was written. */
+function agentRules<O extends { harness: string; command?: string; permissions: string }, I>(schema: z.ZodType<O, z.ZodTypeDef, I>) {
+  return (
+    schema
+      .refine((a) => a.harness !== 'custom' || (a.command !== undefined && a.command.length > 0), {
+        message: 'command is required when harness=custom',
+        path: ['command'],
+      })
+      // agy speaks no ACP and is launched with --dangerously-skip-permissions (agent-agy.ts): there is
+      // no request for the gateway to put to anyone, so `ask` would be a promise silently not kept.
+      .refine((a) => a.harness !== 'agy' || a.permissions !== 'ask', {
+        message: 'permissions: ask is not available for agy — it has no permission requests the gateway can answer',
+        path: ['permissions'],
+      })
+  );
+}
+
+export const AgentDefSchema = agentRules(AgentDefFields);
 export type AgentDef = z.infer<typeof AgentDefSchema>;
+
+/**
+ * An agent as a pod declares it, in `~/.talkcode/pod.yaml` on the host (daemon/pods.ts). The
+ * gateway names it `<id>@<host>` — so a pod cannot take an id config.yaml or another pod uses — and
+ * runs it on that host, so there is no `host` to give.
+ *
+ * Its `env` is used as written. An agent's env values are `${VAR}`-expanded again when it is started
+ * (agent-common.ts expandEnv), from the GATEWAY's environment, which holds the bot tokens: a pod that
+ * could write `${TELEGRAM_BOT_TOKEN}` would be handed it. Refused here rather than escaped there, so
+ * the reason reaches whoever wrote the file.
+ */
+export const POD_AGENT_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
+export const PodAgentSchema = agentRules(
+  AgentDefFields.omit({ host: true }).extend({
+    id: z.string().regex(POD_AGENT_ID, 'id must be 1-32 chars of letters/digits/_/- and start alphanumeric (the gateway adds @<host>)'),
+    env: z
+      .record(
+        z.string().refine((v) => !v.includes('${'), {
+          message:
+            'pod.yaml is used as written: ${VAR} would be expanded from the GATEWAY\'s environment. Put the value itself, or set it in this host\'s login environment',
+        })
+      )
+      .default({}),
+  })
+);
+export type PodAgent = z.infer<typeof PodAgentSchema>;
+
+/** `~/.talkcode/pod.yaml` on a host. No `agents:` (or an empty list) = no agents there. */
+export const PodFileSchema = z.object({ agents: z.array(PodAgentSchema).default([]) }).strict();
+
+/** The id the gateway gives an agent a pod declared. */
+export function podAgentId(id: string, host: string): string {
+  return `${id}@${host}`;
+}
 
 /**
  * A machine the gateway reaches over ssh to run agents on (`hosts.<id>` in config.yaml).

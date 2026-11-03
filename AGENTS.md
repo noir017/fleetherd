@@ -222,6 +222,9 @@ Do not weaken these without saying so explicitly in the PR:
    here only the reverse commands, `mcp` and `help` (`daemon/remote-hosts.ts` isBridgedCommand),
    never `start`, `setup` or any other part of the gateway's administration — and what it runs
    still passes the IPC token check and `ipc/protocol.ts` validation like a local agent's command.
+   The agents a host declares in its `pod.yaml` (`daemon/pods.ts`) are its own, named `<id>@<host>`
+   so they can never stand in for another's, and their text is used as written — never
+   `${VAR}`-expanded, which would hand a host the gateway's environment (`PodAgentSchema`).
 6. **No sub-agent starts without the person.** `task-new` only proposes: every sub-task waits on
    a card that shows it in full until the person taps Start (`Delegation.putUp`, buttons only — a
    typed reply is the person's next message, never a yes), and nothing an agent says can start one.

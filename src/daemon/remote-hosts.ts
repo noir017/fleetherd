@@ -76,7 +76,7 @@ export class RemoteHosts {
   private readonly skillPlaced = new Set<string>();
 
   /** (Re)build the host table from config. Unchanged entries keep their live connection. */
-  configure(cfg: Config, socketPath: string): void {
+  configure(cfg: Pick<Config, 'hosts'>, socketPath: string): void {
     this.socketPath = socketPath;
     const wanted = cfg.hosts ?? {};
     for (const [id, entry] of [...this.hosts]) {

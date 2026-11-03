@@ -49,6 +49,9 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
 | `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on, and the `[sub-agent updates]` card |
 | `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `talkcode …` back here (the allowlisted bridge); placing the skill on a host |
+| `pods.ts` | What each host's pod declares: its `~/.talkcode/pod.yaml`, or the harness commands on its login PATH when it has none. Read at startup and on every `/reload` (`Daemon.reloadAll`) into `pods.json`, which `config/pods.ts` merges into `agents` as `<id>@<host>`. A host that cannot be read, or whose file does not validate, keeps what it had |
+| `host-probe.ts` | The `command -v` script run on a host in the PATH an agent will have: `talkcode doctor`'s check of each host, and `pods.ts`'s look at a host with no `pod.yaml` |
+| `agent-renames.ts` | `agent-renames.json`: new ids for agents, applied at startup to config.yaml, `conversations.json` and `schedules.json` together (after backing them up), because an id is also the key each conversation and task remembers its agent by |
 
 ## Inbound flow
 

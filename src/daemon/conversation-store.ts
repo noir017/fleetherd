@@ -95,6 +95,32 @@ export class ConversationStore {
     }
   }
 
+  /**
+   * Give agents new ids (agent-renames.ts): the binding and each agent's session id move with the
+   * agent, so its conversations resume rather than start over. Returns how many records changed.
+   */
+  renameAgents(renames: ReadonlyMap<string, string>): number {
+    let changed = 0;
+    for (const rec of this.map.values()) {
+      let touched = false;
+      const next = renames.get(rec.agent);
+      if (next) {
+        rec.agent = next;
+        touched = true;
+      }
+      for (const [from, to] of renames) {
+        const session = rec.agentSessions[from];
+        if (session === undefined) continue;
+        delete rec.agentSessions[from];
+        rec.agentSessions[to] ??= session;
+        touched = true;
+      }
+      if (touched) changed++;
+    }
+    if (changed) this.flush();
+    return changed;
+  }
+
   /** The agent currently bound to this conversation, if any. */
   boundAgent(key: string): string | undefined {
     return this.map.get(key)?.agent;
