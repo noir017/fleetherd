@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.23.0] - 2026-11-03
+
 ### Added
 
 - **A sub-agent's turn can be watched while it runs.** `tasks` said only `stage: working` until the
