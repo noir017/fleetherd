@@ -27,7 +27,7 @@ import path from 'node:path';
 
 import { configDir } from '../../config/load.js';
 import type { ConversationAddress } from '../../core/conversation.js';
-import type { MessageRef, SlashCommandSpec } from '../../types.js';
+import type { MessageRef, SettingsScreen, SlashCommandSpec } from '../../types.js';
 import type { PlatformAdapter } from '../adapter.js';
 import { renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
@@ -81,6 +81,13 @@ const CAPABILITIES: PlatformAdapter['capabilities'] = {
   renameThread: true,
   buttons: true,
   editButtons: true,
+  /**
+   * `/setting` is a screen here, not a grid: the page has the width to put a setting's label and
+   * its whole value on separate lines, group the rows, and mark the current value. The daemon
+   * attaches the structured form to the menu message when this is declared (adapter.ts
+   * `settingsScreen`); every chat platform keeps the button grid it has always had.
+   */
+  settingsScreen: true,
   /**
    * The most core allows, and twice what the chat platforms declare. It was their 12, so that
    * which client someone read from did not change how many directories `/cd` offered — until the
@@ -423,12 +430,19 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
       const quote = room.htmlOf(topic, r.messageId);
       return ref(topic, room.post(topic, { own: false, html: renderWebMarkdown(text), quote: { html: quote } }, text).id);
     },
-    async sendButtons(address, text, buttons) {
+    async sendButtons(address, text, buttons, screen?: SettingsScreen) {
       const topic = topicOf(address, 'sendButtons');
-      return ref(topic, room.post(topic, { own: false, html: renderWebMarkdown(text), buttons }, text).id);
+      return ref(
+        topic,
+        room.post(
+          topic,
+          { own: false, html: renderWebMarkdown(text), buttons, ...(screen ? { settings: screen } : {}) },
+          text
+        ).id
+      );
     },
-    async editButtons(r, text, buttons) {
-      room.revise(topicOf(r.address, 'editButtons'), r.messageId, text, buttons);
+    async editButtons(r, text, buttons, screen?: SettingsScreen) {
+      room.revise(topicOf(r.address, 'editButtons'), r.messageId, text, buttons, screen);
     },
     async addReaction(r, emoji) {
       room.react(topicOf(r.address, 'addReaction'), r.messageId, emoji, true);

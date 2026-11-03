@@ -18,7 +18,7 @@ and restarting, which stops every resident agent.
 | clean up voice transcripts | `voice.cleanup` | `on`, `off` (default `on`; only with a `voice:` block) | immediately — the next voice message |
 
 ```
-/setting                       →  the whole screen, as buttons where they work
+/setting                       →  the whole screen (a settings page in the web UI, buttons elsewhere)
 /setting idle                  →  what that one accepts, and its current value
 /setting idle 4h               →  set it, on any platform
 /setting model.cc opus         →  the model an agent starts its sessions with
@@ -26,7 +26,10 @@ and restarting, which stops every resident agent.
 
 Where buttons can be posted *and* replaced (Discord, Telegram, Slack, Lark) the
 bare form opens a two-level menu — tap a setting, tap a value, and the screen
-returns to the list with the new value on it. Everywhere else the same
+returns to the list with the new value on it. In the web UI the same two levels
+are a settings screen instead: rows grouped by what they decide, each showing
+its label and its whole current value, and tapping a row opens its values with
+the current one marked; Back returns to the list. Everywhere else the same
 commands work as text. A long list of models is paged, and a name your harness
 accepts but never advertised (`opusplan`) is taken as typed.
 

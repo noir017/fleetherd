@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { parseConfig, type Config } from '../config/schema.js';
 import { SessionScope } from '../config/schema.js';
 import {
+  buildSettingValueMenu,
+  buildSettingsMenu,
   formatIdle,
   parseSettingButtonId,
   parseSettingValue,
@@ -118,6 +120,99 @@ describe('the settings screen', () => {
     expect(settingsMenuSurface({ buttons: true, editButtons: false })).toBe('text');
     expect(settingsMenuSurface({ buttons: false, editButtons: true })).toBe('text');
     expect(settingsMenuSurface({})).toBe('text'); // a capability object that omits the field
+  });
+
+  it('draws the list as grouped rows with the label and the whole value apart', () => {
+    const rows = settingsRows(cfg);
+    const view = buildSettingsMenu({
+      reqId: 'r1',
+      rows,
+      extra: { id: 'sco:r1:0', label: '⏰ Scheduled tasks · 2 active' },
+      screen: true,
+    });
+    const screen = view.screen;
+    expect(screen?.level).toBe('list');
+    if (screen?.level !== 'list') throw new Error('no list screen');
+
+    expect(screen.rows.map((r) => [r.label, r.target, r.value, r.group])).toEqual([
+      ['Default agent', undefined, 'cc · claude', 'Agent defaults'],
+      ['Default model', 'cc', '(harness default)', 'Agent defaults'],
+      ['Default model', 'oc', 'opencode/big-pickle', 'Agent defaults'],
+      ['Default model', 'own', '(harness default)', 'Agent defaults'],
+      ['Idle reclaim', undefined, '1h', 'Conversation'],
+      ['Conversation scope', undefined, 'per_thread', 'Conversation'],
+      ['Live streaming', undefined, 'off', 'Replies'],
+      ['⏰ Scheduled tasks · 2 active', undefined, undefined, 'More'],
+    ]);
+    // The screen and the buttons are two views of one list: a tap must post the id the button
+    // would have posted.
+    expect(screen.rows.map((r) => r.buttonId)).toEqual(view.buttons.map((b) => b.id));
+    expect(screen.rows[1]!.effectLabel).toBe('next session');
+    expect(screen.rows[5]!.effectLabel).toBe('after restart');
+    // The whole value, which the chat label truncates at 40 characters.
+    expect(screen.rows[2]!.value).toBe('opencode/big-pickle');
+  });
+
+  it('builds no screen unless the platform asks for one', () => {
+    // The whole point of the capability: a chat app's view is unchanged, down to the object it gets.
+    expect(buildSettingsMenu({ reqId: 'r1', rows: settingsRows(cfg) }).screen).toBeUndefined();
+    expect(
+      buildSettingValueMenu({ reqId: 'r2', row: row('idle'), options: settingOptions(row('idle'), cfg, ctx), page: 0 })
+        .screen
+    ).toBeUndefined();
+  });
+
+  it('marks the current value and keeps the value ids absolute across pages', () => {
+    const r = row('idle');
+    const view = buildSettingValueMenu({
+      reqId: 'r2',
+      row: r,
+      options: settingOptions(r, cfg, ctx),
+      page: 1,
+      pageSize: 2,
+      screen: true,
+    });
+    const screen = view.screen;
+    expect(screen?.level).toBe('values');
+    if (screen?.level !== 'values') throw new Error('no value screen');
+
+    expect(screen.options).toEqual([
+      { buttonId: 'stv:r2:2', label: '1h', current: true },
+      { buttonId: 'stv:r2:3', label: '4h', current: false },
+    ]);
+    expect(screen.nav).toEqual({
+      page: 2,
+      pageCount: 3,
+      prev: 'stp:r2:0',
+      next: 'stp:r2:2',
+      back: 'stb:r2:0',
+    });
+    // The screen's nav row carries the page number; the text would otherwise say it twice.
+    expect(view.text).not.toContain('page 2/3');
+    expect(
+      buildSettingValueMenu({
+        reqId: 'r2',
+        row: r,
+        options: settingOptions(r, cfg, ctx),
+        page: 1,
+        pageSize: 2,
+      }).text
+    ).toContain('page 2/3');
+  });
+
+  it('splits a value from the clause that explains it, leaving the chat label whole', () => {
+    const r = row('scope');
+    const options = settingOptions(r, cfg, ctx);
+    expect(options[0]!.label).toBe('per_thread — a topic / thread is its own conversation');
+    const view = buildSettingValueMenu({ reqId: 'r3', row: r, options, page: 0, screen: true });
+    const screen = view.screen;
+    if (screen?.level !== 'values') throw new Error('no value screen');
+    expect(screen.options[0]).toEqual({
+      buttonId: 'stv:r3:0',
+      label: 'per_thread',
+      detail: 'a topic / thread is its own conversation',
+      current: true,
+    });
   });
 });
 

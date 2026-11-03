@@ -434,6 +434,7 @@ never a permission prompt nobody asked for.
 | `reply` | ✓ | Rendered as a quote above the body |
 | `thread` / `renameThread` | ✓ | Topics, and topics that name themselves. The second is only possible because the first is a lane |
 | `buttons` / `editButtons` | ✓ | Both, or `/model`, `/cd` and `/setting` silently degrade to plain text |
+| `settingsScreen` | ✓ | The only platform that declares it: `/setting` is drawn as grouped rows from the structured screen the daemon sends, not as the button grid. Every chat platform keeps the grid (see [Menus](#menus)) |
 | `menuPageSize` | 24 | Core's ceiling, twice the chat platforms' 12. The page draws a menu as a grid (`menu()` in `page.ts`), so 24 is fewer rows here than 12 is on Telegram, and a page of long model ids is still one phone screen |
 | `paceByLane` | ✓ | The only platform that declares it: each topic gets its own outbound budget instead of queueing behind every other topic's streaming |
 | `slashCommands` | ✓ | *Received*, as ordinary text, exactly like Telegram — `registerCommands` only feeds the page's autocomplete |
@@ -476,13 +477,24 @@ daemon on 2026-10-10; jsdom has no layout and cannot see any of it.
 
 ## Menus
 
-Every message with buttons — `/cd`, `/model`, `/setting`, `/agent`, an `ask` — is drawn by
-`menu()` in `page.ts` as a grid (2.14.0; before that, buttons wrapped like words and a page of
-directories was a ragged block). Columns are sized from the widest label, so short names get more
-of them, and there are never fewer than two: a label longer than half the row wraps inside its cell.
+Every message with buttons — `/cd`, `/model`, `/agent`, an `ask` — is drawn by `menu()` in
+`page.ts` as a grid (2.14.0; before that, buttons wrapped like words and a page of directories was
+a ragged block). Columns are sized from the widest label, so short names get more of them, and there
+are never fewer than two: a label longer than half the row wraps inside its cell.
 
-**The page reads two conventions off the labels, because a label is all the daemon sends.** If you
-change the labels in `core/`, this is what moves:
+`/setting` is the exception. A chat app has only buttons, so its settings rows squeeze the label and
+the value into one 40-character string; a page does not have to. The daemon declares
+`settingsScreen` for this platform, builds the same menu as a `SettingsScreen`
+(`WebMessage.settings`), and `settingsScreen()` draws it: a section per group, a row per setting
+with the label and its whole current value on separate lines, and a value list whose current option
+is lit and ticked. Nothing on the page parses a label for it — the groups, values, current marks and
+button ids all arrive as data, which is what makes a long model id readable instead of
+`(harness …`. The screen rides with the buttons: an edit without one clears it, so a retired menu
+or a message handed to the scheduled-task list cannot leave a dead screen behind. `page.dom.test.ts`
+pins the list, the current mark, a row tap, Back and paging.
+
+**For every other menu, the page reads two conventions off the labels, because a label is all the
+daemon sends.** If you change the labels in `core/`, this is what moves:
 
 - A leading `● ` / `☑ ` lights the cell as the current choice; `☐ ` and `⌂ ` become a dim mark.
 - A label that starts with `◀`/`‹` or ends with `▶`/`›` (◀ Prev, Next ▶, ◀ Back, ‹ machines) goes

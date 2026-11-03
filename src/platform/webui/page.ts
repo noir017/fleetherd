@@ -488,6 +488,42 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* A finger, not a pointer: the cells keep roughly the height they had as loose buttons, and the
    gap between two choices is what a near miss lands in. */
 @media(hover:none){.btns{--gap:6px}.btns button{padding:8px 10px}.btns .nav button{padding:7px 14px}}
+/* The settings screen a /setting menu becomes on this page (see settingsScreen()). A chat app can
+   only offer buttons, so /setting arrives there as a grid of labels with the value squeezed into
+   the same string and cut at 40 characters. This page has a message's width, so it draws the
+   screen instead: a section per group, a row per setting with the label on top and the whole value
+   underneath it, wrapping rather than ellipsised, and the whole row as the target. Rows rather
+   than cells because a setting is read, not scanned as a keyboard; a wide screen may put two or
+   three rows side by side inside a section, which is the one place the grid survives. Every
+   control is at least 44px tall: this page is used on a phone more than on a desktop. */
+.set{margin-top:10px;border:1px solid var(--line);border-radius:8px;background:#181818;overflow:hidden}
+.set-group{padding:10px 12px 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.set-rows{display:grid;grid-template-columns:1fr;gap:1px;background:var(--line)}
+@media(min-width:560px){.set-rows{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}}
+.set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"main chev" "value chev";gap:1px 10px;align-items:center;width:100%;min-height:44px;padding:9px 12px;background:#181818;border:0;border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.set-row:hover{background:#202020}
+.set-row:focus-visible,.set-opt:focus-visible,.set-nav button:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.set-main{grid-area:main;min-width:0;display:flex;flex-direction:column;gap:1px}
+.set-label{font-size:13.5px;line-height:1.35}
+.set-meta{font-size:11.5px;line-height:1.35;color:var(--dim)}
+.set-value{grid-area:value;min-width:0;font-size:13px;line-height:1.4;color:#9fb6c9;overflow-wrap:anywhere;white-space:normal}
+.set-chev{grid-area:chev;color:#555;font-size:17px;line-height:1}
+.set-opts{display:flex;flex-direction:column;gap:1px;background:var(--line)}
+.set-opt{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:44px;padding:10px 12px;background:#181818;border:0;border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.set-opt:hover{background:#202020}
+.set-opt.on{background:#1b2430}
+.set-check{flex:none;width:16px;color:#38bdf8;font-size:14px;line-height:1.5;text-align:center}
+.set-opt-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.set-opt-label{font-size:13.5px;line-height:1.35;overflow-wrap:anywhere}
+.set-opt-detail{font-size:12px;line-height:1.4;color:var(--dim)}
+.set-opt.on .set-opt-label{color:#fff;font-weight:600}
+.set-nav{display:flex;align-items:center;gap:6px;padding:8px;border-top:1px solid var(--line);background:#181818}
+.set-nav button{min-height:44px;padding:6px 12px;background:var(--field);color:var(--dim);border:1px solid var(--line);border-radius:5px;font:inherit;font-size:12.5px;cursor:pointer}
+.set-nav button:hover{color:var(--fg);border-color:#3a3a3a}
+.set-page{flex:1;min-width:0;text-align:center;font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+/* Tapped and waiting on the daemon, lit like a menu cell: the row just pressed is the brightest
+   thing in the screen rather than the faintest. */
+.set-row.busy,.set-opt.busy{opacity:1;background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
 button{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
 button:hover{border-color:#3a3a3a}
 button:disabled{opacity:.5;cursor:default}
@@ -1183,7 +1219,7 @@ const SCRIPT = `
     // Buttons are dropped from a message that came out of the cache: the process that would
     // answer them is gone, and the id they name now means a different message or nothing at
     // all. A control that cannot act is worse than no control.
-    if(!hist && m.buttons && m.buttons.length) h += menu(m);
+    if(!hist && m.buttons && m.buttons.length) h += m.settings ? settingsScreen(m) : menu(m);
     if(stuck(m)) h += failedActions(m);
     var meta = clock(m.at) + (m.reactions && m.reactions.length ? '  '+m.reactions.join(' ') : '');
     h += '<div class="t">'+text(meta)+(tools ? allToggle(key) : '')+'</div>';
@@ -1230,6 +1266,73 @@ const SCRIPT = `
     // 40 is core's label budget (truncateLabel); a longer one would be a column no row can hold.
     return '<div class="btns" style="--cw:'+Math.min(widest, 40)+'ch">' + items
       + (nav ? '<div class="nav">'+nav+'</div>' : '') + '</div>';
+  }
+
+  /**
+   * A /setting message drawn as a screen rather than as the grid every other menu uses.
+   *
+   * The daemon sends the screen as data (WebMessage.settings): labels, values, groups, and the
+   * button id each row posts. Nothing here parses a label — the grid did, because a label was all
+   * it had, and a value cut at 40 characters is what that produced on a phone. The two levels
+   * share the row shape: a list row carries a label, a value and a chevron; a value row carries a
+   * tick, the value and what it means. The current value is lit and ticked, and the nav row keeps
+   * paging and Back where a thumb can reach them.
+   */
+  function settingsScreen(m){
+    var s = m.settings, msg = text(m.id), h = '';
+    if(!s) return '';
+    if(s.level === 'values'){
+      var opts = s.options || [];
+      h += '<div class="set-opts">';
+      for(var i=0;i<opts.length;i++) h += settingsOption(opts[i], msg);
+      h += '</div>';
+      if(s.nav) h += settingsNav(s.nav, msg);
+      return '<div class="set">'+h+'</div>';
+    }
+    var rows = s.rows || [], group = null, open = false;
+    for(var j=0;j<rows.length;j++){
+      var r = rows[j], g = String(r.group == null ? '' : r.group);
+      if(g !== group){
+        if(open) h += '</div>';
+        group = g;
+        if(g) h += '<div class="set-group">'+text(g)+'</div>';
+        h += '<div class="set-rows">';
+        open = true;
+      }
+      h += settingsRow(r, msg);
+    }
+    if(open) h += '</div>';
+    return '<div class="set">'+h+'</div>';
+  }
+
+  function settingsRow(r, msg){
+    var meta = [];
+    if(r.target) meta.push(text(r.target));
+    if(r.effectLabel) meta.push(text(r.effectLabel));
+    return '<button type="button" class="set-row" data-msg="'+msg+'" data-btn="'+text(r.buttonId)+'">'
+      + '<span class="set-main"><span class="set-label">'+text(r.label)+'</span>'
+      + (meta.length ? '<span class="set-meta">'+meta.join(' · ')+'</span>' : '')
+      + '</span>'
+      + (r.value != null ? '<span class="set-value">'+text(r.value)+'</span>' : '')
+      + '<span class="set-chev" aria-hidden="true">›</span></button>';
+  }
+
+  function settingsOption(o, msg){
+    return '<button type="button" class="set-opt'+(o.current ? ' on' : '')+'" data-msg="'+msg+'" data-btn="'+text(o.buttonId)+'"'
+      + (o.current ? ' aria-current="true"' : '')+'>'
+      + '<span class="set-check" aria-hidden="true">'+(o.current ? '✓' : '')+'</span>'
+      + '<span class="set-opt-main"><span class="set-opt-label">'+text(o.label)+'</span>'
+      + (o.detail ? '<span class="set-opt-detail">'+text(o.detail)+'</span>' : '')
+      + '</span></button>';
+  }
+
+  function settingsNav(n, msg){
+    var h = '<div class="set-nav">';
+    if(n.back) h += '<button type="button" data-msg="'+msg+'" data-btn="'+text(n.back)+'">◀ Back</button>';
+    h += '<span class="set-page">'+(n.pageCount > 1 ? text(n.page)+' / '+text(n.pageCount) : '')+'</span>';
+    if(n.prev) h += '<button type="button" data-msg="'+msg+'" data-btn="'+text(n.prev)+'">◀ Prev</button>';
+    if(n.next) h += '<button type="button" data-msg="'+msg+'" data-btn="'+text(n.next)+'">Next ▶</button>';
+    return h + '</div>';
   }
 
   /**

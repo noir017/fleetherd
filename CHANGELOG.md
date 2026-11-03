@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **`/setting` on the web UI is a settings screen, not a wall of buttons.** The bare command used
+  to arrive as the same button grid every chat app gets: each row squeezed its label and value into
+  one 40-character string, so a phone showed `Default model · cc · (harness …` with the value cut
+  off and no way to tell a heading from a choice. The page now draws the same menu as grouped rows:
+  the label on one line, the whole current value underneath it — wrapping rather than ellipsising —
+  and the whole row as the target. A row opens its values in the same shape, the current value lit
+  and ticked, and Back returns to the list. Rows are at least 44px tall; a wide screen may show two
+  or three side by side inside a group. Chat platforms are unchanged: the daemon sends them the
+  same text and buttons, and attaches the structured screen only to a platform that declares it.
+
 ### Fixed
 
 - **A `/super` proposal keeps every part, however far apart the calls are.** `task-new` calls were

@@ -8,7 +8,7 @@ import { loadConfig } from '../config/load.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession } from './agent.js';
-import type { ButtonInteraction, InboundMessage, MessageRef, ModelSelector } from '../types.js';
+import type { ButtonInteraction, InboundMessage, MessageRef, ModelSelector, SettingsScreen } from '../types.js';
 
 /**
  * `/setting` end to end: both surfaces, the file it writes, and what actually changes in the
@@ -106,7 +106,7 @@ const MODELS = [
 interface RigOptions {
   access?: string[];
   /** Platform capabilities: omit buttons to exercise the text surface. */
-  caps?: { buttons?: boolean; editButtons?: boolean };
+  caps?: { buttons?: boolean; editButtons?: boolean; settingsScreen?: boolean };
   /** Start with reclaim disabled, to prove `/setting idle` arms a sweeper that was never armed. */
   idleTimeoutMs?: number;
   /** Configure voice transcription (the file must carry the same block — see VOICE_BLOCK). */
@@ -115,11 +115,16 @@ interface RigOptions {
 
 function rig(opts: RigOptions = {}) {
   const sent: string[] = [];
-  const buttonSends: Array<{ text: string; buttons: Array<{ id: string; label: string }> }> = [];
+  const buttonSends: Array<{
+    text: string;
+    buttons: Array<{ id: string; label: string }>;
+    screen?: SettingsScreen;
+  }> = [];
   const buttonEdits: Array<{
     messageId: string;
     text: string;
     buttons: Array<{ id: string; label: string }>;
+    screen?: SettingsScreen;
   }> = [];
   const scheduled: number[] = [];
   const sessions = new Map<string, AgentSession>();
@@ -156,6 +161,7 @@ function rig(opts: RigOptions = {}) {
       slashCommands: true, typing: true, maxMessageLength: 4096,
       buttons: opts.caps?.buttons ?? true,
       editButtons: opts.caps?.editButtons ?? true,
+      settingsScreen: opts.caps?.settingsScreen ?? false,
     },
     sendMessage: async (address: { channel: string }, body: string) => {
       sent.push(body);
@@ -164,17 +170,19 @@ function rig(opts: RigOptions = {}) {
     sendButtons: async (
       address: { channel: string },
       body: string,
-      buttons: Array<{ id: string; label: string }>
+      buttons: Array<{ id: string; label: string }>,
+      screen?: SettingsScreen
     ) => {
-      buttonSends.push({ text: body, buttons });
+      buttonSends.push({ text: body, buttons, ...(screen ? { screen } : {}) });
       return { address, messageId: MENU_MSG };
     },
     editButtons: async (
       ref: MessageRef,
       body: string,
-      buttons: Array<{ id: string; label: string }>
+      buttons: Array<{ id: string; label: string }>,
+      screen?: SettingsScreen
     ) => {
-      buttonEdits.push({ messageId: ref.messageId, text: body, buttons });
+      buttonEdits.push({ messageId: ref.messageId, text: body, buttons, ...(screen ? { screen } : {}) });
     },
     editMessage: async () => {},
     addReaction: async () => {},
@@ -510,6 +518,37 @@ describe('the button menu', () => {
     const r = rig();
     await r.send('/setting');
     expect(r.menu().buttons.map((b) => b.label)).toContain('Default agent · oc · opencode');
+  });
+
+  it('attaches the structured screen only where the platform declares one', async () => {
+    // A chat platform's menu is exactly the text and buttons it always was.
+    const chat = rig();
+    await chat.send('/setting');
+    expect(chat.menu().screen).toBeUndefined();
+
+    const web = rig({ caps: { settingsScreen: true } });
+    await web.send('/setting');
+    const list = web.menu().screen;
+    expect(list?.level).toBe('list');
+    if (list?.level !== 'list') throw new Error('no list screen');
+    // The same rows the buttons carry, with the label and value split apart.
+    expect(list.rows.map((r) => [r.label, r.target, r.value])).toContainEqual([
+      'Default model',
+      'cc',
+      'claude-opus-4-5',
+    ]);
+    expect(list.rows.map((r) => r.buttonId)).toEqual(web.menu().buttons.map((b) => b.id));
+
+    // A level change is the same message edited, and the screen follows it down and back up.
+    await web.click(web.ids('stg:')[0]!);
+    expect(web.screen().screen?.level).toBe('values');
+    await web.click(web.ids('stb:')[0]!);
+    expect(web.screen().screen?.level).toBe('list');
+
+    // Superseding it edits the old message with no screen: a dead screen must not outlive the
+    // buttons it belonged to.
+    await web.send('/setting');
+    expect(web.buttonEdits.at(-1)?.screen).toBeUndefined();
   });
 
   it('opens a setting on the same message, with a way back', async () => {

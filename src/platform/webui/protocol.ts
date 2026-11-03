@@ -17,7 +17,7 @@
 import { z } from 'zod';
 
 import type { ButtonSpec } from '../adapter.js';
-import type { AgentCatalog, AgentStatus, SlashCommandSpec } from '../../types.js';
+import type { AgentCatalog, AgentStatus, SettingsScreen, SlashCommandSpec } from '../../types.js';
 import { MAX_TOPICS, type Topic } from './topics.js';
 
 /**
@@ -264,6 +264,15 @@ export interface WebMessage {
    * Lark (see `daemon.ts` retireAsk), and it would be a shame to reintroduce it here.
    */
   buttons: ButtonSpec[];
+  /**
+   * The `/setting` screen this message IS, when the daemon sent one (see `SettingsScreen`).
+   *
+   * The page draws rows of label and value from these fields instead of reading a button's label
+   * and guessing where the value begins — which is what produced `Default model · cc · (harness …`
+   * on a phone. Present only on a live settings menu: a message that became history loses its
+   * buttons and this with them, for the same reason.
+   */
+  settings?: SettingsScreen;
   /** Lifecycle reactions currently on this message (👀 / ✅ / ❌). Empty, never absent, for the same reason. */
   reactions: string[];
   /** Set when the agent used a native reply; rendered as a quote above the body. */

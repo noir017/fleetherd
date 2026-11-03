@@ -47,6 +47,7 @@ import type {
   AgentStatus,
   ButtonInteraction,
   InboundMessage,
+  SettingsScreen,
   SlashCommandSpec,
   TopicActivity,
   TopicStage,
@@ -1038,8 +1039,19 @@ export class WebRoom {
    * only when the message repaints, so holding that repaint for the settle window leaves the
    * control the user just pressed greyed out and unpressable for a second and a half — which on a
    * multi-select (tap, untap, tap again) is not a delay but a broken control.
+   *
+   * `screen` follows the buttons: given, it is the message's new screen; absent, the message is no
+   * longer that screen. Retiring a menu or handing its message to the scheduled-task list both go
+   * through here without one, and either would otherwise leave a settings screen whose controls no
+   * longer exist.
    */
-  revise(topicId: string, id: string, text: string, buttons?: ButtonSpec[]): void {
+  revise(
+    topicId: string,
+    id: string,
+    text: string,
+    buttons?: ButtonSpec[],
+    screen?: SettingsScreen
+  ): void {
     const room = this.roomOf(topicId);
     const rec = this.mustFind(room, id, 'edit');
     rec.text = text;
@@ -1047,6 +1059,8 @@ export class WebRoom {
     // same bubble with another line or another ✓ (see SendOptions in adapter.ts).
     const html = rec.msg.kind === 'tools' ? renderWebToolLines(text) : renderWebMarkdown(text);
     rec.msg = { ...rec.msg, html, ...(buttons ? { buttons } : {}) };
+    if (screen) rec.msg.settings = screen;
+    else delete rec.msg.settings;
     room.stored.set(id, rec);
     this.enqueue(room, topicId, id);
     this.keep(topicId);

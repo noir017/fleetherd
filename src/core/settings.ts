@@ -1,5 +1,6 @@
 import type { Config, SessionScope } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
+import type { SettingsScreen, SettingsScreenOption, SettingsScreenRow } from '../types.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { matchModels, type ModelOption } from './model-menu.js';
 import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
@@ -53,7 +54,18 @@ export type SettingEffect = 'live' | 'next-session' | 'restart';
 /** One selectable value of a setting. `raw` is what the parser accepts; `label` is what a button shows. */
 export interface SettingOption {
   raw: string;
+  /**
+   * What a chat button shows. It stays whole — a button has one line, so the value and its
+   * explanation are joined with a dash.
+   */
   label: string;
+  /**
+   * The value alone, for a screen that draws the label and its explanation as two lines (the web
+   * UI's settings screen). Absent where `label` has no explanation to separate.
+   */
+  title?: string;
+  /** The explanation `label` appends after its dash, when there is one. */
+  detail?: string;
 }
 
 /**
@@ -373,6 +385,50 @@ function effectText(row: SettingRow): string {
   }
 }
 
+/**
+ * The same fact as effectText, in the two or three words a settings row can carry. Live changes say
+ * nothing: a badge on every row would stop meaning anything.
+ */
+function effectLabel(row: SettingRow): string | undefined {
+  switch (row.effect) {
+    case 'live':
+      return undefined;
+    case 'next-session':
+      return 'next session';
+    case 'restart':
+      return 'after restart';
+    default: {
+      const _exhaustive: never = row.effect;
+      return String(_exhaustive);
+    }
+  }
+}
+
+/**
+ * The heading a row sits under on a screen. It is presentation, but it belongs here with the rest
+ * of the table: a new setting that falls through to the default is a compile error, not a row
+ * stranded under the wrong heading.
+ */
+function settingGroup(row: SettingRow): string {
+  switch (row.id) {
+    case 'agent':
+    case 'model':
+      return 'Agent defaults';
+    case 'idle':
+    case 'scope':
+      return 'Conversation';
+    case 'stream':
+      return 'Replies';
+    case 'voice':
+    case 'cleanup':
+      return 'Voice';
+    default: {
+      const _exhaustive: never = row.id;
+      return String(_exhaustive);
+    }
+  }
+}
+
 // ─────────────────────────────── key resolution ───────────────────────────────
 
 /** Outcome of resolving what the user typed after `/setting`. */
@@ -465,23 +521,58 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
         ...(cfgModel(cfg, row.target) ? [{ raw: '-', label: MODEL_UNSET }] : []),
       ];
     case 'idle':
-      return IDLE_PRESETS.map((p) => ({ raw: p, label: p === 'off' ? 'off (never reclaim)' : p }));
+      return IDLE_PRESETS.map((p) => ({
+        raw: p,
+        label: p === 'off' ? 'off (never reclaim)' : p,
+        title: p,
+        ...(p === 'off' ? { detail: 'never reclaim' } : {}),
+      }));
     case 'scope':
-      return SCOPE_OPTIONS.map(([value, gloss]) => ({ raw: value, label: `${value} — ${gloss}` }));
+      return SCOPE_OPTIONS.map(([value, gloss]) => ({
+        raw: value,
+        label: `${value} — ${gloss}`,
+        title: value,
+        detail: gloss,
+      }));
     case 'stream':
       return [
-        { raw: 'off', label: 'off — send each finished part as a whole message' },
-        { raw: 'on', label: 'on — type the reply out by editing one message' },
+        {
+          raw: 'off',
+          label: 'off — send each finished part as a whole message',
+          title: 'off',
+          detail: 'send each finished part as a whole message',
+        },
+        {
+          raw: 'on',
+          label: 'on — type the reply out by editing one message',
+          title: 'on',
+          detail: 'type the reply out by editing one message',
+        },
       ];
     case 'voice':
       return [
-        { raw: 'on', label: 'on — wait for ✅ Send before the agent sees it' },
-        { raw: 'off', label: 'off — send each transcript on at once' },
+        {
+          raw: 'on',
+          label: 'on — wait for ✅ Send before the agent sees it',
+          title: 'on',
+          detail: 'wait for ✅ Send before the agent sees it',
+        },
+        {
+          raw: 'off',
+          label: 'off — send each transcript on at once',
+          title: 'off',
+          detail: 'send each transcript on at once',
+        },
       ];
     case 'cleanup':
       return [
-        { raw: 'on', label: 'on — show a cleaned-up version too, and send that' },
-        { raw: 'off', label: 'off — word for word only' },
+        {
+          raw: 'on',
+          label: 'on — show a cleaned-up version too, and send that',
+          title: 'on',
+          detail: 'show a cleaned-up version too, and send that',
+        },
+        { raw: 'off', label: 'off — word for word only', title: 'off', detail: 'word for word only' },
       ];
     default: {
       const _exhaustive: never = row.id;
@@ -847,6 +938,12 @@ export interface SettingsMenuView {
   /** The page actually rendered (value level only; 0 for the row list). */
   page: number;
   pageCount: number;
+  /**
+   * The same screen as data, for a platform that draws its own (see `SettingsScreen`). Built only
+   * when the caller asks for it, so every chat platform's view is exactly the text and buttons it
+   * always was.
+   */
+  screen?: SettingsScreen;
 }
 
 export function settingRowButtonId(reqId: string, index: number): string {
@@ -879,11 +976,16 @@ export function parseSettingButtonId(buttonId: string): SettingButtonClick | nul
  * The list level: one button per setting, labelled with its current value — plus, when given, one
  * `extra` entry after them that leads somewhere other than a value (the scheduled-task list, whose
  * menu is core/schedule-menu.ts).
+ *
+ * `screen` asks for the structured form as well (the web UI). It is not built otherwise: a chat
+ * platform would only throw it away, and keeping its construction out of the default path means
+ * this table cannot change what a chat app shows.
  */
 export function buildSettingsMenu(menu: {
   reqId: string;
   rows: SettingRow[];
   extra?: { id: string; label: string };
+  screen?: boolean;
 }): SettingsMenuView {
   const shown = menu.rows.slice(0, SETTING_ROW_MAX);
   const overflow = menu.rows.slice(SETTING_ROW_MAX);
@@ -896,7 +998,34 @@ export function buildSettingsMenu(menu: {
   if (overflow.length > 0) {
     text += `\n\n${overflow.length} more (type them): ${overflow.map((r) => `\`/setting ${settingKeyOf(r)}\``).join(', ')}`;
   }
-  return { text, buttons, page: 0, pageCount: 1 };
+  const screen = menu.screen ? settingsListScreen(menu.reqId, shown, menu.extra) : undefined;
+  return { text, buttons, page: 0, pageCount: 1, ...(screen ? { screen } : {}) };
+}
+
+/**
+ * The list level as rows for a screen: the same rows and the same button ids as the buttons above,
+ * with the value split out of the label.
+ */
+function settingsListScreen(
+  reqId: string,
+  rows: SettingRow[],
+  extra?: { id: string; label: string }
+): SettingsScreen {
+  const screenRows: SettingsScreenRow[] = rows.map((row, i) => {
+    const effect = effectLabel(row);
+    return {
+      buttonId: settingRowButtonId(reqId, i),
+      // `Default model · cc` is two facts in one chat label. On a screen the target is its own
+      // line under the label, which is the whole reason this field exists.
+      label: row.id === 'model' ? 'Default model' : row.label,
+      ...(row.target ? { target: row.target } : {}),
+      value: row.value,
+      ...(effect ? { effectLabel: effect } : {}),
+      group: settingGroup(row),
+    };
+  });
+  if (extra) screenRows.push({ buttonId: extra.id, label: extra.label, group: 'More' });
+  return { level: 'list', rows: screenRows };
 }
 
 /**
@@ -915,6 +1044,8 @@ export function buildSettingValueMenu(menu: {
   pageSize?: number;
   /** Typed-only hint shown when the setting offers no options (a model with no live list). */
   hint?: string;
+  /** Build the structured form too — see buildSettingsMenu. */
+  screen?: boolean;
 }): SettingsMenuView {
   const { reqId, row, options } = menu;
   const total = pageCount(options.length, menu.pageSize);
@@ -923,7 +1054,7 @@ export function buildSettingValueMenu(menu: {
 
   const buttons = items.map((o, i) => ({
     id: settingValueButtonId(reqId, start + i),
-    label: truncateLabel((o.raw === currentRaw(row) ? '● ' : '') + o.label),
+    label: truncateLabel((o.raw === settingCurrentRaw(row) ? '● ' : '') + o.label),
   }));
   if (total > 1) {
     buttons.push(
@@ -938,13 +1069,55 @@ export function buildSettingValueMenu(menu: {
   // settingTypedOnlyHint records: "clear it" alone is a complete-looking list that is not complete.
   const parts = [
     menu.hint,
-    total > 1 ? `page ${page + 1}/${total}` : undefined,
+    // The screen's own nav row says which page this is; only the button menu needs it in the text.
+    total > 1 && !menu.screen ? `page ${page + 1}/${total}` : undefined,
   ].filter((p): p is string => p !== undefined);
+  const screen = menu.screen
+    ? settingsValueScreen(reqId, row, items, start, page, total)
+    : undefined;
   return {
     text: parts.length > 0 ? `${head}\n\n${parts.join('\n')}` : head,
     buttons,
     page,
     pageCount: total,
+    ...(screen ? { screen } : {}),
+  };
+}
+
+/**
+ * The value level as rows for a screen. `start` is the absolute index of the first item, so a
+ * pick's button id means the same value it meant when the page was drawn — the same rule the
+ * buttons follow.
+ */
+function settingsValueScreen(
+  reqId: string,
+  row: SettingRow,
+  items: SettingOption[],
+  start: number,
+  page: number,
+  total: number
+): SettingsScreen {
+  const current = settingCurrentRaw(row);
+  const options: SettingsScreenOption[] = items.map((o, i) => ({
+    buttonId: settingValueButtonId(reqId, start + i),
+    label: o.title ?? o.label,
+    ...(o.detail ? { detail: o.detail } : {}),
+    current: o.raw === current,
+  }));
+  return {
+    level: 'values',
+    options,
+    nav: {
+      page: page + 1,
+      pageCount: total,
+      ...(total > 1
+        ? {
+            prev: settingPageButtonId(reqId, (page - 1 + total) % total),
+            next: settingPageButtonId(reqId, (page + 1) % total),
+          }
+        : {}),
+      back: settingBackButtonId(reqId),
+    },
   };
 }
 
@@ -961,19 +1134,19 @@ export function settingValuePage(
   options: SettingOption[],
   size?: number
 ): number {
-  const current = currentRaw(row);
+  const current = settingCurrentRaw(row);
   const index = options.findIndex((o) => o.raw === current);
   return index >= 0 ? pageOf(index, size) : 0;
 }
 
 /**
- * The raw form of a row's CURRENT value, for the ● marker.
+ * The raw form of a row's CURRENT value, for the ● marker and the screen's current-option mark.
  *
  * Compared against `SettingOption.raw`, which is why it cannot just be `row.value`: a row's value is
  * formatted for display (`cc · claude`, `(harness default)`) while an option's raw form is what the
  * parser takes (`cc`, `-`).
  */
-function currentRaw(row: SettingRow): string {
+export function settingCurrentRaw(row: SettingRow): string {
   switch (row.id) {
     case 'agent':
       return row.value.split(' · ')[0] ?? row.value;
