@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.25.0] - 2026-11-04
+
 ### Changed
 
 - **`/setting` on the web UI is a settings screen, not a wall of buttons.** The bare command used
