@@ -2073,6 +2073,225 @@ describe('webui page: menus', () => {
   });
 });
 
+describe('webui page: the settings screen', () => {
+  /**
+   * A `/setting` list as the daemon sends it with `capabilities.settingsScreen`: the buttons it
+   * would send a chat app, plus the same rows as data. The model row's value is deliberately
+   * longer than the 40-character label budget — the thing this screen exists to stop cutting.
+   */
+  const LONG_MODEL = 'openrouter/anthropic/claude-opus-4.6-thinking:high';
+  const list = (): Record<string, unknown> => ({
+    ...message('m1', '<p>Settings — saved to config.yaml, not just this conversation.</p>'),
+    buttons: [
+      { id: 'stg:r:0', label: 'Default agent · cc · claude' },
+      { id: 'stg:r:1', label: 'Default model · cc · (harness default)' },
+      { id: 'stg:r:2', label: 'Default model · oc · openrouter/anthropic/claude-opus…' },
+      { id: 'stg:r:3', label: 'Idle reclaim · 15m' },
+      { id: 'stg:r:4', label: 'Conversation scope · per_thread' },
+      { id: 'sco:r:0', label: '⏰ Scheduled tasks · 1 active' },
+    ],
+    settings: {
+      level: 'list',
+      rows: [
+        { buttonId: 'stg:r:0', label: 'Default agent', value: 'cc · claude', group: 'Agent defaults' },
+        {
+          buttonId: 'stg:r:1',
+          label: 'Default model',
+          target: 'cc',
+          value: '(harness default)',
+          effectLabel: 'next session',
+          group: 'Agent defaults',
+        },
+        {
+          buttonId: 'stg:r:2',
+          label: 'Default model',
+          target: 'oc',
+          value: LONG_MODEL,
+          effectLabel: 'next session',
+          group: 'Agent defaults',
+        },
+        { buttonId: 'stg:r:3', label: 'Idle reclaim', value: '15m', group: 'Conversation' },
+        {
+          buttonId: 'stg:r:4',
+          label: 'Conversation scope',
+          value: 'per_thread',
+          effectLabel: 'after restart',
+          group: 'Conversation',
+        },
+        { buttonId: 'sco:r:0', label: '⏰ Scheduled tasks · 1 active', group: 'More' },
+      ],
+    },
+  });
+
+  /** The value level of `Idle reclaim`, with `15m` current and nothing to page. */
+  const values = (): Record<string, unknown> => ({
+    ...message('m1', '<p><strong>Idle reclaim</strong> — <code>15m</code></p>'),
+    buttons: [
+      { id: 'stv:r:0', label: 'off (never reclaim)' },
+      { id: 'stv:r:1', label: '● 15m' },
+      { id: 'stv:r:2', label: '1h' },
+      { id: 'stb:r:0', label: '◀ Back' },
+    ],
+    settings: {
+      level: 'values',
+      options: [
+        { buttonId: 'stv:r:0', label: 'off', detail: 'never reclaim', current: false },
+        { buttonId: 'stv:r:1', label: '15m', current: true },
+        { buttonId: 'stv:r:2', label: '1h', current: false },
+      ],
+      nav: { page: 1, pageCount: 1, back: 'stb:r:0' },
+    },
+  });
+
+  const text = (h: Harness, sel: string): string[] =>
+    Array.from(h.doc.querySelectorAll(sel)).map((e) => e.textContent ?? '');
+
+  it('draws grouped rows with the label and the whole value on separate lines', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [list()], ['a1b2c3d4']));
+
+    expect(text(h, '.set-group')).toEqual(['Agent defaults', 'Conversation', 'More']);
+    // Every row, in the daemon's order, is a button that posts its own id.
+    expect(Array.from(h.doc.querySelectorAll('.set-row')).map((b) => b.getAttribute('data-btn'))).toEqual([
+      'stg:r:0',
+      'stg:r:1',
+      'stg:r:2',
+      'stg:r:3',
+      'stg:r:4',
+      'sco:r:0',
+    ]);
+
+    const model = h.doc.querySelector('button[data-btn="stg:r:2"]');
+    expect(model?.querySelector('.set-label')?.textContent).toBe('Default model');
+    expect(model?.querySelector('.set-meta')?.textContent).toBe('oc · next session');
+    // The whole value, not the button's 40-character label: this is the bug the screen fixes.
+    expect(model?.querySelector('.set-value')?.textContent).toBe(LONG_MODEL);
+    expect(model?.textContent).not.toContain('…');
+  });
+
+  it('marks the current value in the value list, and says what each value means', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [values()], ['a1b2c3d4']));
+
+    const current = h.doc.querySelector('.set-opt.on');
+    expect(current?.getAttribute('data-btn')).toBe('stv:r:1');
+    expect(current?.getAttribute('aria-current')).toBe('true');
+    expect(current?.querySelector('.set-check')?.textContent).toBe('✓');
+    expect(current?.querySelector('.set-opt-label')?.textContent).toBe('15m');
+
+    const off = h.doc.querySelector('button[data-btn="stv:r:0"]');
+    expect(off?.classList.contains('on')).toBe(false);
+    expect(off?.querySelector('.set-check')?.textContent).toBe('');
+    expect(off?.querySelector('.set-opt-detail')?.textContent).toBe('never reclaim');
+  });
+
+  it('opens a setting by posting its row id, and the daemon’s edit turns the list into values', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [list()], ['a1b2c3d4']));
+
+    await h.click('button[data-btn="stg:r:3"]');
+    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
+      topic: 'a1b2c3d4',
+      messageId: 'm1',
+      buttonId: 'stg:r:3',
+    });
+
+    await h.emit({ t: 'msg', msg: values() });
+    expect(h.doc.querySelector('.set-opts')).not.toBeNull();
+    expect(h.doc.querySelector('.set-rows')).toBeNull();
+    expect(h.doc.querySelector('.set-row')).toBeNull();
+  });
+
+  it('writes the value the row names, and the list comes back with the new value on it', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [values()], ['a1b2c3d4']));
+
+    await h.click('button[data-btn="stv:r:2"]');
+    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
+      topic: 'a1b2c3d4',
+      messageId: 'm1',
+      buttonId: 'stv:r:2',
+    });
+
+    const updated = list();
+    const settings = updated.settings as { rows: Array<Record<string, unknown>> };
+    settings.rows[3]!.value = '1h';
+    await h.emit({ t: 'msg', msg: updated });
+    expect(h.doc.querySelector('.set-opts')).toBeNull();
+    expect(h.doc.querySelector('button[data-btn="stg:r:3"] .set-value')?.textContent).toBe('1h');
+  });
+
+  it('posts the Back id, which is how the daemon puts the list back on the same message', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [values()], ['a1b2c3d4']));
+
+    await h.click('button[data-btn="stb:r:0"]');
+    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
+      topic: 'a1b2c3d4',
+      messageId: 'm1',
+      buttonId: 'stb:r:0',
+    });
+  });
+
+  it('pages with the ids the daemon drew, and shows which page this is', async () => {
+    const paged = values();
+    paged.settings = {
+      level: 'values',
+      options: [
+        { buttonId: 'stv:r:2', label: '1h', current: false },
+        { buttonId: 'stv:r:3', label: '4h', current: false },
+      ],
+      nav: { page: 2, pageCount: 3, prev: 'stp:r:0', next: 'stp:r:2', back: 'stb:r:0' },
+    };
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [paged], ['a1b2c3d4']));
+
+    expect(h.doc.querySelector('.set-page')?.textContent).toBe('2 / 3');
+    await h.click('button[data-btn="stp:r:2"]');
+    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
+      topic: 'a1b2c3d4',
+      messageId: 'm1',
+      buttonId: 'stp:r:2',
+    });
+
+    // A repaint re-enables the button, as every other menu relies on.
+    await h.emit({ t: 'msg', msg: paged });
+    await h.click('button[data-btn="stp:r:0"]');
+    expect(h.calls.filter((c) => c.path === 'api/click').at(-1)?.body).toEqual({
+      topic: 'a1b2c3d4',
+      messageId: 'm1',
+      buttonId: 'stp:r:0',
+    });
+  });
+
+  it('draws nothing once the menu is retired, or when the message is history', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [list()], ['a1b2c3d4']));
+    expect(h.doc.querySelector('.set')).not.toBeNull();
+
+    // The daemon retires a menu by editing it with no buttons — and the structured screen goes
+    // with them, or a dead screen would outlive every control on it.
+    const retired = { ...list(), buttons: [] } as Record<string, unknown>;
+    delete retired.settings;
+    await h.emit({ t: 'msg', msg: retired });
+    expect(h.doc.querySelector('.set')).toBeNull();
+
+    // A message restored from another run is history: its buttons are dropped, and so is the
+    // screen that would have drawn them. (`g` is only ever compared with the sync's epoch.)
+    await h.emit(sync('a1b2c3d4', [{ ...list(), g: 2 }], ['a1b2c3d4']));
+    expect(h.doc.querySelector('.set')).toBeNull();
+  });
+
+  it('keeps every control a finger target, and only widens the list on a wide screen', () => {
+    const html = renderPage('Chat', false);
+    expect(html).toMatch(/\.set-row\{[^}]*min-height:44px/);
+    expect(html).toMatch(/\.set-opt\{[^}]*min-height:44px/);
+    expect(html).toMatch(/\.set-nav button\{[^}]*min-height:44px/);
+    // The multi-column list is behind a min-width, so a phone is one row at a time.
+    expect(html).toContain('@media(min-width:560px){.set-rows{grid-template-columns:repeat(auto-fit');
+  });
+});
+
 describe('webui page: the command list above the composer', () => {
   // As registerCommands hands them over: `/super` carries its argument as the one required option
   // (core/command-translate.ts genericCommandSpecs), `/new` carries none.

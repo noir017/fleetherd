@@ -103,6 +103,7 @@ import type {
   InboundMessage,
   MessageRef,
   ModelSelector,
+  SettingsScreen,
   SlashCommandSpec,
 } from '../types.js';
 import {
@@ -2756,7 +2757,7 @@ export class Daemon {
 
     const view = this.renderSettingsMenu(reqId, pending);
     void adapter
-      .sendButtons(addressOf(msg.conversation), view.text, view.buttons)
+      .sendButtons(addressOf(msg.conversation), view.text, view.buttons, view.screen)
       .then((ref) => {
         // Keep the menu's own ref: every level change edits THIS message, and the click event's
         // messageId is not a reliable stand-in on every platform (Telegram reports the
@@ -2775,7 +2776,11 @@ export class Daemon {
     menu: PendingSettingsMenu,
     page = 0,
     prefix?: string
-  ): { text: string; buttons: Array<{ id: string; label: string }> } {
+  ): { text: string; buttons: Array<{ id: string; label: string }>; screen?: SettingsScreen } {
+    // Only a platform that draws a screen asks for the structured form; every chat platform gets
+    // exactly the text and buttons it has always had (adapter.ts settingsScreen).
+    const wantsScreen =
+      this.platforms.get(menu.conversation.platform)?.capabilities.settingsScreen === true;
     const view = menu.open
       ? buildSettingValueMenu({
           reqId,
@@ -2784,14 +2789,20 @@ export class Daemon {
           page,
           pageSize: menu.pageSize,
           ...(menu.open.hint ? { hint: menu.open.hint } : {}),
+          screen: wantsScreen,
         })
       : buildSettingsMenu({
           reqId,
           rows: menu.rows,
           // The way into the scheduled tasks, after the settings themselves (core/schedule-menu.ts).
           ...(this.schedules ? { extra: { id: scheduleOpenButtonId(reqId), label: scheduleEntryLabel(this.schedules.tasks()) } } : {}),
+          screen: wantsScreen,
         });
-    return { text: prefix ? `${prefix}\n\n${view.text}` : view.text, buttons: view.buttons };
+    return {
+      text: prefix ? `${prefix}\n\n${view.text}` : view.text,
+      buttons: view.buttons,
+      ...(view.screen ? { screen: view.screen } : {}),
+    };
   }
 
   /** Retire every live settings menu of one conversation, saying so rather than going quiet. */
@@ -2817,16 +2828,18 @@ export class Daemon {
   private editSettingsMenu(
     menu: PendingSettingsMenu,
     text: string,
-    buttons: Array<{ id: string; label: string }>
+    buttons: Array<{ id: string; label: string }>,
+    screen?: SettingsScreen
   ): void {
-    this.editMenuMessage(menu, text, buttons);
+    this.editMenuMessage(menu, text, buttons, screen);
   }
 
   /** The in-place edit both the settings menu and the task menu use (they share a message). */
   private editMenuMessage(
     menu: { conversation: ConversationRef; ref?: MessageRef },
     text: string,
-    buttons: Array<{ id: string; label: string }>
+    buttons: Array<{ id: string; label: string }>,
+    screen?: SettingsScreen
   ): void {
     const adapter = this.platforms.get(menu.conversation.platform);
     if (!adapter) return;
@@ -2835,7 +2848,7 @@ export class Daemon {
       return;
     }
     void adapter
-      .editButtons(menu.ref, text, buttons)
+      .editButtons(menu.ref, text, buttons, screen)
       .catch((e) => console.warn('[setting] menu edit failed:', e instanceof Error ? e.message : e));
   }
 
@@ -2897,9 +2910,9 @@ export class Daemon {
     menu: PendingSettingsMenu,
     page = 0,
     prefix?: string
-  ): [string, Array<{ id: string; label: string }>] {
+  ): [string, Array<{ id: string; label: string }>, SettingsScreen?] {
     const view = this.renderSettingsMenu(reqId, menu, page, prefix);
-    return [view.text, view.buttons];
+    return [view.text, view.buttons, view.screen];
   }
 
   /**

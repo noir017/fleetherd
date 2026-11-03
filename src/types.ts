@@ -503,3 +503,60 @@ export interface TopicActivity {
  * of the `needs-you` ones are the only ones a list of things to do shows; see `needsPerson`.
  */
 export type TopicStage = 'answer' | 'failed' | 'review' | 'retrying' | 'working' | 'idle';
+
+/**
+ * One row of the settings screen the web UI draws for `/setting`.
+ *
+ * A chat app gets a grid of buttons and has to put the label and the value into one string, which
+ * is why a model row there reads `Default model · cc · (harness default)` and loses its tail to the
+ * 40-character label budget. A page has room for two lines and a whole row to tap, so the menu
+ * builder splits the same data into fields instead of leaving the page to find the separator again.
+ *
+ * `buttonId` is what a tap posts, exactly as a button's id would be: the page never derives it.
+ */
+export interface SettingsScreenRow {
+  /** The button id that opens this row — a setting's values, or another menu. */
+  buttonId: string;
+  /** What the setting decides, e.g. `Default model`. */
+  label: string;
+  /** The agent a per-agent setting applies to (`cc`, `cbc@uniagent`); absent for global ones. */
+  target?: string;
+  /** The current value, already formatted for display. Absent on a row that opens another menu. */
+  value?: string;
+  /** When a change lands, when that is worth saying up front (`next session`, `after restart`). */
+  effectLabel?: string;
+  /** The section this row belongs to; consecutive rows with the same group share a heading. */
+  group: string;
+}
+
+/** One value of an open setting, as the web UI's value list draws it. */
+export interface SettingsScreenOption {
+  /** The button id that writes this value. */
+  buttonId: string;
+  /** The value itself (`15m`, `per_thread`, a model id). */
+  label: string;
+  /** What the value means, when it needs a sentence. */
+  detail?: string;
+  /** Whether this is the value the setting holds now. */
+  current: boolean;
+}
+
+/** Paging and the way back, at the foot of a value list. */
+export interface SettingsScreenNav {
+  /** 1-based, for display. */
+  page: number;
+  pageCount: number;
+  prev?: string;
+  next?: string;
+  back?: string;
+}
+
+/**
+ * The `/setting` menu as data, for a platform that draws its own screen instead of a button grid.
+ *
+ * Sent only to a platform declaring `capabilities.settingsScreen` (the web UI), so a chat app's
+ * output is exactly what it was: the same `text` and the same `buttons`.
+ */
+export type SettingsScreen =
+  | { level: 'list'; rows: SettingsScreenRow[] }
+  | { level: 'values'; options: SettingsScreenOption[]; nav: SettingsScreenNav };

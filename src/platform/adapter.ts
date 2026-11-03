@@ -6,6 +6,7 @@ import type {
   CommandInteraction,
   InboundMessage,
   MessageRef,
+  SettingsScreen,
   SlashCommandSpec,
   TopicActivity,
 } from '../types.js';
@@ -278,7 +279,12 @@ export interface PlatformAdapter {
   sendButtons(
     address: ConversationAddress,
     text: string,
-    buttons: ButtonSpec[]
+    buttons: ButtonSpec[],
+    /**
+     * The same menu as a structured screen, for a platform declaring `settingsScreen` (the web
+     * UI). Every other implementation ignores it: its buttons already are the whole screen.
+     */
+    screen?: SettingsScreen
   ): Promise<MessageRef>;
 
   /**
@@ -291,8 +297,17 @@ export interface PlatformAdapter {
    *
    * An empty array strips the buttons and leaves plain text. Only call when
    * capabilities.editButtons is true; the implementation throws otherwise.
+   *
+   * `screen` replaces the structured screen the same way the buttons are replaced: absent means
+   * the message is no longer that screen (retired, or handed to another menu), so a stale one
+   * cannot outlive the buttons it belonged to.
    */
-  editButtons(ref: MessageRef, text: string, buttons: ButtonSpec[]): Promise<void>;
+  editButtons(
+    ref: MessageRef,
+    text: string,
+    buttons: ButtonSpec[],
+    screen?: SettingsScreen
+  ): Promise<void>;
 
   /**
    * Register slash commands (called once after the bot logs in).
@@ -379,6 +394,17 @@ export interface PlatformCapabilities {
    * all). Same reasoning as canRegisterSlashAtRuntime below.
    */
   editButtons: boolean;
+  /**
+   * Whether `/setting` is drawn as a screen of its own rather than as the button grid every menu
+   * shares.
+   *
+   * A chat app can only offer buttons, so its settings rows have to squeeze a label and a value
+   * into one 40-character string; a page has a message's width and can put them on separate lines,
+   * group the rows, and show the whole value. Declaring this asks the daemon to attach the
+   * structured `SettingsScreen` to the menu message (see `sendButtons`), which the web UI is the
+   * only implementation to draw. Absent/undefined treated as false.
+   */
+  settingsScreen?: boolean;
   /**
    * How many items one page of a button menu may hold here (`/cd`, `/model`, `/setting`).
    *
