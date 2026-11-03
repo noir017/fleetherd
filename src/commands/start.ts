@@ -1,5 +1,7 @@
 import path from 'node:path';
-import { loadConfig, resolveSocketPath, configDir } from '../config/load.js';
+import { z } from 'zod';
+import { loadConfig, resolveSocketPath, configDir, defaultSocketPath, readRawConfigIfExists } from '../config/load.js';
+import { HostDefSchema, type Config } from '../config/schema.js';
 import { Daemon } from '../daemon/daemon.js';
 import { createPlatformAdapters } from '../platform/platform-factory.js';
 import { createAgentFactory } from '../daemon/agent-factory.js';
@@ -9,6 +11,8 @@ import { ScheduleStore } from '../daemon/schedule-store.js';
 import { ensureReverseCliShim } from '../daemon/reverse-cli-shim.js';
 import { remoteHosts } from '../daemon/remote-hosts.js';
 import { conversationKey } from '../core/conversation.js';
+import { hostsWithConfiguredAgents, refreshPods } from '../daemon/pods.js';
+import { backUpForRenames, readAgentRenames, renameAgentsInConfig, setRenamesAside } from '../daemon/agent-renames.js';
 
 /**
  * `talkcode start` — default command. Read config -> build platform adapter + agent factory -> start the daemon.
@@ -24,7 +28,15 @@ export async function runStart(): Promise<void> {
     console.error('[uncaughtException]', err.stack ?? err.message);
   });
 
-  const cfg = loadConfig();
+  // Agent renames first (daemon/agent-renames.ts): config.yaml has to carry the new ids before it is
+  // validated, and the stores before anything reads them.
+  const renames = readAgentRenames(configDir());
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  if (renames) {
+    backUpForRenames(configDir(), stamp);
+    renameAgentsInConfig(renames);
+  }
+  const cfg = await loadConfigReadingPods();
   const socket = resolveSocketPath(cfg);
 
   // Provision the reverse-CLI shim up front (agent-acp refreshes it per spawn): fail loudly at
@@ -54,6 +66,14 @@ export async function runStart(): Promise<void> {
     store: new ScheduleStore(path.join(configDir(), 'schedules.json')),
     runsDir: path.join(configDir(), 'schedule-runs'),
   };
+  if (renames) {
+    const conversations = store.renameAgents(renames);
+    const tasks = schedules.store.renameAgents(renames);
+    setRenamesAside(configDir(), stamp);
+    console.log(
+      `[renames] ${[...renames].map(([a, b]) => `${a} → ${b}`).join(', ')}: ${conversations} conversation(s), ${tasks} scheduled task(s); backups *.bak-renames-${stamp}`
+    );
+  }
   const daemon = new Daemon(cfg, platforms, agents, socket, store, workdirUsage, schedules);
 
   await daemon.run();
@@ -62,6 +82,36 @@ export async function runStart(): Promise<void> {
   // Don't register SIGINT/SIGTERM here: installSignalHandlers inside daemon.run()
   // already handles graceful shutdown (exit codes 130/143, cleanup, re-entrancy guard).
   // A second set here would conflict (double stop / inconsistent exit codes).
+}
+
+/**
+ * loadConfig, and when that fails on a gateway with hosts, read their pods and try once more.
+ *
+ * Routing may name an agent a pod declared (`cc@devbox`), which exists only through pods.json
+ * (config/pods.ts). Without that file — a new config directory, or one somebody cleaned — the config
+ * would not load, and a gateway that does not start cannot be told what is wrong from the chat. The
+ * pods are read the way the daemon reads them, with the hosts as config.yaml has them.
+ */
+async function loadConfigReadingPods(): Promise<Config> {
+  try {
+    return loadConfig();
+  } catch (e) {
+    const raw = readRawConfigIfExists();
+    const hosts = z.record(HostDefSchema).safeParse(raw?.hosts);
+    if (!hosts.success || Object.keys(hosts.data).length === 0) throw e;
+    console.warn(`[pods] the config did not load; reading the hosts' pods in case it names their agents`);
+    remoteHosts.configure({ hosts: hosts.data }, defaultSocketPath());
+    const read = await refreshPods({
+      dir: configDir(),
+      hostIds: remoteHosts.ids(),
+      host: (id) => remoteHosts.get(id),
+      configured: hostsWithConfiguredAgents(raw),
+      timeoutMs: 60_000,
+    });
+    for (const n of read.notes) console.warn(`[pods] ${n}`);
+    if (!read.changed) throw e;
+    return loadConfig();
+  }
 }
 
 /**

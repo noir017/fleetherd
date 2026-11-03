@@ -5,6 +5,30 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A remote host can declare its own agents, in `~/.talkcode/pod.yaml`.** With several hosts,
+  config.yaml carried every agent of every machine, the same three entries copied per host with
+  only the id and `host` changed, plus a routing line per id — and each new machine meant editing
+  all of it on the gateway. Now a host lists its agents where they run, and the gateway names them
+  `<id>@<host>` (`oc@devbox`). A host with no file is looked at instead: each harness command on its
+  login PATH becomes an agent with default settings. The file is read when the gateway starts and
+  on every `/reload`; what was read is kept in `pods.json`, so a host that is down — or whose file
+  has a mistake, which the reload's answer names — keeps the agents it had. `${VAR}` is refused in
+  that file, since it would be filled in from the gateway's environment, where the bot tokens are.
+  See [Remote hosts](docs/remote-hosts.md#agents-the-host-declares-talkcodepodyaml).
+- **Renaming an agent keeps its conversations.** An id was also the key every conversation and
+  scheduled task remembered its agent by, so changing it in config.yaml sent all of its topics back
+  to the default agent with a fresh session. `agent-renames.json` in the config directory renames
+  ids in config.yaml, conversations and scheduled tasks together when the gateway starts, after
+  backing up the three files.
+
+### Fixed
+
+- **A comment on a config.yaml line the gateway changes stays on it.** `/setting` (and now a
+  rename) replaced the whole value, so `model: x  # the cheap one` lost its comment the first time
+  the model was set from the chat. A scalar is now changed in place.
+
 ## [2.20.0] - 2026-11-03
 
 ### Added

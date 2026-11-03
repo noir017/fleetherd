@@ -1,5 +1,7 @@
 import { ConfigSchema, findAgent, type Config, type SessionScope } from '../config/schema.js';
-import { configPath, readRawConfigIfExists, saveConfigPatch } from '../config/load.js';
+import { configDir, configPath, readRawConfigIfExists, saveConfigPatch } from '../config/load.js';
+import { readPods } from '../config/pods.js';
+import { POD_FILE } from './pods.js';
 import {
   parseSettingValue,
   readSettingValue,
@@ -91,10 +93,14 @@ export class SettingsStore {
 
     const path = this.diskPath(row);
     if (!path) {
+      // An agent a pod declared lives in that pod's file, which this cannot write (daemon/pods.ts).
+      const pod = podOf(row.target);
       return {
         kind: 'failed',
         row,
-        reason: `no \`agents:\` entry with id "${row.target}" in ${configPath()} — the file has changed since the daemon started; edit it directly`,
+        reason: pod
+          ? `${row.target} is declared on ${pod}, in ~/${POD_FILE} there — change it in that file and /reload; \`/model\` changes it for this conversation only`
+          : `no \`agents:\` entry with id "${row.target}" in ${configPath()} — the file has changed since the daemon started; edit it directly`,
       };
     }
 
@@ -196,4 +202,14 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
       throw new Error(`no config location for setting ${String(_exhaustive)}`);
     }
   }
+}
+
+/** The host whose pod declared `agentId` (`<id>@<host>`, and in pods.json), or undefined. */
+function podOf(agentId: string | undefined): string | undefined {
+  const at = agentId?.lastIndexOf('@') ?? -1;
+  if (!agentId || at < 1) return undefined;
+  const host = agentId.slice(at + 1);
+  const own = agentId.slice(0, at);
+  const agents = readPods(configDir())[host]?.agents ?? [];
+  return agents.some((a) => a && typeof a === 'object' && (a as { id?: unknown }).id === own) ? host : undefined;
 }

@@ -60,6 +60,56 @@ agents:
 
 The host must be Linux on x86-64 or arm64, with a POSIX `sh`. Nothing else is needed on it.
 
+## Agents the host declares: `~/.talkcode/pod.yaml`
+
+A host can say which agents it has, instead of config.yaml listing them. Then `hosts:` is all
+config.yaml needs:
+
+```yaml
+# ~/.talkcode/pod.yaml, on the host
+agents:
+  - id: oc
+    harness: opencode
+    model: opencode/deepseek-v4.1-flash-free
+    cwd: ~/workspace
+  - id: cbc
+    harness: custom
+    command: codebuddy
+    args: [--acp]
+```
+
+- Each one is named `<id>@<host>`: `oc` on `devbox` is `oc@devbox`, so routing, `/agent` and
+  `talkcode task-new` use that. A host cannot take an id config.yaml or another host uses.
+- The fields are an agent's fields from config.yaml, without `host`. Values are used as written:
+  `${VAR}` is refused, because it would be filled in from the gateway's environment, which holds
+  its tokens. A variable the agent needs belongs in the host's login environment.
+- **No file:** the gateway looks on the host's login PATH for `claude-agent-acp`, `codex-acp`,
+  `opencode`, `agy` and `codebuddy`, and offers the ones it finds as `cc`, `cx`, `oc`, `ag` and
+  `cbc`, with default settings. An empty file means no agents. A host that config.yaml already
+  places agents on is not looked at unless it has the file — it would offer each of them again.
+- **When it is read:** when the gateway starts, and on every `/reload` (or `talkcode reload`).
+  Change the file, then reload. What was read is kept in `pods.json` in the config directory, so
+  a host that is down keeps its agents; so does a host whose file is wrong, and the reload's answer
+  says what is wrong with it.
+- `/setting model` cannot change such an agent: its definition is on the host. Edit the file, or
+  use `/model` for one conversation.
+
+### Renaming agents
+
+Conversations and scheduled tasks remember the agent they belong to by id, so changing an id in
+config.yaml alone sends every one of its topics back to the default agent, with a new session. To
+rename, put a map in `agent-renames.json` in the config directory and restart the gateway:
+
+```json
+{ "oc2": "oc@devbox", "cc": "cc@devbox" }
+```
+
+On start, the ids change together in config.yaml (`agents`, `routing`), in every conversation and
+in the scheduled tasks; the three files are first copied to `*.bak-renames-<time>`, and the map is
+set aside as `agent-renames.json.applied-<time>`. To move an agent from config.yaml to its host's
+`pod.yaml`, rename it to its `<id>@<host>` name this way, write the file on the host, then remove
+the config.yaml entry and `/reload`.
+
 ## Where things happen
 
 | | For an agent with `host:` |

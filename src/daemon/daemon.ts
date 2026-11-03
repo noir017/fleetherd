@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentDef, Config } from '../config/schema.js';
 import { accessUnrestricted, agentDisplayName, findAgent } from '../config/schema.js';
-import { readConfig, UNRESTRICTED_WARNING, type ReadConfig } from '../config/load.js';
+import { configDir, readConfig, readRawConfigIfExists, UNRESTRICTED_WARNING, type ReadConfig } from '../config/load.js';
 import { applyConfig, describeReload, diffConfig } from './config-reload.js';
 import {
   agentCommandSpecs,
@@ -76,6 +76,7 @@ import { splitIntoChunks } from '../core/stream-buffer.js';
 import { formatEmptyCatalog, formatSkillCatalog } from '../core/skills-catalog.js';
 import { expandRemoteHome, remoteAgentEnv, remoteAgentHome, resolveConversationCwd } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
+import { hostsWithConfiguredAgents, refreshPods } from './pods.js';
 import {
   agentHome,
   opencodeSkillDirs,
@@ -154,6 +155,14 @@ const DEFAULT_VOICE_LOG_LIMIT = 10;
  * use the interaction's own id, never colliding with a message, so they are unaffected.
  */
 const DEDUP_TTL_MS = 15_000;
+
+/**
+ * How long reading the pods may take (pods.ts). At startup nothing waits on it; on `/reload` the
+ * person does, so it is shorter — a host that does not answer in time keeps what it had, and the
+ * answer says so.
+ */
+const STARTUP_POD_TIMEOUT_MS = 60_000;
+const RELOAD_POD_TIMEOUT_MS = 20_000;
 
 /**
  * Default timeout for an unclicked ask/clarify button (fallback when action.timeoutMs is absent).
@@ -770,6 +779,8 @@ export class Daemon {
 
   /** The IPC socket, which an agent on a remote host reaches through remoteHosts' CLI bridge. */
   private readonly socketPath: string;
+  /** The last read of the pods, so the next one waits for it (refreshPods). */
+  private podsRead: Promise<unknown> = Promise.resolve();
 
   /** Sub-agents: the task commands, their confirmation cards, and the updates (daemon/delegation.ts). */
   private readonly delegation: Delegation;
@@ -849,7 +860,7 @@ export class Daemon {
       // A `/setting` on a platform that can carry (and later edit) buttons.
       onSettingMenuRequest: (id, msg, menu) => this.onSettingMenuRequest(id, msg, menu),
       // `/reload`: the same entry `talkcode reload` uses, answered with the same sentence.
-      onReloadRequest: () => this.reloadConfig().summary,
+      onReloadRequest: async () => (await this.reloadAll()).summary,
       // `/setting schedule …` — the tasks live here, not in the registry.
       onScheduleSetting: (id, msg, args, canMenu) => this.onScheduleSetting(id, msg, args, canMenu),
       scheduleSummary: () =>
@@ -958,6 +969,14 @@ export class Daemon {
     // After the platforms and IPC are up: a run that is due right away (a catch-up after the update
     // that restarted us) needs somewhere to post, and an agent run needs its reverse commands.
     this.schedules?.scheduler.start();
+    // What the hosts' pods declare now (pods.ts). Not awaited: until it answers, every pod keeps the
+    // agents pods.json remembers, which is what routing and conversations were loaded against.
+    void this.refreshPods(STARTUP_POD_TIMEOUT_MS)
+      .then((r) => {
+        for (const n of r.notes) console.warn(`[pods] ${n}`);
+        if (r.changed) this.reloadConfig();
+      })
+      .catch((e: Error) => console.warn(`[pods] not read at startup: ${e.message}`));
     // Graceful stop on SIGINT (Ctrl-C) / SIGTERM (kill / container stop); otherwise resident ACP
     // child processes are orphaned and the socket file lingers. Removed again in stop().
     this.installSignalHandlers();
@@ -1251,17 +1270,52 @@ export class Daemon {
         return this.requireSchedules().list(id, action.id);
       case 'schedule-op':
         return { task: this.requireSchedules().op(action.id, action.op, id) };
-      case 'reload-config': {
+      case 'reload-config':
         // A file that did not load is an error to the CLI (non-zero exit), not a printed result.
-        const reload = this.reloadConfig();
-        if (!reload.ok) throw new Error(reload.summary);
-        return reload;
-      }
+        return this.reloadAll().then((reload) => {
+          if (!reload.ok) throw new Error(reload.summary);
+          return reload;
+        });
       default: {
         const _exhaustive: never = action;
         throw new Error(`unknown gateway query: ${JSON.stringify(_exhaustive)}`);
       }
     }
+  }
+
+  /**
+   * `/reload` as a person or an agent asks for it: the pods are read again first (pods.ts), so an
+   * edited `~/.talkcode/pod.yaml` takes effect with the same command that applies config.yaml. The
+   * hosts are those of the file about to be applied — a host added with this reload is read too.
+   * A file that does not load skips the pods and is reported by reloadConfig, as before.
+   */
+  async reloadAll(): Promise<{ ok: boolean; summary: string }> {
+    let notes: string[] = [];
+    try {
+      remoteHosts.configure(readConfig().config, this.socketPath);
+      notes = (await this.refreshPods(RELOAD_POD_TIMEOUT_MS)).notes;
+    } catch (e) {
+      // A file that does not load: reloadConfig reads it again and says what is wrong.
+      console.warn(`[pods] not read before this reload: ${e instanceof Error ? e.message.split('\n')[0] : e}`);
+    }
+    const reload = this.reloadConfig();
+    if (!reload.ok || notes.length === 0) return reload;
+    return { ok: true, summary: [reload.summary, ...notes.map((n) => `- ⚠️ pods: ${n}`)].join('\n') };
+  }
+
+  /** Read every host's pod into pods.json; serialized, as the startup read and a reload can meet. */
+  private refreshPods(timeoutMs: number): Promise<{ changed: boolean; notes: string[] }> {
+    const run = (): Promise<{ changed: boolean; notes: string[] }> =>
+      refreshPods({
+        dir: configDir(),
+        hostIds: remoteHosts.ids(),
+        host: (id) => remoteHosts.get(id),
+        configured: hostsWithConfiguredAgents(readRawConfigIfExists()),
+        timeoutMs,
+      });
+    const next = this.podsRead.then(run, run);
+    this.podsRead = next.catch(() => undefined);
+    return next;
   }
 
   /**

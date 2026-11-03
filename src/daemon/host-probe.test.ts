@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hostProbeScript, readHostProbe, type HostProbe } from './doctor-hosts.js';
+import { hostProbeScript, readHostProbe, type HostProbe } from './host-probe.js';
 
 /** Run the probe the way a host would (a shell -c), with `pathEnv` as the login PATH. */
 function runProbe(probes: HostProbe[], pathEnv: string): string {

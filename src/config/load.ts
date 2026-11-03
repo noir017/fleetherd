@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parse, parseDocument, stringify } from 'yaml';
+import { isScalar, parse, parseDocument, stringify } from 'yaml';
 import {
   ConfigSchema,
   accessUnrestricted,
@@ -11,6 +11,7 @@ import {
 } from './schema.js';
 import { applyDotEnvDelta, dotEnvDelta, expandEnvVars } from './env-expand.js';
 import { isLegacyConfig, migrateLegacyConfig } from './migrate.js';
+import { mergePodAgents, readPods } from './pods.js';
 
 /**
  * Directory that holds the config file, socket, and other per-instance state.
@@ -129,6 +130,12 @@ export function readConfig(): ReadConfig {
   for (const key of delta.unset) delete env[key];
   raw = expandEnvVars(raw, env);
 
+  // The agents the hosts' pods declared (config/pods.ts) — after expansion, so none of a pod's text
+  // is expanded with this process's environment; before validation, so routing may name them.
+  const pods = mergePodAgents(raw as Record<string, unknown>, readPods(configDir()));
+  for (const s of pods.skipped) console.warn(`[pods] left out ${s}`);
+  raw = pods.raw;
+
   const result = ConfigSchema.safeParse(raw);
   if (!result.success) {
     // Aggregate all issues into one message so the user can fix everything at once.
@@ -185,7 +192,11 @@ export function saveConfigPatch(patch: Array<{ path: Array<string | number>; val
   // parseDocument('') yields an empty document; setIn creates block-style collections as needed.
   const doc = parseDocument(fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '');
   for (const { path: at, value } of patch) {
+    const node = doc.getIn(at, true);
     if (value === undefined) doc.deleteIn(at);
+    // A scalar replaced by a scalar is changed in place, so a comment on its line stays with it
+    // (`- id: cc   # main` renamed by agent-renames.ts, `model: x  # cheap` set by /setting).
+    else if (isScalar(node) && (value === null || typeof value !== 'object')) node.value = value;
     else doc.setIn(at, doc.createNode(value));
   }
   writeConfigFile(doc.toString());

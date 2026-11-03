@@ -12,7 +12,7 @@ import { resolveClaudeAdapterEntry } from '../daemon/agent-acp.js';
 import { AGY_COMMAND } from '../daemon/agent-agy.js';
 import { claudeProjectsDir } from '../daemon/claude-transcript.js';
 import { remoteAgentEnv } from '../daemon/agent-common.js';
-import { hostProbeScript, readHostProbe, type HostProbe } from './doctor-hosts.js';
+import { hostProbeScript, readHostProbe, type HostProbe } from '../daemon/host-probe.js';
 import { agentHome } from '../daemon/skills-scan.js';
 import { OWNER } from '../platform/webui/room.js';
 import { loadJwks } from '../platform/webui/sso.js';

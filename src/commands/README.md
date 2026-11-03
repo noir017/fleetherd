@@ -6,7 +6,7 @@ commander; this module implements them.
 | Command | File | Purpose |
 |---|---|---|
 | `setup` | `setup.ts` | Interactive configuration wizard |
-| `doctor` | `doctor.ts` | Environment self-check — **the default command**. `doctor-hosts.ts` is its probe of each remote host, in the PATH each agent will really have |
+| `doctor` | `doctor.ts` | Environment self-check — **the default command**. its probe of each remote host, in the PATH each agent will really have, is `daemon/host-probe.ts` (the daemon reads pods with it too) |
 | `start` | `start.ts` | Run the daemon |
 | *(reverse)* | `reverse.ts` | The agent-facing chat actions |
 | `mcp` *(hidden)* | `mcp.ts` | The same actions as native tools: an MCP server on stdio, started by the agent's harness |

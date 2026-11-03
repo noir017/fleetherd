@@ -1,6 +1,8 @@
 /**
- * What `talkcode doctor` runs on a host to see whether its agents can start there: one lookup per
- * harness command, in the PATH that agent will actually have.
+ * What `talkcode doctor` runs on a host to see whether its agents can start there — and what the
+ * daemon runs on a pod with no `pod.yaml` to see which agents it has (pods.ts): one lookup per
+ * harness command, in the PATH that agent will actually have. In daemon/ rather than beside doctor
+ * because both use it, and the daemon cannot import from commands/.
  *
  * That PATH is the host's login PATH (remote/shellenv.go) unless the agent's `env` sets PATH, in
  * which case it is exactly that value: remoteAgentEnv passes it through and talkcode-remote replaces

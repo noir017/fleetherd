@@ -550,9 +550,10 @@ export class ConversationRegistry {
        */
       /**
        * `/reload`: re-read config.yaml and apply it. The daemon does it — it owns the files, the
-       * platforms and the slash registration — and answers with the sentence to post.
+       * platforms and the slash registration — and answers with the sentence to post, once the
+       * hosts' pods have been read again (daemon.ts reloadAll), which is why it can take a while.
        */
-      onReloadRequest?(): string;
+      onReloadRequest?(): Promise<string>;
       onSettingMenuRequest?(
         id: ConversationId,
         msg: InboundMessage,
@@ -1833,7 +1834,9 @@ export class ConversationRegistry {
     // this conversation, but asked from one, so the answer goes back to it.
     if (!RELOAD_RE.test(text)) return false;
     console.log(`[conversation] /reload by ${conv.platform}:${conv.user}`);
-    ack('/reload', this.hooks?.onReloadRequest?.() ?? 'Reloading the config is not available in this daemon.');
+    const reload = this.hooks?.onReloadRequest;
+    if (!reload) ack('/reload', 'Reloading the config is not available in this daemon.');
+    else void reload().then((summary) => ack('/reload', summary));
     return true;
   }
 
