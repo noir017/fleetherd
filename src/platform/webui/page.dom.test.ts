@@ -895,7 +895,7 @@ describe('webui page: closing the idle agents', () => {
     // Not the asking topic, not the working one, not the cold one: a question on screen and a
     // running turn are not idle, and a grey dot has no process to close.
     expect(h.el('close-idle').hidden).toBe(false);
-    expect(h.el('close-idle').textContent).toBe('Close idle agents (2)');
+    expect(h.el('close-idle').textContent).toBe('Close idle (2)');
   });
 
   it('lists each topic it would close, starred first, before closing anything', async () => {
@@ -4200,7 +4200,7 @@ describe('webui page: notifications on this device', () => {
   it('turns on: asks permission, registers the worker, subscribes with the server key, and tells the server', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}`, push: {}, replies: { 'api/push': { enabled: true, key: KEY } } });
     await ready(h);
-    expect(h.el('notify-toggle').textContent).toBe('Notifications: off');
+    expect(h.el('notify-state').textContent).toBe('off');
 
     await h.click('#notify-toggle');
     await until('the subscription reached the server', () => h.calls.some((c) => c.path === 'api/push/subscribe'));
@@ -4212,7 +4212,7 @@ describe('webui page: notifications on this device', () => {
       expirationTime: null,
       keys: { p256dh: 'P', auth: 'A' },
     });
-    await until('the toggle says so', () => h.el('notify-toggle').textContent === 'Notifications: on');
+    await until('the toggle says so', () => h.el('notify-state').textContent === 'on');
   });
 
   it('turns off: unsubscribes here and on the server', async () => {
@@ -4222,12 +4222,12 @@ describe('webui page: notifications on this device', () => {
       replies: { 'api/push': { enabled: true, key: KEY } },
     });
     await ready(h);
-    await until('it knows it is on', () => h.el('notify-toggle').textContent === 'Notifications: on');
+    await until('it knows it is on', () => h.el('notify-state').textContent === 'on');
     await h.click('#notify-toggle');
     await until('the server was told', () => h.calls.some((c) => c.path === 'api/push/unsubscribe'));
     expect(h.push.unsubscribed).toBe(true);
     expect(h.calls.find((c) => c.path === 'api/push/unsubscribe')?.body).toEqual({ endpoint: 'https://fcm.googleapis.com/fcm/send/dev1' });
-    await until('the toggle says so', () => h.el('notify-toggle').textContent === 'Notifications: off');
+    await until('the toggle says so', () => h.el('notify-state').textContent === 'off');
   });
 
   it('says so when the browser blocks it, and asks nothing', async () => {
@@ -4237,7 +4237,7 @@ describe('webui page: notifications on this device', () => {
       replies: { 'api/push': { enabled: true, key: KEY } },
     });
     await ready(h);
-    expect(h.el('notify-toggle').textContent).toBe('Notifications: blocked in this browser');
+    expect(h.el('notify-state').textContent).toBe('blocked');
     expect((h.el('notify-toggle') as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -4249,7 +4249,7 @@ describe('webui page: notifications on this device', () => {
     });
     await ready(h);
     await h.click('#notify-toggle');
-    await until('the toggle repaints', () => h.el('notify-toggle').textContent === 'Notifications: blocked in this browser');
+    await until('the toggle repaints', () => h.el('notify-state').textContent === 'blocked');
     expect(h.calls.some((c) => c.path === 'api/push/subscribe')).toBe(false);
   });
 
@@ -4259,5 +4259,118 @@ describe('webui page: notifications on this device', () => {
     h.push.listeners.forEach((fn) => fn({ data: { goto: C } }));
     await tick();
     expect(h.live().url).toBe(`api/events?t=${C}`);
+  });
+});
+
+describe('webui page: the sidebar footer, and low attention', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const C = 'c3d4e5f6';
+  const menuOpen = (h: Harness): boolean => !h.el('opts-menu').hidden;
+  const calm = (h: Harness): boolean => h.el('app').classList.contains('calm');
+
+  it('keeps Notifications, Low attention and Clear in the Settings menu, and Close idle on the footer', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    const menu = h.el('opts-menu');
+    for (const id of ['notify-toggle', 'calm-toggle', 'clear-topics']) expect(menu.contains(h.el(id))).toBe(true);
+    // Its count is the point of it, and a count inside a closed menu is not seen.
+    expect(h.el('close-idle').parentElement).toBe(h.el('sidebar-footer'));
+    expect(menuOpen(h)).toBe(false);
+    expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens on a click, stays open while a toggle flips, and closes on a click elsewhere or on Escape', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.click('#opts-toggle');
+    expect(menuOpen(h)).toBe(true);
+    expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('true');
+    // Left open, so the state it flipped is seen flipping.
+    await h.click('#calm-toggle');
+    expect(menuOpen(h)).toBe(true);
+
+    await h.click('#log');
+    expect(menuOpen(h)).toBe(false);
+    expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
+
+    await h.click('#opts-toggle');
+    await h.click('#opts-toggle');
+    expect(menuOpen(h)).toBe(false);
+
+    await h.click('#opts-toggle');
+    h.el('calm-toggle').focus();
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(menuOpen(h)).toBe(false);
+    // Back on the button that opened it, rather than on a control that is no longer on screen.
+    expect(h.doc.activeElement).toBe(h.el('opts-toggle'));
+  });
+
+  it('is shut before Clear asks, whatever the answer', async () => {
+    const h = await open({ confirm: false });
+    await h.emit(sync(A, [], [A, B]));
+    let openWhenAsked: boolean | undefined;
+    (h.window as any).confirm = (): boolean => {
+      openWhenAsked = menuOpen(h);
+      return false;
+    };
+    await h.click('#opts-toggle');
+    await h.click('#clear-topics');
+    expect(openWhenAsked).toBe(false);
+    expect(menuOpen(h)).toBe(false);
+    expect(h.calls.map((c) => c.path)).not.toContain('api/topics/clear');
+  });
+
+  it('is off until asked for, then marks the page, says so, and is kept by this browser', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    expect(calm(h)).toBe(false);
+    expect(h.el('calm-state').textContent).toBe('off');
+    expect(h.el('calm-toggle').getAttribute('aria-pressed')).toBe('false');
+
+    await h.click('#opts-toggle');
+    await h.click('#calm-toggle');
+    expect(calm(h)).toBe(true);
+    expect(h.el('calm-state').textContent).toBe('on');
+    expect(h.el('calm-toggle').getAttribute('aria-pressed')).toBe('true');
+    expect(h.window.localStorage.getItem('aa_calm')).toBe('1');
+
+    // Applied as the script starts, before the first sync: a reload does not flash the pulse back.
+    const again = await open({ storage: { aa_calm: '1' } });
+    expect(calm(again)).toBe(true);
+    expect(again.el('calm-state').textContent).toBe('on');
+    await again.click('#calm-toggle');
+    expect(calm(again)).toBe(false);
+    expect(again.window.localStorage.getItem('aa_calm')).toBeNull();
+  });
+
+  it('draws the same list either way: the mode is in the stylesheet, not in what the rows say', async () => {
+    // A topic that needs you is found by the same row, dot and badge in both modes; only how loud
+    // they are differs. So the markup itself must not change.
+    const topics = [
+      { id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle' },
+      { id: B, title: 'working', lastAt: 999, msgCount: 5, running: true, live: true, stage: 'working' },
+      { id: C, title: 'asks', lastAt: 998, msgCount: 2, running: true, asking: true, live: true, stage: 'answer' },
+    ];
+    const paint = async (storage: Record<string, string>): Promise<string> => {
+      const h = await open({ url: `http://localhost:8787/?t=${A}`, storage: { aa_reads: JSON.stringify({ [B]: 0, [C]: 0 }), ...storage } });
+      await h.emit(sync(A, [], [A]));
+      await h.emit({ t: 'topics', topics });
+      expect(h.doc.querySelectorAll('#topics .topic-badge')).toHaveLength(2);
+      return h.el('topics').innerHTML;
+    };
+    expect(await paint({ aa_calm: '1' })).toBe(await paint({}));
+  });
+
+  it('quiets the running dot and the unread count, and nothing that needs you', () => {
+    const html = renderPage('Chat', false);
+    const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+    // Every rule the mode has, so one added for a question, a failure, a finished reply or the
+    // green rows fails here: those are what the mode exists to leave standing out.
+    expect(css.match(/#app\.calm [^{]*\{[^}]*\}/g)).toEqual([
+      '#app.calm .topic-dot.running{animation:none}',
+      '#app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}',
+    ]);
+    expect(css).toMatch(/\.topic-dot\.asking\{[^}]*animation:pulse/);
   });
 });

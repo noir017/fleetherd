@@ -215,22 +215,47 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    live greys above are four classes deep, and a lighter rule lost to them on an idle agent. */
 #topics .topic-item.needs:not(.on) .topic-title{color:#4ade80}
 .topic-dot.review{background:#4ade80}
-#notify-toggle{display:block;width:100%;background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;transition:color .15s,background .15s}
-#notify-toggle:hover{color:var(--fg);background:var(--field)}
-#notify-toggle[hidden]{display:none}
+/* Low attention (the Settings menu, per device: calmBtn). With several agents working at once the
+   list never stops moving — a pulsing dot per running topic, and an unread count in a bright pill
+   that climbs with every message a running turn posts — and none of that is anything to act on.
+   Here work is shown and not announced: the running dot keeps its colour and halo and stops
+   pulsing, and the count goes grey. What needs the person is left exactly as it is — the amber
+   dot still pulses, and a question, a failure and an unread reply still move up in green — so it
+   is the only thing on the list that moves or stands out. */
+#app.calm .topic-dot.running{animation:none}
+#app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}
 #topics .topic-item.after-stars{margin-top:5px}
 #topics .topic-item.after-stars::before{content:'';position:absolute;left:9px;right:9px;top:-5px;border-top:1px solid var(--line)}
-/* Pinned under the list rather than beside the + in the header, and that is the whole reason it
-   is a footer: this throws away every room at once, and a one-character icon sitting next to
-   "new topic" is a misclick away from it. Down here it is out of the way, has room for words
-   that say what it does, and only turns red once the pointer is on it. */
-#sidebar-footer{border-top:1px solid var(--line);padding:8px}
-#clear-topics{display:block;width:100%;background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;transition:color .15s,background .15s}
-#clear-topics:hover{color:#f87171;background:rgba(248,113,113,.12)}
-/* Above Clear and dressed like it, but it ends processes, not topics, so it does not turn red: it
-   costs a respawn on each topic's next message and nothing more. Hidden while no agent is idle. */
-#close-idle{display:block;width:100%;background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;transition:color .15s,background .15s}
-#close-idle:hover{color:var(--fg);background:var(--field)}
+/* One row: Settings, and Close idle when there is anything to close. It was a column of full-width
+   buttons, one per control, and reached three rows with a fourth on the way (2026-11-03) — a strip
+   of the list given up for things that are set once per device (Notifications, Low attention) or
+   used rarely (Clear). Those went into the Settings menu; Close idle stays out here because its
+   count is worth seeing without opening anything.
+   A size container so the word "Settings" can give way to the gear alone when the sidebar is
+   dragged narrow (SB_MIN is 180px), rather than the row overflowing or the count being cut. */
+#sidebar-footer{border-top:1px solid var(--line);padding:8px;display:flex;align-items:center;gap:4px;position:relative;container-type:inline-size}
+#sidebar-footer>button{background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
+#sidebar-footer>button:hover,#opts-toggle[aria-expanded="true"]{color:var(--fg);background:var(--field)}
+#opts-toggle .opts-gear{font-size:13px}
+@container (max-width:200px){#opts-toggle .opts-word{display:none}}
+/* Ends processes, not topics, so it does not turn red: it costs a respawn on each topic's next
+   message and nothing more. Hidden while no agent is idle. */
+#close-idle{margin-left:auto}
+/* Opens upward from the footer, over the bottom of the list, and is dismissed by a click anywhere
+   else or Escape (setOpts). A disclosure rather than an ARIA menu: role=menu promises arrow-key
+   navigation, and three buttons are reached with Tab like any others. */
+#opts-menu{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:4px;z-index:12;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
+#opts-menu button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;transition:color .15s,background .15s}
+#opts-menu button:hover{background:var(--field)}
+#opts-menu button:disabled:hover{background:none}
+.opt-state{color:var(--dim);font-size:12px}
+[aria-pressed="true"]>.opt-state{color:#4ade80}
+.opts-sep{border-top:1px solid var(--line);margin:4px 2px}
+/* Last in the menu, under a rule, because it throws away every room at once. It was given the
+   footer rather than a place beside the + in the header for the same reason: a one-character icon
+   next to "new topic" is a misclick away from it. Dim until the pointer is on it, then red. */
+#opts-menu #clear-topics{color:var(--dim)}
+#opts-menu #clear-topics:hover{color:#f87171;background:rgba(248,113,113,.12)}
 /* The confirmation for it: names every topic whose agent is about to go, because "close 7 agents"
    does not say whether the one you were about to come back to is among them. A dialog of the page's
    own rather than confirm(), which cannot hold a list a phone can scroll. The list scrolls inside
@@ -559,9 +584,12 @@ button:disabled{opacity:.5;cursor:default}
   #backdrop{display:block}
   #topics .topic-item{padding:10px 9px}
   /* The drawer runs to the bottom edge, so its last row needs the same home-indicator clearance
-     the composer gets — without it "Clear all topics" sits under the indicator, which is both
-     hard to hit and the wrong control to make hard to hit accurately. */
+     the composer gets — without it the Settings row sits under the indicator, hard to hit, and
+     Clear all topics is one tap inside it. */
   #sidebar-footer{padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px))}
+  /* The footer row and the Settings menu are finger targets here, and 12px text in 7px of padding
+     is a 30px one. */
+  #sidebar-footer>button,#opts-menu button{min-height:44px}
   /* The drawer toggle is the only way back to the topic list on a phone, but it inherits
      .btn-icon's 13px glyph and 4px padding — a 26x21 target, well under the 44px every mobile
      HIG asks for. Pad it out to 44px square and grow the glyph to match; the header's own
@@ -625,7 +653,8 @@ const SCRIPT = `
       chips=$('chips'), hints=$('hints'), typing=$('typing'), note=$('note'), picker=$('picker'),
       bar=$('topics'), sidebar=$('sidebar'), collapseBtn=$('collapse-sidebar'),
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
-      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), notifyBtn=$('notify-toggle'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
+      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
+      optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), calmBtn=$('calm-toggle'), calmState=$('calm-state'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
@@ -889,6 +918,40 @@ const SCRIPT = `
   expandBtn.addEventListener('click', function(){ setSidebar(true); });
   backdrop.addEventListener('click', function(){ setSidebar(false); });
   applySidebar();
+
+  /**
+   * The Settings menu at the foot of the sidebar: Notifications, Low attention, and Clear. Toggles
+   * leave it open, so the state they flip is seen flipping; Clear closes it before its confirm().
+   * Any click outside it closes it — including the backdrop's, which is what dismisses the drawer.
+   */
+  function setOpts(open){
+    optsMenu.hidden = !open;
+    optsBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  optsBtn.addEventListener('click', function(){ setOpts(optsMenu.hidden); });
+  document.addEventListener('click', function(e){
+    if(optsMenu.hidden || optsMenu.contains(e.target) || optsBtn.contains(e.target)) return;
+    setOpts(false);
+  });
+
+  /**
+   * Low attention (#app.calm in the stylesheet, which says what it changes and why). Per device,
+   * like the sidebar's width: the phone in a pocket and the desktop with five agents on it are not
+   * asking for the same list. Absent means off, so nothing changes until someone asks for it.
+   */
+  var calm = false;
+  try { calm = localStorage.getItem('aa_calm') === '1'; } catch(x){}
+  function paintCalm(){
+    app.classList.toggle('calm', calm);
+    calmBtn.setAttribute('aria-pressed', calm ? 'true' : 'false');
+    calmState.textContent = calm ? 'on' : 'off';
+  }
+  calmBtn.addEventListener('click', function(){
+    calm = !calm;
+    try { if(calm) localStorage.setItem('aa_calm', '1'); else localStorage.removeItem('aa_calm'); } catch(x){}
+    paintCalm();
+  });
+  paintCalm();
 
   /**
    * The sidebar's width, dragged from its right edge and kept per browser. Clamped so the chat
@@ -1770,7 +1833,7 @@ const SCRIPT = `
     clearBtn.title = stars ? 'Forget every topic except the starred ones and start a new one' : 'Forget every topic and start a new one';
     var idle=idleTopics().length;
     idleBtn.hidden = !idle;
-    idleBtn.textContent = 'Close idle agents ('+idle+')';
+    idleBtn.textContent = 'Close idle ('+idle+')';
     if(cur){
       chatTitle.textContent=cur.title || 'Untitled';
       // Same order as the dot, and the same reason: during an ask the turn is still open, so
@@ -1838,12 +1901,14 @@ const SCRIPT = `
     notifyBtn.hidden=false;
     if(window.Notification.permission==='denied'){
       notifyBtn.disabled=true;
-      notifyBtn.textContent='Notifications: blocked in this browser';
-      notifyBtn.title='Allow notifications for this site in the browser settings, then reload';
+      notifyBtn.setAttribute('aria-pressed','false');
+      notifyState.textContent='blocked';
+      notifyBtn.title='Blocked in this browser: allow notifications for this site in the browser settings, then reload';
       return;
     }
     notifyBtn.disabled=false;
-    notifyBtn.textContent = pushSub ? 'Notifications: on' : 'Notifications: off';
+    notifyBtn.setAttribute('aria-pressed', pushSub ? 'true' : 'false');
+    notifyState.textContent = pushSub ? 'on' : 'off';
     notifyBtn.title = pushSub
       ? 'This device is notified when something needs you, even with the page closed. Click to stop.'
       : 'Notify this device when something needs you, even with the page closed';
@@ -2472,6 +2537,7 @@ const SCRIPT = `
   }
 
   clearBtn.addEventListener('click', function(){
+    setOpts(false);
     var stars = topics.filter(function(t){ return t.starred; }).length;
     var gone = topics.length - stars;
     if(stars && !gone){ alert('Every topic is starred, so there is nothing to clear. Unstar one first.'); return; }
@@ -2724,7 +2790,7 @@ const SCRIPT = `
     lightboxImg.removeAttribute('src');
   }
   lightbox.addEventListener('click', closeShot);
-  document.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ closeShot(); closeReader(); closeIdle(); } });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ closeShot(); closeReader(); closeIdle(); if(!optsMenu.hidden){ setOpts(false); optsBtn.focus(); } } });
 
   /**
    * Read a file the agent sent without downloading it. The server renders it (reading.ts) and the
@@ -3540,9 +3606,14 @@ __GATE__
     </div>
     <div id="topics"></div>
     <div id="sidebar-footer">
-      <button type="button" id="notify-toggle" hidden title="Notify this device when something needs you">Notifications: off</button>
-      <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle agents</button>
-      <button type="button" id="clear-topics" title="Forget every topic and start a new one">Clear all topics</button>
+      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Settings"><span class="opts-gear">⚙</span><span class="opts-word"> Settings</span></button>
+      <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle</button>
+      <div id="opts-menu" hidden>
+        <button type="button" id="notify-toggle" hidden aria-pressed="false" title="Notify this device when something needs you"><span>Notifications</span><span class="opt-state" id="notify-state">off</span></button>
+        <button type="button" id="calm-toggle" aria-pressed="false" title="Running topics stop pulsing and unread counts go grey; a question, a failure or an unread reply still stands out. This device only."><span>Low attention</span><span class="opt-state" id="calm-state">off</span></button>
+        <div class="opts-sep"></div>
+        <button type="button" id="clear-topics" title="Forget every topic and start a new one">Clear all topics</button>
+      </div>
     </div>
     <div id="sidebar-resize" title="Drag to resize · double-click for the default width"></div>
   </aside>
