@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-11-03
+
 ### Added
 
 - **A remote host can declare its own agents, in `~/.talkcode/pod.yaml`.** With several hosts,
