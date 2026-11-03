@@ -77,6 +77,8 @@ func (d *daemon) op(ctx context.Context, h *Header, body []byte) (any, []byte, e
 		return opWriteFile(path, body, h.Mode, h.Append)
 	case "ensureLink":
 		return opEnsureLink(expandHome(h.Target), path, expandHome(h.Requires))
+	case "sweepSkillLinks":
+		return opSweepSkillLinks(path)
 	case "run":
 		return d.opRun(ctx, h)
 	}
@@ -323,6 +325,48 @@ func opEnsureLink(target, link, requires string) (any, []byte, error) {
 		return result("relinked", previous)
 	}
 	return result("linked", "")
+}
+
+// opSweepSkillLinks removes dangling skill links in `dir` that point into this host's version
+// directory (~/.talkcode/remote/<version>/…). An upgrade deletes the old version directory, and a
+// link into it is only repointed by a spawn of the harness it was made for — so one made for a
+// harness the gateway has since stopped mapping keeps pointing at a path that is gone, and every
+// agent of that harness runs without the skill. Nothing else is touched: a real directory, a file,
+// or a link pointing anywhere outside ~/.talkcode/remote belongs to the operator.
+func opSweepSkillLinks(dir string) (any, []byte, error) {
+	empty := map[string]any{"removed": []string{}}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return empty, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	root := rootDir()
+	removed := []string{}
+	for _, e := range entries {
+		if e.Type()&fs.ModeSymlink == 0 {
+			continue
+		}
+		link := filepath.Join(dir, e.Name())
+		target, err := os.Readlink(link)
+		if err != nil {
+			continue
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(dir, target)
+		}
+		if !strings.HasPrefix(target, root+string(os.PathSeparator)) {
+			continue
+		}
+		if _, err := os.Stat(target); err == nil {
+			continue // still there: a link into the version the gateway is running
+		}
+		if err := os.Remove(link); err == nil {
+			removed = append(removed, link)
+		}
+	}
+	return map[string]any{"removed": removed}, nil, nil
 }
 
 // ── run ───────────────────────────────────────────────────────────────────────────────────────

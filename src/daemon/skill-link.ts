@@ -34,8 +34,17 @@ import { selfInvocation } from './reverse-cli-shim.js';
  *               ones in `~/.claude/skills`, `~/.agents/skills` and `~/.config/opencode/skills`, plus
  *               the project-level `.claude/`, `.agents/` and `.opencode/` ones. (Its `GET /api/skill`
  *               answered an empty list even with skills configured — not a usable probe.)
- *  - gemini, dsh, custom — none known; nothing is linked rather than a guess.
+ *  - custom — only when the command is CodeBuddy Code: `<home>/.codebuddy/skills`, the same shape as
+ *               claude's. A custom harness is whatever its command is (agent-menu.ts agentKindOf),
+ *               so the command is what says whether there is a directory to link into; for any
+ *               other command nothing is linked rather than a guess.
+ *  - gemini, dsh — none known; nothing is linked rather than a guess.
  * `.agents/skills` is the cross-vendor location, so one link serves codex and opencode.
+ *
+ * CodeBuddy used to be left out entirely, and the operator linked it by hand into
+ * `~/.talkcode/remote/<version>/skill` — a path this daemon deletes on upgrade. Nothing repointed
+ * it, so the link died at the next upgrade and stayed dead (`~/.codebuddy/skills/talkcode` on both
+ * hosts, 2026-11-03). It is mapped here now, which is also what makes the next spawn repoint it.
  *
  * Only for a harness that has been run here: the link is made when the harness's own config
  * directory exists, never by creating one — the same rule agy-statusline.ts follows, for the same
@@ -79,7 +88,7 @@ export interface SkillHome {
 }
 
 /** Where `harness` reads skills from under `home` (see the header for the evidence per arm). */
-export function skillHomes(harness: AgentDef['harness'], home: string): SkillHome[] {
+export function skillHomes(harness: AgentDef['harness'], home: string, command?: string): SkillHome[] {
   const shared = path.join(home, '.agents', 'skills');
   switch (harness) {
     case 'claude':
@@ -92,13 +101,30 @@ export function skillHomes(harness: AgentDef['harness'], home: string): SkillHom
       return [{ dir: shared, requires: path.join(home, '.config', 'opencode') }];
     case 'gemini':
     case 'dsh':
-    case 'custom':
       return [];
+    case 'custom':
+      // CodeBuddy Code, by the last segment of its command (`/usr/local/bin/codebuddy`), the same
+      // reading agentKindOf gives it. Its skills live in its own directory, not `.agents/skills`.
+      return path.basename(command ?? '') === 'codebuddy'
+        ? [{ dir: path.join(home, '.codebuddy', 'skills'), requires: path.join(home, '.codebuddy') }]
+        : [];
     default: {
       const _exhaustive: never = harness;
       return _exhaustive;
     }
   }
+}
+
+/**
+ * Every directory a skill of ours could have been linked into under `home` — what a sweep of dead
+ * links has to look at. The union, not the one harness being spawned: a link made by a version that
+ * still mapped a harness outlives the mapping, and nothing else would ever look at it again.
+ */
+export function allSkillDirs(home: string): string[] {
+  const mapped: AgentDef['harness'][] = ['claude', 'codex', 'agy', 'opencode'];
+  const dirs = mapped.flatMap((h) => skillHomes(h, home).map((s) => s.dir));
+  dirs.push(...skillHomes('custom', home, 'codebuddy').map((s) => s.dir));
+  return [...new Set(dirs)];
 }
 
 export type SkillLinkOutcome = 'linked' | 'relinked' | 'current' | 'occupied' | 'skipped' | 'failed';
@@ -140,7 +166,7 @@ const warned = new Set<string>();
  * Link the bundled skills for one agent's harness under `home`. Best-effort: every outcome is logged
  * or silent, never thrown — an agent without the skills still has its tools and its shell.
  */
-export function ensureSkillLink(harness: AgentDef['harness'], home: string): SkillLinkResult[] {
+export function ensureSkillLink(harness: AgentDef['harness'], home: string, command?: string): SkillLinkResult[] {
   if (process.env.TALKCODE_NO_SKILL_LINK) return [];
   if (!selfInvocation()) return [];
   const results: SkillLinkResult[] = [];
@@ -151,7 +177,7 @@ export function ensureSkillLink(harness: AgentDef['harness'], home: string): Ski
       warned.add(source);
       continue;
     }
-    for (const r of skillHomes(harness, home).map((h) => linkSkill(source, h, skill.name))) {
+    for (const r of skillHomes(harness, home, command).map((h) => linkSkill(source, h, skill.name))) {
       results.push(r);
       report(r, source);
     }

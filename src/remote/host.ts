@@ -298,6 +298,17 @@ export class RemoteHost extends EventEmitter {
     return res as { outcome: string; detail?: string; link: string };
   }
 
+  /**
+   * Remove skill links of ours under `dir` that point into a version directory this host no longer
+   * has (remote/ops.go sweepSkillLinks). Only symlinks into `~/.talkcode/remote` are touched; a
+   * real directory or a link pointing anywhere else is the operator's and stays. Answers with what
+   * it removed, so the gateway can say so.
+   */
+  async sweepSkillLinks(dir: string): Promise<string[]> {
+    const { res } = await this.rpc('sweepSkillLinks', { path: dir });
+    return (res as { removed?: string[] }).removed ?? [];
+  }
+
   async run(o: RunOptions, signal?: AbortSignal): Promise<RunResult> {
     const { res, body } = await this.rpc(
       'run',

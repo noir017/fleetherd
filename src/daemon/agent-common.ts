@@ -142,7 +142,7 @@ export function buildAgentEnv(
   if (shimDir) env.PATH = `${shimDir}${delimiter}${env.PATH ?? ''}`;
   // The skill goes under the home THIS agent runs as — an `env.HOME` override included — because
   // that is where its harness will look (see skill-link).
-  ensureSkillLink(def.harness, env.HOME || homedir());
+  ensureSkillLink(def.harness, env.HOME || homedir(), def.command);
   return env;
 }
 
@@ -222,7 +222,7 @@ export async function prepareRemoteSpawn(
       if (!st.exists || !st.dir) throw new Error(`agent "${def.id}": working directory ${root} does not exist on host "${host.id}"`);
     }
   }
-  await remoteHosts.placeSkill(host, def.harness, remoteAgentHome(def, welcome), welcome);
+  await remoteHosts.placeSkill(host, def, remoteAgentHome(def, welcome), welcome);
   return { welcome, cwd: dir };
 }
 

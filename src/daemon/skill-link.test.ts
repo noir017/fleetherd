@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BUNDLED_SKILLS, bundledSkillDir, ensureSkillLink, linkSkill, skillHomes } from './skill-link.js';
+import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, ensureSkillLink, linkSkill, skillHomes } from './skill-link.js';
 
 /**
  * The skill link writes into SHARED directories (the operator's own `~/.claude/skills`), so these
@@ -35,7 +35,21 @@ describe('skillHomes', () => {
   });
 
   it('links nothing for a harness whose skill directory was never found', () => {
-    for (const harness of ['gemini', 'dsh', 'custom'] as const) expect(skillHomes(harness, '/h')).toEqual([]);
+    for (const harness of ['gemini', 'dsh'] as const) expect(skillHomes(harness, '/h')).toEqual([]);
+  });
+
+  it('knows CodeBuddy by its command, since `custom` alone says nothing', () => {
+    expect(skillHomes('custom', '/h', '/usr/local/bin/codebuddy')).toEqual([
+      { dir: '/h/.codebuddy/skills', requires: '/h/.codebuddy' },
+    ]);
+    expect(skillHomes('custom', '/h', 'codebuddy')).toHaveLength(1);
+    for (const command of ['/opt/other/thing', '', undefined]) expect(skillHomes('custom', '/h', command)).toEqual([]);
+  });
+
+  it('lists every directory a link of ours could be sitting in, for the sweep', () => {
+    expect(allSkillDirs('/h').sort()).toEqual(
+      ['/h/.agents/skills', '/h/.claude/skills', '/h/.codebuddy/skills', '/h/.gemini/config/skills'].sort()
+    );
   });
 });
 

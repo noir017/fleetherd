@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -529,6 +531,39 @@ func TestEnsureLink(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(homeDir(), ".claude", "skills", "talkcode"), 0o755)
 	if got := link(); got != "occupied" {
 		t.Fatalf("over a real directory: %s", got)
+	}
+}
+
+func TestSweepSkillLinks(t *testing.T) {
+	d := testDaemon(t, "sweep")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	home := homeDir()
+	skills := filepath.Join(home, ".codebuddy", "skills")
+	_ = os.MkdirAll(skills, 0o755)
+	_ = os.MkdirAll(filepath.Join(home, ".talkcode", "remote", "2.22.0-live", "skill"), 0o755)
+
+	// What an upgrade leaves behind: a link into a version directory that no longer exists. The
+	// other two are the ones it must not touch — a link into the running version, and the
+	// operator's own link somewhere else.
+	dead := filepath.Join(skills, "talkcode")
+	live := filepath.Join(skills, "super")
+	mine := filepath.Join(skills, "notes")
+	_ = os.Symlink(filepath.Join(home, ".talkcode", "remote", "2.17.0-gone", "skill"), dead)
+	_ = os.Symlink(filepath.Join(home, ".talkcode", "remote", "2.22.0-live", "skill"), live)
+	_ = os.Symlink(filepath.Join(home, "elsewhere"), mine)
+
+	_, res, _ := rpc(t, g, &Header{Op: "sweepSkillLinks", Path: "~/.codebuddy/skills"}, nil)
+	removed, _ := res["removed"].([]any)
+	if len(removed) != 1 || removed[0] != dead {
+		t.Fatalf("removed %v, want only %s", removed, dead)
+	}
+	if _, err := os.Lstat(dead); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("dead link still there: %v", err)
+	}
+	for _, keep := range []string{live, mine} {
+		if _, err := os.Lstat(keep); err != nil {
+			t.Fatalf("removed a link it does not own: %s (%v)", keep, err)
+		}
 	}
 }
 

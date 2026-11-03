@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **CodeBuddy Code gets the bundled skills, and the dead link it was left with is swept away.**
+  The links were made for claude, codex, opencode and agy only; a `custom` harness — how CodeBuddy
+  is configured — got none, so the operator had linked `~/.codebuddy/skills/{talkcode,super}` by
+  hand into `~/.talkcode/remote/<version>/skill`. That directory is deleted on upgrade, and nothing
+  repointed a link no spawn was responsible for: both hosts ended up with a dangling link, and every
+  CodeBuddy session ran without the skill (no `/super` either) — including the one that would have
+  used `talkcode send-file`. A `custom` harness whose command is `codebuddy` now maps to
+  `~/.codebuddy/skills` like the others, so the next spawn repoints it; and once per version each
+  known skill directory is swept for links into a version directory that is gone, so a mapping
+  dropped in a later release cannot leave a link dead forever.
+
 ## [2.23.0] - 2026-11-03
 
 ### Added

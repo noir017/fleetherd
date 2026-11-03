@@ -10,7 +10,7 @@ import { packageVersion, remoteBinary, sshTransport } from '../remote/binaries.j
 import type { Welcome } from '../remote/connection.js';
 import { RemoteHost, type CliBridge, type CliSession } from '../remote/host.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { BUNDLED_SKILLS, bundledSkillDir, skillHomes } from './skill-link.js';
+import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes } from './skill-link.js';
 
 /**
  * The daemon's remote hosts (`hosts:` in config.yaml): one RemoteHost per entry, shared by every
@@ -142,24 +142,32 @@ export class RemoteHosts {
   }
 
   /**
-   * Put the bundled skills where `harness` reads skills on the host (skill-link.ts says where, and
+   * Put the bundled skills where `def` reads skills on the host (skill-link.ts says where, and
    * why only for a harness that has run there). The files go into the version's own directory, so
    * an upgrade retires them along with the old build, and the links are repointed by the next
    * spawn. Best-effort, like the local link: an agent without the skills still has its tools.
+   *
+   * Once per version, before linking, the links an older build left behind are swept: a link into a
+   * version directory that no longer exists is dead, and only a spawn of the harness it was made for
+   * would repoint it — so one made for a harness this build no longer maps would stay dead forever.
    */
-  async placeSkill(host: RemoteHost, harness: AgentDef['harness'], home: string, w: Welcome): Promise<void> {
+  async placeSkill(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<void> {
     if (process.env.TALKCODE_NO_SKILL_LINK) return;
-    const homes = skillHomes(harness, home);
-    if (homes.length === 0) return;
     const base = `${w.home}/.talkcode/remote/${w.version}`;
     const key = `${host.id}@${w.version}@${w.instance}`;
+    const homes = skillHomes(def.harness, home, def.command);
     try {
       if (!this.skillPlaced.has(key)) {
-        for (const skill of BUNDLED_SKILLS) {
-          const source = bundledSkillDir(skill.dir);
-          for (const rel of listFiles(source)) {
-            await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
+        if (homes.length > 0) {
+          for (const skill of BUNDLED_SKILLS) {
+            const source = bundledSkillDir(skill.dir);
+            for (const rel of listFiles(source)) {
+              await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
+            }
           }
+        }
+        for (const dir of allSkillDirs(home)) {
+          for (const link of await host.sweepSkillLinks(dir)) console.log(`[skill] ${host.id}: removed dead link ${link}`);
         }
         this.skillPlaced.add(key);
       }
