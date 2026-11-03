@@ -58,7 +58,9 @@ registered there by hand: `help` is local and never reaches the daemon, and `mcp
 front door rather than a command of its own.)
 
 The catalog: `send-message`, `reply`, `edit-message`, `send-file`, `react`, `delete`,
-`fetch-messages`, `create-thread`, `ask`, `voice-log`, `channels`, `schedule`.
+`fetch-messages`, `create-thread`, `ask`, `voice-log`, `channels`, `schedule`, the sub-agent
+`task-*` commands, `reload`, and `pods` / `pod-add` / `pod-remove` (the machines agents run on,
+`daemon/pod-admin.ts`).
 
 ## What an agent is told: nothing. What it can find
 

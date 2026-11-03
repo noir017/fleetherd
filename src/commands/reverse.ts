@@ -344,6 +344,9 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown) => string
   'schedule-list': renderScheduleList,
   // Already a sentence written for a person (it is also the reply to /reload in chat).
   'reload-config': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
+  'pod-add': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
+  'pod-remove': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
+  'pod-list': (data) => toon(data ?? {}),
   'task-agents': renderTaskAgents,
   'task-list': renderTaskList,
   'task-new': renderTaskProposed,

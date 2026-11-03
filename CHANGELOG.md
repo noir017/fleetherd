@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **An agent can add a machine to the gateway: `talkcode pod-add`.** Adding a host meant editing
+  the gateway's config.yaml, scanning the host's key into its known_hosts and copying the gateway's
+  key into the host's authorized_keys, all by hand on the gateway. Now `talkcode pods` prints the
+  line the new host needs, `talkcode pod-add <name> <user@address:port> --host-key "<key>"` writes
+  the `hosts:` entry and pins the key, reloads, and answers with the agents it found there;
+  `talkcode pod-remove` takes a host out. The host key is given, read on the host, never fetched:
+  the gateway still never learns a key by itself. See `talkcode help pods`.
+- **Hosts can ssh to one another: `peer:` in a host's pod.yaml.** Every pair of machines that needed
+  to reach each other needed keys, known_hosts entries and an ssh alias set up by hand, in both
+  directions. A host with `peer:` now joins a mesh: each gets a key of its own, made on the host,
+  and the gateway writes the others' keys, host keys and a `Host <name>.pod` block into
+  `~/.talkcode/ssh/` on every reload, so `ssh <name>.pod` — scp, rsync, git, -L/-R included — works
+  between any two of them. The connections are direct; the gateway only sets them up. The host keys
+  are the ones the gateway already checks each host against. The host's sshd and ssh have to read
+  those files (two lines, already in the uniagent image). See
+  [Remote hosts](docs/remote-hosts.md#pod-to-pod-ssh-peer).
+
 ## [2.21.0] - 2026-11-03
 
 ### Added

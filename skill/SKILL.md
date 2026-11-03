@@ -5,7 +5,7 @@ description: >-
   surviving restarts; post to another chat or topic; read earlier messages in the
   conversation; reply to, edit, react to or delete a message; open a thread; ask with
   buttons; check what a voice message said — all through the `talkcode` command. Also
-  for diagnosing or reconfiguring talkcode itself.
+  for diagnosing or reconfiguring talkcode itself, and the machines its agents run on.
 ---
 
 # talkcode
@@ -33,6 +33,7 @@ current. `talkcode help` lists the topics.
 | `ask` | a question with buttons that blocks until answered — only without a question tool of your own |
 | `voice` | what a voice message actually said, when one reads like a mishearing |
 | `config` | applying an edited config.yaml without a restart |
+| `pods` | the machines agents run on: adding or removing one, the agents it declares, ssh between them |
 | `tasks` | handing parts of a job to other agents (sub-agents) that run in parallel — the person confirms each start; web UI only |
 
 ## Output and errors

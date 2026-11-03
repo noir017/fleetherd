@@ -54,6 +54,20 @@ agents:
 
 主机必须是 x86-64 或 arm64 的 Linux，并且有 POSIX `sh`。其他什么都不用装。
 
+### 在聊天里加：`talkcode pod-add`
+
+上面第 1–3 步智能体可以自己做（`talkcode help pods`）：
+
+1. `talkcode pods` 会打印 `gatewayKey`，也就是新主机 authorized_keys 里要加的那一行（网关第一次用时会自己生成密钥）。
+   它带 `restrict`，`from=` 限定为私网地址段。
+2. 在那台主机上把这一行追加到 `~/.ssh/authorized_keys`，并在主机上读出它的主机公钥——比如
+   `/etc/ssh/ssh_host_ed25519_key.pub`——而不是用 `ssh-keyscan` 去扫：以后每次连接都要拿它来核对。
+3. `talkcode pod-add devbox me@10.0.0.5:22 --host-key "ssh-ed25519 AAAA…"` 会往 config.yaml 里加
+   `hosts.devbox`（保留注释），把公钥钉进网关的 known_hosts，然后 reload，并回复在那台主机上找到了哪些智能体。
+
+`talkcode pod-remove devbox` 把一台主机连同它的智能体一起移除。config.yaml 里还用到它时会被拒绝——那里写了跑在它上面的
+智能体，或者 routing 指向它的某个智能体。
+
 ## 主机自己声明的智能体：`~/.talkcode/pod.yaml`
 
 主机可以自己说明它有哪些智能体，不必在 config.yaml 里一个个列出来。这样 config.yaml 只需要写 `hosts:`：
@@ -82,6 +96,39 @@ agents:
   会存在配置目录的 `pods.json` 里，所以连不上的主机会保留它原有的智能体；文件写错的主机也一样保留，
   reload 的回复里会说明哪里写错了。
 - `/setting model` 改不了这类智能体：它的定义在主机上。去改那个文件，或者用 `/model` 只改当前会话。
+
+### 主机之间互相 ssh：`peer:`
+
+主机之间可以互相 ssh，不用有人去配两两之间的密钥。pod.yaml 里有 `peer:` 的主机会加入互通；`/reload` 之后，
+在其中任意一台上：
+
+```bash
+ssh devbox.pod            # 交互终端；scp、rsync、git 和 -L/-R 都和普通 ssh 主机一样能用
+```
+
+```yaml
+# ~/.talkcode/pod.yaml
+peer:                     # 加入互通
+  ssh: me@10.0.0.5:2222   # 可选：别的主机怎么连这台，和网关连它的方式不同时才写
+```
+
+连接是主机之间直连的普通 OpenSSH，网关一字节都不经手。它只负责配置：互通里的每台主机有一把自己的密钥
+（在主机上生成，`~/.talkcode/ssh/id_ed25519`），网关在旁边写好其他主机的公钥（`authorized_keys`，只能从私网地址段登录）、
+它们以 `<主机>.pod` 命名的主机公钥（`known_hosts`，取自网关自己的 known_hosts——网关本来就拿它核对这些主机），
+以及每台一个 `Host <主机>.pod` 块（`config`）。网关每次启动和 `/reload` 都会重写。
+
+主机要用上这些文件，它的 sshd 得读第二个 `authorized_keys`，ssh 得读这份 `config`——两行配置，uniagent 镜像里已经有了：
+
+```
+# sshd_config
+AuthorizedKeysFile .ssh/authorized_keys .talkcode/ssh/authorized_keys
+AllowTcpForwarding yes        # 为了 -L/-R；带 restrict 的钥匙照样没有转发
+# ssh_config（比如 /etc/ssh/ssh_config.d/20-talkcode-pods.conf）
+Include /home/<用户>/.talkcode/ssh/config
+```
+
+互通里的每台主机都能登录其他每一台：加不加入由主机自己决定（`peer:` 写在它自己的文件里，不在网关的配置里），
+谁拿下其中一台，就等于拿下了全部。去掉 `peer:` 再 reload，这台主机上的那几个文件会被清空，其他主机也不再信任它。
 
 ### 给智能体改名
 

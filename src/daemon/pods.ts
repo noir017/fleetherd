@@ -94,7 +94,13 @@ async function readPodUnbounded(host: PodHost, configured: boolean, signal: Abor
     const ids = parsed.data.agents.map((a) => a.id);
     const twice = ids.find((id, i) => ids.indexOf(id) !== i);
     if (twice) return { kind: 'kept', note: `${host.id}: ~/${POD_FILE} names agent "${twice}" twice; kept what was read before` };
-    return { kind: 'record', record: { source: 'file', agents: parsed.data.agents, at: now.toISOString() } };
+    const record: PodRecord = { source: 'file', agents: parsed.data.agents, at: now.toISOString() };
+    if (parsed.data.peer !== undefined) {
+      const key = await peerKey(host, signal);
+      if (typeof key !== 'string') return { kind: 'kept', note: `${host.id}: ${key.error}; kept what was read before` };
+      record.peer = { key, ...(parsed.data.peer?.ssh ? { ssh: parsed.data.peer.ssh } : {}) };
+    }
+    return { kind: 'record', record };
   }
   if (configured) return { kind: 'none' };
   const script = hostProbeScript(PROBES.map((p) => ({ command: p.command })));
@@ -105,6 +111,25 @@ async function readPodUnbounded(host: PodHost, configured: boolean, signal: Abor
   const { missing, unchecked } = readHostProbe(PROBES.map((p) => ({ command: p.command })), r.output.toString('utf8'));
   const found = PROBES.filter((p) => !missing.includes(p.command) && !unchecked.includes(p.command)).map((p) => p.agent);
   return { kind: 'record', record: { source: 'probe', agents: found, at: now.toISOString() } };
+}
+
+/** Where a pod keeps what the mesh needs (pod-peers.ts): its key, and the files the gateway writes. */
+export const PEER_DIR = '.talkcode/ssh';
+
+/**
+ * The pod's mesh key, made on the pod the first time (so the private half never leaves it), as
+ * `<type> <base64>`. ssh-keygen is there wherever sshd is.
+ */
+async function peerKey(host: PodHost, signal: AbortSignal): Promise<string | { error: string }> {
+  const d = `"$HOME/${PEER_DIR}"`;
+  const script =
+    `mkdir -p ${d} && chmod 700 ${d} && ` +
+    `{ test -f ${d}/id_ed25519 || ssh-keygen -q -t ed25519 -N "" -C talkcode-peer@${host.id} -f ${d}/id_ed25519 </dev/null; } && ` +
+    `cat ${d}/id_ed25519.pub`;
+  const r = await host.run({ argv: ['sh', '-c', script], timeoutMs: 15_000 }, signal);
+  const key = /^(ssh-ed25519 [A-Za-z0-9+/=]+)/.exec(r.output.toString('utf8').trim())?.[1];
+  if (r.code === 0 && key) return key;
+  return { error: `peer: could not make its key in ~/${PEER_DIR} (${r.spawnError || r.stderr?.trim() || `exit ${r.code}`})` };
 }
 
 /** The hosts config.yaml itself places agents on (raw file: `agents[].host`). */
@@ -125,7 +150,7 @@ export async function refreshPods(opts: {
   host(id: string): PodHost | undefined;
   configured: Set<string>;
   timeoutMs: number;
-}): Promise<{ changed: boolean; notes: string[] }> {
+}): Promise<PodsRefresh> {
   const before = readPods(opts.dir);
   const after: PodsState = {};
   const notes: string[] = [];
@@ -135,6 +160,7 @@ export async function refreshPods(opts: {
       return [id, host ? await readPod(host, opts.configured.has(id), opts.timeoutMs) : ({ kind: 'none' } as const)] as const;
     })
   );
+  const answered = reads.filter(([, r]) => r.kind !== 'kept').map(([id]) => id);
   for (const [id, read] of reads) {
     if (read.kind === 'record') {
       const old = before[id];
@@ -147,11 +173,21 @@ export async function refreshPods(opts: {
   }
   const changed = JSON.stringify(before) !== JSON.stringify(after);
   if (changed) writePods(opts.dir, after);
-  return { changed, notes };
+  return { changed, notes, read: answered };
+}
+
+/** What one pass over the pods did. */
+export interface PodsRefresh {
+  /** pods.json changed, so the config has to be read again for it to apply. */
+  changed: boolean;
+  /** One line per host that kept what it had, and why. */
+  notes: string[];
+  /** The hosts answered this time — the ones the mesh files can be written to now. */
+  read: string[];
 }
 
 function same(a: PodRecord, b: PodRecord): boolean {
-  return a.source === b.source && JSON.stringify(a.agents) === JSON.stringify(b.agents);
+  return a.source === b.source && JSON.stringify([a.agents, a.peer]) === JSON.stringify([b.agents, b.peer]);
 }
 
 function firstLine(e: unknown): string {

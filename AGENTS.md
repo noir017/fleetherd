@@ -225,6 +225,12 @@ Do not weaken these without saying so explicitly in the PR:
    The agents a host declares in its `pod.yaml` (`daemon/pods.ts`) are its own, named `<id>@<host>`
    so they can never stand in for another's, and their text is used as written — never
    `${VAR}`-expanded, which would hand a host the gateway's environment (`PodAgentSchema`).
+   Two reverse commands do touch the gateway's setup, and only this much: `pod-add` / `pod-remove`
+   (`daemon/pod-admin.ts`) add or remove a `hosts:` entry with its pinned key — the key is given by
+   whoever adds the host, never fetched, so the gateway still learns no key by itself. A host joins
+   the pod-to-pod ssh mesh (`daemon/pod-peers.ts`) only by its own `peer:`; the gateway then lets
+   every member log in to every other, from private addresses only, vouching for each with the host
+   key it pins itself. Opening one host to another is never the gateway's own initiative.
 6. **No sub-agent starts without the person.** `task-new` only proposes: every sub-task waits on
    a card that shows it in full until the person taps Start (`Delegation.putUp`, buttons only — a
    typed reply is the person's next message, never a yes), and nothing an agent says can start one.

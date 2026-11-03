@@ -60,6 +60,22 @@ agents:
 
 The host must be Linux on x86-64 or arm64, with a POSIX `sh`. Nothing else is needed on it.
 
+### From a chat: `talkcode pod-add`
+
+An agent can do steps 1–3 itself (`talkcode help pods`):
+
+1. `talkcode pods` prints `gatewayKey`, the authorized_keys line for the new host (the gateway makes
+   its key the first time). It carries `restrict` and a `from=` of private address ranges.
+2. On the host, append that line to `~/.ssh/authorized_keys`, and read its host key there — say
+   `/etc/ssh/ssh_host_ed25519_key.pub` — rather than with `ssh-keyscan`: it is what every connection
+   will be checked against.
+3. `talkcode pod-add devbox me@10.0.0.5:22 --host-key "ssh-ed25519 AAAA…"` adds `hosts.devbox` to
+   config.yaml (comments kept), pins the key in the gateway's known_hosts, reloads, and answers with
+   the agents it found there.
+
+`talkcode pod-remove devbox` takes a host out, with its agents. It is refused while config.yaml still
+names it — agents written for it there, or routing that names one of its agents.
+
 ## Agents the host declares: `~/.talkcode/pod.yaml`
 
 A host can say which agents it has, instead of config.yaml listing them. Then `hosts:` is all
@@ -93,6 +109,43 @@ agents:
   says what is wrong with it.
 - `/setting model` cannot change such an agent: its definition is on the host. Edit the file, or
   use `/model` for one conversation.
+
+### Pod-to-pod ssh: `peer:`
+
+Hosts can ssh to one another without anyone setting up keys between them. A host whose pod.yaml
+has `peer:` joins the mesh; after a `/reload`, from any host in it:
+
+```bash
+ssh devbox.pod            # a terminal; scp, rsync, git and -L/-R work as with any ssh host
+```
+
+```yaml
+# ~/.talkcode/pod.yaml
+peer:                     # join the mesh
+  ssh: me@10.0.0.5:2222   # optional: how the other hosts reach this one, if not how the gateway does
+```
+
+The connections are plain OpenSSH between the hosts; the gateway carries none of it. What it does
+is the setup: each host in the mesh gets a key of its own (made on the host, in
+`~/.talkcode/ssh/id_ed25519`), and the gateway writes, beside it, the other hosts' keys
+(`authorized_keys`, usable only from private address ranges), their host keys under `<host>.pod`
+(`known_hosts`, taken from the gateway's own known_hosts — what it already checks them against) and
+a `Host <host>.pod` block for each (`config`). Rewritten on every gateway start and `/reload`.
+
+For a host to use those files, its sshd has to read the second `authorized_keys` and its ssh the
+`config` — two lines, which the uniagent image already has:
+
+```
+# sshd_config
+AuthorizedKeysFile .ssh/authorized_keys .talkcode/ssh/authorized_keys
+AllowTcpForwarding yes        # for -L/-R; keys with `restrict` stay without it
+# ssh_config (e.g. /etc/ssh/ssh_config.d/20-talkcode-pods.conf)
+Include /home/<user>/.talkcode/ssh/config
+```
+
+Every host in the mesh can log in to every other: joining is the host's own decision (`peer:` is in
+its file, not the gateway's config), and one host in it is as good as all of them to whoever gets
+into it. Remove `peer:` and reload, and the host's files are emptied; the others stop trusting it.
 
 ### Renaming agents
 

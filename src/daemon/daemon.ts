@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentDef, Config } from '../config/schema.js';
+import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { accessUnrestricted, agentDisplayName, findAgent } from '../config/schema.js';
 import { configDir, readConfig, readRawConfigIfExists, UNRESTRICTED_WARNING, type ReadConfig } from '../config/load.js';
 import { applyConfig, describeReload, diffConfig } from './config-reload.js';
@@ -75,8 +75,11 @@ import { OutboundPacer } from '../core/outbound-pacer.js';
 import { splitIntoChunks } from '../core/stream-buffer.js';
 import { formatEmptyCatalog, formatSkillCatalog } from '../core/skills-catalog.js';
 import { expandRemoteHome, remoteAgentEnv, remoteAgentHome, resolveConversationCwd } from './agent-common.js';
-import { remoteHosts } from './remote-hosts.js';
+import { knownHostsFileOf, remoteHosts } from './remote-hosts.js';
 import { hostsWithConfiguredAgents, refreshPods } from './pods.js';
+import { leaveMesh, peerName, readKnownHosts, syncPeers } from './pod-peers.js';
+import { addPod, gatewayKeyLine, removePod } from './pod-admin.js';
+import { readPods } from '../config/pods.js';
 import {
   agentHome,
   opencodeSkillDirs,
@@ -193,6 +196,9 @@ const GATEWAY_QUERY_KINDS = {
   'schedule-list': true,
   'schedule-op': true,
   'reload-config': true,
+  'pod-list': true,
+  'pod-add': true,
+  'pod-remove': true,
 } as const satisfies Partial<Record<IpcAction['kind'], true>>;
 type GatewayQuery = Extract<IpcAction, { kind: keyof typeof GATEWAY_QUERY_KINDS }>;
 const isGatewayQuery = (a: IpcAction): a is GatewayQuery => a.kind in GATEWAY_QUERY_KINDS;
@@ -781,6 +787,8 @@ export class Daemon {
   private readonly socketPath: string;
   /** The last read of the pods, so the next one waits for it (refreshPods). */
   private podsRead: Promise<unknown> = Promise.resolve();
+  /** How each host's last read went, for `talkcode pods`: when, and why it kept its old entry. */
+  private readonly podReads = new Map<string, { at: Date; note?: string }>();
 
   /** Sub-agents: the task commands, their confirmation cards, and the updates (daemon/delegation.ts). */
   private readonly delegation: Delegation;
@@ -1276,6 +1284,29 @@ export class Daemon {
           if (!reload.ok) throw new Error(reload.summary);
           return reload;
         });
+      case 'pod-list':
+        return this.podList();
+      case 'pod-add':
+        // Throws, before anything is written, what is wrong with the request (pod-admin.ts).
+        addPod(action.name, action.ssh, action.hostKey);
+        return this.reloadAll().then((r) => ({
+          summary: [
+            `Added ${action.name} (${action.ssh}); its host key is pinned in the gateway's known_hosts.`,
+            `If it was not reached below, put this line in ~/.ssh/authorized_keys on ${action.name}, then \`talkcode reload\`:`,
+            gatewayKeyLine(),
+            r.summary,
+          ].join('\n'),
+        }));
+      case 'pod-remove': {
+        removePod(action.name);
+        // Still reachable through the old host table until the reload replaces it.
+        const leaving = remoteHosts.get(action.name);
+        return (leaving ? leaveMesh(leaving, RELOAD_POD_TIMEOUT_MS) : Promise.resolve(undefined))
+          .then(async (note) => ({ note, reload: await this.reloadAll() }))
+          .then(({ note, reload }) => ({
+            summary: [`Removed ${action.name}.`, ...(note ? [`⚠️ ${note}`] : []), reload.summary].join('\n'),
+          }));
+      }
       default: {
         const _exhaustive: never = action;
         throw new Error(`unknown gateway query: ${JSON.stringify(_exhaustive)}`);
@@ -1292,8 +1323,9 @@ export class Daemon {
   async reloadAll(): Promise<{ ok: boolean; summary: string }> {
     let notes: string[] = [];
     try {
-      remoteHosts.configure(readConfig().config, this.socketPath);
-      notes = (await this.refreshPods(RELOAD_POD_TIMEOUT_MS)).notes;
+      const next = readConfig().config;
+      remoteHosts.configure(next, this.socketPath);
+      notes = (await this.refreshPods(RELOAD_POD_TIMEOUT_MS, next.hosts)).notes;
     } catch (e) {
       // A file that does not load: reloadConfig reads it again and says what is wrong.
       console.warn(`[pods] not read before this reload: ${e instanceof Error ? e.message.split('\n')[0] : e}`);
@@ -1303,16 +1335,32 @@ export class Daemon {
     return { ok: true, summary: [reload.summary, ...notes.map((n) => `- ⚠️ pods: ${n}`)].join('\n') };
   }
 
-  /** Read every host's pod into pods.json; serialized, as the startup read and a reload can meet. */
-  private refreshPods(timeoutMs: number): Promise<{ changed: boolean; notes: string[] }> {
-    const run = (): Promise<{ changed: boolean; notes: string[] }> =>
-      refreshPods({
+  /**
+   * Read every host's pod into pods.json, then put the pod-to-pod ssh files on the ones that answered
+   * (pod-peers.ts). Serialized, as the startup read and a reload can meet. `hosts`: the table about
+   * to apply — a reload's, before it is the live one.
+   */
+  private refreshPods(timeoutMs: number, hosts: Record<string, HostDef> = this.config.hosts ?? {}): Promise<{ changed: boolean; notes: string[] }> {
+    const run = async (): Promise<{ changed: boolean; notes: string[] }> => {
+      const r = await refreshPods({
         dir: configDir(),
         hostIds: remoteHosts.ids(),
         host: (id) => remoteHosts.get(id),
         configured: hostsWithConfiguredAgents(readRawConfigIfExists()),
         timeoutMs,
       });
+      const at = new Date();
+      for (const id of r.read) this.podReads.set(id, { at });
+      for (const note of r.notes) this.podReads.set(note.slice(0, note.indexOf(':')), { at, note });
+      const meshNotes = await syncPeers({
+        pods: readPods(configDir()),
+        hosts,
+        reachable: r.read,
+        host: (id) => remoteHosts.get(id),
+        knownHostsText: (def) => readKnownHosts(knownHostsFileOf(def)),
+      });
+      return { changed: r.changed, notes: [...r.notes, ...meshNotes] };
+    };
     const next = this.podsRead.then(run, run);
     this.podsRead = next.catch(() => undefined);
     return next;
@@ -1368,6 +1416,28 @@ export class Daemon {
     const summary = describeReload(diff, respawn, read.envChanges, warnings);
     console.log(`[reload] ${summary.replace(/\n/g, ' | ')}`);
     return { ok: true, summary };
+  }
+
+  /**
+   * `talkcode pods`: every host, the agents it has and where they were read from, whether it is in
+   * the ssh mesh, and how its last read went — plus the line a new host needs to let the gateway in.
+   */
+  private podList(): { gatewayKey: string; pods: Array<Record<string, string>> } {
+    const pods = readPods(configDir());
+    const explicit = hostsWithConfiguredAgents(readRawConfigIfExists());
+    const rows = Object.entries(this.config.hosts ?? {}).map(([id, def]) => {
+      const read = this.podReads.get(id);
+      const from = explicit.has(id) ? 'config.yaml' : pods[id]?.source === 'file' ? 'pod.yaml' : pods[id]?.source === 'probe' ? 'PATH' : '-';
+      return {
+        pod: id,
+        ssh: def.ssh,
+        agents: this.config.agents.filter((a) => a.host === id).map((a) => a.id).join(' ') || '-',
+        from,
+        peer: pods[id]?.peer ? peerName(id) : '-',
+        lastRead: !read ? 'not yet' : `${read.at.toISOString().slice(0, 19)}Z ${read.note ? `kept old: ${read.note.slice(id.length + 2)}` : 'ok'}`,
+      };
+    });
+    return { gatewayKey: gatewayKeyLine(), pods: rows };
   }
 
   /** The schedule service, or a sentence saying this daemon was started without one. */

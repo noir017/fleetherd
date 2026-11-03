@@ -71,6 +71,21 @@ describe('readPod', () => {
     ]);
   });
 
+  it('makes a pod in the mesh its own key, once, and reports only the public half', async () => {
+    podFile('agents: []\npeer:\n  ssh: user@10.1.2.3:2222\n');
+    // This test needs a real ssh-keygen, so the host's PATH includes the system's.
+    const h = { ...host(), run: async (o: RunOptions): Promise<RunResult> => {
+      const r = spawnSync('/bin/sh', o.argv!.slice(1), { env: { PATH: '/usr/bin:/bin', HOME: home }, encoding: 'buffer' });
+      return { code: r.status, output: r.stdout, stderr: r.stderr.toString() };
+    } };
+    const first = await readPod(h, false, 10_000);
+    if (first.kind !== 'record') throw new Error(JSON.stringify(first));
+    expect(first.record.peer).toEqual({ key: expect.stringMatching(/^ssh-ed25519 [A-Za-z0-9+/=]+$/), ssh: 'user@10.1.2.3:2222' });
+    expect(fs.statSync(path.join(home, '.talkcode/ssh')).mode & 0o777).toBe(0o700);
+    const again = await readPod(h, false, 10_000);
+    expect(again.kind === 'record' && again.record.peer?.key).toBe(first.record.peer?.key);
+  });
+
   it('reads an empty pod.yaml as a pod with no agents', async () => {
     podFile('');
     expect(await readPod(host(), false, 5_000)).toMatchObject({ kind: 'record', record: { agents: [] } });
