@@ -66,6 +66,7 @@ export type HelpTopicName =
   | 'ask'
   | 'voice'
   | 'config'
+  | 'pods'
   | 'tasks';
 
 export interface HelpTopic {
@@ -146,6 +147,17 @@ export const HELP_TOPICS: HelpTopic[] = [
       'Nothing is applied when the file does not load: the error says what is wrong and the gateway keeps running on the old config. Fix it and reload again.',
       'Agents, routing, access, session, display, title and voice apply at once. A changed agent restarts its process on the conversation\'s next message and resumes its session — including the agent you are, if you change your own definition. A turn already running finishes on the old definition. A new `model` only applies to new sessions (/new).',
       'platforms (credentials, instances) only change on a daemon restart, which ends every conversation\'s agent process, yours included; reload says when one is needed. Restarting is the user\'s call, not yours.',
+    ],
+  },
+  {
+    name: 'pods',
+    summary: 'The machines agents run on: add one, remove one, declare its agents, ssh between them',
+    notes: [
+      'A pod is a machine the gateway reaches over ssh to run agents (the `hosts:` of its config). `pods` lists them with their agents, and prints `gatewayKey` — the line a new machine needs in its ~/.ssh/authorized_keys.',
+      'Adding one: on the machine, append `gatewayKey` to ~/.ssh/authorized_keys and read its host key there (`cat /etc/ssh/ssh_host_ed25519_key.pub`, or wherever its sshd keeps it) — read it on the machine, not with ssh-keyscan, since this is what every connection will be checked against. Then `pod-add <name> <user@address[:port]> --host-key "<that line>"`. It answers with the agents found there.',
+      'Its agents: ~/.talkcode/pod.yaml on the machine lists them (`agents:`, the fields of a config.yaml agent without `host`); the gateway names them `<id>@<name>`. Without the file it offers each harness command it finds on the login PATH (claude-agent-acp, codex-acp, opencode, agy, codebuddy). After editing the file, `reload`. Values are used as written: ${VAR} is refused.',
+      'Pod-to-pod ssh: `peer:` in a machine\'s pod.yaml puts it in the mesh — after a `reload`, every pod with `peer:` can `ssh <name>.pod` (and scp, rsync, git) to every other. `peer: { ssh: user@address:port }` when the others reach it differently from the gateway. Needs the machine\'s sshd to read ~/.talkcode/ssh/authorized_keys and its ssh to include ~/.talkcode/ssh/config (uniagent images do).',
+      '`pod-remove <name>` takes a machine out (its agents go with it). Refused while config.yaml itself still names it.',
     ],
   },
   {
@@ -605,6 +617,38 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     build: (positionals, opts) => {
       refuseChannel('task-stop', opts);
       return { kind: 'task-stop', topic: pos(positionals, 0, 'topic') };
+    },
+  },
+  {
+    usage: 'pods',
+    topic: 'pods',
+    description: 'The machines agents run on: address, agents (and where they were read from), whether in the ssh mesh, the last read; and the authorized_keys line for a new one',
+    options: [],
+    build: (_positionals, opts) => {
+      refuseChannel('pods', opts);
+      return { kind: 'pod-list' };
+    },
+  },
+  {
+    usage: 'pod-add <name> <ssh>',
+    topic: 'pods',
+    description: 'Add a machine: <name> for its agents (<id>@<name>), <ssh> as user@address[:port]; prints what was found there',
+    options: [{ flags: '--host-key <line>', description: "the machine's public host key line, read on the machine (required)" }],
+    build: (positionals, opts) => {
+      refuseChannel('pod-add', opts);
+      const hostKey = str(opts.hostKey);
+      if (!hostKey) throw new Error('pod-add needs --host-key "<type> <base64>", read on the machine itself (e.g. /etc/ssh/ssh_host_ed25519_key.pub)');
+      return { kind: 'pod-add', name: pos(positionals, 0, 'name'), ssh: pos(positionals, 1, 'ssh'), hostKey };
+    },
+  },
+  {
+    usage: 'pod-remove <name>',
+    topic: 'pods',
+    description: 'Remove a machine and its agents from the gateway (the machine itself is not touched)',
+    options: [],
+    build: (positionals, opts) => {
+      refuseChannel('pod-remove', opts);
+      return { kind: 'pod-remove', name: pos(positionals, 0, 'name') };
     },
   },
   {

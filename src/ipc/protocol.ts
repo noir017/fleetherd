@@ -143,6 +143,18 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('schedule-list'), id: z.string().min(1).optional() }).strict(),
   // About the whole deployment: no target, so no channelId.
   z.object({ kind: z.literal('reload-config') }).strict(),
+  // The hosts (pods) agents run on (daemon/pod-admin.ts). The daemon validates the values in full;
+  // these bounds only keep a malformed request from carrying a megabyte.
+  z.object({ kind: z.literal('pod-list') }).strict(),
+  z
+    .object({
+      kind: z.literal('pod-add'),
+      name: z.string().min(1).max(32),
+      ssh: z.string().min(1).max(300),
+      hostKey: z.string().min(1).max(16_000),
+    })
+    .strict(),
+  z.object({ kind: z.literal('pod-remove'), name: z.string().min(1).max(32) }).strict(),
   z
     .object({ kind: z.literal('schedule-op'), id: z.string().min(1), op: z.enum(['remove', 'pause', 'resume', 'run']) })
     .strict(),
@@ -218,6 +230,9 @@ export type IpcAction =
     }
   | { kind: 'schedule-list'; id?: string }
   | { kind: 'reload-config' }
+  | { kind: 'pod-list' }
+  | { kind: 'pod-add'; name: string; ssh: string; hostKey: string }
+  | { kind: 'pod-remove'; name: string }
   | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run' }
   | { kind: 'task-agents' }
   | { kind: 'task-list'; limit?: number }

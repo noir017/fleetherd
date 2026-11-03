@@ -20,6 +20,11 @@ export interface PodRecord {
   /** `file`: its `~/.talkcode/pod.yaml`; `probe`: no such file, so the commands found on its PATH. */
   source: 'file' | 'probe';
   agents: unknown[];
+  /**
+   * In the pod-to-pod ssh mesh (`peer:` in its pod.yaml; daemon/pod-peers.ts): its own public key,
+   * and how the other pods reach it when that is not how the gateway does.
+   */
+  peer?: { key: string; ssh?: string };
   /** When it was read (ISO). */
   at: string;
 }

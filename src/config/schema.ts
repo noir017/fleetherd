@@ -211,8 +211,25 @@ export const PodAgentSchema = agentRules(
 );
 export type PodAgent = z.infer<typeof PodAgentSchema>;
 
-/** `~/.talkcode/pod.yaml` on a host. No `agents:` (or an empty list) = no agents there. */
-export const PodFileSchema = z.object({ agents: z.array(PodAgentSchema).default([]) }).strict();
+/** `user@host[:port]` — what ssh is given; nothing a shell would split or quote. */
+const SSH_DESTINATION = z.string().regex(/^[^\s'"]+$/, 'ssh must be user@host[:port], with no spaces or quotes');
+
+/**
+ * `~/.talkcode/pod.yaml` on a host. No `agents:` (or an empty list) = no agents there.
+ *
+ * `peer:` joins the pod-to-pod ssh mesh (daemon/pod-peers.ts): every pod that has it can ssh to every
+ * other as `<host>.pod`, with keys and host keys the gateway puts in place. Asked for by the pod
+ * itself, because it is the pod that becomes reachable — the gateway never opens one host to another
+ * on its own. `peer.ssh` is how the other pods reach this one, when that is not how the gateway does
+ * (a container the gateway reaches by its name on a private network, the others through a published
+ * port).
+ */
+export const PodFileSchema = z
+  .object({
+    agents: z.array(PodAgentSchema).default([]),
+    peer: z.object({ ssh: SSH_DESTINATION.optional() }).strict().nullable().optional(),
+  })
+  .strict();
 
 /** The id the gateway gives an agent a pod declared. */
 export function podAgentId(id: string, host: string): string {
@@ -230,7 +247,7 @@ export function podAgentId(id: string, host: string): string {
 export const HostDefSchema = z
   .object({
     /** `user@host`, optionally `:port` (an IPv6 literal in brackets). */
-    ssh: z.string().regex(/^[^\s'"]+$/, 'ssh must be user@host[:port], with no spaces or quotes'),
+    ssh: SSH_DESTINATION,
     /** Private key. Default: `<config dir>/ssh/id_ed25519`. */
     identityFile: z.string().min(1).optional(),
     /** known_hosts holding the host's key; checked strictly. Default: `<config dir>/ssh/known_hosts`. */

@@ -157,6 +157,8 @@ DMs always get a response regardless of `requireMention` (frozen behavior).
   env:                  # env vars injected into the agent subprocess; ${VAR} expands
     ANTHROPIC_API_KEY: ${MY_KEY}
   permissions: auto     # auto (default) | ask — see below
+  host: devbox          # runs on hosts.devbox (see `hosts` below); absent = this machine
+  group: build boxes    # the label /agent groups it under; default its host
   hooks:
     preLaunch: docker start my-agent   # bash -lc, run to completion before every spawn
     turnFailed:                        # optional: what happens after a failed turn
@@ -190,6 +192,20 @@ Notes:
   `startup`, `preLaunch`, `restart` (the gateway went down mid-turn), `other`. Each continue is
   announced in the chat first; anything the user sends, `/stop`, `/new` or `/kill` calls it off,
   and a turn that ends normally resets the count. See docs/agents.md.
+
+## `hosts` — machines agents run on
+
+```yaml
+hosts:
+  devbox:
+    ssh: user@10.0.0.5:22022   # the gateway logs in with ~/.config/talkcode/ssh/id_ed25519
+                               # and checks the host against ~/.config/talkcode/ssh/known_hosts
+```
+
+Don't add one by hand: `talkcode pod-add` writes the entry and pins the host key together, and
+`talkcode pods` prints the line the machine needs in its authorized_keys (`talkcode help pods`).
+A host usually declares its own agents in `~/.talkcode/pod.yaml` on it — the gateway names them
+`<id>@<host>` and they are not in this file; edit that file and `talkcode reload`.
 
 ## `routing`
 
