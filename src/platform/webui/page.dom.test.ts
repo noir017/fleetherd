@@ -2151,6 +2151,8 @@ describe('webui page: the settings screen', () => {
     await h.emit(sync('a1b2c3d4', [list()], ['a1b2c3d4']));
 
     expect(text(h, '.set-group')).toEqual(['Agent defaults', 'Conversation', 'More']);
+    // The old grid is not also drawn: the screen replaces it, it does not sit under it.
+    expect(h.doc.querySelector('.btns')).toBeNull();
     // Every row, in the daemon's order, is a button that posts its own id.
     expect(Array.from(h.doc.querySelectorAll('.set-row')).map((b) => b.getAttribute('data-btn'))).toEqual([
       'stg:r:0',
@@ -2172,6 +2174,7 @@ describe('webui page: the settings screen', () => {
   it('marks the current value in the value list, and says what each value means', async () => {
     const h = await open();
     await h.emit(sync('a1b2c3d4', [values()], ['a1b2c3d4']));
+    expect(h.doc.querySelector('.btns')).toBeNull();
 
     const current = h.doc.querySelector('.set-opt.on');
     expect(current?.getAttribute('data-btn')).toBe('stv:r:1');
