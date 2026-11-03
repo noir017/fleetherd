@@ -267,6 +267,21 @@ export class InboundMerger {
     else this.collect(msg); // the turn ended while this was being offered: start the next one
   }
 
+  /**
+   * Put a message behind whatever this conversation is doing, without offering it to the running
+   * turn.
+   *
+   * For `task-send --interrupt`: the turn was just stopped to make room for this message, and the
+   * dying turn must not be handed it — a harness still unwinding can accept a steer and then drop
+   * it with the abort, which is the one way this message could be lost. When nothing is running the
+   * message starts a turn as usual.
+   */
+  queueBehind(msg: InboundMessage): void {
+    void this.safeReaction(refOf(msg), this.opts.reactions.received);
+    if (this.phase === 'running' || this.phase === 'collecting') this.queued.push(msg);
+    else this.collect(msg);
+  }
+
   /** Merge window elapsed: hand the batch to the agent. */
   private async dispatch(): Promise<void> {
     this.collectTimer = null;

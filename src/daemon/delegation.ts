@@ -1,6 +1,8 @@
 import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
+import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
 import { parseTarget, type ConversationAddress } from '../core/conversation.js';
+import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
 import { topicStage } from '../core/topic-stage.js';
 import type {
@@ -11,9 +13,11 @@ import type {
   TaskNewResult,
   TaskReadResult,
   TaskRow,
+  TaskStatusResult,
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { ConversationId, TopicStage } from '../types.js';
+import type { AgentStatus, ConversationId, TopicActivity, TopicStage } from '../types.js';
+import type { LiveTurn } from './turn-progress.js';
 import type { ConversationRegistry } from './conversation.js';
 import { UPDATE_SENDER } from './turn-runner.js';
 
@@ -72,6 +76,17 @@ const PROPOSAL_TEXT_CHARS = 1_500;
 const READ_CHARS = 1_500;
 
 /**
+ * How much `task-read --full` returns per message, and in all.
+ *
+ * The per-message cut is what the tool bubble needs: in accumulate mode it holds a whole turn's
+ * commands, and 1500 characters is the first dozen of them. The total is the guard that keeps a
+ * `--full` read from becoming a second runaway turn — a hundred messages at 20k each is a quarter of
+ * a context window.
+ */
+const READ_FULL_CHARS = 20_000;
+const READ_TOTAL_CHARS = 80_000;
+
+/**
  * Whether a platform can hold sub-agents: the relation is the platform's own record of which topic
  * opened which (`parentOf`/`childrenOf`), so one without it has nowhere to put them. The one test,
  * shared by the refusal of a task command here, the slash menu (`/super` is registered only where
@@ -93,6 +108,9 @@ type Registry = Pick<
   | 'laneFor'
   | 'activityOf'
   | 'replyExcerptOf'
+  | 'progressOf'
+  | 'runningSince'
+  | 'statusOf'
   | 'stopConversation'
   | 'stopWithPending'
   | 'runScheduledPrompt'
@@ -189,9 +207,11 @@ export class Delegation {
       case 'task-new':
         return this.propose(here, action);
       case 'task-send':
-        return this.send(here, action.topic, action.text);
+        return this.send(here, action.topic, action.text, action.interrupt === true);
       case 'task-read':
-        return this.read(here, action.topic, action.limit ?? 10);
+        return this.read(here, action.topic, action.limit ?? 10, { full: action.full === true, tail: action.tail });
+      case 'task-status':
+        return this.status(here, action.topic);
       case 'task-stop':
         return this.stop(here, action.topic);
       default: {
@@ -342,30 +362,77 @@ export class Delegation {
     if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${items.length} could not be started:`, ...failed], []);
   }
 
-  private async send(here: Place, topic: string, text: string): Promise<TaskActionResult> {
+  private async send(here: Place, topic: string, text: string, interrupt: boolean): Promise<TaskActionResult> {
     const c = this.child(here, topic);
     const header = this.headerOf(here);
-    const how = await this.deps.registry.handTo(c.key, c.platformId, c.address, text, header);
+    // Stop first, and queue the message behind the stop: the dying turn must not be offered it
+    // (InboundMerger.queueBehind). `idle` means there was nothing to stop, and the send is ordinary.
+    const stopped = interrupt ? this.deps.registry.stopConversation(c.key) !== 'idle' : false;
+    const how = await this.deps.registry.handTo(
+      c.key,
+      c.platformId,
+      c.address,
+      text,
+      header,
+      interrupt ? { queue: true } : {}
+    );
     this.handedOut.add(c.key);
+    return { topic, result: sendResult(how, stopped) };
+  }
+
+  /**
+   * A sub-agent topic's messages, as the agent that opened it reads them.
+   *
+   * `full` and `tail` answer the two ways the default cut fails. A tool bubble in accumulate mode is
+   * one message holding the turn's commands, so a head cut shows the oldest of them and hides what it
+   * is doing now; `tail` keeps the end, `full` raises the cap. The total budget is the guard against
+   * a `--full` read of a hundred messages: the newest whole messages are kept and the rest is said
+   * in `note`, never silently dropped.
+   */
+  private async read(
+    here: Place,
+    topic: string,
+    limit: number,
+    opts: { full: boolean; tail?: number }
+  ): Promise<TaskReadResult> {
+    const c = this.child(here, topic);
+    const messages = await c.adapter.fetchHistory(c.address, { limit });
+    const cap = opts.full || opts.tail !== undefined ? READ_FULL_CHARS : READ_CHARS;
+    const shaped = messages.map((m) => ({
+      from: m.authorIsBot ? ('agent' as const) : ('person' as const),
+      at: new Date(m.timestamp).toISOString(),
+      text: clip(m.content, cap, opts.tail),
+    }));
+    let used = 0;
+    let from = shaped.length;
+    for (let i = shaped.length - 1; i >= 0; i--) {
+      const size = shaped[i]!.text.length;
+      if (used + size > READ_TOTAL_CHARS && from !== shaped.length) break;
+      used += size;
+      from = i;
+    }
+    const dropped = from;
     return {
       topic,
-      result:
-        how === 'joined'
-          ? 'Sent to its agent, which was already working: it takes it into the turn it is running.'
-          : 'Sent to its agent, which is starting on it now.',
+      messages: shaped.slice(from),
+      ...(dropped > 0
+        ? {
+            note:
+              `the ${dropped} oldest of ${shaped.length} messages were left out to keep this under ` +
+              `${READ_TOTAL_CHARS} characters; ask for fewer messages (--limit) or fewer lines (--tail) to fit the rest`,
+          }
+        : {}),
     };
   }
 
-  private async read(here: Place, topic: string, limit: number): Promise<TaskReadResult> {
+  /** One sub-agent topic in detail: its live row, its last tool calls, and its last reply. */
+  private status(here: Place, topic: string): TaskStatusResult {
     const c = this.child(here, topic);
-    const messages = await c.adapter.fetchHistory(c.address, { limit });
+    const live = this.deps.registry.progressOf(c.key);
     return {
-      topic,
-      messages: messages.map((m) => ({
-        from: m.authorIsBot ? ('agent' as const) : ('person' as const),
-        at: new Date(m.timestamp).toISOString(),
-        text: m.content.length > READ_CHARS ? `${m.content.slice(0, READ_CHARS - 1)}…` : m.content,
-      })),
+      task: this.row(c),
+      recent: (live?.recent ?? []).map((t) => ({ at: new Date(t.at).toISOString(), tool: t.tool, detail: t.detail })),
+      reply: this.deps.registry.replyExcerptOf(c.key) ?? '',
     };
   }
 
@@ -455,16 +522,37 @@ export class Delegation {
     const activity = this.deps.registry.activityOf(c.key);
     const agent = this.deps.registry.boundAgentOf(c.key) ?? '';
     const host = agent ? findAgent(this.deps.config, agent)?.host : undefined;
+    // Live only while it works: after the turn ends the outcome is the honest answer, and a tool
+    // line left over from it would describe something that is no longer happening.
+    const live = stage === 'working' ? this.deps.registry.progressOf(c.key) : undefined;
+    const since = stage === 'working' ? this.deps.registry.runningSince(c.key) : undefined;
+    const status = this.deps.registry.statusOf(c.key);
     return {
       topic: `${c.platformId}:${c.address.channel}${c.address.thread ? `/${c.address.thread}` : ''}`,
       title: subjectOf(this.titleOf(c.key, c)),
       agent: host ? `${agent} @ ${host}` : agent,
       cwd: shortenHome(this.deps.registry.workdirOf(c.key) ?? ''),
       stage,
-      line: stage === 'answer' ? (this.deps.questionOf?.(c.key) ?? 'a question is waiting') : (activity?.outcome?.line ?? ''),
-      lastAt: activity?.outcome ? new Date(activity.outcome.at).toISOString() : '',
+      line: this.lineOf(c.key, stage, activity, live),
+      step: live?.steps ?? 0,
+      elapsed: since !== undefined ? formatElapsed(this.deps.clock.now() - since) : '',
+      context: contextOf(status),
+      cost: status?.cost ? formatCost(status.cost) : '',
+      lastAt: lastAtOf(activity, live),
       ...(c.address.thread ? { link: `?t=${c.address.thread}` } : {}),
     };
+  }
+
+  /** What to put beside the stage: the question, what it is doing now, or how its last turn ended. */
+  private lineOf(
+    key: ConversationId,
+    stage: TopicStage,
+    activity: TopicActivity | undefined,
+    live: LiveTurn | undefined
+  ): string {
+    if (stage === 'answer') return this.deps.questionOf?.(key) ?? 'a question is waiting';
+    if (live?.current) return `${live.current.tool}: ${live.current.detail}`;
+    return activity?.outcome?.line ?? '';
   }
 
   /**
@@ -590,6 +678,74 @@ export class Delegation {
     const ch = this.deps.registry.listChannels({ platform: place.platformId, limit: 200 }).channels.find((c) => c.id === want);
     return ch?.title || id;
   }
+}
+
+/** The context column, in the form the footer and `/context` already use; empty when unreported. */
+function contextOf(status: AgentStatus | undefined): string {
+  if (!status?.context) return '';
+  return formatRuntimeFooter({ contextTokens: status.context.used, contextLength: status.context.size }, ['context']);
+}
+
+/** When it last did anything: the last turn's outcome, else the tool it is running now. */
+function lastAtOf(activity: TopicActivity | undefined, live: LiveTurn | undefined): string {
+  const at = activity?.outcome?.at ?? live?.current?.at;
+  return at === undefined ? '' : new Date(at).toISOString();
+}
+
+/**
+ * What to say after `task-send`, from what actually happened rather than from "it looked busy".
+ *
+ * `queued` used to be reported as `joined`, which told the agent its correction had been seen while
+ * the sub-agent was still running the commands it was told to stop (reported 2026-11-03).
+ */
+function sendResult(how: 'started' | 'joined' | 'queued', stopped: boolean): string {
+  if (stopped) {
+    return how === 'queued'
+      ? 'Stopped the turn it was running. This is next in line: it runs as soon as the stopped turn unwinds, with its context kept.'
+      : 'Stopped the turn it was running and sent this as the next one.';
+  }
+  switch (how) {
+    case 'joined':
+      return 'Sent to its agent, which was already working: it takes it into the turn it is running.';
+    case 'queued':
+      return 'Sent to its agent, which is already working and cannot take input mid-turn: it runs as its next turn, once this one ends. If it is going the wrong way, `task-send --interrupt` stops it first.';
+    case 'started':
+      return 'Sent to its agent, which is starting on it now.';
+    default: {
+      const _exhaustive: never = how;
+      return String(_exhaustive);
+    }
+  }
+}
+
+/**
+ * One message as `task-read` returns it.
+ *
+ * `tail` is the half that matters for a tool bubble: accumulate mode keeps the turn's newest lines
+ * in the bubble, so a head cut shows the oldest of what is still there — the commands it ran ten
+ * minutes ago, not the one it is running now. `cap` is raised whenever either flag is used, and what
+ * was left out is said in the text rather than silently gone.
+ */
+function clip(text: string, cap: number, tail: number | undefined): string {
+  let out = text;
+  let droppedLines = 0;
+  if (tail !== undefined) {
+    const lines = out.split('\n');
+    if (lines.length > tail) {
+      droppedLines = lines.length - tail;
+      out = lines.slice(-tail).join('\n');
+    }
+  }
+  let droppedChars = 0;
+  if (out.length > cap) {
+    droppedChars = out.length - (cap - 1);
+    out = `${out.slice(0, cap - 1)}…`;
+  }
+  if (droppedLines) out = `…[${droppedLines} earlier lines]\n${out}`;
+  // The default cut keeps its bare ellipsis; a raised cap says how much it still could not fit,
+  // because there the caller asked for the whole thing and deserves to know it did not get it.
+  if (droppedChars && cap !== READ_CHARS) out = `${out}\n…[${droppedChars} later characters]`;
+  return out;
 }
 
 /** A stage in a sentence. */

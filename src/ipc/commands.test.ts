@@ -58,6 +58,31 @@ describe('help topics', () => {
   });
 });
 
+describe('task commands', () => {
+  it('builds task-read’s --full and --tail, task-send’s --interrupt, and task-status', () => {
+    expect(spec('task-read').build(['web:main/t1'], { full: true, tail: 20, limit: 5 })).toEqual({
+      kind: 'task-read',
+      topic: 'web:main/t1',
+      limit: 5,
+      full: true,
+      tail: 20,
+    });
+    expect(spec('task-send').build(['web:main/t1', 'go'], { interrupt: true })).toEqual({
+      kind: 'task-send',
+      topic: 'web:main/t1',
+      text: 'go',
+      interrupt: true,
+    });
+    expect(spec('task-status').build(['web:main/t1'], {})).toEqual({ kind: 'task-status', topic: 'web:main/t1' });
+  });
+
+  it('refuses --channel: each names its conversation itself', () => {
+    for (const usage of ['task-send', 'task-read', 'task-status', 'task-stop']) {
+      expect(() => spec(usage).build(['t'], { channel: 'c1' })).toThrow(/names its conversation itself/);
+    }
+  });
+});
+
 describe('schedule <action> [id]', () => {
   it('builds an add from its options, --channel as the target', () => {
     expect(

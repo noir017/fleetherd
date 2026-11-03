@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
-import type { ListChannelsResult, TaskAgentsResult, TaskListResult } from '../ipc/protocol.js';
+import type { AgentStatus, TopicActivity } from '../types.js';
+import type {
+  ListChannelsResult,
+  TaskActionResult,
+  TaskAgentsResult,
+  TaskListResult,
+  TaskReadResult,
+  TaskStatusResult,
+} from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { TopicActivity } from '../types.js';
 import { CARD_DELAY_MS, Delegation, PROPOSAL_GATHER_MS, type DelegationDeps } from './delegation.js';
+import type { LiveTurn } from './turn-progress.js';
 import { jobInCommand, UPDATE_SENDER } from './turn-runner.js';
 
 /**
@@ -66,10 +74,17 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
   const parents = new Map<string, string>(); // child key → parent key
   const bound = new Map<string, string>([[P, 'cc']]);
   const activity = new Map<string, TopicActivity>();
+  const progress = new Map<string, LiveTurn>();
+  const status = new Map<string, AgentStatus>();
   const busy = new Set<string>();
   const calls: Array<[string, unknown]> = [];
   const cards: Array<{ text: string; labels: string[]; signal: AbortSignal }> = [];
   let threads = 0;
+  let handResult: 'started' | 'joined' | 'queued' = 'started';
+  const history = [
+    { conversation: {}, messageId: '1', content: 'do it', timestamp: 0, authorIsBot: false },
+    { conversation: {}, messageId: '2', content: 'done', timestamp: 1000, authorIsBot: true },
+  ];
   const platform = {
     capabilities: { thread: true },
     parentOf: (a: ConversationAddress) => {
@@ -82,10 +97,7 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
       posted.push({ to: keyOf(a), text, ...(o?.kind === 'tools' ? { tools: true } : {}) });
       return { address: a, messageId: 'm' };
     },
-    fetchHistory: async () => [
-      { conversation: {}, messageId: '1', content: 'do it', timestamp: 0, authorIsBot: false },
-      { conversation: {}, messageId: '2', content: 'done', timestamp: 1000, authorIsBot: true },
-    ],
+    fetchHistory: async () => history,
   } as unknown as PlatformAdapter;
   const telegram = { capabilities: { thread: true }, sendMessage: async () => ({ messageId: 'm' }) } as unknown as PlatformAdapter;
 
@@ -98,12 +110,15 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
       bound.set(key, o.agentId);
       return { key, address: addrOf(key) };
     },
-    handTo: async (key: string, _p: string, _a: ConversationAddress, text: string, header: string) => {
-      calls.push(['handTo', { key, text, header }]);
-      return 'started' as const;
+    handTo: async (key: string, _p: string, _a: ConversationAddress, text: string, header: string, opts?: { queue?: boolean }) => {
+      calls.push(['handTo', { key, text, header, ...(opts?.queue ? { queue: true } : {}) }]);
+      return handResult;
     },
     isBusy: (k: string) => busy.has(k),
     isAsking: () => false,
+    progressOf: (k: string) => progress.get(k),
+    runningSince: (k: string) => (busy.has(k) ? 1_000 : undefined),
+    statusOf: (k: string) => status.get(k),
     workdirChoices: (id: string) => ({ root: `/home/u/${id}`, dirs: [`/home/u/${id}/talkcode`] }),
     listChannels: (): ListChannelsResult => ({
       channels: [...bound.keys()].map((k) => ({
@@ -127,7 +142,7 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
     replyExcerptOf: (k: string) => (activity.get(k)?.outcome?.kind === 'done' ? 'Done: all green, 12 tests.' : undefined),
     stopConversation: (k: string) => {
       calls.push(['stop', k]);
-      return 'stopped' as const;
+      return busy.has(k) ? ('running' as const) : ('idle' as const);
     },
     stopWithPending: (k: string) => {
       calls.push(['stop', k]);
@@ -154,7 +169,23 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
       return Promise.resolve(opts.answer === undefined ? (labels[0] ?? null) : opts.answer);
     },
   };
-  return { d: new Delegation(deps), clock, posted, parents, bound, activity, busy, calls, cards };
+  return {
+    d: new Delegation(deps),
+    clock,
+    posted,
+    parents,
+    bound,
+    activity,
+    progress,
+    status,
+    history,
+    busy,
+    calls,
+    cards,
+    setHandResult: (v: 'started' | 'joined' | 'queued') => {
+      handResult = v;
+    },
+  };
 }
 
 const task = (agent: string, text: string, extra: Record<string, string> = {}) => ({ kind: 'task-new' as const, agent, text, ...extra });
@@ -300,6 +331,143 @@ describe('Delegation: acting on the topics it opened, and only those', () => {
     r.bound.set('web#main#bbbbbbbb', 'cx');
     await expect(r.d.handle(P, { kind: 'task-send', topic: 'bbbbbbbb', text: 'x' })).rejects.toThrow(/not a topic this conversation opened/);
     await expect(r.d.handle('web#main#c1000000', { kind: 'task-stop', topic: 'c1000000' })).rejects.toThrow(/not a topic/);
+  });
+});
+
+describe('Delegation: seeing what a sub-agent is doing', () => {
+  async function withChild() {
+    const r = rig();
+    await r.d.handle(P, task('cc', 'Fix it'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    return r;
+  }
+  const KEY = 'web#main#c1000000';
+
+  it('shows the tool it is running, its step, elapsed time, context and cost while it works', async () => {
+    const r = await withChild();
+    r.busy.add(KEY);
+    r.clock.advance(2_000); // the proposal card already advanced 3s; runningSince is 1000 → 4s
+    r.progress.set(KEY, {
+      startedAt: 1_000,
+      steps: 148,
+      current: { at: 4_000, tool: 'Bash', detail: 'sed -n 1,20p bundle.js' },
+      recent: [],
+    });
+    r.status.set(KEY, {
+      agent: 'cc',
+      context: { used: 98_000, size: 1_000_000 },
+      cost: { amount: 0.42, currency: 'USD' },
+    });
+    const list = (await r.d.handle(P, { kind: 'task-list' })) as TaskListResult;
+    const row = list.tasks[0]!;
+    expect(row.stage).toBe('working');
+    expect(row.line).toBe('Bash: sed -n 1,20p bundle.js');
+    expect(row.step).toBe(148);
+    expect(row.elapsed).toBe('4s');
+    expect(row.context).toContain('98k');
+    expect(row.context).toContain('10%');
+    expect(row.cost).toBe('$0.42');
+  });
+
+  it('leaves the live columns empty once it is not working, so the last outcome is what shows', async () => {
+    const r = await withChild();
+    r.progress.set(KEY, { startedAt: 1_000, steps: 148, current: { at: 4_000, tool: 'Bash', detail: 'x' }, recent: [] });
+    r.activity.set(KEY, { outcome: { kind: 'done', at: 5, line: 'Done: all green.' } });
+    const list = (await r.d.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(list.tasks[0]).toMatchObject({ stage: 'review', line: 'Done: all green.', step: 0, elapsed: '' });
+  });
+
+  it('gives one topic in detail: its row, the last three tool calls and its last reply', async () => {
+    const r = await withChild();
+    r.activity.set(KEY, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+    r.progress.set(KEY, {
+      startedAt: 1_000,
+      steps: 5,
+      current: { at: 3_000, tool: 'Grep', detail: 'needle' },
+      recent: [
+        { at: 1_000, tool: 'Bash', detail: 'ls' },
+        { at: 2_000, tool: 'Read', detail: 'src/a.ts' },
+        { at: 3_000, tool: 'Grep', detail: 'needle' },
+      ],
+    });
+    const s = (await r.d.handle(P, { kind: 'task-status', topic: 'c1000000' })) as TaskStatusResult;
+    expect(s.task.topic).toBe('web:main/c1000000');
+    expect(s.task.step).toBe(0); // not working, so the row is the outcome's
+    expect(s.recent.map((x) => x.tool)).toEqual(['Bash', 'Read', 'Grep']);
+    expect(s.reply).toBe('Done: all green, 12 tests.');
+  });
+
+  it('reads a whole long message with --full, and the newest lines with --tail', async () => {
+    const r = await withChild();
+    const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+    r.history.splice(0, r.history.length, {
+      conversation: {},
+      messageId: '1',
+      content: lines.join('\n'),
+      timestamp: 0,
+      authorIsBot: true,
+    });
+    const whole = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', full: true })) as TaskReadResult;
+    expect(whole.messages[0]!.text).toBe(lines.join('\n'));
+
+    const tail = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', tail: 3 })) as TaskReadResult;
+    expect(tail.messages[0]!.text).toContain('…[197 earlier lines]');
+    expect(tail.messages[0]!.text.endsWith('line 197\nline 198\nline 199')).toBe(true);
+  });
+
+  it('keeps the newest messages when --full would blow the total budget, and says what it left out', async () => {
+    const r = await withChild();
+    r.history.splice(
+      0,
+      r.history.length,
+      ...Array.from({ length: 6 }, (_, i) => ({
+        conversation: {},
+        messageId: String(i),
+        content: `${i}:`.padEnd(20_000, 'x'),
+        timestamp: i,
+        authorIsBot: true,
+      }))
+    );
+    const read = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', full: true, limit: 10 })) as TaskReadResult;
+    expect(read.messages).toHaveLength(4);
+    expect(read.note).toMatch(/the 2 oldest of 6 messages were left out/);
+    expect(read.messages[3]!.text.startsWith('5:')).toBe(true);
+  });
+
+  it('says whether task-send joined the turn or is waiting behind it', async () => {
+    const r = await withChild();
+    r.busy.add(KEY);
+    r.setHandResult('queued');
+    const queued = (await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'check the log' })) as TaskActionResult;
+    expect(queued.result).toMatch(/cannot take input mid-turn/);
+    r.setHandResult('joined');
+    const joined = (await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'check the log' })) as TaskActionResult;
+    expect(joined.result).toMatch(/takes it into the turn it is running/);
+  });
+
+  it('--interrupt stops the turn and queues the message behind it, saying so', async () => {
+    const r = await withChild();
+    r.busy.add(KEY);
+    r.setHandResult('queued');
+    const res = (await r.d.handle(P, {
+      kind: 'task-send',
+      topic: 'c1000000',
+      text: 'stop reading code, check the log',
+      interrupt: true,
+    })) as TaskActionResult;
+    expect(r.calls).toContainEqual(['stop', KEY]);
+    expect(r.calls.find(([c]) => c === 'handTo')![1]).toMatchObject({ queue: true });
+    expect(res.result).toMatch(/^Stopped the turn it was running\./);
+  });
+
+  it('--interrupt with nothing running is an ordinary send', async () => {
+    const r = await withChild();
+    const res = (await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'go', interrupt: true })) as TaskActionResult;
+    expect(res.result).toMatch(/starting on it now/);
+    // The stop is still attempted (it is how "was anything running" is asked), and answers idle.
+    expect(r.calls).toContainEqual(['stop', KEY]);
   });
 });
 

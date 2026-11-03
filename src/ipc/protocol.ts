@@ -173,11 +173,23 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z
-    .object({ kind: z.literal('task-send'), topic: z.string().min(1).max(200), text: z.string().min(1).max(20_000) })
+    .object({
+      kind: z.literal('task-send'),
+      topic: z.string().min(1).max(200),
+      text: z.string().min(1).max(20_000),
+      interrupt: z.boolean().optional(),
+    })
     .strict(),
   z
-    .object({ kind: z.literal('task-read'), topic: z.string().min(1).max(200), limit: z.number().int().positive().max(100).optional() })
+    .object({
+      kind: z.literal('task-read'),
+      topic: z.string().min(1).max(200),
+      limit: z.number().int().positive().max(100).optional(),
+      full: z.boolean().optional(),
+      tail: z.number().int().positive().max(500).optional(),
+    })
     .strict(),
+  z.object({ kind: z.literal('task-status'), topic: z.string().min(1).max(200) }).strict(),
   z.object({ kind: z.literal('task-stop'), topic: z.string().min(1).max(200) }).strict(),
 ]);
 
@@ -237,8 +249,9 @@ export type IpcAction =
   | { kind: 'task-agents' }
   | { kind: 'task-list'; limit?: number }
   | { kind: 'task-new'; agent: string; text: string; cwd?: string; title?: string }
-  | { kind: 'task-send'; topic: string; text: string }
-  | { kind: 'task-read'; topic: string; limit?: number }
+  | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean }
+  | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number }
+  | { kind: 'task-status'; topic: string }
   | { kind: 'task-stop'; topic: string };
 
 // Compile-time alignment: the zod-inferred type must equal the hand-written union;
@@ -356,8 +369,20 @@ export interface TaskRow {
   cwd: string;
   /** TopicStage: answer | failed | review | retrying | working | idle. */
   stage: string;
-  /** The line beside it: the question, the failure, or the reply's first line. */
+  /**
+   * The line beside it: the question, the failure, the reply's first line — or, while it works,
+   * the tool it is running now (`Bash: sed -n …`). The live half is why this is not empty during a
+   * long turn, which is exactly when the agent that opened the topic needs to know what it is doing.
+   */
   line: string;
+  /** Tool calls in the turn now running; 0 when it is not working. */
+  step: number;
+  /** How long the running turn has been going (`4m 12s`); empty when it is not working. */
+  elapsed: string;
+  /** Context used, as the footer prints it (`18k / 1M (2%)`); empty when the harness reports none. */
+  context: string;
+  /** Cumulative session cost (`$0.42`); empty when the harness reports none. */
+  cost: string;
   /** When it last did anything, ISO. */
   lastAt: string;
   /** A link that opens it on the platform it is on, where there is one (the web UI's `?t=<topic>`). */
@@ -398,6 +423,17 @@ export interface TaskAgentsResult {
 export interface TaskReadResult {
   topic: string;
   messages: Array<{ from: 'person' | 'agent'; at: string; text: string }>;
+  /** What was left out, when a budget cut it (`full` or `--tail`): said so nobody reads it as whole. */
+  note?: string;
+}
+
+/** Response body for task-status: one sub-agent topic, in detail. */
+export interface TaskStatusResult {
+  task: TaskRow;
+  /** The last few tool calls of the running turn (or the last one), oldest first. */
+  recent: Array<{ at: string; tool: string; detail: string }>;
+  /** The head of its last finished reply, when that is the last thing it did; empty otherwise. */
+  reply: string;
 }
 
 /** Response body for task-new: which line of the confirmation card it is, and what happens next. */

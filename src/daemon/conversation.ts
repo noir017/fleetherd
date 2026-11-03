@@ -35,6 +35,7 @@ import type {
   AgentCommand,
   AgentElicitation,
   AgentPermissionRequest,
+  AgentStatus,
   ConversationId,
   ElicitAnswer,
   PermissionAnswer,
@@ -107,6 +108,8 @@ import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
 import { TurnOutcomes } from './turn-outcomes.js';
+import { TurnProgressBoard } from './turn-progress.js';
+import type { LiveTurn } from './turn-progress.js';
 import type { RespawnCounts } from './config-reload.js';
 import {
   claudeProjectsDir,
@@ -449,6 +452,12 @@ export class ConversationRegistry {
    */
   private readonly status: StatusBoard;
   /**
+   * What each conversation's turn is doing right now — the tool it is running, how many steps in.
+   * `outcomes` below only knows a turn once it has ended; a sub-agent 150 tool calls deep is
+   * exactly when its parent needs this. See turn-progress.ts.
+   */
+  private readonly progress: TurnProgressBoard;
+  /**
    * What each conversation's last turn left for the person, and what happens after a failed one
    * (`hooks.turnFailed`, interrupted turns). See turn-outcomes.ts.
    */
@@ -664,6 +673,7 @@ export class ConversationRegistry {
   ) {
     // Inject only the capabilities TurnRunner needs (read-only views + activeAddress write entry),
     // rather than passing the whole registry and creating a circular dependency.
+    this.progress = new TurnProgressBoard(this.clock);
     this.status = new StatusBoard({
       laneOf: (id) => this.laneOf(id),
       platforms: this.platforms,
@@ -693,6 +703,7 @@ export class ConversationRegistry {
         recordModel: (id, model) => this.status.model(id, model),
         recordEffort: (id, effort) => this.status.effort(id, effort),
         recordQuota: (id, pools) => this.status.quota(id, pools),
+        recordTool: (id, evt) => this.progress.tool(id, evt),
         recordTurnComplete: (id) => {
           const state = this.conversations.get(id);
           if (state) state.turnCompleted = true;
@@ -715,7 +726,10 @@ export class ConversationRegistry {
         // reply inside it continues here instead of starting an empty one (see adoptThread).
         adoptThread: (id, address, platformId) => this.adoptThread(id, address, platformId),
         nameConversation: (id, seed) => this.nameConversation(id, seed),
-        recordTurnStart: (id) => this.outcomes.turnStarted(id),
+        recordTurnStart: (id) => {
+          this.progress.started(id);
+          this.outcomes.turnStarted(id);
+        },
         recordTurnEnd: (id, end) => this.outcomes.turnEnded(id, end),
       },
       this.hooks
@@ -3417,18 +3431,27 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * Hand `text` to a sub-agent's conversation — `task-new` (once confirmed) and `task-send`. It is
    * shown there first under `header`, which says whose words these are (the reactions land on that
    * bubble), then goes in like a message typed there: into the running turn when the harness takes
-   * one, else as the next turn. The agent receives `text` alone. Answers which of the two.
+   * one, else as the next turn. The agent receives `text` alone. Answers which of the three.
+   *
+   * `queued` is not a failure: the message is delivered, just after the turn it could not join.
+   * It is a separate answer because the harness's ability to take input mid-turn is not knowable
+   * from `isBusy` alone — agy has none, and calling that "joined" tells the caller its correction
+   * was seen when it was not (reported 2026-11-03).
    *
    * Counts as the person acting (TurnOutcomes.personActed): a continue waiting after a failure is
    * called off, because someone is driving that conversation again.
+   *
+   * `opts.queue` skips the offer entirely: the caller has just stopped the turn (task-send
+   * --interrupt) and the message must wait for the new turn, not be handed to the dying one.
    */
   async handTo(
     key: ConversationId,
     platformId: string,
     address: ConversationAddress,
     text: string,
-    header: string
-  ): Promise<'joined' | 'started'> {
+    header: string,
+    opts: { queue?: boolean } = {}
+  ): Promise<'started' | 'joined' | 'queued'> {
     const agentId = this.boundAgentOf(key);
     if (!agentId || !findAgent(this.config, agentId)) throw new Error('nobody answers that conversation yet; open it with task-new');
     const adapter = this.platforms.get(platformId);
@@ -3437,22 +3460,27 @@ ${formatTokens(left)} left before compaction — ${name}`;
     if (this.draining && state.merger.isIdle()) throw new Error('the gateway is restarting; send it again in a minute');
     const posted = await adapter.sendMessage(address, `${header}\n\n${text}`);
     const busy = !state.merger.isIdle();
+    const joins = !opts.queue && busy && this.turnRunner.canSteer(key);
     this.outcomes.personActed(key);
     this.touch(key);
     state.reclaimOnIdle = false;
-    void state.merger.ingest({
+    const msg = {
       conversation: {
         platform: platformId,
         channel: address.channel,
         ...(address.thread ? { thread: address.thread } : {}),
-        kind: 'direct',
+        kind: 'direct' as const,
         user: DELEGATE_SENDER,
       },
       messageId: posted.messageId,
       content: text,
       timestamp: this.clock.now(),
-    });
-    return busy ? 'joined' : 'started';
+    };
+    // `queue` is --interrupt's: never offer it to the turn that is being stopped (see
+    // InboundMerger.queueBehind).
+    if (opts.queue) state.merger.queueBehind(msg);
+    else void state.merger.ingest(msg);
+    return !busy ? 'started' : joins ? 'joined' : 'queued';
   }
 
   /** Whether a turn is running (or about to) in a conversation. */
@@ -3464,6 +3492,26 @@ ${formatTokens(left)} left before compaction — ${name}`;
   /** Whether a question is waiting on the person in a conversation (an ask, an elicitation, a permission). */
   isAsking(key: ConversationId): boolean {
     return this.hooks?.hasPendingWork?.(key) ?? false;
+  }
+
+  /** What the conversation's turn is doing now, while one runs (turn-progress.ts). */
+  progressOf(id: ConversationId): LiveTurn | undefined {
+    return this.progress.progressOf(id);
+  }
+
+  /** When the turn now running began, epoch ms; undefined while idle or still collecting a batch. */
+  runningSince(id: ConversationId): number | undefined {
+    return this.conversations.get(id)?.merger.runningSince();
+  }
+
+  /** The live agent status the web UI's strip shows, for a list built on the daemon's side. */
+  statusOf(id: ConversationId): AgentStatus | undefined {
+    return this.status.statusOf(id);
+  }
+
+  /** Whether a message sent now joins the running turn instead of queueing behind it. */
+  canSteer(id: ConversationId): boolean {
+    return this.turnRunner.canSteer(id);
   }
 
   /**
@@ -3645,6 +3693,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.store?.clear(id);
     // What the last turn left is part of the context just thrown away.
     this.outcomes.forget(id);
+    this.progress.forget(id);
     const state = this.conversations.get(id);
     if (state) {
       state.headerSent = false;
@@ -3725,6 +3774,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.cancelSweep = null;
     this.status.dispose();
     this.outcomes.dispose();
+    this.progress.dispose();
     for (const key of [...this.conversations.keys()]) {
       this.releaseState(key);
       this.agents.dispose(key);
@@ -3739,6 +3789,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.conversations.delete(id);
     this.tokens.release(id);
     this.unresumableWarned.delete(id);
+    this.progress.forget(id);
   }
 
   private buildMerger(conversationId: ConversationId): InboundMerger {

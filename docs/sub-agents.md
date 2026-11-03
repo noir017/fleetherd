@@ -37,6 +37,19 @@ Questions: one a sub-agent asks with buttons waits for you, moves to the top of 
 and is notified. One about what its task meant is answered by the agent that started it; anything you
 need to decide — scope, merging, releasing, deleting — is passed to you.
 
+## Watching and redirecting one
+
+The agent that started a sub-agent can see what it is doing without opening its topic: `tasks` shows
+the tool it is running, how many steps into the turn it is, how long that turn has run, and the
+context it has used; `task-status` gives one topic's last three tool calls. A long tool list can be
+read whole or from its newest lines (`task-read --full`, `--tail`), so an hour-long turn is not a
+black box.
+
+When a sub-agent is going the wrong way, `task-send --interrupt` stops the turn it is running and
+sends the correction as the next one. Its conversation is kept: it carries on with the context it
+already had. Without `--interrupt`, a message reaches a running turn only on harnesses that take
+input mid-turn; elsewhere it waits for the turn to end, and the agent is told which happened.
+
 ## In the sidebar
 
 - Sub-agent topics are indented under the topic that opened them. **▾ 3** folds them away; folded,

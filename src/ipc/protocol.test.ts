@@ -35,6 +35,12 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'schedule-list' },
     { kind: 'schedule-list', id: 'a1b2c3' },
     { kind: 'schedule-op', id: 'a1b2c3', op: 'remove' },
+    { kind: 'task-send', topic: 'web:main/t1', text: 'go' },
+    { kind: 'task-send', topic: 'web:main/t1', text: 'go', interrupt: true },
+    { kind: 'task-read', topic: 'web:main/t1' },
+    { kind: 'task-read', topic: 'web:main/t1', limit: 5, full: true, tail: 20 },
+    { kind: 'task-status', topic: 'web:main/t1' },
+    { kind: 'task-stop', topic: 'web:main/t1' },
   ];
   it.each(valid)('accepts %j', (action) => {
     const r = parseIpcRequest({ token: TOKEN, action });
@@ -72,6 +78,11 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['schedule-op unknown op', { token: TOKEN, action: { kind: 'schedule-op', id: 'a', op: 'explode' } }],
     ['schedule-op missing id', { token: TOKEN, action: { kind: 'schedule-op', op: 'remove' } }],
     ['schedule-list with a channel', { token: TOKEN, action: { kind: 'schedule-list', channelId: 'c' } }],
+    // Task commands are strict too, and their bounds are real.
+    ['task-read zero tail', { token: TOKEN, action: { kind: 'task-read', topic: 't', tail: 0 } }],
+    ['task-read unknown field', { token: TOKEN, action: { kind: 'task-read', topic: 't', noTruncate: true } }],
+    ['task-send non-boolean interrupt', { token: TOKEN, action: { kind: 'task-send', topic: 't', text: 'x', interrupt: 'yes' } }],
+    ['task-status missing topic', { token: TOKEN, action: { kind: 'task-status' } }],
   ];
   it.each(bad)('rejects %s', (_label, raw) => {
     const r = parseIpcRequest(raw);

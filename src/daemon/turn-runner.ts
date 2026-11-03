@@ -12,6 +12,7 @@ import type {
   InboundMessage,
   QuotaPool,
   SteerOutcome,
+  ToolEvent,
 } from '../types.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
@@ -151,6 +152,15 @@ export interface TurnRunnerDeps {
    * writer: the harness's own `usage_update`, never a guess.
    */
   recordUsage?(id: ConversationId, usage: AgentUsage): void;
+  /**
+   * Record that a tool call started in this conversation's turn.
+   *
+   * The live half of a sub-agent's status (daemon/turn-progress.ts): `TurnOutcomes` only learns what
+   * a turn did when it ends, and a turn that is 150 tool calls deep is exactly when the agent that
+   * opened it needs to see what it is doing. Called synchronously from `onToolStart`, before the
+   * rendering chain — a status read must not queue behind a rate-limited chat.
+   */
+  recordTool?(id: ConversationId, evt: ToolEvent): void;
   /**
    * Record what the harness reported about the session that is not usage — the serving model, its
    * effort, its quota pools — for a surface that shows them between replies (the web UI's status
@@ -592,6 +602,16 @@ export class TurnRunner {
   }
 
   /**
+   * Whether the turn running here can take a message mid-turn at all.
+   *
+   * Asked before saying so: a harness with no `steer` (agy) has the merger queue the message behind
+   * the turn, so reporting it as joined would tell the agent something the sub-agent never saw.
+   */
+  canSteer(conversationId: ConversationId): boolean {
+    return this.running.get(conversationId)?.agent.steer !== undefined;
+  }
+
+  /**
    * Assemble the stream-event callbacks passed to agent.runTurn — extracted from the runTurn body purely
    * to shorten it and gather the timing in one place; no behavior change.
    *
@@ -620,6 +640,9 @@ export class TurnRunner {
         enqueue(() => ref.stream.push(delta));
       },
       onToolStart: (evt) => {
+        // Before the rendering chain: the live status is read while this turn runs, and must not
+        // wait for a rate-limited bubble to be painted. See TurnRunnerDeps.recordTool.
+        this.deps.recordTool?.(conversationId, evt);
         rollSegment(ref);
         // Before a tool: finish the current text as its own bubble (no footer: not the last segment), then
         // register the tool. Registering is synchronous — the bubble is delivered by the renderer's own

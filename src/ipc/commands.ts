@@ -169,7 +169,9 @@ export const HELP_TOPICS: HelpTopic[] = [
       'A sub-agent sees nothing of this conversation: <text> is all it gets. Make it whole — the goal, the constraints, how to tell it is done — and leave the how to the agent.',
       'Prefer agents with here=true in task-agents (your own machine). Agents on other machines work in their own checkouts.',
       'When a sub-agent finishes, fails or asks something, you are told here in a message beginning `[sub-agent updates]`, which says how many are still working. Its questions are the person\'s to answer in its topic unless they are only about what your task meant.',
-      'A topic is the id `tasks` and the updates print. task-send, task-read and task-stop act only on topics this conversation opened.',
+      'A topic is the id `tasks` and the updates print. task-send, task-read, task-status and task-stop act only on topics this conversation opened.',
+      '`tasks` shows what a working sub-agent is doing now: the tool it is running, its step count, how long the turn has gone and its context. `task-status` is one topic in detail, with its last three tool calls. A long tool list is cut at 1500 characters per message by default; `task-read --tail 20` shows the newest lines, `--full` the whole list.',
+      'task-send only reaches a turn that is still running when the harness accepts input mid-turn (claude and codex do; agy does not). The answer says which happened: joined, queued behind the turn, or started. To redirect a harness that is not listening, `--interrupt` stops the turn and sends the message as the next one — its context is kept.',
     ],
   },
   {
@@ -556,7 +558,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'tasks',
     topic: 'tasks',
     description:
-      'The sub-agent topics this conversation opened, most recent first: agent, directory, stage (review | answer | failed | retrying | working | idle) and one line',
+      'The sub-agent topics this conversation opened, most recent first: agent, directory, stage (review | answer | failed | retrying | working | idle), one line, and while one works the tool it is running, its step count, elapsed time and context',
     options: [{ flags: '-l, --limit <n>', description: 'how many (default 30)', parse: intArg('--limit') }],
     build: (_positionals, opts) => {
       refuseChannel('tasks', opts);
@@ -588,25 +590,54 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-send <topic> <text>',
     topic: 'tasks',
-    description: "Send <text> to one of this conversation's sub-agents: into its turn if it is working, else as its next turn",
-    options: [],
+    description:
+      "Send <text> to one of this conversation's sub-agents: into its turn when the harness takes input mid-turn, else as its next turn",
+    options: [
+      {
+        flags: '--interrupt',
+        description: 'stop the turn it is running first, then send this as its next one (the only way to redirect a harness with no mid-turn input, such as agy)',
+      },
+    ],
     build: (positionals, opts) => {
       refuseChannel('task-send', opts);
-      return { kind: 'task-send', topic: pos(positionals, 0, 'topic'), text: pos(positionals, 1, 'text') };
+      return {
+        kind: 'task-send',
+        topic: pos(positionals, 0, 'topic'),
+        text: pos(positionals, 1, 'text'),
+        interrupt: opts.interrupt === true ? true : undefined,
+      };
     },
   },
   {
     usage: 'task-read <topic>',
     topic: 'tasks',
-    description: "A sub-agent topic's recent messages, oldest first, cut at 1500 characters each",
-    options: [{ flags: '-l, --limit <n>', description: 'how many messages (default 10)', parse: intArg('--limit') }],
+    description:
+      'A sub-agent topic\'s recent messages, oldest first, cut at 1500 characters each; --full raises the cut, --tail shows the end of each',
+    options: [
+      { flags: '-l, --limit <n>', description: 'how many messages (default 10)', parse: intArg('--limit') },
+      { flags: '--full', description: 'up to 20000 characters per message, 80000 in all (the whole command list, not just its start)' },
+      { flags: '--tail <n>', description: 'the last n lines of each message — what it is doing now, without the earlier ones' },
+    ],
     build: (positionals, opts) => {
       refuseChannel('task-read', opts);
       return {
         kind: 'task-read',
         topic: pos(positionals, 0, 'topic'),
         limit: typeof opts.limit === 'number' ? opts.limit : undefined,
+        full: opts.full === true ? true : undefined,
+        tail: typeof opts.tail === 'number' ? opts.tail : undefined,
       };
+    },
+  },
+  {
+    usage: 'task-status <topic>',
+    topic: 'tasks',
+    description:
+      'One sub-agent topic in detail: stage, current tool, step, elapsed, context and cost, plus the last three tool calls and its last reply',
+    options: [],
+    build: (positionals, opts) => {
+      refuseChannel('task-status', opts);
+      return { kind: 'task-status', topic: pos(positionals, 0, 'topic') };
     },
   },
   {

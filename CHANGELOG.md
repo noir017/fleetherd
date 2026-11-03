@@ -5,6 +5,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A sub-agent's turn can be watched while it runs.** `tasks` said only `stage: working` until the
+  turn ended, so a sub-agent 150 tool calls deep was a black box whose only diagnostic was its
+  host's transcript; `task-read` then cut every message at 1500 characters, which on an accumulated
+  tool bubble shows the oldest commands and hides the one running now. `tasks` now carries the tool
+  it is running, its step count, how long the turn has gone and the context it has used;
+  `task-status <topic>` gives one topic's last three tool calls; `task-read --tail <n>` shows the
+  newest lines and `--full` the whole message (20k each, 80k in all, with what was left out said in
+  the answer rather than silently dropped).
+- **`task-send --interrupt` stops a turn and sends the correction as the next one.** A message sent
+  mid-turn reaches the turn only on harnesses that take input there (claude, codex); agy has no such
+  input, so a correction queued behind a long tool loop and changed nothing. `--interrupt` ends the
+  turn first and hands the message to the next one, with the conversation's context kept.
+
+### Fixed
+
+- **`task-send` no longer says a message joined a running turn when it was only queued.** It
+  answered "joined" whenever the conversation was busy, whether or not the harness could take input
+  mid-turn — so an agent that sent "stop reading code, check the log" was told its words had been
+  seen while the sub-agent kept running `sed`. The answer now distinguishes joined, queued behind
+  the turn, and started.
+
 ## [2.22.0] - 2026-11-03
 
 ### Added

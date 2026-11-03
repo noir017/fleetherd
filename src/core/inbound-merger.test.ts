@@ -488,3 +488,27 @@ describe('InboundMerger.interrupt (/stop)', () => {
     expect(h.deps.runTurn).not.toHaveBeenCalled();
   });
 });
+
+describe('InboundMerger: queueBehind (task-send --interrupt)', () => {
+  it('never offers the message to the turn that was just stopped, even when the harness could take it', async () => {
+    const h = harness(() => Promise.resolve('joined'));
+    await startTurn(h);
+
+    h.merger.queueBehind(msg('m2'));
+    await tick();
+    expect(h.deps.steer).not.toHaveBeenCalled();
+
+    h.resolveFirst();
+    await tick();
+    expect(h.batches).toEqual([['m1'], ['m2']]);
+    expect(h.merger.isIdle()).toBe(true);
+  });
+
+  it('starts a turn as usual when nothing is running', async () => {
+    const h = harness();
+    h.merger.queueBehind(msg('m1'));
+    h.clock.advance(1500);
+    await tick();
+    expect(h.batches).toEqual([['m1']]);
+  });
+});

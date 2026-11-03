@@ -14,6 +14,7 @@ import type {
   TaskListResult,
   TaskNewResult,
   TaskReadResult,
+  TaskStatusResult,
   VoiceLogResult,
 } from '../ipc/protocol.js';
 import { ASK_CLIENT_TIMEOUT_MARGIN_MS, DEFAULT_ASK_TIMEOUT_MS } from '../ipc/protocol.js';
@@ -352,6 +353,7 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown) => string
   'task-new': renderTaskProposed,
   'task-read': renderTaskRead,
   'task-send': renderTaskAction,
+  'task-status': renderTaskStatus,
   'task-stop': renderTaskAction,
 };
 
@@ -372,7 +374,10 @@ function renderTaskAgents(data: unknown): string {
 function renderTaskList(data: unknown): string {
   const result = (data as TaskListResult | undefined) ?? { tasks: [], total: 0 };
   if (result.tasks.length === 0) return toon({ count: 0, note: 'this conversation has opened no sub-agent topics' });
-  const help = ['review: finished. answer: waiting on a question (the person answers it in that topic). failed, retrying, working, idle.'];
+  const help = [
+    'review: finished. answer: waiting on a question (the person answers it in that topic). failed, retrying, working, idle.',
+    'While a sub-agent works, line is the tool it is running now, step counts this turn\'s tool calls, elapsed is this turn, and context/cost are what its harness last reported (empty when it reports none).',
+  ];
   if (result.total > result.tasks.length) help.push(`Showing the ${result.tasks.length} most recent of ${result.total}; raise --limit for more.`);
   return toon({ tasks: result.tasks, help });
 }
@@ -387,7 +392,18 @@ function renderTaskProposed(data: unknown): string {
 function renderTaskRead(data: unknown): string {
   const result = data as TaskReadResult | undefined;
   if (!result || result.messages.length === 0) return toon({ count: 0, note: 'nothing has been said there yet' });
-  return toon({ topic: result.topic, messages: result.messages });
+  return toon({ topic: result.topic, messages: result.messages, ...(result.note ? { note: result.note } : {}) });
+}
+
+/** task-status: one topic's live row, its last few tool calls, and the head of its last reply. */
+function renderTaskStatus(data: unknown): string {
+  const result = data as TaskStatusResult | undefined;
+  if (!result) return toon({ ok: true });
+  return toon({
+    ...result.task,
+    recent: result.recent,
+    ...(result.reply ? { reply: result.reply } : {}),
+  });
 }
 
 /** task-send / task-stop: what happened. */

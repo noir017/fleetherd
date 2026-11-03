@@ -24,7 +24,9 @@ function inbound(content: string, thread = 'tt'): InboundMessage {
   };
 }
 
-function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' | 'ok'> } = {}) {
+function rig(
+  opts: { continue?: Record<string, unknown>; script?: Array<'fail' | 'ok'>; hold?: boolean; steer?: boolean } = {}
+) {
   const parsed = parseConfig({
     platforms: { web: { type: 'webui', token: 't' } },
     agents: [
@@ -79,6 +81,8 @@ function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' |
       return {
         runTurn: async (input: { prompt: string }, h: AgentStreamHandlers) => {
           prompts.push({ conversation: conversationId, prompt: input.prompt });
+          // A turn that stays running, so a handTo lands mid-turn (the queued/joined distinction).
+          if (opts.hold) await new Promise<void>(() => {});
           const next = script.shift() ?? 'ok';
           if (next === 'fail') throw new TurnFailure('upstream 503', 'service');
           h.onText('Done: all green.');
@@ -86,6 +90,7 @@ function rig(opts: { continue?: Record<string, unknown>; script?: Array<'fail' |
         abort: () => {},
         setFollowUpSink: () => {},
         dispose: () => {},
+        ...(opts.steer ? { steer: async () => 'joined' as const } : {}),
       } as unknown as AgentSession;
     },
     peek: () => undefined,
@@ -163,5 +168,23 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     const r = rig();
     live = r.registry;
     await expect(r.registry.handTo('web#main#never', 'web', { channel: 'main', thread: 'never' }, 'x', header)).rejects.toThrow(/nobody answers/);
+  });
+
+  it('says queued, not joined, while a harness with no steer is mid-turn', async () => {
+    const r = rig({ hold: true });
+    live = r.registry;
+    const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header });
+    await wait(20);
+    expect(r.registry.canSteer(opened.key)).toBe(false);
+    await expect(r.registry.handTo(opened.key, 'web', opened.address, 'stop that', header)).resolves.toBe('queued');
+  });
+
+  it('says joined only when the running harness really takes mid-turn input', async () => {
+    const r = rig({ hold: true, steer: true });
+    live = r.registry;
+    const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'cc', text: 'go', header });
+    await wait(20);
+    expect(r.registry.canSteer(opened.key)).toBe(true);
+    await expect(r.registry.handTo(opened.key, 'web', opened.address, 'also the docs', header)).resolves.toBe('joined');
   });
 });
