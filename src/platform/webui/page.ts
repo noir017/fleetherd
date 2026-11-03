@@ -135,6 +135,12 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    long title pushes the delete button out of the column instead of being cut. */
 .topic-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .topic-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Which agent answers here, as formatLaneTitle puts it in front of the name. Dimmer than the
+   title it opens: the subject is what you scan for, and the tag is metadata the row already half
+   says one line down (the machine, when the agent is on a host). It still takes its width — it is
+   inside the one ellipsised line — so the page shortens it to the agent id where it can
+   (splitTitle), rather than letting it eat the subject. */
+.topic-tag{color:#6b7683}
 /* Which project this topic is in. Dimmer than an idle title on purpose: it is what you scan
    for when several topics are open, not what you read. */
 .topic-dir{font-size:11px;line-height:1.35;color:#6b7683;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1758,6 +1764,32 @@ const SCRIPT = `
     return !t.parent || t.stage==='answer';
   }
 
+  /**
+   * Split a topic's "[agent] subject" name into its tag and its subject, shortening the tag to the
+   * agent id alone when the row's second line already names the same machine.
+   *
+   * The tag is the agent id, and for an agent on a host that id is "cbc@uniagent" — 15 characters
+   * of a 240px column spent naming a machine the directory line repeats one line down, which left
+   * a whole row reading "[cbc@uniagent] Oracle A…" (reported 2026-11-03). What the operator types
+   * to bind an agent is the part before the @, so that is what the row keeps, and the name it was
+   * cut from goes on the tag's tooltip. A tag whose host the second line does not name — no
+   * directory known yet, or a group standing in for the host — is left whole: dropping the host
+   * there would take the only place on the row that says which machine the agent is on.
+   *
+   * Only ever reads a leading bracketed group, which formatLaneTitle guarantees: an untagged
+   * name (a topic seeded from its first message before any turn) has no tag and is shown as it is.
+   * full is set only when the tag was shortened, so an untouched row gets no tooltip to explain
+   * an abbreviation it does not have — and the row's own tooltip (what a needs-you row says) is
+   * left to the rest of the row rather than covered by this one.
+   */
+  function splitTitle(title, host){
+    var m=/^\\[([^\\]]+)\\]\\s*([\\s\\S]*)$/.exec(title);
+    if(!m) return {tag:'', rest:title};
+    var tag=m[1], rest=m[2], at=tag.indexOf('@');
+    if(at>0 && host && tag.slice(at+1)===host) return {tag:'['+tag.slice(0, at)+']', rest:rest, full:title};
+    return {tag:'['+tag+']', rest:rest};
+  }
+
   function paintTopics(){
     var h='';
     var cur=null;
@@ -1802,6 +1834,10 @@ const SCRIPT = `
       // hosts — whose directories usually share a name too — so it is what the ellipsis spares.
       var where=t.dir&&t.dir.host?t.dir.host+' · ':'';
       var dir=t.dir?'<span class="topic-dir" title="'+text((t.dir.host?t.dir.host+':':'')+t.dir.path)+'">'+text(where+t.dir.name)+'</span>':'';
+      var named=splitTitle(t.title || 'Untitled', t.dir&&t.dir.host);
+      var title='<span class="topic-title">'
+         + (named.tag?'<span class="topic-tag"'+(named.full?' title="'+text(named.full)+'"':'')+'>'+text(named.tag)+'</span> ':'')
+         + text(named.rest)+'</span>';
       // aria-pressed rather than two different buttons: it is one control with a state, and the
       // state is what a screen reader should announce.
       var star='<button type="button" class="btn-icon topic-star'+(t.starred?' on':'')+'" data-star="'+text(t.id)+'"'
@@ -1816,7 +1852,7 @@ const SCRIPT = `
       h += '<div class="'+cls+'" data-topic="'+text(t.id)+'" role="button" tabindex="0"'+says+'>'
          + '<span class="'+dotCls+'"></span>'
          + '<span class="topic-main">'
-         + '<span class="topic-title">'+text(t.title || 'Untitled')+'</span>'
+         + title
          + (fold ? '<span class="topic-line">'+fold+dir+'</span>' : dir)
          + '</span>'
          + term

@@ -41,6 +41,7 @@ import {
 } from '../../core/conversation.js';
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
 import { needsPerson, replyLine, topicStage } from '../../core/topic-stage.js';
+import { parseWorkdirButtonId } from '../../core/workdir-menu.js';
 import type {
   AgentCatalog,
   AgentStatus,
@@ -255,7 +256,9 @@ interface Room {
   holdUntil: number;
   msgCount: number;
   /**
-   * Message ids currently showing buttons — i.e. every question this topic is waiting on.
+   * Message ids currently showing buttons — every message this topic could be answered through,
+   * questions and menus alike (a directory menu is the one kind that is not a question; see
+   * `awaitingQuestion`).
    *
    * A set rather than a scan of `stored` on demand, because the topic list is rebuilt on every
    * message posted into any topic and scanning 500 messages × 64 topics for one boolean is work
@@ -731,7 +734,7 @@ export class WebRoom {
       const room = this.rooms.get(t.id);
       const dir = this.dirOf(t.id);
       const running = Boolean(room?.typing);
-      const asking = Boolean(room?.awaiting.size);
+      const asking = this.awaitingQuestion(room);
       const stage = topicStage({
         running,
         asking,
@@ -753,6 +756,36 @@ export class WebRoom {
         ...(dir ? { dir } : {}),
       };
     });
+  }
+
+  /**
+   * Whether a topic is waiting on the operator — as opposed to holding a menu they opened.
+   *
+   * `awaiting` means "a message with live buttons", which was the same thing while every such
+   * message was a question. It is not: the directory menu is a control for the operator's own next
+   * step (which project to work in), and since a new topic's choice of agent is a tap that types
+   * `/agent` (2026-11-02), the daemon posts that menu into a conversation that has not started.
+   * Counted as a question, a topic left mid-setup pinned itself to the top of the switcher in green
+   * and pushed "Waiting on your answer" — about a conversation with no agent in it, which the
+   * operator had just been looking at (reported 2026-11-03). It also turned the dot amber, saying
+   * something was blocked when nothing was: no session exists until the menu is answered or a
+   * message is sent, and the message is an answer of its own.
+   *
+   * `awaiting` itself is left alone, because the other two readers want the menu counted: `inUse`
+   * will not evict a topic holding a clickable menu, and idle reclaim will not close an agent under
+   * one. Those ask "would throwing this away lose something", not "is someone blocked".
+   *
+   * Fails safe: buttons this file does not recognise are a question, so a new kind of ask is
+   * announced rather than silently missed.
+   */
+  private awaitingQuestion(room: Room | undefined): boolean {
+    if (!room) return false;
+    for (const id of room.awaiting) {
+      const rec = room.stored.get(id);
+      if (rec && isWorkdirMenu(rec.msg.buttons)) continue;
+      return true;
+    }
+    return false;
   }
 
   private announceTopics(): void {
@@ -1443,6 +1476,16 @@ export function operatorStage(t: Pick<Topic, 'stage' | 'parent'>): TopicStage {
 function noticeBody(stage: TopicStage, line: string | undefined): string {
   const what = stage === 'answer' ? 'Waiting on your answer' : stage === 'failed' ? 'Failed' : 'Finished';
   return line ? `${what}: ${line}` : what;
+}
+
+/**
+ * Whether a message's buttons are a directory menu's rather than a question's.
+ *
+ * `core/workdir-menu.ts` owns the id grammar; this only asks it. A menu whose page turn and pick
+ * buttons both parse is one of its own, and no other menu or ask in the gateway uses those ids.
+ */
+function isWorkdirMenu(buttons: ButtonSpec[]): boolean {
+  return buttons.length > 0 && buttons.every((b) => parseWorkdirButtonId(b.id) !== null);
 }
 
 function flagsOf(topics: Topic[]): string {

@@ -69,6 +69,35 @@ describe('WebRoom: the stage of a topic', () => {
     expect(row(topic)?.line).toBe('Ship 2.18.0 now?');
   });
 
+  /**
+   * The menu a new topic gets right after its agent is chosen — a tap on a card types `/agent`,
+   * and the daemon answers with where that agent should work. Nobody is blocked on it: no session
+   * exists until it is answered (or until a message is sent, which is an answer of its own), so a
+   * topic left mid-setup must not pin itself to the top in green or push "Waiting on your answer".
+   */
+  it('a directory menu is a control, not a question: it neither asks nor notifies', () => {
+    vi.useFakeTimers();
+    const { room, topic, row } = rig();
+    const sent: TopicNotice[] = [];
+    room.useNotifier((n) => sent.push(n));
+    room.post(
+      topic,
+      {
+        own: false,
+        html: '',
+        buttons: [
+          { id: 'wdr:ab12cd34:0', label: '● workspace' },
+          { id: 'wdr:ab12cd34:1', label: 'quantlab' },
+        ],
+      },
+      'Working dir: /home/user/workspace\n2 available — tap one to work there'
+    );
+    expect(row(topic)?.asking).toBe(false);
+    expect(row(topic)?.stage).toBe('idle');
+    vi.advanceTimersByTime(10_000);
+    expect(sent).toEqual([]);
+  });
+
   it('keeps the outcome and when it was seen across a restart, but not a scheduled continue', () => {
     const { room, topic, file } = rig();
     room.setActivity(topic, {

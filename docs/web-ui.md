@@ -29,7 +29,9 @@ laid out as a grid with the current choice lit, and hold 24 to a page where chat
 **Topics.** The sidebar on the left lists parallel conversations and switches between them,
 the same way a Telegram forum topic or a Feishu 话题 does: each has its own agent
 session and its own context, and each gets named automatically from what it turned
-out to be about. `+` opens one; the agent can open one itself with
+out to be about. A title opens with the agent that answers it in brackets — just the id, since
+the machine is named on the line below — and hovering the title shows the whole name. `+` opens
+one; the agent can open one itself with
 `talkcode create-thread`, and write into one with `--channel main/<topic id>`. Under each
 title is the directory the topic works in, led by the machine when its agent runs on a
 [remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. On a narrow
@@ -62,7 +64,10 @@ with a line under the group: a question to answer first (amber dot), then a turn
 dot), then a reply you have not read yet (green dot). Hover a row for what it is — a reply's first
 line, which is usually the conclusion. A reply goes back to its place once you have looked at it. A
 failure stays until the next turn runs, and its dot stays red after that. Working and idle topics
-stay where they are. [Sub-agent](sub-agents.md) topics are nested under the topic that opened
+stay where they are. The directory menu a new topic shows after you pick its agent is not one of
+these: it is a control for your own next step rather than something an agent is blocked on, so a
+topic you leave half set up keeps its place and sends no notification.
+[Sub-agent](sub-agents.md) topics are nested under the topic that opened
 them, and move up only for a question of their own — the agent that opened them reads the rest. A link to a topic in a
 reply opens it in place.
 
