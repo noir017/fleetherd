@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.24.1] - 2026-11-03
+
 ### Fixed
 
 - **A web UI topic you are still setting up no longer asks for attention.** Picking an agent in a new
