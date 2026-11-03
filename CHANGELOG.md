@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-11-03
+
 ### Added
 
 - **Low attention, for a web UI with several agents working at once.** Turned on in the sidebar's
