@@ -89,6 +89,15 @@ describe('webui page', () => {
     expect(html).toContain('.topic-item.running');
   });
 
+  it('fades the agent tag with its row instead of pinning it to one grey', () => {
+    // A fixed #6b7683 was tuned against an idle title and read as disabled beside the
+    // #dcdcdc/#fff of a running or selected one. Inheriting the title's colour keeps the tag
+    // one step below whichever state the row is in. Asserted as text: jsdom resolves neither
+    // opacity blending nor an inherited colour from a class rule.
+    expect(html).toContain('.topic-tag{color:inherit;opacity:');
+    expect(html).not.toMatch(/\.topic-tag\{color:#/);
+  });
+
   it('has a scheduled-task panel of its own, opened from the chat header', () => {
     // A column, not a row in the topic list: a task is not a conversation, and the sidebar is
     // the conversation switcher. Opening it is remembered; a first visit starts closed.

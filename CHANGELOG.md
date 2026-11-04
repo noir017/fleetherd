@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent tag in a topic row dims with its title instead of sitting at one fixed grey.** The
+  tag's `#6b7683` was tuned against an idle row, so beside the `#dcdcdc`/`#fff` title of a running
+  or selected topic it read as disabled — the row's own metadata looking switched off in the two
+  states most worth reading. It now inherits the title's colour at 85%, one step below whatever
+  state the row is in, in the sidebar and in the scheduled panel's Sessions list.
+
 ## [2.28.0] - 2026-11-04
 
 ### Changed

@@ -144,10 +144,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Which agent answers here, as formatLaneTitle puts it in front of the name. Dimmer than the
    title it opens: the subject is what you scan for, and the tag is metadata the row already half
-   says one line down (the machine, when the agent is on a host). It still takes its width — it is
-   inside the one ellipsised line — so the page shortens it to the agent id where it can
-   (splitTitle), rather than letting it eat the subject. */
-.topic-tag{color:#6b7683}
+   says one line down (the machine, when the agent is on a host). Dimmer by a step, not by a fixed
+   grey: #6b7683 was tuned against an idle row and read as disabled next to the #dcdcdc/#fff of a
+   running or selected title — the two states whose row is most worth reading. Inheriting the
+   title's colour and fading it keeps the tag one step below whichever title it sits in, in every
+   state the title rules below paint, and in the sessions panel, whose title has its own colour
+   rule. It still takes its width — it is inside the one ellipsised line — so the page shortens it
+   to the agent id where it can (splitTitle), rather than letting it eat the subject. */
+.topic-tag{color:inherit;opacity:.85}
 /* Which project this topic is in. Dimmer than an idle title on purpose: it is what you scan
    for when several topics are open, not what you read. */
 .topic-dir{font-size:11px;line-height:1.35;color:#6b7683;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
