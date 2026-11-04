@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.32.0] - 2026-11-04
+
 ### Added
 
 - **Quiet conversations review themselves.** The managed skills learn from what actually happened:
