@@ -52,7 +52,14 @@ import type {
   TopicActivity,
   TopicStage,
 } from '../../types.js';
-import type { ButtonSpec, ConversationWorkdir } from '../adapter.js';
+import type {
+  ButtonSpec,
+  ConversationWorkdir,
+  SchedulePanel,
+  SchedulePanelAction,
+  SchedulePanelResult,
+  SchedulePanelTask,
+} from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import type { ClickRequest, SendRequest, WebEvent, WebMessage } from './protocol.js';
@@ -305,6 +312,8 @@ export class WebRoom {
   private liveness: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise — see `useScheduleLookup`. Only ever read when the store is full. */
   private scheduled: ((ref: ConversationRef) => boolean) | null = null;
+  /** The daemon's task list and its four operations — see `useSchedulePanel`. */
+  private schedulePanel: SchedulePanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
@@ -593,6 +602,30 @@ export class WebRoom {
    */
   useScheduleLookup(lookup: (ref: ConversationRef) => boolean): void {
     this.scheduled = lookup;
+  }
+
+  /**
+   * Accept the daemon's scheduled tasks and the four operations on them, which the page draws in
+   * a panel of its own rather than in the topic list.
+   *
+   * A facade rather than a copy: the list is read on every request and every operation goes
+   * through `ScheduleService.op`, so a change made in the panel is the same change the agent's
+   * `schedule` commands and `/setting schedule` make, with the same state checks.
+   */
+  useSchedulePanel(panel: SchedulePanel): void {
+    this.schedulePanel = panel;
+  }
+
+  /** Every task, for the panel. `enabled: false` when the daemon offered none (a test daemon). */
+  schedules(): { enabled: boolean; tasks: SchedulePanelTask[] } {
+    if (!this.schedulePanel) return { enabled: false, tasks: [] };
+    return { enabled: true, tasks: this.schedulePanel.list() };
+  }
+
+  /** Carry out one action on a task, with the fresh list when it worked. */
+  scheduleOp(id: string, action: SchedulePanelAction): SchedulePanelResult {
+    if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
+    return this.schedulePanel.op(id, action);
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */

@@ -120,6 +120,25 @@ export const ClearTopicsRequestSchema = z.object({}).strict();
  */
 export const CloseIdleRequestSchema = z.object({ topics: z.array(TopicId).min(1).max(MAX_TOPICS) }).strict();
 
+/**
+ * One action on one scheduled task.
+ *
+ * The id is the daemon's own alphabet (`schedule-store.ts` TaskSchema), not the page's: a task id
+ * travels into `ScheduleService.op`, and accepting a shape the store cannot hold would only reach
+ * a "no such task" one layer later. The action is a closed set rather than a string — `run` starts
+ * an unattended process, and the four verbs are the only things the service accepts.
+ *
+ * No free text anywhere in this body: the panel lists and manages, it does not create. Creation
+ * stays in the conversation with the agent, which is the one path that can be asked what a task
+ * should do.
+ */
+export const ScheduleOpRequestSchema = z
+  .object({
+    id: z.string().regex(/^[a-z0-9]{4,16}$/, 'not a task id'),
+    action: z.enum(['pause', 'resume', 'run', 'remove']),
+  })
+  .strict();
+
 export const ClickRequestSchema = z
   .object({
     topic: TopicId,
@@ -139,6 +158,7 @@ export type PushSubscribeRequest = z.infer<typeof PushSubscribeSchema>;
 export type EndTerminalRequest = z.infer<typeof EndTerminalRequestSchema>;
 export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;
+export type ScheduleOpRequest = z.infer<typeof ScheduleOpRequestSchema>;
 
 /**
  * Validate one inbound body against a schema.

@@ -524,6 +524,7 @@ function lifecycle(
   | 'useWorkdirLookup'
   | 'useLivenessLookup'
   | 'useScheduleLookup'
+  | 'useSchedulePanel'
   | 'useIdleReclaim'
   | 'useAgentCatalog'
   | 'registerCommands'
@@ -550,6 +551,12 @@ function lifecycle(
      * a chat app's list is the platform's, and this one evicts past its cap. Read only then.
      */
     useScheduleLookup: (lookup) => room.useScheduleLookup(lookup),
+    /**
+     * Likewise the only implementor, and for a different reason: a chat app manages tasks through
+     * `/setting schedule`, whose menu is a message. This page has a column to put them in, so the
+     * daemon hands it the list and the four operations instead of a rendered menu.
+     */
+    useSchedulePanel: (panel) => room.useSchedulePanel(panel),
     /**
      * The only implementor because it is the only platform that lists its conversations' agents
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".

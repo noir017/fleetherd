@@ -70,7 +70,7 @@ import {
   type SettingOption,
   type SettingRow,
 } from '../core/settings.js';
-import type { ButtonSpec, PlatformAdapter } from '../platform/adapter.js';
+import type { ButtonSpec, PlatformAdapter, SchedulePanel, SchedulePanelTask } from '../platform/adapter.js';
 import { OutboundPacer } from '../core/outbound-pacer.js';
 import { splitIntoChunks } from '../core/stream-buffer.js';
 import { formatEmptyCatalog, formatSkillCatalog } from '../core/skills-catalog.js';
@@ -127,6 +127,7 @@ import {
 } from '../ipc/protocol.js';
 import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
+import { panelTasks } from './schedule-panel.js';
 import { commandSurface, Delegation } from './delegation.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { DRAIN_LIMIT_MS, describeInProgress, nothingInProgress, whenIdle, type InProgress } from './restart-drain.js';
@@ -961,6 +962,11 @@ export class Daemon {
       // ask which of them a scheduled task still posts into. Not decoration, unlike the two above:
       // a task whose topic was evicted fails every run after it.
       adapter.useScheduleLookup?.((ref) => this.schedules?.targets(ref) ?? false);
+      // …and one that can draw the tasks themselves gets the list and the four operations (the
+      // web UI's side panel). Same service the agent's commands and `/setting schedule` use, so
+      // a change made in the panel is a change made everywhere.
+      const panel = this.schedulePanel(id);
+      if (panel) adapter.useSchedulePanel?.(panel);
       // …and one with room to lay out the agents a new conversation could be given to (the web UI's
       // empty topic) gets a way to ask which, and who answers if nobody picks.
       adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
@@ -1448,6 +1454,33 @@ export class Daemon {
   private requireSchedules(): ScheduleService {
     if (!this.schedules) throw new Error('scheduled tasks are not enabled in this daemon');
     return this.schedules;
+  }
+
+  /**
+   * The web UI's scheduled-task panel, bound to one platform instance: the list, and the four
+   * operations, both answered from the same service the agent's `schedule` commands and
+   * `/setting schedule` use. `announce: false` because the panel is the acknowledgement — posting
+   * a card into a conversation the operator may not be looking at would say it twice.
+   *
+   * The instance id is only for `targetTopic`: a task may post to another platform, and a topic id
+   * from another instance would point the page at a lane it does not have.
+   */
+  private schedulePanel(instance: string): SchedulePanel | undefined {
+    const schedules = this.schedules;
+    if (!schedules) return undefined;
+    const list = (): SchedulePanelTask[] =>
+      panelTasks(schedules.tasks(), schedules.now(), (id) => schedules.scheduler.isRunning(id), instance);
+    return {
+      list,
+      op: (id, action) => {
+        try {
+          schedules.op(id, action, undefined, false);
+          return { ok: true, tasks: list() };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+    };
   }
 
   /**
