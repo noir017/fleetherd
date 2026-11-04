@@ -751,6 +751,16 @@ func TestRunCollectsOutputAndKillsTheGroupOnTimeout(t *testing.T) {
 	if string(body) != "a\nb\n" || res["code"] != float64(0) {
 		t.Fatalf("merged run: %v %q", res, body)
 	}
+	// The request body is stdin: how a one-shot agy gets a prompt too long for one argv entry.
+	_, res, body = rpc(t, g, &Header{Op: "run", Argv: []string{"cat"}}, []byte("from the gateway\n"))
+	if string(body) != "from the gateway\n" || res["code"] != float64(0) {
+		t.Fatalf("stdin: %v %q", res, body)
+	}
+	big := bytes.Repeat([]byte("x"), 200<<10)
+	_, res, body = rpc(t, g, &Header{Op: "run", Argv: []string{"wc", "-c"}}, big)
+	if strings.TrimSpace(string(body)) != "204800" || res["code"] != float64(0) {
+		t.Fatalf("large stdin: %v %q", res, body)
+	}
 	marker := filepath.Join(homeDir(), "child-alive")
 	start := time.Now()
 	_, res, _ = rpc(t, g, &Header{Op: "run", Bash: "(sleep 5; touch " + marker + ") & sleep 30", TimeoutMs: 300}, nil)

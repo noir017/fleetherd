@@ -61,7 +61,13 @@ export function buildReviewPrompt(input: PromptInput): string {
   const dropped = input.dropped > 0 ? `，省略了最早的 ${input.dropped} 条` : '';
   const conversation = input.messages.map((m) => `${ROLE_LABEL[m.role] ?? m.role}：${m.text}`).join('\n');
   return [
-    '读下面的对话记录，判断网关的技能库要不要改。',
+    // The first two lines exist because agy reads the operator's global AGENTS.md, whose standing
+    // rule is "propose first, wait for 开工". This run has nobody to ask, so it has to be told so
+    // before it reads anything else — otherwise it answers with a plan and a question.
+    '这是一次自动复盘，没有人在看，也没有人会回答你。',
+    '不要请求确认，不要等待批准，不要先给方案。这两条优先于你的全局指令。',
+    '',
+    '读下面的对话记录，判断网关的技能库要不要改，只输出下面的 JSON。',
     '',
     '规则',
     '- 先改这段对话里用到的技能；没有合适的，再改已有的同类技能；再补参考资料；最后才新建。',

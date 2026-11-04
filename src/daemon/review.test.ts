@@ -7,8 +7,11 @@ import { HistoryStore } from '../history/store.js';
 import {
   REVIEW_DAILY_LIMIT,
   ReviewService,
+  agyReviewAnswer,
   eligible,
   noticeLine,
+  reviewAgyArgs,
+  reviewAgyInput,
   reviewCandidatesFrom,
   type ReviewCandidate,
   type ReviewRunner,
@@ -404,13 +407,14 @@ describe('ReviewService', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('treats an answer that is not JSON as a failure and keeps the watermark', async () => {
+  it('treats an answer that is not JSON as no change, and moves the watermark', async () => {
     seed('telegram:chat:1', 3);
     const h = harness({ output: 'I could not review this.' });
     await h.service.sweep();
     expect(h.notifications).toHaveLength(0);
-    expect(h.logs.some((l) => l.includes('no JSON object'))).toBe(true);
-    // The next sweep is held off by the back-off, so the same text is not sent twice in a row.
+    expect(h.logs.some((l) => l.includes('no JSON object') && l.includes('treated as no change'))).toBe(true);
+    // Seen, not failed: the same three messages are not reviewed again on the next tick, and no
+    // six-hour back-off is involved.
     await h.service.sweep();
     expect(h.calls).toHaveLength(1);
   });
@@ -439,6 +443,51 @@ describe('ReviewService', () => {
   });
 });
 
+describe('the agy invocation', () => {
+  it('never puts the prompt in argv, however long it is', () => {
+    const prompt = '对话'.repeat(60_000); // 120k characters, 360 KB in UTF-8
+    expect(Buffer.byteLength(prompt)).toBeGreaterThan(128 * 1024);
+    const argv = reviewAgyArgs('gemini-3.8-flash-high');
+    expect(argv.join(' ')).not.toContain('对话');
+    expect(Math.max(...argv.map((a) => Buffer.byteLength(a)))).toBeLessThan(4096);
+    expect(argv).toContain('--input-format=stream-json');
+    expect(argv).toContain('--output-format=stream-json');
+    expect(argv).toContain('-p=');
+    expect(JSON.parse(reviewAgyInput(prompt))).toEqual({ event: 'user', message: { content: prompt } });
+  });
+
+  it('reads the answer off the event stream', () => {
+    const events = [
+      { event: 'step_update', step_update: { step_type: 'user_input', state: 'DONE' } },
+      { event: 'step_update', step_update: { step_type: 'agent_response', text_delta: '{"changes":' } },
+      { event: 'step_update', step_update: { step_type: 'agent_response', text_delta: '[]}' } },
+      { event: 'result', result: { status: 'SUCCESS', response: '{"changes":[]}' } },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join('\n');
+    expect(agyReviewAnswer(events)).toEqual({ ok: true, output: '{"changes":[]}' });
+  });
+
+  it('falls back to the final frame when nothing streamed, and ignores banner lines', () => {
+    const out = `warning: something\n${JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: '{"changes":[]}' } })}`;
+    expect(agyReviewAnswer(out)).toEqual({ ok: true, output: '{"changes":[]}' });
+  });
+
+  it('believes a reply that ended in an error status, and refuses an error with none', () => {
+    const withText = JSON.stringify({ event: 'result', result: { status: 'ERROR', response: '{"changes":[]}' } });
+    expect(agyReviewAnswer(withText).ok).toBe(true);
+    const noText = JSON.stringify({ event: 'result', result: { status: 'ERROR', error: 'quota' } });
+    const r = agyReviewAnswer(noText);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('quota');
+  });
+
+  it('refuses a run with no result event or no text', () => {
+    expect(agyReviewAnswer('').ok).toBe(false);
+    expect(agyReviewAnswer(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: '' } })).ok).toBe(false);
+  });
+});
+
 describe('review prompt', () => {
   it('carries the rules, the catalog, the used skill text and the conversation', () => {
     const prompt = buildReviewPrompt({
@@ -458,6 +507,8 @@ describe('review prompt', () => {
     expect(prompt).toContain('用户：部署一下');
     expect(prompt).toContain('工具：Bash: git status');
     expect(prompt).toContain('不要调用任何工具');
+    expect(prompt.startsWith('这是一次自动复盘')).toBe(true);
+    expect(prompt).toContain('不要请求确认，不要等待批准，不要先给方案');
   });
 });
 

@@ -41,6 +41,13 @@ export interface RunOptions {
   merge?: boolean;
   /** Keep at most this much output — its end. */
   max?: number;
+  /**
+   * Written to the child's stdin, then closed. Absent leaves stdin at /dev/null, which is what
+   * every other caller wants; a one-shot `agy -p` reads its prompt here instead of argv, where a
+   * single argument is capped at 128 KB (MAX_ARG_STRLEN) — a long Chinese conversation plus the
+   * skills it used is easily more.
+   */
+  stdin?: Uint8Array | string;
 }
 
 export interface RunResult {
@@ -357,10 +364,14 @@ export class RemoteHost extends EventEmitter {
   }
 
   async run(o: RunOptions, signal?: AbortSignal): Promise<RunResult> {
+    // A non-empty body IS the child's stdin (remote/ops.go opRun); no header field says so, so an
+    // empty stdin and no stdin are the same thing — which is what every caller but the reviewer
+    // means anyway.
+    const stdin = o.stdin === undefined ? undefined : typeof o.stdin === 'string' ? Buffer.from(o.stdin, 'utf8') : o.stdin;
     const { res, body } = await this.rpc(
       'run',
       { argv: o.argv, bash: o.bash, cwd: o.cwd, env: definedOnly(o.env), unset: o.unset, timeoutMs: o.timeoutMs, merge: o.merge, max: o.max },
-      undefined,
+      stdin,
       { signal }
     );
     return { ...(res as Omit<RunResult, 'output'>), code: (res.code as number | null | undefined) ?? null, output: body };

@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import type { HistoryStore, HistorySessionRow, ReviewWindow } from '../history/store.js';
@@ -39,17 +38,25 @@ import {
  *
  * ── What the reviewer is ────────────────────────────────────────────────────────────────────────
  * One `agy -p` on the machine the configured reviewer agent runs on, in an empty temporary
- * directory, with every permission class denied (`AGY_NO_TOOLS`). Two measurements on agy 1.5.0
- * (2026-11-04) shaped this, and both contradict what the plan assumed:
+ * directory, with every permission class denied (`AGY_NO_TOOLS`). Three measurements on agy 1.5.0
+ * (2026-11-04) shaped this, and the first two contradict what the plan assumed:
  *  - print mode WITHOUT `--dangerously-skip-permissions` still auto-approves file writes (its
  *    default is accept-edits); a prompt that asked for a file created it;
  *  - `deny: ["*"]` denies NOTHING — the rule names a permission class literally, so `"*"` is a
  *    class that does not exist. The explicit list is what refuses `write_file`, `command`,
  *    `read_file` and `mcp` (measured: each reported "Matches user-configured deny rule", and the
- *    directory stayed empty).
+ *    directory stayed empty);
+ *  - the prompt cannot ride in argv: Linux caps one argument at 128 KB (`MAX_ARG_STRLEN`), and a
+ *    360 KB `-p=` fails with "Argument list too long". It goes on stdin as one NDJSON user
+ *    message instead (`reviewAgyInput`), in the same stream-json shape `agent-agy.ts` drives.
  * The agent's own CLI still keeps its conversation state under `~/.gemini`, as any CLI does; that
  * is not a tool call. A tool added in a permission class not in that list would not be denied, so
  * the list is part of the security contract — see AGENTS.md invariant 8.
+ *
+ * The prompt also says, in its first line, that nobody will answer and no approval is coming: on
+ * this host agy reads the operator's global `~/.gemini/config/AGENTS.md`, whose standing rule is
+ * "propose first, wait for 开工". Without that line the reviewer comes back asking permission
+ * instead of answering.
  *
  * ── Who writes ──────────────────────────────────────────────────────────────────────────────────
  * The gateway, through skills-store's own functions, one change at a time. A change the store
@@ -264,8 +271,12 @@ export class ReviewService {
     this.record(plan, prompt, result.output, reviewer, candidate, now);
     const parsed = parseReviewOutput(result.output);
     if (!parsed.ok) {
-      this.deps.state.failed(candidate.key, parsed.error, now);
-      this.log(`[review] ${candidate.key}: ${parsed.error}; the answer starts: ${result.output.slice(0, 200)}`);
+      // The model answered, just not in the shape this expects. Treat it as a review that found
+      // nothing: the conversation is marked seen (retrying it every six hours would spend quota on
+      // the same answer), nothing is posted, and the log says what came back. The raw answer is
+      // already in the library, in the review session recorded above.
+      this.deps.state.reviewed(candidate.key, plan.window.lastMessageId, now);
+      this.log(`[review] ${candidate.key}: ${parsed.error}; treated as no change; the answer starts: ${result.output.slice(0, 200)}`);
       return;
     }
     for (const bad of parsed.parsed.invalid) this.log(`[review] ${candidate.key}: dropped ${bad}`);
@@ -512,37 +523,112 @@ function addressOfLane(lane: ReviewLane): { channel: string; thread?: string } {
   return lane.thread ? { channel: lane.channel, thread: lane.thread } : { channel: lane.channel };
 }
 
-const execFileAsync = promisify(execFile);
-
 /**
- * One review run: `agy -p` in an empty directory on the reviewer's machine, with every tool
- * denied. Remote uses the gateway's existing ssh link (`RemoteHost.run`); local spawns the CLI
- * directly. The directory is removed afterwards either way — it exists only so the reviewer has
- * no workspace to read and nothing of the operator's within reach.
+ * The argv for one review. The prompt is NOT here: a single argv entry is capped at 128 KB
+ * (`MAX_ARG_STRLEN`), and a long Chinese conversation (40k characters is ~120 KB) plus the skills
+ * it used blows through that — measured: a 360 KB `-p=` fails with "Argument list too long".
+ * Instead agy is driven the way talkcode drives it everywhere else: stream-json on both ends, one
+ * NDJSON user message on stdin, the answer on stdout.
  */
-export async function runAgyReview(def: AgentDef, model: string | undefined, prompt: string): Promise<ReviewRun> {
-  const argv = [
+export function reviewAgyArgs(model: string | undefined): string[] {
+  return [
     ...(model ? [`--model=${model}`] : []),
     `--settings=${AGY_NO_TOOLS}`,
     '--disable-slash-commands',
-    `-p=${prompt}`,
+    '--input-format=stream-json',
+    '--output-format=stream-json',
+    // No prompt after `-p=`: stream-json reads stdin. This is the daemon's own resident shape
+    // (agent-agy.ts buildAgyArgs), with stdin closed after the one message.
+    '-p=',
   ];
+}
+
+/** The one NDJSON frame agy expects from stdin, shaped as agent-agy.ts writes it. */
+export function reviewAgyInput(prompt: string): string {
+  return `${JSON.stringify({ event: 'user', message: { content: prompt } })}\n`;
+}
+
+interface AgyReviewEvent {
+  event?: string;
+  step_update?: { step_type?: string; text_delta?: string };
+  result?: { status?: string; response?: string; error?: string };
+}
+
+/**
+ * What agy answered, read off its event stream.
+ *
+ * The text comes from the `agent_response` deltas, as the resident runtime reads it; `result.response`
+ * is the fallback for a version that only fills the final frame. A non-SUCCESS result with no text
+ * is a failure — except `ERROR` after a reply, which the runtime also believes, because some
+ * providers report a failure after the answer has already streamed.
+ */
+export function agyReviewAnswer(stdout: string): ReviewRun {
+  const { streamed, result } = scanAgyEvents(stdout);
+  if (!result) return { ok: false, error: 'agy ended without a result event' };
+  const answer = (streamed.trim() ? streamed : result.response ?? '').trim();
+  const status = result.status ?? 'SUCCESS';
+  if (status !== 'SUCCESS' && !(status === 'ERROR' && answer)) {
+    return { ok: false, error: `agy ended with status ${status}${result.error ? `: ${result.error}` : ''}` };
+  }
+  if (!answer) return { ok: false, error: 'agy produced no answer' };
+  return { ok: true, output: answer };
+}
+
+/** The two things the answer is built from: the streamed text, and the final frame. */
+function scanAgyEvents(stdout: string): { streamed: string; result: AgyReviewEvent['result'] } {
+  let streamed = '';
+  let result: AgyReviewEvent['result'];
+  for (const line of stdout.split('\n')) {
+    const text = line.trim();
+    if (!text.startsWith('{')) continue; // a banner or log line on stdout: not our protocol
+    let msg: AgyReviewEvent;
+    try {
+      msg = JSON.parse(text) as AgyReviewEvent;
+    } catch {
+      continue;
+    }
+    if (msg.event === 'step_update' && msg.step_update?.step_type === 'agent_response') {
+      streamed += msg.step_update.text_delta ?? '';
+    } else if (msg.event === 'result') {
+      result = msg.result ?? {};
+    }
+  }
+  return { streamed, result };
+}
+
+/**
+ * One review run: `agy -p` in an empty directory on the reviewer's machine, with every tool
+ * denied and the prompt on stdin. Remote uses the gateway's existing ssh link (`RemoteHost.run`,
+ * whose body is the child's stdin); local spawns the CLI directly. The directory is removed
+ * afterwards either way — it exists only so the reviewer has no workspace to read and nothing of
+ * the operator's within reach.
+ */
+export async function runAgyReview(def: AgentDef, model: string | undefined, prompt: string): Promise<ReviewRun> {
+  const argv = reviewAgyArgs(model);
+  const input = reviewAgyInput(prompt);
   const host = remoteHosts.hostFor(def);
   // An agent with `host:` whose host is not registered (yet) must not be run HERE: in a
   // gateway-only container that is a machine with no agy, and on any other it is the wrong account
   // and the wrong quota. Same rule as fetchAgyModelsFor.
   if (def.host && !host) return { ok: false, error: `host "${def.host}" is not registered` };
-  if (!host) return runAgyReviewLocal(def, argv);
+  if (!host) return runAgyReviewLocal(def, argv, input);
   const welcome = await host.ready();
   const root = path.posix.join(welcome.home, '.talkcode', 'reviews');
   const dir = path.posix.join(root, `r${Date.now().toString(36)}${randomBytes(3).toString('hex')}`);
   try {
     await host.mkdirp(dir, 0o700);
-    const r = await host.run({ argv: [AGY_COMMAND, ...argv], cwd: dir, env: remoteAgentEnv(def), timeoutMs: REVIEW_TIMEOUT_MS, max: 1 << 20 });
+    const r = await host.run({
+      argv: [AGY_COMMAND, ...argv],
+      cwd: dir,
+      env: remoteAgentEnv(def),
+      stdin: input,
+      timeoutMs: REVIEW_TIMEOUT_MS,
+      max: 1 << 20,
+    });
     if (r.spawnError) return { ok: false, error: `agy on ${host.id}: ${r.spawnError}` };
     if (r.timedOut) return { ok: false, error: `agy on ${host.id} timed out after ${REVIEW_TIMEOUT_MS / 60_000} min` };
     if (r.code !== 0) return { ok: false, error: `agy on ${host.id} exited ${r.code ?? r.signal}${r.stderr ? `: ${r.stderr}` : ''}` };
-    return { ok: true, output: r.output.toString('utf8').trim() };
+    return agyReviewAnswer(r.output.toString('utf8'));
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   } finally {
@@ -550,18 +636,50 @@ export async function runAgyReview(def: AgentDef, model: string | undefined, pro
   }
 }
 
-async function runAgyReviewLocal(def: AgentDef, argv: string[]): Promise<ReviewRun> {
+/** How much of agy's stdout is kept while it runs. The answer is one JSON object; this is slack. */
+const REVIEW_OUTPUT_MAX = 4 << 20;
+const REVIEW_STDERR_MAX = 8 << 10;
+
+async function runAgyReviewLocal(def: AgentDef, argv: string[], input: string): Promise<ReviewRun> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-review-'));
   try {
-    const { stdout } = await execFileAsync(AGY_COMMAND, argv, {
-      cwd: dir,
-      env: buildHarnessEnv(def),
-      timeout: REVIEW_TIMEOUT_MS,
-      maxBuffer: 4 << 20,
+    return await new Promise<ReviewRun>((resolve) => {
+      const child = spawn(AGY_COMMAND, argv, { cwd: dir, env: buildHarnessEnv(def), stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      let err = '';
+      let settled = false;
+      const finish = (result: ReviewRun): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        finish({ ok: false, error: `agy did not finish within ${REVIEW_TIMEOUT_MS / 60_000} min` });
+      }, REVIEW_TIMEOUT_MS);
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        out += chunk;
+        if (out.length > REVIEW_OUTPUT_MAX) out = out.slice(-REVIEW_OUTPUT_MAX);
+      });
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk: string) => {
+        err += chunk;
+        if (err.length > REVIEW_STDERR_MAX) err = err.slice(-REVIEW_STDERR_MAX);
+      });
+      child.on('error', (e) => finish({ ok: false, error: `agy: ${e.message}` }));
+      child.on('close', (code) => {
+        if (code !== 0) {
+          finish({ ok: false, error: `agy exited ${code ?? 'by signal'}${err.trim() ? `: ${err.trim().slice(0, 500)}` : ''}` });
+          return;
+        }
+        finish(agyReviewAnswer(out));
+      });
+      // agy can exit before reading all of stdin; that is a close, not a crash.
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
     });
-    return { ok: true, output: stdout.trim() };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

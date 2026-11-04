@@ -401,7 +401,17 @@ that is removed afterwards, with every permission class denied (`AGY_NO_TOOLS`).
 NOTHING (`"*"` names a permission class literally). The explicit list refuses `write_file`,
 `command`, `read_file` and `mcp` — each reported "Matches user-configured deny rule" — and the
 same prompt wrote nothing. A tool in a class not in that list would not be denied; the list is
-part of the security contract (AGENTS.md invariant 8). `runAgyReview` is injectable so no test starts a model.
+part of the security contract (AGENTS.md invariant 8). `runAgyReview` is injectable so no test
+starts a model.
+
+**The prompt goes on stdin, not in argv.** Linux caps one argument at 128 KB (`MAX_ARG_STRLEN`),
+and the conversation window alone is 40k characters — ~120 KB of Chinese — before eight used
+skills at 20 KB each. Measured: a 360 KB `-p=` fails with "Argument list too long", and a 231 KB
+review prompt through stdin answers normally. So the run is driven the way the resident runtime
+drives agy: `--input-format=stream-json --output-format=stream-json -p=`, one NDJSON
+`{"event":"user","message":{"content":…}}` frame on stdin, the answer read off the `result` event
+(and the `agent_response` deltas before it). Remote reuses `RemoteHost.run`'s body as the child's
+stdin, so the temporary directory stays empty.
 
 **Who writes.** Only the gateway, one change at a time through `createSkill` / `patchSkill` /
 `writeSkillFile`. A change the store refuses — a taken name, a file outside the three

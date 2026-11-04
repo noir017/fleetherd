@@ -251,6 +251,9 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
     const r = await host.run({ bash: 'echo "$X"; echo err >&2; exit 2', env: { X: 'from-gateway' }, merge: true });
     expect(r.code).toBe(2);
     expect(r.output.toString()).toBe('from-gateway\nerr\n');
+    // The request body is the child's stdin — the path a long agy prompt takes instead of argv.
+    const s = await host.run({ argv: ['cat'], stdin: 'from the gateway\n' });
+    expect(s.output.toString()).toBe('from the gateway\n');
     const t = await host.run({ bash: 'sleep 20', timeoutMs: 200 });
     expect(t.timedOut).toBe(true);
   }, 30_000);

@@ -140,7 +140,7 @@ Paths may start with `~/`, resolved against the host's home.
 | `removeLink` | `path owned` | `{outcome, detail}` — the symlink removed only if it points inside `owned` (`removed`), else `kept` / `absent` |
 | `removePath` | `path owned` | `{removed, path}` — one file or directory tree removed only if `path` is strictly inside `owned`; the parent is resolved through symlinks first, and the path itself is not followed |
 | `listFiles` | `path` | `{files: [relative, …]}` — every non-directory entry, slash-separated, without following symlinks |
-| `run` | `argv` or `bash`, `cwd env unset timeoutMs merge max` | `{code, signal, timedOut, cancelled, truncated, spawnError, stderr}` + body (the output's end) |
+| `run` | `argv` or `bash`, `cwd env unset timeoutMs merge max`, optional body | `{code, signal, timedOut, cancelled, truncated, spawnError, stderr}` + body (the output's end). A non-empty request body is the child's stdin, then closed — a prompt too long for one argv entry (Linux caps it at 128 KB) travels that way |
 
 ## Testing
 

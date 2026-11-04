@@ -89,7 +89,7 @@ func (d *daemon) op(ctx context.Context, h *Header, body []byte) (any, []byte, e
 	case "sweepSkillLinks":
 		return opSweepSkillLinks(path)
 	case "run":
-		return d.opRun(ctx, h)
+		return d.opRun(ctx, h, body)
 	}
 	return nil, nil, fmt.Errorf("unknown operation %q", h.Op)
 }
@@ -559,10 +559,13 @@ type runResult struct {
 }
 
 // opRun runs a command to completion: `argv` directly, or `bash` as `bash -lc` — the gateway's own
-// runner for preLaunch hooks and scheduled `--bash` tasks (schedule-bash.ts), moved to the host the
-// agent is on. Its own process group, killed whole (SIGTERM, then SIGKILL) on timeout or on an
-// `rpc-cancel`. Output beyond `max` keeps its END, which is where a failing script says why.
-func (d *daemon) opRun(ctx context.Context, h *Header) (any, []byte, error) {
+// runner for preLaunch hooks, scheduled `--bash` tasks (schedule-bash.ts) and the automatic
+// review's `agy -p`. Its own process group, killed whole (SIGTERM, then SIGKILL) on timeout or on
+// an `rpc-cancel`. Output beyond `max` keeps its END, which is where a failing script says why.
+// A non-empty request body is written to the child's stdin and then closed; an empty one leaves
+// stdin at /dev/null. The review needs that: its prompt is a long NDJSON line, and one argv entry
+// is capped at 128 KB (MAX_ARG_STRLEN).
+func (d *daemon) opRun(ctx context.Context, h *Header, stdin []byte) (any, []byte, error) {
 	argv := h.Argv
 	if h.Bash != "" {
 		argv = []string{"bash", "-lc", h.Bash}
@@ -587,6 +590,12 @@ func (d *daemon) opRun(ctx context.Context, h *Header) (any, []byte, error) {
 		return runResult{SpawnError: err.Error()}, nil, nil
 	}
 	cmd := &exec.Cmd{Path: path, Args: argv, Env: env, Dir: cwd, SysProcAttr: groupAttr()}
+	// The request's body, when there is one, is the child's stdin — how a one-shot `agy -p` gets a
+	// prompt too long for a single argv entry (Linux caps one at 128 KB). An empty body leaves
+	// stdin at /dev/null, which is what every other run wants.
+	if len(stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	// Bounded wait for output after exit: a script that left `ssh -fN` or `foo &` running would
 	// otherwise hold its pipes, and this answer, forever.
 	cmd.WaitDelay = time.Second

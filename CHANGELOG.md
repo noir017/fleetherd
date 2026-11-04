@@ -18,7 +18,9 @@ All notable changes to this project are documented here. The format is based on
   tools: one `agy -p` in an empty temporary directory with every permission class denied — print
   mode without `--dangerously-skip-permissions` still auto-approves file writes on agy 1.5.0, and
   `deny: ["*"]` denies nothing at all (both measured 2026-11-04), so the explicit deny list is what
-  makes the reviewer unable to touch a file. Only the gateway writes, through `talkcode skills`'
+  makes the reviewer unable to touch a file. Its prompt travels on stdin as one stream-json frame,
+  not in argv: Linux caps one argument at 128 KB, and a long conversation plus the skills it used
+  is more than that. Only the gateway writes, through `talkcode skills`'
   own rules: a patch must carry the version the reviewer was given, and a change the store refuses
   is dropped and logged. One review runs at a time, at most
   ten a day; a failure waits six hours. When something changed, one line appears in the reviewed
