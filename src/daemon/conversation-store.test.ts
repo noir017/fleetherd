@@ -165,6 +165,21 @@ describe('ConversationStore: working directory (/cd)', () => {
     expect(s.conversationCwd('tg#c1#')).toBe('/home/u/workspace/quantlab');
   });
 
+  it('counts the generations a conversation has discarded, and survives a reload', () => {
+    const s = new ConversationStore(file);
+    s.bind('tg#c1#', 'cc');
+    expect(s.conversationGeneration('tg#c1#')).toBe(0);
+    expect(s.bumpGeneration('tg#c1#')).toBe(1);
+    expect(s.bumpGeneration('tg#c1#')).toBe(2);
+    // /new clears the record first; the caller reads the old number and writes the next one back.
+    s.clear('tg#c1#');
+    s.bind('tg#c1#', 'cc');
+    s.setGeneration('tg#c1#', 'cc', 3);
+
+    const reloaded = new ConversationStore(file);
+    expect(reloaded.conversationGeneration('tg#c1#')).toBe(3);
+  });
+
   it('drops a malformed cwd rather than the whole record', () => {
     fs.writeFileSync(
       file,

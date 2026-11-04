@@ -24,6 +24,57 @@ agent 里说过的事，隔几天几周都行。这是网关自己的记录，�
 **写入失败绝不影响这一轮。** 磁盘满了、库打不开，网关记一条日志照常回答；回答才是要紧的，
 索引不是。
 
+## 轮次
+
+每一条记录都属于某一轮。一轮是网关交给 agent 的一件事：开头的那段话（或中途并入的那条消息）、
+它做的工具调用、结尾的回复。每一轮另有一行自己的记录：
+
+- 回答它的 agent，以及这个会话的**代次**——`/new` 和 `/cd` 销毁 agent 会话时会加一，
+  重置前后的轮次因此能分开；
+- 开始时间和结束时间；
+- 触发来源：人发的消息（`person`）、定时任务（`schedule`）、失败后的自动继续（`continue`）、
+  交给子代理的任务（`delegate`）、`[sub-agent updates]` 卡片（`update`）、
+  agent 在轮次结束后报回的输出（`background`）；
+- 结局：`done`、被停（`stopped`）、失败（`failed`），以及 `restart`——网关没跑完的那一轮，
+  下次启动时从仍然标着「进行中」的行认出来。这种轮的结束时间只是下界：它写下的最后一条消息
+  的时间。
+
+归属规则：
+
+- 一轮运行期间插话、被并入的消息属于**这一轮**；
+- 回复封口之后 agent 才报回来的输出自成一轮（`background`）：算进原来那一轮，就会把话记在
+  那一轮结束之后；
+- 定时任务自成一**轮**（`schedule`），即使它是说进一个普通话题里的；
+- 被停的轮保留已经写下的内容。它确实跑过，半截回复也是真的。
+
+已有的 `history.db` 原地迁移：加上 `turn` 列，旧行留空，读出来是轮次 `?`、结局 `unknown`。
+不会给旧行补造轮次。
+
+## 读其中一部分
+
+```bash
+talkcode sessions read '#12' --turn last
+talkcode sessions read '#12' --turn done
+talkcode sessions read '#12' --turns 3
+talkcode sessions read '#12' --turn 2 --role agent
+talkcode sessions read '#12' --since '#87'
+talkcode sessions read '#12' --grep 超时
+talkcode sessions read '#12' --role tool --tail 20
+```
+
+- `--role user|agent|tool`：只看这个角色的行。
+- `--turn last|done|<n>`：最近一轮、最近一个正常结束的轮、这个会话里的第 `n` 轮（从 1 数）。
+  `--turns <n>` 取最近 `n` 轮。
+- `--since <消息>`：这条消息 id 之后（不含）的行，id 来自上一次读。
+- `--grep <文字>`：只在这个会话里找包含这段文字的行。
+- `--tail <n>`：配合 `--role tool`，取最近 `n` 行工具调用。
+
+这些筛选可以叠加（AND）。带筛选的读会额外打印每行的轮次、那一轮的结局和 agent。`--around`
+不能和它们一起用：它自己定义了一段窗口。不加任何筛选时，输出与有轮次之前完全一样。
+
+每次读都有上限：500 行、20 万字符。碰到上限会说明漏掉了多少行、从哪一端截的——尾部读保留
+最新的行，普通读保留最早的行。
+
 ## 怎么查
 
 ```bash

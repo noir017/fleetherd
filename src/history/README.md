@@ -23,12 +23,64 @@ library from reaching into the conversation registry.
 - `sessions` — one per conversation key, with platform, title, agent, host, directory, kind
   and its span. The first `kind` recorded wins: a normal topic a fixed-session scheduled task
   later speaks into stays a normal topic, and the scheduled turn is marked on its rows.
+- `turns` — one row per turn:
+
+  | column | meaning |
+  |---|---|
+  | `id` | what `messages.turn` points at |
+  | `session_id` | the conversation it happened in |
+  | `seq` | 1-based order within that conversation; what `--turn <n>` and the printed turn number mean |
+  | `agent` | the agent that answered it (the binding when it started) |
+  | `generation` | the conversation's counter, bumped by `/new` and `/cd`. Tells turns on either side of a reset apart without the harness's own session id, which a fresh session does not have yet |
+  | `trigger` | `person` \| `schedule` \| `continue` \| `delegate` \| `update` \| `background` — the sender the daemon put on the batch, or a follow-up burst |
+  | `started_at`, `ended_at` | epoch ms. `ended_at` on a `restart` turn is a lower bound: the newest message it wrote |
+  | `outcome` | `done` \| `stopped` \| `failed` \| `restart`, or NULL while running |
+  | `detail` | why it failed, capped; empty otherwise |
+
 - `messages` — one row per prompt (`user`), reply (`agent`) or tool call (`tool`), each with
-  the kind of the turn that produced it. A tool row is one line: `Bash: git status`.
+  the kind of the turn that produced it and `turn` = `turns.id`. A tool row is one line:
+  `Bash: git status`. `turn` is NULL on rows imported or written before turns existed; they
+  read as "unknown", never as a guessed turn.
 - `messages_fts` — FTS5 over `tokenize.indexText(text)`, rowid = `messages.id`, `unicode61`.
 - `imported` — one row per web UI transcript file already folded in. This is what makes the
   import idempotent; the transcript files themselves are rewritten every few seconds and must
   not be re-read into duplicate rows.
+
+### Which turn owns which row
+
+- **A turn's own rows** are the prompt that opened it, every tool line it produced, and the reply
+  its render sealed. They are written with the id `startTurn` returned.
+- **A mid-turn message** that the harness accepted (`TurnRunner.steer`) belongs to the running
+  turn: the agent is still working on the same answer. A message the harness refused is not
+  written there — it becomes the next turn and is recorded then, once.
+- **Background output** (a follow-up burst after the reply was sealed) is a turn of its own with
+  `trigger: background`, opened when the burst first renders and closed when the runtime seals
+  it. Filing it with the turn that asked would place it after that turn's end.
+- **A scheduled run** is its own turn (`schedule`), even in a normal topic. The conversation's
+  `kind` still comes from its first turn; the trigger and the rows say what this run was.
+- **`/new` and `/cd`** bump `generation`. `seq` keeps counting across them: the number identifies
+  a turn within the conversation, the generation says which agent session it ran on.
+- **A turn the process never finished** (a drain that ran out of time, a crash) is still marked
+  running in the file when the next process opens it. The constructor marks every such turn
+  `restart` — being one process per config directory is what makes that read unambiguous — and
+  leaves its end time at the newest message it wrote.
+
+The `messages.turn` column is added by `migrate()` with `ALTER TABLE`, without a default and
+without a back-fill. `turns` is created empty by the same `CREATE TABLE IF NOT EXISTS` block, so
+an upgraded file opens without a rewrite and its old rows stay unknown.
+
+## Reading part of a conversation
+
+`read(session, opts)` has three shapes: no filter (the whole conversation, unchanged), `around`
+(the old window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n),
+`since` (message id, exclusive), `grep` (text, this conversation only) and `tail` (newest n tool
+lines, only with `role: 'tool'`). They combine with AND. A filtered result adds each row's turn
+number, that turn's outcome and agent; the unfiltered result keeps its original five fields
+because `sessions read <id>` must not change under anyone.
+
+A turn/tail/since read is a tail: when the 200k character budget cuts it, the newest rows are
+kept and the note says how many older ones went. A role/grep read is not, and drops later rows
+like the unfiltered read. Both bounds (500 rows, 200k characters) are reported, never silent.
 
 WAL, `synchronous = NORMAL`. The file, and its `-wal`/`-shm` companions, are chmod'd `0600`:
 this is the same kind of text the harnesses' own session files hold.
@@ -73,7 +125,10 @@ that will write here later.
 ## Tests
 
 `tokenize.test.ts` pins the split (two-character words, one-character fallback, English,
-mixed). `store.test.ts` pins search in each of those, the scheduled ordering, read windows,
-list, `0600`, and a write that fails without throwing. `import-webui.test.ts` pins the roles,
-tool lines, kinds and idempotency. `daemon/history-record.test.ts` pins what a turn records
-and that a library which throws on every write still answers.
+mixed). `store.test.ts` pins search in each of those, the scheduled ordering, read windows, read
+filters and their truncation notes, the turns table (old-file migration, every trigger and
+outcome, `restart` on reopen, turn selection), list, `0600`, and a write that fails without
+throwing. `import-webui.test.ts` pins the roles, tool lines, kinds and idempotency.
+`daemon/history-record.test.ts` pins what a turn records — including background output as its own
+turn and the generation after `/new` — and that a library which throws on every write still
+answers. `daemon/turn-trigger.test.ts` pins which sender becomes which trigger.

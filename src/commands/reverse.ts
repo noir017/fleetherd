@@ -370,7 +370,13 @@ function renderSessionSearch(data: unknown): string {
   });
 }
 
-/** sessions read: the conversation header, then its messages oldest first. */
+/**
+ * sessions read: the conversation header, then its messages oldest first.
+ *
+ * An unfiltered read prints exactly the fields it always has. A filtered one adds the turn each
+ * row belongs to, that turn's outcome and the agent — and says "?" / "unknown" for a row written
+ * before turns existed, rather than inventing a number.
+ */
 function renderSessionRead(data: unknown): string {
   const result = data as SessionReadResult | undefined;
   if (!result) return toon({ ok: true });
@@ -390,7 +396,20 @@ function renderSessionRead(data: unknown): string {
       lastAt: result.session.lastAt,
     },
     count: result.messages.length,
-    messages: result.messages.map((m) => ({ ...m, id: `#${m.id}` })),
+    messages: result.messages.map((m) =>
+      m.turn === undefined
+        ? { ...m, id: `#${m.id}` }
+        : {
+            id: `#${m.id}`,
+            at: m.at,
+            role: m.role,
+            turn: m.turn ?? '?',
+            outcome: m.outcome ?? 'unknown',
+            agent: m.agent ?? '',
+            kind: m.kind,
+            text: m.text,
+          }
+    ),
     ...(result.note ? { note: result.note } : {}),
   });
 }

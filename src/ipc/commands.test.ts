@@ -219,6 +219,22 @@ describe('sessions <action> [arg]', () => {
     });
   });
 
+  it('builds a read with its filters, and keeps them off every other action', () => {
+    expect(
+      sessions(['read', '#12'], { role: 'tool', turn: 'done', since: 40, grep: '查询', tail: 20 })
+    ).toMatchObject({
+      kind: 'sessions-read',
+      session: '#12',
+      role: 'tool',
+      turn: 'done',
+      since: 40,
+      grep: '查询',
+      tail: 20,
+    });
+    expect(sessions(['read', '12'], { turn: 'last' })).toMatchObject({ kind: 'sessions-read', turn: 'last' });
+    expect(sessions(['read', '12'], { turns: 2 })).toMatchObject({ kind: 'sessions-read', turns: 2 });
+  });
+
   it('builds a list', () => {
     expect(sessions(['list'], { days: 7, limit: 10 })).toEqual({ kind: 'sessions-list', days: 7, limit: 10 });
     expect(sessions(['ls'])).toEqual({ kind: 'sessions-list', days: undefined, limit: undefined });
@@ -248,6 +264,12 @@ describe('sessions <action> [arg]', () => {
     [['read', '1'], { days: 7 }, /--days does not apply/],
     [['list'], { window: 3 }, /--window does not apply/],
     [['search', 'x'], { channel: 'tg:1' }, /--channel does not apply/],
+    [['list'], { role: 'tool' }, /--role does not apply/],
+    [['read', '1'], { role: 'robot' }, /--role must be user, agent or tool/],
+    [['read', '1'], { turn: 'soon' }, /--turn takes last, done/],
+    [['read', '1'], { turn: 'last', turns: 2 }, /use one/],
+    [['read', '1'], { tail: 5 }, /--tail reads tool lines/],
+    [['read', '1'], { around: 3, role: 'tool' }, /--around reads a window of its own/],
   ])('refuses %j %j', (positionals, opts, why) => {
     expect(() => sessions(positionals, opts)).toThrow(why);
   });

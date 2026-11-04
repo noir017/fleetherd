@@ -15,8 +15,15 @@ import {
   type CommandTranslation,
 } from '../core/command-translate.js';
 import { commandSurface } from './delegation.js';
+import { kindForTrigger } from '../history/record.js';
 import type { HistoryEvent } from '../history/record.js';
-import type { HistoryMessage, HistorySessionMeta, HistoryStore } from '../history/store.js';
+import type {
+  HistoryMessage,
+  HistorySessionMeta,
+  HistoryStore,
+  HistoryTurnEnd,
+  HistoryTurnStart,
+} from '../history/store.js';
 import {
   parseTextCommand,
   resolveAgent,
@@ -769,6 +776,8 @@ export class ConversationRegistry {
         },
         recordTurnEnd: (id, end) => this.outcomes.turnEnded(id, end),
         recordHistory: (id, event) => this.recordHistory(id, event),
+        beginHistoryTurn: (id, start) => this.beginHistoryTurn(id, start),
+        endHistoryTurn: (turnId, end) => this.endHistoryTurn(turnId, end),
       },
       this.hooks
     );
@@ -2841,7 +2850,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const history = this.history;
     if (!history) return;
     try {
-      const session = history.session(this.historyMeta(id, event));
+      const session = history.session(this.historyMeta(id, event.kind, event.at));
       const row = historyRow(event);
       if (row) history.message(session, row);
     } catch (e) {
@@ -2849,8 +2858,42 @@ ${formatTokens(left)} left before compaction — ${name}`;
     }
   }
 
+  /**
+   * Open the library's row for a turn, returning the id its messages carry.
+   *
+   * The session row is written first, because a turn belongs to one and the first turn of a
+   * conversation is what creates it. The generation read here is the one in force when the turn
+   * STARTS — a `/new` during the turn cannot retroactively change what this turn belonged to,
+   * and the next turn reads the new number.
+   */
+  private beginHistoryTurn(id: ConversationId, start: HistoryTurnStart): number | undefined {
+    const history = this.history;
+    if (!history) return undefined;
+    try {
+      const session = history.session(this.historyMeta(id, kindForTrigger(start.trigger), start.at));
+      if (session === undefined) return undefined;
+      return history.startTurn(session, {
+        ...start,
+        generation: this.store?.conversationGeneration?.(id) ?? 0,
+      });
+    } catch (e) {
+      console.error('[history] could not open a turn:', e instanceof Error ? e.message : e);
+      return undefined;
+    }
+  }
+
+  /** Close the library's row for a turn. Every write is best-effort, like the record above. */
+  private endHistoryTurn(turnId: number | undefined, end: HistoryTurnEnd): void {
+    if (turnId === undefined) return;
+    try {
+      this.history?.endTurn(turnId, end);
+    } catch (e) {
+      console.error('[history] could not close a turn:', e instanceof Error ? e.message : e);
+    }
+  }
+
   /** What only the registry knows about a conversation, for one library row. */
-  private historyMeta(id: ConversationId, event: HistoryEvent): HistorySessionMeta {
+  private historyMeta(id: ConversationId, kind: HistoryEvent['kind'], at: number): HistorySessionMeta {
     const lane = this.laneOf(id);
     const agentId = this.agentIdOf(id);
     const def = findAgent(this.config, agentId);
@@ -2863,8 +2906,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
       cwd: this.workdirOf(id, agentId) ?? def?.cwd ?? '',
       // The conversation's kind is the kind of its first turn; a later scheduled run in a
       // normal topic is marked on its messages, not by relabelling the topic.
-      kind: event.kind,
-      at: event.at,
+      kind,
+      at,
     };
   }
 
@@ -3196,6 +3239,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     // the conversations that never chose anything else.
     store.setConversationCwd(id, agentId, path === root ? undefined : path);
     store.clearAgentSessions(id);
+    // A new directory means a new agent session; turns on either side must not look continuous.
+    store.bumpGeneration?.(id);
     this.agents.dispose(id);
     // Counted here rather than at the menu, so only a directory actually MOVED TO scores: a `/cd`
     // that resolved to the current directory returned `unchanged` above without reaching this line,
@@ -3816,6 +3861,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
     // keeps it: a reset that also moved the topic back to the agent's root would silently undo a
     // `/cd` nobody asked to undo — and the menu `/new` offers next is how you change it on purpose.
     const cwd = this.store?.conversationCwd(id);
+    // Read before clear(), which drops the whole record: the counter must survive the reset it is
+    // counting, or every `/new` would label its turns generation 1 and tell them apart from nothing.
+    const generation = (this.store?.conversationGeneration?.(id) ?? 0) + 1;
     // Not read off in-memory state alone: `/cd` and `/new` are both answered before a conversation
     // has any (route intercepts daemon commands first), so a topic driven entirely by commands
     // would otherwise lose its binding and its directory here.
@@ -3834,6 +3882,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     }
     if (agentId) {
       this.store?.bind(id, agentId);
+      // The next turn is on the other side of this reset; the history library says so by number.
+      this.store?.setGeneration?.(id, agentId, generation);
       if (cwd) this.store?.setConversationCwd(id, agentId, cwd);
     }
   }
@@ -3991,8 +4041,12 @@ function historyRow(event: HistoryEvent): HistoryMessage | undefined {
   if (event.type === 'prompt') {
     const attachments = event.attachments?.filter(Boolean) ?? [];
     const text = attachments.length > 0 ? `${event.text}\n[attachments: ${attachments.join(', ')}]` : event.text;
-    return text.trim() ? { ts: event.at, role: 'user', kind: event.kind, text } : undefined;
+    return text.trim() ? { ts: event.at, role: 'user', kind: event.kind, text, turn: event.turn } : undefined;
   }
-  if (event.type === 'tool') return { ts: event.at, role: 'tool', kind: event.kind, text: event.title };
-  return event.text.trim() ? { ts: event.at, role: 'agent', kind: event.kind, text: event.text } : undefined;
+  if (event.type === 'tool') {
+    return { ts: event.at, role: 'tool', kind: event.kind, text: event.title, turn: event.turn };
+  }
+  return event.text.trim()
+    ? { ts: event.at, role: 'agent', kind: event.kind, text: event.text, turn: event.turn }
+    : undefined;
 }

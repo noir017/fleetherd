@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HistoryStore } from './store.js';
+import type { HistoryOutcome, HistoryTrigger } from './store.js';
 
 const dirs: string[] = [];
 
@@ -257,3 +259,236 @@ describe('HistoryStore', () => {
     });
   });
 });
+
+/**
+ * Turns: the row per turn, the turn on each message, and the reads that select by them.
+ *
+ * The old-schema case is built with raw SQL on purpose. A migration test that used this store to
+ * create its "old" file would be testing the new schema against itself.
+ */
+describe('HistoryStore turns', () => {
+  it('adds the turn column to an old database, and old rows read as unknown', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-old-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'history.db');
+    const raw = new Sqlite(file);
+    raw.exec(`
+      CREATE TABLE sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, platform TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+        cwd TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'normal',
+        started_at INTEGER NOT NULL, last_at INTEGER NOT NULL
+      );
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, ts INTEGER NOT NULL,
+        role TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'normal', text TEXT NOT NULL
+      );
+      INSERT INTO sessions (key, platform, title, agent, started_at, last_at)
+        VALUES ('tg#old#', 'tg', '旧对话', 'cc', 1000, 1000);
+      INSERT INTO messages (session_id, ts, role, kind, text) VALUES (1, 1000, 'user', 'normal', '旧问题');
+      INSERT INTO messages (session_id, ts, role, kind, text) VALUES (1, 1001, 'agent', 'normal', '旧回答');
+    `);
+    raw.close();
+
+    const store = new HistoryStore(file);
+    const read = store.read('tg#old#', { role: 'user' });
+    const session = read.session.id;
+    expect(read.messages).toHaveLength(1);
+    // Unknown, not guessed: the row predates turns and belongs to none.
+    expect(read.messages[0]).toMatchObject({ text: '旧问题', turn: null, outcome: null, agent: '' });
+
+    // The new column is writable, and a turn opened now starts at 1 in this conversation.
+    const turn = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: 2000 })!;
+    store.message(session, { ts: 2000, role: 'user', kind: 'normal', text: '新问题', turn });
+    store.endTurn(turn, { outcome: 'done', at: 2100 });
+    const last = store.read(String(session), { turn: 'last' });
+    expect(last.messages).toHaveLength(1);
+    expect(last.messages[0]).toMatchObject({ turn: 1, outcome: 'done', agent: 'cc', text: '新问题' });
+    store.close();
+  });
+
+  it('stores every trigger and every outcome, in one row per turn', () => {
+    const { store, file } = tempStore();
+    const at = Date.UTC(2026, 10, 2, 9, 0);
+    const session = store.session({ key: 'tg#turns#', platform: 'tg', agent: 'cc', at })!;
+    const rows: Array<{ trigger: HistoryTrigger; outcome?: HistoryOutcome; agent: string }> = [
+      { trigger: 'person', outcome: 'done', agent: 'cc' },
+      { trigger: 'schedule', outcome: 'stopped', agent: 'oc' },
+      { trigger: 'delegate', outcome: 'failed', agent: 'cc' },
+      { trigger: 'update', outcome: 'done', agent: 'oc' },
+      { trigger: 'continue', outcome: 'done', agent: 'cc' },
+      { trigger: 'background', outcome: 'done', agent: 'cc' },
+    ];
+    rows.forEach((r, i) => {
+      const turn = store.startTurn(session, {
+        agent: r.agent,
+        generation: i >= 3 ? 1 : 0,
+        trigger: r.trigger,
+        at: at + i * 1_000,
+      })!;
+      store.message(session, { ts: at + i * 1_000, role: 'user', kind: 'normal', text: `第${i + 1}轮`, turn });
+      if (r.outcome) store.endTurn(turn, { outcome: r.outcome, at: at + i * 1_000 + 500 });
+    });
+
+    // The trigger and generation are not printed by read — they are the data the next phase reads
+    // — so they are checked in the file itself.
+    store.close();
+    const raw = new Sqlite(file);
+    const turns = raw.prepare('SELECT seq, agent, generation, trigger, outcome FROM turns ORDER BY seq').all() as Array<
+      Record<string, unknown>
+    >;
+    raw.close();
+    expect(turns).toHaveLength(6);
+    expect(turns.map((t) => `${t.seq}:${t.agent}:${t.generation}:${t.trigger}:${t.outcome}`)).toEqual([
+      '1:cc:0:person:done',
+      '2:oc:0:schedule:stopped',
+      '3:cc:0:delegate:failed',
+      '4:oc:1:update:done',
+      '5:cc:1:continue:done',
+      '6:cc:1:background:done',
+    ]);
+  });
+
+  it('selects the last turn, the last normal end, the last n, and one by number', () => {
+    const { store } = tempStore();
+    const { session } = seedThreeTurns(store);
+    expect(store.read(String(session), { turn: 'last' }).messages.map((m) => m.text)).toEqual([
+      '第三轮问题',
+      '第三轮回答',
+    ]);
+    const done = store.read(String(session), { turn: 'done' });
+    // Turn 3 also ended normally; `done` means the NEWEST normal end, not the first.
+    expect(done.messages.map((m) => `${m.turn}:${m.outcome}`)).toEqual(['3:done', '3:done']);
+    expect(store.read(String(session), { turn: '2' }).messages.map((m) => m.text)).toEqual([
+      '第二轮问题：继续查询',
+      'Bash: npm test',
+      '第二轮回答',
+    ]);
+    const lastTwo = store.read(String(session), { turns: 2 });
+    expect(lastTwo.messages.map((m) => m.turn)).toEqual([2, 2, 2, 3, 3]);
+    // A running turn reads as running, not as an outcome that never happened.
+    const running = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: 99_000 })!;
+    store.message(session, { ts: 99_000, role: 'user', kind: 'normal', text: '还在跑', turn: running });
+    expect(store.read(String(session), { turn: 'last' }).messages[0]).toMatchObject({ turn: 4, outcome: 'running' });
+    store.close();
+  });
+
+  it('combines role, grep, since and tail', () => {
+    const { store } = tempStore();
+    const { session } = seedThreeTurns(store);
+    const tools = store.read(String(session), { role: 'tool' });
+    expect(tools.messages.map((m) => m.text)).toEqual(['Bash: git status', 'Bash: npm test']);
+    expect(tools.messages.every((m) => m.role === 'tool' && m.turn !== null)).toBe(true);
+    expect(store.read(String(session), { role: 'tool', tail: 1 }).messages.map((m) => m.text)).toEqual([
+      'Bash: npm test',
+    ]);
+    expect(store.read(String(session), { grep: '查询' }).messages.map((m) => m.text)).toEqual([
+      '第一轮回答：查询做完了',
+      '第二轮问题：继续查询',
+    ]);
+    // The watermark is exclusive, and belongs to this conversation.
+    const anchor = store.search('第二轮问题')[0]!.message;
+    const since = store.read(String(session), { since: anchor });
+    expect(since.messages.map((m) => m.text)).toEqual([
+      'Bash: npm test',
+      '第二轮回答',
+      '第三轮问题',
+      '第三轮回答',
+    ]);
+    expect(() => store.read(String(session), { since: 999_999 })).toThrow(/not in conversation/);
+    const combined = store.read(String(session), { turns: 2, role: 'agent', grep: '回答' });
+    expect(combined.messages.map((m) => `${m.turn}:${m.outcome}`)).toEqual(['2:stopped', '3:done']);
+    store.close();
+  });
+
+  it('keeps the newest rows of a tail read and says what it left out', () => {
+    const { store } = tempStore();
+    const at = Date.UTC(2026, 10, 3, 9, 0);
+    const session = store.session({ key: 'tg#long#', platform: 'tg', agent: 'cc', at })!;
+    const turn = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
+    const text = 'x'.repeat(90_000);
+    for (let i = 0; i < 3; i += 1) {
+      store.message(session, { ts: at + i, role: 'agent', kind: 'normal', text: `${i}:${text}`, turn });
+    }
+    store.endTurn(turn, { outcome: 'done', at: at + 3 });
+    const tail = store.read(String(session), { turn: 'last' });
+    // 200k budget: the newest two fit, the oldest is the one dropped.
+    expect(tail.messages).toHaveLength(2);
+    expect(tail.messages.map((m) => m.text.slice(0, 2))).toEqual(['1:', '2:']);
+    expect(tail.note).toMatch(/1 older message\(s\) were left out/);
+    // An unfiltered read is unchanged: oldest first, same five fields, dropping later rows.
+    const all = store.read(String(session));
+    expect(all.messages.map((m) => m.text.slice(0, 2))).toEqual(['0:', '1:']);
+    expect(all.note).toMatch(/1 later message\(s\)/);
+    expect('turn' in all.messages[0]!).toBe(false);
+    store.close();
+  });
+
+  it('marks a turn left running when the library is opened again as restart', () => {
+    const { store, file } = tempStore();
+    const at = Date.UTC(2026, 10, 4, 9, 0);
+    const session = store.session({ key: 'tg#crash#', platform: 'tg', agent: 'cc', at })!;
+    const turn = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
+    store.message(session, { ts: at + 10, role: 'user', kind: 'normal', text: '没跑完', turn });
+    store.close();
+
+    const reopened = new HistoryStore(file);
+    const read = reopened.read(String(session), { turn: 'last' });
+    expect(read.messages[0]).toMatchObject({ turn: 1, outcome: 'restart' });
+    reopened.close();
+    // A second open must not re-mark it (and must not lose the first end time).
+    const again = new HistoryStore(file);
+    expect(again.read(String(session), { turn: 'last' }).messages[0]!.outcome).toBe('restart');
+    again.close();
+  });
+
+  it('says why a turn it does not have cannot be read', () => {
+    const { store } = tempStore();
+    const { session } = seedThreeTurns(store);
+    expect(() => store.read(String(session), { turn: '9' })).toThrow(/has 3 turn\(s\); there is no turn 9/);
+    expect(() => store.read(String(session), { turn: 'soon' })).toThrow(/--turn takes last, done/);
+    expect(() => store.read(String(session), { turn: 'last', turns: 2 })).toThrow(/use one/);
+    expect(() => store.read(String(session), { tail: 5 })).toThrow(/--tail reads tool lines/);
+    const old = store.session({ key: 'tg#pre#', platform: 'tg', at: 5 })!;
+    expect(() => store.read(String(old), { turn: 'last' })).toThrow(/no recorded turns/);
+    store.close();
+  });
+});
+
+/** A raw connection, for building an old file and for reading what `read` does not print. */
+const Sqlite = (
+  createRequire(import.meta.url)('node:sqlite') as {
+    DatabaseSync: new (file: string) => {
+      exec(sql: string): void;
+      prepare(sql: string): { all(...params: unknown[]): unknown[] };
+      close(): void;
+    };
+  }
+).DatabaseSync;
+
+/**
+ * Three turns in one conversation: done, stopped, and a third still ending as done. Tool and
+ * person rows are mixed so role, text and turn filters have something to disagree about.
+ */
+function seedThreeTurns(store: HistoryStore): { session: number } {
+  const at = Date.UTC(2026, 10, 2, 9, 0);
+  const session = store.session({ key: 'tg#three#', platform: 'tg', agent: 'cc', at })!;
+  const add = (ts: number, role: 'user' | 'agent' | 'tool', text: string, turn: number): void => {
+    store.message(session, { ts, role, kind: 'normal', text, turn });
+  };
+  const t1 = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
+  add(at, 'user', '第一轮问题', t1);
+  add(at + 1, 'tool', 'Bash: git status', t1);
+  add(at + 2, 'agent', '第一轮回答：查询做完了', t1);
+  store.endTurn(t1, { outcome: 'done', at: at + 3 });
+  const t2 = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: at + 10 })!;
+  add(at + 10, 'user', '第二轮问题：继续查询', t2);
+  add(at + 11, 'tool', 'Bash: npm test', t2);
+  add(at + 12, 'agent', '第二轮回答', t2);
+  store.endTurn(t2, { outcome: 'stopped', at: at + 13 });
+  const t3 = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: at + 20 })!;
+  add(at + 20, 'user', '第三轮问题', t3);
+  add(at + 21, 'agent', '第三轮回答', t3);
+  store.endTurn(t3, { outcome: 'done', at: at + 22 });
+  return { session };
+}

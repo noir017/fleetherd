@@ -1429,7 +1429,16 @@ export class Daemon {
           }),
         };
       case 'sessions-read':
-        return this.requireHistory().read(action.session, { around: action.around, window: action.window });
+        return this.requireHistory().read(action.session, {
+          around: action.around,
+          window: action.window,
+          role: action.role,
+          turn: action.turn,
+          turns: action.turns,
+          since: action.since,
+          grep: action.grep,
+          tail: action.tail,
+        });
       case 'sessions-list':
         return {
           sessions: this.requireHistory().list({ days: action.days, limit: action.limit }),

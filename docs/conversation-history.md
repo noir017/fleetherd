@@ -29,6 +29,62 @@ the kind of a later turn is kept on that turn's rows.
 the gateway logs it and answers as usual; the answer is the thing that matters, the index is
 not.
 
+## Turns
+
+Every recorded row belongs to a turn. A turn is one piece of work the gateway gave an agent: the
+prompt that opened it (or a mid-turn message merged into it), the tool calls it made, and the
+reply it ended with. Each turn also has one row of its own, carrying:
+
+- the agent that answered it, and the conversation's **generation** — a counter `/new` and `/cd`
+  bump when they destroy the agent's session, so turns on either side of a reset can be told
+  apart;
+- when it started and ended;
+- what started it: a person's message (`person`), a scheduled run (`schedule`), an automatic
+  continue after a failure (`continue`), a task handed to a sub-agent (`delegate`), a
+  `[sub-agent updates]` card (`update`), or output the agent reported after its turn
+  (`background`);
+- how it ended: `done`, `stopped` (`/stop`), `failed`, or `restart` — a turn the gateway never
+  finished, found at the next start from the row still marked running. Its end time is then a
+  lower bound: the newest message it managed to write.
+
+Who owns which row:
+
+- a message typed while a turn is running and merged into it belongs to **that** turn;
+- output an agent reports after its reply was sealed is a turn of its own (`background`):
+  filing it with the turn that asked would put words after that turn had ended;
+- a scheduled run is a turn of its own (`schedule`), even when it speaks into a normal topic;
+- a stopped turn keeps what it had written. The turn ran, and its partial reply is real.
+
+An existing `history.db` is migrated in place: the `turn` column is added and left empty on old
+rows, which read as turn `?`, outcome `unknown`. No turn is invented for them.
+
+## Reading part of a conversation
+
+```bash
+talkcode sessions read '#12' --turn last
+talkcode sessions read '#12' --turn done
+talkcode sessions read '#12' --turns 3
+talkcode sessions read '#12' --turn 2 --role agent
+talkcode sessions read '#12' --since '#87'
+talkcode sessions read '#12' --grep 超时
+talkcode sessions read '#12' --role tool --tail 20
+```
+
+- `--role user|agent|tool` — only rows of that role.
+- `--turn last|done|<n>` — the newest turn, the newest turn that ended normally, or turn number
+  `n` counted from 1 in that conversation. `--turns <n>` takes the last `n`.
+- `--since <message>` — rows after that message id (exclusive), from an earlier read.
+- `--grep <text>` — rows containing this text, in this conversation only.
+- `--tail <n>` — with `--role tool`, the newest `n` tool lines.
+
+The filters combine (AND). A filtered read prints each row's turn number, that turn's outcome and
+the agent that ran it. `--around` cannot be combined with them: it selects a window of its own.
+Without any filter the output is exactly what it was before turns existed.
+
+Every read is bounded: 500 rows and 200,000 characters. A read that hits a bound says how many
+rows it left out and which end it cut — a tail read keeps the newest rows, an ordinary one keeps
+the oldest.
+
 ## Searching it
 
 ```bash

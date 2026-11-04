@@ -27,11 +27,13 @@ const DatabaseSync = loadSqlite();
  * The gateway's long-term conversation library: every turn that went through it, in
  * `<configDir>/history.db`, searchable by keyword.
  *
- * Three tables: `sessions` (one per conversation, with platform, title, agent, host,
- * directory, kind and its span), `messages` (one row per prompt, reply or tool call), and
- * `messages_fts` (the same text, tokenised for search — see tokenize.ts for why Chinese is
- * split in JS first). `imported` records the web UI transcripts already folded in, so the
- * import runs once per file rather than once per start.
+ * Four tables: `sessions` (one per conversation, with platform, title, agent, host,
+ * directory, kind and its span), `turns` (one per turn: the agent, the conversation generation
+ * that tells `/new` apart, the trigger, the span and how it ended), `messages` (one row per
+ * prompt, reply or tool call, carrying the turn it belongs to), and `messages_fts` (the same
+ * text, tokenised for search — see tokenize.ts for why Chinese is split in JS first).
+ * `imported` records the web UI transcripts already folded in, so the import runs once per file
+ * rather than once per start.
  *
  * **Recording never throws.** A write failure is logged and dropped: the turn it describes
  * is the thing worth keeping, and a full disk must not fail an answer. Queries do throw —
@@ -45,6 +47,56 @@ const DatabaseSync = loadSqlite();
 export type HistoryKind = 'normal' | 'schedule' | 'subagent' | 'background' | 'review';
 
 export type HistoryRole = 'user' | 'agent' | 'tool';
+
+/**
+ * What started a turn — the sender the daemon put on the batch that opened it, or `background`
+ * for output the agent produced after its turn (a follow-up burst). `update` is the gateway's
+ * own `[sub-agent updates]` card, `delegate` a task handed to a sub-agent: both are `subagent`
+ * message kinds, and telling them apart is the reason a trigger exists beside the kind.
+ */
+export type HistoryTrigger = 'person' | 'schedule' | 'delegate' | 'update' | 'continue' | 'background';
+
+/**
+ * How a turn ended. `restart` is only written at startup, for a turn still marked running in the
+ * file: the process that opened the library is new, so the previous one never finished it. A turn
+ * that is running right now has no outcome at all.
+ */
+export type HistoryOutcome = 'done' | 'stopped' | 'failed' | 'restart';
+
+/** What the daemon knows when a turn starts. The library adds the row and its sequence number. */
+export interface HistoryTurnStart {
+  /** The agent answering this turn (the binding at the moment it started). */
+  agent: string;
+  trigger: HistoryTrigger;
+  at: number;
+}
+
+/**
+ * What the store writes: the start plus the conversation's generation — a counter bumped by
+ * `/new` and `/cd`, the two commands that destroy the agent's session. It is what tells turns on
+ * either side of a reset apart without consulting the harness's own session ids, which a new
+ * session does not have yet.
+ */
+export interface HistoryTurnRecord extends HistoryTurnStart {
+  generation: number;
+}
+
+/** How a turn ended, when it ends. */
+export interface HistoryTurnEnd {
+  outcome: HistoryOutcome;
+  at: number;
+  /** Why it failed, capped; empty for every other outcome. */
+  detail?: string;
+}
+
+/** The turn fields a filtered read adds to a message row. */
+export interface HistoryTurnRef {
+  /** The turn's number in this conversation, 1-based; null for a row written before turns. */
+  seq: number | null;
+  /** done | stopped | failed | restart | running; null when the row has no turn. */
+  outcome: string | null;
+  agent: string;
+}
 
 export interface HistorySessionMeta {
   /** The conversation id — the same key `conversations.json` uses. */
@@ -67,6 +119,8 @@ export interface HistoryMessage {
   role: HistoryRole;
   kind: HistoryKind;
   text: string;
+  /** The turn this row belongs to (turns.id); absent for an import or a row from before turns. */
+  turn?: number;
 }
 
 export interface HistorySessionRow {
@@ -97,11 +151,51 @@ export interface HistoryHit {
   excerpt: string;
 }
 
+/**
+ * One row of a read. The last three fields are present only on a FILTERED read: adding them to
+ * the unfiltered one would change what `sessions read` prints for everyone, which this feature
+ * deliberately does not do.
+ */
+export interface HistoryReadMessage {
+  id: number;
+  at: string;
+  role: string;
+  kind: string;
+  text: string;
+  /** The turn's number in this conversation; null for a row written before turns existed. */
+  turn?: number | null;
+  /** That turn's outcome, or `running`; null when the row has no turn. */
+  outcome?: string | null;
+  /** The agent that ran that turn. */
+  agent?: string;
+}
+
 export interface HistoryReadResult {
   session: HistorySessionRow;
-  messages: Array<{ id: number; at: string; role: string; kind: string; text: string }>;
+  messages: HistoryReadMessage[];
   /** What was left out, when a bound cut it — said so nobody reads a partial log as whole. */
   note?: string;
+}
+
+/**
+ * How `read` narrows one conversation. `around` is the old window and is refused beside the
+ * filters (it defines a window of its own); the rest combine with AND.
+ */
+export interface HistoryReadOptions {
+  around?: number;
+  window?: number;
+  /** Only rows of this role. */
+  role?: HistoryRole;
+  /** `last` | `done` (the newest turn that ended normally) | a turn number, 1-based. */
+  turn?: string;
+  /** The last n turns. */
+  turns?: number;
+  /** Rows after this message id (exclusive). */
+  since?: number;
+  /** Rows whose text contains this word or phrase. */
+  grep?: string;
+  /** With `role: 'tool'`, the newest n tool lines. */
+  tail?: number;
 }
 
 export interface HistorySearchOptions {
@@ -198,9 +292,23 @@ export class HistoryStore {
           ts INTEGER NOT NULL,
           role TEXT NOT NULL,
           kind TEXT NOT NULL DEFAULT 'normal',
-          text TEXT NOT NULL
+          text TEXT NOT NULL,
+          turn INTEGER
         );
         CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, ts, id);
+        CREATE TABLE IF NOT EXISTS turns (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          seq INTEGER NOT NULL,
+          agent TEXT NOT NULL DEFAULT '',
+          generation INTEGER NOT NULL DEFAULT 0,
+          trigger TEXT NOT NULL,
+          started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          outcome TEXT,
+          detail TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS turns_session ON turns(session_id, seq);
         CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(body, tokenize = 'unicode61');
         CREATE TABLE IF NOT EXISTS imported (
           source TEXT PRIMARY KEY,
@@ -209,12 +317,49 @@ export class HistoryStore {
           messages INTEGER NOT NULL
         );
       `);
+      this.migrate();
+      this.closeInterruptedTurns();
       this.lockDown();
     } catch (e) {
       this.failure = e instanceof Error ? e.message : String(e);
       this.db = undefined;
       this.log(`[history] could not open ${file}: ${this.failure}; conversations are not being recorded`);
     }
+  }
+
+  /**
+   * Bring an older file up to the current schema, in place, without rewriting a row.
+   *
+   * `messages.turn` is the only column a previous version lacks: `CREATE TABLE IF NOT EXISTS`
+   * cannot add it to an existing table, and a migration that back-filled it would be inventing
+   * turn boundaries nobody recorded. So the column is added NULL and old rows stay NULL — read
+   * as "unknown" (see HistoryReadMessage) rather than guessed at.
+   */
+  private migrate(): void {
+    const db = this.db;
+    if (!db) return;
+    const columns = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === 'turn')) db.exec('ALTER TABLE messages ADD COLUMN turn INTEGER');
+    // After the ALTER, so an old file gets the index too. Cheap, and every filtered read uses it.
+    db.exec('CREATE INDEX IF NOT EXISTS messages_turn ON messages(turn)');
+  }
+
+  /**
+   * A turn still marked running when this library is opened was cut off by the process that
+   * wrote it — a drain that ran out of time, a crash, a kill. The gateway is one process per
+   * config directory, so there is no other way to read it, and nothing in the harness's own
+   * history says the gateway stopped listening. This is the turns-table counterpart of
+   * ConversationRecord.inFlight, and it runs at open for the same reason: it is the only moment
+   * that knows the previous process is gone.
+   *
+   * Its end time is a LOWER BOUND: the newest message it managed to write, else its start.
+   */
+  private closeInterruptedTurns(): void {
+    this.db?.exec(`
+      UPDATE turns SET outcome = 'restart',
+        ended_at = COALESCE((SELECT MAX(ts) FROM messages WHERE messages.turn = turns.id), started_at)
+      WHERE outcome IS NULL
+    `);
   }
 
   /**
@@ -266,6 +411,36 @@ export class HistoryStore {
     if (sessionId === undefined) return;
     this.guard('message', () => {
       this.insertMessage(sessionId, msg);
+    });
+  }
+
+  /**
+   * Open one turn, returning its id for the rows it will own. Numbered per conversation, so
+   * `--turn 3` means the third turn of THAT conversation and matches the number printed beside
+   * every row. A failure is logged and dropped like every other recording write.
+   */
+  startTurn(sessionId: number, start: HistoryTurnRecord): number | undefined {
+    return this.guard('turn', () => {
+      const db = this.requireDb();
+      const row = db
+        .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM turns WHERE session_id = ?')
+        .get(sessionId) as { seq: number | bigint };
+      const res = db
+        .prepare(
+          'INSERT INTO turns (session_id, seq, agent, generation, trigger, started_at) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+        .run(sessionId, Number(row.seq), start.agent, start.generation, start.trigger, start.at);
+      return Number(res.lastInsertRowid);
+    });
+  }
+
+  /** Close a turn with how it ended. A missing id (recording failed at the start) is a no-op. */
+  endTurn(turnId: number | undefined, end: HistoryTurnEnd): void {
+    if (turnId === undefined) return;
+    this.guard('turn end', () => {
+      this.db
+        ?.prepare('UPDATE turns SET outcome = ?, ended_at = ?, detail = ? WHERE id = ?')
+        .run(end.outcome, end.at, end.detail ?? '', turnId);
     });
   }
 
@@ -384,36 +559,56 @@ export class HistoryStore {
   }
 
   /**
-   * One conversation: all of it, or a window around one message. `around` is a message id
-   * from a search hit; `window` is how many messages on each side (default 10).
+   * One conversation: all of it, a window around one message, or the rows a filter selects.
+   *
+   * `around` is the old window (`--around`/`--window`) and is refused beside the filters, which
+   * define a selection of their own. Without a filter the answer is exactly what it has always
+   * been — same rows, same fields — because `sessions read <id>` must not change under anyone.
    */
-  read(sessionRef: string, opts: { around?: number; window?: number } = {}): HistoryReadResult {
-    const db = this.requireDb();
+  read(sessionRef: string, opts: HistoryReadOptions = {}): HistoryReadResult {
     const session = this.findSession(sessionRef);
     if (!session) throw new Error(`no conversation "${sessionRef}"; \`talkcode sessions list\` shows the ids`);
-    if (opts.around === undefined) {
-      const rows = db
-        .prepare('SELECT id, ts, role, kind, text FROM messages WHERE session_id = ? ORDER BY ts, id LIMIT ?')
-        .all(session.id, READ_ALL_LIMIT + 1) as Array<Record<string, unknown>>;
-      const more = rows.length > READ_ALL_LIMIT;
-      const all = (more ? rows.slice(0, READ_ALL_LIMIT) : rows).map(messageRow);
-      const { messages, dropped } = capRead(all);
-      const notes = [
-        more ? `This conversation has more than ${READ_ALL_LIMIT} messages.` : '',
-        dropped > 0 ? `${dropped} later message(s) were left out of this answer.` : '',
-      ].filter(Boolean);
-      return {
-        session,
-        messages,
-        ...(notes.length > 0
-          ? { note: `${notes.join(' ')} Read a window with --around <message>.` }
-          : {}),
-      };
+    if (opts.around !== undefined) {
+      if (hasReadFilter(opts)) {
+        throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail');
+      }
+      return this.readWindow(session, opts);
     }
+    if (!hasReadFilter(opts)) return this.readAll(session);
+    return this.readFiltered(session, opts);
+  }
+
+  /** The whole conversation, oldest first, bounded by rows and characters. */
+  private readAll(session: HistorySessionRow): HistoryReadResult {
+    const db = this.requireDb();
+    const rows = db
+      .prepare('SELECT id, ts, role, kind, text FROM messages WHERE session_id = ? ORDER BY ts, id LIMIT ?')
+      .all(session.id, READ_ALL_LIMIT + 1) as Array<Record<string, unknown>>;
+    const more = rows.length > READ_ALL_LIMIT;
+    const all = (more ? rows.slice(0, READ_ALL_LIMIT) : rows).map(messageRow);
+    const { messages, dropped } = capRead(all);
+    const notes = [
+      more ? `This conversation has more than ${READ_ALL_LIMIT} messages.` : '',
+      dropped > 0 ? `${dropped} later message(s) were left out of this answer.` : '',
+    ].filter(Boolean);
+    return {
+      session,
+      messages,
+      ...(notes.length > 0
+        ? { note: `${notes.join(' ')} Read a window with --around <message>.` }
+        : {}),
+    };
+  }
+
+  /** Messages on both sides of one id (`--around`), oldest first. */
+  private readWindow(session: HistorySessionRow, opts: HistoryReadOptions): HistoryReadResult {
+    const db = this.requireDb();
+    const around = opts.around;
+    if (around === undefined) throw new Error('--around needs a message id');
     const anchor = db
       .prepare('SELECT id, ts FROM messages WHERE id = ? AND session_id = ?')
-      .get(opts.around, session.id) as { id: number; ts: number } | undefined;
-    if (!anchor) throw new Error(`message ${opts.around} is not in conversation ${session.id}`);
+      .get(around, session.id) as { id: number; ts: number } | undefined;
+    if (!anchor) throw new Error(`message ${around} is not in conversation ${session.id}`);
     const window = Math.max(0, Math.min(opts.window ?? 10, 100));
     const before = db
       .prepare(
@@ -434,6 +629,134 @@ export class HistoryStore {
         ? { note: `${dropped} message(s) of this window were left out to keep the answer under ${READ_CHAR_BUDGET} characters; narrow --window.` }
         : {}),
     };
+  }
+
+  /**
+   * The filtered read: role, turn selection, watermark and text, combined with AND. Every row it
+   * returns carries its turn's number, outcome and agent, because a filtered answer is about the
+   * shape of the work, not just the words.
+   *
+   * Direction matters. A turn/tail/since read is a TAIL: when a bound cuts it, the newest rows
+   * are the ones worth keeping, so the cut is made from the oldest end and the note says so.
+   * A role/grep read of the whole conversation keeps the oldest and drops later, like `readAll`.
+   */
+  private readFiltered(session: HistorySessionRow, opts: HistoryReadOptions): HistoryReadResult {
+    const db = this.requireDb();
+    const { where, params } = this.readWhere(session, opts);
+    const tail = opts.tail !== undefined ? Math.max(1, Math.min(opts.tail, 500)) : undefined;
+    const newestFirst =
+      tail !== undefined || opts.turn !== undefined || opts.turns !== undefined || opts.since !== undefined;
+    const limit = tail ?? READ_ALL_LIMIT + 1;
+    const order = newestFirst ? 'm.ts DESC, m.id DESC' : 'm.ts, m.id';
+    const sql = `
+      SELECT m.id AS id, m.ts AS ts, m.role AS role, m.kind AS kind, m.text AS text,
+             m.turn AS turn_ref, t.seq AS turn_seq, t.outcome AS turn_outcome, t.agent AS turn_agent
+      FROM messages m
+      LEFT JOIN turns t ON t.id = m.turn
+      WHERE ${where.join(' AND ')}
+      ORDER BY ${order}
+      LIMIT ?`;
+    const rows = db.prepare(sql).all(...params, limit) as Array<Record<string, unknown>>;
+
+    const more = tail === undefined && rows.length > READ_ALL_LIMIT;
+    let selected = (more ? rows.slice(0, READ_ALL_LIMIT) : rows).map(readMessageRow);
+    if (newestFirst) selected = selected.reverse();
+    const { messages, dropped } = newestFirst ? capTail(selected) : capRead(selected);
+    const note = readNote(more, dropped, newestFirst);
+    return { session, messages, ...(note ? { note } : {}) };
+  }
+
+  /** The WHERE a filtered read selects, and its parameters. Split out to keep readFiltered short. */
+  private readWhere(
+    session: HistorySessionRow,
+    opts: HistoryReadOptions
+  ): { where: string[]; params: Array<string | number> } {
+    const db = this.requireDb();
+    // The CLI refuses this too; the store is the second wall for a hand-written IPC request.
+    if (opts.tail !== undefined && opts.role !== 'tool') {
+      throw new Error('--tail reads tool lines; use it with --role tool');
+    }
+    const where = ['m.session_id = ?'];
+    const params: Array<string | number> = [session.id];
+    if (opts.role) {
+      where.push('m.role = ?');
+      params.push(opts.role);
+    }
+    if (opts.grep) {
+      where.push("m.text LIKE ? ESCAPE '\\'");
+      params.push(likePattern(opts.grep));
+    }
+    const turnIds = this.turnScope(session, opts);
+    if (turnIds) {
+      where.push(`m.turn IN (${turnIds.map(() => '?').join(', ')})`);
+      params.push(...turnIds);
+    }
+    if (opts.since !== undefined) {
+      const exists = db
+        .prepare('SELECT 1 AS yes FROM messages WHERE id = ? AND session_id = ?')
+        .get(opts.since, session.id);
+      if (!exists) throw new Error(`message ${opts.since} is not in conversation ${session.id}`);
+      where.push('m.id > ?');
+      params.push(opts.since);
+    }
+    return { where, params };
+  }
+
+  /**
+   * Which turns a read selects, as ids — or undefined when it selects every turn (no turn filter).
+   * Throws a message written for the agent when the conversation has no such turn: silently
+   * returning an empty list would read as "nothing was said", which is a different answer.
+   */
+  private turnScope(session: HistorySessionRow, opts: HistoryReadOptions): number[] | undefined {
+    const db = this.requireDb();
+    if (opts.turn === undefined && opts.turns === undefined) return undefined;
+    if (opts.turn !== undefined && opts.turns !== undefined) {
+      throw new Error('--turn and --turns select turns in different ways; use one');
+    }
+    const count = Number(
+      (db.prepare('SELECT COUNT(*) AS n FROM turns WHERE session_id = ?').get(session.id) as { n: number | bigint }).n
+    );
+    if (count === 0) {
+      throw new Error(
+        `conversation ${session.id} has no recorded turns — it predates turn tracking; read it without --turn`
+      );
+    }
+    if (opts.turns !== undefined) {
+      const n = Math.max(1, Math.min(opts.turns, 100));
+      const max = Number(
+        (db.prepare('SELECT MAX(seq) AS seq FROM turns WHERE session_id = ?').get(session.id) as { seq: number | bigint })
+          .seq
+      );
+      return (
+        db
+          .prepare('SELECT id FROM turns WHERE session_id = ? AND seq > ? ORDER BY seq')
+          .all(session.id, max - n) as Array<{ id: number | bigint }>
+      ).map((r) => Number(r.id));
+    }
+    const which = opts.turn ?? '';
+    if (which === 'last' || which === 'done') {
+      const clause = which === 'done' ? "AND outcome = 'done'" : '';
+      const row = db
+        .prepare(`SELECT id FROM turns WHERE session_id = ? ${clause} ORDER BY seq DESC LIMIT 1`)
+        .get(session.id) as { id: number | bigint } | undefined;
+      if (!row) {
+        throw new Error(
+          which === 'done'
+            ? `no turn of conversation ${session.id} ended normally`
+            : `conversation ${session.id} has no recorded turns`
+        );
+      }
+      return [Number(row.id)];
+    }
+    const seq = Number(which);
+    if (!Number.isInteger(seq) || seq < 1) {
+      throw new Error(`--turn takes last, done, or a turn number (1 = the first), got ${JSON.stringify(which)}`);
+    }
+    const row = db
+      .prepare('SELECT id FROM turns WHERE session_id = ? AND seq = ?')
+      .get(session.id, seq) as { id: number | bigint } | undefined;
+    if (!row) throw new Error(`conversation ${session.id} has ${count} turn(s); there is no turn ${seq}`);
+    return [Number(row.id)];
   }
 
   /** The most recently active conversations, newest first. */
@@ -580,8 +903,8 @@ export class HistoryStore {
   private insertMessage(sessionId: number, msg: HistoryMessage): void {
     const db = this.requireDb();
     const res = db
-      .prepare('INSERT INTO messages (session_id, ts, role, kind, text) VALUES (?, ?, ?, ?, ?)')
-      .run(sessionId, msg.ts, msg.role, msg.kind, msg.text);
+      .prepare('INSERT INTO messages (session_id, ts, role, kind, text, turn) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(sessionId, msg.ts, msg.role, msg.kind, msg.text, msg.turn ?? null);
     const id = Number(res.lastInsertRowid);
     db.prepare('INSERT INTO messages_fts (rowid, body) VALUES (?, ?)').run(id, indexText(msg.text));
   }
@@ -600,7 +923,7 @@ export class HistoryStore {
   }
 }
 
-function messageRow(row: Record<string, unknown>): { id: number; at: string; role: string; kind: string; text: string } {
+function messageRow(row: Record<string, unknown>): HistoryReadMessage {
   return {
     id: Number(row.id),
     at: iso(Number(row.ts)),
@@ -608,6 +931,69 @@ function messageRow(row: Record<string, unknown>): { id: number; at: string; rol
     kind: String(row.kind ?? ''),
     text: String(row.text ?? ''),
   };
+}
+
+/** A filtered row, with its turn's number, outcome and agent. */
+function readMessageRow(row: Record<string, unknown>): HistoryReadMessage {
+  const base = messageRow(row);
+  // Three states, deliberately distinct: no turn at all (a row recorded before turns), a turn
+  // whose row is missing, and a turn that exists but has not ended yet (`running`).
+  if (row.turn_ref === null || row.turn_ref === undefined || row.turn_seq === null || row.turn_seq === undefined) {
+    return { ...base, turn: null, outcome: null, agent: '' };
+  }
+  return {
+    ...base,
+    turn: Number(row.turn_seq),
+    outcome: row.turn_outcome === null || row.turn_outcome === undefined ? 'running' : String(row.turn_outcome),
+    agent: String(row.turn_agent ?? ''),
+  };
+}
+
+/** Whether any of the read filters that select rows was given. */
+function hasReadFilter(opts: HistoryReadOptions): boolean {
+  return (
+    opts.role !== undefined ||
+    opts.turn !== undefined ||
+    opts.turns !== undefined ||
+    opts.since !== undefined ||
+    opts.grep !== undefined ||
+    opts.tail !== undefined
+  );
+}
+
+/** The sentence a filtered read adds when a bound cut it — said, never silent. */
+function readNote(more: boolean, dropped: number, newestFirst: boolean): string | undefined {
+  const notes: string[] = [];
+  if (more) {
+    notes.push(
+      `More than ${READ_ALL_LIMIT} messages match; the ${newestFirst ? 'newest' : 'oldest'} ${READ_ALL_LIMIT} are shown.`
+    );
+  }
+  if (dropped > 0) {
+    notes.push(
+      `${dropped} ${newestFirst ? 'older' : 'later'} message(s) were left out to keep the answer under ${READ_CHAR_BUDGET} characters.`
+    );
+  }
+  return notes.length > 0
+    ? `${notes.join(' ')} Narrow the read with --turn, --turns, --since, --grep or --tail.`
+    : undefined;
+}
+
+/**
+ * Stop at the character budget from the NEWEST end (the input is oldest-first), so a tail read
+ * keeps the rows nearest now. Always keeps one row, for the reason capRead does.
+ */
+function capTail<T extends { text: string }>(messages: T[]): { messages: T[]; dropped: number } {
+  let total = 0;
+  const kept: T[] = [];
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]!;
+    if (kept.length > 0 && total + message.text.length > READ_CHAR_BUDGET) break;
+    kept.push(message);
+    total += message.text.length;
+  }
+  kept.reverse();
+  return { messages: kept, dropped: messages.length - kept.length };
 }
 
 /**
