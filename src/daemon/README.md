@@ -472,6 +472,14 @@ What each piece is shaped by, one line each:
   Discord), created already named `[agent] ⏰ name · time` and recorded so the namer leaves it alone;
   the user can carry on in it. Elsewhere it runs in a throwaway conversation (`schedule#<id>#<planned>`)
   that posts into the target and is released afterwards.
+- **A daily-session run keeps one topic per local day.** The first run of the day opens it (same
+  shape as a new-session run), names it `⏰ name · YYYY-MM-DD`, and records that day and topic in
+  the task; later runs that day — including a catch-up whose planned time was before midnight —
+  join it, and the next day opens a fresh one. The day is the task's own `tz`, taken from the
+  run's planned time. A restart reads the topic back from `schedules.json`; a topic deleted
+  meanwhile is reopened on the next run (the web UI answers `hasThread`). There is no throwaway
+  fallback: a platform that cannot open a topic is refused at registration, and a failed create
+  fails the run and says so — a conversation the user cannot reply into is not a session.
 - **A bash run is not an agent**: `bash -lc` in its own process group (killed whole on timeout — `a |
   b` forks), the daemon's environment minus the reverse-command token, a 16 KB tail kept for the chat
   and the full output in `<configDir>/schedule-runs/<id>/` (20 per task). Longer than 3000 characters

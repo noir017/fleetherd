@@ -6,6 +6,7 @@ import {
   bashResultText,
   bashStatus,
   buildTask,
+  formatDay,
   formatInZone,
   nextRunOf,
   runNoticeText,
@@ -13,6 +14,7 @@ import {
   taskExpiredText,
   taskView,
   type NewTaskInput,
+  type ScheduleDaySession,
   type ScheduleTask,
 } from '../core/schedule.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
@@ -57,7 +59,7 @@ export class ScheduleService {
     private readonly platforms: Map<string, PlatformAdapter>,
     private readonly registry: Registry,
     private readonly clock: { now(): number; schedule(fn: () => void, ms: number): () => void },
-    store: ScheduleStore,
+    private readonly store: ScheduleStore,
     /** `<configDir>/schedule-runs` — one directory of bash logs per task. */
     private readonly runsDir: string
   ) {
@@ -89,6 +91,7 @@ export class ScheduleService {
       agents: this.config.agents.map((a) => a.id),
       from,
       target,
+      canOpenTopic: this.platforms.get(target.platform)?.capabilities.thread === true,
       ...(targetConversation ? { targetConversation } : {}),
     });
     if (!built.ok) throw new Error(built.error);
@@ -156,15 +159,18 @@ export class ScheduleService {
    * expired task has already posted its notice and runs no more.
    */
   targets(ref: ConversationRef): boolean {
-    return this.scheduler
-      .list()
-      .some(
-        (t) =>
-          (t.state === 'active' || t.state === 'paused') &&
-          t.target.platform === ref.platform &&
-          t.target.channel === ref.channel &&
-          t.target.thread === ref.thread
+    return this.scheduler.list().some((t) => {
+      if (t.state !== 'active' && t.state !== 'paused') return false;
+      if (t.target.platform !== ref.platform) return false;
+      if (t.target.channel === ref.channel && t.target.thread === ref.thread) return true;
+      // A daily task's topic for today is not its target — it is the conversation the day's runs
+      // join, and evicting it would lose the day's context (and force a fresh topic next run).
+      return (
+        t.daySession !== undefined &&
+        t.daySession.address.channel === ref.channel &&
+        t.daySession.address.thread === ref.thread
       );
+    });
   }
 
   nextRun(task: ScheduleTask): number | undefined {
@@ -246,6 +252,8 @@ export class ScheduleService {
       );
     }
 
+    if (run.session === 'daily') return this.runDaily(task, run, platform, planned);
+
     const opened = await this.registry.openScheduledConversation({
       platform: task.target.platform,
       address: targetAddress(task),
@@ -262,6 +270,81 @@ export class ScheduleService {
     } finally {
       if (opened.ephemeral) this.registry.releaseScheduled(opened.key);
     }
+  }
+
+  /**
+   * One session a day: the first run of the task's local day opens a topic, and every later run
+   * that day — including a catch-up whose PLANNED time was before midnight — joins it. The topic is
+   * recorded with the task (`daySession`), so a restart in the middle of the day does not open a
+   * second one; a topic deleted meanwhile is reopened on the next run.
+   *
+   * There is deliberately no throwaway fallback here. A conversation the person cannot reply into
+   * would hide the output instead of delivering it, so a platform that cannot open a topic — or a
+   * create that fails — makes the run fail, and the chat is told why.
+   */
+  private async runDaily(
+    task: ScheduleTask,
+    run: Extract<ScheduleTask['run'], { kind: 'agent' }>,
+    platform: PlatformAdapter,
+    planned: number
+  ): Promise<ScheduleRunResult> {
+    const day = formatDay(planned, task.when.tz);
+    const stored = this.store.get(task.id)?.daySession;
+    // Ask the platform whether the topic is still there when it can answer; one that cannot is
+    // assumed to have kept it, which is the only honest guess a chat app allows.
+    const reuse = stored?.day === day && (platform.hasThread?.(stored.address) ?? true) ? stored : undefined;
+
+    let key: string;
+    let address: ConversationAddress;
+    if (reuse) {
+      key = reuse.conversation;
+      address = reuse.address;
+      const bound = this.registry.boundAgentOf(key);
+      if (bound !== undefined && bound !== run.agent) {
+        // The day's topic was given another agent on purpose; a schedule must not undo that.
+        const why = `this topic is now answered by ${bound}, not ${run.agent}`;
+        await platform.sendMessage(targetAddress(task), `⏰ \`#${task.id}\` **${task.name}** skipped — ${why}.`).catch((e) => warn('skip notice', e));
+        return { status: 'failed', error: why };
+      }
+    } else {
+      let opened: { key: string; address: ConversationAddress };
+      try {
+        opened = await this.registry.openScheduledConversation({
+          platform: task.target.platform,
+          address: targetAddress(task),
+          agentId: run.agent,
+          title: `⏰ ${task.name} · ${day}`,
+          ...optional('cwd', run.cwd),
+          ephemeralKey: `schedule#${task.id}#${planned}`,
+          mustOpen: true,
+        });
+      } catch (e) {
+        const why = e instanceof Error ? e.message : String(e);
+        await platform
+          .sendMessage(
+            targetAddress(task),
+            `⏰ \`#${task.id}\` **${task.name}** failed — could not open a topic for today's session: ${why}`
+          )
+          .catch((err) => warn('failure notice', err));
+        return { status: 'failed', error: why };
+      }
+      key = opened.key;
+      address = opened.address;
+      this.rememberDay(task.id, { day, conversation: key, address });
+    }
+
+    await platform.sendMessage(address, runNoticeText(task, planned)).catch((e) => warn('run notice', e));
+    return toResult(
+      await this.registry.runScheduledPrompt({ key, platform: task.target.platform, address, agentId: run.agent, prompt: run.prompt })
+    );
+  }
+
+  /** Record which topic today's daily runs join — before the turn, so a crash mid-run keeps it. */
+  private rememberDay(id: string, day: ScheduleDaySession): void {
+    const current = this.store.get(id);
+    // Removed while the topic was being opened: nothing to remember, and putting it back would
+    // resurrect a task the user just deleted.
+    if (current) this.store.put({ ...current, daySession: day });
   }
 
   // ─────────────────────────────── helpers ───────────────────────────────

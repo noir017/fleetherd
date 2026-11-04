@@ -19,6 +19,7 @@ function task(input: NewTaskInput, id = 'a1b2c3', now = NOW): ScheduleTask {
     from: { key: 'web#main#t1', platform: 'web', agent: 'cc' },
     target: { platform: 'web', address: { channel: 'main', thread: 't1' } },
     targetConversation: { key: 'web#main#t1', agent: 'cc' },
+    canOpenTopic: true,
   });
   if (!r.ok) throw new Error(r.error);
   return r.task;

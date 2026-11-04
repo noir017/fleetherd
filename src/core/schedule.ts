@@ -16,7 +16,7 @@ import { formatTarget } from './conversation.js';
  * running. (Those harness tools are deliberately left enabled — the gateway does not edit an agent's
  * toolbox. The agent-facing help says which one survives.)
  *
- * ── Two kinds, two session modes ──────────────────────────────────────────────────────────────
+ * ── Two kinds, three session modes ───────────────────────────────────────────────────────────
  * - `bash`: a command, run by the daemon itself, its output posted to the target. No agent.
  * - `agent` + `fixed`: the prompt is a turn in ONE conversation — by default the topic it was
  *   registered from — so context accumulates and the user can follow up in place. Limited to a
@@ -24,6 +24,13 @@ import { formatTarget } from './conversation.js';
  *   schedule keeps talking into indefinitely grows a context nobody is reading.
  * - `agent` + `new`: every run is a fresh session, in a new topic where the platform can open one.
  *   No window; this is the shape for "every morning".
+ * - `agent` + `daily`: the first run of each local day opens a new topic and the rest of that
+ *   day's runs join it — one conversation a day, then a fresh one tomorrow. The day is the
+ *   task's own `tz` (a run belongs to the day of its PLANNED time, so a catch-up after midnight
+ *   still joins the day it was meant for). Needs a cron and a platform that can open a topic:
+ *   unlike `new`, there is no throwaway fallback, because a session nobody can reply into is not
+ *   a conversation — it is a place output goes to die. No window; this is the shape for a
+ *   briefing that should build on itself through the day.
  */
 
 /** How long a fixed-session task stays live after it is registered (operator's rule, 2026-09-30). */
@@ -42,7 +49,7 @@ export const MAX_BASH_TIMEOUT_MS = 6 * 3_600_000;
 export type ScheduleWhen = { cron: string; tz: string } | { at: number; tz: string };
 
 export type ScheduleRun =
-  | { kind: 'agent'; agent: string; prompt: string; session: 'fixed' | 'new'; cwd?: string }
+  | { kind: 'agent'; agent: string; prompt: string; session: 'fixed' | 'new' | 'daily'; cwd?: string }
   /**
    * `host`: the `hosts:` entry the registering agent ran on. A command an agent wrote names that
    * agent's machine — its paths, its tools — so it runs there, not on the gateway.
@@ -66,6 +73,20 @@ export type ScheduleRunStatus = 'ok' | 'failed' | 'interrupted' | 'skipped' | 'm
  */
 export type ScheduleState = 'active' | 'paused' | 'expired' | 'done';
 
+/**
+ * The topic a daily-session task is using today, and which day that is.
+ *
+ * Persisted with the task rather than held in memory, because the whole promise is that a
+ * restart in the middle of the day still lands in the same conversation. `day` is the task's
+ * local calendar date (`YYYY-MM-DD` in its own `tz`); when a run's planned day differs, the
+ * entry is stale and a new topic is opened.
+ */
+export interface ScheduleDaySession {
+  day: string;
+  conversation: string;
+  address: ConversationAddress;
+}
+
 export interface ScheduleTask {
   id: string;
   name: string;
@@ -74,6 +95,8 @@ export interface ScheduleTask {
   target: ScheduleTarget;
   /** The conversation a fixed-session task runs in. */
   conversation?: string;
+  /** A daily-session task's topic for the current day; absent until its first run of a day. */
+  daySession?: ScheduleDaySession;
   state: ScheduleState;
   createdAt: number;
   /** Who registered it: the conversation and the platform it was on. */
@@ -128,6 +151,8 @@ export function zonedToEpoch(y: number, mo: number, d: number, h: number, mi: nu
   return second;
 }
 
+const two = (n: number): string => String(n).padStart(2, '0');
+
 /**
  * `2026-10-01 08:00` in `tz` — the form every surface shows a time in — with `:ss` added when the
  * time is not on a minute. That matters for `--at +2m`, which lands wherever the clock was: shown as
@@ -136,9 +161,19 @@ export function zonedToEpoch(y: number, mo: number, d: number, h: number, mi: nu
  */
 export function formatInZone(epoch: number, tz: string): string {
   const p = zonedParts(epoch, tz);
-  const two = (n: number): string => String(n).padStart(2, '0');
   const base = `${p.year}-${two(p.month)}-${two(p.day)} ${two(p.hour)}:${two(p.minute)}`;
   return p.second !== 0 ? `${base}:${two(p.second)}` : base;
+}
+
+/**
+ * The calendar day `epoch` falls on in `tz`, as `YYYY-MM-DD` — a daily-session task's key for
+ * "which day is this run part of". The task's own zone decides, never the gateway host's; and the
+ * caller passes the PLANNED time, so a run caught up after midnight still belongs to the day it
+ * was meant for.
+ */
+export function formatDay(epoch: number, tz: string): string {
+  const p = zonedParts(epoch, tz);
+  return `${p.year}-${two(p.month)}-${two(p.day)}`;
 }
 
 const RELATIVE_RE = /^\+(\d+)\s*(s|m|h|d)$/i;
@@ -259,7 +294,7 @@ export interface NewTaskInput {
   prompt?: string;
   bash?: string;
   agent?: string;
-  session?: 'fixed' | 'new';
+  session?: 'fixed' | 'new' | 'daily';
   cwd?: string;
   timeoutMs?: number;
 }
@@ -275,6 +310,12 @@ export interface NewTaskContext {
   from: { key: string; platform: string; agent: string; cwd?: string; host?: string };
   /** Where output goes (`--channel`, else the registering conversation's own lane). */
   target: { platform: string; address: ConversationAddress };
+  /**
+   * Whether the target platform can open a topic. A daily-session task is refused without it:
+   * its whole point is one conversation per day that the person can reply into, and the
+   * fallback `new` uses — a throwaway conversation — would be invisible to them.
+   */
+  canOpenTopic: boolean;
   /**
    * The conversation a fixed-session run would happen in — the target's — with the agent bound
    * there (if any). Undefined when the scope cannot name one conversation for an address.
@@ -304,6 +345,11 @@ export function buildTask(input: NewTaskInput, ctx: NewTaskContext): Built {
   if ((input.prompt === undefined) === (input.bash === undefined)) {
     return fail('give exactly one of --prompt <text> (an agent runs it) or --bash <command> (the daemon runs it)');
   }
+  // A daily session means "the rest of today joins the first run" — a one-shot has no rest of
+  // the day to join, and the run after it would be a different task.
+  if (input.session === 'daily' && input.at !== undefined) {
+    return fail('--session daily needs --cron: a one-shot --at has no rest of the day to join; use --session new for a one-off topic');
+  }
   const when = parseWhen(input, ctx);
   if ('error' in when) return fail(when.error);
 
@@ -324,9 +370,14 @@ export function buildTask(input: NewTaskInput, ctx: NewTaskContext): Built {
   if (input.timeoutMs !== undefined) return fail('--timeout is for --bash tasks; an agent turn is bounded by the gateway itself');
   const prompt = input.prompt!;
   if (!prompt.trim()) return fail('--prompt is empty');
-  return (input.session ?? 'fixed') === 'fixed'
-    ? buildFixedTask(input, prompt, ctx, base)
-    : buildFreshTask(input, prompt, ctx, base);
+  switch (input.session ?? 'fixed') {
+    case 'fixed':
+      return buildFixedTask(input, prompt, ctx, base);
+    case 'new':
+      return buildFreshTask(input, prompt, ctx, base);
+    case 'daily':
+      return buildDailyTask(input, prompt, ctx, base);
+  }
 }
 
 function parseWhen(input: NewTaskInput, ctx: NewTaskContext): ScheduleWhen | { error: string } {
@@ -355,6 +406,9 @@ function parseWhen(input: NewTaskInput, ctx: NewTaskContext): ScheduleWhen | { e
 }
 
 function buildBashTask(input: NewTaskInput, command: string, ctx: NewTaskContext, base: TaskBase): Built {
+  if (input.session === 'daily') {
+    return fail('--session daily is for --prompt tasks: a --bash task is run by the daemon and has no conversation to keep for the day');
+  }
   if (input.agent !== undefined || input.session !== undefined) {
     return fail('--agent and --session are for --prompt tasks; a --bash task is run by the daemon, not an agent');
   }
@@ -424,6 +478,29 @@ function buildFreshTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext
   );
 }
 
+/** One session a day: the first run opens the topic, the rest of that day's runs join it. */
+function buildDailyTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext, base: TaskBase): Built {
+  if (!ctx.canOpenTopic) {
+    return fail(
+      '--session daily needs a target that can open a topic (the web UI, a Telegram forum, Discord): ' +
+        'each day gets its own conversation, and without one the runs would have nowhere the user can reply; ' +
+        'use --session new to post into the chat instead'
+    );
+  }
+  const agent = input.agent ?? ctx.from.agent;
+  const unknown = checkAgent(agent, ctx);
+  if (unknown) return fail(unknown);
+  const cwd = input.cwd ?? ctx.from.cwd;
+  return firstRunCheck(
+    {
+      ...base,
+      name: input.name?.trim() || defaultName(prompt),
+      run: { kind: 'agent', agent, prompt, session: 'daily', ...(cwd ? { cwd } : {}) },
+    },
+    ctx.now
+  );
+}
+
 function firstRunCheck(task: ScheduleTask, now: number): Built {
   return nextRunOf(task, now) === undefined ? fail('that schedule never runs') : { ok: true, task };
 }
@@ -438,7 +515,9 @@ export function describeWhen(when: ScheduleWhen, plain = false): string {
 
 export function describeRun(run: ScheduleRun): string {
   if (run.kind === 'bash') return 'bash';
-  return `${run.agent} · ${run.session === 'fixed' ? 'fixed session' : 'new session each run'}`;
+  const session =
+    run.session === 'fixed' ? 'fixed session' : run.session === 'daily' ? 'one session a day' : 'new session each run';
+  return `${run.agent} · ${session}`;
 }
 
 /**

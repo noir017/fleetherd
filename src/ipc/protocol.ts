@@ -135,7 +135,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       prompt: z.string().min(1).max(20_000).optional(),
       bash: z.string().min(1).max(20_000).optional(),
       agent: z.string().min(1).optional(),
-      session: z.enum(['fixed', 'new']).optional(),
+      session: z.enum(['fixed', 'new', 'daily']).optional(),
       cwd: z.string().min(1).optional(),
       timeoutMs: z.number().int().positive().optional(),
     })
@@ -304,7 +304,7 @@ export type IpcAction =
       prompt?: string;
       bash?: string;
       agent?: string;
-      session?: 'fixed' | 'new';
+      session?: 'fixed' | 'new' | 'daily';
       cwd?: string;
       timeoutMs?: number;
     }

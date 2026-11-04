@@ -69,7 +69,7 @@ export const NATIVE_TOOLS: readonly NativeTool[] = [
     },
     enums: {
       action: ['add', 'list', 'show', 'pause', 'resume', 'run', 'rm'],
-      session: ['fixed', 'new'],
+      session: ['fixed', 'new', 'daily'],
     },
   },
 ];

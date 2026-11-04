@@ -21,6 +21,16 @@ All notable changes to this project are documented here. The format is based on
   filter the output is exactly what it was. An existing file is migrated in place: old rows keep
   a NULL turn and read as unknown rather than being guessed into a neighbour.
   [→](docs/conversation-history.md)
+- **A scheduled task can keep one conversation per day.** `schedule add --session daily` opens a
+  topic on the first run of each local day and sends the rest of that day's runs into it, so a
+  briefing can build on itself without a new topic every hour or a context that grows for a week.
+  The day is counted in the task's own time zone by each run's already-written rules: the day of
+  its planned time, so a catch-up after midnight still joins the day it was meant for, and the
+  topic is named with that date. The topic is remembered in `schedules.json`, so restarting the
+  gateway mid-day does not open a second one; a deleted topic is reopened next run. It needs a
+  cron and a platform that can open a topic — refused at registration otherwise, and a failed
+  create fails the run and says so, because the alternative (a throwaway conversation) is one the
+  person cannot reply into. `fixed` and `new` are unchanged.
 
 - **Sub-agent starts can be left unconfirmed.** By default `task-new` still only proposes: every
   sub-task waits on a card listing all of them until the person taps Start. `/setting delegation

@@ -468,6 +468,20 @@ export interface PlatformAdapter {
   /** The conversations the one at `address` opened, most recently active first. See `parentOf`. */
   childrenOf?(address: ConversationAddress): ConversationAddress[];
 
+  /**
+   * Whether the lane an address names still exists.
+   *
+   * A daily-session task keeps its topic for the day, so before a later run joins it the daemon has
+   * to know the topic was not deleted — otherwise every run until midnight fails into nothing. A
+   * platform that can answer says so; one that cannot leaves this absent and the daemon assumes the
+   * lane is there, which is the only honest answer when the platform has no way to ask (a chat app's
+   * topic may also be deleted, but nothing in its API reports it).
+   *
+   * Optional and web-UI-only for the same reason as the lookups above: the page owns its topic list,
+   * so deletion is a fact it knows exactly.
+   */
+  hasThread?(address: ConversationAddress): boolean;
+
   /** Send a message with buttons (used by clarify). */
   sendButtons(
     address: ConversationAddress,

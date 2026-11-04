@@ -351,6 +351,7 @@ type Outbound = Pick<
   | 'seenAt'
   | 'parentOf'
   | 'childrenOf'
+  | 'hasThread'
   | 'createThread'
   | 'renameThread'
   | 'measureRendered'
@@ -480,6 +481,10 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
       return address.channel === CHANNEL && address.thread
         ? room.childrenOf(address.thread).map((thread) => ({ channel: CHANNEL, thread }))
         : [];
+    },
+    /** Asked before a daily-session run rejoins yesterday's topic: a deleted one must be reopened. */
+    hasThread(address) {
+      return address.channel === CHANNEL && address.thread !== undefined && room.topics.has(address.thread);
     },
     /**
      * Open a topic.

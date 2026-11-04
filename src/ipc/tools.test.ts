@@ -45,7 +45,7 @@ describe('toolInputSchema', () => {
   it('gives schedule its closed sets and every add option', () => {
     const p = props('schedule');
     expect(p.action!.enum).toEqual(['add', 'list', 'show', 'pause', 'resume', 'run', 'rm']);
-    expect(p.session!.enum).toEqual(['fixed', 'new']);
+    expect(p.session!.enum).toEqual(['fixed', 'new', 'daily']);
     for (const key of ['cron', 'at', 'tz', 'prompt', 'bash', 'agent', 'name', 'cwd', 'timeout', 'channel']) {
       expect(p[key], key).toBeDefined();
     }
@@ -102,7 +102,7 @@ describe('toolAction', () => {
     expect(() => toolAction(tool('send_file'), {})).toThrow('send_file: path is required');
     expect(() => toolAction(tool('send_file'), { path: 'a', colour: 'red' })).toThrow(/unknown parameter\(s\) colour; accepted: path, name, caption, channel/);
     expect(() => toolAction(tool('schedule'), { action: 'explode' })).toThrow(/action must be one of add, list/);
-    expect(() => toolAction(tool('schedule'), { action: 'add', session: 'forever' })).toThrow(/session must be one of fixed, new/);
+    expect(() => toolAction(tool('schedule'), { action: 'add', session: 'forever' })).toThrow(/session must be one of fixed, new, daily/);
     expect(() => toolAction(tool('send_file'), { path: { nested: true } })).toThrow('send_file: path must be a string');
     expect(() => toolAction(tool('send_file'), 'a.png')).toThrow('arguments must be an object');
   });

@@ -32,18 +32,32 @@ const cfg = { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMerg
 type Sent = { platform: string; address: { channel: string; thread?: string }; text: string };
 type Menu = { text: string; buttons: Array<{ id: string; label: string }> };
 
+type Fake = PlatformAdapter & {
+  threads: string[];
+  /** Topic ids that still exist; a test removes one to stand in for the user deleting it. */
+  alive: Set<string>;
+  /** Make the next createThread calls fail, as a platform with every topic starred does. */
+  failCreate(msg: string): void;
+};
+
 function adapter(
   id: string,
   type: string,
   sent: Sent[],
-  opts: { thread: boolean; buttons?: boolean; menus?: Menu[] }
-): PlatformAdapter & { threads: string[] } {
+  opts: { thread: boolean; buttons?: boolean; menus?: Menu[]; alive?: Set<string> }
+): Fake {
   const threads: string[] = [];
+  const alive = opts.alive ?? new Set<string>();
   const menus = opts.menus ?? [];
+  let createError: string | undefined;
   return {
     platform: id,
     platformType: type,
     threads,
+    alive,
+    failCreate: (msg: string) => {
+      createError = msg;
+    },
     capabilities: {
       thread: opts.thread,
       editMessage: true,
@@ -67,9 +81,13 @@ function adapter(
       sent.push({ platform: id, address, text: `[file ${file.name}]` });
       return { address, messageId: 'f' };
     },
+    hasThread: (address: Sent['address']) => address.thread !== undefined && alive.has(address.thread),
     createThread: async (ref: { address: { channel: string } }, name: string) => {
+      if (createError) throw new Error(createError);
       threads.push(name);
-      return { address: { channel: ref.address.channel, thread: `new${threads.length}` } };
+      const thread = `new${threads.length}`;
+      alive.add(thread);
+      return { address: { channel: ref.address.channel, thread } };
     },
     renameThread: async () => {},
     editMessage: async () => {},
@@ -78,7 +96,7 @@ function adapter(
     stopTyping: async () => {},
     measureRendered: (t: string) => t.length,
     stop: async () => {},
-  } as unknown as PlatformAdapter & { threads: string[] };
+  } as unknown as Fake;
 }
 
 const dirs: string[] = [];
@@ -88,9 +106,10 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
-async function rig() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-'));
-  dirs.push(dir);
+/** A daemon on `dir`; passing the previous rig's dir restarts it against the same state files. */
+async function rig(existing?: string, alive?: Set<string>) {
+  const dir = existing ?? fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-'));
+  if (!dirs.includes(dir)) dirs.push(dir);
   const socket = path.join(dir, 'd.sock');
   const sent: Sent[] = [];
   const tokens: string[] = [];
@@ -122,7 +141,7 @@ async function rig() {
   };
   const tg = adapter('tg', 'telegram', sent, { thread: false });
   const menus: Menu[] = [];
-  const web = adapter('web', 'webui', sent, { thread: true, buttons: true, menus });
+  const web = adapter('web', 'webui', sent, { thread: true, buttons: true, menus, ...(alive ? { alive } : {}) });
   const daemon = new Daemon(
     cfg,
     new Map<string, PlatformAdapter>([
@@ -159,7 +178,13 @@ async function rig() {
   };
   /** What the web UI asks before evicting a topic (`PlatformAdapter.useScheduleLookup`). */
   const targets = (ref: InboundMessage['conversation']): boolean => internals.schedules.targets(ref);
-  return { dir, sent, turns, disposed, tg, web, menus, inbound, call, tap, targets };
+  /** Stop this daemon (a restart is another rig() on the same dir). */
+  const stop = async (): Promise<void> => {
+    await daemon.stop();
+    const i = daemons.indexOf(daemon);
+    if (i >= 0) daemons.splice(i, 1);
+  };
+  return { dir, sent, turns, disposed, tg, web, menus, inbound, call, tap, targets, stop };
 }
 
 const settle = (ms = 60): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -244,6 +269,80 @@ describe('schedule over IPC', () => {
     expect(turn.conversation).toMatch(new RegExp(`^schedule#${task.id}#`));
     expect(r.sent[0]).toMatchObject({ platform: 'tg', address: { channel: '586' } });
     expect(r.disposed).toContain(turn.conversation);
+  });
+
+  it('daily: two runs the same day share one topic, titled with the date', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    const first = r.turns.at(-1)!;
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.web.threads).toHaveLength(1);
+    expect(r.web.threads[0]).toMatch(/^\[cc\] ⏰ brief · \d{4}-\d{2}-\d{2}$/);
+    const briefs = r.turns.filter((t) => t.prompt === 'brief');
+    expect(briefs).toHaveLength(2);
+    expect(briefs[1]!.conversation).toBe(first.conversation);
+    expect(r.disposed).not.toContain(first.conversation);
+  });
+
+  it('daily: a restart mid-day rejoins the same topic', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    const key = r.turns.at(-1)!.conversation;
+    await r.stop();
+
+    const again = await rig(r.dir, r.web.alive);
+    await again.inbound(WEB, 'hello');
+    await again.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(again.web.threads).toHaveLength(0);
+    expect(again.turns.at(-1)).toMatchObject({ conversation: key, prompt: 'brief' });
+  });
+
+  it('daily: a topic deleted during the day is reopened on the next run', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    const first = r.turns.at(-1)!.conversation;
+    r.web.alive.delete(first.split('#').at(-1)!);
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.web.threads).toHaveLength(2);
+    expect(r.turns.at(-1)!.conversation).not.toBe(first);
+  });
+
+  it('daily: a topic that cannot be opened fails the run and says so in the chat', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    r.web.failCreate('every topic is starred');
+    r.sent.length = 0;
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(0);
+    expect(r.sent.find((s) => s.text.includes('could not open a topic for today\'s session: every topic is starred'))).toBeDefined();
+    const list = await r.call({ kind: 'schedule-list', id: task.id });
+    expect((list as { data: { tasks: ScheduleTaskView[] } }).data.tasks[0]!.last).toMatch(/^failed /);
+  });
+
+  it('refuses daily where it cannot work, each time with the reason', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const noTopic = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', prompt: 'x', session: 'daily', channelId: 'tg:586' });
+    expect(noTopic).toMatchObject({ ok: false });
+    expect((noTopic as { error: string }).error).toMatch(/needs a target that can open a topic/);
+    const oneShot = await r.call({ kind: 'schedule-add', at: '+1h', prompt: 'x', session: 'daily' });
+    expect((oneShot as { error: string }).error).toMatch(/needs --cron/);
+    const bash = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', bash: 'true', session: 'daily' });
+    expect((bash as { error: string }).error).toMatch(/--session daily is for --prompt tasks/);
   });
 
   it('says which conversations a task can still post into, so the web UI will not evict them', async () => {

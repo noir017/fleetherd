@@ -190,7 +190,7 @@ describe('schedule <action> [id]', () => {
     [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add`/],
     [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add`/],
     [['add', 'x'], { cron: '0 8 * * *' }, /takes no id/],
-    [['add'], { session: 'forever' }, /--session must be fixed or new/],
+    [['add'], { session: 'forever' }, /--session must be fixed, new or daily/],
   ])('refuses %j %j', (positionals, opts, why) => {
     expect(() => schedule(positionals, opts)).toThrow(why);
   });

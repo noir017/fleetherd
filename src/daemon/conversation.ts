@@ -3754,7 +3754,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
   /**
    * Where a new-session run happens: a new topic in the target when the platform can open one — so
    * the run is a conversation the user can carry on in — else a throwaway conversation that posts
-   * into the target and is forgotten after the run (`ephemeral`, see releaseScheduled).
+   * into the target and is forgotten after the run (`ephemeral`, see releaseScheduled). A daily
+   * session passes `mustOpen` instead: it has no acceptable throwaway, so the failure is raised to
+   * the caller, which fails the run and says why in the chat.
    *
    * The topic is created with its name already in the gateway's `[agent] subject` form and that name
    * is recorded, so the automatic namer leaves it alone instead of renaming it after the prompt.
@@ -3766,6 +3768,12 @@ ${formatTokens(left)} left before compaction — ${name}`;
     title: string;
     cwd?: string;
     ephemeralKey: ConversationId;
+    /**
+     * The caller cannot use a throwaway conversation: a daily session must be a topic the user can
+     * reply into, so a platform without one, or a failed create, is an error rather than a silent
+     * downgrade to a conversation that disappears after the run.
+     */
+    mustOpen?: boolean;
   }): Promise<{ key: ConversationId; address: ConversationAddress; ephemeral: boolean }> {
     const adapter = this.platforms.get(opts.platform);
     if (!adapter) throw new Error(`platform instance "${opts.platform}" is not running`);
@@ -3778,10 +3786,16 @@ ${formatTokens(left)} left before compaction — ${name}`;
         // conversation and ignores it.
         opened = (await adapter.createThread({ address: opts.address, messageId: '' }, title, { scheduled: true })).address;
       } catch (e) {
+        if (opts.mustOpen) throw e;
         console.warn(`[schedule] could not open a topic on ${opts.platform}; posting into the chat instead: ${e instanceof Error ? e.message : e}`);
       }
+    } else if (opts.mustOpen) {
+      throw new Error(`platform instance "${opts.platform}" cannot open a topic`);
     }
     const conv = opened ? this.conversationAt(opts.platform, opened) : undefined;
+    if (opts.mustOpen && !conv) {
+      throw new Error('the new topic does not map to a conversation of its own under this deployment\'s scope');
+    }
     const key = conv?.key ?? opts.ephemeralKey;
     const address = opened && conv ? opened : opts.address;
     this.ensureState(key, opts.platform, opts.agentId, { fresh: true });

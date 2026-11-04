@@ -5,6 +5,7 @@ import {
   CATCH_UP_GRACE_MS,
   decide,
   FIXED_SESSION_WINDOW_MS,
+  formatDay,
   formatInZone,
   nextRunOf,
   parseAt,
@@ -35,6 +36,7 @@ const ctx = (over: Partial<NewTaskContext> = {}): NewTaskContext => ({
   from: { key: 'web#main#t1', platform: 'web', agent: 'cc', cwd: '/work' },
   target: { platform: 'web', address: { channel: 'main', thread: 't1' } },
   targetConversation: { key: 'web#main#t1', agent: 'cc' },
+  canOpenTopic: true,
   ...over,
 });
 
@@ -66,6 +68,17 @@ describe('time in a zone', () => {
     // New York springs forward on 2026-03-08: 01:30 is EST (-5), 03:30 is EDT (-4).
     expect(zonedToEpoch(2026, 3, 8, 1, 30, 0, 'America/New_York')).toBe(Date.UTC(2026, 2, 8, 6, 30));
     expect(zonedToEpoch(2026, 3, 8, 3, 30, 0, 'America/New_York')).toBe(Date.UTC(2026, 2, 8, 7, 30));
+  });
+
+  it('names the local day in the task\'s own zone, not UTC or the host\'s', () => {
+    // 23:30 UTC on 2026-10-01 is already 07:30 on the 2nd in Shanghai, and still 19:30 on the
+    // 1st in New York. A daily task's topic key must follow its own tz.
+    const late = Date.UTC(2026, 9, 1, 23, 30);
+    expect(formatDay(late, 'Asia/Shanghai')).toBe('2026-10-02');
+    expect(formatDay(late, 'America/New_York')).toBe('2026-10-01');
+    expect(formatDay(late, 'UTC')).toBe('2026-10-01');
+    // A catch-up run belongs to the day of its PLANNED time, even when it is made after midnight.
+    expect(formatDay(Date.UTC(2026, 9, 1, 23, 30), 'Asia/Shanghai')).toBe('2026-10-02');
   });
 
   it.each([
@@ -121,6 +134,30 @@ describe('buildTask', () => {
     expect(t.expiresAt).toBeUndefined();
     expect(t.conversation).toBeUndefined();
     expect(t.run).toEqual({ kind: 'agent', agent: 'oc', prompt: 'morning brief', session: 'new', cwd: '/work' });
+  });
+
+  it('a daily-session task takes a cron, an agent, a directory and no window', () => {
+    const t = built({ cron: '0 8 * * *', prompt: 'morning brief', session: 'daily', agent: 'oc' });
+    expect(t.expiresAt).toBeUndefined();
+    expect(t.conversation).toBeUndefined();
+    expect(t.daySession).toBeUndefined();
+    expect(t.run).toEqual({ kind: 'agent', agent: 'oc', prompt: 'morning brief', session: 'daily', cwd: '/work' });
+    expect(taskCardText(t, 'registered', NOW)).toContain('oc · one session a day');
+  });
+
+  it('refuses a daily one-shot and a daily bash task, each naming why', () => {
+    expect(refusal({ at: '+1h', prompt: 'x', session: 'daily' })).toMatch(/needs --cron.*no rest of the day.*--session new/);
+    expect(refusal({ cron: '0 8 * * *', bash: 'true', session: 'daily' })).toMatch(/--session daily is for --prompt tasks.*run by the daemon/);
+  });
+
+  it('refuses a daily task where no topic can be opened, rather than falling back to a throwaway', () => {
+    expect(refusal({ cron: '0 8 * * *', prompt: 'x', session: 'daily' }, ctx({ canOpenTopic: false }))).toMatch(
+      /needs a target that can open a topic.*--session new/
+    );
+  });
+
+  it('refuses a daily task for an unknown agent, like new', () => {
+    expect(refusal({ cron: '0 8 * * *', prompt: 'x', session: 'daily', agent: 'zz' })).toMatch(/unknown agent "zz"/);
   });
 
   it('a bash task takes a timeout and no agent', () => {
