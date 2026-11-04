@@ -62,8 +62,10 @@ Dependencies point downward only. This is currently true and must stay true:
 
 ```
 commands ──► daemon ──► platform ──► core ──► config
-     └────────┴──────────┴─────────► ipc
-              └────────────────────► remote
+     ├────────┴──────────┴─────────► ipc
+     │        ├────────────────────► remote
+     │        └────────────────────► history
+     └─────────────────────────────► history
 ```
 
 Enforced facts, verifiable with grep:
@@ -84,6 +86,9 @@ Enforced facts, verifiable with grep:
   schemas). That file is deliberately kept free of Satori imports so config loading
   never drags in the adapter chain.
 - `ipc/` imports nothing from other modules except `types.ts`.
+- `history/` imports only Node built-ins — nothing from the rest of the project — and only
+  `daemon/` and `commands/` import it. It is IO plus pure tokenising with its paths injected,
+  which is what lets it be tested without a daemon.
 - `remote/` (the TypeScript one) imports nothing from other modules: it is transport. What is the
   daemon's to decide about a remote agent — the namespace, how its `talkcode` command is run here,
   where the skill goes — lives in `daemon/remote-hosts.ts`. The one exception to "daemon only" is
