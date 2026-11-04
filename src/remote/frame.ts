@@ -55,6 +55,8 @@ export interface FrameHeader {
   mode?: number;
   target?: string;
   requires?: string;
+  owned?: string;
+  atomic?: boolean;
   bash?: string;
   argv?: string[];
   timeoutMs?: number;

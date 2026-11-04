@@ -283,7 +283,16 @@ export class RemoteHost extends EventEmitter {
     return body.toString('utf8');
   }
 
-  async writeFile(path: string, data: Uint8Array, mode?: number): Promise<void> {
+  /**
+   * With `atomic`, the file is replaced in one step (remote/ops.go opWriteFileAtomic): for a file
+   * an agent may be reading as it changes. That takes a single frame, so it is for small files only.
+   */
+  async writeFile(path: string, data: Uint8Array, mode?: number, opts: { atomic?: boolean } = {}): Promise<void> {
+    if (opts.atomic) {
+      if (data.length > FILE_CHUNK) throw new Error(`an atomic write takes one frame: ${data.length} bytes is over ${FILE_CHUNK}`);
+      await this.rpc('writeFile', { path, mode, atomic: true }, data);
+      return;
+    }
     if (data.length === 0) {
       await this.rpc('writeFile', { path, mode }, data);
       return;
@@ -293,8 +302,27 @@ export class RemoteHost extends EventEmitter {
     }
   }
 
-  async ensureLink(target: string, link: string, requires: string): Promise<{ outcome: string; detail?: string; link: string }> {
-    const { res } = await this.rpc('ensureLink', { target, path: link, requires });
+  /**
+   * Make `link` a symlink to `target` where `requires` exists. With `owned`, an existing symlink is
+   * repointed only if it points inside that directory; one pointing elsewhere is the operator's and
+   * comes back `occupied`, like a real file (remote/ops.go opEnsureLink).
+   */
+  async ensureLink(
+    target: string,
+    link: string,
+    requires: string,
+    owned?: string
+  ): Promise<{ outcome: string; detail?: string; link: string }> {
+    const { res } = await this.rpc('ensureLink', { target, path: link, requires, owned });
+    return res as { outcome: string; detail?: string; link: string };
+  }
+
+  /**
+   * Remove `link` if, and only if, it is a symlink pointing inside `owned` (remote/ops.go
+   * opRemoveLink): `removed`, or `absent` / `kept` with nothing done.
+   */
+  async removeLink(link: string, owned: string): Promise<{ outcome: string; detail?: string; link: string }> {
+    const { res } = await this.rpc('removeLink', { path: link, owned });
     return res as { outcome: string; detail?: string; link: string };
   }
 
