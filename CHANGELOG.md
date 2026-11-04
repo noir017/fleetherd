@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.30.0] - 2026-11-04
+
 ### Added
 
 - **Your instructions, for every agent.** How the operator wants to be worked with had to be
