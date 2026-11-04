@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's scheduled panel lists the runs, not just the tasks, and gives the topics back.**
+  A new-session task opens a topic for every run, and those topics used to land in the ordinary
+  switcher beside the person's own conversations — a column that grew by one row per run and said
+  nothing about where the row came from. They now carry a `scheduled` mark (persisted, and adopted
+  once for the runs an older install already has from their `[agent] ⏰ …` titles) and are left out
+  of the switcher. A second tab in the panel, **Sessions**, lists them with their state and unread
+  count; tapping one opens it, and its × deletes it. The tab needs no request of its own: the topic
+  list the page already receives carries everything it draws.
+
+- **The panel is narrower, and the operator can size it.** Its default column is
+  `clamp(240px, 20vw, 320px)` rather than up to 380px, because it is a glance at background work
+  rather than a second chat. The left edge is a drag handle, kept in this browser like the
+  sidebar's width, and double-clicking it restores the default.
+
 ## [2.26.0] - 2026-11-04
 
 ### Added

@@ -19,7 +19,9 @@ made when it comes back; older is recorded as missed. Every change posts a card 
 details, written by the gateway rather than the agent, so what you read is what will run.
 
 On the web UI, the clock at the right of the chat header opens a **⏰ Scheduled tasks** panel of
-its own: the same list, plus "run now", and a pin that keeps it open beside the chat. `/setting`
-has a **⏰ Scheduled tasks** button everywhere: every task with its next and last run, and
-pause, resume and delete (delete asks twice). Where there are no buttons,
-`/setting schedule [pause|resume|delete|run <id>]` does the same by typing.
+its own: the **Tasks** tab is the same list, plus "run now", and a pin that keeps it open beside
+the chat. A task that runs in a new session opens a topic for each run; the **Sessions** tab lists
+those topics, and they no longer appear in the ordinary topic list. `/setting` has a **⏰ Scheduled
+tasks** button everywhere: every task with its next and last run, and pause, resume and delete
+(delete asks twice). Where there are no buttons, `/setting schedule [pause|resume|delete|run <id>]`
+does the same by typing.

@@ -399,23 +399,36 @@ footer is a size container so the word "Settings" drops at the narrowest sidebar
 
 ## The scheduled-task panel
 
-The clock at the right of the chat header toggles a panel of the gateway's scheduled tasks. It is
+The clock at the right of the chat header toggles a panel of the gateway's scheduled work. It is
 a column of its own on a screen at least 1024px wide and a slide-over below that; hidden by
 default, and pinned open across topic switches and reloads when the operator asks (`aa_sched_pin`).
 Closing it clears the pin: a close the next reload undid would read as a panel that cannot be shut.
+The docked width defaults to `clamp(240px, 20vw, 320px)` — narrower than the topic sidebar, because
+this is a glance at background work — and the left edge is a drag handle (`aa_sched_w`, double-click
+to reset). The overlay and full-screen layouts below 1024px take their width from the screen.
 
 It is deliberately not a section of the topic list. A task is not a conversation — a bash task has
 none, and a new-session task makes one per run — and the sidebar is the conversation switcher. The
 panel is also the only place on this page where a task can be managed, so its toggle is always in
 the header, unlike the terminal's.
 
-**Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the list and the four operations; the
-daemon builds it in `daemon/schedule-panel.ts` from `ScheduleService`, the same service the agent's
-`schedule` commands and `/setting schedule` use. Two routes carry it: `GET api/schedules` and
-`POST api/schedules/op`, the latter validated by `ScheduleOpRequestSchema`. The panel pulls when it
-opens, after every action, and on a timer while visible (5s while a run is in flight, 30s
-otherwise) — the daemon has no event for a run finishing. Countdowns ("in 3h 12m") are computed
-from `nextAt` on the client; every other time arrives formatted in the task's own zone.
+**Two tabs.** **Tasks** is the definitions and their controls. **Sessions** is the topics a
+new-session run opened (`Topic.scheduled`): the switcher leaves those out (`topicRows` filters
+them), so the tab is their only listing and its × is the only delete. It needs no request of its
+own — the `topics` event that keeps the switcher current carries their titles, state, message
+counts and unread marks, so a run that starts or finishes moves the tab as it happens. Tapping a
+row opens the topic; following it puts an unpinned panel away like any other switch. A run holding
+a question puts an amber dot on the clock (`#sched-alert`), because it has no row in the switcher
+to show it there.
+
+**Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the four
+operations; the daemon builds it in `daemon/schedule-panel.ts` from `ScheduleService`, the same
+service the agent's `schedule` commands and `/setting schedule` use. Two routes carry it:
+`GET api/schedules` and `POST api/schedules/op`, the latter validated by
+`ScheduleOpRequestSchema`. The task list pulls when the panel opens, after every action, and on a
+timer while visible (5s while a run is in flight, 30s otherwise) — the daemon has no event for a
+run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
+arrives formatted in the task's own zone.
 
 **What it cannot do.** It does not create tasks. Creation is a sentence to an agent in a topic, and
 letting the page POST a prompt or a command would put a bash injection surface behind the login
