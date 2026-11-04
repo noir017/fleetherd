@@ -300,7 +300,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    hides it — the iframe stays mounted and its WebSocket stays up, which is both what makes
    coming back instant and what keeps the switcher's marker lit. So visibility is a class, never
    a teardown. */
-#term-toggle{margin-left:auto}
+#term-toggle{margin-left:0}
 #term-toggle.on{color:#4ade80}
 #term{display:none;flex:1;min-height:0;background:#000;flex-direction:column}
 #chat.term #log,#chat.term #typing,#chat.term #note,#chat.term #bar{display:none}
@@ -308,6 +308,58 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #term-bar{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;background:#161616;border-bottom:1px solid var(--line);flex:0 0 auto}
 .term-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 #term-end:hover{color:#f87171;background:rgba(248,113,113,.15)}
+/* The scheduled-task panel's toggle. It owns the auto margin the terminal used to: the clock is
+   always in the header, so it is what pushes the right-hand group to the edge whether the
+   terminal button is there or not. */
+#schedules-toggle{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px;margin-left:auto}
+#schedules-toggle.on{color:#4ade80}
+
+/* ── The scheduled-task panel ────────────────────────────────────────────────
+   A column of its own on the right, not a section of the topic list: a task is not a
+   conversation, and the sidebar is where conversations live. Hidden until asked for; pinned, it
+   stays open across topics and reloads (localStorage, like the sidebar's width). Under 1024px
+   there is no room to dock a 300–380px column beside a 240px sidebar, so it slides over the
+   chat; under 640px it is the whole screen, like the reader. */
+#schedules{display:none;flex-direction:column;width:clamp(300px,26vw,380px);flex:0 0 clamp(300px,26vw,380px);height:100%;min-width:0;background:#171717;border-left:1px solid var(--line)}
+#app.sched #schedules{display:flex}
+#schedules-head{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 12px;border-bottom:1px solid var(--line);min-height:42px}
+.sched-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.sched-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sched-summary{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#schedules-pin.on{color:#4ade80}
+#schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
+#schedules-list{display:flex;flex-direction:column;gap:8px}
+.sched-item{border:1px solid var(--line);border-radius:6px;padding:10px;background:#1b1b1b;cursor:pointer}
+.sched-item:hover{background:#1e1e1e}
+.sched-item.open{background:#202020;border-color:#3a3a3a}
+.sched-row{display:flex;align-items:center;gap:8px}
+.sched-dot{width:8px;height:8px;border-radius:50%;background:#555;flex:none}
+.sched-item.active .sched-dot{background:#38bdf8}
+.sched-item.paused .sched-dot{background:#fbbf24}
+.sched-item.expired .sched-dot{background:#f87171}
+.sched-item.done .sched-dot{background:#4ade80}
+.sched-item.running .sched-dot{box-shadow:0 0 6px rgba(56,189,248,.8);animation:pulse 1.5s infinite}
+#app.calm .sched-item.running .sched-dot{animation:none}
+.sched-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
+.sched-state{flex:none;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+.sched-when{margin-top:6px;font-size:12px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.sched-in{margin-top:2px;font-size:12px;color:#38bdf8}
+.sched-meta{margin-top:3px;font-size:12px;color:var(--dim);overflow-wrap:anywhere}
+.sched-last{margin-top:4px;font-size:12px;color:var(--dim);overflow-wrap:anywhere}
+.sched-last.bad{color:#f87171}
+.sched-detail{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.sched-detail-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.sched-detail-body{margin-top:4px;max-height:220px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#c9c9c9}
+.sched-detail-meta{margin-top:6px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+.sched-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.sched-acts button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
+.sched-acts button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
+.sched-acts button:disabled{opacity:.45;cursor:default}
+.sched-acts button.danger{color:#f87171}
+.sched-acts button.confirm{background:rgba(248,113,113,.16);border-color:#7f1d1d;color:#fca5a5}
+#schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
+.sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
+#sched-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:19}
 /* One host for every mounted terminal, of which exactly one is visible. Visibility is a class
    rather than the hidden attribute because the rule that sizes an iframe would have to fight
    it: display:block on the element beats hidden's user-agent display:none, and the loser of
@@ -610,6 +662,16 @@ button:disabled{opacity:.5;cursor:default}
 /* Phones and tablets held upright. Everything here is about the parts of a handset a desktop
    layout has no concept of: a URL bar that eats viewport height, a home indicator under the
    composer, Safari's zoom-on-focus, and a finger instead of a pointer. */
+/* A 240px sidebar and a 300–380px panel leave too little chat on a laptop screen, so below
+   1024px the panel slides over the chat instead of taking a column. The backdrop is what
+   dismisses it, as the sidebar drawer's is. */
+@media(max-width:1023px){
+  #app.sched #schedules{position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px rgba(0,0,0,.6)}
+  #app.sched #sched-backdrop{display:block}
+  /* Nothing to dock it to here, so the pin would be a control that changes nothing until the
+     window is wide again. The choice is kept, not offered. */
+  #schedules-pin{display:none}
+}
 @media(max-width:640px){
   /* height:100% resolves against a viewport that still counts the collapsing browser chrome,
      so the composer sits below the fold until the page is scrolled. dvh is the height actually
@@ -647,6 +709,15 @@ button:disabled{opacity:.5;cursor:default}
      a target three times its size and reads as a stray mark rather than a control. */
   #kill-agent{min-width:44px;height:44px}
   #kill-agent svg{width:18px;height:18px}
+  /* The panel is the whole screen here: 88vw of a phone is a sliver of chat behind a surface
+     that is already modal. */
+  #app.sched #schedules{width:100%;left:0}
+  #schedules-head{padding:0 4px 0 12px;min-height:49px}
+  #schedules-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  #schedules-toggle{min-width:44px;height:44px}
+  #schedules-toggle svg{width:18px;height:18px}
+  #schedules-body{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+  .sched-acts button{min-height:44px;padding:0 14px}
   .chat-title{max-width:none}
   #log{padding:14px 12px 6px}
   #typing,#note{padding-left:12px;padding-right:12px}
@@ -700,6 +771,8 @@ const SCRIPT = `
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
+      schedToggle=$('schedules-toggle'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
+      schedPin=$('schedules-pin'), schedClose=$('schedules-close'), schedNote=$('schedules-note'), schedBackdrop=$('sched-backdrop'),
       lightbox=$('lightbox'), lightboxImg=$('lightbox-img'),
       reader=$('reader'), readerName=$('reader-name'), readerGet=$('reader-get'), readerBody=$('reader-body'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status');
@@ -744,6 +817,9 @@ const SCRIPT = `
   var topics = [];
   var readCounts = {};
   try { readCounts = JSON.parse(localStorage.getItem('aa_reads') || '{}'); } catch(x){}
+  // The scheduled-task panel: whether it is showing, whether it was pinned to stay open, the
+  // last list drawn, and its refresh timer. See "The scheduled-task panel" below.
+  var schedOpen=false, schedPinned=false, schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
 
   function saveReads(){
     try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
@@ -1001,7 +1077,12 @@ const SCRIPT = `
    * the handle, because the pointer leaves an 8px handle on the first fast move.
    */
   var SB_MIN = 180;
-  function sbMax(){ return Math.max(SB_MIN, Math.min(640, window.innerWidth - 360)); }
+  // The panel's width is the stylesheet's clamp(300px,26vw,380px); this is the same arithmetic,
+  // used only to keep the sidebar's own maximum from leaving the chat a sliver when both are
+  // open. docked() is the stylesheet's 1023px breakpoint, read the other way round.
+  function schedWidth(){ return Math.min(380, Math.max(300, Math.round(window.innerWidth * 0.26))); }
+  function docked(){ return window.innerWidth >= 1024; }
+  function sbMax(){ return Math.max(SB_MIN, Math.min(640, window.innerWidth - 360 - (schedOpen && docked() ? schedWidth() : 0))); }
   function setSbWidth(w, keep){
     if(w == null){
       sidebar.style.removeProperty('--sbw');
@@ -1034,6 +1115,268 @@ const SCRIPT = `
     if(w > 0) setSbWidth(w, true);
   });
   sbHandle.addEventListener('dblclick', function(){ setSbWidth(null); });
+
+  // ── The scheduled-task panel ────────────────────────────────────────────────
+  /**
+   * The gateway's scheduled tasks, in a column of their own rather than in the topic list.
+   *
+   * Closed by default, and closed again on a topic switch unless pinned: the panel is a side
+   * glance, and following a task's target into a topic should get it out of the way. Pinned, it
+   * is part of the workspace and survives topic switches and reloads (aa_sched_pin). Closing
+   * clears the pin — a close that the next reload undid would read as a panel that cannot be shut.
+   *
+   * The list is pulled when the panel opens, after every action, and on a timer while it is
+   * visible (5s while a task is running, 30s otherwise). The daemon has no event for "a run
+   * finished", and polling every task forever would be worse than one small request from a page
+   * that is already open.
+   */
+  try { schedPinned = localStorage.getItem('aa_sched_pin') === '1'; } catch(x){}
+  // A pinned panel is docked by definition; a window with nowhere to dock it starts closed, and
+  // the pin stays for the next wide window.
+  if(schedPinned && docked()) schedOpen = true;
+
+  function paintSchedules(){
+    app.classList.toggle('sched', schedOpen);
+    schedToggle.setAttribute('aria-expanded', schedOpen ? 'true' : 'false');
+    schedToggle.classList.toggle('on', schedOpen);
+    schedPin.setAttribute('aria-pressed', schedPinned ? 'true' : 'false');
+    schedPin.classList.toggle('on', schedPinned);
+  }
+
+  function setPinned(v){
+    schedPinned = v;
+    try { if(v) localStorage.setItem('aa_sched_pin', '1'); else localStorage.removeItem('aa_sched_pin'); } catch(x){}
+    paintSchedules();
+  }
+
+  function disarmSched(){
+    if(schedTimer) clearTimeout(schedTimer);
+    schedTimer = 0;
+  }
+
+  function armSched(){
+    disarmSched();
+    if(!schedOpen) return;
+    var wait = schedTasks && schedTasks.some(function(t){ return t.running; }) ? 5000 : 30000;
+    schedTimer = setTimeout(function(){
+      schedTimer = 0;
+      if(!schedOpen) return;
+      if(document.visibilityState === 'hidden'){ armSched(); return; }
+      loadSchedules();
+    }, wait);
+  }
+
+  function setSchedules(open){
+    if(open === schedOpen) return;
+    // Docking the panel narrows the chat, which re-wraps the transcript. A reader at the bottom
+    // should stay at the bottom; one reading history keeps the pixel position they chose.
+    var wasBottom = atBottom();
+    schedOpen = open;
+    if(!open && schedPinned) setPinned(false);
+    paintSchedules();
+    if(open){
+      if(schedTasks === null) schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
+      loadSchedules();
+      armSched();
+    } else {
+      disarmSched();
+    }
+    // The sidebar's maximum depends on whether the panel is taking a column; re-clamp it so
+    // opening the panel cannot leave the chat a sliver. Not persisted: the width the operator
+    // chose is still what they get back when the panel closes.
+    var w = parseFloat(sidebar.style.getPropertyValue('--sbw'));
+    if(w > 0) setSbWidth(w, false);
+    if(wasBottom) toBottom();
+  }
+
+  function showSchedNote(msg){
+    schedNote.hidden = false;
+    schedNote.textContent = msg;
+  }
+
+  function loadSchedules(){
+    // Before the gate is down the request would only be refused; the stream's open handler asks
+    // again the moment the page is really in.
+    if(app.hidden) return;
+    var seq = ++schedSeq;
+    schedNote.hidden = true;
+    fetch('api/schedules', {credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      if(seq !== schedSeq) return;
+      schedEnabled = d.enabled !== false;
+      paintSchedulesList(d.tasks || []);
+    }).catch(function(e){
+      if(seq !== schedSeq) return;
+      // Keep what is on screen: a list that was true a moment ago beats an empty panel, and the
+      // note says why it did not move.
+      showSchedNote('Could not refresh: ' + ((e && e.message) || 'network error'));
+    }).then(function(){
+      if(seq === schedSeq) armSched();
+    });
+  }
+
+  function schedIn(at){
+    if(at <= Date.now()) return 'due now';
+    return 'in ' + stLeft(at - Date.now());
+  }
+
+  function schedDur(ms){
+    if(ms < 1000) return ms + 'ms';
+    if(ms < 60000) return (ms/1000).toFixed(1) + 's';
+    if(ms < 3600000) return Math.round(ms/60000) + 'm';
+    return (ms/3600000).toFixed(1) + 'h';
+  }
+
+  function schedTarget(t){
+    if(t.targetTopic){
+      for(var i=0;i<topics.length;i++){
+        if(topics[i].id === t.targetTopic) return 'posts to ' + (topics[i].title || t.targetTopic);
+      }
+    }
+    return 'posts to ' + t.target;
+  }
+
+  function schedLast(t){
+    if(!t.last) return 'not run yet';
+    var mark = {ok:'✅', failed:'❌', interrupted:'⏹', skipped:'⏭', missed:'⌛'}[t.last.status] || t.last.status;
+    var s = 'last ' + mark + ' ' + t.last.atText;
+    if(t.last.durationMs != null) s += ' · ' + schedDur(t.last.durationMs);
+    if(t.last.error) s += ' — ' + t.last.error;
+    return s;
+  }
+
+  function schedCard(t){
+    var state = t.state || 'active';
+    var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + '" data-id="' + text(t.id) + '">';
+    h += '<div class="sched-row"><span class="sched-dot"></span><span class="sched-name">' + text(t.name) + '</span><span class="sched-state">' + text(state) + '</span></div>';
+    h += '<div class="sched-when">' + text(t.when) + '</div>';
+    if(t.running) h += '<div class="sched-in">running now</div>';
+    else if(t.state === 'active' && t.next) h += '<div class="sched-in">next ' + text(t.next) + (t.nextAt ? ' · ' + text(schedIn(t.nextAt)) : '') + '</div>';
+    else if(t.state === 'paused') h += '<div class="sched-in">paused</div>';
+    h += '<div class="sched-meta">' + text(t.run) + '</div>';
+    h += '<div class="sched-meta">' + text(schedTarget(t)) + '</div>';
+    h += '<div class="sched-last' + (t.last && t.last.status !== 'ok' ? ' bad' : '') + '">' + text(schedLast(t)) + '</div>';
+    h += '<div class="sched-detail" hidden>';
+    h += '<div class="sched-detail-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div>';
+    h += '<div class="sched-detail-body">' + text(t.detail) + '</div>';
+    var meta = '#' + t.id + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs');
+    if(t.cwd) meta += ' · ' + t.cwd;
+    if(t.expires) meta += ' · until ' + t.expires;
+    h += '<div class="sched-detail-meta">' + text(meta) + '</div></div>';
+    h += '<div class="sched-acts">';
+    if(state === 'active') h += '<button type="button" data-op="pause">Pause</button>';
+    if(state === 'paused') h += '<button type="button" data-op="resume">Resume</button>';
+    if(state === 'active' || state === 'paused') h += '<button type="button" data-op="run"' + (t.running ? ' disabled' : '') + '>Run now</button>';
+    h += '<button type="button" class="danger" data-op="remove">Delete</button>';
+    h += '</div></div>';
+    return h;
+  }
+
+  function paintSchedulesList(tasks){
+    schedTasks = tasks || [];
+    var active = 0, paused = 0, ended = 0, i;
+    for(i=0;i<schedTasks.length;i++){
+      if(schedTasks[i].state === 'active') active++;
+      else if(schedTasks[i].state === 'paused') paused++;
+      else ended++;
+    }
+    schedSummary.textContent = !schedEnabled
+      ? 'not enabled'
+      : schedTasks.length
+        ? active + ' active' + (paused ? ' · ' + paused + ' paused' : '') + (ended ? ' · ' + ended + ' ended' : '')
+        : 'nothing scheduled';
+    if(!schedTasks.length){
+      schedList.innerHTML = '<div class="sched-empty">' + (schedEnabled
+        ? 'No scheduled tasks yet. Ask an agent in a topic — for example “every morning at 8, summarise the CI failures” — and it will be registered here.'
+        : 'Scheduled tasks are not enabled in this daemon.') + '</div>';
+      return;
+    }
+    var h = '';
+    for(i=0;i<schedTasks.length;i++) h += schedCard(schedTasks[i]);
+    schedList.innerHTML = h;
+  }
+
+  function schedOp(id, action, btn){
+    if(schedBusy) return;
+    schedBusy = true;
+    if(btn) btn.disabled = true;
+    fetch('api/schedules/op', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id, action:action}),
+      credentials:'same-origin'
+    }).then(function(r){
+      return r.json().catch(function(){ return { ok:false, error:'HTTP ' + r.status }; });
+    }).then(function(d){
+      if(d && d.ok && d.tasks) paintSchedulesList(d.tasks);
+      else showSchedNote((d && d.error) || 'That did not work.');
+    }).catch(function(e){
+      showSchedNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+    }).then(function(){
+      schedBusy = false;
+      if(btn) btn.disabled = false;
+      armSched();
+    });
+  }
+
+  schedToggle.addEventListener('click', function(){ setSchedules(!schedOpen); });
+  schedClose.addEventListener('click', function(){ setSchedules(false); });
+  schedBackdrop.addEventListener('click', function(){ setSchedules(false); });
+  schedPin.addEventListener('click', function(){ setPinned(!schedPinned); });
+
+  schedList.addEventListener('click', function(e){
+    var opBtn = e.target.closest ? e.target.closest('[data-op]') : null;
+    if(opBtn){
+      e.stopPropagation();
+      var item = opBtn.closest ? opBtn.closest('.sched-item') : null;
+      var id = item ? item.getAttribute('data-id') : '';
+      var op = opBtn.getAttribute('data-op');
+      if(!id || !op) return;
+      if(op === 'remove' && opBtn.getAttribute('data-confirm') !== '1'){
+        // Two taps, like the /setting menu: the task is gone for good and a mis-tap on a phone
+        // is easy. Any repaint clears it, and so does this timeout.
+        opBtn.setAttribute('data-confirm', '1');
+        opBtn.classList.add('confirm');
+        opBtn.classList.remove('danger');
+        opBtn.textContent = 'Delete?';
+        setTimeout(function(){
+          if(opBtn.getAttribute('data-confirm') === '1'){
+            opBtn.removeAttribute('data-confirm');
+            opBtn.classList.remove('confirm');
+            opBtn.classList.add('danger');
+            opBtn.textContent = 'Delete';
+          }
+        }, 4000);
+        return;
+      }
+      schedOp(id, op, opBtn);
+      return;
+    }
+    if(e.target.closest && e.target.closest('.sched-acts')) return;
+    var card = e.target.closest ? e.target.closest('.sched-item') : null;
+    if(!card) return;
+    var detail = card.querySelector('.sched-detail');
+    if(!detail) return;
+    detail.hidden = !detail.hidden;
+    card.classList.toggle('open', !detail.hidden);
+  });
+
+  // A timer is not worth running behind a hidden tab; ask once on the way back instead.
+  document.addEventListener('visibilitychange', function(){
+    if(!schedOpen) return;
+    if(document.visibilityState === 'hidden') disarmSched();
+    else loadSchedules();
+  });
+
+  paintSchedules();
+  if(schedOpen){
+    loadSchedules();
+    armSched();
+    var schedSbw = parseFloat(sidebar.style.getPropertyValue('--sbw'));
+    if(schedSbw > 0) setSbWidth(schedSbw, false);
+  }
 
   // Escapes for BOTH uses this page makes of it: element content, and the inside of a
   // double-quoted attribute. textContent alone covers the first and leaves the quote, which is
@@ -2215,6 +2558,9 @@ const SCRIPT = `
 
   function switchTopic(id){
     if(!id || id===topic) return;
+    // The panel is a side glance unless it was pinned: following a topic out of the room puts it
+    // away. Pinned means the operator asked it to survive this, and it stays.
+    if(schedOpen && !schedPinned) setSchedules(false);
     // The topic being left, written now rather than at the end of its window — in a moment
     // nothing on screen belongs to it any more and there is nothing left to write.
     cacheFlush();
@@ -2553,7 +2899,12 @@ const SCRIPT = `
     stream.onmessage = function(e){ try{ handle(JSON.parse(e.data)); }catch(x){} };
     // Not focused on a phone: the keyboard would come up before a word has been read, and on
     // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
-    stream.onopen = function(){ gate.hidden=true; app.hidden=false; note.textContent=''; if(!narrow()) input.focus(); initNotify(); };
+    stream.onopen = function(){
+      gate.hidden=true; app.hidden=false; note.textContent=''; if(!narrow()) input.focus(); initNotify();
+      // A panel opened or pinned before the gate came down asked too early (loadSchedules refuses
+      // while #app is hidden); this is the first moment the answer can be had.
+      if(schedOpen){ loadSchedules(); armSched(); }
+    };
     stream.onerror = function(){
       if(done) return;
       if(stream.readyState === 2){
@@ -2929,7 +3280,15 @@ const SCRIPT = `
     lightboxImg.removeAttribute('src');
   }
   lightbox.addEventListener('click', closeShot);
-  document.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ closeShot(); closeReader(); closeIdle(); if(!optsMenu.hidden){ setOpts(false); optsBtn.focus(); } } });
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Escape') return;
+    // Close the topmost thing first: Escape over a picture or the reader must not also put away
+    // a pinned task panel behind it.
+    var overlay = !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !optsMenu.hidden;
+    closeShot(); closeReader(); closeIdle();
+    if(!optsMenu.hidden){ setOpts(false); optsBtn.focus(); }
+    if(!overlay && schedOpen) setSchedules(false);
+  });
 
   /**
    * Read a file the agent sent without downloading it. The server renders it (reading.ts) and the
@@ -3802,6 +4161,10 @@ __GATE__
       <!-- Present in the markup but hidden unless the daemon serves a terminal, so the script
            has one thing to reveal rather than one thing to build. -->
       <button type="button" class="btn-icon" id="term-toggle" title="Terminal" hidden>&gt;_</button>
+      <!-- Always present, unlike the terminal's: the task panel is the only place on this page
+           where scheduled tasks are managed. A clock rather than an emoji for the same reason
+           the power button is an SVG — it has to sit on the header's text baseline. -->
+      <button type="button" class="btn-icon" id="schedules-toggle" aria-expanded="false" aria-controls="schedules" title="Scheduled tasks" aria-label="Scheduled tasks"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
     </div>
     <div id="log"></div>
     <div id="typing" hidden>...</div>
@@ -3845,6 +4208,24 @@ __GATE__
       </form>
     </div>
   </section>
+  <!-- The scheduled-task panel. A column of its own on a wide screen and an overlay below
+       1024px; the page toggles #app.sched and the stylesheet decides which of the two it is.
+       Outside #chat because it is about the gateway, not about the topic being read. -->
+  <aside id="schedules" aria-label="Scheduled tasks">
+    <div id="schedules-head">
+      <div class="sched-heading">
+        <span class="sched-title">⏰ Scheduled tasks</span>
+        <span id="schedules-summary" class="sched-summary"></span>
+      </div>
+      <button type="button" class="btn-icon" id="schedules-pin" aria-pressed="false" title="Keep this panel open" aria-label="Keep this panel open"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 3h6l-1 6 4 4v2H6v-2l4-4z"/><path d="M12 15v6"/></svg></button>
+      <button type="button" class="btn-icon" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
+    </div>
+    <div id="schedules-body">
+      <div id="schedules-note" hidden></div>
+      <div id="schedules-list"></div>
+    </div>
+  </aside>
+  <div id="sched-backdrop"></div>
 </main>
 <script>${SCRIPT}</script>
 </body>
