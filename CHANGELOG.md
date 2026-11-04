@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Past conversations, searchable from any agent.** Everything the gateway carries is now kept
+  in `<config dir>/history.db`: the prompt a turn gave its agent (attachments by name only), the
+  reply in full, and one line per tool call. `talkcode sessions search <words>`, `read <session>`
+  and `list` let an agent find what was said in another topic, on another platform, with another
+  agent — the knowledge that used to die with each conversation's context. Search is BM25 over
+  keyword text; Chinese works because every run of Han characters is indexed as overlapping
+  two-character words (`跨会话查询` → `跨会 会话 话查 查询`) on the way in and on the way out —
+  SQLite's default tokenizer treats the run as one token, and `trigram` cannot match a
+  two-character word (measured on 3.53.4). A single character falls back to a substring match.
+  Scheduled-task output sorts after ordinary conversations, so a noisy task cannot bury the
+  conversation someone is looking for. The web UI's kept transcripts are folded in once on the
+  first start; the file is `0600`, and a failed write is logged rather than allowed to fail the
+  turn it describes. [→](docs/conversation-history.md)
+
 ## [2.30.0] - 2026-11-04
 
 ### Added

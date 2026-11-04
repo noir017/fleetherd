@@ -129,6 +129,7 @@ is in [Configuration](docs/configuration.md).
 | [Voice messages](docs/voice.md) | transcription and confirmation |
 | [Scheduled tasks](docs/scheduled-tasks.md) | prompts and commands on a schedule |
 | [Sub-agents](docs/sub-agents.md) | `/super`: split a job across agents working in parallel |
+| [Past conversations](docs/conversation-history.md) | `talkcode sessions`: search every conversation the gateway carried |
 | [Your instructions](docs/instructions.md) | one set of standing instructions for every agent, plus one per agent |
 | [What the agent can do](docs/agent-actions.md) | button questions, sending files, the bundled skill |
 

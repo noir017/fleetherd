@@ -136,3 +136,46 @@ describe('schedule <action> [id]', () => {
     expect(() => schedule(positionals, opts)).toThrow(why);
   });
 });
+
+describe('sessions <action> [arg]', () => {
+  const sessions = (positionals: string[], opts: Record<string, unknown> = {}): IpcAction =>
+    spec('sessions').build(positionals, opts);
+
+  it('builds a search, joining unquoted words', () => {
+    expect(sessions(['search', 'git', 'status'], { agent: 'cc', days: 30, limit: 5 })).toEqual({
+      kind: 'sessions-search',
+      query: 'git status',
+      agent: 'cc',
+      days: 30,
+      limit: 5,
+    });
+  });
+
+  it('builds a read with its window', () => {
+    expect(sessions(['read', '#12'], { around: 87, window: 3 })).toEqual({
+      kind: 'sessions-read',
+      session: '#12',
+      around: 87,
+      window: 3,
+    });
+  });
+
+  it('builds a list', () => {
+    expect(sessions(['list'], { days: 7, limit: 10 })).toEqual({ kind: 'sessions-list', days: 7, limit: 10 });
+    expect(sessions(['ls'])).toEqual({ kind: 'sessions-list', days: undefined, limit: undefined });
+  });
+
+  it.each([
+    [['search'], {}, /needs a word/],
+    [['read'], {}, /missing required argument <session>/],
+    [['read', '1', '2'], {}, /one conversation id/],
+    [['list', 'extra'], {}, /takes no arguments/],
+    [['frobnicate'], {}, /unknown sessions action "frobnicate"/],
+    [['search', 'x'], { around: 3 }, /--around does not apply/],
+    [['read', '1'], { days: 7 }, /--days does not apply/],
+    [['list'], { window: 3 }, /--window does not apply/],
+    [['search', 'x'], { channel: 'tg:1' }, /--channel does not apply/],
+  ])('refuses %j %j', (positionals, opts, why) => {
+    expect(() => sessions(positionals, opts)).toThrow(why);
+  });
+});

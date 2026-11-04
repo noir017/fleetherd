@@ -14,6 +14,8 @@ import {
   type CommandTranslation,
 } from '../core/command-translate.js';
 import { commandSurface } from './delegation.js';
+import type { HistoryEvent } from '../history/record.js';
+import type { HistoryMessage, HistorySessionMeta, HistoryStore } from '../history/store.js';
 import {
   parseTextCommand,
   resolveAgent,
@@ -676,7 +678,13 @@ export class ConversationRegistry {
      * makes — that such a name is answered here and never reaches the agent — without spawning a
      * CLI it does not control. The default is the real thing, so the daemon wires nothing.
      */
-    private readonly runHarnessCli: typeof runAgyCliCommand = runAgyCliCommand
+    private readonly runHarnessCli: typeof runAgyCliCommand = runAgyCliCommand,
+    /**
+     * The conversation library (`<configDir>/history.db`). Optional, and absence is a supported
+     * deployment: a test registry records nothing, and a gateway whose library failed to open
+     * still answers. See daemon/turn-runner.ts `recordHistory` for why every write is best-effort.
+     */
+    private readonly history?: HistoryStore
   ) {
     // Inject only the capabilities TurnRunner needs (read-only views + activeAddress write entry),
     // rather than passing the whole registry and creating a circular dependency.
@@ -738,6 +746,7 @@ export class ConversationRegistry {
           this.outcomes.turnStarted(id);
         },
         recordTurnEnd: (id, end) => this.outcomes.turnEnded(id, end),
+        recordHistory: (id, event) => this.recordHistory(id, event),
       },
       this.hooks
     );
@@ -1424,6 +1433,9 @@ export class ConversationRegistry {
     // Recorded only AFTER the platform accepted it, so a failed rename is retried next time rather
     // than remembered as done.
     this.store?.setConversationTitle(id, agentId, wanted, pinned);
+    // The library already holds this conversation's turns; give them the name it just took, so a
+    // search hit is a title rather than an id. Guarded like every other library write.
+    this.history?.setTitle(id, wanted);
     console.log(`[title] ${id} renamed to "${wanted}"${pinned ? ' (pinned)' : ''}`);
     return undefined;
   }
@@ -2756,6 +2768,46 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
+   * File one fact of a turn in the conversation library, enriched with what only the registry
+   * knows: the lane's platform, the name the topic was given, the agent and the machine and
+   * directory its turn runs in.
+   *
+   * Every write is guarded. The library is an index of the gateway's conversations, not part of
+   * running one: a full disk or a locked database must never cost an answer. `HistoryStore`'s
+   * writes are guarded too — this is the second wall, for a recorder that throws.
+   */
+  private recordHistory(id: ConversationId, event: HistoryEvent): void {
+    const history = this.history;
+    if (!history) return;
+    try {
+      const session = history.session(this.historyMeta(id, event));
+      const row = historyRow(event);
+      if (row) history.message(session, row);
+    } catch (e) {
+      console.error('[history] could not record:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  /** What only the registry knows about a conversation, for one library row. */
+  private historyMeta(id: ConversationId, event: HistoryEvent): HistorySessionMeta {
+    const lane = this.laneOf(id);
+    const agentId = this.agentIdOf(id);
+    const def = findAgent(this.config, agentId);
+    return {
+      key: id,
+      platform: lane?.platformId ?? this.conversations.get(id)?.platform ?? '',
+      title: this.store?.conversationTitle(id),
+      agent: agentId,
+      host: def?.host ?? '',
+      cwd: this.workdirOf(id, agentId) ?? def?.cwd ?? '',
+      // The conversation's kind is the kind of its first turn; a later scheduled run in a
+      // normal topic is marked on its messages, not by relabelling the topic.
+      kind: event.kind,
+      at: event.at,
+    };
+  }
+
+  /**
    * Where the conversation at an ADDRESS works — the lookup handed to any platform that can
    * display it (`PlatformAdapter.useWorkdirLookup`): the directory, and the machine it is on.
    *
@@ -3853,4 +3905,19 @@ ${formatTokens(left)} left before compaction — ${name}`;
       }
     );
   }
+}
+
+/**
+ * One library row from a turn event. Kept outside the registry because it is a pure mapping:
+ * a prompt gains its attachment names (never their contents), a tool event is already one line,
+ * and a reply with no text adds nothing at all.
+ */
+function historyRow(event: HistoryEvent): HistoryMessage | undefined {
+  if (event.type === 'prompt') {
+    const attachments = event.attachments?.filter(Boolean) ?? [];
+    const text = attachments.length > 0 ? `${event.text}\n[attachments: ${attachments.join(', ')}]` : event.text;
+    return text.trim() ? { ts: event.at, role: 'user', kind: event.kind, text } : undefined;
+  }
+  if (event.type === 'tool') return { ts: event.at, role: 'tool', kind: event.kind, text: event.title };
+  return event.text.trim() ? { ts: event.at, role: 'agent', kind: event.kind, text: event.text } : undefined;
 }

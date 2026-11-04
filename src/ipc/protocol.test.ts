@@ -41,6 +41,12 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'task-read', topic: 'web:main/t1', limit: 5, full: true, tail: 20 },
     { kind: 'task-status', topic: 'web:main/t1' },
     { kind: 'task-stop', topic: 'web:main/t1' },
+    { kind: 'sessions-search', query: '跨会话查询' },
+    { kind: 'sessions-search', query: 'git status', agent: 'cc', days: 30, limit: 20 },
+    { kind: 'sessions-read', session: '#12' },
+    { kind: 'sessions-read', session: '12', around: 87, window: 10 },
+    { kind: 'sessions-list' },
+    { kind: 'sessions-list', days: 7, limit: 30 },
   ];
   it.each(valid)('accepts %j', (action) => {
     const r = parseIpcRequest({ token: TOKEN, action });
@@ -83,6 +89,13 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['task-read unknown field', { token: TOKEN, action: { kind: 'task-read', topic: 't', noTruncate: true } }],
     ['task-send non-boolean interrupt', { token: TOKEN, action: { kind: 'task-send', topic: 't', text: 'x', interrupt: 'yes' } }],
     ['task-status missing topic', { token: TOKEN, action: { kind: 'task-status' } }],
+    // The library arms: a query is text, a session is an id, and none targets a channel.
+    ['sessions-search empty query', { token: TOKEN, action: { kind: 'sessions-search', query: '' } }],
+    ['sessions-search with a channel', { token: TOKEN, action: { kind: 'sessions-search', query: 'x', channelId: 'c' } }],
+    ['sessions-search zero limit', { token: TOKEN, action: { kind: 'sessions-search', query: 'x', limit: 0 } }],
+    ['sessions-read missing session', { token: TOKEN, action: { kind: 'sessions-read' } }],
+    ['sessions-read zero window', { token: TOKEN, action: { kind: 'sessions-read', session: '1', window: -1 } }],
+    ['sessions-list extra field', { token: TOKEN, action: { kind: 'sessions-list', query: 'x' } }],
   ];
   it.each(bad)('rejects %s', (_label, raw) => {
     const r = parseIpcRequest(raw);

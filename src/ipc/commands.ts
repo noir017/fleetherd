@@ -61,6 +61,7 @@ export type HelpTopicName =
   | 'schedule'
   | 'channels'
   | 'history'
+  | 'sessions'
   | 'messages'
   | 'threads'
   | 'ask'
@@ -116,6 +117,16 @@ export const HELP_TOPICS: HelpTopic[] = [
     notes: [
       'Use it when the user refers to something outside your context ("the file I sent above"). Content is cut at 500 characters per message; `--fields attachments` adds the attachment URLs.',
       'Page further back with --before <the oldest messageId you have>. count: 0 means the channel really is empty.',
+    ],
+  },
+  {
+    name: 'sessions',
+    summary: 'Search every earlier conversation the gateway has carried — all agents, all platforms',
+    notes: [
+      'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through talkcode, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
+      'search <words> returns the conversation id, the message id, the title, the agent and a matching excerpt. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations.',
+      'read <session> prints the whole conversation (up to 500 messages); read <session> --around <message> --window <n> shows n messages on each side of a hit. list [--days <n>] is the recent conversations.',
+      'Pass the ids exactly as printed: session and message are numbers, with or without the leading #.',
     ],
   },
   {
@@ -362,6 +373,54 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
   }
 }
 
+/** `sessions <action> [arg]` → one IpcAction, refusing flags that do not belong to the action. */
+function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
+  const action = pos(p, 0, 'action').toLowerCase();
+  // The library is every conversation the gateway has carried, so there is no target to name.
+  if (str(opts.channel) !== undefined) {
+    throw new Error('sessions searches every conversation; --channel does not apply');
+  }
+  const num = (key: string): number | undefined => (typeof opts[key] === 'number' ? (opts[key] as number) : undefined);
+  const refuse = (allowed: readonly string[]): void => {
+    const all = ['agent', 'days', 'limit', 'around', 'window'];
+    const stray = all.find((k) => !allowed.includes(k) && opts[k] !== undefined);
+    if (stray) throw new Error(`--${stray} does not apply to \`sessions ${action}\``);
+  };
+  switch (action) {
+    case 'search': {
+      refuse(['agent', 'days', 'limit']);
+      // Unquoted words are joined, so `sessions search git status` works like a search box.
+      const query = p.slice(1).join(' ').trim();
+      if (!query) throw new Error('sessions search needs a word to look for');
+      return {
+        kind: 'sessions-search',
+        query,
+        agent: str(opts.agent),
+        days: num('days'),
+        limit: num('limit'),
+      };
+    }
+    case 'read': {
+      refuse(['around', 'window']);
+      if (p.length > 2) throw new Error('sessions read takes one conversation id');
+      return {
+        kind: 'sessions-read',
+        session: pos(p, 1, 'session'),
+        around: num('around'),
+        window: num('window'),
+      };
+    }
+    case 'list':
+    case 'ls': {
+      refuse(['days', 'limit']);
+      if (p.length > 1) throw new Error('sessions list takes no arguments');
+      return { kind: 'sessions-list', days: num('days'), limit: num('limit') };
+    }
+    default:
+      throw new Error(`unknown sessions action "${action}"; use search <words> | read <session> | list`);
+  }
+}
+
 export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'send-message <text>',
@@ -524,6 +583,20 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         limit: typeof opts.limit === 'number' ? opts.limit : undefined,
       };
     },
+  },
+  {
+    usage: 'sessions <action> [arg]',
+    topic: 'sessions',
+    description:
+      'The gateway\'s library of past conversations: search <words> [--agent] [--days] [--limit] | read <session> [--around <message>] [--window] | list [--days]',
+    options: [
+      { flags: '-a, --agent <id>', description: 'search: only conversations answered by this agent' },
+      { flags: '-d, --days <n>', description: 'search/list: only the last n days', parse: intArg('--days') },
+      { flags: '-l, --limit <n>', description: 'search/list: how many rows (search default 10, list 30)', parse: intArg('--limit') },
+      { flags: '--around <message>', description: 'read: a message id from a search hit, to read around', parse: intArg('--around') },
+      { flags: '--window <n>', description: 'read: messages on each side of --around (default 10)', parse: intArg('--window') },
+    ],
+    build: buildSessions,
   },
   {
     usage: 'schedule <action> [id]',

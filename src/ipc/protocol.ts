@@ -191,6 +191,33 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
     .strict(),
   z.object({ kind: z.literal('task-status'), topic: z.string().min(1).max(200) }).strict(),
   z.object({ kind: z.literal('task-stop'), topic: z.string().min(1).max(200) }).strict(),
+  // The conversation library (history/store.ts). A search query is words, not SQL; the bounds
+  // only keep a malformed request from carrying a megabyte. None takes a channel: the library is
+  // every conversation the gateway has carried, and a target would mean "search somewhere else".
+  z
+    .object({
+      kind: z.literal('sessions-search'),
+      query: z.string().min(1).max(2_000),
+      agent: z.string().min(1).max(100).optional(),
+      days: z.number().int().positive().max(3_650).optional(),
+      limit: z.number().int().positive().max(100).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('sessions-read'),
+      session: z.string().min(1).max(200),
+      around: z.number().int().positive().optional(),
+      window: z.number().int().min(0).max(100).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('sessions-list'),
+      days: z.number().int().positive().max(3_650).optional(),
+      limit: z.number().int().positive().max(200).optional(),
+    })
+    .strict(),
 ]);
 
 const IpcRequestSchema = z
@@ -252,7 +279,10 @@ export type IpcAction =
   | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean }
   | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number }
   | { kind: 'task-status'; topic: string }
-  | { kind: 'task-stop'; topic: string };
+  | { kind: 'task-stop'; topic: string }
+  | { kind: 'sessions-search'; query: string; agent?: string; days?: number; limit?: number }
+  | { kind: 'sessions-read'; session: string; around?: number; window?: number }
+  | { kind: 'sessions-list'; days?: number; limit?: number };
 
 // Compile-time alignment: the zod-inferred type must equal the hand-written union;
 // if either side drifts, this type errors.
@@ -446,4 +476,57 @@ export interface TaskNewResult {
 export interface TaskActionResult {
   topic: string;
   result: string;
+}
+
+/**
+ * One conversation as the library lists it. Flat, so a list renders as one TOON table.
+ * Shaped like history/store.ts HistorySessionRow, restated here because ipc/ imports nothing but
+ * types.ts (the same arrangement ListChannelsResult has).
+ */
+export interface SessionRow {
+  /** What `sessions read` takes: the id, printed as `#<id>`. */
+  id: number;
+  key: string;
+  platform: string;
+  title: string;
+  agent: string;
+  /** The machine the agent runs on; empty for the gateway's own. */
+  host: string;
+  cwd: string;
+  kind: string;
+  startedAt: string;
+  lastAt: string;
+  messages: number;
+}
+
+/** Response body for sessions-search: one row per hit, best first. */
+export interface SessionSearchResult {
+  hits: Array<{
+    /** The conversation to read: `sessions read <session>`. */
+    session: number;
+    /** The message to read around: `sessions read <session> --around <message>`. */
+    message: number;
+    at: string;
+    title: string;
+    agent: string;
+    platform: string;
+    /** The turn kind: normal | schedule | subagent | background. */
+    kind: string;
+    role: string;
+    excerpt: string;
+  }>;
+}
+
+/** Response body for sessions-list. */
+export interface SessionListResult {
+  sessions: SessionRow[];
+  /** The window that was applied, so the CLI can say what it left out. */
+  days: number;
+}
+
+/** Response body for sessions-read. */
+export interface SessionReadResult {
+  session: SessionRow;
+  messages: Array<{ id: number; at: string; role: string; kind: string; text: string }>;
+  note?: string;
 }

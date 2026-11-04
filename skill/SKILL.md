@@ -3,9 +3,10 @@ name: talkcode
 description: >-
   Send a file to the user; schedule a prompt or a bash command to run later or repeatedly,
   surviving restarts; post to another chat or topic; read earlier messages in the
-  conversation; reply to, edit, react to or delete a message; open a thread; ask with
-  buttons; check what a voice message said — all through the `talkcode` command. Also
-  for diagnosing or reconfiguring talkcode itself, and the machines its agents run on.
+  conversation; search earlier conversations (every agent, every platform); reply to, edit,
+  react to or delete a message; open a thread; ask with buttons; check what a voice message
+  said — all through the `talkcode` command. Also for diagnosing or reconfiguring talkcode
+  itself, and the machines its agents run on.
 ---
 
 # talkcode
@@ -28,6 +29,7 @@ current. `talkcode help` lists the topics.
 | `schedule` | a prompt or a bash command that runs later or repeatedly, and survives restarts |
 | `channels` | posting to another chat or topic, on any platform |
 | `history` | reading earlier messages the user refers to ("the file I sent above") |
+| `sessions` | searching every earlier conversation the gateway carried — all agents, all platforms |
 | `messages` | an extra message, a quote-reply, editing, reacting, deleting |
 | `threads` | opening a thread from a message |
 | `ask` | a question with buttons that blocks until answered — only without a question tool of your own |
