@@ -11,10 +11,18 @@ import type {
   TaskStatusResult,
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import { CARD_DELAY_MS, CARD_ITEM_CHARS, CARD_TOTAL_CHARS, Delegation, PROPOSAL_GATHER_MS, type DelegationDeps } from './delegation.js';
+import {
+  CARD_DELAY_MS,
+  CARD_ITEM_CHARS,
+  CARD_MAX_ENTRIES,
+  CARD_TOTAL_CHARS,
+  Delegation,
+  PROPOSAL_GATHER_MS,
+  type DelegationDeps,
+} from './delegation.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 import type { LiveTurn } from './turn-progress.js';
-import { jobInCommand, UPDATE_SENDER } from './turn-runner.js';
+import { FAILURE_NOTICE_CHARS, jobInCommand, UPDATE_SENDER } from './turn-runner.js';
 
 /**
  * Sub-agents (delegation.ts): who may run the task commands and on what, the confirmation card every
@@ -146,8 +154,8 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
     activityOf: (k: string) => activity.get(k),
     replyOf: (k: string) => {
       if (activity.get(k)?.outcome?.kind !== 'done') return undefined;
-      const text = replies.get(k) ?? 'Done: all green, 12 tests.';
-      return { text, total: text.length };
+      const text = replies.get(k);
+      return text === undefined ? undefined : { text, total: text.length };
     },
     failureOf: (k: string) => {
       if (activity.get(k)?.outcome?.kind !== 'failed') return undefined;
@@ -453,6 +461,7 @@ describe('Delegation: seeing what a sub-agent is doing', () => {
         { at: 3_000, tool: 'Grep', detail: 'needle' },
       ],
     });
+    r.replies.set(KEY, 'Done: all green, 12 tests.');
     const s = (await r.d.handle(P, { kind: 'task-status', topic: 'c1000000' })) as TaskStatusResult;
     expect(s.task.topic).toBe('web:main/c1000000');
     expect(s.task.step).toBe(0); // not working, so the row is the outcome's
@@ -577,6 +586,37 @@ describe('Delegation: [sub-agent updates]', () => {
   const cardOf = (r: ReturnType<typeof rig>): string =>
     (r.calls.find(([c]) => c === 'prompt')![1] as { prompt: string }).prompt;
 
+  /** The card with a real TurnOutcomes behind it, so a turn end is the source of what it quotes. */
+  const realChain = () => {
+    const r = rig();
+    const self: { d?: Delegation } = {};
+    const outcomes = new TurnOutcomes({
+      config: r.deps.config,
+      clock: r.clock,
+      platforms: r.deps.platforms,
+      laneOf: (id) => r.registry.laneFor(id),
+      agentIdOf: (id) => r.bound.get(id) ?? 'cc',
+      runContinue: () => true,
+      onNeedsPerson: (id) => self.d?.childChanged(id),
+    });
+    const wrapped = {
+      ...r.registry,
+      activityOf: (k: string) => outcomes.activityOf(k) ?? r.registry.activityOf(k),
+      replyOf: (k: string) => outcomes.replyOf(k) ?? r.registry.replyOf(k),
+      failureOf: (k: string) => outcomes.failureOf(k) ?? r.registry.failureOf(k),
+    };
+    const d = new Delegation({ ...r.deps, registry: wrapped as unknown as DelegationDeps['registry'] });
+    self.d = d;
+    return { r, d, outcomes };
+  };
+
+  const openOne = async (chain: ReturnType<typeof realChain>): Promise<void> => {
+    await chain.d.handle(P, task('cc', 'a'));
+    chain.r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+  };
+
   it('tells the agent that opened a topic when it finishes — gathered, shown folded, then run as a turn', async () => {
     const r = rig();
     await r.d.handle(P, task('cc', 'a'));
@@ -585,6 +625,7 @@ describe('Delegation: [sub-agent updates]', () => {
     await settle();
     await settle();
     r.activity.set('web#main#c1000000', { outcome: { kind: 'done', at: 5, line: 'Done: all green.' } });
+    r.replies.set('web#main#c1000000', 'Done: all green, 12 tests.');
     r.busy.add('web#main#c2000000');
     r.d.childChanged('web#main#c1000000');
     expect(r.calls.filter(([c]) => c === 'prompt')).toEqual([]);
@@ -613,6 +654,17 @@ describe('Delegation: [sub-agent updates]', () => {
     const prompt = cardOf(r);
     expect(prompt).toContain(`  reply: ${reply.replace(/\n/g, '\n  ')}`);
     expect(prompt).not.toContain('first line');
+  });
+
+  it('says a reply was not kept instead of passing its first line off as the reply', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done: first line.' } });
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(r);
+    expect(prompt).toContain('  reply: the reply was not kept');
+    expect(prompt).not.toContain('reply: Done: first line.');
   });
 
   it('cuts a reply at CARD_ITEM_CHARS, saying how long it was and where the rest is read', async () => {
@@ -671,12 +723,34 @@ describe('Delegation: [sub-agent updates]', () => {
     r.clock.advance(CARD_DELAY_MS);
     const prompt = cardOf(r);
     expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
-    const list = bodies(prompt, 'reply');
-    expect(list.length).toBeGreaterThanOrEqual(2);
-    for (const body of list) expect(body.length).toBeLessThanOrEqual(CARD_ITEM_CHARS);
-    // The third entry's heading and link are there, and what did not fit is said, not silently gone.
-    expect(prompt).toContain('topic web:main/c3000000');
-    expect(list.at(-1)).toContain(`${CARD_ITEM_CHARS} chars total, cut at`);
+    const chunks = prompt.split('\n- topic ').slice(1);
+    expect(chunks).toHaveLength(3);
+    for (const chunk of chunks) {
+      const [body] = bodies(chunk, 'reply');
+      if (body) expect(body.length).toBeLessThanOrEqual(CARD_ITEM_CHARS);
+    }
+    // The third entry really is there, with its heading and its cut notice — not just two entries
+    // whose last one the assertion happened to find.
+    expect(chunks[2]).toContain('  reply: ');
+    expect(chunks[2]).toContain(`${CARD_ITEM_CHARS} chars total, cut at`);
+  });
+
+  it('lists at most CARD_MAX_ENTRIES and folds the rest into one line', async () => {
+    const r = rig();
+    const keys = Array.from({ length: CARD_MAX_ENTRIES + 3 }, (_, i) => `web#main#a${String(i).padStart(7, '0')}`);
+    for (const key of keys) {
+      r.parents.set(key, P);
+      r.bound.set(key, 'cc');
+      r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+      r.replies.set(key, 'short reply');
+    }
+    for (const key of keys) await r.d.handle(P, { kind: 'task-send', topic: key.slice('web#main#'.length), text: 'x' });
+    for (const key of keys) r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(r);
+    expect(prompt.split('\n- topic ').slice(1)).toHaveLength(CARD_MAX_ENTRIES);
+    expect(prompt).toContain(`- 3 more sub-agents — see talkcode tasks`);
+    expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
   });
 
   it('carries the whole question, while the topic row and its folded line stay one line', async () => {
@@ -721,7 +795,7 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(body!.length).toBe(CARD_ITEM_CHARS);
     expect(body).toContain('at step (file.ts:1:1)');
     expect(body).toContain(`${error.length} chars total, cut at`);
-    expect(body).toContain("the topic's ❌ notice has only the first 300 characters");
+    expect(body).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters`);
     expect(body).not.toContain('task-read');
   });
 
@@ -736,33 +810,24 @@ describe('Delegation: [sub-agent updates]', () => {
   });
 
   it('is fed by a real turn end: TurnOutcomes stores the reply and childChanged carries it', async () => {
-    const r = rig();
-    const card: { d?: Delegation } = {};
-    const outcomes = new TurnOutcomes({
-      config: r.deps.config,
-      clock: r.clock,
-      platforms: r.deps.platforms,
-      laneOf: (id) => r.registry.laneFor(id),
-      agentIdOf: (id) => r.bound.get(id) ?? 'cc',
-      runContinue: () => true,
-      onNeedsPerson: (id) => card.d?.childChanged(id),
-    });
-    const wrapped = {
-      ...r.registry,
-      activityOf: (k: string) => outcomes.activityOf(k) ?? r.registry.activityOf(k),
-      replyOf: (k: string) => outcomes.replyOf(k) ?? r.registry.replyOf(k),
-      failureOf: (k: string) => outcomes.failureOf(k) ?? r.registry.failureOf(k),
-    };
-    const d = new Delegation({ ...r.deps, registry: wrapped as unknown as DelegationDeps['registry'] });
-    card.d = d;
-    await d.handle(P, task('cc', 'a'));
-    r.clock.advance(PROPOSAL_GATHER_MS);
-    await settle();
-    await settle();
+    const chain = realChain();
+    await openOne(chain);
     const reply = '## Review\n\nVerdict: merge.\n\n- one\n- two';
-    outcomes.turnEnded('web#main#c1000000', { kind: 'done', text: reply });
-    r.clock.advance(CARD_DELAY_MS);
-    expect(cardOf(r)).toContain(`  reply: ${reply.replace(/\n/g, '\n  ')}`);
+    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'done', text: reply });
+    chain.r.clock.advance(CARD_DELAY_MS);
+    expect(cardOf(chain.r)).toContain(`  reply: ${reply.replace(/\n/g, '\n  ')}`);
+  });
+
+  it('is fed by a real failed turn: the whole error is cut, disclosed, and says where the rest is', async () => {
+    const chain = realChain();
+    await openOne(chain);
+    const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(400)}`;
+    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'failed', error: new Error(error) });
+    chain.r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(chain.r);
+    expect(prompt).toContain('  failure: Process exited 1:');
+    expect(prompt).toContain(`${error.length} chars total, cut at`);
+    expect(prompt).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters`);
   });
 
   it('does not tell the parent about a turn the person started in the sub-agent’s topic', async () => {

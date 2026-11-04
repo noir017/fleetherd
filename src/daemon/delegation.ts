@@ -19,7 +19,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentStatus, ConversationId, TopicActivity, TopicStage } from '../types.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { ConversationRegistry } from './conversation.js';
-import { UPDATE_SENDER } from './turn-runner.js';
+import { FAILURE_NOTICE_CHARS, UPDATE_SENDER } from './turn-runner.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
@@ -82,6 +82,13 @@ export const CARD_DELAY_MS = 5_000;
  */
 export const CARD_ITEM_CHARS = 4_000;
 export const CARD_TOTAL_CHARS = 8_000;
+
+/**
+ * How many sub-agents one card lists. A card has no fixed frame size — every entry's heading and
+ * link is its own length — so an unbounded burst could spend the whole budget on headings. The
+ * rest is one line pointing at `talkcode tasks`, where every topic is listed.
+ */
+export const CARD_MAX_ENTRIES = 20;
 
 /** How much of each sub-task's text the confirmation card shows. */
 const PROPOSAL_TEXT_CHARS = 1_500;
@@ -721,7 +728,11 @@ export class Delegation {
       shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage)}${row.line ? `: ${row.line}` : ''}`);
     }
     if (entries.length === 0) return;
-    this.tell(here, this.card(`[sub-agent updates] ${this.tally(here)}`, entries), shown, entries.length);
+    const visible = entries.slice(0, CARD_MAX_ENTRIES);
+    const extra = entries.length - visible.length;
+    const folded = shown.slice(0, CARD_MAX_ENTRIES);
+    if (extra) folded.push(`🔔 ${extra} more — see talkcode tasks`);
+    this.tell(here, this.card(`[sub-agent updates] ${this.tally(here)}`, visible, extra), folded, entries.length);
   }
 
   /**
@@ -752,25 +763,33 @@ export class Delegation {
     const label = stage === 'review' ? 'reply' : 'failure';
     const kept = stage === 'review' ? this.deps.registry.replyOf(c.key) : this.deps.registry.failureOf(c.key);
     if (kept) return { label, text: kept.text, total: kept.total };
+    // A reply's first line is not a stand-in for the reply: the card would pass 120 characters off
+    // as the whole answer and never say anything was missing. The kept text is dropped with a
+    // released scheduled conversation, so say that instead.
+    if (stage === 'review') {
+      const text = 'the reply was not kept';
+      return { label, text, total: text.length };
+    }
     return row.line ? { label, text: row.line, total: row.line.length } : undefined;
   }
 
   /**
    * The card's lines, with the sub-agent text cut to what one card can carry.
    *
-   * Headings and links are the frame and always go in: every topic is named even when none of its
-   * text fits. The quote blocks share CARD_TOTAL_CHARS and one may take at most CARD_ITEM_CHARS.
-   * Entries are served in the order the updates arrived, and every later entry's cut notice is
-   * reserved before an earlier one takes the rest, so an entry is not left with a heading and no
-   * word about why it has no text. The budget is a hard cap: a block that cannot fit even its
-   * notice is omitted rather than made to overflow the card.
+   * Headings and links are the frame and are counted, but the frame is bounded: at most
+   * CARD_MAX_ENTRIES entries are listed, and any beyond that are one line pointing at
+   * `talkcode tasks`. Within that frame, quote blocks share CARD_TOTAL_CHARS and one may take at
+   * most CARD_ITEM_CHARS. Every later entry's notice is reserved before an earlier one takes the
+   * rest, so an entry with a quote keeps at least its notice; a heading so long that no notice
+   * fits loses its block rather than overflowing the card.
    */
-  private card(header: string, entries: CardEntry[]): string[] {
+  private card(header: string, entries: CardEntry[], extra: number): string[] {
     const lines = [header];
+    const tail = extra ? `- ${extra} more sub-agent${extra === 1 ? '' : 's'} — see talkcode tasks` : '';
     // Overcounts the joined string by one newline; the slack is what keeps it inside the budget.
     const frame = entries.reduce(
       (n, e) => n + e.head.length + 1 + (e.link ? `  link: ${e.link}`.length + 1 : 0),
-      header.length + 1
+      header.length + 1 + (tail ? tail.length + 1 : 0)
     );
     let left = CARD_TOTAL_CHARS - frame;
     for (const [i, e] of entries.entries()) {
@@ -785,6 +804,7 @@ export class Delegation {
       }
       if (e.link) lines.push(`  link: ${e.link}`);
     }
+    if (tail) lines.push(tail);
     return lines;
   }
 
@@ -931,7 +951,7 @@ function quoteBody(q: CardQuote, topic: string, cut: number): string {
 function cutNote(q: CardQuote, topic: string, cut: number): string {
   const rest =
     q.label === 'failure'
-      ? "the topic's ❌ notice has only the first 300 characters"
+      ? `the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters`
       : `the rest is in this topic — task-read ${topic} --full`;
   return `\n…[${q.total} chars total, cut at ${cut}; ${rest}]`;
 }

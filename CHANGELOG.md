@@ -17,9 +17,10 @@ All notable changes to this project are documented here. The format is based on
   card 8,000 across a burst (`CARD_ITEM_CHARS`, `CARD_TOTAL_CHARS` in `delegation.ts`), both hard
   limits. A cut adds one line the gateway writes — the text's full length, where it stopped, and
   where the rest is: a reply or question stays in the topic (`task-read <topic> --full`), while a
-  failed turn's error only exists as the first 300 characters of its ❌ notice, and the cut says
-  that instead of pointing at text nobody kept. That line is the card's only added text, and only
-  when something was cut; no summary or instruction about the work is added.
+  failed turn's error only exists as the opening of its ❌ notice, and the cut says that instead of
+  pointing at text nobody kept. That line is the card's only added text, and only when something
+  was cut; no summary or instruction about the work is added. One card lists at most 20 sub-agents
+  and folds the rest into one line pointing at `talkcode tasks`.
 
 ## [2.32.0] - 2026-11-04
 

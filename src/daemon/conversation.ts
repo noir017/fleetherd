@@ -3921,8 +3921,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.tokens.release(id);
     this.unresumableWarned.delete(id);
     this.progress.forget(id);
-    // The card has long since been sent (it goes CARD_DELAY_MS after the turn); keeping a reply's
-    // head or an error alive with an idle conversation only grows the daemon's memory.
+    // Only releaseScheduled and dispose call this; idle reclaim keeps the conversation and its
+    // outcome, so this is not where a quiet conversation's reply is dropped. A released scheduled
+    // conversation can produce no sub-agent card, and shutdown produces none at all.
     this.outcomes.dropTexts(id);
   }
 

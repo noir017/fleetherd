@@ -105,7 +105,7 @@ export class TurnOutcomes {
     return this.activity.get(id)?.outcome?.kind === 'failed' ? this.failures.get(id) : undefined;
   }
 
-  /** The conversation's runtime state is going away (idle reclaim, `/new`): its kept texts go too. */
+  /** A released scheduled run, or shutdown, is dropping the conversation's state: its texts go too. */
   dropTexts(id: ConversationId): void {
     this.replies.delete(id);
     this.failures.delete(id);
