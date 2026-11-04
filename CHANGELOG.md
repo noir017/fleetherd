@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.27.2] - 2026-11-04
+
 ### Changed
 
 - **The topic list is ordered by what each topic is doing, and a /super dispatcher counts as
