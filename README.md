@@ -51,7 +51,7 @@ was called `agent-anywhere` until 2.0.0.
 - **Failed turns can carry on** — continue automatically after an upstream outage, with your own words, and run a command to alert you. [→](docs/agents.md#when-a-turn-fails)
 - **Scheduled tasks** — "every morning at 8, …" becomes a task the gateway keeps, surviving restarts. [→](docs/scheduled-tasks.md)
 - **Your instructions, for every agent** — write once how you want to be worked with; every agent on every host reads it, plus a file per agent for what only suits one. [→](docs/instructions.md)
-- **Skills that write themselves** — say "remember this as a skill" and the agent creates one the gateway keeps, delivers to every agent on every host, versions, and archives when it goes unused. [→](docs/skills.md)
+- **Skills that write themselves** — say "remember this as a skill" and the agent creates one the gateway keeps, delivers to every agent on every host, versions, and archives when it goes unused. Name a reviewer agent and quiet conversations are reviewed on their own. [→](docs/skills.md)
 - **Voice messages** — transcribed, shown to you, and sent on once you confirm. [→](docs/voice.md)
 - **Small config** — five sections, `${VAR}` and `.env` expansion; [`/setting`](docs/settings.md) edits the fields worth changing from chat.
 

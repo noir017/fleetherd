@@ -46,6 +46,16 @@ no bigram; it is indexed as itself and searched with LIKE.
 runs the tests) strips the `node:` prefix before consulting its builtin list, and Node 24 lists
 this module only in the prefixed form. The comment there is the full reason.
 
+## What a review reads
+
+`sessionOf(key)` is one conversation's row without its messages, and `reviewWindow(key, afterId,
+maxChars)` is the tail a review is given: rows after the watermark, cut from the oldest end to a
+character budget, with the count of the person's own messages and the newest id (where the next
+review starts). Scheduled and sub-agent rows are left out — they share a topic with a person's
+conversation but are not what the person said — and `background` output is kept. The two methods
+exist here, rather than as ad-hoc SQL in the daemon, so the "three things since last time" rule is
+tested against a real database.
+
 ## Recording is best-effort; searching is not
 
 `session`, `message`, `setTitle` and `importSession` swallow a failure into a log line. A full

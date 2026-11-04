@@ -38,6 +38,9 @@ const RELOAD_KIND = {
   // Live: the daemon rebuilds its host table from it after a reload (remoteHosts.configure), and an
   // agent on a host whose entry changed counts as changed itself (diffConfig), so it is respawned.
   hosts: 'live',
+  // Live: the review service reads config.review on every sweep, and one already queued is
+  // abandoned rather than run against a definition the operator just removed.
+  review: 'live',
 } as const satisfies Record<keyof UserConfig, 'ignore' | 'restart' | 'agents' | 'live'>;
 
 type LiveSection = { [K in keyof typeof RELOAD_KIND]: (typeof RELOAD_KIND)[K] extends 'live' ? K : never }[keyof typeof RELOAD_KIND];

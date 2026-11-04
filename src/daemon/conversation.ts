@@ -316,6 +316,27 @@ export function agentSwitchRefusalText(p: {
 const SWEEP_INTERVAL_MS = 60_000;
 
 /**
+ * One live conversation as the review sweep sees it (see `reviewFacts`). Kept out of
+ * `daemon/review.ts` so the registry does not import the reviewer, and out of `types.ts` because
+ * it is not a domain shape any platform or store shares.
+ */
+export interface ReviewFacts {
+  key: ConversationId;
+  agentId: string;
+  idleMs: number;
+  busyTurn: boolean;
+  pendingWork: boolean;
+  stopped: boolean;
+  unresumable: boolean;
+  /**
+   * Where the conversation lives, when this process has answered a turn there. The stored record
+   * carries the same lane, except after `/new` — which clears the record — so this is what keeps
+   * a `/new`ed topic reviewable (and its notice postable) without waiting for its next message.
+   */
+  lane?: { platform: string; channel: string; thread?: string };
+}
+
+/**
  * All per-conversation runtime state in one object. Consolidated so creation sets one object (no
  * half-init), release is one delete (no leak), and adding a field touches only this interface.
  *
@@ -915,6 +936,35 @@ export class ConversationRegistry {
       const idleMin = Math.round((now - state.lastActivityAt) / 60_000);
       this.reclaimSession(id, `idle for ${idleMin}m`);
     }
+  }
+
+  /**
+   * Every conversation this process holds state for, as the review sweep decides on it
+   * (daemon/review.ts `eligible`).
+   *
+   * Only LIVE conversations: after a restart there is no state until a message arrives, and the
+   * daemon fills those in from `conversations.json` and the library. `stopped` and `unresumable`
+   * come from the session's own `reclaimState` — the same answer the idle sweeper acts on — so a
+   * conversation whose child is up is never reviewed behind a running agent's back.
+   */
+  reviewFacts(now = this.clock.now()): ReviewFacts[] {
+    const out: ReviewFacts[] = [];
+    for (const [id, state] of this.conversations) {
+      const session = this.agents.peek(id);
+      const reclaim = session ? (session.reclaimState?.() ?? 'unresumable') : 'no-child';
+      const lane = this.laneOf(id);
+      out.push({
+        key: id,
+        agentId: state.agentId,
+        idleMs: now - state.lastActivityAt,
+        busyTurn: !state.merger.isIdle(),
+        pendingWork: this.hooks?.hasPendingWork?.(id) ?? false,
+        stopped: reclaim === 'no-child',
+        unresumable: reclaim === 'unresumable',
+        ...(lane ? { lane: { platform: lane.platformId, ...lane.address } } : {}),
+      });
+    }
+    return out;
   }
 
   /**

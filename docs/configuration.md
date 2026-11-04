@@ -25,6 +25,8 @@ agents:                       # at least one; routing picks by id
     cwd: ~/projects/main
   - id: codex
     harness: codex
+  - id: ag
+    harness: agy               # also the one that can review conversations (see below)
   - id: claude-devbox
     harness: claude
     host: devbox              # runs on another machine — see Remote hosts
@@ -50,6 +52,10 @@ session:
 
 access:
   allowFrom: ["discord-main:123456"]   # <instanceId>:userId; empty = anyone
+
+review:                       # optional; off unless an agy agent is named
+  agent: ag                   # one agy -p on that agent's machine reviews a quiet conversation
+  model: gemini-3.8-flash-high
 ```
 
 `${VAR}` expands from the environment plus a `<configDir>/.env` sidecar, so
@@ -64,7 +70,8 @@ the YAML can be committed.
 The rest is described where it is used: each harness's options in [Agents](agents.md), the web
 UI's `terminal:` and `sso:` in [Web UI](web-ui.md), `title:` in [Topic names](topic-names.md),
 `voice:` in [Voice messages](voice.md), `hosts:` with `agents[].host` in
-[Remote hosts](remote-hosts.md), and `agents[].hooks` in [Agents](agents.md#pre-launch-hook). A
+[Remote hosts](remote-hosts.md), `agents[].hooks` in [Agents](agents.md#pre-launch-hook), and
+`review:` in [Skills](skills.md#auto-review). A
 handful of fields can also be changed from chat,
 without a restart — see [Settings from chat](settings.md).
 

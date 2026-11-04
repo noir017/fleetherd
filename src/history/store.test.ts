@@ -189,4 +189,71 @@ describe('HistoryStore', () => {
     expect(store.list({ days: 30 })[0]!.messages).toBe(1);
     store.close();
   });
+
+  describe('review windows', () => {
+    /** A conversation with a scheduled turn and a sub-agent turn mixed into it. */
+    function seeded(store: HistoryStore): { id: number; last: number } {
+      const at = Date.UTC(2026, 10, 4, 9, 0);
+      const id = store.session({ key: 'telegram#chat#1', platform: 'telegram', title: '部署', kind: 'normal', at })!;
+      store.message(id, { ts: at, role: 'user', kind: 'normal', text: '第一句' });
+      store.message(id, { ts: at + 1, role: 'agent', kind: 'normal', text: '好的' });
+      store.message(id, { ts: at + 2, role: 'user', kind: 'schedule', text: '定时任务的话' });
+      store.message(id, { ts: at + 3, role: 'user', kind: 'subagent', text: '子代理的话' });
+      store.message(id, { ts: at + 4, role: 'user', kind: 'normal', text: '第二句' });
+      const last = store.session({ key: 'telegram#chat#1', platform: 'telegram', at: at + 5 })!;
+      return { id: last, last: at + 4 };
+    }
+
+    it('finds a session by its key without reading its messages', () => {
+      const { store } = tempStore();
+      seeded(store);
+      const row = store.sessionOf('telegram#chat#1');
+      expect(row?.title).toBe('部署');
+      expect(row?.kind).toBe('normal');
+      expect(row?.messages).toBe(5);
+      expect(store.sessionOf('nope')).toBeUndefined();
+      store.close();
+    });
+
+    it('counts only the person\'s own turns and leaves scheduled and sub-agent ones out', () => {
+      const { store } = tempStore();
+      seeded(store);
+      const window = store.reviewWindow('telegram#chat#1', 0, 10_000)!;
+      expect(window.userMessages).toBe(2);
+      expect(window.messages.map((m) => m.text)).toEqual(['第一句', '好的', '第二句']);
+      expect(window.dropped).toBe(0);
+      store.close();
+    });
+
+    it('returns only what came after the watermark', () => {
+      const { store } = tempStore();
+      seeded(store);
+      const first = store.reviewWindow('telegram#chat#1', 0, 10_000)!;
+      const second = store.reviewWindow('telegram#chat#1', first.messages[0]!.id, 10_000)!;
+      expect(second.userMessages).toBe(1);
+      expect(second.messages.map((m) => m.text)).toEqual(['好的', '第二句']);
+      store.close();
+    });
+
+    it('keeps the newest messages when the budget is short and says how many it left out', () => {
+      const { store } = tempStore();
+      seeded(store);
+      const window = store.reviewWindow('telegram#chat#1', 0, 6)!;
+      // "第二句" is 3 chars and is always kept (the newest row), "好的" would be 2 more — under the
+      // budget — and "第一句" would exceed it.
+      expect(window.messages.map((m) => m.text)).toEqual(['好的', '第二句']);
+      expect(window.dropped).toBe(1);
+      expect(window.lastMessageId).toBeGreaterThan(window.messages[0]!.id);
+      store.close();
+    });
+
+    it('reports the newest message id so a review starts after it', () => {
+      const { store } = tempStore();
+      seeded(store);
+      const window = store.reviewWindow('telegram#chat#1', 0, 10_000)!;
+      const all = store.read('telegram#chat#1');
+      expect(window.lastMessageId).toBe(all.messages[all.messages.length - 1]!.id);
+      store.close();
+    });
+  });
 });

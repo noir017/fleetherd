@@ -584,6 +584,27 @@ export const ConfigSchema = z
       .default({}),
 
     /**
+     * Automatic review of idle conversations (docs/skills.md#auto-review).
+     *
+     * Off unless `agent` names one, because a review spends the reviewer's quota on every
+     * conversation that goes quiet and writes into a skill library every agent reads. The
+     * deployment decision is which agent reviews (and, when that agent's own model is not the
+     * right one for the job, which model it uses); when a review runs, how much it sees and how
+     * many run a day are constants in `daemon/review.ts`.
+     *
+     * The agent must be an `agy` one: a review is one `agy -p` process on the machine that agent
+     * runs on, in an empty directory, with every tool denied. It never touches a file itself —
+     * the gateway applies what it returns through the same rules as `talkcode skills`.
+     */
+    review: z
+      .object({
+        agent: z.string().min(1),
+        /** Passed as `agy --model`; defaults to the agent's own `model`. */
+        model: z.string().min(1).optional(),
+      })
+      .optional(),
+
+    /**
      * Reply delivery. Alongside `display`, the part of outbound rendering an operator legitimately
      * decides; the throttling and chunking guardrails stay in the frozen EXPERIENCE block.
      */
@@ -820,6 +841,22 @@ export const ConfigSchema = z
       }
     });
     const platformIds = new Set(Object.keys(cfg.platforms));
+    if (cfg.review) {
+      const reviewer = cfg.agents.find((a) => a.id === cfg.review!.agent);
+      if (!reviewer) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['review', 'agent'],
+          message: `review.agent references a non-existent agent id "${cfg.review.agent}" (available: ${[...ids].join(', ')})`,
+        });
+      } else if (reviewer.harness !== 'agy') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['review', 'agent'],
+          message: `review.agent "${reviewer.id}" is a ${reviewer.harness} agent; a review runs \`agy -p\`, so it must name an agy agent`,
+        });
+      }
+    }
     cfg.routing.pipeline.forEach((rule, i) => {
       if (!ids.has(rule.use.agent)) {
         ctx.addIssue({

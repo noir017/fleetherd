@@ -259,8 +259,20 @@ Do not weaken these without saying so explicitly in the PR:
    puts them back; an archived skill is taken off every host; and the conversation that created a
    skill is told when it is archived. `access.allowFrom` remains the only gate on who can talk to
    the bot, so it is also the gate on who can write a skill — keep it to people you trust, and do
-   not add a second writer (the phase-3 review is the planned one) without the same validation and
-   history.
+   not add another writer without the same validation and history.
+
+   **The second writer is the automatic review** (`daemon/review.ts`, `docs/skills.md#auto-review`).
+   It is not a person and has no conversation to be trusted in, so it is held to the same rules
+   plus two of its own. It writes through the same `createSkill` / `patchSkill` / `writeSkillFile`
+   calls — never a file edit — so every validation, version check and history entry above applies
+   unchanged; a change that fails one is dropped and logged, never retried around it. And the
+   reviewer has no tools at all: one `agy -p` in an empty temporary directory with
+   `--settings` denying every permission class (`AGY_NO_TOOLS`), never
+   `--dangerously-skip-permissions`. That combination is load-bearing, not decoration, and both
+   halves were measured on agy 1.5.0 (2026-11-04): print mode without the flag still auto-approves
+   file writes, and `deny: ["*"]` denies NOTHING — `"*"` names a permission class literally. The
+   deny list must name every class; a tool in a class it does not name is not refused. Do not
+   relax either half, and keep the list complete when the CLI gains a class.
 
 ## Adding things
 

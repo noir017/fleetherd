@@ -103,3 +103,42 @@ That is the point — "remember this as a skill" works in the conversation where
 also the risk: a managed skill enters **every** agent's context, so an agent that writes one is
 writing instructions the others will follow. The guards are the validation above, the history and
 `revert`, the archive notice, and the 30-day archive. Keep the access list to people you trust.
+
+## Auto review
+
+A conversation that goes quiet can teach the library something: a step that was missing, a
+mistake the person corrected, a technique worth keeping. Turn it on by naming the agent that does
+the reviewing — it must be an `agy` agent, and a review is one `agy -p` on the machine that agent
+runs on:
+
+```yaml
+review:
+  agent: ag@uniagent             # off unless this is set
+  model: gemini-3.8-flash-high   # optional; the agent's own model otherwise
+```
+
+A review runs when a conversation has been idle for an hour, nothing is running there, and the
+person has sent at least three messages since the last review. In practice it fires the moment
+[idle reclaim](chat-commands.md) stops the agent process; `/kill` and `/new` are
+reviewed an hour later, a gateway restart backfills whatever went quiet while it was down, and a
+conversation whose agent can never be reclaimed (reclaim off, or a harness that cannot resume a
+session) is reviewed with its process still up. Scheduled tasks, sub-agents and reviews themselves
+are never reviewed.
+
+The reviewer gets the conversation (capped), the skill list with versions, and the full text of the
+skills that conversation used. It has no tools: it runs in an empty temporary directory with every
+tool denied, so it cannot read or write anything. It answers with a JSON list of `create`, `patch`
+and `write-file` changes, each with a reason, plus any preferences it noticed. The gateway applies
+them through the same rules as `talkcode skills` — a patch must carry the version the reviewer was
+given, and a change that fails is dropped and logged. The reviewer itself never touches a file.
+
+When something changed, one line appears in the conversation that was reviewed:
+
+```text
+📝 复盘：更新技能 `deploy-check`（回滚 `talkcode skills revert deploy-check 0000000000172-abc123`）。偏好建议：回答先给结论
+```
+
+No change, no line. One review runs at a time and at most ten a day (UTC), so a quiet library
+cannot spend the reviewer's quota; a failed review waits six hours before it is tried again.
+Reviews are filed in the conversation library as `review` sessions, which search and `list` leave
+out.
