@@ -1113,9 +1113,11 @@ publishing a link to nothing. The agent's own file is only ever read.
 ### Reading a file instead of downloading it
 
 A report, a plan or a log the agent sends is meant to be read, and a download meant the downloads
-folder and another application — on a phone, one that may not exist. Since 2.15.0 such a file gets
-**Preview** beside its link, which opens it in `#reader`, an opaque overlay with the file's name,
-a Download link and a close button.
+folder and another application — on a phone, one that may not exist. Since 2.15.0 such a file has
+been readable in place. Its name is now the way in, and **Download** beside the name is what the
+name used to be: `#reader` is a window over the transcript — a dimmed backdrop, a box capped in both
+directions, with the file's name, a Download link and a close button — rather than the opaque
+full-screen page it was, so the conversation stays visible around the document being read.
 
 It does not bend point 5, it goes round it. `GET view/<token>` (`server.ts` `view`) resolves the
 same download token, reads at most `MAX_READ_BYTES` (512 KiB) of the file, and answers JSON:
@@ -1127,23 +1129,26 @@ so there is nothing that could render it.
 
 - **`reading.ts` `readableKind` is the closed list, read by both ends** — the arrangement
   `inlineImageType` has. `index.ts` sets `file.view` (the URL, from `WebRoom.viewUrl`, next to where
-  `f/<token>` is minted) only for a name it accepts, and the page shows Preview only where `view` is
-  set. PDF and office formats are absent on purpose: their text is not in their bytes, so they need
-  a renderer — the browser's PDF viewer, which is exactly what the download rule keeps off this
-  origin, or several megabytes of library.
+  `f/<token>` is minted) only for a name it accepts, and the page makes the name a preview only
+  where `view` is set. PDF and office formats are absent on purpose: their text is not in their
+  bytes, so they need a renderer — the browser's PDF viewer, which is exactly what the download
+  rule keeps off this origin, or several megabytes of library.
 - **The name is trusted for the list, the bytes are checked anyway.** A NUL in the first 8000 bytes
   (git's `buffer_is_binary` test) answers 415 "that file is not text", which the reader shows.
 - **A long file is cut, and says so.** At the last line break in the second half of the budget,
   else at a UTF-8 character boundary — never inside a character. The page writes "Showing the first
   512 KB of 2.0 MB" above it. In Chromium on 2026-10-31 a 2 MB log opened in under 200 ms.
-- **No Preview on history.** Its token died with the run that minted it, so `parseKept` drops
-  `view` and the page leaves the button off a message from another generation, as it does buttons.
+- **No preview on history.** Its token died with the run that minted it, so `parseKept` drops
+  `view` and the page leaves the name a plain download on a message from another generation, as it
+  does buttons.
 - **`readSeq`** discards an answer that arrives after its reader was closed — on a slow link, the
   first file would otherwise land under the second one's name. Closing empties the body, as the
   lightbox drops its picture.
 
-The real-browser half — files delivered through the real adapter's `sendFile`, read at 1280 and
-390 px, no CSP violation, the close button 44px on a phone — was checked in Chromium on 2026-10-31.
+The real-browser half — files delivered through the real adapter's `sendFile`, the name opened at
+1280 and 390 px, the window's margins and dimmed backdrop, **Download** saving the file, no CSP
+violation, the close button 44px on a phone — was checked in Chromium on 2026-11-04
+(`project-scripts/talkcode-file-reader/e2e.mts`).
 
 ### The other door: `sso.ts`
 
