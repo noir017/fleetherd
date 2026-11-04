@@ -252,6 +252,25 @@ export class RemoteHost extends EventEmitter {
     return (res.entries as Array<{ name: string; dir: boolean }> | undefined) ?? [];
   }
 
+  /**
+   * Every file under `path`, relative and slash-separated (remote/ops.go opListFiles). Symlinks are
+   * listed as entries, not followed — what the managed-skill prune needs to see the whole copy.
+   */
+  async listFiles(path: string, timeoutMs?: number): Promise<string[]> {
+    const { res } = await this.rpc('listFiles', { path }, undefined, { timeoutMs });
+    return (res.files as string[] | undefined) ?? [];
+  }
+
+  /**
+   * Remove one file or directory tree, only if it is strictly inside `owned` (remote/ops.go
+   * opRemovePath). Used for a managed skill's copy and for the files a new version no longer has;
+   * the guard is what keeps a path in the copy from becoming a delete in the operator's home.
+   */
+  async removePath(path: string, owned: string): Promise<{ removed: boolean; path: string }> {
+    const { res } = await this.rpc('removePath', { path, owned });
+    return res as { removed: boolean; path: string };
+  }
+
   async mkdirp(path: string, mode?: number): Promise<void> {
     await this.rpc('mkdirp', { path, mode });
   }

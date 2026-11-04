@@ -83,6 +83,65 @@ describe('task commands', () => {
   });
 });
 
+describe('skills <action>', () => {
+  const skills = (positionals: string[], opts: Record<string, unknown> = {}): IpcAction => spec('skills').build(positionals, opts);
+
+  it('maps the read and write actions onto one IpcAction', () => {
+    expect(skills(['list'])).toEqual({ kind: 'skills', action: 'list' });
+    expect(skills(['show', 'deploy-check'])).toEqual({ kind: 'skills', action: 'show', name: 'deploy-check' });
+    expect(skills(['show', 'deploy-check', 'references/api.md'])).toEqual({
+      kind: 'skills',
+      action: 'show',
+      name: 'deploy-check',
+      file: 'references/api.md',
+    });
+    expect(skills(['create', 'deploy-check'], { description: 'when deploying', body: '# Steps' })).toEqual({
+      kind: 'skills',
+      action: 'create',
+      name: 'deploy-check',
+      description: 'when deploying',
+      body: '# Steps',
+    });
+    expect(skills(['patch', 'deploy-check'], { version: 'abc123', content: 'x' })).toEqual({
+      kind: 'skills',
+      action: 'patch',
+      name: 'deploy-check',
+      version: 'abc123',
+      content: 'x',
+    });
+    expect(skills(['write-file', 'deploy-check', 'references/api.md'], { content: 'API' })).toEqual({
+      kind: 'skills',
+      action: 'write-file',
+      name: 'deploy-check',
+      file: 'references/api.md',
+      content: 'API',
+    });
+    expect(skills(['remove-file', 'deploy-check', 'references/api.md'])).toEqual({
+      kind: 'skills',
+      action: 'remove-file',
+      name: 'deploy-check',
+      file: 'references/api.md',
+    });
+    expect(skills(['revert', 'deploy-check', '001-abc'])).toEqual({ kind: 'skills', action: 'revert', name: 'deploy-check', id: '001-abc' });
+    for (const action of ['archive', 'restore', 'pin', 'unpin', 'history']) {
+      expect(skills([action, 'deploy-check'])).toEqual({ kind: 'skills', action, name: 'deploy-check' });
+    }
+  });
+
+  it('refuses a write without the version show printed, and a create without a description', () => {
+    expect(() => skills(['patch', 'deploy-check'], { content: 'x' })).toThrow(/needs --version/);
+    expect(() => skills(['patch', 'deploy-check'], { version: 'abc123' })).toThrow(/needs --content/);
+    expect(() => skills(['create', 'deploy-check'])).toThrow(/needs --description/);
+    expect(() => skills(['write-file', 'deploy-check', 'references/a.md'])).toThrow(/needs --content/);
+  });
+
+  it('refuses --channel, is gateway-wide, and names an unknown action', () => {
+    expect(() => skills(['list'], { channel: 'tg:1' })).toThrow(/--channel does not apply/);
+    expect(() => skills(['frobnicate'])).toThrow(/unknown skills action/);
+    expect(() => skills(['show'])).toThrow(/needs a <name>/);
+  });
+});
+
 describe('schedule <action> [id]', () => {
   it('builds an add from its options, --channel as the target', () => {
     expect(

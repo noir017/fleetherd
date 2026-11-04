@@ -248,6 +248,19 @@ Do not weaken these without saying so explicitly in the PR:
    chose, and the server sends to it; `webui/webpush.ts` allowedEndpoint holds it to HTTPS on the
    push services browsers use, at subscribe time and again before every send — the outbound twin
    of invariant 3.
+8. **Any agent may write a managed skill, and every agent reads it.** `talkcode skills` is not an
+   operator-only command: an agent in any conversation can `create` or `patch` a skill, and at every
+   agent start the gateway delivers the active ones to every host and links them into every
+   harness's skill directory. So a skill is one agent writing instructions another agent will
+   follow — the first such path in this project, and the reason the write side is not a plain file
+   edit. What keeps it answerable: names, paths and `SKILL.md` are validated before anything is
+   written; `patch` must carry the version `show` printed, so a stale edit is refused rather than
+   silently undoing a newer one; every change keeps the previous files in `.history/` and `revert`
+   puts them back; an archived skill is taken off every host; and the conversation that created a
+   skill is told when it is archived. `access.allowFrom` remains the only gate on who can talk to
+   the bot, so it is also the gate on who can write a skill — keep it to people you trust, and do
+   not add a second writer (the phase-3 review is the planned one) without the same validation and
+   history.
 
 ## Adding things
 

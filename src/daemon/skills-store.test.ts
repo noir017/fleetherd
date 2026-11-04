@@ -1,0 +1,222 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  MAX_SKILL_BYTES,
+  archiveSkill,
+  archivedSkillNames,
+  createSkill,
+  listSkills,
+  patchSkill,
+  pinSkill,
+  removeSkillFile,
+  restoreSkill,
+  revertSkill,
+  showSkill,
+  skillDir,
+  skillHistory,
+  skillVersion,
+  validateFilePath,
+  validateSkillName,
+  writeSkillFile,
+} from './skills-store.js';
+
+/** The store writes only under a temp config directory; nothing here touches the live gateway. */
+
+let dir: string;
+const T0 = Date.parse('2026-11-01T00:00:00Z');
+
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-store-'));
+});
+
+afterEach(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const create = (name = 'deploy-check', extra: { body?: string; description?: string } = {}) =>
+  createSkill({ name, description: extra.description ?? 'Use when checking a deployment', body: extra.body, now: T0 }, dir);
+
+describe('rules', () => {
+  it('accepts lowercase words joined by hyphens, and nothing else', () => {
+    for (const name of ['deploy', 'deploy-check', 'a1-b2']) expect(validateSkillName(name)).toBe(name);
+    for (const name of ['Deploy', 'deploy_check', 'deploy check', '-deploy', 'deploy-', 'deploy--check', '', '../x']) {
+      expect(() => validateSkillName(name), name).toThrow(/lowercase/);
+    }
+    expect(() => validateSkillName('a'.repeat(65))).toThrow(/too long/);
+  });
+
+  it('will not let a managed skill shadow the bundled two', () => {
+    for (const name of ['talkcode', 'super']) expect(() => validateSkillName(name)).toThrow(/bundled/);
+    expect(() => createSkill({ name: 'super', description: 'x', now: T0 }, dir)).toThrow(/bundled/);
+  });
+
+  it('allows extra files only under the three directories', () => {
+    expect(validateFilePath('references/api.md')).toBe('references/api.md');
+    expect(validateFilePath('./scripts/run.sh')).toBe('scripts/run.sh');
+    expect(validateFilePath('templates/report.md')).toBe('templates/report.md');
+    for (const file of ['SKILL.md', 'other/a.md', '../x/a.md', 'references/../a.md', '/etc/passwd', 'references', 'a/b.md']) {
+      expect(() => validateFilePath(file), file).toThrow(/files may only|stay inside|needs a name|use "\/"/);
+    }
+  });
+
+  it('refuses a SKILL.md over 20 KB, or one a harness would not list', () => {
+    expect(() => create('deploy-check', { body: 'x'.repeat(MAX_SKILL_BYTES) })).toThrow(/over the 20480-byte limit/);
+    const skill = create();
+    const version = showSkill(skill.name, undefined, dir).version;
+    expect(() => patchSkill({ name: skill.name, version, content: 'no frontmatter', now: T0 }, dir)).toThrow(/frontmatter/);
+    expect(() =>
+      patchSkill({ name: skill.name, version, content: '---\nname: other\ndescription: x\n---\n', now: T0 }, dir)
+    ).toThrow(/but this skill is "deploy-check"/);
+    expect(() =>
+      patchSkill({ name: skill.name, version, content: '---\nname: deploy-check\ndescription: ""\n---\n', now: T0 }, dir)
+    ).toThrow(/non-empty description/);
+  });
+});
+
+describe('create and show', () => {
+  it('writes SKILL.md and a usage record with the source conversation', () => {
+    const source = { conversation: 'c1', platform: 'tg', address: { channel: '1' }, agent: 'claude' };
+    const skill = createSkill({ name: 'deploy-check', description: 'Use when checking a deployment', body: '# Steps', source, now: T0 }, dir);
+    expect(skill.version).toMatch(/^[0-9a-f]{12}$/);
+    expect(skill.status).toBe('active');
+    expect(skill.uses).toBe(0);
+    const md = fs.readFileSync(path.join(skillDir('deploy-check', dir), 'SKILL.md'), 'utf8');
+    expect(md).toMatch(/^---\nname: deploy-check\ndescription: "Use when checking a deployment"\n---\n\n# Steps\n$/);
+    expect(showSkill('deploy-check', undefined, dir)).toMatchObject({ name: 'deploy-check', file: 'SKILL.md', content: md });
+    const usage = JSON.parse(fs.readFileSync(path.join(dir, 'skills', '.usage.json'), 'utf8')) as { skills: Record<string, { source: unknown }> };
+    expect(usage.skills['deploy-check']!.source).toEqual(source);
+  });
+
+  it('refuses a duplicate name and points at the archived copy when there is one', () => {
+    create();
+    expect(() => create()).toThrow(/already exists/);
+    archiveSkill('deploy-check', dir, T0);
+    expect(() => create()).toThrow(/archived; restore it/);
+  });
+
+  it('shows an archived skill and its version', () => {
+    const skill = create();
+    const version = skill.version;
+    archiveSkill(skill.name, dir, T0);
+    expect(showSkill(skill.name, undefined, dir)).toMatchObject({ version, status: 'archived' });
+    expect(() => showSkill(skill.name, 'references/missing.md', dir)).toThrow(/has no references\/missing.md/);
+  });
+});
+
+describe('patch', () => {
+  it('is refused unless it names the version show printed', () => {
+    const skill = create();
+    const next = '---\nname: deploy-check\ndescription: "Use when checking a deployment"\n---\n\nnew body\n';
+    expect(() => patchSkill({ name: skill.name, version: '000000000000', content: next, now: T0 + 1 }, dir)).toThrow(/version mismatch/);
+    const patched = patchSkill({ name: skill.name, version: skill.version, content: next, now: T0 + 1 }, dir);
+    expect(patched.version).not.toBe(skill.version);
+    expect(showSkill(skill.name, undefined, dir).content).toBe(next);
+    // The old version is now stale: a second write must read again.
+    expect(() => patchSkill({ name: skill.name, version: skill.version, content: next, now: T0 + 2 }, dir)).toThrow(/version mismatch/);
+  });
+
+  it('rejects a patch to a skill that is archived', () => {
+    const skill = create();
+    archiveSkill(skill.name, dir, T0);
+    expect(() => patchSkill({ name: skill.name, version: skill.version, content: '', now: T0 }, dir)).toThrow(/archived/);
+  });
+});
+
+describe('extra files', () => {
+  it('writes and removes a reference, changing the version each time', () => {
+    const skill = create();
+    const withRef = writeSkillFile({ name: skill.name, file: 'references/api.md', content: 'API', now: T0 + 1 }, dir);
+    expect(withRef.version).not.toBe(skill.version);
+    expect(fs.readFileSync(path.join(skillDir(skill.name, dir), 'references', 'api.md'), 'utf8')).toBe('API');
+    const without = removeSkillFile({ name: skill.name, file: 'references/api.md', now: T0 + 2 }, dir);
+    expect(without.version).toBe(skill.version);
+    expect(fs.existsSync(path.join(skillDir(skill.name, dir), 'references'))).toBe(false);
+    expect(() => removeSkillFile({ name: skill.name, file: 'references/api.md', now: T0 + 3 }, dir)).toThrow(/has no file/);
+  });
+
+  it('keeps a script executable and refuses one over the size cap', () => {
+    const skill = create();
+    writeSkillFile({ name: skill.name, file: 'scripts/run.sh', content: '#!/bin/sh\n', now: T0 + 1 }, dir);
+    expect(fs.statSync(path.join(skillDir(skill.name, dir), 'scripts', 'run.sh')).mode & 0o777).toBe(0o700);
+    expect(() =>
+      writeSkillFile({ name: skill.name, file: 'references/big.md', content: 'x'.repeat(1024 * 1024 + 1), now: T0 + 2 }, dir)
+    ).toThrow(/over the 1048576-byte limit/);
+  });
+});
+
+describe('history and revert', () => {
+  it('keeps the version before every change and puts it back on revert', () => {
+    const first = create();
+    const second = patchSkill({
+      name: first.name,
+      version: first.version,
+      content: '---\nname: deploy-check\ndescription: "second"\n---\n\nsecond\n',
+      now: T0 + 1,
+    }, dir);
+    const third = writeSkillFile({ name: first.name, file: 'references/a.md', content: 'a', now: T0 + 2 }, dir);
+    expect(third.version).not.toBe(second.version);
+
+    const history = skillHistory(first.name, dir);
+    expect(history.map((h) => h.action)).toEqual(['write-file', 'patch', 'create']);
+    const patchEntry = history.find((h) => h.action === 'patch')!;
+    expect(patchEntry).toMatchObject({ beforeVersion: first.version, afterVersion: second.version });
+    expect(history.find((h) => h.action === 'create')!.beforeVersion).toBeUndefined();
+
+    const reverted = revertSkill(first.name, patchEntry.id, dir, T0 + 3);
+    expect(reverted.skill.version).toBe(first.version);
+    expect(showSkill(first.name, undefined, dir).content).toContain('Use when checking a deployment');
+    // The file added after that patch is gone too: the snapshot is the whole skill.
+    expect(fs.existsSync(path.join(skillDir(first.name, dir), 'references', 'a.md'))).toBe(false);
+    expect(skillHistory(first.name, dir)[0]).toMatchObject({ action: 'revert', note: `revert ${patchEntry.id}` });
+  });
+
+  it('has nothing to revert to for the first version', () => {
+    const skill = create();
+    const createEntry = skillHistory(skill.name, dir).find((h) => h.action === 'create')!;
+    expect(() => revertSkill(skill.name, createEntry.id, dir, T0 + 1)).toThrow(/nothing before it/);
+    expect(() => revertSkill(skill.name, 'no-such-entry', dir, T0 + 1)).toThrow(/no history entry/);
+  });
+
+  it('reverts a skill that is archived back into use', () => {
+    const first = create();
+    const second = patchSkill({
+      name: first.name,
+      version: first.version,
+      content: '---\nname: deploy-check\ndescription: "second"\n---\n\nsecond\n',
+      now: T0 + 1,
+    }, dir);
+    const patchEntry = skillHistory(first.name, dir).find((h) => h.action === 'patch')!;
+    archiveSkill(first.name, dir, T0 + 2);
+    expect(archivedSkillNames(dir)).toEqual([first.name]);
+    const reverted = revertSkill(first.name, patchEntry.id, dir, T0 + 3);
+    expect(reverted.skill.status).toBe('active');
+    expect(archivedSkillNames(dir)).toEqual([]);
+    expect(skillVersion(first.name, dir)).toBe(first.version);
+    expect(second.version).not.toBe(first.version);
+  });
+});
+
+describe('archive, restore and pin', () => {
+  it('moves a skill to .archive, never deletes it, and restores it with a fresh clock', () => {
+    const skill = create();
+    const archived = archiveSkill(skill.name, dir, T0 + 30 * 86_400_000);
+    expect(archived.status).toBe('archived');
+    expect(fs.existsSync(skillDir(skill.name, dir))).toBe(false);
+    expect(archivedSkillNames(dir)).toEqual([skill.name]);
+    expect(listSkills(dir, T0 + 31 * 86_400_000)).toEqual([expect.objectContaining({ name: skill.name, status: 'archived' })]);
+    const restored = restoreSkill(skill.name, dir, T0 + 40 * 86_400_000);
+    expect(restored.status).toBe('active');
+    expect(restored.restoredAt).toBe(new Date(T0 + 40 * 86_400_000).toISOString());
+    expect(fs.existsSync(path.join(skillDir(skill.name, dir), 'SKILL.md'))).toBe(true);
+    expect(() => restoreSkill(skill.name, dir, T0 + 41 * 86_400_000)).toThrow(/already active/);
+  });
+
+  it('pins a skill and unpins it', () => {
+    const skill = create();
+    expect(pinSkill(skill.name, true, dir)).toMatchObject({ pinned: true, status: 'active' });
+    expect(pinSkill(skill.name, false, dir)).toMatchObject({ pinned: false });
+    expect(() => pinSkill('nope', true, dir)).toThrow(/no skill named/);
+  });
+});

@@ -46,6 +46,10 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `reverse-cli-shim.ts` | Guarantees `talkcode` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
 | `skill-link.ts` | Links the bundled skills (`talkcode`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
 | `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
+| `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`): names, paths and size rules, content versions, `.usage.json`, `.archive/`, and `.history/` with `revert` |
+| `skill-usage.ts` | What counts as using a managed skill — a `Skill` tool call, `/<name>`, a file under its directory — once per turn, with `talkcode skills` excluded |
+| `skill-lifecycle.ts` | The daily check (14 days expired, 30 archived, pinned exempt) and its archive notice |
+| `managed-skills.ts` | Delivering active skills to `~/.talkcode/skills/` on an agent's machine and linking only links that point back there; taking an archived skill's links back |
 | `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
 | `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
 | `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on, and the `[sub-agent updates]` card |
@@ -1035,15 +1039,17 @@ environment, working-directory resolution (`agents[].cwd`, or an auto-created
 SIGKILL after `KILL_GRACE_MS` — harness CLIs may ignore SIGTERM mid-turn).
 
 `buildAgentEnv` runs at every spawn in both runtimes, which makes it the one place that provisions
-what the reverse CLI depends on: the shim at the front of `PATH`, and the skill link
-(`skill-link.ts`) under the home this agent runs as. It also places the operator's instructions
-(`instructions.ts`) there; an agent on a remote host gets both from `prepareRemoteSpawn`.
+what the reverse CLI depends on: the shim at the front of `PATH`, the skill link
+(`skill-link.ts`) under the home this agent runs as, and the gateway's own managed skills
+(`managed-skills.ts`). It also places the operator's instructions (`instructions.ts`) there; an
+agent on a remote host gets all of them from `prepareRemoteSpawn`.
 
 #### Agents on a remote host
 
 An agent with `host:` is spawned through that host's `RemoteHost` instead of `child_process`, and
 everything else in this module has a remote twin used at the same points: `prepareRemoteSpawn`
-(reach the host, settle the directory there, place the skill), `remoteAgentEnv` (an overlay — the
+(reach the host, settle the directory there, place the bundled skill, the operator's instructions
+and the managed skills), `remoteAgentEnv` (an overlay — the
 base is the host's login environment, never this daemon's), `expandRemoteHome`, and
 `watchRemoteLink`, which tells the chat about an outage longer than a blip and restarts the silence
 watchdog when the link is back (both runtimes' `onSilence` also re-arm while the link is down: an
@@ -1180,6 +1186,29 @@ Probed live 2026-09-11: `claude` sends real elicitations; **`opencode` 1.18.27 a
 `session/request_permission`). On those two a model that wants to ask writes the question
 as text and ends the turn, which the user answers in the next message — a graceful
 degradation that needs no code.
+
+## Skills the gateway keeps
+
+`<configDir>/skills/` is a second kind of skill, beside the two the package bundles: one an agent
+writes through `talkcode skills` (`skills-store.ts`), delivered to every agent on every host at
+spawn (`managed-skills.ts`, and `remote-hosts.ts` `placeManagedSkills` for an agent on another
+machine). The copy lives in `~/.talkcode/skills/<name>/` — never under a version directory — and is
+read-only; the link into each harness's skill directory is made only when the harness's own config
+directory exists, and is repointed or removed only when it points back into that copy. A real
+directory, a real file, or the operator's own link at the same name is left alone and logged.
+
+`SKILL.md` is capped at 20 KB and every write is validated (`skills-store.ts`), because the skill
+enters every agent's context. `show` prints a content hash; `patch` refuses unless it carries that
+hash, so a half-read edit cannot silently undo a newer one. Before each content change the old
+files go into `.history/<name>/<id>/` with one `meta.json`, and `revert` restores a whole snapshot
+and records the revert itself. `archive` moves the directory into `.archive/`; the next spawn takes the
+copy and every link of ours back, and the conversation the skill came from gets one line.
+
+Use is counted from events the gateway already has (`skill-usage.ts`): a `Skill` tool call naming
+the skill, a message starting with `/<name>`, or any tool call whose arguments mention
+`~/.talkcode/skills/<name>/`. A turn counts a skill once; `talkcode skills` is management and is
+excluded. `skill-lifecycle.ts` sweeps daily: 14 days unused marks expired, 30 archives; a pinned
+skill is exempt, and nothing is deleted.
 
 ## `daemon.ts` responsibilities
 

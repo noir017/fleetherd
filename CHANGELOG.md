@@ -20,6 +20,22 @@ All notable changes to this project are documented here. The format is based on
   conversation someone is looking for. The web UI's kept transcripts are folded in once on the
   first start; the file is `0600`, and a failed write is logged rather than allowed to fail the
   turn it describes. [→](docs/conversation-history.md)
+- **Skills the gateway keeps for every agent.** An agent could write a file where it happened to
+  run, but a skill worth keeping is one the next agent on the next host also gets. `talkcode
+  skills` now owns that: `create`, `patch`, `write-file`, `remove-file`, `archive`, `restore`,
+  `pin`/`unpin`, `history` and `revert`, with the gateway's directory (`<config dir>/skills/`) as
+  the one copy. Each spawn copies the active skills to `~/.talkcode/skills/<name>/` on the agent's
+  machine and links them into its harness's skill directory — only ever repointing or removing a
+  link that points back into that directory, so an operator's own skill of the same name is left
+  alone. `patch` must carry the version `show` printed, which is what stops a half-read edit from
+  silently undoing a newer one; every content change keeps the previous files in `.history/`, and
+  `revert` puts them back. Use is counted from the events the gateway already receives — a `Skill` tool
+  call, a message starting with `/<name>`, or a tool touching a file under the skill's directory —
+  once per turn, and `talkcode skills` itself does not count. After 14 days unused a skill is
+  marked expired; after 30 it is moved into `.archive/` and taken off every agent, with a line in
+  the conversation that created it. Pinned skills are exempt, and nothing is deleted. Because any
+  agent can write one and every agent reads it, this is the first feature that lets an agent
+  change another agent's instructions; the security notes say so. [→](docs/skills.md)
 
 ## [2.30.0] - 2026-11-04
 

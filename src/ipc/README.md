@@ -59,8 +59,9 @@ front door rather than a command of its own.)
 
 The catalog: `send-message`, `reply`, `edit-message`, `send-file`, `react`, `delete`,
 `fetch-messages`, `create-thread`, `ask`, `voice-log`, `channels`, `sessions`, `schedule`, the
-sub-agent `task-*` commands, `reload`, and `pods` / `pod-add` / `pod-remove` (the machines agents
-run on, `daemon/pod-admin.ts`).
+sub-agent `task-*` commands, `reload`, `pods` / `pod-add` / `pod-remove` (the machines agents
+run on, `daemon/pod-admin.ts`), and `skills` (the gateway's own skills: list, show, create, patch,
+archive, history, revert — `daemon/skills-store.ts`).
 
 ## What an agent is told: nothing. What it can find
 

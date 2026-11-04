@@ -125,6 +125,8 @@ export function renderResult(action: IpcAction, data: unknown): ReverseOutput {
   const tabular = DATA_PRINTERS[action.kind];
   if (tabular) return { stdout: tabular(data) };
   switch (action.kind) {
+    case 'skills':
+      return { stdout: renderSkills(action, data) };
     case 'ask': {
       const chosen = (data as { chosen?: string | null } | undefined)?.chosen ?? null;
       // An empty stdout line is a legitimate answer shape, which makes it a poor way to learn that
@@ -420,6 +422,27 @@ function renderSessionList(data: unknown): string {
  * more switch arms: every gateway query added one, and the switch in renderResult is about the
  * commands whose rendering also depends on what was asked (ask's timeout, fetch's columns).
  */
+/** `skills …`: a file read for `show`, TOON for every other action (a table or a record). */
+function renderSkills(action: Extract<IpcAction, { kind: 'skills' }>, data: unknown): string {
+  return action.action === 'show' ? renderSkillFile(data) : toon(data ?? {});
+}
+
+/** `skills show`: metadata a `patch` needs, then the file itself, verbatim. */
+function renderSkillFile(data: unknown): string {
+  const shown = data as
+    | { name?: string; file?: string; version?: string; status?: string; content?: string }
+    | undefined;
+  if (!shown) return toon({ ok: true });
+  return [
+    `skill: ${shown.name ?? ''}`,
+    `file: ${shown.file ?? 'SKILL.md'}`,
+    `version: ${shown.version ?? ''}`,
+    `status: ${shown.status ?? ''}`,
+    '',
+    shown.content ?? '',
+  ].join('\n');
+}
+
 const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown) => string>> = {
   'voice-log': renderVoiceLog,
   'list-channels': renderChannels,

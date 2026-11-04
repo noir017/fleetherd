@@ -127,7 +127,7 @@ export function allSkillDirs(home: string): string[] {
   return [...new Set(dirs)];
 }
 
-export type SkillLinkOutcome = 'linked' | 'relinked' | 'current' | 'occupied' | 'skipped' | 'failed';
+export type SkillLinkOutcome = 'linked' | 'relinked' | 'current' | 'occupied' | 'skipped' | 'failed' | 'removed';
 
 export interface SkillLinkResult {
   link: string;
@@ -136,8 +136,20 @@ export interface SkillLinkResult {
   detail?: string;
 }
 
-/** Make `<home.dir>/<name>` a symlink to `source`. No guard — the tests drive this directly. */
-export function linkSkill(source: string, home: SkillHome, name = SKILL_LINK_NAME): SkillLinkResult {
+function isUnder(dest: string, dir: string): boolean {
+  return path.resolve(dest).startsWith(path.resolve(dir) + path.sep);
+}
+
+/**
+ * Make `<home.dir>/<name>` a symlink to `source`. No guard — the tests drive this directly.
+ *
+ * With `owned`, an existing symlink is repointed only when it points inside that directory — the
+ * rule the remote side already follows (remote/ops.go opEnsureLink) and the managed skills need:
+ * `~/.claude/skills/foo` may be the operator's own link to their own copy, which is not ours to
+ * replace just because a managed skill has the same name. Without `owned`, any symlink is treated
+ * as ours, which is what the two bundled skills have always done.
+ */
+export function linkSkill(source: string, home: SkillHome, name = SKILL_LINK_NAME, owned?: string): SkillLinkResult {
   const link = path.join(home.dir, name);
   try {
     if (!fs.existsSync(home.requires)) return { link, outcome: 'skipped', detail: `${home.requires} does not exist` };
@@ -146,7 +158,9 @@ export function linkSkill(source: string, home: SkillHome, name = SKILL_LINK_NAM
       const st = fs.lstatSync(link);
       if (!st.isSymbolicLink()) return { link, outcome: 'occupied', detail: st.isDirectory() ? 'a directory' : 'a file' };
       previous = fs.readlinkSync(link);
-      if (path.resolve(home.dir, previous) === source) return { link, outcome: 'current' };
+      const dest = path.resolve(home.dir, previous);
+      if (dest === source) return { link, outcome: 'current' };
+      if (owned && !isUnder(dest, owned)) return { link, outcome: 'occupied', detail: `a link to ${previous}` };
       fs.unlinkSync(link);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
@@ -155,6 +169,23 @@ export function linkSkill(source: string, home: SkillHome, name = SKILL_LINK_NAM
     fs.symlinkSync(source, link, 'dir');
     return previous === undefined ? { link, outcome: 'linked' } : { link, outcome: 'relinked', detail: previous };
   } catch (e) {
+    return { link, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Take back a skill link only if it is a symlink pointing inside `owned` (managed skills). */
+export function removeSkillLink(link: string, owned: string): SkillLinkResult {
+  try {
+    const st = fs.lstatSync(link);
+    if (!st.isSymbolicLink()) return { link, outcome: 'occupied', detail: st.isDirectory() ? 'a directory' : 'a file' };
+    const previous = fs.readlinkSync(link);
+    if (!isUnder(path.resolve(path.dirname(link), previous), owned)) {
+      return { link, outcome: 'occupied', detail: `a link to ${previous}` };
+    }
+    fs.unlinkSync(link);
+    return { link, outcome: 'removed', detail: previous };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { link, outcome: 'skipped', detail: 'nothing there' };
     return { link, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) };
   }
 }

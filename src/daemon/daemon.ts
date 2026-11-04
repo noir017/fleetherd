@@ -119,6 +119,22 @@ import type { ConversationStore } from './conversation-store.js';
 import type { WorkdirUsageStore } from './workdir-usage.js';
 import { resolvePageSize } from '../core/paging.js';
 import { IpcServer } from '../ipc/server.js';
+import { startSkillSweep } from './skill-lifecycle.js';
+import { selfInvocation } from './reverse-cli-shim.js';
+import {
+  archiveSkill,
+  createSkill,
+  listSkills,
+  patchSkill,
+  pinSkill,
+  removeSkillFile,
+  restoreSkill,
+  revertSkill,
+  showSkill,
+  skillHistory,
+  writeSkillFile,
+  type SkillRecord,
+} from './skills-store.js';
 import type { IpcAction, VoiceLogResult } from '../ipc/protocol.js';
 import {
   DEFAULT_ASK_TIMEOUT_MS as PROTOCOL_DEFAULT_ASK_TIMEOUT_MS,
@@ -202,6 +218,7 @@ const GATEWAY_QUERY_KINDS = {
   'pod-list': true,
   'pod-add': true,
   'pod-remove': true,
+  skills: true,
 } as const satisfies Partial<Record<IpcAction['kind'], true>>;
 type GatewayQuery = Extract<IpcAction, { kind: keyof typeof GATEWAY_QUERY_KINDS }>;
 const isGatewayQuery = (a: IpcAction): a is GatewayQuery => a.kind in GATEWAY_QUERY_KINDS;
@@ -757,6 +774,8 @@ export class Daemon {
   private recentRouted = new Map<string, number>();
   /** Graceful stop runs once: signals may repeat (e.g. double Ctrl-C); guards stop() reentry. */
   private stopping = false;
+  /** The daily managed-skill sweep, cleared on stop. */
+  private skillSweepStop: (() => void) | undefined;
   /** Cancel handle for installed signal handlers (removed on stop to avoid leak + test cross-talk). */
   private signalCleanup: (() => void) | null = null;
   /** Set while a SIGTERM waits for the work in progress (beginDrain); cancels that wait. */
@@ -1007,6 +1026,11 @@ export class Daemon {
     // After the platforms and IPC are up: a run that is due right away (a catch-up after the update
     // that restarted us) needs somewhere to post, and an agent run needs its reverse commands.
     this.schedules?.scheduler.start();
+    // The managed skills' daily check: 14 days marks one expired, 30 archives it. Not from a test
+    // worker, which is not the CLI and must not touch the operator's config directory.
+    if (selfInvocation() && !process.env.TALKCODE_NO_SKILL_LINK) {
+      this.skillSweepStop = startSkillSweep((skill, reason) => this.notifySkillArchived(skill, reason));
+    }
     // What the hosts' pods declare now (pods.ts). Not awaited: until it answers, every pod keeps the
     // agents pods.json remembers, which is what routing and conversations were loaded against.
     void this.refreshPods(STARTUP_POD_TIMEOUT_MS)
@@ -1090,6 +1114,8 @@ export class Daemon {
     this.drainCancel?.();
     this.signalCleanup?.();
     this.signalCleanup = null;
+    this.skillSweepStop?.();
+    this.skillSweepStop = undefined;
     // First, so nothing new starts while the rest goes down. Bash runs in flight are signalled and
     // record themselves as interrupted; agent runs end with the registry below.
     this.schedules?.scheduler.stop();
@@ -1342,6 +1368,8 @@ export class Daemon {
             summary: [`Removed ${action.name}.`, ...(note ? [`⚠️ ${note}`] : []), reload.summary].join('\n'),
           }));
       }
+      case 'skills':
+        return this.handleSkills(action, id, address);
       default: {
         const _exhaustive: never = action;
         throw new Error(`unknown gateway query: ${JSON.stringify(_exhaustive)}`);
@@ -1378,6 +1406,86 @@ export class Daemon {
         throw new Error(`unknown sessions query: ${JSON.stringify(_exhaustive)}`);
       }
     }
+  }
+
+  /**
+   * `talkcode skills …` — the gateway's own skills (skills-store.ts). The store owns every rule
+   * and throws a message written for the agent; this only supplies what the request cannot: the
+   * conversation that created a skill, so an archive notice has somewhere to go.
+   */
+  private handleSkills(
+    action: Extract<IpcAction, { kind: 'skills' }>,
+    conversationId: ConversationId | undefined,
+    address: ConversationAddress
+  ): unknown {
+    const need = (value: string | undefined, what: string): string => {
+      if (value === undefined || value === '') throw new Error(`skills ${action.action} needs ${what}`);
+      return value;
+    };
+    const name = (): string => need(action.name, 'a <name>');
+    switch (action.action) {
+      case 'list':
+        return { skills: listSkills() };
+      case 'show':
+        return showSkill(name(), action.file);
+      case 'create': {
+        const source = conversationId
+          ? {
+              conversation: conversationId,
+              platform: this.lastResolvedPlatform ?? this.registry.platformFor(conversationId),
+              address,
+              agent: this.registry.boundAgentOf(conversationId) ?? this.config.routing.default,
+            }
+          : undefined;
+        return createSkill({ name: name(), description: action.description ?? '', body: action.body, source });
+      }
+      case 'patch':
+        return patchSkill({ name: name(), version: need(action.version, '--version'), content: need(action.content, '--content') });
+      case 'write-file':
+        if (action.content === undefined) throw new Error('skills write-file needs --content');
+        return writeSkillFile({ name: name(), file: need(action.file, 'a <file>'), content: action.content });
+      case 'remove-file':
+        return removeSkillFile({ name: name(), file: need(action.file, 'a <file>') });
+      case 'archive': {
+        const record = archiveSkill(name());
+        this.notifySkillArchived(record, 'manual');
+        return record;
+      }
+      case 'restore':
+        return restoreSkill(name());
+      case 'pin':
+        return pinSkill(name(), true);
+      case 'unpin':
+        return pinSkill(name(), false);
+      case 'history':
+        return { history: skillHistory(name()) };
+      case 'revert':
+        return revertSkill(name(), need(action.id, 'a history <id>'));
+      default: {
+        const _exhaustive: never = action.action;
+        throw new Error(`unknown skills action: ${_exhaustive}`);
+      }
+    }
+  }
+
+  /** Tell the conversation a skill came from that it was archived; no source means a log line only. */
+  private notifySkillArchived(skill: SkillRecord, reason: 'unused' | 'manual'): void {
+    const source = skill.source;
+    if (!source?.platform || !source.address) {
+      console.log(`[skills] archived "${skill.name}" (no source conversation to tell)`);
+      return;
+    }
+    const adapter = this.platforms.get(source.platform);
+    if (!adapter) {
+      console.log(`[skills] archived "${skill.name}" (its conversation was on ${source.platform}, which is no longer configured)`);
+      return;
+    }
+    const why = reason === 'unused' ? 'was archived after 30 days unused' : 'was archived';
+    void adapter
+      .sendMessage(source.address, `Skill "${skill.name}" ${why}. Restore it with \`talkcode skills restore ${skill.name}\`.`)
+      .catch((e: unknown) =>
+        console.warn(`[skills] could not tell ${source.platform} about "${skill.name}":`, e instanceof Error ? e.message : e)
+      );
   }
 
   /**

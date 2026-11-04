@@ -1,6 +1,7 @@
 import type { AgentDef, Config } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
 import { SessionTokenRegistry } from './conversation-token-registry.js';
+import { beginSkillTurn, recordToolUse } from './skill-usage.js';
 import {
   translateCommand,
   buildHelpText,
@@ -45,7 +46,7 @@ import type {
 } from '../types.js';
 import type { ConversationWorkdir, PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentUsage } from './agent.js';
-import type { EffortSelector, ModelSelector, TopicActivity } from '../types.js';
+import type { EffortSelector, ModelSelector, ToolEvent, TopicActivity } from '../types.js';
 import {
   effortAmbiguousText,
   effortChoiceText,
@@ -718,7 +719,7 @@ export class ConversationRegistry {
         recordModel: (id, model) => this.status.model(id, model),
         recordEffort: (id, effort) => this.status.effort(id, effort),
         recordQuota: (id, pools) => this.status.quota(id, pools),
-        recordTool: (id, evt) => this.progress.tool(id, evt),
+        recordTool: (id, evt) => this.recordTool(id, evt),
         recordTurnComplete: (id) => {
           const state = this.conversations.get(id);
           if (state) state.turnCompleted = true;
@@ -2768,6 +2769,16 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
+   * A tool call starting in a turn: the live status line reads it, and so does the managed skills'
+   * use count (skill-usage.ts). A method rather than an inline arrow only to keep the constructor
+   * that wires the turn runner within the lint's function length.
+   */
+  private recordTool(id: ConversationId, evt: ToolEvent): void {
+    this.progress.tool(id, evt);
+    recordToolUse(id, this.agentIdOf(id), evt);
+  }
+
+  /**
    * File one fact of a turn in the conversation library, enriched with what only the registry
    * knows: the lane's platform, the name the topic was given, the agent and the machine and
    * directory its turn runs in.
@@ -3871,7 +3882,12 @@ ${formatTokens(left)} left before compaction — ${name}`;
         // Reactions target inbound messages of this conversation; resolve the adapter at call time
         // (a shared-scope conversation's platform may have changed since the merger was built).
         addReaction: (ref, emoji) => this.adapterFor(conversationId).addReaction(ref, emoji),
-        runTurn: (batch, signal) => this.turnRunner.runTurn(conversationId, batch, signal),
+        runTurn: (batch, signal) => {
+          // A `/skill-name` message is a use of that managed skill; the rest of the signals come
+          // from tool events (recordTool above). One turn counts a skill once.
+          beginSkillTurn(conversationId, this.agentIdOf(conversationId), batch);
+          return this.turnRunner.runTurn(conversationId, batch, signal);
+        },
         // A message sent mid-turn is handed to the turn that is running, for a harness that can take
         // it there (see TurnRunner.steer); otherwise the merger queues it behind the turn.
         steer: (batch) => this.turnRunner.steer(conversationId, batch),

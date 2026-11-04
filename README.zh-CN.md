@@ -51,6 +51,7 @@ Code、Codex、OpenCode，以及 Google 的 Antigravity CLI。给机器人发消
 - **失败后自动继续** —— 上游故障导致一轮失败时，可以用你自己的话自动继续，并跑一条命令提醒你。[→](docs/zh-CN/agents.md#一轮失败之后)
 - **定时任务** —— 「每天早上 8 点……」会变成网关自己保存的任务，重启不丢。[→](docs/zh-CN/scheduled-tasks.md)
 - **工作偏好，所有智能体通用** —— 你希望怎么干活写一次，每台主机上的每个智能体都读得到；只适合某一种智能体的，另写一份给它。[→](docs/zh-CN/instructions.md)
+- **会自己写自己的技能** —— 说「把这个记成技能」，智能体就建一个网关自己保存的技能，下发到每台主机上的每个智能体，有版本、能回滚，长期不用自动归档。[→](docs/zh-CN/skills.md)
 - **语音消息** —— 自动转写，先给你看，确认后再发。[→](docs/zh-CN/voice.md)
 - **精简配置** —— 五个部分，支持 `${VAR}` 与 `.env` 展开；值得在聊天里改的那几项用 [`/setting`](docs/zh-CN/settings.md) 直接改。
 
@@ -127,6 +128,7 @@ access:
 | [定时任务](docs/zh-CN/scheduled-tasks.md) | 定时跑提示词或命令 |
 | [子代理](docs/zh-CN/sub-agents.md) | `/super`：把一件活拆给几个智能体并行干 |
 | [以前的对话](docs/zh-CN/conversation-history.md) | `talkcode sessions`：搜索网关经手过的所有对话 |
+| [网关自己维护的技能](docs/zh-CN/skills.md) | 所有智能体共用的技能：写、版本、归档、恢复 |
 | [工作偏好](docs/zh-CN/instructions.md) | 一份给所有智能体的工作偏好，外加每种智能体各自一份 |
 | [智能体能做什么](docs/zh-CN/agent-actions.md) | 按钮提问、发文件、内置 skill |
 
