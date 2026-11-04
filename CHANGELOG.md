@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.28.0] - 2026-11-04
+
 ### Changed
 
 - **The scheduled panel stays where it was put.** It used to be a side glance: it closed itself on
