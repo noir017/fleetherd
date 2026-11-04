@@ -632,10 +632,11 @@ prototype, which refuses to infer "waiting on a person" from prose.
 
 **TurnOutcomes** (`turn-outcomes.ts`) hears every turn's start and end from TurnRunner
 (`recordTurnStart` / `recordTurnEnd`, exactly one end per start, on every way out) and keeps what
-the last one left: a finished reply's first line and a 600-character excerpt, or a failure and its
-reason (`TurnFailure`, thrown by the runtimes wherever they know why; anything else is `other`). It
-pushes that to the platform (`PlatformAdapter.setActivity`) and tells delegation. A start
-supersedes the last outcome; a `/stop` leaves none.
+the last one left: a finished reply in full — its first line for a platform's list, the text for
+the update card — or a failure, its reason and the whole error (`TurnFailure`, thrown by the
+runtimes wherever they know why; anything else is `other`). It pushes that to the platform
+(`PlatformAdapter.setActivity`) and tells delegation. A start supersedes the last outcome; a
+`/stop` leaves none.
 
 - **`hooks.turnFailed.continue`** schedules the operator's message after a failure whose reason it
   names, as a solo turn with `CONTINUE_SENDER` — attended, unlike a scheduled run, so a
@@ -667,8 +668,12 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
 - Updates come back through `childChanged` — TurnOutcomes' `onNeedsPerson`, and a sub-agent's ask —
   only for turns the parent handed out (`handedOut`, in memory): a turn the person starts in a
   sub-agent's topic is theirs. Gathered for `CARD_DELAY_MS`, shown folded in the parent's topic,
-  then run there as a solo turn with `UPDATE_SENDER`, which the namer skips. The stage is read
-  without `seenAt`: the person having read a reply does not mean the parent agent has.
+  then run there as a solo turn with `UPDATE_SENDER`, which the namer skips. The card quotes what
+  the sub-agent said whole — reply, question or error, line breaks kept — within
+  `CARD_ITEM_CHARS` for one entry and `CARD_TOTAL_CHARS` for a burst; a cut states its full length
+  and points at `task-read <topic> --full`, so the parent never has to open the topic to learn it
+  was cut. The stage is read without `seenAt`: the person having read a reply does not mean the
+  parent agent has.
 
 `/super` is not the daemon's: it is the bundled `super` skill (`skill-super/`), linked beside
 `talkcode` by `skill-link.ts`. The daemon's one concession to it is naming — `jobInCommand` seeds a

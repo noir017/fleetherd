@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The sub-agent update card carries the whole answer.** The `[sub-agent updates]` card a parent
+  agent receives quoted 600 characters of a finished sub-agent's reply, flattened to one line, and
+  the first 120 characters of a question or a failure; a review, a conclusion-first one included,
+  lost its verdict, and the parent had to open the topic and read it again — the exact cost the
+  card exists to remove. The card now quotes the reply a turn ended on, the question a sub-agent is
+  waiting on, or the error a turn failed with, in full and with its line breaks and lists, and no
+  longer repeats a reply's first line beside it. One entry carries at most 4,000 characters and one
+  card 8,000 across a burst (`CARD_ITEM_CHARS`, `CARD_TOTAL_CHARS` in `delegation.ts`); a cut states
+  the text's full length, where it stopped, and that the rest is in the topic
+  (`task-read <topic> --full`), so a truncated review cannot read as a short one. The card still
+  holds only what the sub-agent said and its state — no gateway-written summary or instruction.
+
 ## [2.32.0] - 2026-11-04
 
 ### Added

@@ -4,7 +4,7 @@ import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
 import { parseTarget, type ConversationAddress } from '../core/conversation.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
-import { topicStage } from '../core/topic-stage.js';
+import { LINE_MAX, topicStage } from '../core/topic-stage.js';
 import type {
   IpcAction,
   TaskActionResult,
@@ -71,8 +71,17 @@ export const PROPOSAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 /** How long sub-agent updates are gathered before the agent is told: a burst is one card. */
 export const CARD_DELAY_MS = 5_000;
 
-/** How much of a finished reply a card carries. */
-export const CARD_EXCERPT_CHARS = 600;
+/**
+ * How much of one finished reply, question or error an update card carries, and how much it carries
+ * across a burst (several sub-agents' news is one card).
+ *
+ * A review worth acting on is a few thousand characters, and the card exists so the parent agent
+ * does not have to open the topic to get its conclusion; an excerpt that stops before the verdict
+ * is worse than no card. An entry longer than its budget is cut, and the cut states its full length
+ * and where the rest is read (clipCard), so a truncated review cannot pass for a short one.
+ */
+export const CARD_ITEM_CHARS = 4_000;
+export const CARD_TOTAL_CHARS = 8_000;
 
 /** How much of each sub-task's text the confirmation card shows. */
 const PROPOSAL_TEXT_CHARS = 1_500;
@@ -112,7 +121,8 @@ type Registry = Pick<
   | 'conversationAt'
   | 'laneFor'
   | 'activityOf'
-  | 'replyExcerptOf'
+  | 'replyTextOf'
+  | 'failureTextOf'
   | 'progressOf'
   | 'runningSince'
   | 'statusOf'
@@ -159,6 +169,17 @@ interface Item {
   text: string;
   cwd?: string;
   title?: string;
+}
+
+/** One sub-agent's entry on an update card, before the card's budgets are applied. */
+interface CardEntry {
+  /** The topic id, as `task-read` takes it; also what a cut points at. */
+  topic: string;
+  /** The `- topic … · stage` line. */
+  head: string;
+  /** What the sub-agent said, whole; the card cuts it (clipCard). */
+  quote?: { label: 'question' | 'failure' | 'reply'; text: string };
+  link?: string;
 }
 
 type TaskAction = Extract<IpcAction, { kind: `task-${string}` }>;
@@ -426,7 +447,7 @@ export class Delegation {
     await here.adapter
       .sendMessage(here.address, said)
       .catch((e) => console.warn('[delegation] could not say which sub-agents started:', e instanceof Error ? e.message : e));
-    if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${items.length} could not be started:`, ...failed], []);
+    if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${items.length} could not be started:`, ...failed], [], failed.length);
   }
 
   private async send(here: Place, topic: string, text: string, interrupt: boolean): Promise<TaskActionResult> {
@@ -499,7 +520,7 @@ export class Delegation {
     return {
       task: this.row(c),
       recent: (live?.recent ?? []).map((t) => ({ at: new Date(t.at).toISOString(), tool: t.tool, detail: t.detail })),
-      reply: this.deps.registry.replyExcerptOf(c.key) ?? '',
+      reply: this.deps.registry.replyTextOf(c.key) ?? '',
     };
   }
 
@@ -617,7 +638,10 @@ export class Delegation {
     activity: TopicActivity | undefined,
     live: LiveTurn | undefined
   ): string {
-    if (stage === 'answer') return this.deps.questionOf?.(key) ?? 'a question is waiting';
+    if (stage === 'answer') {
+      const question = this.deps.questionOf?.(key);
+      return question ? oneLine(question) : 'a question is waiting';
+    }
     if (live?.current) return `${live.current.tool}: ${live.current.detail}`;
     return activity?.outcome?.line ?? '';
   }
@@ -669,7 +693,7 @@ export class Delegation {
     this.updates.delete(key);
     const here = this.place(key);
     if (!u || !here) return;
-    const entries: string[] = [];
+    const entries: CardEntry[] = [];
     const shown: string[] = [];
     for (const id of u.children) {
       const c = this.childrenOf(here).find((x) => x.key === id);
@@ -684,19 +708,58 @@ export class Delegation {
       shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage)}${row.line ? `: ${row.line}` : ''}`);
     }
     if (entries.length === 0) return;
-    this.tell(here, [`[sub-agent updates] ${this.tally(here)}`, ...entries], shown);
+    this.tell(here, this.card(`[sub-agent updates] ${this.tally(here)}`, entries), shown, entries.length);
   }
 
-  /** One sub-agent on the card: where it is, how it stands, and what it said. */
-  private entry(c: Place, row: TaskRow, stage: TopicStage): string {
-    const excerpt = stage === 'review' ? this.deps.registry.replyExcerptOf(c.key) : undefined;
-    const label = stage === 'answer' ? 'question' : stage === 'failed' ? 'failure' : 'first line';
-    return [
-      `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}`,
-      ...(row.line ? [`  ${label}: ${row.line}`] : []),
-      ...(excerpt ? [`  reply: ${excerpt.replace(/\s+/g, ' ').trim()}`] : []),
-      ...(row.link ? [`  link: ${row.link}`] : []),
-    ].join('\n');
+  /**
+   * One sub-agent on the card: where it is, how it stands, and what it said.
+   *
+   * The body is the whole of what the sub-agent said — the reply the turn ended on, the question it
+   * is waiting on, the error the turn failed with — because the parent agent is meant to act on the
+   * card without opening the topic. A reply is not accompanied by its first line: that line is
+   * already in it.
+   */
+  private entry(c: Place, row: TaskRow, stage: TopicStage): CardEntry {
+    const text =
+      stage === 'review'
+        ? this.deps.registry.replyTextOf(c.key) ?? row.line
+        : stage === 'answer'
+          ? this.deps.questionOf?.(c.key) ?? row.line
+          : stage === 'failed'
+            ? this.deps.registry.failureTextOf(c.key) ?? row.line
+            : undefined;
+    const label = stage === 'answer' ? 'question' : stage === 'review' ? 'reply' : 'failure';
+    return {
+      topic: row.topic,
+      head: `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}`,
+      ...(text ? { quote: { label, text } } : {}),
+      ...(row.link ? { link: row.link } : {}),
+    };
+  }
+
+  /**
+   * The card's lines, with the sub-agent text cut to what one card can carry.
+   *
+   * Entries share CARD_TOTAL_CHARS in the order the updates arrived, and one may take at most
+   * CARD_ITEM_CHARS. A body that does not fit is cut and says where the rest is; an entry whose
+   * share is already spent keeps its heading and link, and its body is that notice. Headings are
+   * the card's frame, not part of the budget: the budget bounds how much the sub-agents said, which
+   * is what the parent agent would otherwise open each topic to read.
+   */
+  private card(header: string, entries: CardEntry[]): string[] {
+    const lines = [header];
+    let left = CARD_TOTAL_CHARS;
+    for (const e of entries) {
+      lines.push(e.head);
+      if (e.quote) {
+        const cap = Math.min(CARD_ITEM_CHARS, Math.max(0, left));
+        const text = clipCard(e.quote.text, cap, e.topic);
+        lines.push(`  ${e.quote.label}: ${text}`.replace(/\n/g, '\n  '));
+        left -= text.length;
+      }
+      if (e.link) lines.push(`  link: ${e.link}`);
+    }
+    return lines;
   }
 
   /** "2 of 3 sub-agents have finished; 1 is still working." — so the agent knows whether to wait. */
@@ -714,7 +777,7 @@ export class Delegation {
   }
 
   /** One card to one conversation: shown folded there, then put in front of its agent as a turn. */
-  private tell(here: Place, lines: string[], shown: string[]): void {
+  private tell(here: Place, lines: string[], shown: string[], count = shown.length): void {
     const agentId = this.deps.registry.boundAgentOf(here.key);
     if (!agentId || !findAgent(this.deps.config, agentId)) return;
     if (shown.length) {
@@ -728,7 +791,7 @@ export class Delegation {
         if (typeof outcome === 'object') console.warn(`[delegation] sub-agent updates not delivered to ${here.key}: ${outcome.refused}`);
       })
       .catch((e) => console.warn('[delegation] sub-agent updates failed:', e instanceof Error ? e.message : e));
-    console.log(`[delegation] told ${here.key} about ${Math.max(shown.length, lines.length - 1)} sub-agent(s)`);
+    console.log(`[delegation] told ${here.key} about ${count} sub-agent(s)`);
   }
 
   // ── Lookups ───────────────────────────────────────────────────────────────────────────────────
@@ -813,6 +876,31 @@ function clip(text: string, cap: number, tail: number | undefined): string {
   // because there the caller asked for the whole thing and deserves to know it did not get it.
   if (droppedChars && cap !== READ_CHARS) out = `${out}\n…[${droppedChars} later characters]`;
   return out;
+}
+
+/**
+ * One quoted text cut to `cap` characters, saying what was left out.
+ *
+ * The notice counts against the cap, so a budget is the length the card actually carries. It names
+ * the whole's length, where the cut fell, and the existing way to read the rest: a parent agent
+ * that cannot tell a cut review from a short one will act on half a conclusion, which is the bug
+ * the long excerpt is here to end. When the cap is smaller than the notice itself, the notice
+ * still goes in — a budget is not worth losing the fact that something was omitted.
+ */
+function clipCard(text: string, cap: number, topic: string): string {
+  if (text.length <= cap) return text;
+  const note = (cut: number) =>
+    `\n…[${text.length} chars total, cut at ${cut}; the rest is in this topic — task-read ${topic} --full]`;
+  // The cut changes the note's digit count, so settle it in a second pass.
+  let cut = Math.max(0, cap - note(0).length);
+  cut = Math.max(0, cap - note(cut).length);
+  return `${text.slice(0, cut)}${note(cut)}`;
+}
+
+/** A multi-line text on one row: a sidebar line, not a summary (see core/topic-stage.ts LINE_MAX). */
+function oneLine(text: string, max = LINE_MAX): string {
+  const one = text.replace(/\s+/g, ' ').trim();
+  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
 }
 
 /** A stage in a sentence. */

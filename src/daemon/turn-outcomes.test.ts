@@ -97,6 +97,26 @@ describe('TurnOutcomes — what a turn leaves for the person', () => {
     expect(r.needs).toEqual([ID]);
   });
 
+  it('keeps a finished reply whole for the update card, line breaks and all', () => {
+    const r = rig(config());
+    const text = `## Review\n\n${'x'.repeat(5_000)}`;
+    r.outcomes.turnEnded(ID, { kind: 'done', text });
+    expect(r.outcomes.replyTextOf(ID)).toBe(text);
+    // The next turn supersedes it, as the activity does.
+    r.outcomes.turnStarted(ID);
+    expect(r.outcomes.replyTextOf(ID)).toBeUndefined();
+  });
+
+  it('keeps a failed turn’s whole error, while the list still gets one line', () => {
+    const r = rig(config());
+    const message = `failed: ${'y'.repeat(5_000)}`;
+    r.outcomes.turnEnded(ID, fail('service', message));
+    expect(r.outcomes.failureTextOf(ID)).toBe(message);
+    expect(r.last()?.outcome?.line).toHaveLength(120);
+    r.outcomes.forget(ID);
+    expect(r.outcomes.failureTextOf(ID)).toBeUndefined();
+  });
+
   it('a stopped turn leaves nothing', () => {
     const r = rig(config());
     r.outcomes.turnEnded(ID, { kind: 'stopped' });

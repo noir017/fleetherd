@@ -1821,12 +1821,11 @@ export class Daemon {
     );
   }
 
-  /** The question waiting on the person in a conversation, first line — for sub-agent updates. */
+  /** The question waiting on the person in a conversation, whole — for sub-agent updates. */
   private questionOf(conversationId: ConversationId): string | undefined {
     for (const pending of this.pendingAsks.values()) {
       if (pending.conversationId !== conversationId) continue;
-      const line = pending.prompt.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
-      return line.length > 120 ? `${line.slice(0, 119)}…` : line || undefined;
+      return pending.prompt.trim() || undefined;
     }
     return undefined;
   }

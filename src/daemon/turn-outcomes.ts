@@ -59,9 +59,6 @@ export interface TurnOutcomesDeps {
   onNeedsPerson?(id: ConversationId): void;
 }
 
-/** How much of a finished reply is kept for a sub-agent update (see delegation.ts CARD_EXCERPT_CHARS). */
-const REPLY_EXCERPT_CHARS = 600;
-
 /** One conversation's automatic-continue bookkeeping. */
 interface Continuing {
   /** Continues already SENT in this run of failures. Reset by a normal end, a stop, or the person. */
@@ -73,18 +70,26 @@ interface Continuing {
 export class TurnOutcomes {
   private readonly activity = new Map<ConversationId, TopicActivity>();
   /**
-   * The head of each conversation's last finished reply (REPLY_EXCERPT_CHARS), for a sub-agent
-   * update. Kept here rather than pushed with the activity: a platform's list shows one line, and this
-   * is only ever read by the daemon.
+   * The whole of each conversation's last finished reply, for a sub-agent update. Kept here rather
+   * than pushed with the activity: a platform's list shows one line, and this is only ever read by
+   * the daemon. Whole rather than a head, because the update card is how the parent agent reads the
+   * conclusion without opening the topic; the card applies its own budget (delegation.ts).
    */
-  private readonly excerpts = new Map<ConversationId, string>();
+  private readonly replies = new Map<ConversationId, string>();
+  /** The same for a failed turn's error: the card needs the whole message, not its first line. */
+  private readonly failures = new Map<ConversationId, string>();
   private readonly continuing = new Map<ConversationId, Continuing>();
 
   constructor(private readonly deps: TurnOutcomesDeps) {}
 
-  /** The head of the conversation's last finished reply, while it is still the last thing that happened. */
-  excerptOf(id: ConversationId): string | undefined {
-    return this.activity.get(id)?.outcome?.kind === 'done' ? this.excerpts.get(id) : undefined;
+  /** The text of the conversation's last finished reply, while it is still the last thing that happened. */
+  replyTextOf(id: ConversationId): string | undefined {
+    return this.activity.get(id)?.outcome?.kind === 'done' ? this.replies.get(id) : undefined;
+  }
+
+  /** The whole error of the conversation's last failed turn, while it is still the last thing that happened. */
+  failureTextOf(id: ConversationId): string | undefined {
+    return this.activity.get(id)?.outcome?.kind === 'failed' ? this.failures.get(id) : undefined;
   }
 
   /** What is known about a conversation's last turn (for a list built on the daemon's side). */
@@ -102,6 +107,8 @@ export class TurnOutcomes {
    */
   turnStarted(id: ConversationId): void {
     this.callOffPending(id);
+    this.replies.delete(id);
+    this.failures.delete(id);
     this.set(id, {});
     this.deps.store?.setInFlight(id, this.deps.clock.now());
   }
@@ -113,9 +120,10 @@ export class TurnOutcomes {
     switch (end.kind) {
       case 'done': {
         this.continuing.delete(id);
+        this.failures.delete(id);
         const text = end.text.trim();
-        if (text) this.excerpts.set(id, text.length > REPLY_EXCERPT_CHARS ? `${text.slice(0, REPLY_EXCERPT_CHARS - 1)}…` : text);
-        else this.excerpts.delete(id);
+        if (text) this.replies.set(id, text);
+        else this.replies.delete(id);
         const line = replyLine(end.text);
         this.set(id, { outcome: { kind: 'done', at, ...(line ? { line } : {}) } });
         this.deps.onNeedsPerson?.(id);
@@ -124,6 +132,8 @@ export class TurnOutcomes {
       case 'stopped':
         // The person stopped it: nothing is left for them, and nothing should carry on by itself.
         this.continuing.delete(id);
+        this.replies.delete(id);
+        this.failures.delete(id);
         this.set(id, {});
         return;
       case 'failed': {
@@ -157,7 +167,8 @@ export class TurnOutcomes {
   forget(id: ConversationId): void {
     this.personActed(id);
     this.activity.delete(id);
-    this.excerpts.delete(id);
+    this.replies.delete(id);
+    this.failures.delete(id);
     this.push(id, undefined);
   }
 
@@ -208,6 +219,7 @@ export class TurnOutcomes {
   /** A failed turn: record it, run the operator's command, and continue if the policy says to. */
   private failed(id: ConversationId, reason: TurnFailureReason, message: string, at: number): void {
     const outcome: TurnOutcome = { kind: 'failed', at, line: failureLine(message), reason };
+    this.failures.set(id, message);
     const scheduled = this.scheduleContinue(id, reason);
     this.set(id, { outcome, ...(scheduled ? { retry: scheduled } : {}) });
     this.reportToCommand(id, reason, message, at, scheduled);

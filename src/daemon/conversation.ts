@@ -3696,9 +3696,14 @@ ${formatTokens(left)} left before compaction — ${name}`;
     return this.outcomes.activityOf(id);
   }
 
-  /** The head of a conversation's last finished reply, while it is the last thing that happened there. */
-  replyExcerptOf(id: ConversationId): string | undefined {
-    return this.outcomes.excerptOf(id);
+  /** The text of a conversation's last finished reply, while it is the last thing that happened there. */
+  replyTextOf(id: ConversationId): string | undefined {
+    return this.outcomes.replyTextOf(id);
+  }
+
+  /** The whole error of a conversation's last failed turn, for a sub-agent update. */
+  failureTextOf(id: ConversationId): string | undefined {
+    return this.outcomes.failureTextOf(id);
   }
 
   /**
