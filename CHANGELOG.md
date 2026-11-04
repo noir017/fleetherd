@@ -14,10 +14,12 @@ All notable changes to this project are documented here. The format is based on
   card exists to remove. The card now quotes the reply a turn ended on, the question a sub-agent is
   waiting on, or the error a turn failed with, in full and with its line breaks and lists, and no
   longer repeats a reply's first line beside it. One entry carries at most 4,000 characters and one
-  card 8,000 across a burst (`CARD_ITEM_CHARS`, `CARD_TOTAL_CHARS` in `delegation.ts`); a cut states
-  the text's full length, where it stopped, and that the rest is in the topic
-  (`task-read <topic> --full`), so a truncated review cannot read as a short one. The card still
-  holds only what the sub-agent said and its state — no gateway-written summary or instruction.
+  card 8,000 across a burst (`CARD_ITEM_CHARS`, `CARD_TOTAL_CHARS` in `delegation.ts`), both hard
+  limits. A cut adds one line the gateway writes — the text's full length, where it stopped, and
+  where the rest is: a reply or question stays in the topic (`task-read <topic> --full`), while a
+  failed turn's error only exists as the first 300 characters of its ❌ notice, and the cut says
+  that instead of pointing at text nobody kept. That line is the card's only added text, and only
+  when something was cut; no summary or instruction about the work is added.
 
 ## [2.32.0] - 2026-11-04
 

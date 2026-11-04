@@ -238,4 +238,17 @@ describe('ask question reminders, timeouts, and session reclaim', () => {
     await vi.advanceTimersByTimeAsync(30 * 60_000);
     expect(r.sent).not.toContain(DEFAULT_ASK_REMINDER_TEXT);
   });
+
+  it('gives a sub-agent update the whole question, not its first line', async () => {
+    const r = rig();
+    const prompt = `${'Q'.repeat(200)}\n\nsecond line\n- an option`;
+    r.ask({
+      message: 'Question',
+      questions: [{ key: 'q0', prompt, options: [{ label: 'A', value: 'a' }], customKey: 'q0_custom', multi: false }],
+    });
+    await r.send('hello');
+    expect(r.buttonSends).toHaveLength(1);
+    const questionOf = (r.daemon as unknown as { questionOf(id: string): string | undefined }).questionOf.bind(r.daemon);
+    expect(questionOf('tg#c1#')).toBe(prompt);
+  });
 });

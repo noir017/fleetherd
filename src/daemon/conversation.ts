@@ -110,7 +110,7 @@ import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
-import { TurnOutcomes } from './turn-outcomes.js';
+import { TurnOutcomes, type KeptText } from './turn-outcomes.js';
 import { TurnProgressBoard } from './turn-progress.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { RespawnCounts } from './config-reload.js';
@@ -3696,14 +3696,14 @@ ${formatTokens(left)} left before compaction — ${name}`;
     return this.outcomes.activityOf(id);
   }
 
-  /** The text of a conversation's last finished reply, while it is the last thing that happened there. */
-  replyTextOf(id: ConversationId): string | undefined {
-    return this.outcomes.replyTextOf(id);
+  /** The conversation's last finished reply, while it is the last thing that happened there. */
+  replyOf(id: ConversationId): KeptText | undefined {
+    return this.outcomes.replyOf(id);
   }
 
-  /** The whole error of a conversation's last failed turn, for a sub-agent update. */
-  failureTextOf(id: ConversationId): string | undefined {
-    return this.outcomes.failureTextOf(id);
+  /** The last failed turn's error, for a sub-agent update. */
+  failureOf(id: ConversationId): KeptText | undefined {
+    return this.outcomes.failureOf(id);
   }
 
   /**
@@ -3921,6 +3921,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.tokens.release(id);
     this.unresumableWarned.delete(id);
     this.progress.forget(id);
+    // The card has long since been sent (it goes CARD_DELAY_MS after the turn); keeping a reply's
+    // head or an error alive with an idle conversation only grows the daemon's memory.
+    this.outcomes.dropTexts(id);
   }
 
   private buildMerger(conversationId: ConversationId): InboundMerger {

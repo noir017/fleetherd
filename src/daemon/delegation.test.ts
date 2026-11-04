@@ -12,6 +12,7 @@ import type {
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import { CARD_DELAY_MS, CARD_ITEM_CHARS, CARD_TOTAL_CHARS, Delegation, PROPOSAL_GATHER_MS, type DelegationDeps } from './delegation.js';
+import { TurnOutcomes } from './turn-outcomes.js';
 import type { LiveTurn } from './turn-progress.js';
 import { jobInCommand, UPDATE_SENDER } from './turn-runner.js';
 
@@ -143,8 +144,16 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
     },
     laneFor: (k: string) => ({ platformId: k.startsWith('tg#') ? 'tg' : 'web', address: addrOf(k) }),
     activityOf: (k: string) => activity.get(k),
-    replyTextOf: (k: string) => (activity.get(k)?.outcome?.kind === 'done' ? replies.get(k) ?? 'Done: all green, 12 tests.' : undefined),
-    failureTextOf: (k: string) => (activity.get(k)?.outcome?.kind === 'failed' ? failures.get(k) : undefined),
+    replyOf: (k: string) => {
+      if (activity.get(k)?.outcome?.kind !== 'done') return undefined;
+      const text = replies.get(k) ?? 'Done: all green, 12 tests.';
+      return { text, total: text.length };
+    },
+    failureOf: (k: string) => {
+      if (activity.get(k)?.outcome?.kind !== 'failed') return undefined;
+      const text = failures.get(k);
+      return text === undefined ? undefined : { text, total: text.length };
+    },
     stopConversation: (k: string) => {
       calls.push(['stop', k]);
       return busy.has(k) ? ('running' as const) : ('idle' as const);
@@ -177,6 +186,8 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
   };
   return {
     d: new Delegation(deps),
+    deps,
+    registry,
     clock,
     posted,
     parents,
@@ -633,14 +644,39 @@ describe('Delegation: [sub-agent updates]', () => {
       r.d.childChanged(key);
     }
     r.clock.advance(CARD_DELAY_MS);
-    const list = bodies(cardOf(r), 'reply');
+    const prompt = cardOf(r);
+    const list = bodies(prompt, 'reply');
     expect(list).toHaveLength(3);
     expect(list[0]).toBe('r'.repeat(3_500));
     expect(list[1]).toBe('r'.repeat(3_500));
-    // What is left of the card after the first two: the third is cut, and says so.
-    expect(list[2]!.length).toBe(CARD_TOTAL_CHARS - 2 * 3_500);
+    // The frame takes its room first, so the third gets what is left of the 8000, not 1000.
+    expect(list[2]!.length).toBeLessThan(CARD_TOTAL_CHARS - 2 * 3_500);
     expect(list[2]).toContain('3500 chars total, cut at');
     expect(list[2]).toContain('task-read web:main/c3000000 --full');
+    expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
+  });
+
+  it('keeps 8000 a hard cap when three entries each want the 4000 maximum', async () => {
+    const r = rig();
+    for (const text of ['a', 'b', 'c']) await r.d.handle(P, task('cc', text));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    const keys = ['web#main#c1000000', 'web#main#c2000000', 'web#main#c3000000'];
+    for (const key of keys) {
+      r.replies.set(key, 'r'.repeat(CARD_ITEM_CHARS));
+      r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+      r.d.childChanged(key);
+    }
+    r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(r);
+    expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
+    const list = bodies(prompt, 'reply');
+    expect(list.length).toBeGreaterThanOrEqual(2);
+    for (const body of list) expect(body.length).toBeLessThanOrEqual(CARD_ITEM_CHARS);
+    // The third entry's heading and link are there, and what did not fit is said, not silently gone.
+    expect(prompt).toContain('topic web:main/c3000000');
+    expect(list.at(-1)).toContain(`${CARD_ITEM_CHARS} chars total, cut at`);
   });
 
   it('carries the whole question, while the topic row and its folded line stay one line', async () => {
@@ -685,7 +721,48 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(body!.length).toBe(CARD_ITEM_CHARS);
     expect(body).toContain('at step (file.ts:1:1)');
     expect(body).toContain(`${error.length} chars total, cut at`);
-    expect(body).toContain('task-read web:main/c1000000 --full');
+    expect(body).toContain("the topic's ❌ notice has only the first 300 characters");
+    expect(body).not.toContain('task-read');
+  });
+
+  it('keeps task-status to a short preview while the card carries the long reply', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    r.replies.set(key, 'x'.repeat(2_000));
+    r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+    const s = (await r.d.handle(P, { kind: 'task-status', topic: 'c1000000' })) as TaskStatusResult;
+    expect(s.reply).toHaveLength(600);
+    expect(s.reply.endsWith('…')).toBe(true);
+  });
+
+  it('is fed by a real turn end: TurnOutcomes stores the reply and childChanged carries it', async () => {
+    const r = rig();
+    const card: { d?: Delegation } = {};
+    const outcomes = new TurnOutcomes({
+      config: r.deps.config,
+      clock: r.clock,
+      platforms: r.deps.platforms,
+      laneOf: (id) => r.registry.laneFor(id),
+      agentIdOf: (id) => r.bound.get(id) ?? 'cc',
+      runContinue: () => true,
+      onNeedsPerson: (id) => card.d?.childChanged(id),
+    });
+    const wrapped = {
+      ...r.registry,
+      activityOf: (k: string) => outcomes.activityOf(k) ?? r.registry.activityOf(k),
+      replyOf: (k: string) => outcomes.replyOf(k) ?? r.registry.replyOf(k),
+      failureOf: (k: string) => outcomes.failureOf(k) ?? r.registry.failureOf(k),
+    };
+    const d = new Delegation({ ...r.deps, registry: wrapped as unknown as DelegationDeps['registry'] });
+    card.d = d;
+    await d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    const reply = '## Review\n\nVerdict: merge.\n\n- one\n- two';
+    outcomes.turnEnded('web#main#c1000000', { kind: 'done', text: reply });
+    r.clock.advance(CARD_DELAY_MS);
+    expect(cardOf(r)).toContain(`  reply: ${reply.replace(/\n/g, '\n  ')}`);
   });
 
   it('does not tell the parent about a turn the person started in the sub-agent’s topic', async () => {

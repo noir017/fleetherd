@@ -21,11 +21,13 @@ in parallel, and come back with one report — so you follow one topic instead o
    message in each says which topic it came from.
 4. When a sub-agent finishes, fails or asks something, the agent that started it is told. A folded
    🔔 line in its topic shows exactly what it was told. The notice quotes what the sub-agent said
-   whole — the reply, the question or the error, line breaks kept — so the agent can act on the
-   conclusion without opening the topic. A text longer than the card's budget is cut, and the cut
-   states its full length and that the rest is read with `task-read <topic> --full`. The agent
-   checks the result itself — reads the diff, runs the tests — and sends fixes where needed. When
-   every part is done, it writes one summary with a link to each topic.
+   in full when it fits the card's budget — the reply, the question or the error, line breaks kept —
+   so the agent can act on the conclusion without opening the topic. A cut adds one line with the
+   text's full length and where the rest is: a reply or question is read from the topic with
+   `task-read <topic> --full`; a failed turn's ❌ notice in the topic has only the first 300
+   characters, and the cut says so. The agent checks the result itself — reads the diff, runs the
+   tests — and sends fixes where needed. When every part is done, it writes one summary with a link
+   to each topic.
 
 ## Talking to a sub-agent
 

@@ -78,7 +78,7 @@ export const CARD_DELAY_MS = 5_000;
  * A review worth acting on is a few thousand characters, and the card exists so the parent agent
  * does not have to open the topic to get its conclusion; an excerpt that stops before the verdict
  * is worse than no card. An entry longer than its budget is cut, and the cut states its full length
- * and where the rest is read (clipCard), so a truncated review cannot pass for a short one.
+ * and where the rest is read (quotedBlock), so a truncated review cannot pass for a short one.
  */
 export const CARD_ITEM_CHARS = 4_000;
 export const CARD_TOTAL_CHARS = 8_000;
@@ -88,6 +88,9 @@ const PROPOSAL_TEXT_CHARS = 1_500;
 
 /** How much of each message `task-read` returns. */
 const READ_CHARS = 1_500;
+
+/** How much of a reply `task-status` previews; the card and `task-read` carry the rest. */
+const STATUS_REPLY_CHARS = 600;
 
 /**
  * How much `task-read --full` returns per message, and in all.
@@ -121,8 +124,8 @@ type Registry = Pick<
   | 'conversationAt'
   | 'laneFor'
   | 'activityOf'
-  | 'replyTextOf'
-  | 'failureTextOf'
+  | 'replyOf'
+  | 'failureOf'
   | 'progressOf'
   | 'runningSince'
   | 'statusOf'
@@ -171,14 +174,23 @@ interface Item {
   title?: string;
 }
 
+/** What one sub-agent said, as the card quotes it. */
+interface CardQuote {
+  label: 'question' | 'failure' | 'reply';
+  /** The head kept for the card; `total` may be larger (see turn-outcomes.ts KeptText). */
+  text: string;
+  /** The length of the whole text, before the head was cut. */
+  total: number;
+}
+
 /** One sub-agent's entry on an update card, before the card's budgets are applied. */
 interface CardEntry {
   /** The topic id, as `task-read` takes it; also what a cut points at. */
   topic: string;
   /** The `- topic … · stage` line. */
   head: string;
-  /** What the sub-agent said, whole; the card cuts it (clipCard). */
-  quote?: { label: 'question' | 'failure' | 'reply'; text: string };
+  /** What the sub-agent said, whole; the card cuts it (quotedBlock). */
+  quote?: CardQuote;
   link?: string;
 }
 
@@ -517,10 +529,11 @@ export class Delegation {
   private status(here: Place, topic: string): TaskStatusResult {
     const c = this.child(here, topic);
     const live = this.deps.registry.progressOf(c.key);
+    const reply = this.deps.registry.replyOf(c.key)?.text ?? '';
     return {
       task: this.row(c),
       recent: (live?.recent ?? []).map((t) => ({ at: new Date(t.at).toISOString(), tool: t.tool, detail: t.detail })),
-      reply: this.deps.registry.replyTextOf(c.key) ?? '',
+      reply: previewOf(reply),
     };
   }
 
@@ -720,42 +733,55 @@ export class Delegation {
    * already in it.
    */
   private entry(c: Place, row: TaskRow, stage: TopicStage): CardEntry {
-    const text =
-      stage === 'review'
-        ? this.deps.registry.replyTextOf(c.key) ?? row.line
-        : stage === 'answer'
-          ? this.deps.questionOf?.(c.key) ?? row.line
-          : stage === 'failed'
-            ? this.deps.registry.failureTextOf(c.key) ?? row.line
-            : undefined;
-    const label = stage === 'answer' ? 'question' : stage === 'review' ? 'reply' : 'failure';
+    const quote = this.quoteOf(c, row, stage);
     return {
       topic: row.topic,
       head: `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}`,
-      ...(text ? { quote: { label, text } } : {}),
+      ...(quote ? { quote } : {}),
       ...(row.link ? { link: row.link } : {}),
     };
+  }
+
+  /** What this stage makes worth quoting: the question, the reply or the error. */
+  private quoteOf(c: Place, row: TaskRow, stage: TopicStage): CardQuote | undefined {
+    if (stage === 'answer') {
+      const text = this.deps.questionOf?.(c.key) ?? row.line;
+      return text ? { label: 'question', text, total: text.length } : undefined;
+    }
+    if (stage !== 'review' && stage !== 'failed') return undefined;
+    const label = stage === 'review' ? 'reply' : 'failure';
+    const kept = stage === 'review' ? this.deps.registry.replyOf(c.key) : this.deps.registry.failureOf(c.key);
+    if (kept) return { label, text: kept.text, total: kept.total };
+    return row.line ? { label, text: row.line, total: row.line.length } : undefined;
   }
 
   /**
    * The card's lines, with the sub-agent text cut to what one card can carry.
    *
-   * Entries share CARD_TOTAL_CHARS in the order the updates arrived, and one may take at most
-   * CARD_ITEM_CHARS. A body that does not fit is cut and says where the rest is; an entry whose
-   * share is already spent keeps its heading and link, and its body is that notice. Headings are
-   * the card's frame, not part of the budget: the budget bounds how much the sub-agents said, which
-   * is what the parent agent would otherwise open each topic to read.
+   * Headings and links are the frame and always go in: every topic is named even when none of its
+   * text fits. The quote blocks share CARD_TOTAL_CHARS and one may take at most CARD_ITEM_CHARS.
+   * Entries are served in the order the updates arrived, and every later entry's cut notice is
+   * reserved before an earlier one takes the rest, so an entry is not left with a heading and no
+   * word about why it has no text. The budget is a hard cap: a block that cannot fit even its
+   * notice is omitted rather than made to overflow the card.
    */
   private card(header: string, entries: CardEntry[]): string[] {
     const lines = [header];
-    let left = CARD_TOTAL_CHARS;
-    for (const e of entries) {
+    // Overcounts the joined string by one newline; the slack is what keeps it inside the budget.
+    const frame = entries.reduce(
+      (n, e) => n + e.head.length + 1 + (e.link ? `  link: ${e.link}`.length + 1 : 0),
+      header.length + 1
+    );
+    let left = CARD_TOTAL_CHARS - frame;
+    for (const [i, e] of entries.entries()) {
       lines.push(e.head);
       if (e.quote) {
-        const cap = Math.min(CARD_ITEM_CHARS, Math.max(0, left));
-        const text = clipCard(e.quote.text, cap, e.topic);
-        lines.push(`  ${e.quote.label}: ${text}`.replace(/\n/g, '\n  '));
-        left -= text.length;
+        const reserved = entries.slice(i + 1).reduce((n, later) => n + quoteNeed(later), 0);
+        const block = quotedBlock(e.quote, e.topic, Math.max(0, left - reserved));
+        if (block) {
+          lines.push(block);
+          left -= block.length + 1;
+        }
       }
       if (e.link) lines.push(`  link: ${e.link}`);
     }
@@ -879,22 +905,75 @@ function clip(text: string, cap: number, tail: number | undefined): string {
 }
 
 /**
- * One quoted text cut to `cap` characters, saying what was left out.
+ * One quote as the card shows it, cut after `cut` characters of its head.
  *
- * The notice counts against the cap, so a budget is the length the card actually carries. It names
- * the whole's length, where the cut fell, and the existing way to read the rest: a parent agent
- * that cannot tell a cut review from a short one will act on half a conclusion, which is the bug
- * the long excerpt is here to end. When the cap is smaller than the notice itself, the notice
- * still goes in — a budget is not worth losing the fact that something was omitted.
+ * The notice is part of what the card says, not decoration: a parent agent that cannot tell a cut
+ * review from a short one will act on half a conclusion, which is the bug the whole quote is for.
+ * No harness mechanism carries "this is truncated" beside a message — the note is the gateway's
+ * only way to say it — so it is the one line added to the prompt, and only when something was cut.
  */
-function clipCard(text: string, cap: number, topic: string): string {
-  if (text.length <= cap) return text;
-  const note = (cut: number) =>
-    `\n…[${text.length} chars total, cut at ${cut}; the rest is in this topic — task-read ${topic} --full]`;
-  // The cut changes the note's digit count, so settle it in a second pass.
-  let cut = Math.max(0, cap - note(0).length);
-  cut = Math.max(0, cap - note(cut).length);
-  return `${text.slice(0, cut)}${note(cut)}`;
+function renderQuote(q: CardQuote, topic: string, cut: number): string {
+  return `  ${q.label}: ${quoteBody(q, topic, cut)}`.replace(/\n/g, '\n  ');
+}
+
+/** The quoted text itself, cut after `cut` characters, with its notice when anything was left out. */
+function quoteBody(q: CardQuote, topic: string, cut: number): string {
+  return q.total <= q.text.length && cut >= q.total ? q.text : `${q.text.slice(0, cut)}${cutNote(q, topic, cut)}`;
+}
+
+/**
+ * What a cut leaves out, and where the rest is.
+ *
+ * A reply or question is still in its topic when the card stops. An error is not: turn-runner
+ * posts only its first 300 characters there, so pointing at `task-read` would send the parent
+ * after text nobody kept. The note says what the topic actually has instead.
+ */
+function cutNote(q: CardQuote, topic: string, cut: number): string {
+  const rest =
+    q.label === 'failure'
+      ? "the topic's ❌ notice has only the first 300 characters"
+      : `the rest is in this topic — task-read ${topic} --full`;
+  return `\n…[${q.total} chars total, cut at ${cut}; ${rest}]`;
+}
+
+/** The least an entry needs to say anything at all: its cut notice (or its whole text, if short). */
+function quoteNeed(e: CardEntry): number {
+  if (!e.quote) return 0;
+  const full = renderQuote(e.quote, e.topic, Math.min(e.quote.text.length, e.quote.total));
+  const noteOnly = renderQuote(e.quote, e.topic, 0);
+  // +1 for the newline the joined card puts after it.
+  return Math.min(full.length, noteOnly.length) + 1;
+}
+
+/**
+ * One quote block no longer than `budget` and no longer than CARD_ITEM_CHARS, cutting the text as
+ * far as both allow.
+ *
+ * Empty when even the notice does not fit: CARD_TOTAL_CHARS is a hard cap. The reservation in
+ * `card` means that only happens when the frame itself has filled the card.
+ */
+function quotedBlock(q: CardQuote, topic: string, budget: number): string {
+  if (budget <= 0) return '';
+  const fits = (cut: number): boolean =>
+    renderQuote(q, topic, cut).length <= budget && quoteBody(q, topic, cut).length <= CARD_ITEM_CHARS;
+  let lo = 0;
+  let hi = Math.min(q.text.length, CARD_ITEM_CHARS);
+  let best = fits(0) ? renderQuote(q, topic, 0) : '';
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (fits(mid)) {
+      best = renderQuote(q, topic, mid);
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/** `task-status` keeps its old one-value preview; the card and `task-read` carry the whole reply. */
+function previewOf(text: string): string {
+  return text.length > STATUS_REPLY_CHARS ? `${text.slice(0, STATUS_REPLY_CHARS - 1)}…` : text;
 }
 
 /** A multi-line text on one row: a sidebar line, not a summary (see core/topic-stage.ts LINE_MAX). */

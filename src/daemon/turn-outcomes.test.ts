@@ -8,6 +8,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { TopicActivity } from '../types.js';
 import { TurnFailure } from './agent.js';
 import { ConversationStore } from './conversation-store.js';
+import { CARD_ITEM_CHARS } from './delegation.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 
 /**
@@ -97,24 +98,32 @@ describe('TurnOutcomes — what a turn leaves for the person', () => {
     expect(r.needs).toEqual([ID]);
   });
 
-  it('keeps a finished reply whole for the update card, line breaks and all', () => {
+  it('keeps a finished reply for the update card, bounded and with its whole length', () => {
     const r = rig(config());
     const text = `## Review\n\n${'x'.repeat(5_000)}`;
     r.outcomes.turnEnded(ID, { kind: 'done', text });
-    expect(r.outcomes.replyTextOf(ID)).toBe(text);
+    expect(r.outcomes.replyOf(ID)).toEqual({ text: text.slice(0, CARD_ITEM_CHARS), total: text.length });
     // The next turn supersedes it, as the activity does.
     r.outcomes.turnStarted(ID);
-    expect(r.outcomes.replyTextOf(ID)).toBeUndefined();
+    expect(r.outcomes.replyOf(ID)).toBeUndefined();
   });
 
-  it('keeps a failed turn’s whole error, while the list still gets one line', () => {
+  it('keeps a failed turn’s error bounded too, while the list still gets one line', () => {
     const r = rig(config());
     const message = `failed: ${'y'.repeat(5_000)}`;
     r.outcomes.turnEnded(ID, fail('service', message));
-    expect(r.outcomes.failureTextOf(ID)).toBe(message);
+    expect(r.outcomes.failureOf(ID)).toEqual({ text: message.slice(0, CARD_ITEM_CHARS), total: message.length });
     expect(r.last()?.outcome?.line).toHaveLength(120);
     r.outcomes.forget(ID);
-    expect(r.outcomes.failureTextOf(ID)).toBeUndefined();
+    expect(r.outcomes.failureOf(ID)).toBeUndefined();
+  });
+
+  it('drops the kept texts with the conversation’s runtime state, keeping the outcome', () => {
+    const r = rig(config());
+    r.outcomes.turnEnded(ID, { kind: 'done', text: 'a long enough reply' });
+    r.outcomes.dropTexts(ID);
+    expect(r.outcomes.replyOf(ID)).toBeUndefined();
+    expect(r.outcomes.activityOf(ID)?.outcome?.kind).toBe('done');
   });
 
   it('a stopped turn leaves nothing', () => {

@@ -514,7 +514,7 @@ export interface TaskStatusResult {
   task: TaskRow;
   /** The last few tool calls of the running turn (or the last one), oldest first. */
   recent: Array<{ at: string; tool: string; detail: string }>;
-  /** Its last finished reply, when that is the last thing it did; empty otherwise. */
+  /** The head of its last finished reply, when that is the last thing it did; empty otherwise. */
   reply: string;
 }
 
