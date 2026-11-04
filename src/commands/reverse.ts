@@ -9,6 +9,9 @@ import type {
   ListChannelsResult,
   ScheduleListResult,
   ScheduleTaskView,
+  SessionListResult,
+  SessionReadResult,
+  SessionSearchResult,
   TaskActionResult,
   TaskAgentsResult,
   TaskListResult,
@@ -333,6 +336,86 @@ function renderScheduleList(data: unknown): string {
 }
 
 /**
+ * sessions search: one row per hit, with the ids that take the agent to the next step. A hit
+ * without its conversation id would only be a tease — the excerpt is where to look, and the id
+ * is how to read the rest.
+ */
+function renderSessionSearch(data: unknown): string {
+  const hits = (data as SessionSearchResult | undefined)?.hits ?? [];
+  if (hits.length === 0) {
+    return toon({
+      count: 0,
+      note: 'nothing matches; the library only holds conversations that went through this gateway, from the upgrade onward',
+    });
+  }
+  return toon({
+    count: hits.length,
+    hits: hits.map((h) => ({
+      session: `#${h.session}`,
+      message: `#${h.message}`,
+      at: h.at,
+      title: h.title || '(unnamed)',
+      agent: h.agent,
+      platform: h.platform,
+      kind: h.kind,
+      role: h.role,
+      excerpt: h.excerpt,
+    })),
+    help: [
+      'Read the whole conversation with `sessions read <session>`; read around a hit with `--around <message> --window 10`.',
+      'kind=schedule rows are scheduled-task output and sort after ordinary conversations; kind=background is work reported after its turn.',
+    ],
+  });
+}
+
+/** sessions read: the conversation header, then its messages oldest first. */
+function renderSessionRead(data: unknown): string {
+  const result = data as SessionReadResult | undefined;
+  if (!result) return toon({ ok: true });
+  if (result.messages.length === 0) {
+    return toon({ session: { ...result.session, id: `#${result.session.id}` }, count: 0, note: 'this conversation has no messages' });
+  }
+  return toon({
+    session: {
+      id: `#${result.session.id}`,
+      title: result.session.title || '(unnamed)',
+      platform: result.session.platform,
+      agent: result.session.agent,
+      host: result.session.host,
+      cwd: result.session.cwd,
+      kind: result.session.kind,
+      startedAt: result.session.startedAt,
+      lastAt: result.session.lastAt,
+    },
+    count: result.messages.length,
+    messages: result.messages.map((m) => ({ ...m, id: `#${m.id}` })),
+    ...(result.note ? { note: result.note } : {}),
+  });
+}
+
+/** sessions list: recent conversations, newest first. */
+function renderSessionList(data: unknown): string {
+  const result = (data as SessionListResult | undefined) ?? { sessions: [], days: 7 };
+  if (result.sessions.length === 0) {
+    return toon({ count: 0, note: `no conversations in the last ${result.days} day(s)` });
+  }
+  return toon({
+    count: result.sessions.length,
+    days: result.days,
+    sessions: result.sessions.map((s) => ({
+      id: `#${s.id}`,
+      at: s.lastAt,
+      title: s.title || '(unnamed)',
+      agent: s.agent,
+      platform: s.platform,
+      kind: s.kind,
+      messages: s.messages,
+    })),
+    help: ['`sessions read <id>` opens one; `sessions search <words>` looks inside them.'],
+  });
+}
+
+/**
  * Printers for the commands whose output is a function of the response alone. A table rather than
  * more switch arms: every gateway query added one, and the switch in renderResult is about the
  * commands whose rendering also depends on what was asked (ask's timeout, fetch's columns).
@@ -355,6 +438,9 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown) => string
   'task-send': renderTaskAction,
   'task-status': renderTaskStatus,
   'task-stop': renderTaskAction,
+  'sessions-search': renderSessionSearch,
+  'sessions-read': renderSessionRead,
+  'sessions-list': renderSessionList,
 };
 
 /** task-agents: one row per agent; the directories joined, since a nested list breaks the table. */

@@ -13,6 +13,8 @@ import { remoteHosts } from '../daemon/remote-hosts.js';
 import { conversationKey } from '../core/conversation.js';
 import { hostsWithConfiguredAgents, refreshPods } from '../daemon/pods.js';
 import { backUpForRenames, readAgentRenames, renameAgentsInConfig, setRenamesAside } from '../daemon/agent-renames.js';
+import { HistoryStore } from '../history/store.js';
+import { importWebuiTranscripts } from '../history/import-webui.js';
 
 /**
  * `talkcode start` — default command. Read config -> build platform adapter + agent factory -> start the daemon.
@@ -74,7 +76,7 @@ export async function runStart(): Promise<void> {
       `[renames] ${[...renames].map(([a, b]) => `${a} → ${b}`).join(', ')}: ${conversations} conversation(s), ${tasks} scheduled task(s); backups *.bak-renames-${stamp}`
     );
   }
-  const daemon = new Daemon(cfg, platforms, agents, socket, store, workdirUsage, schedules);
+  const daemon = new Daemon(cfg, platforms, agents, socket, store, workdirUsage, schedules, openHistory());
 
   await daemon.run();
   console.log(`🚀 talkcode daemon is running (socket: ${socket})`);
@@ -156,3 +158,25 @@ function migrateLegacy(cfg: ReturnType<typeof loadConfig>, store: ConversationSt
 
 /** Placeholder ref fields the key function ignores for the scope in question. */
 const BLANK = { platform: '', channel: '', kind: 'group' as const, user: '' };
+
+/**
+ * The conversation library, and the one-time fold-in of what the web UI already kept.
+ *
+ * The import is idempotent per transcript file (`HistoryStore.importSession`), so this runs on
+ * every start and only the first one does work. A library that cannot be opened is not fatal:
+ * `HistoryStore` logs it once and the daemon runs without history, which is what the recording
+ * path's best-effort rule already assumes.
+ */
+function openHistory(): HistoryStore {
+  const store = new HistoryStore(path.join(configDir(), 'history.db'));
+  const imported = importWebuiTranscripts(configDir(), store);
+  if (imported.imported > 0) {
+    console.log(
+      `[history] imported ${imported.imported} web UI conversation(s), ${imported.messages} message(s)`
+    );
+  }
+  if (imported.failed > 0) {
+    console.warn(`[history] ${imported.failed} web UI transcript(s) could not be imported`);
+  }
+  return store;
+}

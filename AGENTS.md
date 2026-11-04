@@ -46,6 +46,7 @@ it. Do not duplicate that content here.
 | `src/platform/` | IM adapters: the profile seam, 8 Satori platform profiles, per-dialect markdown renderers, and `webui/` — a browser page the daemon serves, implementing `PlatformAdapter` directly | [README](src/platform/README.md) |
 | `src/daemon/` | The running system: routing, conversations, turn orchestration, agent runtimes (ACP + agy) | [README](src/daemon/README.md) |
 | `src/ipc/` | Reverse-command protocol over a unix socket (agent → daemon → chat) | [README](src/ipc/README.md) |
+| `src/history/` | The conversation library: every turn in `<configDir>/history.db`, searchable by keyword (Han bigrams in JS, BM25), plus the web UI transcript import | [README](src/history/README.md) |
 | `src/remote/` | The gateway's side of agents on other machines: one reliable link per host over ssh | [README](src/remote/README.md) |
 | `remote/` | talkcode-remote, the host side of that link — **Go**, a static binary per architecture, built by `npm run build` into `dist/remote-bin/` | [README](remote/README.md) |
 | `src/commands/` | CLI entry points: `setup`, `doctor`, `start`, reverse commands | [README](src/commands/README.md) |

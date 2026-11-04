@@ -126,6 +126,7 @@ access:
 | [语音消息](docs/zh-CN/voice.md) | 转写与确认 |
 | [定时任务](docs/zh-CN/scheduled-tasks.md) | 定时跑提示词或命令 |
 | [子代理](docs/zh-CN/sub-agents.md) | `/super`：把一件活拆给几个智能体并行干 |
+| [以前的对话](docs/zh-CN/conversation-history.md) | `talkcode sessions`：搜索网关经手过的所有对话 |
 | [工作偏好](docs/zh-CN/instructions.md) | 一份给所有智能体的工作偏好，外加每种智能体各自一份 |
 | [智能体能做什么](docs/zh-CN/agent-actions.md) | 按钮提问、发文件、内置 skill |
 

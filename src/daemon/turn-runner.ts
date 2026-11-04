@@ -24,6 +24,9 @@ import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import { ingestAttachments, type AttachmentInput } from '../core/attachment-ingest.js';
 import { createAttachmentIngestDeps, remoteAttachmentSave } from './attachment-io.js';
 import { remoteHosts } from './remote-hosts.js';
+import type { HistoryEvent } from '../history/record.js';
+import { toolLine } from '../history/record.js';
+import type { HistoryKind } from '../history/store.js';
 
 /**
  * The sender a scheduled run's message carries (ConversationRegistry.runScheduledPrompt). Exported
@@ -63,6 +66,36 @@ export const UPDATE_SENDER = 'sub-agent-updates';
 export function jobInCommand(text: string): string | undefined {
   const m = /^\/super\s+([\s\S]+)$/.exec(text.trim());
   return m?.[1]?.trim() || undefined;
+}
+
+/**
+ * How a turn is filed in the conversation library. A scheduled run and a sub-agent's work are
+ * the same machinery here, and are told apart by the sender the daemon put on their messages.
+ * A background burst is a render kind, not a batch — see followUpSink.
+ */
+function historyKindOf(batch: InboundMessage[]): HistoryKind {
+  if (batch.length > 0 && batch.every((m) => m.conversation.user === SCHEDULED_SENDER)) return 'schedule';
+  if (
+    batch.length > 0 &&
+    batch.every((m) => m.conversation.user === DELEGATE_SENDER || m.conversation.user === UPDATE_SENDER)
+  ) {
+    return 'subagent';
+  }
+  return 'normal';
+}
+
+/**
+ * The attachment names of a batch, for the library. The prompt the agent received has their
+ * CONTENTS inlined (or their saved paths); what the library keeps is only what the person sent,
+ * by name — an index of the gateway's conversation should not become a second copy of every file
+ * that passed through it.
+ */
+function attachmentNames(batch: InboundMessage[]): string[] {
+  const names: string[] = [];
+  for (const m of batch) {
+    for (const a of m.attachments ?? []) names.push(a.name ?? 'attachment');
+  }
+  return names;
 }
 
 /**
@@ -229,6 +262,15 @@ export interface TurnRunnerDeps {
    * `hooks.turnFailed` acts on. Called exactly once per recordTurnStart, on every way out.
    */
   recordTurnEnd?(id: ConversationId, end: TurnEnd): void;
+  /**
+   * File one fact of this turn in the conversation library (`src/history/`): the prompt, a tool
+   * line, the reply.
+   *
+   * Optional, and every call is guarded: a gateway without a library, or a disk that filled up,
+   * must not cost the turn. See HistoryStore's header for why recording is best-effort while
+   * searching is not.
+   */
+  recordHistory?(id: ConversationId, event: HistoryEvent): void;
 }
 
 /**
@@ -294,7 +336,18 @@ interface TurnRef {
    */
   segmentText: string;
   lastText: string;
+  /**
+   * Everything the agent said in this render, across segments — what the conversation library
+   * keeps as the reply. Separate from segmentText, which keeps only the head of the current
+   * segment for a one-line summary; a library row that held 4 KB of a long answer would be a
+   * search result nobody could use. Capped at HISTORY_REPLY_KEEP so a runaway stream cannot
+   * grow the row without bound.
+   */
+  replyText: string;
 }
+
+/** How much of one render's text the library keeps (see TurnRef.replyText). */
+const HISTORY_REPLY_KEEP = 200_000;
 
 /** How much of a segment's text a TurnRef keeps for TurnEnd (see TurnRef.segmentText). */
 const REPLY_TEXT_KEEP = 4_000;
@@ -303,6 +356,9 @@ const REPLY_TEXT_KEEP = 4_000;
 function rollSegment(ref: TurnRef): void {
   if (ref.segmentText.trim()) ref.lastText = ref.segmentText;
   ref.segmentText = '';
+  // A segment boundary is a paragraph break in the library's one reply row; without it the text
+  // before and after a tool call would run together.
+  if (ref.replyText && !ref.replyText.endsWith('\n')) ref.replyText += '\n\n';
 }
 
 /** The text a turn ended on (see TurnRef.segmentText). */
@@ -320,6 +376,8 @@ type BurstFacts = Pick<TurnRef, 'model' | 'effort'>;
 interface RunningTurn {
   agent: AgentSession;
   platformId: string;
+  /** What the library files this turn's messages under (see historyKindOf). */
+  kind: HistoryKind;
   /**
    * Where messages that belong to this turn come from: the lane the batch was sent in, and the lane
    * the reply is going to. The two differ under autoThread, which opens a thread for the reply and
@@ -464,7 +522,8 @@ export class TurnRunner {
 
     // Everything that turns agent events into messages in this lane. Shared with the follow-up
     // path (see followUpSink) so out-of-turn output renders exactly like in-turn output.
-    const render = this.beginRender(conversationId, platform, address);
+    const historyKind = historyKindOf(batch);
+    const render = this.beginRender(conversationId, platform, address, historyKind);
     const ref = render.ref;
 
     const agent = this.agents.getOrCreate(conversationId, agentId);
@@ -473,10 +532,19 @@ export class TurnRunner {
     // child would leave background output with nowhere to go.
     agent.setFollowUpSink?.(this.followUpSink(conversationId));
     const { prompt, images } = await this.buildPrompt(batch, platform, agentId);
+    // The library keeps the prompt WITHOUT the inlined attachment text — the file names, not
+    // what was in the files. `mergePrompt` is the same text minus the attachment block.
+    this.recordHistory(conversationId, {
+      type: 'prompt',
+      text: this.mergePrompt(batch),
+      attachments: attachmentNames(batch),
+      kind: historyKind,
+      at: this.clock.now(),
+    });
     console.log(`[turn] ${conversationId} starting turn (${batch.length} message(s))`);
     // Open to messages sent while it runs (see steer) from here until it ends. Keyed by conversation,
     // and removed only if it is still THIS turn, so a turn can never unregister its successor.
-    const turn: RunningTurn = { agent, platformId, lanes: [addressOf(last.conversation), address] };
+    const turn: RunningTurn = { agent, platformId, kind: historyKind, lanes: [addressOf(last.conversation), address] };
     this.running.set(conversationId, turn);
     this.reportStart(conversationId);
     // Exactly one end per start, whichever way out the turn takes (see TurnRunnerDeps.recordTurnEnd).
@@ -569,6 +637,19 @@ export class TurnRunner {
   }
 
   /**
+   * recordHistory, likewise — and for a stronger reason: the library is a convenience, and a
+   * full disk or a corrupt database must not fail the turn it was describing. The store's own
+   * writes are already guarded; this is the second wall, for a recorder that throws.
+   */
+  private recordHistory(conversationId: ConversationId, event: HistoryEvent): void {
+    try {
+      this.deps.recordHistory?.(conversationId, event);
+    } catch (e) {
+      console.error('[history] could not record:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  /**
    * Hand messages that arrived mid-turn to the turn running in this conversation (see
    * AgentSession.steer), or say why not — the merger queues whatever this refuses.
    *
@@ -597,6 +678,17 @@ export class TurnRunner {
     const { prompt, images } = await this.buildPrompt(batch, this.adapterFor(turn.platformId), this.deps.agentIdOf(conversationId));
     if (this.running.get(conversationId) !== turn) return 'refused';
     const outcome = await turn.agent.steer({ prompt, ...(images.length > 0 ? { images } : {}) });
+    // Recorded only when the harness really took it. A `refused` message stays queued and runs as
+    // the next turn, which records it then — writing it here too would put it in the library twice.
+    if (outcome !== 'refused') {
+      this.recordHistory(conversationId, {
+        type: 'prompt',
+        text: this.mergePrompt(batch),
+        attachments: attachmentNames(batch),
+        kind: turn.kind,
+        at: this.clock.now(),
+      });
+    }
     console.log(`[turn] ${conversationId} ${batch.length} message(s) sent mid-turn: ${outcome}`);
     return outcome;
   }
@@ -631,18 +723,27 @@ export class TurnRunner {
     enqueue: (fn: () => Promise<void> | void) => void,
     /** Where a question to the user is posted — the lane this render is already writing to. */
     platform: PlatformAdapter,
-    address: ConversationAddress
+    address: ConversationAddress,
+    /** How this render is filed in the conversation library. */
+    historyKind: HistoryKind
   ): AgentStreamHandlers {
     return {
       onText: (delta) => {
         if (delta) ref.producedOutput = true;
         if (ref.segmentText.length < REPLY_TEXT_KEEP) ref.segmentText += delta;
+        if (ref.replyText.length < HISTORY_REPLY_KEEP) ref.replyText += delta;
         enqueue(() => ref.stream.push(delta));
       },
       onToolStart: (evt) => {
         // Before the rendering chain: the live status is read while this turn runs, and must not
         // wait for a rate-limited bubble to be painted. See TurnRunnerDeps.recordTool.
         this.deps.recordTool?.(conversationId, evt);
+        this.recordHistory(conversationId, {
+          type: 'tool',
+          title: toolLine(evt.name, evt.inputPreview, evt.agent),
+          kind: historyKind,
+          at: this.clock.now(),
+        });
         rollSegment(ref);
         // Before a tool: finish the current text as its own bubble (no footer: not the last segment), then
         // register the tool. Registering is synchronous — the bubble is delivered by the renderer's own
@@ -750,7 +851,9 @@ export class TurnRunner {
   private beginRender(
     conversationId: ConversationId,
     platform: PlatformAdapter,
-    address: ConversationAddress
+    address: ConversationAddress,
+    /** How this render's text and tool calls are filed in the conversation library. */
+    historyKind: HistoryKind
   ): Render {
     // StreamBuffer factory closure: sink bound to this address, callable repeatedly to rotate a
     // fresh buffer per segment — trailing text below a tool bubble goes to a new message, not editing the prior one.
@@ -771,6 +874,7 @@ export class TurnRunner {
       producedOutput: false,
       segmentText: '',
       lastText: '',
+      replyText: '',
     };
 
     const tools = new ToolRenderer(
@@ -829,7 +933,7 @@ export class TurnRunner {
     return {
       ref,
       enqueue,
-      handlers: this.buildStreamHandlers(conversationId, ref, makeStream, tools, enqueue, platform, address),
+      handlers: this.buildStreamHandlers(conversationId, ref, makeStream, tools, enqueue, platform, address, historyKind),
       abort: () => tools.abort(),
       finalize: async (footer: string) => {
         await effects; // wait for all queued side effects to land
@@ -840,6 +944,14 @@ export class TurnRunner {
         // fresh one — let it land before the closing text, for the reason onToolStart waits.
         await tools.placed(BUBBLE_PLACEMENT_WAIT_MS);
         await ref.stream.complete(footer ? { footer } : undefined);
+        // What the agent said, filed once per render. A render that produced no text (a turn
+        // that only ran tools) adds no reply row rather than an empty one.
+        this.recordHistory(conversationId, {
+          type: 'reply',
+          text: ref.replyText.trim(),
+          kind: historyKind,
+          at: this.clock.now(),
+        });
         // Then STOP WAITING for the tool bubbles — bounded, because a chat the platform has
         // paused for minutes must not hold the turn (and its ✅) open for the same minutes.
         await tools.settle(this.config.outbound.finalizeWaitMs);
@@ -892,7 +1004,7 @@ export class TurnRunner {
         console.warn(`[follow-up] ${conversationId}: no adapter for platform "${target.platformId}"; dropping`);
         return undefined;
       }
-      render = this.beginRender(conversationId, platform, target.address);
+      render = this.beginRender(conversationId, platform, target.address, 'background');
       // The runtime reports the model and effort when the burst begins, which is before its first
       // text — so before this message existed to record them on.
       if (facts.model) render.ref.model = facts.model;

@@ -6,6 +6,7 @@ import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { accessUnrestricted, agentDisplayName, findAgent } from '../config/schema.js';
 import { configDir, readConfig, readRawConfigIfExists, UNRESTRICTED_WARNING, type ReadConfig } from '../config/load.js';
 import { applyConfig, describeReload, diffConfig } from './config-reload.js';
+import type { HistoryStore } from '../history/store.js';
 import {
   agentCommandSpecs,
   agentForCommand,
@@ -204,6 +205,19 @@ const GATEWAY_QUERY_KINDS = {
 } as const satisfies Partial<Record<IpcAction['kind'], true>>;
 type GatewayQuery = Extract<IpcAction, { kind: keyof typeof GATEWAY_QUERY_KINDS }>;
 const isGatewayQuery = (a: IpcAction): a is GatewayQuery => a.kind in GATEWAY_QUERY_KINDS;
+
+/**
+ * The conversation library's three questions (history/store.ts). Split from GATEWAY_QUERY_KINDS
+ * only because they share one subject and one handler — keeping the two switches small enough
+ * to stay under the project's complexity bound, and giving the library a single place to grow.
+ */
+const SESSIONS_QUERY_KINDS = {
+  'sessions-search': true,
+  'sessions-read': true,
+  'sessions-list': true,
+} as const satisfies Partial<Record<IpcAction['kind'], true>>;
+type SessionsQuery = Extract<IpcAction, { kind: keyof typeof SESSIONS_QUERY_KINDS }>;
+const isSessionsQuery = (a: IpcAction): a is SessionsQuery => a.kind in SESSIONS_QUERY_KINDS;
 
 /** The sub-agent commands (daemon/delegation.ts), handled before both switches. */
 type TaskAction = Extract<IpcAction, { kind: `task-${string}` }>;
@@ -808,7 +822,13 @@ export class Daemon {
      * Scheduled tasks: the task file, and the directory bash runs log into. Optional so the many
      * tests that build a daemon for something else need not; `start` always passes it.
      */
-    schedules?: { store: ScheduleStore; runsDir: string }
+    schedules?: { store: ScheduleStore; runsDir: string },
+    /**
+     * The conversation library (`<configDir>/history.db`): the `talkcode sessions` commands read
+     * it, and the registry writes every turn into it. Optional so a test daemon need not open a
+     * file; absent means the command answers that there is no library.
+     */
+    private readonly history?: HistoryStore
   ) {
     // Real runtime clock; core classes never read the system clock directly (for testability).
     const clock = {
@@ -893,7 +913,7 @@ export class Daemon {
       onNeedsPerson: (id) => this.delegation.childChanged(id),
       // `/stop` in a topic that opened sub-agents stops them too.
       stopSubAgents: (id) => this.delegation.stopOpened(id),
-    }, store, workdirUsage);
+    }, store, workdirUsage, undefined, history);
     this.delegation = new Delegation({
       config,
       platforms: this.platforms,
@@ -1113,6 +1133,9 @@ export class Daemon {
     this.pendingAsks.clear();
     this.delegation.dispose();
     this.registry.dispose(); // release all mergers + agent sessions
+    // After the registry: a turn unwinding on the way out may still be recording its last row.
+    // Closing flushes the WAL, so the next start finds a complete database.
+    this.history?.close();
     // The stop signals the line above sent to agents on other machines are still in their links;
     // give them a moment to leave before the connections go. A host this misses stops those agents
     // anyway when the next gateway connects (a new epoch), or after its orphan timeout.
@@ -1180,6 +1203,8 @@ export class Daemon {
     if (this.lastResolvedConversationId) this.registry.touch(this.lastResolvedConversationId);
     // Sub-agents: acted on from the asking conversation, on the topics it opened (Delegation.handle).
     if (isTaskAction(action)) return this.delegation.handle(conversation, action);
+    // The conversation library: searches every conversation, not a chat — see handleSessionsQuery.
+    if (isSessionsQuery(action)) return this.handleSessionsQuery(action);
     // Questions for the gateway itself, not actions on a chat — answered before the chat switch.
     if (isGatewayQuery(action)) return this.handleGatewayQuery(action, address);
     switch (action.kind) {
@@ -1325,6 +1350,37 @@ export class Daemon {
   }
 
   /**
+   * `talkcode sessions …`: the gateway's own library, not a chat. Every one is answered from
+   * `<configDir>/history.db` — search is BM25 over the tokenised text, read is one conversation,
+   * list is the recent ones. None takes a channel (there is nothing to target), and a daemon
+   * started without a library says so rather than pretending the history is empty.
+   */
+  private handleSessionsQuery(action: SessionsQuery): unknown {
+    switch (action.kind) {
+      case 'sessions-search':
+        // Scheduled runs sort after ordinary conversations — see HistoryStore.search.
+        return {
+          hits: this.requireHistory().search(action.query, {
+            agent: action.agent,
+            days: action.days,
+            limit: action.limit,
+          }),
+        };
+      case 'sessions-read':
+        return this.requireHistory().read(action.session, { around: action.around, window: action.window });
+      case 'sessions-list':
+        return {
+          sessions: this.requireHistory().list({ days: action.days, limit: action.limit }),
+          days: action.days ?? 7,
+        };
+      default: {
+        const _exhaustive: never = action;
+        throw new Error(`unknown sessions query: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
+
+  /**
    * `/reload` as a person or an agent asks for it: the pods are read again first (pods.ts), so an
    * edited `~/.talkcode/pod.yaml` takes effect with the same command that applies config.yaml. The
    * hosts are those of the file about to be applied — a host added with this reload is read too.
@@ -1454,6 +1510,12 @@ export class Daemon {
   private requireSchedules(): ScheduleService {
     if (!this.schedules) throw new Error('scheduled tasks are not enabled in this daemon');
     return this.schedules;
+  }
+
+  /** The conversation library; a daemon started without one answers `sessions` with this. */
+  private requireHistory(): HistoryStore {
+    if (!this.history) throw new Error('the conversation history is not enabled in this daemon');
+    return this.history;
   }
 
   /**
