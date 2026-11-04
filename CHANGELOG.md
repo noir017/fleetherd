@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.29.0] - 2026-11-04
+
 ### Changed
 
 - **A file the agent sends opens in a window, and its name is the way in.** Clicking the name of a
