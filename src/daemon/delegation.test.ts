@@ -656,14 +656,14 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(prompt).not.toContain('first line');
   });
 
-  it('says a reply was not kept instead of passing its first line off as the reply', async () => {
+  it('says no reply instead of passing its first line off as the reply', async () => {
     const r = await oneChild();
     const key = 'web#main#c1000000';
     r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done: first line.' } });
     r.d.childChanged(key);
     r.clock.advance(CARD_DELAY_MS);
     const prompt = cardOf(r);
-    expect(prompt).toContain('  reply: the reply was not kept');
+    expect(prompt).toContain('  reply: no reply');
     expect(prompt).not.toContain('reply: Done: first line.');
   });
 
@@ -795,7 +795,7 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(body!.length).toBe(CARD_ITEM_CHARS);
     expect(body).toContain('at step (file.ts:1:1)');
     expect(body).toContain(`${error.length} chars total, cut at`);
-    expect(body).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters`);
+    expect(body).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`);
     expect(body).not.toContain('task-read');
   });
 
@@ -827,7 +827,7 @@ describe('Delegation: [sub-agent updates]', () => {
     const prompt = cardOf(chain.r);
     expect(prompt).toContain('  failure: Process exited 1:');
     expect(prompt).toContain(`${error.length} chars total, cut at`);
-    expect(prompt).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters`);
+    expect(prompt).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`);
   });
 
   it('does not tell the parent about a turn the person started in the sub-agent’s topic', async () => {

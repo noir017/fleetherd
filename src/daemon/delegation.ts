@@ -763,11 +763,11 @@ export class Delegation {
     const label = stage === 'review' ? 'reply' : 'failure';
     const kept = stage === 'review' ? this.deps.registry.replyOf(c.key) : this.deps.registry.failureOf(c.key);
     if (kept) return { label, text: kept.text, total: kept.total };
-    // A reply's first line is not a stand-in for the reply: the card would pass 120 characters off
-    // as the whole answer and never say anything was missing. The kept text is dropped with a
-    // released scheduled conversation, so say that instead.
+    // A reply's first line is not a stand-in for the reply. The text is absent either because the
+    // turn ended without one (turn-outcomes deletes an empty reply) or because a released
+    // scheduled conversation dropped it; "no reply" is true of both and claims less than either.
     if (stage === 'review') {
-      const text = 'the reply was not kept';
+      const text = 'no reply';
       return { label, text, total: text.length };
     }
     return row.line ? { label, text: row.line, total: row.line.length } : undefined;
@@ -780,8 +780,9 @@ export class Delegation {
    * CARD_MAX_ENTRIES entries are listed, and any beyond that are one line pointing at
    * `talkcode tasks`. Within that frame, quote blocks share CARD_TOTAL_CHARS and one may take at
    * most CARD_ITEM_CHARS. Every later entry's notice is reserved before an earlier one takes the
-   * rest, so an entry with a quote keeps at least its notice; a heading so long that no notice
-   * fits loses its block rather than overflowing the card.
+   * rest, so an entry with a quote keeps at least its notice. The frame is not itself capped by
+   * CARD_TOTAL_CHARS — twenty very long titles or cwds can still fill it — and when it does,
+   * blocks are dropped and the card can pass the budget on the headings alone.
    */
   private card(header: string, entries: CardEntry[], extra: number): string[] {
     const lines = [header];
@@ -945,13 +946,14 @@ function quoteBody(q: CardQuote, topic: string, cut: number): string {
  * What a cut leaves out, and where the rest is.
  *
  * A reply or question is still in its topic when the card stops. An error is not: turn-runner
- * posts only its first 300 characters there, so pointing at `task-read` would send the parent
- * after text nobody kept. The note says what the topic actually has instead.
+ * posts only its opening (up to FAILURE_NOTICE_CHARS characters of it) there, so pointing at
+ * `task-read` would send the parent after text nobody kept. The note says what the topic actually
+ * has instead.
  */
 function cutNote(q: CardQuote, topic: string, cut: number): string {
   const rest =
     q.label === 'failure'
-      ? `the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters`
+      ? `the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`
       : `the rest is in this topic — task-read ${topic} --full`;
   return `\n…[${q.total} chars total, cut at ${cut}; ${rest}]`;
 }

@@ -344,10 +344,11 @@ export function buildInputPreview(input: unknown): string {
 /**
  * How much of a harness's reason reaches the chat.
  *
- * turn-runner caps the whole failure message at 300 characters, and the timeout sentence already
- * spends ~85 of them; a long reason (opencode's connection errors run past 200) would push the cap
- * over and truncate the message from the RIGHT, cutting the reason's own tail off anyway. Trimming
- * here instead keeps the sentence intact and loses only the far end of a long reason.
+ * turn-runner caps the error it appends at FAILURE_NOTICE_CHARS characters, and the timeout
+ * sentence already spends ~85 of them; a long reason (opencode's connection errors run past 200)
+ * would push the cap over and truncate the message from the RIGHT, cutting the reason's own tail
+ * off anyway. Trimming here instead keeps the sentence intact and loses only the far end of a long
+ * reason.
  */
 const REASON_MAX_CHARS = 150;
 

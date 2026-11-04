@@ -18,9 +18,9 @@ All notable changes to this project are documented here. The format is based on
   limits. A cut adds one line the gateway writes — the text's full length, where it stopped, and
   where the rest is: a reply or question stays in the topic (`task-read <topic> --full`), while a
   failed turn's error only exists as the opening of its ❌ notice, and the cut says that instead of
-  pointing at text nobody kept. That line is the card's only added text, and only when something
-  was cut; no summary or instruction about the work is added. One card lists at most 20 sub-agents
-  and folds the rest into one line pointing at `talkcode tasks`.
+  pointing at text nobody kept. Apart from the sub-agents' own words, the card adds only one-line
+  notes: the cut notice, `no reply` when a turn left no text, and the folded line for sub-agents
+  past the first 20. No summary or instruction about the work is added.
 
 ## [2.32.0] - 2026-11-04
 
