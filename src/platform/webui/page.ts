@@ -73,7 +73,12 @@ const SSO_GATE = `<form id="gate" autocomplete="off"><div id="login">
 </div></form>`;
 
 const STYLE = `
-:root{--bg:#131313;--fg:#dcdcdc;--dim:#7d7d7d;--line:#272727;--own:#1c222b;--own-edge:#3a5f86;--field:#1a1a1a;color-scheme:dark}
+/* The three columns' header bars — topics, the topic title, the scheduled panel — are one line
+   across the page and share one height; a bar taller than its neighbours makes the top edge read
+   as ragged. min-height rather than height because the panel's bar grows to 49px for a finger
+   under 640px, and because a bar's own content can only make it taller, never shorter: whatever
+   goes inside one has to fit this number. */
+:root{--bg:#131313;--fg:#dcdcdc;--dim:#7d7d7d;--line:#272727;--own:#1c222b;--own-edge:#3a5f86;--field:#1a1a1a;--headh:42px;color-scheme:dark}
 *{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#333 transparent}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -106,7 +111,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* Only ever on screen under the narrow-screen rules below, where the sidebar is an overlay
    rather than a column and there is otherwise nothing to tap to dismiss it. */
 #backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:5}
-#sidebar-header{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line);min-height:42px}
+/* 9px, not 10px: the + is a 15px glyph in 4px of padding, so 23px of content — 20px of padding
+   plus the border made the bar 44px, two past --headh, and it was the tallest of the three. */
+#sidebar-header{display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid var(--line);min-height:var(--headh)}
 .sidebar-title{flex:1;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
 .btn-icon{background:none;border:0;padding:4px 7px;color:var(--dim);font:inherit;font-size:13px;cursor:pointer;border-radius:4px;line-height:1}
 .btn-icon:hover{color:var(--fg);background:var(--field)}
@@ -281,7 +288,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #idle-go{color:#f87171;border-color:rgba(248,113,113,.4)}
 
 #chat{flex:1;display:flex;flex-direction:column;height:100%;min-width:0;position:relative}
-#chat-header{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);min-height:42px;font-size:13px}
+#chat-header{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
 .chat-title{font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50ch}
 .chat-status{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
 .chat-status.running{color:#38bdf8}
@@ -333,8 +340,12 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #app.sched #schedules{display:flex}
 #sched-resize{position:absolute;top:0;bottom:0;left:-4px;width:8px;cursor:col-resize;z-index:12;touch-action:none}
 #sched-resize:hover,#sched-resize.dragging{background:linear-gradient(90deg,transparent 3px,#3d3d3d 3px,#3d3d3d 5px,transparent 5px)}
-#schedules-head{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 12px;border-bottom:1px solid var(--line);min-height:42px}
-.sched-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+/* The heading is two lines in the same bar the other columns give one: the title and the summary
+   are what the panel says at a glance, and neither can go. So the leading is tightened to 1.25
+   and the padding to 5px — 15 + 14.4 + 1 + 10 + 1 = 41.4, inside --headh — rather than the bar
+   growing past the other two. */
+#schedules-head{display:flex;align-items:center;gap:6px;padding:5px 8px 5px 12px;border-bottom:1px solid var(--line);min-height:var(--headh)}
+.sched-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
 .sched-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sched-summary{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #schedules-pin.on{color:#4ade80}
@@ -649,7 +660,7 @@ button:disabled{opacity:.5;cursor:default}
    to come back from. Opaque where the lightbox is dimmed, because this is read, not glanced at.
    The bar's height matches #chat-header's so the name sits where the topic title was. */
 #reader{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column}
-#reader-bar{display:flex;align-items:center;gap:12px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:42px;font-size:13px}
+#reader-bar{display:flex;align-items:center;gap:12px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
 #reader-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 #reader-get{color:#8fa6c0}
 #reader-close{font-size:18px;padding:6px 10px}

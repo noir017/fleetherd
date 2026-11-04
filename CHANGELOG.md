@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The web UI's three column headers are one height.** The topics bar, the topic title and the
+  scheduled panel's bar each sized to their own content: the sidebar's `+` made its bar 44px and
+  the panel's second line — the task/session summary — made that one 56, so the three bottom
+  borders landed on three different rows and the panel's tabs started a line below the chat. All
+  three now share `--headh` (42px; 49 on a phone, where the chat header's drawer toggle makes the
+  bar taller for a finger), and the panel keeps its summary by tightening its leading instead of
+  growing the bar.
+
 ## [2.27.0] - 2026-11-04
 
 ### Changed
