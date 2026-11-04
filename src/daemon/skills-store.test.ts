@@ -8,6 +8,7 @@ import {
   archivedSkillNames,
   createSkill,
   listSkills,
+  listSkillFiles,
   patchSkill,
   pinSkill,
   removeSkillFile,
@@ -102,6 +103,18 @@ describe('create and show', () => {
     archiveSkill(skill.name, dir, T0);
     expect(showSkill(skill.name, undefined, dir)).toMatchObject({ version, status: 'archived' });
     expect(() => showSkill(skill.name, 'references/missing.md', dir)).toThrow(/has no references\/missing.md/);
+  });
+
+  it('lists only delivered files for an archived skill, ignoring one an agent left at its root', () => {
+    const skill = create();
+    writeSkillFile({ name: skill.name, file: 'references/api.md', content: 'API', now: T0 + 1 }, dir);
+    // What an agent can leave with a shell command: not a file `show` can open, because a file
+    // path must be SKILL.md or one of the three directories.
+    fs.writeFileSync(path.join(skillDir(skill.name, dir), 'notes.txt'), 'hand-written');
+    archiveSkill(skill.name, dir, T0 + 2);
+
+    expect(listSkillFiles(skill.name, dir).map((f) => f.path)).toEqual(['SKILL.md', 'references/api.md']);
+    expect(() => showSkill(skill.name, 'notes.txt', dir)).toThrow(/files may only go in/);
   });
 });
 

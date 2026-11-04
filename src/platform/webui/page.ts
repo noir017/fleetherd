@@ -3861,17 +3861,17 @@ const SCRIPT = `
     h += '<div class="skill-section">Files</div><div class="skill-files">';
     for(var i=0;i<skillSel.files.length;i++){
       var f = skillSel.files[i];
-      h += '<button type="button" class="skill-file' + (cur && cur.path === f.path ? ' on' : '') + '" data-file="' + text(f.path) + '">'
+      h += '<button type="button" class="skill-file' + (cur.path === f.path ? ' on' : '') + '" data-file="' + text(f.path) + '">'
         + text(f.path) + '<small>' + text(byteSize(f.size)) + '</small></button>';
     }
     h += '</div>';
-    h += '<div class="skill-section" id="skill-editor-label">' + text(cur ? cur.path : 'New file') + '</div>';
-    h += '<input class="skill-field" id="skill-path" value="' + text(cur ? cur.path : '') + '" placeholder="references/notes.md" autocomplete="off"'
-      + (cur && cur.path === 'SKILL.md' ? ' readonly' : '') + '>';
+    h += '<div class="skill-section" id="skill-editor-label">' + text(cur.path) + '</div>';
+    h += '<input class="skill-field" id="skill-path" value="' + text(cur.path) + '" placeholder="references/notes.md" autocomplete="off"'
+      + (cur.path === 'SKILL.md' ? ' readonly' : '') + '>';
     h += '<textarea class="skill-text" id="skill-text" spellcheck="false"></textarea>';
     h += '<div class="skill-acts editor"><button type="button" data-sop="save">Save</button>'
       + '<button type="button" data-sop="new-file">New file</button>';
-    if(cur && cur.path !== 'SKILL.md') h += '<button type="button" class="danger" data-sop="remove-file">Remove file</button>';
+    if(cur.path !== 'SKILL.md') h += '<button type="button" class="danger" data-sop="remove-file">Remove file</button>';
     h += '</div>';
     h += '<div class="skill-section">History</div><div class="skill-history">';
     if(!skillSel.history.length) h += '<div class="skills-empty">No recorded changes yet.</div>';
@@ -3879,7 +3879,7 @@ const SCRIPT = `
     h += '</div>';
     skillsDetailEl.innerHTML = h;
     var ta = $('skill-text');
-    if(ta) ta.value = cur ? cur.content : '';
+    if(ta) ta.value = cur.content;
   }
 
   function skillNote(msg){
@@ -3910,15 +3910,23 @@ const SCRIPT = `
     post('api/skills/op', body, 1).then(function(r){
       return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
     }).then(function(d){
-      if(!d || !d.ok) return skillNote((d && d.error) || 'Could not open that skill.');
+      if(!d || !d.ok){
+        skillsBusy = false;
+        return skillNote((d && d.error) || 'Could not open that skill.');
+      }
       skillList = d.skills || skillList;
       skillSel = d.detail;
       skillNewMode = false;
       skillClearNote();
+      // Released before the render, so a control that appears with it is usable at once. The
+      // alternative — clear it in a trailing .then — leaves a frame where the page is drawn and
+      // every button silently drops the click.
+      skillsBusy = false;
       renderSkillDetail();
     }).catch(function(e){
+      skillsBusy = false;
       skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
-    }).then(function(){ skillsBusy = false; });
+    });
   }
 
   /** One write, then whatever the answer changed. The list always comes back, so a row cannot
@@ -3930,15 +3938,23 @@ const SCRIPT = `
     post('api/skills/op', body, 1).then(function(r){
       return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
     }).then(function(d){
-      if(!d || !d.ok) return skillNote((d && d.error) || 'That did not work.');
+      if(!d || !d.ok){
+        skillsBusy = false;
+        return skillNote((d && d.error) || 'That did not work.');
+      }
       skillList = d.skills || skillList;
       if(d.detail) skillSel = d.detail;
+      // Released BEFORE then(): that callback may start a show of its own (the page re-reads the
+      // skill after every write), and clearing the flag after it would make the editor writable
+      // again while that request is still in flight — a late answer could then undo a newer one.
+      skillsBusy = false;
       if(then) then(d);
       else if(skillSel) renderSkillDetail();
       else renderSkillsList();
     }).catch(function(e){
+      skillsBusy = false;
       skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
-    }).then(function(){ skillsBusy = false; });
+    });
   }
 
   function saveSkillFile(){

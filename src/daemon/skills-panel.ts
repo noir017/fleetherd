@@ -106,8 +106,13 @@ export function buildSkillsPanel(options: SkillsPanelOptions = {}): SkillsPanel 
             removeSkillFile({ name: request.name, file: request.file }, root());
             return done();
           case 'archive': {
+            // `archiveSkill` is idempotent — asking twice returns the archived record without
+            // moving anything — so the notice must be tied to the transition, not the call. A
+            // second request from the page (or a hand-written POST) must not tell the creating
+            // conversation about an archive that already happened.
+            const wasActive = listSkills(root()).some((s) => s.name === request.name && s.status !== 'archived');
             const archived = archiveSkill(request.name, root());
-            options.notifyArchived?.(archived);
+            if (wasActive) options.notifyArchived?.(archived);
             return done();
           }
           case 'restore':

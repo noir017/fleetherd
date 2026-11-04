@@ -85,6 +85,18 @@ describe('skills panel', () => {
     expect(panel.op({ action: 'remove-file', name: 'deploy-check', file: 'references/api.md' }).ok).toBe(false);
   });
 
+  it('removes one extra file and records the removal', () => {
+    const panel = build();
+    panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
+    panel.op({ action: 'write-file', name: 'deploy-check', file: 'references/api.md', content: 'API' });
+
+    const removed = panel.op({ action: 'remove-file', name: 'deploy-check', file: 'references/api.md' });
+    expect(removed).toMatchObject({ ok: true });
+    const shown = detail(panel.op({ action: 'show', name: 'deploy-check' }));
+    expect(shown.files.map((f) => f.path)).toEqual(['SKILL.md']);
+    expect(shown.history.map((h) => h.action)).toEqual(['remove-file', 'write-file', 'create']);
+  });
+
   it('archives with a notice, lists the archived copy, and restores it', () => {
     const told: string[] = [];
     const panel = build((skill) => told.push(`${skill.name}:${skill.status}`));
@@ -93,6 +105,9 @@ describe('skills panel', () => {
 
     const archived = panel.op({ action: 'archive', name: 'deploy-check' });
     expect(archived).toMatchObject({ ok: true, skills: [expect.objectContaining({ name: 'deploy-check', status: 'archived' })] });
+    expect(told).toEqual(['deploy-check:archived']);
+    // A second archive changes nothing and must not tell the conversation again.
+    expect(panel.op({ action: 'archive', name: 'deploy-check' }).ok).toBe(true);
     expect(told).toEqual(['deploy-check:archived']);
     expect(fs.existsSync(skillDir('deploy-check', dir))).toBe(false);
 

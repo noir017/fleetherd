@@ -5107,6 +5107,47 @@ describe('webui page: the skills page', () => {
     });
   });
 
+  it('pins, unpins, and removes a reference file', async () => {
+    const ref = { path: 'references/api.md', content: 'API', version: '0123456789ab' };
+    const replies: Record<string, unknown> = {
+      'api/skills': list(),
+      'api/skills/op': opReply([entry()], detail({ file: ref })),
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    // Pin, then unpin. The reply flips between the two so the follow-up show draws the button the
+    // operator would see; the assertions are on what the page POSTED, which is the decision.
+    replies['api/skills/op'] = opReply([entry({ pinned: true })], detail({ skill: entry({ pinned: true }), file: ref }));
+    (h.doc.querySelector('[data-sop="pin"]') as HTMLElement).click();
+    await until('the pin', () => h.calls.some((c) => c.body.action === 'pin'));
+    expect(h.calls.find((c) => c.body.action === 'pin')?.body).toEqual({ action: 'pin', name: 'deploy-check', pinned: true });
+    await until('the Unpin button', () => h.doc.querySelector('[data-sop="pin"]')?.textContent === 'Unpin');
+
+    replies['api/skills/op'] = opReply([entry({ pinned: false })], detail({ file: ref }));
+    (h.doc.querySelector('[data-sop="pin"]') as HTMLElement).click();
+    await until('the unpin', () => h.calls.filter((c) => c.body.action === 'pin').length === 2);
+    expect(h.calls.filter((c) => c.body.action === 'pin')[1]?.body).toEqual({ action: 'pin', name: 'deploy-check', pinned: false });
+
+    // The unpin's own show is still in flight until the button reads "Pin" again; the Remove
+    // file control was already on screen from the previous detail, so waiting for it alone would
+    // click while the page is still busy and the write would be dropped by design.
+    await until('the Pin button back', () => h.doc.querySelector('[data-sop="pin"]')?.textContent === 'Pin');
+    await until('the Remove file button', () => Boolean(h.doc.querySelector('[data-sop="remove-file"]')));
+    (h.doc.querySelector('[data-sop="remove-file"]') as HTMLElement).click();
+    await until('the remove-file', () => h.calls.some((c) => c.body.action === 'remove-file'));
+    expect(h.confirms[0]).toContain('references/api.md');
+    expect(h.calls.find((c) => c.body.action === 'remove-file')?.body).toEqual({
+      action: 'remove-file',
+      name: 'deploy-check',
+      file: 'references/api.md',
+    });
+  });
+
   it('creates a skill from the New form', async () => {
     const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
     const h = await open({ replies });

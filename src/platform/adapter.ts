@@ -145,16 +145,16 @@ export interface SkillPanelHistoryEntry {
 }
 
 /**
- * A skill opened for editing: its files, one file's text, and every recorded change.
+ * A skill opened for editing: its files, the opened file's text, and every recorded change.
  *
- * `file` is absent when the requested path does not exist — the page asks for a path it listed,
- * but a second tab (or an agent) may have removed it since. `version` is the skill's current one
- * and travels with the content, because `patch` is refused unless it names exactly this.
+ * `file` is always present: `show` refuses a path that does not exist, and the page asks only for
+ * paths it was just handed. `version` is the skill's current one and travels with the content,
+ * because `patch` is refused unless it names exactly this.
  */
 export interface SkillPanelDetail {
   skill: SkillPanelEntry;
   files: SkillPanelFile[];
-  file?: { path: string; content: string; version: string };
+  file: { path: string; content: string; version: string };
   history: SkillPanelHistoryEntry[];
 }
 
