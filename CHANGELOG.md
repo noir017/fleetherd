@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.27.0] - 2026-11-04
+
 ### Changed
 
 - **The web UI's scheduled panel lists the runs, not just the tasks, and gives the topics back.**
