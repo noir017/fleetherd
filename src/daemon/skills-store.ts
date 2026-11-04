@@ -277,6 +277,26 @@ export function readSkillFiles(name: string, dir = configDir()): Map<string, Buf
   return files;
 }
 
+/**
+ * The files of an ACTIVE or ARCHIVED skill, by path and size, sorted.
+ *
+ * The web UI's file list is the only caller: `readSkillFiles` reads the live directory and
+ * `show` returns one file's text, so neither can answer "what else does this skill carry" for
+ * something in `.archive/`. Read-only, and it validates the name before touching a path.
+ */
+export function listSkillFiles(name: string, dir = configDir()): Array<{ path: string; size: number }> {
+  const clean = validateSkillName(name);
+  const active = fs.existsSync(skillDir(clean, dir));
+  const archived = archivedDir(clean, dir);
+  if (!active && !fs.existsSync(archived)) {
+    throw new Error(`no skill named "${clean}"; \`talkcode skills list\` shows them`);
+  }
+  const files = active ? readSkillFiles(clean, dir) : readAllFiles(archived);
+  return [...files]
+    .map(([rel, data]) => ({ path: rel, size: data.length }))
+    .sort((a, b) => (a.path === SKILL_FILE ? -1 : b.path === SKILL_FILE ? 1 : a.path.localeCompare(b.path)));
+}
+
 function listFiles(dir: string, prefix = ''): string[] {
   let entries: fs.Dirent[];
   try {

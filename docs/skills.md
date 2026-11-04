@@ -53,6 +53,24 @@ The dot entries are the gateway's bookkeeping, not skills.
 - **Nothing is deleted.** `archive` moves a skill; `revert` replaces files with an older snapshot.
   Both are recorded in `.history/`, and `revert` can itself be reverted.
 
+## From the web UI
+
+The web UI's sidebar footer has a **✦ Skills** button. It lists every managed skill with its
+status, whether it is pinned, and when it was last used, and opens one for editing:
+
+- **New** creates a skill from a name, a one-line description and an optional body.
+- **Edit** changes `SKILL.md` or any file under `references/`, `templates/` or `scripts/`;
+  **New file** adds one. Saving `SKILL.md` carries the version the page read, so the same
+  read-before-write rule as `patch` applies, and a refusal says the current version.
+- **History** lists every recorded change; **Restore this version** is `revert`, and is itself
+  recorded as a new change.
+- **Delete** is `archive` — the skill moves into `.archive/` whole and can be restored from the
+  same page. Nothing in the gateway hard-deletes a skill, and the page has no such operation.
+
+It is the same store and the same rules as `talkcode skills`, because every write goes through
+`skills-store.ts`. Archiving from the page also tells the conversation that created the skill,
+exactly as archiving from a chat does.
+
 ## How it reaches an agent
 
 At every agent start the gateway copies each active skill to

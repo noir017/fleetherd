@@ -254,7 +254,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #sidebar-footer>button{background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
 #sidebar-footer>button:hover,#opts-toggle[aria-expanded="true"]{color:var(--fg);background:var(--field)}
 #opts-toggle .opts-gear{font-size:13px}
-@container (max-width:200px){#opts-toggle .opts-word{display:none}}
+@container (max-width:200px){#opts-toggle .opts-word,#skills-toggle .opts-word{display:none}}
 /* Ends processes, not topics, so it does not turn red: it costs a respawn on each topic's next
    message and nothing more. Hidden while no agent is idle. */
 #close-idle{margin-left:auto}
@@ -428,6 +428,57 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
 #sched-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:19}
+/* ── The skills page ─────────────────────────────────────────────────────────
+   A window over the transcript rather than a column: an editor needs width, and a history row
+   needs more than a sidebar's 240px. The backdrop dims the chat for the same reason the reader's
+   does — this is a surface of its own, not a third column competing with the conversation. */
+#skills{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#skills[hidden]{display:none}
+#skills-box{display:flex;flex-direction:column;width:min(980px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#skills-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
+#skills-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+#skills-count{flex:none;font-size:11.5px;color:var(--dim)}
+#skills-new{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
+#skills-new:hover{border-color:#3a3a3a;background:#2a2a2a}
+#skills-close{font-size:18px;padding:6px 10px}
+#skills-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+#skills-note{margin:0 0 10px;font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
+.skills-empty{padding:10px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
+.skill-item{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
+.skill-item:hover{background:#1e1e1e}
+.skill-row{display:flex;align-items:center;gap:8px;min-width:0}
+.skill-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
+.skill-state{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;background:#262626;color:#9a9a9a}
+.skill-state.active{color:#4ade80;background:rgba(74,222,128,.12)}
+.skill-state.expired{color:#fbbf24;background:rgba(251,191,36,.12)}
+.skill-state.archived{color:#9ca3af;background:#262626}
+.skill-pin{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#fbbf24}
+.skill-desc{font-size:12.5px;color:#d0d0d0;line-height:1.45;overflow-wrap:anywhere}
+.skill-meta{font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+.skill-head{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.skill-head .skill-name{flex:1 1 220px;font-size:15px}
+.skill-acts{display:flex;flex-wrap:wrap;gap:6px}
+.skill-acts.editor{margin-top:8px}
+.skill-acts button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
+.skill-acts button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
+.skill-acts button:disabled{opacity:.45;cursor:default}
+.skill-acts button.danger{color:var(--dim);border-color:transparent;background:none}
+.skill-acts button.danger:hover:not(:disabled){color:#f87171;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12)}
+.skill-acts button.confirm{background:rgba(248,113,113,.16);border-color:#7f1d1d;color:#fca5a5}
+.skill-section{margin-top:16px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.skill-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.skill-file{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 9px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.skill-file.on{border-color:#3a6ea5;background:rgba(56,189,248,.12);color:#bae6fd}
+.skill-file small{color:var(--dim);margin-left:6px}
+.skill-field{display:block;width:100%;box-sizing:border-box;margin-top:8px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12.5px;padding:8px 10px}
+.skill-field[readonly]{color:var(--dim)}
+.skill-text{width:100%;box-sizing:border-box;margin-top:8px;min-height:280px;resize:vertical;background:#111;border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;white-space:pre;overflow-wrap:normal;overflow-x:auto}
+.skill-new-form{cursor:default}
+.skill-history{margin-top:6px;border-top:1px solid var(--line)}
+.skill-hist{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;flex-wrap:wrap}
+.skill-hist-main{flex:1 1 260px;min-width:0}
+.skill-hist-action{font-weight:600}
+.skill-hist-meta{font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
 /* One host for every mounted terminal, of which exactly one is visible. Visibility is a class
    rather than the hidden attribute because the rule that sizes an iframe would have to fight
    it: display:block on the element beats hidden's user-agent display:none, and the loser of
@@ -794,6 +845,16 @@ button:disabled{opacity:.5;cursor:default}
   #sched-tabs{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
   .sched-acts button{min-height:44px;padding:0 14px}
   .sched-tab{min-height:44px}
+  /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
+     phone is an editor with a sliver of transcript behind it, and the transcript is not what the
+     operator opened. */
+  #skills{padding:0}
+  #skills-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #skills-bar{padding:0 4px 0 12px;min-height:49px}
+  #skills-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  #skills-new{min-height:44px;padding:0 14px}
+  .skill-acts button,.skill-file{min-height:44px;padding:0 12px}
+  .skill-text{min-height:40dvh;font-size:14px}
   /* A hover-revealed × does not exist on a finger, and the row is the only way to delete a
      scheduled run now that the switcher no longer lists it. */
   .sess-del{opacity:1;min-width:44px;height:44px}
@@ -859,6 +920,10 @@ const SCRIPT = `
       schedTabTasksN=$('sched-tab-tasks-n'), schedTabSessionsN=$('sched-tab-sessions-n'),
       lightbox=$('lightbox'), lightboxImg=$('lightbox-img'),
       reader=$('reader'), readerName=$('reader-name'), readerGet=$('reader-get'), readerBody=$('reader-body'),
+      skillsWin=$('skills'), skillsToggle=$('skills-toggle'), skillsBack=$('skills-back'),
+      skillsTitle=$('skills-title'), skillsCount=$('skills-count'), skillsNewBtn=$('skills-new'),
+      skillsClose=$('skills-close'), skillsBody=$('skills-body'), skillsNote=$('skills-note'),
+      skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status');
   var data={}, els={}, files=[], commands=[], stream=null, done=false;
   // Last markup written per message, so a sync that re-sends an unchanged message touches no DOM.
@@ -907,6 +972,10 @@ const SCRIPT = `
   // Which of the panel's two lists is on screen. Persisted, because it is a preference about the
   // workspace rather than about one visit.
   var schedTab='tasks';
+  // The skills window: its list, the skill open in it, and whether the New form is showing. Not
+  // persisted — a management surface is opened on purpose, and a window that came back on load
+  // would sit over a conversation nobody asked it to cover.
+  var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false;
 
   function saveReads(){
     try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
@@ -3641,8 +3710,8 @@ const SCRIPT = `
     if(e.key !== 'Escape') return;
     // Close the topmost thing first: Escape over a picture or the reader must not also put away
     // an open task panel behind it.
-    var overlay = !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !optsMenu.hidden;
-    closeShot(); closeReader(); closeIdle();
+    var overlay = !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !optsMenu.hidden || !skillsWin.hidden;
+    closeShot(); closeReader(); closeIdle(); closeSkills();
     if(!optsMenu.hidden){ setOpts(false); optsBtn.focus(); }
     if(!overlay && schedOpen) setSchedules(false);
   });
@@ -3691,6 +3760,351 @@ const SCRIPT = `
   // The dimmed page behind the window is a way out too, as it is for the lightbox — but only the
   // backdrop itself: a click that lands in the document must not close what is being read.
   reader.addEventListener('click', function(e){ if(e.target === reader) closeReader(); });
+
+  // ── The skills page ────────────────────────────────────────────────────────
+  // The gateway's managed skills (daemon/skills-store.ts), the same records the "talkcode skills"
+  // command reads and writes. This half is presentation only: every verb is posted to api/skills/op and
+  // the store answers with its own sentence when it refuses — the version guard on patch, the
+  // 20 KB and path rules, and the archive that is the only "delete" there is.
+  function skillAgo(iso){
+    var at = iso ? Date.parse(iso) : 0;
+    return at ? schedAgo(at) : '';
+  }
+
+  function skillState(s){
+    return s === 'archived' ? 'Archived' : (s === 'expired' ? 'Expired' : 'Active');
+  }
+
+  function skillDetailMeta(s){
+    var parts = [skillState(s.status), 'v' + s.version, 'created ' + skillAgo(s.createdAt)];
+    if(s.pinned) parts.push('pinned');
+    parts.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt) : 'never used');
+    parts.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
+    return parts.join(' \\u00b7 ');
+  }
+
+  function skillCard(s){
+    var meta = [];
+    if(s.pinned) meta.push('pinned');
+    meta.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt) : 'never used');
+    meta.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
+    var h = '<div class="skill-item" data-skill="' + text(s.name) + '" role="button" tabindex="0">';
+    h += '<div class="skill-row"><span class="skill-name">' + text(s.name) + '</span>';
+    h += '<span class="skill-state ' + text(s.status) + '">' + text(skillState(s.status)) + '</span>';
+    if(s.pinned) h += '<span class="skill-pin">pinned</span>';
+    h += '</div>';
+    h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
+    h += '<div class="skill-meta">' + text(meta.join(' \\u00b7 ') + ' \\u00b7 v' + s.version) + '</div>';
+    h += '</div>';
+    return h;
+  }
+
+  function skillNewForm(){
+    return '<div class="skill-item skill-new-form" data-newform="1">'
+      + '<div class="skill-row"><span class="skill-name">New skill</span></div>'
+      + '<input class="skill-field" id="skill-new-name" placeholder="name — lowercase-words-with-hyphens" autocomplete="off">'
+      + '<input class="skill-field" id="skill-new-desc" placeholder="When should an agent use it?" autocomplete="off">'
+      + '<textarea class="skill-text" id="skill-new-body" placeholder="Body (optional)"></textarea>'
+      + '<div class="skill-acts editor"><button type="button" data-sop="create">Create</button>'
+      + '<button type="button" class="danger" data-sop="cancel-new">Cancel</button></div></div>';
+  }
+
+  function renderSkillsList(){
+    skillSel = null;
+    skillsBack.hidden = true;
+    skillsDetailEl.hidden = true;
+    skillsListEl.hidden = false;
+    skillsTitle.textContent = 'Skills';
+    skillsCount.textContent = skillList.length ? skillList.length + (skillList.length === 1 ? ' skill' : ' skills') : '';
+    skillsNewBtn.hidden = skillNewMode;
+    var h = '';
+    if(!skillsEnabled) h = '<div class="skills-empty">Skills are not enabled in this daemon.</div>';
+    else if(!skillList.length) h = '<div class="skills-empty">No managed skills yet. An agent can create one when you ask it to remember a procedure, or press New.</div>';
+    else for(var i=0;i<skillList.length;i++) h += skillCard(skillList[i]);
+    if(skillNewMode) h = skillNewForm() + h;
+    skillsListEl.innerHTML = h;
+    if(skillNewMode){ var n = $('skill-new-name'); if(n) n.focus(); }
+  }
+
+  /** One history row. Only a change with something before it can be restored: the first version
+      of a skill has no snapshot, and the store refuses that revert rather than inventing one. */
+  function skillHistRow(e){
+    var meta = skillAgo(e.at);
+    if(e.note) meta += ' \\u00b7 ' + e.note;
+    if(e.beforeVersion) meta += ' \\u00b7 ' + e.beforeVersion + ' \\u2192 ' + (e.afterVersion || '(no version)');
+    var h = '<div class="skill-hist"><div class="skill-hist-main">'
+      + '<div class="skill-hist-action">' + text(e.action) + '</div>'
+      + '<div class="skill-hist-meta">' + text(meta) + '</div></div>';
+    if(e.beforeVersion) h += '<button type="button" class="skill-file" data-revert="' + text(e.id) + '">Restore this version</button>';
+    h += '</div>';
+    return h;
+  }
+
+  function renderSkillDetail(){
+    if(!skillSel) return renderSkillsList();
+    var s = skillSel.skill, cur = skillSel.file;
+    skillsListEl.hidden = true;
+    skillsDetailEl.hidden = false;
+    skillsBack.hidden = false;
+    skillsNewBtn.hidden = true;
+    skillsTitle.textContent = s.name;
+    skillsCount.textContent = skillState(s.status);
+    var h = '<div class="skill-head"><span class="skill-name">' + text(s.name) + '</span>';
+    h += '<div class="skill-acts">';
+    h += '<button type="button" data-sop="pin">' + (s.pinned ? 'Unpin' : 'Pin') + '</button>';
+    h += s.status === 'archived'
+      ? '<button type="button" data-sop="restore">Restore</button>'
+      : '<button type="button" class="danger" data-sop="archive">Delete</button>';
+    h += '</div></div>';
+    h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
+    h += '<div class="skill-meta">' + text(skillDetailMeta(s)) + '</div>';
+    h += '<div class="skill-section">Files</div><div class="skill-files">';
+    for(var i=0;i<skillSel.files.length;i++){
+      var f = skillSel.files[i];
+      h += '<button type="button" class="skill-file' + (cur && cur.path === f.path ? ' on' : '') + '" data-file="' + text(f.path) + '">'
+        + text(f.path) + '<small>' + text(byteSize(f.size)) + '</small></button>';
+    }
+    h += '</div>';
+    h += '<div class="skill-section" id="skill-editor-label">' + text(cur ? cur.path : 'New file') + '</div>';
+    h += '<input class="skill-field" id="skill-path" value="' + text(cur ? cur.path : '') + '" placeholder="references/notes.md" autocomplete="off"'
+      + (cur && cur.path === 'SKILL.md' ? ' readonly' : '') + '>';
+    h += '<textarea class="skill-text" id="skill-text" spellcheck="false"></textarea>';
+    h += '<div class="skill-acts editor"><button type="button" data-sop="save">Save</button>'
+      + '<button type="button" data-sop="new-file">New file</button>';
+    if(cur && cur.path !== 'SKILL.md') h += '<button type="button" class="danger" data-sop="remove-file">Remove file</button>';
+    h += '</div>';
+    h += '<div class="skill-section">History</div><div class="skill-history">';
+    if(!skillSel.history.length) h += '<div class="skills-empty">No recorded changes yet.</div>';
+    else for(var j=0;j<skillSel.history.length;j++) h += skillHistRow(skillSel.history[j]);
+    h += '</div>';
+    skillsDetailEl.innerHTML = h;
+    var ta = $('skill-text');
+    if(ta) ta.value = cur ? cur.content : '';
+  }
+
+  function skillNote(msg){
+    skillsNote.hidden = false;
+    skillsNote.textContent = msg;
+  }
+  function skillClearNote(){ skillsNote.hidden = true; }
+
+  function loadSkills(){
+    if(app.hidden) return;
+    fetch('api/skills', {credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      skillsEnabled = d.enabled !== false;
+      skillList = d.skills || [];
+      renderSkillsList();
+    }).catch(function(e){
+      skillNote('Could not load skills: ' + ((e && e.message) || 'network error'));
+    });
+  }
+
+  function openSkill(name, file){
+    var body = {action:'show', name:name};
+    if(file) body.file = file;
+    skillsBusy = true;
+    skillClearNote();
+    post('api/skills/op', body, 1).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(!d || !d.ok) return skillNote((d && d.error) || 'Could not open that skill.');
+      skillList = d.skills || skillList;
+      skillSel = d.detail;
+      skillNewMode = false;
+      skillClearNote();
+      renderSkillDetail();
+    }).catch(function(e){
+      skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+    }).then(function(){ skillsBusy = false; });
+  }
+
+  /** One write, then whatever the answer changed. The list always comes back, so a row cannot
+      show the state from before the write; "show" also brings the detail. */
+  function skillOp(body, then){
+    if(skillsBusy) return;
+    skillsBusy = true;
+    skillClearNote();
+    post('api/skills/op', body, 1).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(!d || !d.ok) return skillNote((d && d.error) || 'That did not work.');
+      skillList = d.skills || skillList;
+      if(d.detail) skillSel = d.detail;
+      if(then) then(d);
+      else if(skillSel) renderSkillDetail();
+      else renderSkillsList();
+    }).catch(function(e){
+      skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+    }).then(function(){ skillsBusy = false; });
+  }
+
+  function saveSkillFile(){
+    if(!skillSel) return;
+    var pathEl = $('skill-path'), textEl = $('skill-text');
+    if(!pathEl || !textEl) return;
+    var path = (pathEl.value || '').trim(), content = textEl.value, s = skillSel.skill;
+    if(!path) return skillNote('A file path is required.');
+    if(path === 'SKILL.md'){
+      if(!skillSel.file || skillSel.file.path !== 'SKILL.md') return skillNote('Open SKILL.md to edit it.');
+      skillOp({action:'patch', name:s.name, version:skillSel.file.version, content:content}, function(){
+        openSkill(s.name, 'SKILL.md');
+      });
+    } else {
+      skillOp({action:'write-file', name:s.name, file:path, content:content}, function(){
+        openSkill(s.name, path);
+      });
+    }
+  }
+
+  function removeFileUi(){
+    if(!skillSel) return;
+    var pathEl = $('skill-path');
+    var path = pathEl ? (pathEl.value || '').trim() : '';
+    if(!path || path === 'SKILL.md') return;
+    var name = skillSel.skill.name;
+    if(!confirm('Remove ' + path + ' from "' + name + '"? The previous version stays in its history.')) return;
+    skillOp({action:'remove-file', name:name, file:path}, function(){ openSkill(name, 'SKILL.md'); });
+  }
+
+  /** Two taps, like the scheduled panel's Delete: a phone mis-tap on a button that archives a
+      skill is easy, and any repaint or four seconds puts it back. */
+  function skillConfirm(btn, fn){
+    if(btn.getAttribute('data-confirm') === '1'){ fn(); return; }
+    var old = btn.textContent;
+    btn.setAttribute('data-confirm', '1');
+    btn.classList.add('confirm');
+    btn.classList.remove('danger');
+    btn.textContent = 'Delete?';
+    setTimeout(function(){
+      if(btn.getAttribute('data-confirm') === '1'){
+        btn.removeAttribute('data-confirm');
+        btn.classList.remove('confirm');
+        btn.classList.add('danger');
+        btn.textContent = old;
+      }
+    }, 4000);
+  }
+
+  function archiveUi(btn){
+    if(!skillSel) return;
+    var name = skillSel.skill.name;
+    skillConfirm(btn, function(){
+      skillOp({action:'archive', name:name}, function(){
+        skillSel = null;
+        renderSkillsList();
+      });
+    });
+  }
+
+  function openSkills(){
+    if(!skillsWin.hidden) return;
+    skillsWin.hidden = false;
+    skillNewMode = false;
+    skillClearNote();
+    skillsListEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
+    skillsDetailEl.hidden = true;
+    skillsListEl.hidden = false;
+    skillsBack.hidden = true;
+    skillsTitle.textContent = 'Skills';
+    skillsCount.textContent = '';
+    loadSkills();
+    skillsClose.focus();
+  }
+  function closeSkills(){
+    if(skillsWin.hidden) return;
+    skillsWin.hidden = true;
+  }
+
+  skillsToggle.addEventListener('click', openSkills);
+  skillsClose.addEventListener('click', closeSkills);
+  skillsWin.addEventListener('click', function(e){ if(e.target === skillsWin) closeSkills(); });
+  skillsBack.addEventListener('click', function(){ skillClearNote(); renderSkillsList(); });
+  skillsNewBtn.addEventListener('click', function(){
+    skillNewMode = true;
+    skillClearNote();
+    renderSkillsList();
+  });
+
+  skillsBody.addEventListener('click', function(e){
+    var rev = e.target.closest ? e.target.closest('[data-revert]') : null;
+    if(rev){
+      e.stopPropagation();
+      if(!skillSel) return;
+      var id = rev.getAttribute('data-revert'), name = skillSel.skill.name;
+      if(!id) return;
+      if(!confirm('Restore the files from before this change? It is recorded as a new change, and can itself be reverted.')) return;
+      skillOp({action:'revert', name:name, id:id}, function(){ openSkill(name); });
+      return;
+    }
+    var opBtn = e.target.closest ? e.target.closest('[data-sop]') : null;
+    if(opBtn){
+      e.stopPropagation();
+      var op = opBtn.getAttribute('data-sop');
+      if(op === 'create'){
+        var nameEl = $('skill-new-name'), descEl = $('skill-new-desc'), bodyEl = $('skill-new-body');
+        var newName = nameEl ? nameEl.value.trim() : '';
+        var newDesc = descEl ? descEl.value.trim() : '';
+        if(!newName) return skillNote('A skill needs a name.');
+        if(!newDesc) return skillNote('A skill needs a one-line description of when to use it.');
+        var body = {action:'create', name:newName, description:newDesc};
+        if(bodyEl && bodyEl.value) body.body = bodyEl.value;
+        skillOp(body, function(){
+          skillNewMode = false;
+          skillSel = null;
+          renderSkillsList();
+          openSkill(newName);
+        });
+        return;
+      }
+      if(op === 'cancel-new'){ skillNewMode = false; skillClearNote(); renderSkillsList(); return; }
+      if(op === 'save'){ saveSkillFile(); return; }
+      if(op === 'new-file'){
+        var p = $('skill-path'), t = $('skill-text'), label = $('skill-editor-label');
+        if(!p || !t) return;
+        p.value = ''; p.removeAttribute('readonly'); t.value = '';
+        if(label) label.textContent = 'New file';
+        p.focus();
+        return;
+      }
+      if(op === 'remove-file'){ removeFileUi(); return; }
+      if(op === 'archive'){ archiveUi(opBtn); return; }
+      if(op === 'restore' && skillSel){
+        var restoreName = skillSel.skill.name;
+        skillOp({action:'restore', name:restoreName}, function(){ openSkill(restoreName); });
+        return;
+      }
+      if(op === 'pin' && skillSel){
+        var pinName = skillSel.skill.name, pinned = !skillSel.skill.pinned;
+        skillOp({action:'pin', name:pinName, pinned:pinned}, function(){ openSkill(pinName); });
+        return;
+      }
+      return;
+    }
+    var fileBtn = e.target.closest ? e.target.closest('[data-file]') : null;
+    if(fileBtn && skillSel){
+      var path = fileBtn.getAttribute('data-file');
+      if(path) openSkill(skillSel.skill.name, path);
+      return;
+    }
+    var card = e.target.closest ? e.target.closest('[data-skill]') : null;
+    if(card){
+      var cardName = card.getAttribute('data-skill');
+      if(cardName) openSkill(cardName);
+    }
+  });
+
+  skillsBody.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    if(e.target.closest && e.target.closest('button,input,textarea')) return;
+    var card = e.target.closest ? e.target.closest('[data-skill]') : null;
+    if(!card) return;
+    e.preventDefault();
+    var name = card.getAttribute('data-skill');
+    if(name) openSkill(name);
+  });
 
   // Grow to fit, and let the max-height in the stylesheet decide where to stop — it is stated
   // in dvh there, which on a phone with the keyboard up is the viewport that is actually left.
@@ -4463,6 +4877,10 @@ __GATE__
     <div id="topics"></div>
     <div id="sidebar-footer">
       <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Settings"><span class="opts-gear">⚙</span><span class="opts-word"> Settings</span></button>
+      <!-- The gateway's managed skills: a surface of its own, not a setting. The glyph is text
+           because the page already carries its controls that way; the word drops at the
+           narrowest sidebar exactly as Settings' does. -->
+      <button type="button" id="skills-toggle" title="Skills the gateway gives every agent"><span class="opts-gear">✦</span><span class="opts-word"> Skills</span></button>
       <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle</button>
       <div id="opts-menu" hidden>
         <button type="button" id="notify-toggle" hidden aria-pressed="false" title="Notify this device when something needs you"><span>Notifications</span><span class="opt-state" id="notify-state">off</span></button>
@@ -4489,6 +4907,26 @@ __GATE__
         <button type="button" class="btn-icon" id="reader-close" title="Close (Esc)" aria-label="Close">&times;</button>
       </div>
       <div id="reader-body" tabindex="-1"></div>
+    </div>
+  </div>
+  <!-- The gateway's managed skills, as a window over the transcript. One node with two views
+       inside it — the list and the open skill — because a skill is edited in place and going
+       back is one tap, not a second window. Every write goes to api/skills/op; the store
+       behind it is the one the talkcode skills command uses, and its Delete is an archive. -->
+  <div id="skills" hidden role="dialog" aria-modal="true" aria-labelledby="skills-title">
+    <div id="skills-box">
+      <div id="skills-bar">
+        <button type="button" class="btn-icon" id="skills-back" title="Back to all skills" aria-label="Back" hidden>&lsaquo;</button>
+        <span id="skills-title">Skills</span>
+        <span id="skills-count"></span>
+        <button type="button" id="skills-new" title="Create a skill">New</button>
+        <button type="button" class="btn-icon" id="skills-close" title="Close (Esc)" aria-label="Close">&times;</button>
+      </div>
+      <div id="skills-body">
+        <div id="skills-note" hidden></div>
+        <div id="skills-list"></div>
+        <div id="skills-detail" hidden></div>
+      </div>
     </div>
   </div>
   <!-- "Close idle agents", confirmed against the list it will act on (openIdle), then showing what

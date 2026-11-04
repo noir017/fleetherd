@@ -139,6 +139,50 @@ export const ScheduleOpRequestSchema = z
   })
   .strict();
 
+/**
+ * One operation on one managed skill.
+ *
+ * A discriminated union, so each verb carries exactly the fields it needs and a body carrying
+ * another verb's field is refused rather than ignored. The bounds here are the request's outer
+ * envelope, not the rules: `daemon/skills-store.ts` still validates the name, the path, the
+ * frontmatter and the 20 KB / 1 MB limits, and `patch` still refuses a version that is not the
+ * one `show` printed. Keeping the numbers in step matters only so a page cannot make the daemon
+ * buffer something the store will reject a moment later.
+ *
+ * There is no `delete`: the store has no hard delete, and the page's "Delete" is `archive`.
+ */
+const SkillName = z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'not a skill name');
+const SkillFilePath = z.string().min(1).max(300);
+const SkillMd = z.string().max(20 * 1024);
+const SkillExtra = z.string().max(1024 * 1024);
+const SkillHistoryId = z.string().regex(/^\d{15}-[0-9a-f]{6}$/, 'not a history id');
+
+export const SkillOpRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('show'), name: SkillName, file: SkillFilePath.optional() }).strict(),
+  z
+    .object({
+      action: z.literal('create'),
+      name: SkillName,
+      description: z.string().min(1).max(2000),
+      body: SkillMd.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('patch'),
+      name: SkillName,
+      version: z.string().regex(/^[0-9a-f]{12}$/, 'not a skill version'),
+      content: SkillMd,
+    })
+    .strict(),
+  z.object({ action: z.literal('write-file'), name: SkillName, file: SkillFilePath, content: SkillExtra }).strict(),
+  z.object({ action: z.literal('remove-file'), name: SkillName, file: SkillFilePath }).strict(),
+  z.object({ action: z.literal('archive'), name: SkillName }).strict(),
+  z.object({ action: z.literal('restore'), name: SkillName }).strict(),
+  z.object({ action: z.literal('pin'), name: SkillName, pinned: z.boolean() }).strict(),
+  z.object({ action: z.literal('revert'), name: SkillName, id: SkillHistoryId }).strict(),
+]);
+
 export const ClickRequestSchema = z
   .object({
     topic: TopicId,
@@ -159,6 +203,7 @@ export type EndTerminalRequest = z.infer<typeof EndTerminalRequestSchema>;
 export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;
 export type ScheduleOpRequest = z.infer<typeof ScheduleOpRequestSchema>;
+export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;
 
 /**
  * Validate one inbound body against a schema.

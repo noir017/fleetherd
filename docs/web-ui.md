@@ -139,6 +139,17 @@ it turns red with **Retry**. Retry after a reload works for text; a message that
 files offers **Copy** and **Discard**, because the files themselves are not kept. The
 composer's draft is saved too, a second after you stop typing.
 
+## Skills
+
+**✦ Skills** at the bottom of the topic list opens the gateway's managed skills — the ones every
+agent is given (see [Skills the gateway keeps](skills.md)). The page lists each skill with its
+status (active, expired or archived), whether it is pinned and when it was last used. **New**
+creates one; opening a skill shows its files, a `SKILL.md` editor and every recorded change, and
+**Delete** archives it rather than removing it — **Restore** brings it back. Saving `SKILL.md`
+carries the version the page read, so an edit made elsewhere is refused instead of overwritten.
+The page writes through the same store as `talkcode skills`, and an archive made here still tells
+the conversation that created the skill.
+
 ## Notifications
 
 **Notifications** in **⚙ Settings** at the bottom of the topic list turns on push notifications

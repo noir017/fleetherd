@@ -145,6 +145,7 @@ import {
 import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
 import { panelTasks } from './schedule-panel.js';
+import { buildSkillsPanel } from './skills-panel.js';
 import { commandSurface, Delegation } from './delegation.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { DRAIN_LIMIT_MS, describeInProgress, nothingInProgress, whenIdle, type InProgress } from './restart-drain.js';
@@ -1006,6 +1007,10 @@ export class Daemon {
       // a change made in the panel is a change made everywhere.
       const panel = this.schedulePanel(id);
       if (panel) adapter.useSchedulePanel?.(panel);
+      // …and one with room for a skills page gets the gateway's managed skills and every write
+      // the store allows (the web UI). `talkcode skills` is the same store, so the two cannot
+      // disagree; archiving here tells the creating conversation exactly as the CLI path does.
+      adapter.useSkillsPanel?.(buildSkillsPanel({ notifyArchived: (skill) => this.notifySkillArchived(skill, 'manual') }));
       // …and one with room to lay out the agents a new conversation could be given to (the web UI's
       // empty topic) gets a way to ask which, and who answers if nobody picks.
       adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));

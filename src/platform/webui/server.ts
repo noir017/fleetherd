@@ -61,6 +61,7 @@ import {
   PushUnsubscribeSchema,
   ScheduleOpRequestSchema,
   SeenRequestSchema,
+  SkillOpRequestSchema,
   StarTopicRequestSchema,
   parseBody,
   type WebEvent,
@@ -323,6 +324,11 @@ const GUARDED: Route[] = [
   // everything else; the four verbs are validated in protocol.ts before they reach the daemon.
   { method: 'GET', path: '/api/schedules', run: scheduleList },
   { method: 'POST', path: '/api/schedules/op', run: scheduleOp },
+  // The skills page: the gateway's managed skills, and one operation on one of them. Behind the
+  // same session as everything else, and the operation is a closed union in protocol.ts — there
+  // is no hard delete among the verbs, because the store has none.
+  { method: 'GET', path: '/api/skills', run: skillsList },
+  { method: 'POST', path: '/api/skills/op', run: skillsOp },
   { method: 'DELETE', path: '/api/topics', run: deleteTopic },
   { method: 'POST', path: '/api/logout', run: logout },
   { method: 'GET', path: '/f/', prefix: true, run: ({ req, res, rest }, ctx) => download(req, res, ctx.room, rest) },
@@ -720,6 +726,29 @@ async function scheduleOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, ScheduleOpRequestSchema);
   if (!parsed) return;
   const result = ctx.room.scheduleOp(parsed.id, parsed.action);
+  send(req, res, result.ok ? 200 : 400, result);
+}
+
+/**
+ * Every managed skill, for the page's skills window. `enabled: false` when this daemon was
+ * started without the panel (tests, mostly), so the page can say so instead of pretending the
+ * gateway has no skills.
+ */
+function skillsList({ req, res }: Req, ctx: Ctx): void {
+  send(req, res, 200, ctx.room.skills());
+}
+
+/**
+ * One operation on one skill. A refusal is the store's own sentence — "version mismatch", "no
+ * skill named …", "files may only go in …" — handed back as-is, so the page never restates a rule
+ * it does not own. A successful write answers with the fresh list, and `show` with the detail,
+ * because racing a refresh against the page's own write is the one moment it could show the old
+ * state as the new one.
+ */
+async function skillsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, SkillOpRequestSchema);
+  if (!parsed) return;
+  const result = ctx.room.skillOp(parsed);
   send(req, res, result.ok ? 200 : 400, result);
 }
 

@@ -59,6 +59,10 @@ import type {
   SchedulePanelAction,
   SchedulePanelResult,
   SchedulePanelTask,
+  SkillPanelEntry,
+  SkillPanelOp,
+  SkillPanelResult,
+  SkillsPanel,
 } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -314,6 +318,8 @@ export class WebRoom {
   private scheduled: ((ref: ConversationRef) => boolean) | null = null;
   /** The daemon's task list and its four operations — see `useSchedulePanel`. */
   private schedulePanel: SchedulePanel | null = null;
+  /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
+  private skillsPanel: SkillsPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
@@ -627,6 +633,30 @@ export class WebRoom {
   scheduleOp(id: string, action: SchedulePanelAction): SchedulePanelResult {
     if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
     return this.schedulePanel.op(id, action);
+  }
+
+  /**
+   * Accept the daemon's managed skills and every operation on them, which the page draws in a
+   * window of its own rather than as a chat command.
+   *
+   * A facade, like the schedule panel above: every write is `daemon/skills-store.ts`'s, so the
+   * page gets the same name/path validation, the same version guard on `patch`, the same
+   * `.history/` snapshot, and the same archive-instead-of-delete as `talkcode skills`.
+   */
+  useSkillsPanel(panel: SkillsPanel): void {
+    this.skillsPanel = panel;
+  }
+
+  /** Every managed skill, for the page. `enabled: false` when the daemon offered none. */
+  skills(): { enabled: boolean; skills: SkillPanelEntry[] } {
+    if (!this.skillsPanel) return { enabled: false, skills: [] };
+    return { enabled: true, skills: this.skillsPanel.list() };
+  }
+
+  /** Carry out one skills operation, with the fresh list (and detail, for `show`). */
+  skillOp(op: SkillPanelOp): SkillPanelResult {
+    if (!this.skillsPanel) return { ok: false, error: 'skills are not enabled in this daemon' };
+    return this.skillsPanel.op(op);
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */

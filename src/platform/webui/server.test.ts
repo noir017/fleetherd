@@ -8,7 +8,7 @@ import { createGunzip, inflateSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
-import type { SchedulePanelTask } from '../adapter.js';
+import type { SchedulePanelTask, SkillPanelEntry } from '../adapter.js';
 import { WebAuth } from './auth.js';
 import { diskUploadStore } from './index.js';
 import { MAX_READ_BYTES } from './reading.js';
@@ -1108,6 +1108,104 @@ describe('webui server: traffic', () => {
         method: 'POST',
         headers: JSON_HEADERS,
         body: JSON.stringify({ id: 'a1b2c3', action: 'pause' }),
+      });
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe('skills', () => {
+    const skill: SkillPanelEntry = {
+      name: 'deploy-check',
+      description: 'Use when checking a deployment',
+      version: '0123456789ab',
+      status: 'active',
+      pinned: false,
+      createdAt: '2026-11-01T00:00:00.000Z',
+      uses: 3,
+      agents: ['cc'],
+    };
+
+    it('lists what the daemon handed the room, and says when it offered none', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      expect(await (await fetch(`${base}/api/skills`, { headers: { cookie } })).json()).toEqual({
+        enabled: false,
+        skills: [],
+      });
+
+      room.useSkillsPanel({ list: () => [skill], op: () => ({ ok: true, skills: [skill] }) });
+      const res = await fetch(`${base}/api/skills`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ enabled: true, skills: [skill] });
+    });
+
+    it('carries out one operation and answers with the fresh list', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const calls: string[] = [];
+      room.useSkillsPanel({
+        list: () => [skill],
+        op: (op) => {
+          calls.push(op.action);
+          return { ok: true, skills: [{ ...skill, pinned: true }] };
+        },
+      });
+
+      const res = await fetch(`${base}/api/skills/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'pin', name: 'deploy-check', pinned: true }),
+      });
+      expect(res.status).toBe(200);
+      expect(calls).toEqual(['pin']);
+      expect(await res.json()).toEqual({ ok: true, skills: [{ ...skill, pinned: true }] });
+    });
+
+    it('hands back the store refusal, and refuses a body the page could not have sent', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      let called = 0;
+      room.useSkillsPanel({
+        list: () => [skill],
+        op: () => {
+          called += 1;
+          return { ok: false, error: 'version mismatch: "deploy-check" is at aabbccddeeff, not 0123456789ab.' };
+        },
+      });
+
+      const refused = await fetch(`${base}/api/skills/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'patch', name: 'deploy-check', version: '0123456789ab', content: 'x' }),
+      });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({
+        ok: false,
+        error: 'version mismatch: "deploy-check" is at aabbccddeeff, not 0123456789ab.',
+      });
+
+      for (const body of [
+        { action: 'delete', name: 'deploy-check' },
+        { action: 'archive', name: 'deploy-check', force: true },
+        { action: 'show', name: '../etc/passwd' },
+      ]) {
+        const malformed = await fetch(`${base}/api/skills/op`, {
+          method: 'POST',
+          headers: { ...JSON_HEADERS, cookie },
+          body: JSON.stringify(body),
+        });
+        expect(malformed.status, JSON.stringify(body)).toBe(400);
+      }
+      expect(called).toBe(1);
+    });
+
+    it('is behind the session like every other route', async () => {
+      const { base } = await boot();
+      expect((await fetch(`${base}/api/skills`)).status).toBe(401);
+      const res = await fetch(`${base}/api/skills/op`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ action: 'archive', name: 'deploy-check' }),
       });
       expect(res.status).toBe(401);
     });

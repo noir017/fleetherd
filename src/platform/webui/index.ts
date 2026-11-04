@@ -525,6 +525,7 @@ function lifecycle(
   | 'useLivenessLookup'
   | 'useScheduleLookup'
   | 'useSchedulePanel'
+  | 'useSkillsPanel'
   | 'useIdleReclaim'
   | 'useAgentCatalog'
   | 'registerCommands'
@@ -557,6 +558,13 @@ function lifecycle(
      * daemon hands it the list and the four operations instead of a rendered menu.
      */
     useSchedulePanel: (panel) => room.useSchedulePanel(panel),
+    /**
+     * Likewise the only implementor, and for the same kind of reason: `talkcode skills` is how a
+     * chat app manages these, and its answer is a message. This page has room for a file list, an
+     * editor and a history, so the daemon hands it the store's operations instead of a transcript
+     * of them.
+     */
+    useSkillsPanel: (panel) => room.useSkillsPanel(panel),
     /**
      * The only implementor because it is the only platform that lists its conversations' agents
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".

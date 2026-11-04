@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
-import type { SchedulePanelTask } from '../adapter.js';
+import type { SchedulePanelTask, SkillPanelEntry } from '../adapter.js';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import {
   CHANNEL,
@@ -1599,5 +1599,47 @@ describe('WebRoom: the scheduled-task panel', () => {
     expect(room.schedules()).toEqual({ enabled: true, tasks: [task] });
     expect(room.scheduleOp('a1b2c3', 'pause')).toEqual({ ok: true, tasks: [{ ...task, state: 'paused' }] });
     expect(ops).toEqual(['a1b2c3:pause']);
+  });
+});
+
+describe('WebRoom: the skills page', () => {
+  const skill: SkillPanelEntry = {
+    name: 'deploy-check',
+    description: 'Use when checking a deployment',
+    version: '0123456789ab',
+    status: 'active',
+    pinned: false,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    uses: 3,
+    agents: ['cc'],
+  };
+
+  it('says the daemon offered none rather than pretending there are no skills', () => {
+    const { room } = attached();
+
+    expect(room.skills()).toEqual({ enabled: false, skills: [] });
+    expect(room.skillOp({ action: 'show', name: 'deploy-check' })).toEqual({
+      ok: false,
+      error: 'skills are not enabled in this daemon',
+    });
+  });
+
+  it('reads the list through the daemon and forwards each operation', () => {
+    const { room } = attached();
+    const ops: string[] = [];
+    room.useSkillsPanel({
+      list: () => [skill],
+      op: (op) => {
+        ops.push(op.action);
+        return { ok: true, skills: [{ ...skill, pinned: true }] };
+      },
+    });
+
+    expect(room.skills()).toEqual({ enabled: true, skills: [skill] });
+    expect(room.skillOp({ action: 'pin', name: 'deploy-check', pinned: true })).toEqual({
+      ok: true,
+      skills: [{ ...skill, pinned: true }],
+    });
+    expect(ops).toEqual(['pin']);
   });
 });
