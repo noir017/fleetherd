@@ -91,7 +91,7 @@ as a Telegram forum topic, which is also why it is the second platform after Tel
 rename one — `retitleLane` refuses any address without a lane, so a design that gave each topic
 a channel of its own would have left `renameThread` permanently inert.
 
-**Four adapter methods are not in the matrix, because they are not capabilities.**
+**The adapter methods that are not in the matrix are not capabilities.**
 `useWorkdirLookup` hands an adapter a way to *ask* the daemon which directory the conversation
 at one of its addresses works in, and only the web UI implements it: a chat platform has
 nowhere to put the answer, while the page's topic switcher has a second line per row and,
@@ -116,6 +116,15 @@ otherwise; the conversation is kept either way.
 still post into this conversation? The web UI evicts its least recently active topic once it holds
 64, and a task's target is a plain address nothing rewrites when the topic behind it goes — so the
 answer decides what may be evicted, not what a row looks like. It is read only at that moment.
+
+`useSchedulePanel` is the other half of that answer: the whole task list and the four operations
+(pause, resume, run now, delete), handed to a platform that can draw them — the web UI's side
+panel. It is the one seam here that is a surface rather than decoration, so the page pulls it when
+it opens, after every action, and on a timer while it is visible; nothing announces a run
+finishing, and a push would invent an event the daemon does not otherwise need. The operations go
+through `ScheduleService.op`, the same validation the agent's `schedule` commands and
+`/setting schedule` use, and a refusal comes back as a sentence rather than a throw because it is
+the page's to show.
 
 `setStatus` is the fourth, and runs the other way: the daemon *pushes* the agent's live status
 (model, context, cost, cache expiry, quota) for a conversation, and only the web UI shows it — in a

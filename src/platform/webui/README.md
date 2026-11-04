@@ -397,6 +397,31 @@ list and closes on any click outside it (the drawer's backdrop included) or Esca
 set once per device or used rarely; Close idle stayed outside because its count is worth seeing. The
 footer is a size container so the word "Settings" drops at the narrowest sidebar (`SB_MIN`).
 
+## The scheduled-task panel
+
+The clock at the right of the chat header toggles a panel of the gateway's scheduled tasks. It is
+a column of its own on a screen at least 1024px wide and a slide-over below that; hidden by
+default, and pinned open across topic switches and reloads when the operator asks (`aa_sched_pin`).
+Closing it clears the pin: a close the next reload undid would read as a panel that cannot be shut.
+
+It is deliberately not a section of the topic list. A task is not a conversation — a bash task has
+none, and a new-session task makes one per run — and the sidebar is the conversation switcher. The
+panel is also the only place on this page where a task can be managed, so its toggle is always in
+the header, unlike the terminal's.
+
+**Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the list and the four operations; the
+daemon builds it in `daemon/schedule-panel.ts` from `ScheduleService`, the same service the agent's
+`schedule` commands and `/setting schedule` use. Two routes carry it: `GET api/schedules` and
+`POST api/schedules/op`, the latter validated by `ScheduleOpRequestSchema`. The panel pulls when it
+opens, after every action, and on a timer while visible (5s while a run is in flight, 30s
+otherwise) — the daemon has no event for a run finishing. Countdowns ("in 3h 12m") are computed
+from `nextAt` on the client; every other time arrives formatted in the task's own zone.
+
+**What it cannot do.** It does not create tasks. Creation is a sentence to an agent in a topic, and
+letting the page POST a prompt or a command would put a bash injection surface behind the login
+form. Deleting asks twice, like the chat menu, and a refusal from the daemon is shown as its own
+sentence rather than a generic failure.
+
 ## Notifications
 
 A phone freezes the page the moment it is put down, so nothing the event stream carries reaches it
