@@ -110,7 +110,7 @@ import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
-import { TurnOutcomes } from './turn-outcomes.js';
+import { TurnOutcomes, type KeptText } from './turn-outcomes.js';
 import { TurnProgressBoard } from './turn-progress.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { RespawnCounts } from './config-reload.js';
@@ -3696,9 +3696,14 @@ ${formatTokens(left)} left before compaction — ${name}`;
     return this.outcomes.activityOf(id);
   }
 
-  /** The head of a conversation's last finished reply, while it is the last thing that happened there. */
-  replyExcerptOf(id: ConversationId): string | undefined {
-    return this.outcomes.excerptOf(id);
+  /** The conversation's last finished reply, while it is the last thing that happened there. */
+  replyOf(id: ConversationId): KeptText | undefined {
+    return this.outcomes.replyOf(id);
+  }
+
+  /** The last failed turn's error, for a sub-agent update. */
+  failureOf(id: ConversationId): KeptText | undefined {
+    return this.outcomes.failureOf(id);
   }
 
   /**
@@ -3916,6 +3921,10 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.tokens.release(id);
     this.unresumableWarned.delete(id);
     this.progress.forget(id);
+    // Only releaseScheduled and dispose call this; idle reclaim keeps the conversation and its
+    // outcome, so this is not where a quiet conversation's reply is dropped. A released scheduled
+    // conversation can produce no sub-agent card, and shutdown produces none at all.
+    this.outcomes.dropTexts(id);
   }
 
   private buildMerger(conversationId: ConversationId): InboundMerger {

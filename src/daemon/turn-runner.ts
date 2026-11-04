@@ -59,6 +59,15 @@ export const DELEGATE_SENDER = 'delegated';
 export const UPDATE_SENDER = 'sub-agent-updates';
 
 /**
+ * How much of a failed turn's reason the ❌ notice in its topic carries.
+ *
+ * Shared with delegation.ts: an update card that cuts an error says what the topic actually holds,
+ * and the number it quotes has to be the one this notice was cut with. Too long for a chat line,
+ * too short to be the whole error — the card is where the fuller copy reaches the parent agent.
+ */
+export const FAILURE_NOTICE_CHARS = 300;
+
+/**
  * The job a command carries, for the one command that carries one: `/super <job>` (the bundled
  * `super` skill — daemon/skill-link.ts BUNDLED_SKILLS) is what its topic is about, where `/model
  * opus` or `/compact` names nothing.
@@ -604,7 +613,7 @@ export class TurnRunner {
       // a bare ❌ reaction reaches the user. Best-effort and capped — a send failure here must not
       // mask the original error, which is rethrown for the merger to mark ❌.
       const reason = err instanceof Error ? err.message : String(err);
-      const short = reason.length > 300 ? reason.slice(0, 299) + '…' : reason;
+      const short = reason.length > FAILURE_NOTICE_CHARS ? reason.slice(0, FAILURE_NOTICE_CHARS - 1) + '…' : reason;
       await platform
         .sendMessage(address, `❌ This turn failed: ${short}`)
         .catch((e) => console.error('[turn] failed to send error notice:', e instanceof Error ? e.message : e));

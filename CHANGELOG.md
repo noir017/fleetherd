@@ -18,6 +18,23 @@ All notable changes to this project are documented here. The format is based on
   path rules, the version `patch` demands and the `.history/` snapshot are the same; an archive
   made here also tells the conversation that created the skill. [→](docs/skills.md)
 
+### Changed
+
+- **The sub-agent update card carries the whole answer.** The `[sub-agent updates]` card a parent
+  agent receives quoted 600 characters of a finished sub-agent's reply, flattened to one line, and
+  the first 120 characters of a question or a failure; a review, a conclusion-first one included,
+  lost its verdict, and the parent had to open the topic and read it again — the exact cost the
+  card exists to remove. The card now quotes the reply a turn ended on, the question a sub-agent is
+  waiting on, or the error a turn failed with, in full and with its line breaks and lists, and no
+  longer repeats a reply's first line beside it. One entry carries at most 4,000 characters and one
+  card 8,000 across a burst (`CARD_ITEM_CHARS`, `CARD_TOTAL_CHARS` in `delegation.ts`), both hard
+  limits. A cut adds one line the gateway writes — the text's full length, where it stopped, and
+  where the rest is: a reply or question stays in the topic (`task-read <topic> --full`), while a
+  failed turn's error only exists as the opening of its ❌ notice, and the cut says that instead of
+  pointing at text nobody kept. Apart from the sub-agents' own words, the card adds only one-line
+  notes: the cut notice, `no reply` when a turn left no text, and the folded line for sub-agents
+  past the first 20. No summary or instruction about the work is added.
+
 ## [2.32.0] - 2026-11-04
 
 ### Added

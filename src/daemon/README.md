@@ -633,10 +633,11 @@ prototype, which refuses to infer "waiting on a person" from prose.
 
 **TurnOutcomes** (`turn-outcomes.ts`) hears every turn's start and end from TurnRunner
 (`recordTurnStart` / `recordTurnEnd`, exactly one end per start, on every way out) and keeps what
-the last one left: a finished reply's first line and a 600-character excerpt, or a failure and its
-reason (`TurnFailure`, thrown by the runtimes wherever they know why; anything else is `other`). It
-pushes that to the platform (`PlatformAdapter.setActivity`) and tells delegation. A start
-supersedes the last outcome; a `/stop` leaves none.
+the last one left: a finished reply in full — its first line for a platform's list, the text for
+the update card — or a failure, its reason and the whole error (`TurnFailure`, thrown by the
+runtimes wherever they know why; anything else is `other`). It pushes that to the platform
+(`PlatformAdapter.setActivity`) and tells delegation. A start supersedes the last outcome; a
+`/stop` leaves none.
 
 - **`hooks.turnFailed.continue`** schedules the operator's message after a failure whose reason it
   names, as a solo turn with `CONTINUE_SENDER` — attended, unlike a scheduled run, so a
@@ -668,8 +669,14 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
 - Updates come back through `childChanged` — TurnOutcomes' `onNeedsPerson`, and a sub-agent's ask —
   only for turns the parent handed out (`handedOut`, in memory): a turn the person starts in a
   sub-agent's topic is theirs. Gathered for `CARD_DELAY_MS`, shown folded in the parent's topic,
-  then run there as a solo turn with `UPDATE_SENDER`, which the namer skips. The stage is read
-  without `seenAt`: the person having read a reply does not mean the parent agent has.
+  then run there as a solo turn with `UPDATE_SENDER`, which the namer skips. The card quotes what
+  the sub-agent said — reply, question or error, line breaks kept — within `CARD_ITEM_CHARS` for
+  one entry and `CARD_TOTAL_CHARS` for a burst, both hard limits; one card lists at most
+  `CARD_MAX_ENTRIES` and folds the rest into a line pointing at `talkcode tasks`. A cut states its
+  full length and where the rest is: a reply or question stays in the topic (`task-read <topic>
+  --full`), while a failed turn's ❌ notice holds only the error's opening, which the cut says
+  instead of pointing at text nobody kept. The stage is read without `seenAt`: the person having
+  read a reply does not mean the parent agent has.
 
 `/super` is not the daemon's: it is the bundled `super` skill (`skill-super/`), linked beside
 `talkcode` by `skill-link.ts`. The daemon's one concession to it is naming — `jobInCommand` seeds a

@@ -11,9 +11,18 @@ import type {
   TaskStatusResult,
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import { CARD_DELAY_MS, Delegation, PROPOSAL_GATHER_MS, type DelegationDeps } from './delegation.js';
+import {
+  CARD_DELAY_MS,
+  CARD_ITEM_CHARS,
+  CARD_MAX_ENTRIES,
+  CARD_TOTAL_CHARS,
+  Delegation,
+  PROPOSAL_GATHER_MS,
+  type DelegationDeps,
+} from './delegation.js';
+import { TurnOutcomes } from './turn-outcomes.js';
 import type { LiveTurn } from './turn-progress.js';
-import { jobInCommand, UPDATE_SENDER } from './turn-runner.js';
+import { FAILURE_NOTICE_CHARS, jobInCommand, UPDATE_SENDER } from './turn-runner.js';
 
 /**
  * Sub-agents (delegation.ts): who may run the task commands and on what, the confirmation card every
@@ -76,6 +85,10 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
   const activity = new Map<string, TopicActivity>();
   const progress = new Map<string, LiveTurn>();
   const status = new Map<string, AgentStatus>();
+  const questions = new Map<string, string>();
+  const failures = new Map<string, string>();
+  const replies = new Map<string, string>();
+  const asking = new Set<string>();
   const busy = new Set<string>();
   const calls: Array<[string, unknown]> = [];
   const cards: Array<{ text: string; labels: string[]; signal: AbortSignal }> = [];
@@ -115,7 +128,7 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
       return handResult;
     },
     isBusy: (k: string) => busy.has(k),
-    isAsking: () => false,
+    isAsking: (k: string) => asking.has(k),
     progressOf: (k: string) => progress.get(k),
     runningSince: (k: string) => (busy.has(k) ? 1_000 : undefined),
     statusOf: (k: string) => status.get(k),
@@ -139,7 +152,16 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
     },
     laneFor: (k: string) => ({ platformId: k.startsWith('tg#') ? 'tg' : 'web', address: addrOf(k) }),
     activityOf: (k: string) => activity.get(k),
-    replyExcerptOf: (k: string) => (activity.get(k)?.outcome?.kind === 'done' ? 'Done: all green, 12 tests.' : undefined),
+    replyOf: (k: string) => {
+      if (activity.get(k)?.outcome?.kind !== 'done') return undefined;
+      const text = replies.get(k);
+      return text === undefined ? undefined : { text, total: text.length };
+    },
+    failureOf: (k: string) => {
+      if (activity.get(k)?.outcome?.kind !== 'failed') return undefined;
+      const text = failures.get(k);
+      return text === undefined ? undefined : { text, total: text.length };
+    },
     stopConversation: (k: string) => {
       calls.push(['stop', k]);
       return busy.has(k) ? ('running' as const) : ('idle' as const);
@@ -164,6 +186,7 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
     ]),
     registry: registry as unknown as DelegationDeps['registry'],
     clock,
+    questionOf: (k: string) => questions.get(k),
     confirm: ({ text, labels, signal }) => {
       cards.push({ text, labels, signal });
       return Promise.resolve(opts.answer === undefined ? (labels[0] ?? null) : opts.answer);
@@ -171,6 +194,8 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
   };
   return {
     d: new Delegation(deps),
+    deps,
+    registry,
     clock,
     posted,
     parents,
@@ -178,6 +203,10 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
     activity,
     progress,
     status,
+    questions,
+    failures,
+    replies,
+    asking,
     history,
     busy,
     calls,
@@ -432,6 +461,7 @@ describe('Delegation: seeing what a sub-agent is doing', () => {
         { at: 3_000, tool: 'Grep', detail: 'needle' },
       ],
     });
+    r.replies.set(KEY, 'Done: all green, 12 tests.');
     const s = (await r.d.handle(P, { kind: 'task-status', topic: 'c1000000' })) as TaskStatusResult;
     expect(s.task.topic).toBe('web:main/c1000000');
     expect(s.task.step).toBe(0); // not working, so the row is the outcome's
@@ -537,6 +567,56 @@ describe('Delegation: /stop in the topic that opened them', () => {
 });
 
 describe('Delegation: [sub-agent updates]', () => {
+  /** The quoted bodies on one card, with the two-space continuation indent taken back off. */
+  const bodies = (prompt: string, label: 'reply' | 'question' | 'failure'): string[] =>
+    prompt
+      .split(`\n  ${label}: `)
+      .slice(1)
+      .map((p) => p.split('\n  link:')[0]!.replace(/\n {2}/g, '\n'));
+
+  const oneChild = async () => {
+    const r = rig();
+    await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    return r;
+  };
+
+  const cardOf = (r: ReturnType<typeof rig>): string =>
+    (r.calls.find(([c]) => c === 'prompt')![1] as { prompt: string }).prompt;
+
+  /** The card with a real TurnOutcomes behind it, so a turn end is the source of what it quotes. */
+  const realChain = () => {
+    const r = rig();
+    const self: { d?: Delegation } = {};
+    const outcomes = new TurnOutcomes({
+      config: r.deps.config,
+      clock: r.clock,
+      platforms: r.deps.platforms,
+      laneOf: (id) => r.registry.laneFor(id),
+      agentIdOf: (id) => r.bound.get(id) ?? 'cc',
+      runContinue: () => true,
+      onNeedsPerson: (id) => self.d?.childChanged(id),
+    });
+    const wrapped = {
+      ...r.registry,
+      activityOf: (k: string) => outcomes.activityOf(k) ?? r.registry.activityOf(k),
+      replyOf: (k: string) => outcomes.replyOf(k) ?? r.registry.replyOf(k),
+      failureOf: (k: string) => outcomes.failureOf(k) ?? r.registry.failureOf(k),
+    };
+    const d = new Delegation({ ...r.deps, registry: wrapped as unknown as DelegationDeps['registry'] });
+    self.d = d;
+    return { r, d, outcomes };
+  };
+
+  const openOne = async (chain: ReturnType<typeof realChain>): Promise<void> => {
+    await chain.d.handle(P, task('cc', 'a'));
+    chain.r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+  };
+
   it('tells the agent that opened a topic when it finishes — gathered, shown folded, then run as a turn', async () => {
     const r = rig();
     await r.d.handle(P, task('cc', 'a'));
@@ -545,6 +625,7 @@ describe('Delegation: [sub-agent updates]', () => {
     await settle();
     await settle();
     r.activity.set('web#main#c1000000', { outcome: { kind: 'done', at: 5, line: 'Done: all green.' } });
+    r.replies.set('web#main#c1000000', 'Done: all green, 12 tests.');
     r.busy.add('web#main#c2000000');
     r.d.childChanged('web#main#c1000000');
     expect(r.calls.filter(([c]) => c === 'prompt')).toEqual([]);
@@ -556,11 +637,197 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(prompt.prompt.split('\n')).toEqual([
       '[sub-agent updates] 1 of 2 sub-agents have finished or stopped; 1 still working.',
       '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/talkcode · finished',
-      '  first line: Done: all green.',
       '  reply: Done: all green, 12 tests.',
       '  link: ?t=c1000000',
     ]);
     expect(r.posted).toContainEqual({ to: P, text: '🔔 part (cc @ near) — finished: Done: all green.', tools: true });
+  });
+
+  it('carries a finished reply whole, line breaks and lists intact, with no separate first line', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    const reply = '## Review\n\nVerdict: merge after one fix.\n\n- rename the flag\n- add a test';
+    r.replies.set(key, reply);
+    r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Review' } });
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(r);
+    expect(prompt).toContain(`  reply: ${reply.replace(/\n/g, '\n  ')}`);
+    expect(prompt).not.toContain('first line');
+  });
+
+  it('says no reply instead of passing its first line off as the reply', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done: first line.' } });
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(r);
+    expect(prompt).toContain('  reply: no reply');
+    expect(prompt).not.toContain('reply: Done: first line.');
+  });
+
+  it('cuts a reply at CARD_ITEM_CHARS, saying how long it was and where the rest is read', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    r.replies.set(key, 'x'.repeat(5_000));
+    r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    const [body] = bodies(cardOf(r), 'reply');
+    expect(body).toBeDefined();
+    expect(body!.length).toBe(CARD_ITEM_CHARS);
+    expect(body).toContain('5000 chars total, cut at');
+    expect(body).toContain('task-read web:main/c1000000 --full');
+  });
+
+  it('shares CARD_TOTAL_CHARS across a burst, and every cut says where the rest is', async () => {
+    const r = rig();
+    await r.d.handle(P, task('cc', 'a'));
+    await r.d.handle(P, task('cc', 'b'));
+    await r.d.handle(P, task('cc', 'c'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    const keys = ['web#main#c1000000', 'web#main#c2000000', 'web#main#c3000000'];
+    for (const key of keys) {
+      r.replies.set(key, 'r'.repeat(3_500));
+      r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+      r.d.childChanged(key);
+    }
+    r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(r);
+    const list = bodies(prompt, 'reply');
+    expect(list).toHaveLength(3);
+    expect(list[0]).toBe('r'.repeat(3_500));
+    expect(list[1]).toBe('r'.repeat(3_500));
+    // The frame takes its room first, so the third gets what is left of the 8000, not 1000.
+    expect(list[2]!.length).toBeLessThan(CARD_TOTAL_CHARS - 2 * 3_500);
+    expect(list[2]).toContain('3500 chars total, cut at');
+    expect(list[2]).toContain('task-read web:main/c3000000 --full');
+    expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
+  });
+
+  it('keeps 8000 a hard cap when three entries each want the 4000 maximum', async () => {
+    const r = rig();
+    for (const text of ['a', 'b', 'c']) await r.d.handle(P, task('cc', text));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    const keys = ['web#main#c1000000', 'web#main#c2000000', 'web#main#c3000000'];
+    for (const key of keys) {
+      r.replies.set(key, 'r'.repeat(CARD_ITEM_CHARS));
+      r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+      r.d.childChanged(key);
+    }
+    r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(r);
+    expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
+    const chunks = prompt.split('\n- topic ').slice(1);
+    expect(chunks).toHaveLength(3);
+    for (const chunk of chunks) {
+      const [body] = bodies(chunk, 'reply');
+      if (body) expect(body.length).toBeLessThanOrEqual(CARD_ITEM_CHARS);
+    }
+    // The third entry really is there, with its heading and its cut notice — not just two entries
+    // whose last one the assertion happened to find.
+    expect(chunks[2]).toContain('  reply: ');
+    expect(chunks[2]).toContain(`${CARD_ITEM_CHARS} chars total, cut at`);
+  });
+
+  it('lists at most CARD_MAX_ENTRIES and folds the rest into one line', async () => {
+    const r = rig();
+    const keys = Array.from({ length: CARD_MAX_ENTRIES + 3 }, (_, i) => `web#main#a${String(i).padStart(7, '0')}`);
+    for (const key of keys) {
+      r.parents.set(key, P);
+      r.bound.set(key, 'cc');
+      r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+      r.replies.set(key, 'short reply');
+    }
+    for (const key of keys) await r.d.handle(P, { kind: 'task-send', topic: key.slice('web#main#'.length), text: 'x' });
+    for (const key of keys) r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(r);
+    expect(prompt.split('\n- topic ').slice(1)).toHaveLength(CARD_MAX_ENTRIES);
+    expect(prompt).toContain(`- 3 more sub-agents — see talkcode tasks`);
+    expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
+  });
+
+  it('carries the whole question, while the topic row and its folded line stay one line', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    const question = 'This needs a decision.\n\nWhich database should I use?\n- postgres\n- sqlite';
+    r.questions.set(key, question);
+    r.asking.add(key);
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(cardOf(r)).toContain(`  question: ${question.replace(/\n/g, '\n  ')}`);
+    expect(r.posted.find((p) => p.tools)?.text).toBe(
+      '🔔 part (cc @ near) — waiting on a question: This needs a decision. Which database should I use? - postgres - sqlite'
+    );
+    const list = (await r.d.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(list.tasks[0]!.line).toBe('This needs a decision. Which database should I use? - postgres - sqlite');
+  });
+
+  it('cuts a long question at CARD_ITEM_CHARS, saying how long it was', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    r.questions.set(key, 'q'.repeat(5_000));
+    r.asking.add(key);
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    const [body] = bodies(cardOf(r), 'question');
+    expect(body!.length).toBe(CARD_ITEM_CHARS);
+    expect(body).toContain('5000 chars total, cut at');
+    expect(body).toContain('task-read web:main/c1000000 --full');
+  });
+
+  it('carries a failed turn\'s whole error, not its first line', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(200)}`;
+    r.failures.set(key, error);
+    r.activity.set(key, { outcome: { kind: 'failed', at: 5, line: 'Process exited 1:', reason: 'other' } });
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    const [body] = bodies(cardOf(r), 'failure');
+    expect(body).toBeDefined();
+    expect(body!.length).toBe(CARD_ITEM_CHARS);
+    expect(body).toContain('at step (file.ts:1:1)');
+    expect(body).toContain(`${error.length} chars total, cut at`);
+    expect(body).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`);
+    expect(body).not.toContain('task-read');
+  });
+
+  it('keeps task-status to a short preview while the card carries the long reply', async () => {
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    r.replies.set(key, 'x'.repeat(2_000));
+    r.activity.set(key, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+    const s = (await r.d.handle(P, { kind: 'task-status', topic: 'c1000000' })) as TaskStatusResult;
+    expect(s.reply).toHaveLength(600);
+    expect(s.reply.endsWith('…')).toBe(true);
+  });
+
+  it('is fed by a real turn end: TurnOutcomes stores the reply and childChanged carries it', async () => {
+    const chain = realChain();
+    await openOne(chain);
+    const reply = '## Review\n\nVerdict: merge.\n\n- one\n- two';
+    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'done', text: reply });
+    chain.r.clock.advance(CARD_DELAY_MS);
+    expect(cardOf(chain.r)).toContain(`  reply: ${reply.replace(/\n/g, '\n  ')}`);
+  });
+
+  it('is fed by a real failed turn: the whole error is cut, disclosed, and says where the rest is', async () => {
+    const chain = realChain();
+    await openOne(chain);
+    const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(400)}`;
+    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'failed', error: new Error(error) });
+    chain.r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(chain.r);
+    expect(prompt).toContain('  failure: Process exited 1:');
+    expect(prompt).toContain(`${error.length} chars total, cut at`);
+    expect(prompt).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`);
   });
 
   it('does not tell the parent about a turn the person started in the sub-agent’s topic', async () => {

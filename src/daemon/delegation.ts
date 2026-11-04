@@ -4,7 +4,7 @@ import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
 import { parseTarget, type ConversationAddress } from '../core/conversation.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
-import { topicStage } from '../core/topic-stage.js';
+import { LINE_MAX, topicStage } from '../core/topic-stage.js';
 import type {
   IpcAction,
   TaskActionResult,
@@ -19,7 +19,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentStatus, ConversationId, TopicActivity, TopicStage } from '../types.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { ConversationRegistry } from './conversation.js';
-import { UPDATE_SENDER } from './turn-runner.js';
+import { FAILURE_NOTICE_CHARS, UPDATE_SENDER } from './turn-runner.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
@@ -71,14 +71,33 @@ export const PROPOSAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 /** How long sub-agent updates are gathered before the agent is told: a burst is one card. */
 export const CARD_DELAY_MS = 5_000;
 
-/** How much of a finished reply a card carries. */
-export const CARD_EXCERPT_CHARS = 600;
+/**
+ * How much of one finished reply, question or error an update card carries, and how much it carries
+ * across a burst (several sub-agents' news is one card).
+ *
+ * A review worth acting on is a few thousand characters, and the card exists so the parent agent
+ * does not have to open the topic to get its conclusion; an excerpt that stops before the verdict
+ * is worse than no card. An entry longer than its budget is cut, and the cut states its full length
+ * and where the rest is read (quotedBlock), so a truncated review cannot pass for a short one.
+ */
+export const CARD_ITEM_CHARS = 4_000;
+export const CARD_TOTAL_CHARS = 8_000;
+
+/**
+ * How many sub-agents one card lists. A card has no fixed frame size — every entry's heading and
+ * link is its own length — so an unbounded burst could spend the whole budget on headings. The
+ * rest is one line pointing at `talkcode tasks`, where every topic is listed.
+ */
+export const CARD_MAX_ENTRIES = 20;
 
 /** How much of each sub-task's text the confirmation card shows. */
 const PROPOSAL_TEXT_CHARS = 1_500;
 
 /** How much of each message `task-read` returns. */
 const READ_CHARS = 1_500;
+
+/** How much of a reply `task-status` previews; the card and `task-read` carry the rest. */
+const STATUS_REPLY_CHARS = 600;
 
 /**
  * How much `task-read --full` returns per message, and in all.
@@ -112,7 +131,8 @@ type Registry = Pick<
   | 'conversationAt'
   | 'laneFor'
   | 'activityOf'
-  | 'replyExcerptOf'
+  | 'replyOf'
+  | 'failureOf'
   | 'progressOf'
   | 'runningSince'
   | 'statusOf'
@@ -159,6 +179,26 @@ interface Item {
   text: string;
   cwd?: string;
   title?: string;
+}
+
+/** What one sub-agent said, as the card quotes it. */
+interface CardQuote {
+  label: 'question' | 'failure' | 'reply';
+  /** The head kept for the card; `total` may be larger (see turn-outcomes.ts KeptText). */
+  text: string;
+  /** The length of the whole text, before the head was cut. */
+  total: number;
+}
+
+/** One sub-agent's entry on an update card, before the card's budgets are applied. */
+interface CardEntry {
+  /** The topic id, as `task-read` takes it; also what a cut points at. */
+  topic: string;
+  /** The `- topic … · stage` line. */
+  head: string;
+  /** What the sub-agent said, whole; the card cuts it (quotedBlock). */
+  quote?: CardQuote;
+  link?: string;
 }
 
 type TaskAction = Extract<IpcAction, { kind: `task-${string}` }>;
@@ -426,7 +466,7 @@ export class Delegation {
     await here.adapter
       .sendMessage(here.address, said)
       .catch((e) => console.warn('[delegation] could not say which sub-agents started:', e instanceof Error ? e.message : e));
-    if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${items.length} could not be started:`, ...failed], []);
+    if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${items.length} could not be started:`, ...failed], [], failed.length);
   }
 
   private async send(here: Place, topic: string, text: string, interrupt: boolean): Promise<TaskActionResult> {
@@ -496,10 +536,11 @@ export class Delegation {
   private status(here: Place, topic: string): TaskStatusResult {
     const c = this.child(here, topic);
     const live = this.deps.registry.progressOf(c.key);
+    const reply = this.deps.registry.replyOf(c.key)?.text ?? '';
     return {
       task: this.row(c),
       recent: (live?.recent ?? []).map((t) => ({ at: new Date(t.at).toISOString(), tool: t.tool, detail: t.detail })),
-      reply: this.deps.registry.replyExcerptOf(c.key) ?? '',
+      reply: previewOf(reply),
     };
   }
 
@@ -617,7 +658,10 @@ export class Delegation {
     activity: TopicActivity | undefined,
     live: LiveTurn | undefined
   ): string {
-    if (stage === 'answer') return this.deps.questionOf?.(key) ?? 'a question is waiting';
+    if (stage === 'answer') {
+      const question = this.deps.questionOf?.(key);
+      return question ? oneLine(question) : 'a question is waiting';
+    }
     if (live?.current) return `${live.current.tool}: ${live.current.detail}`;
     return activity?.outcome?.line ?? '';
   }
@@ -669,7 +713,7 @@ export class Delegation {
     this.updates.delete(key);
     const here = this.place(key);
     if (!u || !here) return;
-    const entries: string[] = [];
+    const entries: CardEntry[] = [];
     const shown: string[] = [];
     for (const id of u.children) {
       const c = this.childrenOf(here).find((x) => x.key === id);
@@ -684,19 +728,85 @@ export class Delegation {
       shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage)}${row.line ? `: ${row.line}` : ''}`);
     }
     if (entries.length === 0) return;
-    this.tell(here, [`[sub-agent updates] ${this.tally(here)}`, ...entries], shown);
+    const visible = entries.slice(0, CARD_MAX_ENTRIES);
+    const extra = entries.length - visible.length;
+    const folded = shown.slice(0, CARD_MAX_ENTRIES);
+    if (extra) folded.push(`🔔 ${extra} more — see talkcode tasks`);
+    this.tell(here, this.card(`[sub-agent updates] ${this.tally(here)}`, visible, extra), folded, entries.length);
   }
 
-  /** One sub-agent on the card: where it is, how it stands, and what it said. */
-  private entry(c: Place, row: TaskRow, stage: TopicStage): string {
-    const excerpt = stage === 'review' ? this.deps.registry.replyExcerptOf(c.key) : undefined;
-    const label = stage === 'answer' ? 'question' : stage === 'failed' ? 'failure' : 'first line';
-    return [
-      `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}`,
-      ...(row.line ? [`  ${label}: ${row.line}`] : []),
-      ...(excerpt ? [`  reply: ${excerpt.replace(/\s+/g, ' ').trim()}`] : []),
-      ...(row.link ? [`  link: ${row.link}`] : []),
-    ].join('\n');
+  /**
+   * One sub-agent on the card: where it is, how it stands, and what it said.
+   *
+   * The body is the whole of what the sub-agent said — the reply the turn ended on, the question it
+   * is waiting on, the error the turn failed with — because the parent agent is meant to act on the
+   * card without opening the topic. A reply is not accompanied by its first line: that line is
+   * already in it.
+   */
+  private entry(c: Place, row: TaskRow, stage: TopicStage): CardEntry {
+    const quote = this.quoteOf(c, row, stage);
+    return {
+      topic: row.topic,
+      head: `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}`,
+      ...(quote ? { quote } : {}),
+      ...(row.link ? { link: row.link } : {}),
+    };
+  }
+
+  /** What this stage makes worth quoting: the question, the reply or the error. */
+  private quoteOf(c: Place, row: TaskRow, stage: TopicStage): CardQuote | undefined {
+    if (stage === 'answer') {
+      const text = this.deps.questionOf?.(c.key) ?? row.line;
+      return text ? { label: 'question', text, total: text.length } : undefined;
+    }
+    if (stage !== 'review' && stage !== 'failed') return undefined;
+    const label = stage === 'review' ? 'reply' : 'failure';
+    const kept = stage === 'review' ? this.deps.registry.replyOf(c.key) : this.deps.registry.failureOf(c.key);
+    if (kept) return { label, text: kept.text, total: kept.total };
+    // A reply's first line is not a stand-in for the reply. The text is absent either because the
+    // turn ended without one (turn-outcomes deletes an empty reply) or because a released
+    // scheduled conversation dropped it; "no reply" is true of both and claims less than either.
+    if (stage === 'review') {
+      const text = 'no reply';
+      return { label, text, total: text.length };
+    }
+    return row.line ? { label, text: row.line, total: row.line.length } : undefined;
+  }
+
+  /**
+   * The card's lines, with the sub-agent text cut to what one card can carry.
+   *
+   * Headings and links are the frame and are counted, but the frame is bounded: at most
+   * CARD_MAX_ENTRIES entries are listed, and any beyond that are one line pointing at
+   * `talkcode tasks`. Within that frame, quote blocks share CARD_TOTAL_CHARS and one may take at
+   * most CARD_ITEM_CHARS. Every later entry's notice is reserved before an earlier one takes the
+   * rest, so an entry with a quote keeps at least its notice. The frame is not itself capped by
+   * CARD_TOTAL_CHARS — twenty very long titles or cwds can still fill it — and when it does,
+   * blocks are dropped and the card can pass the budget on the headings alone.
+   */
+  private card(header: string, entries: CardEntry[], extra: number): string[] {
+    const lines = [header];
+    const tail = extra ? `- ${extra} more sub-agent${extra === 1 ? '' : 's'} — see talkcode tasks` : '';
+    // Overcounts the joined string by one newline; the slack is what keeps it inside the budget.
+    const frame = entries.reduce(
+      (n, e) => n + e.head.length + 1 + (e.link ? `  link: ${e.link}`.length + 1 : 0),
+      header.length + 1 + (tail ? tail.length + 1 : 0)
+    );
+    let left = CARD_TOTAL_CHARS - frame;
+    for (const [i, e] of entries.entries()) {
+      lines.push(e.head);
+      if (e.quote) {
+        const reserved = entries.slice(i + 1).reduce((n, later) => n + quoteNeed(later), 0);
+        const block = quotedBlock(e.quote, e.topic, Math.max(0, left - reserved));
+        if (block) {
+          lines.push(block);
+          left -= block.length + 1;
+        }
+      }
+      if (e.link) lines.push(`  link: ${e.link}`);
+    }
+    if (tail) lines.push(tail);
+    return lines;
   }
 
   /** "2 of 3 sub-agents have finished; 1 is still working." — so the agent knows whether to wait. */
@@ -714,7 +824,7 @@ export class Delegation {
   }
 
   /** One card to one conversation: shown folded there, then put in front of its agent as a turn. */
-  private tell(here: Place, lines: string[], shown: string[]): void {
+  private tell(here: Place, lines: string[], shown: string[], count = shown.length): void {
     const agentId = this.deps.registry.boundAgentOf(here.key);
     if (!agentId || !findAgent(this.deps.config, agentId)) return;
     if (shown.length) {
@@ -728,7 +838,7 @@ export class Delegation {
         if (typeof outcome === 'object') console.warn(`[delegation] sub-agent updates not delivered to ${here.key}: ${outcome.refused}`);
       })
       .catch((e) => console.warn('[delegation] sub-agent updates failed:', e instanceof Error ? e.message : e));
-    console.log(`[delegation] told ${here.key} about ${Math.max(shown.length, lines.length - 1)} sub-agent(s)`);
+    console.log(`[delegation] told ${here.key} about ${count} sub-agent(s)`);
   }
 
   // ── Lookups ───────────────────────────────────────────────────────────────────────────────────
@@ -813,6 +923,85 @@ function clip(text: string, cap: number, tail: number | undefined): string {
   // because there the caller asked for the whole thing and deserves to know it did not get it.
   if (droppedChars && cap !== READ_CHARS) out = `${out}\n…[${droppedChars} later characters]`;
   return out;
+}
+
+/**
+ * One quote as the card shows it, cut after `cut` characters of its head.
+ *
+ * The notice is part of what the card says, not decoration: a parent agent that cannot tell a cut
+ * review from a short one will act on half a conclusion, which is the bug the whole quote is for.
+ * No harness mechanism carries "this is truncated" beside a message — the note is the gateway's
+ * only way to say it — so it is the one line added to the prompt, and only when something was cut.
+ */
+function renderQuote(q: CardQuote, topic: string, cut: number): string {
+  return `  ${q.label}: ${quoteBody(q, topic, cut)}`.replace(/\n/g, '\n  ');
+}
+
+/** The quoted text itself, cut after `cut` characters, with its notice when anything was left out. */
+function quoteBody(q: CardQuote, topic: string, cut: number): string {
+  return q.total <= q.text.length && cut >= q.total ? q.text : `${q.text.slice(0, cut)}${cutNote(q, topic, cut)}`;
+}
+
+/**
+ * What a cut leaves out, and where the rest is.
+ *
+ * A reply or question is still in its topic when the card stops. An error is not: turn-runner
+ * posts only its opening (up to FAILURE_NOTICE_CHARS characters of it) there, so pointing at
+ * `task-read` would send the parent after text nobody kept. The note says what the topic actually
+ * has instead.
+ */
+function cutNote(q: CardQuote, topic: string, cut: number): string {
+  const rest =
+    q.label === 'failure'
+      ? `the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`
+      : `the rest is in this topic — task-read ${topic} --full`;
+  return `\n…[${q.total} chars total, cut at ${cut}; ${rest}]`;
+}
+
+/** The least an entry needs to say anything at all: its cut notice (or its whole text, if short). */
+function quoteNeed(e: CardEntry): number {
+  if (!e.quote) return 0;
+  const full = renderQuote(e.quote, e.topic, Math.min(e.quote.text.length, e.quote.total));
+  const noteOnly = renderQuote(e.quote, e.topic, 0);
+  // +1 for the newline the joined card puts after it.
+  return Math.min(full.length, noteOnly.length) + 1;
+}
+
+/**
+ * One quote block no longer than `budget` and no longer than CARD_ITEM_CHARS, cutting the text as
+ * far as both allow.
+ *
+ * Empty when even the notice does not fit: CARD_TOTAL_CHARS is a hard cap. The reservation in
+ * `card` means that only happens when the frame itself has filled the card.
+ */
+function quotedBlock(q: CardQuote, topic: string, budget: number): string {
+  if (budget <= 0) return '';
+  const fits = (cut: number): boolean =>
+    renderQuote(q, topic, cut).length <= budget && quoteBody(q, topic, cut).length <= CARD_ITEM_CHARS;
+  let lo = 0;
+  let hi = Math.min(q.text.length, CARD_ITEM_CHARS);
+  let best = fits(0) ? renderQuote(q, topic, 0) : '';
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (fits(mid)) {
+      best = renderQuote(q, topic, mid);
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/** `task-status` keeps its old one-value preview; the card and `task-read` carry the whole reply. */
+function previewOf(text: string): string {
+  return text.length > STATUS_REPLY_CHARS ? `${text.slice(0, STATUS_REPLY_CHARS - 1)}…` : text;
+}
+
+/** A multi-line text on one row: a sidebar line, not a summary (see core/topic-stage.ts LINE_MAX). */
+function oneLine(text: string, max = LINE_MAX): string {
+  const one = text.replace(/\s+/g, ' ').trim();
+  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
 }
 
 /** A stage in a sentence. */

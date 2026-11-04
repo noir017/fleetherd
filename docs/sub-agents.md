@@ -20,9 +20,15 @@ in parallel, and come back with one report — so you follow one topic instead o
 3. Each part gets a topic of its own, nested under this one, and they all run at once. The first
    message in each says which topic it came from.
 4. When a sub-agent finishes, fails or asks something, the agent that started it is told. A folded
-   🔔 line in its topic shows exactly what it was told. It checks the result itself — reads the
-   diff, runs the tests — and sends fixes where needed. When every part is done, it writes one
-   summary with a link to each topic.
+   🔔 line in its topic shows exactly what it was told. The notice quotes what the sub-agent said
+   in full when it fits the card's budget — the reply, the question or the error, line breaks kept —
+   so the agent can act on the conclusion without opening the topic. A cut adds one line with the
+   text's full length and where the rest is: a reply or question is read from the topic with
+   `task-read <topic> --full`; a failed turn's ❌ notice in the topic has only its opening, and the
+   cut says so. A burst longer than 20 sub-agents is one card with the rest folded into a line
+   pointing at `talkcode tasks`. The agent checks the result itself — reads the diff, runs the
+   tests — and sends fixes where needed. When every part is done, it writes one summary with a link
+   to each topic.
 
 ## Talking to a sub-agent
 

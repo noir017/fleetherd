@@ -13,6 +13,7 @@ import { turnFailureReason } from './agent.js';
 import { resolveConversationCwd } from './agent-common.js';
 import { runTurnFailedHook } from './agent-hooks.js';
 import type { ConversationStore } from './conversation-store.js';
+import { CARD_ITEM_CHARS } from './delegation.js';
 import type { TurnEnd } from './turn-runner.js';
 
 /**
@@ -59,8 +60,16 @@ export interface TurnOutcomesDeps {
   onNeedsPerson?(id: ConversationId): void;
 }
 
-/** How much of a finished reply is kept for a sub-agent update (see delegation.ts CARD_EXCERPT_CHARS). */
-const REPLY_EXCERPT_CHARS = 600;
+/**
+ * A turn's reply or error as an update card needs it: the head the card can carry, and how long
+ * the whole was. Keeping the head bounded is what stops one long review from being held in memory
+ * forever; the card never shows more than CARD_ITEM_CHARS of one entry, and `total` is what lets a
+ * cut say how much it is not showing.
+ */
+export interface KeptText {
+  text: string;
+  total: number;
+}
 
 /** One conversation's automatic-continue bookkeeping. */
 interface Continuing {
@@ -73,18 +82,33 @@ interface Continuing {
 export class TurnOutcomes {
   private readonly activity = new Map<ConversationId, TopicActivity>();
   /**
-   * The head of each conversation's last finished reply (REPLY_EXCERPT_CHARS), for a sub-agent
-   * update. Kept here rather than pushed with the activity: a platform's list shows one line, and this
-   * is only ever read by the daemon.
+   * The head of each conversation's last finished reply, for a sub-agent update, with the whole's
+   * length. Kept here rather than pushed with the activity: a platform's list shows one line, and
+   * this is only ever read by the daemon. Bounded rather than whole, because every conversation's
+   * outcomes are held here, not just sub-agent topics; the card applies its own budget on top
+   * (delegation.ts).
    */
-  private readonly excerpts = new Map<ConversationId, string>();
+  private readonly replies = new Map<ConversationId, KeptText>();
+  /** The same for a failed turn's error: the card needs more than its first line. */
+  private readonly failures = new Map<ConversationId, KeptText>();
   private readonly continuing = new Map<ConversationId, Continuing>();
 
   constructor(private readonly deps: TurnOutcomesDeps) {}
 
-  /** The head of the conversation's last finished reply, while it is still the last thing that happened. */
-  excerptOf(id: ConversationId): string | undefined {
-    return this.activity.get(id)?.outcome?.kind === 'done' ? this.excerpts.get(id) : undefined;
+  /** The conversation's last finished reply, while it is still the last thing that happened. */
+  replyOf(id: ConversationId): KeptText | undefined {
+    return this.activity.get(id)?.outcome?.kind === 'done' ? this.replies.get(id) : undefined;
+  }
+
+  /** The last failed turn's error, while it is still the last thing that happened. */
+  failureOf(id: ConversationId): KeptText | undefined {
+    return this.activity.get(id)?.outcome?.kind === 'failed' ? this.failures.get(id) : undefined;
+  }
+
+  /** A released scheduled run, or shutdown, is dropping the conversation's state: its texts go too. */
+  dropTexts(id: ConversationId): void {
+    this.replies.delete(id);
+    this.failures.delete(id);
   }
 
   /** What is known about a conversation's last turn (for a list built on the daemon's side). */
@@ -102,6 +126,8 @@ export class TurnOutcomes {
    */
   turnStarted(id: ConversationId): void {
     this.callOffPending(id);
+    this.replies.delete(id);
+    this.failures.delete(id);
     this.set(id, {});
     this.deps.store?.setInFlight(id, this.deps.clock.now());
   }
@@ -113,9 +139,10 @@ export class TurnOutcomes {
     switch (end.kind) {
       case 'done': {
         this.continuing.delete(id);
+        this.failures.delete(id);
         const text = end.text.trim();
-        if (text) this.excerpts.set(id, text.length > REPLY_EXCERPT_CHARS ? `${text.slice(0, REPLY_EXCERPT_CHARS - 1)}…` : text);
-        else this.excerpts.delete(id);
+        if (text) this.replies.set(id, kept(text));
+        else this.replies.delete(id);
         const line = replyLine(end.text);
         this.set(id, { outcome: { kind: 'done', at, ...(line ? { line } : {}) } });
         this.deps.onNeedsPerson?.(id);
@@ -124,6 +151,8 @@ export class TurnOutcomes {
       case 'stopped':
         // The person stopped it: nothing is left for them, and nothing should carry on by itself.
         this.continuing.delete(id);
+        this.replies.delete(id);
+        this.failures.delete(id);
         this.set(id, {});
         return;
       case 'failed': {
@@ -157,7 +186,8 @@ export class TurnOutcomes {
   forget(id: ConversationId): void {
     this.personActed(id);
     this.activity.delete(id);
-    this.excerpts.delete(id);
+    this.replies.delete(id);
+    this.failures.delete(id);
     this.push(id, undefined);
   }
 
@@ -208,6 +238,7 @@ export class TurnOutcomes {
   /** A failed turn: record it, run the operator's command, and continue if the policy says to. */
   private failed(id: ConversationId, reason: TurnFailureReason, message: string, at: number): void {
     const outcome: TurnOutcome = { kind: 'failed', at, line: failureLine(message), reason };
+    this.failures.set(id, kept(message));
     const scheduled = this.scheduleContinue(id, reason);
     this.set(id, { outcome, ...(scheduled ? { retry: scheduled } : {}) });
     this.reportToCommand(id, reason, message, at, scheduled);
@@ -322,6 +353,16 @@ export class TurnOutcomes {
 
 function seconds(ms: number): string {
   return ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms / 60_000)} min`;
+}
+
+/**
+ * A reply or error kept for the update card, cut to the most the card can show of one entry.
+ *
+ * The card never shows more, so holding more would only keep a long review's bytes for every
+ * conversation until its next turn; `total` still says how long the whole was, so a cut is honest.
+ */
+function kept(text: string): KeptText {
+  return { text: text.length > CARD_ITEM_CHARS ? text.slice(0, CARD_ITEM_CHARS) : text, total: text.length };
 }
 
 function preview(text: string): string {
