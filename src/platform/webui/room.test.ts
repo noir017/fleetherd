@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
+import type { SchedulePanelTask } from '../adapter.js';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import {
   CHANNEL,
@@ -1554,5 +1555,49 @@ describe('WebRoom: the agent status strip', () => {
     const resumed: Seen[] = [];
     room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
     expect(last(resumed)).toEqual({ t: 'status' });
+  });
+});
+
+describe('WebRoom: the scheduled-task panel', () => {
+  const task: SchedulePanelTask = {
+    id: 'a1b2c3',
+    name: 'Morning CI',
+    state: 'active',
+    when: '0 8 * * * (Asia/Shanghai)',
+    next: '2026-11-05 08:00',
+    nextAt: Date.UTC(2026, 10, 5, 0, 0, 0),
+    run: 'cc · fixed session',
+    target: 'web:main#a1b2c3d4',
+    targetTopic: 'a1b2c3d4',
+    runs: 2,
+    running: false,
+    detail: 'summarise the failures',
+    kind: 'agent',
+  };
+
+  it('says the daemon offered none rather than pretending there are no tasks', () => {
+    const { room } = attached();
+
+    expect(room.schedules()).toEqual({ enabled: false, tasks: [] });
+    expect(room.scheduleOp('a1b2c3', 'pause')).toEqual({
+      ok: false,
+      error: 'scheduled tasks are not enabled in this daemon',
+    });
+  });
+
+  it('reads the list through the daemon and forwards each action', () => {
+    const { room } = attached();
+    const ops: string[] = [];
+    room.useSchedulePanel({
+      list: () => [task],
+      op: (id, action) => {
+        ops.push(`${id}:${action}`);
+        return { ok: true, tasks: [{ ...task, state: 'paused' }] };
+      },
+    });
+
+    expect(room.schedules()).toEqual({ enabled: true, tasks: [task] });
+    expect(room.scheduleOp('a1b2c3', 'pause')).toEqual({ ok: true, tasks: [{ ...task, state: 'paused' }] });
+    expect(ops).toEqual(['a1b2c3:pause']);
   });
 });

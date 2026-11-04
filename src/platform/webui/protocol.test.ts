@@ -6,6 +6,7 @@ import {
   DeleteTopicRequestSchema,
   ClearTopicsRequestSchema,
   LoginRequestSchema,
+  ScheduleOpRequestSchema,
   SendRequestSchema,
   StarTopicRequestSchema,
   parseBody,
@@ -125,5 +126,19 @@ describe('webui protocol: inbound validation', () => {
     ['an extra key', { topic: TOPIC, starred: true, pin: true }, false],
   ])('starring a topic with %s', (_label, body, want) => {
     expect(parseBody(StarTopicRequestSchema, body).ok).toBe(want);
+  });
+
+  it.each([
+    ['pausing', { id: 'a1b2c3', action: 'pause' }, true],
+    ['running one now', { id: 'a1b2c3', action: 'run' }, true],
+    // The id is the daemon's own alphabet; the action is a closed set, because `run` starts an
+    // unattended process and the four verbs are all the service accepts.
+    ['a malformed task id', { id: 'A1B2C3', action: 'pause' }, false],
+    ['an unknown action', { id: 'a1b2c3', action: 'delete' }, false],
+    ['a command smuggled as an action', { id: 'a1b2c3', action: 'rm -rf /' }, false],
+    ['a missing id', { action: 'pause' }, false],
+    ['an extra key', { id: 'a1b2c3', action: 'pause', prompt: 'x' }, false],
+  ])('acting on a scheduled task with %s', (_label, body, want) => {
+    expect(parseBody(ScheduleOpRequestSchema, body).ok).toBe(want);
   });
 });

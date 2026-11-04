@@ -4639,11 +4639,153 @@ describe('webui page: the sidebar footer, and low attention', () => {
     const html = renderPage('Chat', false);
     const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
     // Every rule the mode has, so one added for a question, a failure, a finished reply or the
-    // green rows fails here: those are what the mode exists to leave standing out.
+    // green rows fails here: those are what the mode exists to leave standing out. A running
+    // scheduled task is the same kind of "still working" signal as a running topic, so its dot
+    // is quieted with the same rule.
     expect(css.match(/#app\.calm [^{]*\{[^}]*\}/g)).toEqual([
       '#app.calm .topic-dot.running{animation:none}',
       '#app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}',
+      '#app.calm .sched-item.running .sched-dot{animation:none}',
     ]);
     expect(css).toMatch(/\.topic-dot\.asking\{[^}]*animation:pulse/);
+  });
+});
+
+describe('webui page: the scheduled-task panel', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const task = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'a1b2c3',
+    name: 'Morning CI',
+    state: 'active',
+    when: '0 8 * * * (Asia/Shanghai)',
+    next: '2026-11-05 08:00',
+    nextAt: Date.UTC(2026, 10, 5, 0, 0, 0),
+    run: 'cc · fixed session',
+    target: 'web:main#' + A,
+    targetTopic: A,
+    runs: 2,
+    running: false,
+    detail: 'summarise the failures',
+    kind: 'agent',
+    ...over,
+  });
+  const listReply = (tasks: Array<Record<string, unknown>>): Record<string, unknown> => ({ enabled: true, tasks });
+
+  it('is closed by default, opens from the header, and draws the list', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+    await h.emit(sync(A, [], [A]));
+
+    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.el('schedules-toggle').getAttribute('aria-expanded')).toBe('false');
+
+    await h.click('#schedules-toggle');
+
+    expect(h.el('app').classList.contains('sched')).toBe(true);
+    expect(h.el('schedules-toggle').getAttribute('aria-expanded')).toBe('true');
+    expect(h.el('schedules-summary').textContent).toBe('1 active');
+    expect(h.el('schedules-list').textContent).toContain('Morning CI');
+    expect(h.el('schedules-list').textContent).toContain('0 8 * * * (Asia/Shanghai)');
+    // The target is resolved against the topic list the page already has, rather than shown as
+    // `web:main#…` — the one thing a person cannot read.
+    expect(h.el('schedules-list').textContent).toContain('posts to Topic ' + A);
+  });
+
+  it('pins open across a reload, and a topic switch puts away only the unpinned panel', async () => {
+    const replies = { 'api/schedules': listReply([task()]) };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A, B]));
+    await h.click('#schedules-toggle');
+    await h.click('#schedules-pin');
+    expect(h.window.localStorage.getItem('aa_sched_pin')).toBe('1');
+
+    // What the next page finds: the pin, not the open/closed state of this one.
+    const again = await open({ replies, storage: { aa_sched_pin: '1' } });
+    await again.emit(sync(A, [], [A, B]));
+    expect(again.el('app').classList.contains('sched')).toBe(true);
+    expect(again.el('schedules-pin').getAttribute('aria-pressed')).toBe('true');
+
+    await again.click('#schedules-pin');
+    expect(again.window.localStorage.getItem('aa_sched_pin')).toBeNull();
+    await again.click('[data-topic="' + B + '"]');
+    expect(again.el('app').classList.contains('sched')).toBe(false);
+  });
+
+  it('does not dock a pinned panel where there is nowhere to dock it', async () => {
+    const h = await open({ width: 500, storage: { aa_sched_pin: '1' } });
+    expect(h.el('app').classList.contains('sched')).toBe(false);
+  });
+
+  it('deletes on the second tap, not the first', async () => {
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/schedules/op': { ok: true, tasks: [] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    const del = (): HTMLElement => h.doc.querySelector('.sched-acts [data-op="remove"]') as HTMLElement;
+
+    del().click();
+    await tick();
+    expect(h.calls.some((c) => c.path === 'api/schedules/op')).toBe(false);
+    expect(del().textContent).toBe('Delete?');
+
+    del().click();
+    await until('the delete request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({ id: 'a1b2c3', action: 'remove' });
+    await until('the empty state', () => h.el('schedules-list').textContent!.includes('No scheduled tasks yet'));
+  });
+
+  it('shows the daemon sentence when an action is refused, and keeps the list', async () => {
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/schedules/op': { ok: false, error: '#a1b2c3 is already paused' },
+    };
+    const h = await open({ replies, status: { 'api/schedules/op': 400 } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+
+    (h.doc.querySelector('.sched-acts [data-op="pause"]') as HTMLElement).click();
+    await until('the refusal', () => !h.el('schedules-note').hidden);
+
+    expect(h.el('schedules-note').textContent).toBe('#a1b2c3 is already paused');
+    expect(h.el('schedules-list').textContent).toContain('Morning CI');
+  });
+
+  it('opens a card for the full prompt without treating the tap as an action', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    const card = h.doc.querySelector('.sched-item') as HTMLElement;
+    const detail = card.querySelector('.sched-detail') as HTMLElement;
+
+    expect(detail.hidden).toBe(true);
+    card.click();
+    await tick();
+
+    expect(detail.hidden).toBe(false);
+    expect(detail.textContent).toContain('summarise the failures');
+    expect(h.calls.some((c) => c.path === 'api/schedules/op')).toBe(false);
+  });
+
+  it('closes on Escape', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+    await h.click('#schedules-toggle');
+    expect(h.el('app').classList.contains('sched')).toBe(true);
+
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+
+    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.window.localStorage.getItem('aa_sched_pin')).toBeNull();
+  });
+
+  it('says when the daemon has no task store instead of showing an empty list', async () => {
+    const h = await open({ replies: { 'api/schedules': { enabled: false, tasks: [] } } });
+    await h.click('#schedules-toggle');
+    await until('the disabled note', () => h.el('schedules-list').textContent!.includes('not enabled'));
+
+    expect(h.el('schedules-list').textContent).toContain('Scheduled tasks are not enabled in this daemon');
   });
 });

@@ -89,6 +89,17 @@ describe('webui page', () => {
     expect(html).toContain('.topic-item.running');
   });
 
+  it('has a scheduled-task panel of its own, opened from the chat header', () => {
+    // A column, not a row in the topic list: a task is not a conversation, and the sidebar is
+    // the conversation switcher. The pin is what keeps it across topics and reloads.
+    expect(html).toContain('id="schedules"');
+    expect(html).toContain('id="schedules-toggle"');
+    expect(html).toContain('api/schedules');
+    expect(html).toContain('api/schedules/op');
+    expect(html).toContain('aa_sched_pin');
+    expect(html).toContain('#app.sched #schedules{display:flex}');
+  });
+
   it('sends a nonce, without which its own retry would double-post', () => {
     expect(html).toContain('nonce:');
   });
