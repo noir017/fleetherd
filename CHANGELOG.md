@@ -5,6 +5,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The scheduled panel stays where it was put.** It used to be a side glance: it closed itself on
+  every topic switch unless a pin held it open, and the pin was a second switch to understand for
+  one behaviour. It is now open until it is closed — switching topics, opening a run from Sessions
+  and reloading all leave it in place (`aa_sched_open`) — and a first visit starts with it closed.
+  The pin is gone; the close button, Escape and the clock are the three ways to put it away, and
+  each is remembered.
+
+- **Its tabs moved to the foot of the panel, Sessions first.** They choose between two views of one
+  column rather than heading its content, so they sit where the topic sidebar keeps its own row —
+  same padding and type size, so the two columns end on the same line. The heading no longer carries
+  a clock glyph; the clock is already the button that opens the panel.
+
+- **The Tasks list says one thing per line.** Each card used to give its name, state, cron line,
+  next run, run mode, target and last result the same weight, with a mark on the last one. It now
+  reads name (with a state word only when it is not active), schedule, next run and target, last
+  run — red only when it failed — with the prompt, run mode and bookkeeping behind a tap. Delete is
+  quiet until the pointer is on it.
+
 ## [2.27.2] - 2026-11-04
 
 ### Changed

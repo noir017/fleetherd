@@ -4742,29 +4742,58 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.el('schedules-list').textContent).toContain('posts to Topic ' + A);
   });
 
-  it('pins open across a reload, and a topic switch puts away only the unpinned panel', async () => {
+  it('stays open across a topic switch and a reload, and a first visit starts closed', async () => {
     const replies = { 'api/schedules': listReply([task()]) };
     const h = await open({ replies });
     await h.emit(sync(A, [], [A, B]));
-    await h.click('#schedules-toggle');
-    await h.click('#schedules-pin');
-    expect(h.window.localStorage.getItem('aa_sched_pin')).toBe('1');
 
-    // What the next page finds: the pin, not the open/closed state of this one.
-    const again = await open({ replies, storage: { aa_sched_pin: '1' } });
+    // First visit: no stored choice, so the panel is not in the way.
+    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.window.localStorage.getItem('aa_sched_open')).toBeNull();
+
+    await h.click('#schedules-toggle');
+    expect(h.window.localStorage.getItem('aa_sched_open')).toBe('1');
+
+    // Following a topic no longer puts it away.
+    await h.click('[data-topic="' + B + '"]');
+    expect(h.el('app').classList.contains('sched')).toBe(true);
+
+    // What the next page finds: the open choice, not the closed state of some earlier visit.
+    const again = await open({ replies, storage: { aa_sched_open: '1' } });
     await again.emit(sync(A, [], [A, B]));
     expect(again.el('app').classList.contains('sched')).toBe(true);
-    expect(again.el('schedules-pin').getAttribute('aria-pressed')).toBe('true');
 
-    await again.click('#schedules-pin');
-    expect(again.window.localStorage.getItem('aa_sched_pin')).toBeNull();
-    await again.click('[data-topic="' + B + '"]');
+    await again.click('#schedules-close');
     expect(again.el('app').classList.contains('sched')).toBe(false);
+    expect(again.window.localStorage.getItem('aa_sched_open')).toBeNull();
   });
 
-  it('does not dock a pinned panel where there is nowhere to dock it', async () => {
-    const h = await open({ width: 500, storage: { aa_sched_pin: '1' } });
+  it('does not restore an open panel where there is nowhere to dock it', async () => {
+    const h = await open({ width: 500, storage: { aa_sched_open: '1' } });
     expect(h.el('app').classList.contains('sched')).toBe(false);
+  });
+
+  it('puts the overlay away after a run, without forgetting it was opened', async () => {
+    const C = 'c3d4e5f6';
+    const h = await open({ width: 500 });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'an ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 3, stage: 'idle', scheduled: true },
+      ],
+    });
+
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+    (h.doc.querySelector('.sess-item') as HTMLElement).click();
+    await until('the switch', () => h.window.location.search.includes(C));
+
+    // The overlay has to get out of the way of the chat it opened, but that is not the operator
+    // closing the panel: the next wide window still opens it.
+    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.window.localStorage.getItem('aa_sched_open')).toBe('1');
   });
 
   it('deletes on the second tap, not the first', async () => {
@@ -4829,7 +4858,7 @@ describe('webui page: the scheduled-task panel', () => {
     await tick();
 
     expect(h.el('app').classList.contains('sched')).toBe(false);
-    expect(h.window.localStorage.getItem('aa_sched_pin')).toBeNull();
+    expect(h.window.localStorage.getItem('aa_sched_open')).toBeNull();
   });
 
   it('says when the daemon has no task store instead of showing an empty list', async () => {
@@ -4898,8 +4927,9 @@ describe('webui page: the scheduled-task panel', () => {
 
     (h.doc.querySelector('.sess-item') as HTMLElement).click();
     await until('the switch', () => h.window.location.search.includes(C));
-    // Following the run puts the panel away, exactly as following a task's target does.
-    expect(h.el('app').classList.contains('sched')).toBe(false);
+    // Following the run leaves the panel beside the transcript: it is part of the workspace now,
+    // not a side glance that gets out of the way.
+    expect(h.el('app').classList.contains('sched')).toBe(true);
 
     const again = await open({ storage: { aa_sched_tab: 'sessions' } });
     expect(again.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('true');

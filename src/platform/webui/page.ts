@@ -327,10 +327,11 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 
 /* ── The scheduled-task panel ────────────────────────────────────────────────
    A column of its own on the right, not a section of the topic list: a task is not a
-   conversation, and the sidebar is where conversations live. Hidden until asked for; pinned, it
-   stays open across topics and reloads (localStorage, like the sidebar's width). Under 1024px
-   there is no room to dock a 240–320px column beside a 240px sidebar, so it slides over the
-   chat; under 640px it is the whole screen, like the reader.
+   conversation, and the sidebar is where conversations live. Closed on a first visit, then open
+   until the operator closes it: the choice is kept in localStorage (aa_sched_open, like the
+   sidebar's width), so opening a session from the panel leaves the panel where it was. Under
+   1024px there is no room to dock a 240–320px column beside a 240px sidebar, so it slides over
+   the chat; under 640px it is the whole screen, like the reader.
 
    The width is deliberately narrower than the sidebar's topic column was before this: the panel
    is a glance at background work, not a place to read a transcript. --schedw is set inline by
@@ -348,17 +349,19 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
 .sched-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sched-summary{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#schedules-pin.on{color:#4ade80}
 /* Two lists, one panel: a task is a definition and a session is one run of it, so they are
-   tabs rather than one merged column that would make every run look like a task. */
-#sched-tabs{display:flex;flex:0 0 auto;border-bottom:1px solid var(--line)}
-.sched-tab{flex:1;min-width:0;background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);font:inherit;font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:8px 4px 6px;cursor:pointer;white-space:nowrap}
-.sched-tab:hover{color:var(--fg)}
-.sched-tab.on{color:var(--fg);border-bottom-color:#4ade80}
+   tabs rather than one merged column that would make every run look like a task. The tabs sit at
+   the foot of the panel, not under its heading: they are a choice between two views of the same
+   column, and the bottom is where the topic sidebar keeps its own row — same padding, same type
+   size, so the two columns end on one line. */
+#sched-tabs{display:flex;align-items:center;gap:4px;padding:8px;border-top:1px solid var(--line);flex:0 0 auto}
+.sched-tab{flex:1;min-width:0;background:none;border:0;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;padding:7px 9px;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
+.sched-tab:hover{color:var(--fg);background:var(--field)}
+.sched-tab.on{color:var(--fg);background:var(--field)}
 .sched-count{font-weight:500;color:#6b7683;margin-left:2px}
 .sched-tab.on .sched-count{color:#8a8a8a}
 #schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
-#schedules-list{display:flex;flex-direction:column;gap:8px}
+#schedules-list{display:flex;flex-direction:column;gap:6px}
 /* A scheduled run, as the Sessions tab draws it: one line per topic, because there can be many
    and the thing being scanned for is which one is still working or waiting. */
 #sched-sessions{display:flex;flex-direction:column;gap:2px}
@@ -372,7 +375,11 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sess-del{opacity:.35;flex:none}
 .sess-item:hover .sess-del,.sess-item:focus-within .sess-del{opacity:1}
 .sess-del:hover{color:#f87171;background:rgba(248,113,113,.15)}
-.sched-item{border:1px solid var(--line);border-radius:6px;padding:10px;background:#1b1b1b;cursor:pointer}
+/* A task card, in the order a person asks about one: what is it, when does it run, when next,
+   where does it post, how did last time go. The name and the schedule carry the weight; the
+   countdown and the target are one quiet line under them, and the only colour is a state that is
+   not the ordinary one or a run that did not end ok. */
+.sched-item{border:1px solid var(--line);border-radius:6px;padding:10px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px}
 .sched-item:hover{background:#1e1e1e}
 .sched-item.open{background:#202020;border-color:#3a3a3a}
 .sched-row{display:flex;align-items:center;gap:8px}
@@ -384,21 +391,35 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-item.running .sched-dot{box-shadow:0 0 6px rgba(56,189,248,.8);animation:pulse 1.5s infinite}
 #app.calm .sched-item.running .sched-dot{animation:none}
 .sched-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
-.sched-state{flex:none;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
-.sched-when{margin-top:6px;font-size:12px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
-.sched-in{margin-top:2px;font-size:12px;color:#38bdf8}
-.sched-meta{margin-top:3px;font-size:12px;color:var(--dim);overflow-wrap:anywhere}
-.sched-last{margin-top:4px;font-size:12px;color:var(--dim);overflow-wrap:anywhere}
+/* A word only for the states that are not the ordinary one: an ACTIVE tag on every card is a
+   line of text that tells nobody anything. */
+.sched-state{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;background:#262626}
+.sched-state.running{color:#38bdf8;background:rgba(56,189,248,.12)}
+.sched-state.paused{color:#fbbf24;background:rgba(251,191,36,.12)}
+.sched-state.expired{color:#f87171;background:rgba(248,113,113,.12)}
+.sched-state.done{color:#4ade80;background:rgba(74,222,128,.12)}
+.sched-when{font-size:12px;color:#d0d0d0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.sched-sub{display:flex;align-items:baseline;gap:6px;min-width:0;font-size:11.5px;color:var(--dim)}
+.sched-next{flex:none;color:#a8a8a8}
+/* Blue is the running signal; a countdown on every active card would spend it. */
+.sched-item.running .sched-next{color:#38bdf8}
+.sched-target{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sched-sep{flex:none;color:#4a4a4a}
+.sched-last{font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sched-last.bad{color:#f87171}
-.sched-detail{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.sched-detail{margin-top:5px;padding-top:8px;border-top:1px solid var(--line)}
 .sched-detail-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
 .sched-detail-body{margin-top:4px;max-height:220px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#c9c9c9}
 .sched-detail-meta{margin-top:6px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
-.sched-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.sched-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .sched-acts button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
 .sched-acts button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
 .sched-acts button:disabled{opacity:.45;cursor:default}
-.sched-acts button.danger{color:#f87171}
+/* Delete is last and quiet until the pointer is on it: it is the one action here that cannot be
+   undone, and it should not compete with Pause for the eye on every card. */
+.sched-acts button:last-child{margin-left:auto}
+.sched-acts button.danger{color:var(--dim);border-color:transparent;background:none}
+.sched-acts button.danger:hover:not(:disabled){color:#f87171;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12)}
 .sched-acts button.confirm{background:rgba(248,113,113,.16);border-color:#7f1d1d;color:#fca5a5}
 #schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
@@ -711,10 +732,8 @@ button:disabled{opacity:.5;cursor:default}
 @media(max-width:1023px){
   #app.sched #schedules{position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px rgba(0,0,0,.6)}
   #app.sched #sched-backdrop{display:block}
-  /* Nothing to dock it to here, so the pin would be a control that changes nothing until the
-     window is wide again. The choice is kept, not offered. The same goes for the resize handle:
-     an overlay's width is the screen's, not the operator's. */
-  #schedules-pin{display:none}
+  /* Nothing to dock it to here, so the resize handle is not offered: an overlay's width is the
+     screen's, not the operator's. */
   #sched-resize{display:none}
 }
 @media(max-width:640px){
@@ -761,7 +780,10 @@ button:disabled{opacity:.5;cursor:default}
   #schedules-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   #schedules-toggle{min-width:44px;height:44px}
   #schedules-toggle svg{width:18px;height:18px}
-  #schedules-body{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+  #schedules-body{padding-bottom:8px}
+  /* The tab row is the panel's last line, so it — not the list above it — is what needs the
+     home-indicator clearance, exactly as the sidebar footer does. */
+  #sched-tabs{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
   .sched-acts button{min-height:44px;padding:0 14px}
   .sched-tab{min-height:44px}
   /* A hover-revealed × does not exist on a finger, and the row is the only way to delete a
@@ -821,7 +843,7 @@ const SCRIPT = `
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
       schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
-      schedPin=$('schedules-pin'), schedClose=$('schedules-close'), schedNote=$('schedules-note'), schedBackdrop=$('sched-backdrop'),
+      schedClose=$('schedules-close'), schedNote=$('schedules-note'), schedBackdrop=$('sched-backdrop'),
       schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
       schedTabTasks=$('sched-tab-tasks'), schedTabSessions=$('sched-tab-sessions'),
       schedTabTasksN=$('sched-tab-tasks-n'), schedTabSessionsN=$('sched-tab-sessions-n'),
@@ -869,9 +891,9 @@ const SCRIPT = `
   var topics = [];
   var readCounts = {};
   try { readCounts = JSON.parse(localStorage.getItem('aa_reads') || '{}'); } catch(x){}
-  // The scheduled-task panel: whether it is showing, whether it was pinned to stay open, the
-  // last list drawn, and its refresh timer. See "The scheduled-task panel" below.
-  var schedOpen=false, schedPinned=false, schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
+  // The scheduled-task panel: whether it is showing, the last list drawn, and its refresh timer.
+  // See "The scheduled-task panel" below.
+  var schedOpen=false, schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
   // Which of the panel's two lists is on screen. Persisted, because it is a preference about the
   // workspace rather than about one visit.
   var schedTab='tasks';
@@ -1233,20 +1255,18 @@ const SCRIPT = `
    * their controls, Sessions is the topics a new-session run opened. Those topics are left out of
    * the switcher (topicRows), so this tab is their only home — and the only place to delete one.
    *
-   * Closed by default, and closed again on a topic switch unless pinned: the panel is a side
-   * glance, and following a task's target into a topic should get it out of the way. Pinned, it
-   * is part of the workspace and survives topic switches and reloads (aa_sched_pin). Closing
-   * clears the pin — a close that the next reload undid would read as a panel that cannot be shut.
+   * Closed on a first visit, then open until the operator closes it: the choice is kept in
+   * localStorage (aa_sched_open), so opening a session from the panel leaves the panel where it
+   * was. Only a docked panel is restored on load — below 1024px the panel is an overlay over the
+   * chat, and coming back to a page with the whole screen covered is not "remembered", it is in
+   * the way. Closing is the close button, Escape, or the clock, and each of them is remembered too.
    *
    * The task list is pulled when the panel opens, after every action, and on a timer while it is
    * visible (5s while a task is running, 30s otherwise). The sessions list needs no request: the
    * topics event that keeps the switcher current carries their flags, state and unread counts too.
    */
-  try { schedPinned = localStorage.getItem('aa_sched_pin') === '1'; } catch(x){}
+  try { schedOpen = localStorage.getItem('aa_sched_open') === '1' && docked(); } catch(x){}
   try { if(localStorage.getItem('aa_sched_tab') === 'sessions') schedTab = 'sessions'; } catch(x){}
-  // A pinned panel is docked by definition; a window with nowhere to dock it starts closed, and
-  // the pin stays for the next wide window.
-  if(schedPinned && docked()) schedOpen = true;
 
   /** The topics a scheduled run opened, most recently active first (the order topics is in). */
   function schedSessions(){
@@ -1368,15 +1388,7 @@ const SCRIPT = `
     app.classList.toggle('sched', schedOpen);
     schedToggle.setAttribute('aria-expanded', schedOpen ? 'true' : 'false');
     schedToggle.classList.toggle('on', schedOpen);
-    schedPin.setAttribute('aria-pressed', schedPinned ? 'true' : 'false');
-    schedPin.classList.toggle('on', schedPinned);
     paintSchedTab();
-  }
-
-  function setPinned(v){
-    schedPinned = v;
-    try { if(v) localStorage.setItem('aa_sched_pin', '1'); else localStorage.removeItem('aa_sched_pin'); } catch(x){}
-    paintSchedules();
   }
 
   function disarmSched(){
@@ -1396,13 +1408,15 @@ const SCRIPT = `
     }, wait);
   }
 
-  function setSchedules(open){
+  function setSchedules(open, transient){
     if(open === schedOpen) return;
     // Docking the panel narrows the chat, which re-wraps the transcript. A reader at the bottom
     // should stay at the bottom; one reading history keeps the pixel position they chose.
     var wasBottom = atBottom();
     schedOpen = open;
-    if(!open && schedPinned) setPinned(false);
+    // A close nobody asked for — following a session on an overlay, where the panel would cover
+    // the chat it just opened — is not a preference, so it leaves aa_sched_open alone.
+    if(!transient) try { if(open) localStorage.setItem('aa_sched_open', '1'); else localStorage.removeItem('aa_sched_open'); } catch(x){}
     paintSchedules();
     if(open){
       if(schedTasks === null) schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
@@ -1473,30 +1487,52 @@ const SCRIPT = `
     return 'posts to ' + t.target;
   }
 
+  /** The last run in one line: a word, how long ago, and how long it took. Empty when it has never
+      run — "not run yet" is a line the eye reads to learn nothing. */
   function schedLast(t){
-    if(!t.last) return 'not run yet';
-    var mark = {ok:'✅', failed:'❌', interrupted:'⏹', skipped:'⏭', missed:'⌛'}[t.last.status] || t.last.status;
-    var s = 'last ' + mark + ' ' + t.last.atText;
+    if(!t.last) return '';
+    var word = {ok:'ok', failed:'failed', interrupted:'interrupted', skipped:'skipped', missed:'missed'}[t.last.status] || t.last.status;
+    var s = 'last run ' + word + ' · ' + schedAgo(t.last.at);
     if(t.last.durationMs != null) s += ' · ' + schedDur(t.last.durationMs);
     if(t.last.error) s += ' — ' + t.last.error;
     return s;
   }
 
+  /** A word only for the states that are not the ordinary one: active is what a card is unless it
+      says otherwise, and a badge on every card is noise the eye has to filter. */
+  function schedStateTag(t, state){
+    if(t.running) return '<span class="sched-state running">Running</span>';
+    if(state === 'paused') return '<span class="sched-state paused">Paused</span>';
+    if(state === 'expired') return '<span class="sched-state expired">Expired</span>';
+    if(state === 'done') return '<span class="sched-state done">Done</span>';
+    return '';
+  }
+
+  /**
+   * One task, in the order the questions come: what is it, when does it run, when next, where does
+   * it post, how did last time go. The name and the schedule carry the weight; the countdown is
+   * the one live number; the rest is a quiet line under them. The prompt, the run mode and the
+   * bookkeeping stay behind the card, which is what clicking it is for.
+   */
   function schedCard(t){
     var state = t.state || 'active';
     var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + '" data-id="' + text(t.id) + '">';
-    h += '<div class="sched-row"><span class="sched-dot"></span><span class="sched-name">' + text(t.name) + '</span><span class="sched-state">' + text(state) + '</span></div>';
+    h += '<div class="sched-row"><span class="sched-dot"></span><span class="sched-name">' + text(t.name) + '</span>' + schedStateTag(t, state) + '</div>';
     h += '<div class="sched-when">' + text(t.when) + '</div>';
-    if(t.running) h += '<div class="sched-in">running now</div>';
-    else if(t.state === 'active' && t.next) h += '<div class="sched-in">next ' + text(t.next) + (t.nextAt ? ' · ' + text(schedIn(t.nextAt)) : '') + '</div>';
-    else if(t.state === 'paused') h += '<div class="sched-in">paused</div>';
-    h += '<div class="sched-meta">' + text(t.run) + '</div>';
-    h += '<div class="sched-meta">' + text(schedTarget(t)) + '</div>';
-    h += '<div class="sched-last' + (t.last && t.last.status !== 'ok' ? ' bad' : '') + '">' + text(schedLast(t)) + '</div>';
+    var sub = '';
+    if(t.running) sub += '<span class="sched-next">running now</span><span class="sched-sep">·</span>';
+    else if(state === 'active' && t.nextAt){
+      var next = schedIn(t.nextAt);
+      sub += '<span class="sched-next" title="' + text(t.next || '') + '">' + text(next === 'due now' ? next : 'next ' + next) + '</span><span class="sched-sep">·</span>';
+    }
+    sub += '<span class="sched-target">' + text(schedTarget(t)) + '</span>';
+    h += '<div class="sched-sub">' + sub + '</div>';
+    var last = schedLast(t);
+    if(last) h += '<div class="sched-last' + (t.last.status !== 'ok' ? ' bad' : '') + '" title="' + text(t.last.atText) + '">' + text(last) + '</div>';
     h += '<div class="sched-detail" hidden>';
     h += '<div class="sched-detail-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div>';
     h += '<div class="sched-detail-body">' + text(t.detail) + '</div>';
-    var meta = '#' + t.id + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs');
+    var meta = t.run + ' · #' + t.id + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs');
     if(t.cwd) meta += ' · ' + t.cwd;
     if(t.expires) meta += ' · until ' + t.expires;
     h += '<div class="sched-detail-meta">' + text(meta) + '</div></div>';
@@ -1550,7 +1586,6 @@ const SCRIPT = `
   schedToggle.addEventListener('click', function(){ setSchedules(!schedOpen); });
   schedClose.addEventListener('click', function(){ setSchedules(false); });
   schedBackdrop.addEventListener('click', function(){ setSchedules(false); });
-  schedPin.addEventListener('click', function(){ setPinned(!schedPinned); });
   schedTabTasks.addEventListener('click', function(){ setSchedTab('tasks'); });
   schedTabSessions.addEventListener('click', function(){ setSchedTab('sessions'); });
 
@@ -2858,9 +2893,10 @@ const SCRIPT = `
 
   function switchTopic(id){
     if(!id || id===topic) return;
-    // The panel is a side glance unless it was pinned: following a topic out of the room puts it
-    // away. Pinned means the operator asked it to survive this, and it stays.
-    if(schedOpen && !schedPinned) setSchedules(false);
+    // The panel stays where it is: it is part of the workspace, and following a run out of it
+    // should leave the list of runs beside the transcript. The one exception is the overlay under
+    // 1024px, which covers the chat it just opened — there is nothing to keep it beside there.
+    if(schedOpen && !docked()) setSchedules(false, true);
     // The topic being left, written now rather than at the end of its window — in a moment
     // nothing on screen belongs to it any more and there is nothing left to write.
     cacheFlush();
@@ -3201,8 +3237,9 @@ const SCRIPT = `
     // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
     stream.onopen = function(){
       gate.hidden=true; app.hidden=false; note.textContent=''; if(!narrow()) input.focus(); initNotify();
-      // A panel opened or pinned before the gate came down asked too early (loadSchedules refuses
-      // while #app is hidden); this is the first moment the answer can be had.
+      // A panel opened (or restored from aa_sched_open) before the gate came down asked too
+      // early (loadSchedules refuses while #app is hidden); this is the first moment the answer
+      // can be had.
       if(schedOpen){ loadSchedules(); armSched(); }
     };
     stream.onerror = function(){
@@ -3588,7 +3625,7 @@ const SCRIPT = `
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
     // Close the topmost thing first: Escape over a picture or the reader must not also put away
-    // a pinned task panel behind it.
+    // an open task panel behind it.
     var overlay = !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !optsMenu.hidden;
     closeShot(); closeReader(); closeIdle();
     if(!optsMenu.hidden){ setOpts(false); optsBtn.focus(); }
@@ -4522,22 +4559,23 @@ __GATE__
     <div id="sched-resize" role="separator" aria-orientation="vertical" aria-label="Resize the scheduled panel" title="Drag to resize · double-click for the default width"></div>
     <div id="schedules-head">
       <div class="sched-heading">
-        <span class="sched-title">⏰ Scheduled tasks</span>
+        <span class="sched-title">Scheduled tasks</span>
         <span id="schedules-summary" class="sched-summary"></span>
       </div>
-      <button type="button" class="btn-icon" id="schedules-pin" aria-pressed="false" title="Keep this panel open" aria-label="Keep this panel open"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 3h6l-1 6 4 4v2H6v-2l4-4z"/><path d="M12 15v6"/></svg></button>
       <button type="button" class="btn-icon" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
-    </div>
-    <!-- A task is a definition, a session is one run that opened a topic of its own. Two lists,
-         because a run is not a task and merging them would make every run look like one. -->
-    <div id="sched-tabs" role="tablist" aria-label="Scheduled tasks and sessions">
-      <button type="button" class="sched-tab on" id="sched-tab-tasks" role="tab" aria-selected="true" aria-controls="schedules-list">Tasks <span class="sched-count" id="sched-tab-tasks-n"></span></button>
-      <button type="button" class="sched-tab" id="sched-tab-sessions" role="tab" aria-selected="false" aria-controls="sched-sessions">Sessions <span class="sched-count" id="sched-tab-sessions-n"></span></button>
     </div>
     <div id="schedules-body">
       <div id="schedules-note" hidden></div>
-      <div id="schedules-list" role="tabpanel" aria-labelledby="sched-tab-tasks"></div>
       <div id="sched-sessions" role="tabpanel" aria-labelledby="sched-tab-sessions" hidden></div>
+      <div id="schedules-list" role="tabpanel" aria-labelledby="sched-tab-tasks"></div>
+    </div>
+    <!-- A task is a definition, a session is one run that opened a topic of its own. Two lists,
+         because a run is not a task and merging them would make every run look like one. The tabs
+         sit at the foot, sharing the sidebar footer's row height, because they choose between two
+         views of this column rather than heading its content. -->
+    <div id="sched-tabs" role="tablist" aria-label="Scheduled sessions and tasks">
+      <button type="button" class="sched-tab" id="sched-tab-sessions" role="tab" aria-selected="false" aria-controls="sched-sessions">Sessions <span class="sched-count" id="sched-tab-sessions-n"></span></button>
+      <button type="button" class="sched-tab on" id="sched-tab-tasks" role="tab" aria-selected="true" aria-controls="schedules-list">Tasks <span class="sched-count" id="sched-tab-tasks-n"></span></button>
     </div>
   </aside>
   <div id="sched-backdrop"></div>

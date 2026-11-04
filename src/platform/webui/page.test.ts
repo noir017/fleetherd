@@ -91,17 +91,24 @@ describe('webui page', () => {
 
   it('has a scheduled-task panel of its own, opened from the chat header', () => {
     // A column, not a row in the topic list: a task is not a conversation, and the sidebar is
-    // the conversation switcher. The pin is what keeps it across topics and reloads.
+    // the conversation switcher. Opening it is remembered; a first visit starts closed.
     expect(html).toContain('id="schedules"');
     expect(html).toContain('id="schedules-toggle"');
     expect(html).toContain('api/schedules');
     expect(html).toContain('api/schedules/op');
-    expect(html).toContain('aa_sched_pin');
+    expect(html).toContain('aa_sched_open');
+    expect(html).not.toContain('aa_sched_pin');
+    expect(html).not.toContain('schedules-pin');
     expect(html).toContain('#app.sched #schedules{display:flex}');
-    // The definitions and the topics their runs opened are two lists, not one.
+    // The heading is words, not a clock glyph.
+    expect(html).toContain('<span class="sched-title">Scheduled tasks</span>');
+    // The definitions and the topics their runs opened are two lists, not one, and the tab row
+    // is the last thing in the column rather than a heading over it.
     expect(html).toContain('id="sched-tabs"');
     expect(html).toContain('id="sched-tab-sessions"');
     expect(html).toContain('id="sched-sessions"');
+    expect(html.indexOf('id="schedules-body"')).toBeLessThan(html.indexOf('id="sched-tabs"'));
+    expect(html.indexOf('id="sched-tab-sessions"')).toBeLessThan(html.indexOf('id="sched-tab-tasks"'));
     // Narrower than the old fixed column, and the operator can drag it.
     expect(html).toContain('clamp(240px,20vw,320px)');
     expect(html).toContain('id="sched-resize"');

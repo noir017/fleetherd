@@ -62,18 +62,19 @@ which were closed. Each conversation is kept, and the next message in a topic st
 again where it left off. A topic that starts working in the meantime is left running, and
 starred topics are closed like the rest.
 
-**Scheduled tasks.** The clock at the right of the chat header opens a panel with two tabs. **Tasks**
-lists every task the gateway has registered — what it runs, when it runs next, where its output goes,
-and how the last run ended. **Sessions** lists the topics a new-session run opened; those topics are
-kept out of the topic list, so this is where they live, and tapping one opens it (the × deletes it).
+**Scheduled tasks.** The clock at the right of the chat header opens a panel with two tabs at its
+foot. **Sessions** lists the topics a new-session run opened; those topics are kept out of the topic
+list, so this is where they live, and tapping one opens it (the × deletes it). **Tasks** lists every
+task the gateway has registered — what it runs, when it runs next, where its output goes, and how the
+last run ended.
 A run waiting on an answer puts an amber dot on the clock itself, since it has no row in the topic
 list to show it.
-The panel is a column of its own on a wide screen and an overlay on a narrow one, hidden by default,
-and narrower than the topic sidebar — drag its left edge to resize it, double-click the edge for the
-default width. Tap a task for the full prompt or command, pause or resume it, run it now, or delete it
-(two taps). The pin keeps it open across topic switches and reloads; without the pin, switching
-topics puts the panel away, and closing it clears the pin. Tasks are still registered by asking an
-agent in a topic — the panel manages them, it does not create them.
+The panel is a column of its own on a wide screen and an overlay on a narrow one, closed by default;
+once opened it stays open across topic switches and reloads, until you close it. Opening a session
+leaves it where it is. It is narrower than the topic sidebar — drag its left edge to resize it,
+double-click the edge for the default width. Tap a task for the full prompt or command, pause or
+resume it, run it now, or delete it (two taps). Tasks are still registered by asking an agent in a
+topic — the panel manages them, it does not create them.
 
 **What needs you.** Every topic waiting on you moves to the top of the list, its title in green,
 with a line under the group: a question to answer first (amber dot), then a turn that failed (red

@@ -410,26 +410,33 @@ footer is a size container so the word "Settings" drops at the narrowest sidebar
 ## The scheduled-task panel
 
 The clock at the right of the chat header toggles a panel of the gateway's scheduled work. It is
-a column of its own on a screen at least 1024px wide and a slide-over below that; hidden by
-default, and pinned open across topic switches and reloads when the operator asks (`aa_sched_pin`).
-Closing it clears the pin: a close the next reload undid would read as a panel that cannot be shut.
-The docked width defaults to `clamp(240px, 20vw, 320px)` — narrower than the topic sidebar, because
-this is a glance at background work — and the left edge is a drag handle (`aa_sched_w`, double-click
-to reset). The overlay and full-screen layouts below 1024px take their width from the screen.
+a column of its own on a screen at least 1024px wide and a slide-over below that; closed on a first
+visit, then open until the operator closes it (`aa_sched_open`), so opening a session from it leaves
+it beside the transcript. Only a docked panel is restored on load: an overlay that came back would
+cover the chat it is supposed to sit beside. The docked width defaults to
+`clamp(240px, 20vw, 320px)` — narrower than the topic sidebar, because this is a glance at
+background work — and the left edge is a drag handle (`aa_sched_w`, double-click to reset). The
+overlay and full-screen layouts below 1024px take their width from the screen.
 
 It is deliberately not a section of the topic list. A task is not a conversation — a bash task has
 none, and a new-session task makes one per run — and the sidebar is the conversation switcher. The
 panel is also the only place on this page where a task can be managed, so its toggle is always in
 the header, unlike the terminal's.
 
-**Two tabs.** **Tasks** is the definitions and their controls. **Sessions** is the topics a
-new-session run opened (`Topic.scheduled`): the switcher leaves those out (`topicRows` filters
-them), so the tab is their only listing and its × is the only delete. It needs no request of its
-own — the `topics` event that keeps the switcher current carries their titles, state, message
-counts and unread marks, so a run that starts or finishes moves the tab as it happens. Tapping a
-row opens the topic; following it puts an unpinned panel away like any other switch. A run holding
-a question puts an amber dot on the clock (`#sched-alert`), because it has no row in the switcher
-to show it there.
+**Two tabs, at the foot of the panel.** **Sessions** is the topics a new-session run opened
+(`Topic.scheduled`): the switcher leaves those out (`topicRows` filters them), so the tab is their
+only listing and its × is the only delete. **Tasks** is the definitions and their controls. The tab
+row is the panel's last line, at the same padding and type size as the topic sidebar's footer, so
+the two columns end together. Sessions needs no request of its own — the `topics` event that keeps
+the switcher current carries their titles, state, message counts and unread marks, so a run that
+starts or finishes moves the tab as it happens. Tapping a row opens the topic and leaves the panel
+where it is. A run holding a question puts an amber dot on the clock (`#sched-alert`), because it
+has no row in the switcher to show it there.
+
+A task card is four lines, in the order the questions come: the name (with a state word only when
+it is not the ordinary `active`), the schedule, the next run and the target, and the last run — red
+only when it did not end `ok`. The prompt or command, the run mode and the bookkeeping are behind a
+tap, so a column of tasks stays scannable.
 
 **Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the four
 operations; the daemon builds it in `daemon/schedule-panel.ts` from `ScheduleService`, the same
