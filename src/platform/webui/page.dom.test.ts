@@ -757,26 +757,34 @@ describe('webui page: reading a file the agent sent', () => {
   });
   const say = (h: Harness): string => h.el('reader-body').textContent ?? '';
 
-  it('offers Preview beside the link only for a file the server said it can render', async () => {
+  it("makes the file's name the way into the reader, with Download beside it, only when the server said it can render", async () => {
     const h = await open();
     await h.emit(
       sync(T, [readable('m1', 'plan.md', 'aa'), { ...message('m2', ''), file: { name: 'build.apk', url: 'f/bb' } }], [T])
     );
     const rows = h.doc.querySelectorAll('#log .files');
     expect(rows[0]?.querySelector('a')?.textContent).toBe('plan.md');
-    expect(rows[0]?.querySelector('button.view')?.getAttribute('data-view')).toBe('view/aa');
-    // `view` is the server's answer, not a guess from the name — no field, no button.
-    expect(rows[1]?.querySelector('button.view')).toBeNull();
+    expect(rows[0]?.querySelector('a[data-view]')?.getAttribute('data-view')).toBe('view/aa');
+    expect(rows[0]?.querySelector('a.view')?.textContent).toBe('Download');
+    expect(rows[0]?.querySelector('a.view')?.getAttribute('href')).toBe('f/aa');
+    expect(rows[0]?.querySelector('a.view')?.hasAttribute('download')).toBe(true);
+    // `view` is the server's answer, not a guess from the name — no field, no preview, no button.
+    expect(rows[1]?.querySelector('a[data-view]')).toBeNull();
+    expect(rows[1]?.querySelector('a.view')).toBeNull();
   });
 
-  it('opens the file over the transcript, rendered, with its name and a way to save it', async () => {
+  it('opens the file in a window over the transcript, rendered, with its name and a way to save it', async () => {
     const h = await open({ replies: { 'view/aa': reading('<h1>Plan</h1><p>ship it</p>') } });
     await h.emit(sync(T, [readable('m1', 'plan.md', 'aa')], [T]));
     expect(h.el('reader').hidden).toBe(true);
 
-    await h.click('#log button.view');
+    await h.click('#log a[data-view]');
     await until('the file to arrive', () => say(h).includes('ship it'));
     expect(h.el('reader').hidden).toBe(false);
+    // A dialog over the page, not a page of its own: the backdrop holds a box, and the box holds
+    // the name, the download link and the document.
+    expect(h.el('reader').getAttribute('role')).toBe('dialog');
+    expect(h.el('reader').querySelector('#reader-box #reader-body')).not.toBeNull();
     expect(h.calls.map((c) => c.path)).toContain('view/aa');
     expect(h.el('reader-name').textContent).toBe('plan.md');
     expect(h.el('reader-get').getAttribute('href')).toBe('f/aa');
@@ -790,7 +798,7 @@ describe('webui page: reading a file the agent sent', () => {
   it('says how much of a long file it is showing', async () => {
     const h = await open({ replies: { 'view/aa': reading('<pre class="src"><code>1\n2</code></pre>', 3 * 1048576, 524288) } });
     await h.emit(sync(T, [readable('m1', 'run.log', 'aa')], [T]));
-    await h.click('#log button.view');
+    await h.click('#log a[data-view]');
     await until('the file to arrive', () => h.el('reader-body').querySelector('.src') !== null);
     expect(h.el('reader-body').querySelector('.reader-note')?.textContent).toBe(
       'Showing the first 512 KB of 3.0 MB. Download it for the rest.'
@@ -801,23 +809,36 @@ describe('webui page: reading a file the agent sent', () => {
     const h = await open({ replies: { 'view/aa': reading('<p>ship it</p>') } });
     await h.emit(sync(T, [readable('m1', 'plan.md', 'aa')], [T]));
 
-    await h.click('#log button.view');
+    await h.click('#log a[data-view]');
     await until('the file to arrive', () => say(h).includes('ship it'));
     await h.click('#reader-close');
     expect(h.el('reader').hidden).toBe(true);
     // Emptied, not hidden with half a megabyte of DOM still under it.
     expect(h.el('reader-body').childNodes.length).toBe(0);
 
-    await h.click('#log button.view');
+    await h.click('#log a[data-view]');
     await until('the file to arrive', () => say(h).includes('ship it'));
     h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(h.el('reader').hidden).toBe(true);
+  });
+
+  it('closes on the dimmed page behind it, but not on the document', async () => {
+    const h = await open({ replies: { 'view/aa': reading('<p>ship it</p>') } });
+    await h.emit(sync(T, [readable('m1', 'plan.md', 'aa')], [T]));
+
+    await h.click('#log a[data-view]');
+    await until('the file to arrive', () => say(h).includes('ship it'));
+    // A click that lands in the box is a click in the document, and must not put it away.
+    h.el('reader-box').click();
+    expect(h.el('reader').hidden).toBe(false);
+    h.el('reader').click();
     expect(h.el('reader').hidden).toBe(true);
   });
 
   it('says a file is gone, in words, when its token no longer resolves', async () => {
     const h = await open({ status: { 'view/aa': 404 }, replies: { 'view/aa': { error: 'no such file' } } });
     await h.emit(sync(T, [readable('m1', 'plan.md', 'aa')], [T]));
-    await h.click('#log button.view');
+    await h.click('#log a[data-view]');
     await until('an answer', () => !say(h).includes('Loading'));
     expect(say(h)).toBe('This file is no longer here: the daemon has let it go since it was sent.');
   });
@@ -825,7 +846,7 @@ describe('webui page: reading a file the agent sent', () => {
   it("shows the server's reason for a file it would not render", async () => {
     const h = await open({ status: { 'view/aa': 415 }, replies: { 'view/aa': { error: 'that file is not text' } } });
     await h.emit(sync(T, [readable('m1', 'notes.txt', 'aa')], [T]));
-    await h.click('#log button.view');
+    await h.click('#log a[data-view]');
     await until('an answer', () => !say(h).includes('Loading'));
     expect(say(h)).toBe('that file is not text');
   });
@@ -842,7 +863,7 @@ describe('webui page: reading a file the agent sent', () => {
       replies: { 'view/aa': reading('<p>the first</p>'), 'view/bb': reading('<p>the second</p>') },
     });
     await h.emit(sync(T, [readable('m1', 'one.md', 'aa'), readable('m2', 'two.md', 'bb')], [T]));
-    const [first, second] = Array.from(h.doc.querySelectorAll('#log button.view')) as HTMLButtonElement[];
+    const [first, second] = Array.from(h.doc.querySelectorAll('#log a[data-view]')) as HTMLAnchorElement[];
 
     first?.click();
     await tick();
@@ -856,14 +877,15 @@ describe('webui page: reading a file the agent sent', () => {
     expect(say(h)).toBe('the second');
   });
 
-  it('offers no Preview on a message from before a restart, whose token is dead', async () => {
+  it('offers no preview on a message from before a restart, whose token is dead', async () => {
     const h = await open();
     await h.emit(sync(T, [readable('m1', 'plan.md', 'aa', { g: 1 }), readable('m2', 'next.md', 'bb', { g: 2 })], [T], { epoch: 2 }));
     const rows = h.doc.querySelectorAll('#log .files');
     // The link stays on the old one — it is what that message has always degraded to.
     expect(rows[0]?.querySelector('a')).not.toBeNull();
-    expect(rows[0]?.querySelector('button.view')).toBeNull();
-    expect(rows[1]?.querySelector('button.view')).not.toBeNull();
+    expect(rows[0]?.querySelector('a[data-view]')).toBeNull();
+    expect(rows[0]?.querySelector('a.view')).toBeNull();
+    expect(rows[1]?.querySelector('a[data-view]')).not.toBeNull();
   });
 });
 
@@ -3655,13 +3677,15 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(css).toMatch(/#kill-agent\{[^}]*height:44px/);
   });
 
-  it("gives the file reader's close button, and Preview, a finger-sized target", () => {
-    // Measured in Chromium at 390px: the close button was 35x30 and Preview 22px tall before this;
-    // 44x44 and 33px after (project-scripts/talkcode-file-reader/e2e.mts).
+  it("gives the file reader's close button, and Download, a finger-sized target", () => {
+    // Measured in Chromium at 390px: the close button was 35x30 and the old Preview 22px tall
+    // before this; 44x44 and 33px after (project-scripts/talkcode-file-reader/e2e.mts).
     const css = narrowBlock();
     expect(css).toMatch(/#reader-close\{[^}]*min-width:44px/);
     expect(css).toMatch(/#reader-close\{[^}]*height:44px/);
     expect(css).toContain('.files .view{padding:6px 12px}');
+    // A margin all round, so the reader still reads as a window rather than a page on a phone.
+    expect(css).toContain('#reader{padding:8px}');
   });
 
   it("gives the idle-agents dialog's answers a finger-sized target", () => {
