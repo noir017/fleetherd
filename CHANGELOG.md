@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.28.1] - 2026-11-04
+
 ### Fixed
 
 - **The agent tag in a topic row dims with its title instead of sitting at one fixed grey.** The
