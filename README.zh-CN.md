@@ -50,6 +50,7 @@ Code、Codex、OpenCode，以及 Google 的 Antigravity CLI。给机器人发消
 - **子代理和待办列表** —— `/super <任务>`：智能体把活拆开，经你确认后交给几个智能体在挂在它下面的话题里同时干，再检查结果、汇报给你。网页端列出所有在等你的事，还能推送到手机。[→](docs/zh-CN/sub-agents.md)
 - **失败后自动继续** —— 上游故障导致一轮失败时，可以用你自己的话自动继续，并跑一条命令提醒你。[→](docs/zh-CN/agents.md#一轮失败之后)
 - **定时任务** —— 「每天早上 8 点……」会变成网关自己保存的任务，重启不丢。[→](docs/zh-CN/scheduled-tasks.md)
+- **工作偏好，所有智能体通用** —— 你希望怎么干活写一次，每台主机上的每个智能体都读得到；只适合某一种智能体的，另写一份给它。[→](docs/zh-CN/instructions.md)
 - **语音消息** —— 自动转写，先给你看，确认后再发。[→](docs/zh-CN/voice.md)
 - **精简配置** —— 五个部分，支持 `${VAR}` 与 `.env` 展开；值得在聊天里改的那几项用 [`/setting`](docs/zh-CN/settings.md) 直接改。
 
@@ -125,6 +126,7 @@ access:
 | [语音消息](docs/zh-CN/voice.md) | 转写与确认 |
 | [定时任务](docs/zh-CN/scheduled-tasks.md) | 定时跑提示词或命令 |
 | [子代理](docs/zh-CN/sub-agents.md) | `/super`：把一件活拆给几个智能体并行干 |
+| [工作偏好](docs/zh-CN/instructions.md) | 一份给所有智能体的工作偏好，外加每种智能体各自一份 |
 | [智能体能做什么](docs/zh-CN/agent-actions.md) | 按钮提问、发文件、内置 skill |
 
 ## 参与开发

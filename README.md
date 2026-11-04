@@ -50,6 +50,7 @@ was called `agent-anywhere` until 2.0.0.
 - **Sub-agents, and a list of what needs you** — `/super <job>`: the agent splits a job, hands the parts to other agents that work in parallel in topics nested under it — once you confirm — then checks and reports. The web UI lists what is waiting on you and can notify your phone. [→](docs/sub-agents.md)
 - **Failed turns can carry on** — continue automatically after an upstream outage, with your own words, and run a command to alert you. [→](docs/agents.md#when-a-turn-fails)
 - **Scheduled tasks** — "every morning at 8, …" becomes a task the gateway keeps, surviving restarts. [→](docs/scheduled-tasks.md)
+- **Your instructions, for every agent** — write once how you want to be worked with; every agent on every host reads it, plus a file per agent for what only suits one. [→](docs/instructions.md)
 - **Voice messages** — transcribed, shown to you, and sent on once you confirm. [→](docs/voice.md)
 - **Small config** — five sections, `${VAR}` and `.env` expansion; [`/setting`](docs/settings.md) edits the fields worth changing from chat.
 
@@ -128,6 +129,7 @@ is in [Configuration](docs/configuration.md).
 | [Voice messages](docs/voice.md) | transcription and confirmation |
 | [Scheduled tasks](docs/scheduled-tasks.md) | prompts and commands on a schedule |
 | [Sub-agents](docs/sub-agents.md) | `/super`: split a job across agents working in parallel |
+| [Your instructions](docs/instructions.md) | one set of standing instructions for every agent, plus one per agent |
 | [What the agent can do](docs/agent-actions.md) | button questions, sending files, the bundled skill |
 
 ## Contributing

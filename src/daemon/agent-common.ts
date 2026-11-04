@@ -7,6 +7,7 @@ import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import type { AgentStreamHandlers } from './agent.js';
 import { remoteHosts } from './remote-hosts.js';
+import { placeInstructions } from './instructions.js';
 import { ensureReverseCliShim } from './reverse-cli-shim.js';
 import { ensureSkillLink } from './skill-link.js';
 
@@ -141,8 +142,9 @@ export function buildAgentEnv(
   const shimDir = ensureReverseCliShim();
   if (shimDir) env.PATH = `${shimDir}${delimiter}${env.PATH ?? ''}`;
   // The skill goes under the home THIS agent runs as — an `env.HOME` override included — because
-  // that is where its harness will look (see skill-link).
+  // that is where its harness will look (see skill-link). The operator's instructions likewise.
   ensureSkillLink(def.harness, env.HOME || homedir(), def.command);
+  placeInstructions(def, env.HOME || homedir());
   return env;
 }
 
@@ -195,8 +197,8 @@ export function remoteAgentEnv(def: AgentDef, sessionToken?: string): Record<str
 
 /**
  * Everything a remote spawn needs before the process can start: the host reached (or the reason it
- * cannot be), the directory resolved and present on it, and the bundled skill placed for the
- * harness. Mirrors what the local path does — an agent's own workspace is created, a configured
+ * cannot be), the directory resolved and present on it, and the bundled skill and the operator's
+ * instructions placed for the harness. Mirrors what the local path does — an agent's own workspace is created, a configured
  * directory is not (a typo should say so), and a `/cd` choice that has since disappeared falls back
  * to the root rather than failing the turn.
  */
@@ -223,6 +225,7 @@ export async function prepareRemoteSpawn(
     }
   }
   await remoteHosts.placeSkill(host, def, remoteAgentHome(def, welcome), welcome);
+  await remoteHosts.placeInstructions(host, def, remoteAgentHome(def, welcome), welcome);
   return { welcome, cwd: dir };
 }
 

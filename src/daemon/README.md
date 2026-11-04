@@ -45,6 +45,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `restart-drain.ts` | A SIGTERM with turns or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `talkcode` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
 | `skill-link.ts` | Links the bundled skills (`talkcode`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
+| `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
 | `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
 | `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
 | `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on, and the `[sub-agent updates]` card |
@@ -1035,7 +1036,8 @@ SIGKILL after `KILL_GRACE_MS` — harness CLIs may ignore SIGTERM mid-turn).
 
 `buildAgentEnv` runs at every spawn in both runtimes, which makes it the one place that provisions
 what the reverse CLI depends on: the shim at the front of `PATH`, and the skill link
-(`skill-link.ts`) under the home this agent runs as.
+(`skill-link.ts`) under the home this agent runs as. It also places the operator's instructions
+(`instructions.ts`) there; an agent on a remote host gets both from `prepareRemoteSpawn`.
 
 #### Agents on a remote host
 
