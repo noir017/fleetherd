@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.33.0] - 2026-11-05
+
 ### Added
 
 - **A skills page in the web UI.** The gateway's managed skills could only be read and edited by
