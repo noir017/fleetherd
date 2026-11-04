@@ -21,6 +21,8 @@ import {
 } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes } from './skill-link.js';
+import { managedSkillsHome } from './managed-skills.js';
+import { activeSkillFiles, archivedSkillNames } from './skills-store.js';
 
 /**
  * The daemon's remote hosts (`hosts:` in config.yaml): one RemoteHost per entry, shared by every
@@ -94,6 +96,8 @@ export class RemoteHosts {
    * hash of the text, or `none` / `too-big`), so an unchanged text costs no round trip per spawn.
    */
   private readonly instructionsPlaced = new Map<string, string>();
+  /** host id + daemon instance + skill name → the version delivered there, or `absent` for an archived one. */
+  private readonly managedPlaced = new Map<string, string>();
 
   /** (Re)build the host table from config. Unchanged entries keep their live connection. */
   configure(cfg: Pick<Config, 'hosts'>, socketPath: string): void {
@@ -235,6 +239,63 @@ export class RemoteHosts {
     } catch (e) {
       reportInstructions({ link: where.file, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) }, host.id);
     }
+  }
+
+  /**
+   * Put the gateway's managed skills where `def` reads skills on the host — the remote twin of
+   * managed-skills.ts `placeManagedSkills`, which says where and under what rules. The copy goes to
+   * `<home>/.talkcode/skills/<name>/`; each skill is linked into the harness's directories with
+   * `owned` set, so a link of the operator's own is never repointed.
+   *
+   * A version delivered once is not sent again on the next spawn (per host, daemon instance and
+   * skill); a new gateway instance re-places everything, since its own state is gone. Archived
+   * skills have their links taken back in every directory a link could be in, then are remembered
+   * as absent so a spawn costs nothing more. Best-effort like the bundled skill.
+   */
+  async placeManagedSkills(host: RemoteHost, def: AgentDef, home: string, w: Welcome, dir?: string): Promise<void> {
+    if (process.env.TALKCODE_NO_SKILL_LINK) return;
+    const owned = managedSkillsHome(home);
+    const homes = skillHomes(def.harness, home, def.command);
+    for (const skill of activeSkillFiles(dir)) {
+      const key = `${host.id}@${w.instance}@${skill.name}`;
+      if (this.managedPlaced.get(key) === skill.version) continue;
+      try {
+        const copy = `${owned}/${skill.name}`;
+        for (const [rel, data] of skill.files) {
+          await host.writeFile(`${copy}/${rel}`, data, rel.startsWith('scripts/') ? 0o555 : 0o444, { atomic: true });
+        }
+        for (const h of homes) await this.linkManaged(host, copy, h, skill.name, owned);
+        this.managedPlaced.set(key, skill.version);
+      } catch (e) {
+        console.warn(`[skills] ${host.id}: could not place "${skill.name}":`, e instanceof Error ? e.message : e);
+      }
+    }
+    for (const name of archivedSkillNames(dir)) {
+      const key = `${host.id}@${w.instance}@${name}`;
+      if (this.managedPlaced.get(key) === 'absent') continue;
+      try {
+        for (const dir of allSkillDirs(home)) await this.unlinkManaged(host, dir, name, owned);
+        this.managedPlaced.set(key, 'absent');
+      } catch (e) {
+        console.warn(`[skills] ${host.id}: could not take back archived "${name}":`, e instanceof Error ? e.message : e);
+      }
+    }
+  }
+
+  /** One managed skill's link into one of a harness's directories, with `owned` set. */
+  private async linkManaged(host: RemoteHost, copy: string, where: { dir: string; requires: string }, name: string, owned: string): Promise<void> {
+    const r = await host.ensureLink(copy, `${where.dir}/${name}`, where.requires, owned);
+    if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[skills] ${host.id}: ${r.outcome} ${r.link} → ${copy}`);
+    else if (r.outcome === 'occupied' || r.outcome === 'failed') {
+      console.warn(`[skills] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''}) — leaving it alone`);
+    }
+  }
+
+  /** Take one archived skill's link out of one directory, only if it is ours. */
+  private async unlinkManaged(host: RemoteHost, dir: string, name: string, owned: string): Promise<void> {
+    const r = await host.removeLink(`${dir}/${name}`, owned);
+    if (r.outcome === 'removed') console.log(`[skills] ${host.id}: took back ${r.link} (archived)`);
+    else if (r.outcome === 'kept') console.warn(`[skills] ${host.id}: ${r.link} is ${r.detail ?? 'not ours'} — leaving it alone`);
   }
 
   /**

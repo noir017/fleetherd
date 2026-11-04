@@ -8,6 +8,7 @@ import type { RemoteHost } from '../remote/host.js';
 import type { AgentStreamHandlers } from './agent.js';
 import { remoteHosts } from './remote-hosts.js';
 import { placeInstructions } from './instructions.js';
+import { placeManagedSkills } from './managed-skills.js';
 import { ensureReverseCliShim } from './reverse-cli-shim.js';
 import { ensureSkillLink } from './skill-link.js';
 
@@ -145,6 +146,8 @@ export function buildAgentEnv(
   // that is where its harness will look (see skill-link). The operator's instructions likewise.
   ensureSkillLink(def.harness, env.HOME || homedir(), def.command);
   placeInstructions(def, env.HOME || homedir());
+  // The skills the gateway keeps itself, delivered the same way and from the same moment.
+  placeManagedSkills(def, env.HOME || homedir());
   return env;
 }
 
@@ -226,6 +229,7 @@ export async function prepareRemoteSpawn(
   }
   await remoteHosts.placeSkill(host, def, remoteAgentHome(def, welcome), welcome);
   await remoteHosts.placeInstructions(host, def, remoteAgentHome(def, welcome), welcome);
+  await remoteHosts.placeManagedSkills(host, def, remoteAgentHome(def, welcome), welcome);
   return { welcome, cwd: dir };
 }
 

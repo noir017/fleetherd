@@ -41,6 +41,9 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'task-read', topic: 'web:main/t1', limit: 5, full: true, tail: 20 },
     { kind: 'task-status', topic: 'web:main/t1' },
     { kind: 'task-stop', topic: 'web:main/t1' },
+    { kind: 'skills', action: 'list' },
+    { kind: 'skills', action: 'show', name: 'deploy-check', file: 'references/api.md' },
+    { kind: 'skills', action: 'patch', name: 'deploy-check', version: 'abc123', content: '---\nname: deploy-check\ndescription: x\n---\n' },
   ];
   it.each(valid)('accepts %j', (action) => {
     const r = parseIpcRequest({ token: TOKEN, action });
@@ -55,6 +58,8 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['empty token', { token: '', action: { kind: 'fetch-messages' } }],
     ['non-string token', { token: 123, action: { kind: 'fetch-messages' } }],
     ['unknown discriminator', { token: TOKEN, action: { kind: 'rm-rf' } }],
+    ['unknown skills action', { token: TOKEN, action: { kind: 'skills', action: 'frobnicate', name: 'x' } }],
+    ['skills extra field (strict)', { token: TOKEN, action: { kind: 'skills', action: 'list', evil: 1 } }],
     ['missing required field (reply.text)', { token: TOKEN, action: { kind: 'reply', messageId: 'm1' } }],
     ['wrong field type (text number)', { token: TOKEN, action: { kind: 'send-message', text: 5 } }],
     ['empty channelId string', { token: TOKEN, action: { kind: 'fetch-messages', channelId: '' } }],

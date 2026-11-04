@@ -1,6 +1,7 @@
 import type { AgentDef, Config } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
 import { SessionTokenRegistry } from './conversation-token-registry.js';
+import { beginSkillTurn, recordToolUse } from './skill-usage.js';
 import {
   translateCommand,
   buildHelpText,
@@ -710,7 +711,10 @@ export class ConversationRegistry {
         recordModel: (id, model) => this.status.model(id, model),
         recordEffort: (id, effort) => this.status.effort(id, effort),
         recordQuota: (id, pools) => this.status.quota(id, pools),
-        recordTool: (id, evt) => this.progress.tool(id, evt),
+        recordTool: (id, evt) => {
+          this.progress.tool(id, evt);
+          recordToolUse(id, this.agentIdOf(id), evt);
+        },
         recordTurnComplete: (id) => {
           const state = this.conversations.get(id);
           if (state) state.turnCompleted = true;
@@ -3819,7 +3823,12 @@ ${formatTokens(left)} left before compaction — ${name}`;
         // Reactions target inbound messages of this conversation; resolve the adapter at call time
         // (a shared-scope conversation's platform may have changed since the merger was built).
         addReaction: (ref, emoji) => this.adapterFor(conversationId).addReaction(ref, emoji),
-        runTurn: (batch, signal) => this.turnRunner.runTurn(conversationId, batch, signal),
+        runTurn: (batch, signal) => {
+          // A `/skill-name` message is a use of that managed skill; the rest of the signals come
+          // from tool events (recordTool above). One turn counts a skill once.
+          beginSkillTurn(conversationId, this.agentIdOf(conversationId), batch);
+          return this.turnRunner.runTurn(conversationId, batch, signal);
+        },
         // A message sent mid-turn is handed to the turn that is running, for a harness that can take
         // it there (see TurnRunner.steer); otherwise the merger queues it behind the turn.
         steer: (batch) => this.turnRunner.steer(conversationId, batch),

@@ -155,6 +155,35 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('pod-remove'), name: z.string().min(1).max(32) }).strict(),
+  // The gateway's own skills (daemon/skills-store.ts). `action` decides which of the optional
+  // fields matter; the store validates names, paths, versions and content in full, with a message
+  // that says what is wrong. Bounds here only keep a malformed request from carrying a megabyte.
+  z
+    .object({
+      kind: z.literal('skills'),
+      action: z.enum([
+        'list',
+        'show',
+        'create',
+        'patch',
+        'write-file',
+        'remove-file',
+        'archive',
+        'restore',
+        'pin',
+        'unpin',
+        'history',
+        'revert',
+      ]),
+      name: z.string().min(1).max(64).optional(),
+      file: z.string().min(1).max(300).optional(),
+      version: z.string().min(1).max(64).optional(),
+      content: z.string().max(1_048_576).optional(),
+      description: z.string().min(1).max(2_000).optional(),
+      body: z.string().max(32_000).optional(),
+      id: z.string().min(1).max(64).optional(),
+    })
+    .strict(),
   z
     .object({ kind: z.literal('schedule-op'), id: z.string().min(1), op: z.enum(['remove', 'pause', 'resume', 'run']) })
     .strict(),
@@ -245,6 +274,29 @@ export type IpcAction =
   | { kind: 'pod-list' }
   | { kind: 'pod-add'; name: string; ssh: string; hostKey: string }
   | { kind: 'pod-remove'; name: string }
+  | {
+      kind: 'skills';
+      action:
+        | 'list'
+        | 'show'
+        | 'create'
+        | 'patch'
+        | 'write-file'
+        | 'remove-file'
+        | 'archive'
+        | 'restore'
+        | 'pin'
+        | 'unpin'
+        | 'history'
+        | 'revert';
+      name?: string;
+      file?: string;
+      version?: string;
+      content?: string;
+      description?: string;
+      body?: string;
+      id?: string;
+    }
   | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run' }
   | { kind: 'task-agents' }
   | { kind: 'task-list'; limit?: number }

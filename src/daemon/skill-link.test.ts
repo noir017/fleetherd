@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, ensureSkillLink, linkSkill, skillHomes } from './skill-link.js';
+import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, ensureSkillLink, linkSkill, removeSkillLink, skillHomes } from './skill-link.js';
 
 /**
  * The skill link writes into SHARED directories (the operator's own `~/.claude/skills`), so these
@@ -83,6 +83,33 @@ describe('linkSkill', () => {
     fs.mkdirSync(own, { recursive: true });
     expect(linkSkill(source, claude())).toMatchObject({ outcome: 'occupied', detail: 'a directory' });
     expect(fs.lstatSync(own).isDirectory()).toBe(true);
+  });
+
+  it('with `owned`, leaves a link of the operator\'s own alone', () => {
+    fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+    const link = path.join(home, '.claude', 'skills', 'mine');
+    fs.symlinkSync('/somewhere/else', link);
+    expect(linkSkill(source, claude(), 'mine', path.join(home, '.talkcode', 'skills'))).toMatchObject({
+      outcome: 'occupied',
+      detail: 'a link to /somewhere/else',
+    });
+    expect(fs.readlinkSync(link)).toBe('/somewhere/else');
+  });
+});
+
+describe('removeSkillLink', () => {
+  it('removes a link that points into the owned directory, and nothing else', () => {
+    const owned = path.join(home, '.talkcode', 'skills');
+    fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+    const ours = path.join(home, '.claude', 'skills', 'ours');
+    const theirs = path.join(home, '.claude', 'skills', 'theirs');
+    fs.symlinkSync(path.join(owned, 'ours'), ours);
+    fs.symlinkSync('/somewhere/else', theirs);
+    expect(removeSkillLink(ours, owned)).toMatchObject({ outcome: 'removed' });
+    expect(fs.existsSync(ours)).toBe(false);
+    expect(removeSkillLink(theirs, owned)).toMatchObject({ outcome: 'occupied', detail: 'a link to /somewhere/else' });
+    expect(fs.readlinkSync(theirs)).toBe('/somewhere/else');
+    expect(removeSkillLink(path.join(home, '.claude', 'skills', 'gone'), owned)).toMatchObject({ outcome: 'skipped' });
   });
 });
 
