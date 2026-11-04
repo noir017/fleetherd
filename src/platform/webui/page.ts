@@ -680,24 +680,28 @@ button:disabled{opacity:.5;cursor:default}
 #lightbox{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;padding:12px;cursor:zoom-out}
 #lightbox[hidden]{display:none}
 #lightbox img{max-width:100%;max-height:100%;object-fit:contain}
-/* A file the agent sent, read where it was sent (openReader; the HTML is reading.ts's). Over the
-   whole page and not a new tab, for the lightbox's reason: installed as an app there is no tab bar
-   to come back from. Opaque where the lightbox is dimmed, because this is read, not glanced at.
-   The bar's height matches #chat-header's so the name sits where the topic title was. */
-#reader{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column}
+/* A file the agent sent, read where it was sent (openReader; the HTML is reading.ts's). A window
+   over the transcript and not a new tab, for the lightbox's reason: installed as an app there is no
+   tab bar to come back from. The backdrop is dimmed and the box opaque, because this is read, not
+   glanced at; the box is capped in both directions so the conversation stays visible around it. */
+#reader{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#reader[hidden]{display:none}
+#reader-box{display:flex;flex-direction:column;width:min(900px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
 #reader-bar{display:flex;align-items:center;gap:12px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
 #reader-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 #reader-get{color:#8fa6c0}
 #reader-close{font-size:18px;padding:6px 10px}
-#reader-body{flex:1;overflow-y:auto;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));outline:none}
+#reader-body{flex:1;min-height:0;overflow-y:auto;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));outline:none}
 #reader-body>*{max-width:860px;margin-left:auto;margin-right:auto}
 /* A text file wraps rather than scrolling sideways: a whole document wider than a phone is read a
    line at a time with a thumb, and a log's long lines are the usual reason it is wide. */
 #reader .src{white-space:pre-wrap;overflow-wrap:anywhere}
 .reader-note{color:var(--dim);font-size:12px;margin-bottom:12px}
-/* Beside the file's link, and smaller than a message's own buttons: it is about the file, and
-   the link it sits next to is the thing it is an alternative to. */
-.files .view{font-size:12px;padding:1px 8px}
+/* The way to the bytes, beside the name that opens the reader. Smaller than a message's own
+   buttons because it is about the file. An anchor rather than a button, so it still downloads
+   with the script dead; dressed as a button to match the Preview it replaced. */
+.files .view{display:inline-block;font-size:12px;padding:1px 8px;color:var(--fg);background:var(--field);border:1px solid var(--line);border-radius:4px;text-decoration:none}
+.files .view:hover{border-color:#3a3a3a}
 #row{display:flex;gap:8px;align-items:flex-end}
 /* Red at rest, unlike #kill-agent: it only exists while a reply is streaming in, and in that
    moment it is the control being looked for. */
@@ -812,8 +816,10 @@ button:disabled{opacity:.5;cursor:default}
     min-width:44px;height:44px;font-size:18px}
   /* The reader's way out, for the same finger: it measured 35x30 at 390px in Chromium before this.
      The bar gives up its vertical padding to it, as the chat header does to the drawer toggle.
-     Preview grows too — at 12px with 1px of padding it was a 22px-tall target beside a link that
-     a near miss would download instead. */
+     Download grows too — at 12px with 1px of padding it was a 22px-tall target beside the file's
+     name. The window keeps a margin all round rather than going edge to edge, so it still reads
+     as something laid over the conversation. */
+  #reader{padding:8px}
   #reader-bar{padding:0 4px 0 12px}
   #reader-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   .files .view{padding:6px 12px}
@@ -1844,11 +1850,14 @@ const SCRIPT = `
       // exists to remove. The link stays underneath either way: it is still the only way to
       // get the bytes onto disk, and it is what a picture that fails to load degrades to.
       if(m.file.image) h += '<img class="shot" src="'+text(m.file.url)+'" alt="'+text(m.file.name)+'" loading="lazy">';
-      h += '<div class="files"><a href="'+text(m.file.url)+'" download>'+text(m.file.name)+'</a>';
-      // A report or a log can be read here instead (openReader). Not offered on history, for the
+      h += '<div class="files"><a href="'+text(m.file.url)+'" download'
+        + (m.file.view && !hist ? ' data-view="'+text(m.file.view)+'"' : '')
+        + '>'+text(m.file.name)+'</a>';
+      // A report or a log is read by tapping its name (openReader); Download beside it is the
+      // way to the bytes, which is what the name used to be. Not offered on history, for the
       // reason its buttons are dropped below: the token died with the process that minted it, so
       // the reader could only ever open onto "no longer here".
-      if(m.file.view && !hist) h += '<button type="button" class="view" data-view="'+text(m.file.view)+'">Preview</button>';
+      if(m.file.view && !hist) h += '<a class="view" href="'+text(m.file.url)+'" download>Download</a>';
       h += '</div>';
     }
     // Buttons are dropped from a message that came out of the cache: the process that would
@@ -3565,8 +3574,10 @@ const SCRIPT = `
     // A new topic's choice of agent: typed for the operator, so it is a message like any other.
     var card = e.target.closest ? e.target.closest('button[data-agent]') : null;
     if(card) return command('/agent '+card.getAttribute('data-agent'));
-    var view = e.target.closest ? e.target.closest('button[data-view]') : null;
-    if(view) return openReader(view);
+    // The name of a file the server can render opens it (openReader); the Download link beside
+    // it, and any file the server cannot render, stays an ordinary download.
+    var view = e.target.closest ? e.target.closest('a[data-view]') : null;
+    if(view){ e.preventDefault(); return openReader(view); }
     // What a message that failed to send offers. Checked before the ordinary buttons: these are
     // answered here, locally, and never posted as a click on a message the daemon has no idea
     // about.
@@ -3638,24 +3649,22 @@ const SCRIPT = `
 
   /**
    * Read a file the agent sent without downloading it. The server renders it (reading.ts) and the
-   * answer fills an overlay over the transcript. The name and the download link come from the
-   * message at once, so a slow link shows which file is coming rather than an empty frame.
+   * answer fills a window over the transcript. The name and the download link are on the file's
+   * own link, so a slow link shows which file is coming rather than an empty frame.
    *
    * readSeq is which opening an answer belongs to. Close one file and open another before the first
    * has answered, and without it the first file's text would land under the second one's name.
    */
   var readSeq = 0;
-  function openReader(btn){
-    var link = btn.parentNode.querySelector('a');
-    readerName.textContent = link ? link.textContent : '';
+  function openReader(link){
+    readerName.textContent = link.textContent;
     readerName.title = readerName.textContent;
-    if(link) readerGet.setAttribute('href', link.getAttribute('href'));
-    readerGet.hidden = !link;
+    readerGet.setAttribute('href', link.getAttribute('href'));
     readerSay('Loading\\u2026');
     reader.hidden = false;
     readerBody.focus();
     var mine = ++readSeq;
-    fetch(btn.getAttribute('data-view'), {credentials:'same-origin'}).then(function(r){
+    fetch(link.getAttribute('data-view'), {credentials:'same-origin'}).then(function(r){
       return r.json().then(function(j){ return {ok:r.ok, status:r.status, body:j}; });
     }).then(function(res){
       if(mine !== readSeq) return;
@@ -3679,6 +3688,9 @@ const SCRIPT = `
   }
   function byteSize(n){ return n < 1048576 ? Math.max(1, Math.round(n/1024)) + ' KB' : (n/1048576).toFixed(1) + ' MB'; }
   $('reader-close').addEventListener('click', closeReader);
+  // The dimmed page behind the window is a way out too, as it is for the lightbox — but only the
+  // backdrop itself: a click that lands in the document must not close what is being read.
+  reader.addEventListener('click', function(e){ if(e.target === reader) closeReader(); });
 
   // Grow to fit, and let the max-height in the stylesheet decide where to stop — it is stated
   // in dvh there, which on a phone with the keyboard up is the viewport that is actually left.
@@ -4466,15 +4478,18 @@ __GATE__
        image, rather than one per message: the transcript holds hundreds. -->
   <div id="lightbox" hidden><img id="lightbox-img" alt=""></div>
   <!-- A file the agent sent, rendered for reading (openReader). One node for every file, like the
-       lightbox; the body is emptied when it closes. tabindex lets the body take focus on open, so
-       the keyboard scrolls the document rather than the transcript behind it. -->
+       lightbox; the body is emptied when it closes. A window over the transcript rather than a page
+       of its own, so the conversation stays visible around it. tabindex lets the body take focus on
+       open, so the keyboard scrolls the document rather than the transcript behind it. -->
   <div id="reader" hidden role="dialog" aria-modal="true" aria-labelledby="reader-name">
-    <div id="reader-bar">
-      <span id="reader-name"></span>
-      <a id="reader-get" download>Download</a>
-      <button type="button" class="btn-icon" id="reader-close" title="Close (Esc)" aria-label="Close">&times;</button>
+    <div id="reader-box">
+      <div id="reader-bar">
+        <span id="reader-name"></span>
+        <a id="reader-get" download>Download</a>
+        <button type="button" class="btn-icon" id="reader-close" title="Close (Esc)" aria-label="Close">&times;</button>
+      </div>
+      <div id="reader-body" tabindex="-1"></div>
     </div>
-    <div id="reader-body" tabindex="-1"></div>
   </div>
   <!-- "Close idle agents", confirmed against the list it will act on (openIdle), then showing what
        happened to each. -->
