@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The topic list is ordered by what each topic is doing, and a /super dispatcher counts as
+  working while its sub-agents are.** A dispatcher hands its job to topics of its own and then sits
+  idle between turns, so its row — now the only one on screen, since sub-agent topics are folded
+  away by default — was the one row that looked dead while the work ran. It is drawn as running
+  (dot, title, chat header), sorts with the working group, and is no longer offered by "Close
+  idle". Below the green needs-you group the list is ordered the way it is read: working, an agent
+  that is up and idle, then one with no process behind it; a starred row leads its unstarred peers
+  inside a state, and the daemon's most-recently-active order holds below that. Sub-agent topics
+  start folded under the topic that opened them; opening one is remembered per browser.
+
 ## [2.27.1] - 2026-11-04
 
 ### Fixed

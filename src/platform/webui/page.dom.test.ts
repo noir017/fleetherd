@@ -1397,7 +1397,8 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     // Drawn at once rather than on the broadcast, so a tap on a slow link does not look ignored.
     expect(order(h)).toEqual([C, A, B]);
     expect(h.doc.querySelector(`[data-star="${C}"]`)?.getAttribute('aria-pressed')).toBe('true');
-    expect(h.doc.querySelector(`[data-topic="${A}"]`)?.classList.contains('after-stars')).toBe(true);
+    // A star leads its peers inside its state; it is not a group of its own, so no divider.
+    expect(h.doc.querySelector('#topics .after-needs')).toBeNull();
     // Starring is not a reason to switch to it.
     expect(h.live().url).toBe(`api/events?t=${A}`);
     // And the sweep now says it spares what was starred.
@@ -4303,7 +4304,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     // Each topic once: the rows themselves move up, with a line under them, rather than a second
     // copy of each in a block of their own (which read as two conversations).
     expect(rows(h)).toEqual([D, C, B, A]);
-    expect(h.doc.querySelector(`#topics [data-topic="${A}"]`)?.classList.contains('after-stars')).toBe(true);
+    expect(h.doc.querySelector(`#topics [data-topic="${A}"]`)?.classList.contains('after-needs')).toBe(true);
     expect(h.doc.getElementById('needs')).toBeNull();
     // The dot still says which of the three it is.
     expect(h.doc.querySelector(`#topics [data-topic="${B}"] .topic-dot`)?.className).toBe('topic-dot review');
@@ -4336,46 +4337,94 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     expect(stop.hidden).toBe(true);
   });
 
-  it('nests a sub-agent’s topic under the one that opened it, starred roots first', async () => {
+  it('nests a sub-agent’s topic under the one that opened it, folded a level at a time', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'topics', topics: list({ [B]: { parent: D }, [C]: { parent: B }, [D]: { starred: true } }) });
+    // Folded on first sight: the column lists conversations, not the working detail behind one.
+    expect(rows(h)).toEqual([D, A]);
+    expect(h.doc.querySelector(`#topics [data-fold="${D}"]`)?.textContent).toBe('▸ 1');
+    await h.click(`#topics [data-fold="${D}"]`);
+    // Opening one level does not open the next.
+    expect(rows(h)).toEqual([D, B, A]);
+    expect(h.doc.querySelector(`#topics [data-fold="${B}"]`)?.textContent).toBe('▸ 1');
+    await h.click(`#topics [data-fold="${B}"]`);
     expect(rows(h)).toEqual([D, B, C, A]);
     const row = (id: string): Element => h.doc.querySelector(`#topics [data-topic="${id}"]`)!;
     expect(row(D).className).not.toMatch(/\bsub\b/);
     expect(row(B).className).toMatch(/\bsub d1\b/);
     expect(row(C).className).toMatch(/\bsub d2\b/);
-    expect(row(A).classList.contains('after-stars')).toBe(true);
     expect(row(D).querySelector('[data-fold]')?.textContent).toBe('▾ 1');
     expect(row(A).querySelector('[data-fold]')).toBeNull();
     // A child is a topic like any other: it can be starred and deleted.
     expect(row(B).querySelector('[data-del]')).not.toBeNull();
   });
 
-  it('folds a parent’s sub-agents away — remembered, colour kept, and without switching to it', async () => {
+  it('folds a parent’s sub-agents away by default — remembered, colour kept, and without switching to it', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
-    const topics = list({ [B]: { parent: D }, [C]: { parent: D, asking: true } });
+    const topics = list({ [B]: { parent: D }, [C]: { parent: D, running: true } });
     await h.emit({ t: 'topics', topics });
-    expect(rows(h)).toEqual([A, D, B, C]);
-    await h.click(`#topics [data-fold="${D}"]`);
-    expect(rows(h)).toEqual([A, D]);
+    // Folded on first sight, and the pill takes the colour of what it hides.
+    expect(rows(h)).toEqual([D, A]);
     const pill = h.doc.querySelector(`#topics [data-fold="${D}"]`)!;
     expect(pill.textContent).toBe('▸ 2');
-    expect(pill.className).toContain('asking');
+    expect(pill.className).toContain('running');
     expect(pill.getAttribute('aria-expanded')).toBe('false');
-    expect(h.live().url).toBe(`api/events?t=${A}`);
-    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [D]: true });
+    // Opening is the operator's choice, and it is kept as one.
     await h.click(`#topics [data-fold="${D}"]`);
-    expect(rows(h)).toEqual([A, D, B, C]);
+    expect(rows(h)).toEqual([D, B, C, A]);
+    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [D]: false });
+    expect(h.live().url).toBe(`api/events?t=${A}`);
+    await h.click(`#topics [data-fold="${D}"]`);
+    expect(rows(h)).toEqual([D, A]);
+    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [D]: true });
   });
 
-  it('never folds away the topic on screen', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${C}`, storage: { aa_folded: JSON.stringify({ [D]: true }) } });
+  it('never folds away the topic on screen, even under the default fold', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${C}` });
     await h.emit(sync(C, [], [C]));
     await h.emit({ t: 'topics', topics: list({ [C]: { parent: D } }) });
     expect(rows(h)).toEqual([A, B, D, C]);
     expect(h.doc.querySelector(`#topics [data-fold="${D}"]`)?.textContent).toBe('▾ 1');
+  });
+
+  it('draws a topic whose sub-agents work as running, not idle', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list({ [B]: { parent: A }, [C]: { parent: B, running: true } }) });
+    const row = (): Element => h.doc.querySelector(`#topics [data-topic="${A}"]`)!;
+    // Its own turn ended long ago; the job did not, so the row and the header both say running.
+    expect(row().className).toMatch(/\brunning\b/);
+    expect(row().querySelector('.topic-dot')?.className).toBe('topic-dot running');
+    expect(h.el('topic-status').textContent).toBe('running');
+    expect((h.el('stop-turn') as HTMLButtonElement).hidden).toBe(false);
+    // And it is not offered for closing as an idle agent either.
+    expect(h.el('close-idle').hidden).toBe(true);
+
+    await h.emit({ t: 'topics', topics: list({ [B]: { parent: A }, [C]: { parent: B } }) });
+    expect(row().className).not.toMatch(/\brunning\b/);
+    expect(h.el('topic-status').textContent).toBe('');
+  });
+
+  it('orders the list by state: a decision, then working, then resident, then no agent', async () => {
+    const E = 'e6f7a8b9';
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        // The daemon's order, deliberately the reverse of the one these states belong in.
+        { id: A, title: 'stopped', lastAt: 1000, msgCount: 0, stage: 'idle' },
+        { id: D, title: 'resident', lastAt: 999, msgCount: 0, stage: 'idle', live: true },
+        { id: B, title: 'decision', lastAt: 998, msgCount: 0, stage: 'answer', asking: true, running: true, live: true },
+        { id: C, title: 'working', lastAt: 997, msgCount: 0, stage: 'working', running: true, live: true },
+        { id: E, title: 'resident, starred', lastAt: 996, msgCount: 0, stage: 'idle', live: true, starred: true },
+      ],
+    });
+    // A star leads its unstarred peers inside a state, and the daemon's order holds below that.
+    expect(rows(h)).toEqual([B, C, E, D, A]);
+    expect(h.doc.querySelector(`#topics [data-topic="${C}"]`)?.classList.contains('after-needs')).toBe(true);
   });
 
   it('puts a sub-agent’s topic first only for a question of its own', async () => {
@@ -4385,12 +4434,14 @@ describe('webui page: what needs you, and sub-agent topics', () => {
       t: 'topics',
       topics: list({
         [B]: { parent: A, stage: 'review', line: 'done' },
-        [C]: { parent: A, stage: 'answer', line: 'Which branch?' },
+        [C]: { parent: A, stage: 'answer', asking: true, line: 'Which branch?' },
         [D]: { parent: A, stage: 'failed', line: 'boom' },
       }),
     });
     expect(needs(h)).toEqual([[C, 'Waiting on your answer: Which branch?']]);
     expect(rows(h)[0]).toBe(C);
+    // The parent is folded, and its pill carries the question it is hiding.
+    expect(h.doc.querySelector(`#topics [data-fold="${A}"]`)?.className).toContain('asking');
   });
 
   it('marks a failed topic’s dot red when nothing else is going on', async () => {

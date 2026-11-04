@@ -121,7 +121,8 @@ mid-turn, asking a question, an agent resident, a terminal attached, or the targ
 task that can still run (`PlatformAdapter.useScheduleLookup` — a task posts to a plain address and
 nothing rewrites it when the topic goes). Otherwise the only thing that keeps a quiet topic is a
 **star** (☆ beside the `×`). A starred topic is never evicted, survives "Clear all topics" (which
-says "Clear unstarred topics" while any are starred), and is listed first. The `×` still deletes
+says "Clear unstarred topics" while any are starred), and leads its unstarred peers inside its
+state in the list. The `×` still deletes
 it: a star defers to the operator, not the other way round, and the confirmation says "starred".
 When every topic is starred or busy, `+` is refused, and the page shows the daemon's sentence
 saying so rather than doing nothing.
@@ -374,12 +375,21 @@ count as a question, so a new kind of ask is announced rather than silently miss
 persisted, and the only record of the relation (`parentOf` / `childrenOf` on the adapter read it back).
 `TopicStore.orphan` drops a `parent` that names a topic no longer there, on load and after every
 delete or sweep, so the × on a parent never takes its children with it. The page nests them
-(`topicRows`: what needs you first, then each root, starred first, followed by what it opened, depth-first; drawn as `sub d1`–`d3`
-classes rather than a `--depth` in a style attribute, which the CSP refuses) and folds them per
-browser (`aa_folded` in localStorage); the topic on screen is never folded away, and a `parent` chain
+(`topicRows`: what needs you first, then each root by state — working, resident, no agent — with a
+starred row leading its unstarred peers inside a state, each followed by what it opened, depth-first;
+drawn as `sub d1`–`d3` classes rather than a `--depth` in a style attribute, which the CSP refuses)
+and folds them per browser, folded by default (`aa_folded` in localStorage; `false` is an opened
+one); the topic on screen is never folded away, and a `parent` chain
 that loops is drawn as roots rather than lost. A sub-agent topic is in Needs you, and notifies, only
 for a question of its own (`operatorStage`, and the same rule in the page's `needsYou`): its
 replies and failures are its parent agent's to read.
+
+**A parent is working while its children are** (`rowRunning`). A /super dispatcher hands its work
+to topics of its own and then sits idle between turns, so a row drawn from its own `running` flag
+alone was the one row that looked dead while the job ran — and since the children are folded away by
+default, that row is all the person sees. It is drawn as running (dot, title, header status) when
+anything below it is running or asking, sorted with the working group, and left out of Close idle:
+offering to close a row that says "running" is the list contradicting itself.
 
 A link to another topic is `?t=<id>` — the one relative link `web-markdown.ts` keeps — rendered with
 `data-goto`, which the page intercepts to switch in place.

@@ -194,13 +194,13 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
   #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-acts{position:static;padding-left:0;background:none;opacity:1;pointer-events:auto}
   #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-del{display:none}
 }
-/* Starred rows are listed first; this line is where they end. A pseudo-element on the first row
-   after them rather than a node of its own, so #topics holds rows and nothing else. */
+/* Where the group that needs the person ends. A pseudo-element on the first row after it rather
+   than a node of its own, so #topics holds rows and nothing else. */
 /* A topic another topic's agent opened (Topic.parent — daemon/delegation.ts), under the one that
    opened it. Classes rather than a --depth custom property in a style attribute, which the page's
    CSP would refuse; deeper than three is drawn at three, since a 240px column has no room for a
    staircase. The elbow is ::before, which is free on these rows: only a depth-0 row draws the
-   after-stars rule. */
+   after-needs rule. */
 #topics .topic-item.sub{width:auto}
 #topics .topic-item.d1{margin-left:14px}
 #topics .topic-item.d2{margin-left:28px}
@@ -237,8 +237,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    is the only thing on the list that moves or stands out. */
 #app.calm .topic-dot.running{animation:none}
 #app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}
-#topics .topic-item.after-stars{margin-top:5px}
-#topics .topic-item.after-stars::before{content:'';position:absolute;left:9px;right:9px;top:-5px;border-top:1px solid var(--line)}
+#topics .topic-item.after-needs{margin-top:5px}
+#topics .topic-item.after-needs::before{content:'';position:absolute;left:9px;right:9px;top:-5px;border-top:1px solid var(--line)}
 /* One row: Settings, and Close idle when there is anything to close. It was a column of full-width
    buttons, one per control, and reached three rows with a fourth on the way (2026-11-03) — a strip
    of the list given up for things that are set once per device (Notifications, Low attention) or
@@ -880,7 +880,12 @@ const SCRIPT = `
     try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
   }
 
-  /** Parents whose sub-agent topics are folded away (paintTopics), per browser. Unfolded by default. */
+  /**
+   * Parents whose sub-agent topics are folded away (paintTopics), per browser. Folded by default:
+   * a /super job's children are the working detail behind one conversation, and a dispatcher that
+   * opens five of them would otherwise push five rows into a column read as a list of conversations.
+   * An entry of false is an operator who opened one, and it stays open on this browser.
+   */
   var folded = {};
   try { folded = JSON.parse(localStorage.getItem('aa_folded') || '{}') || {}; } catch(x){}
   function saveFolded(){
@@ -2362,11 +2367,13 @@ const SCRIPT = `
   }
 
   /**
-   * The rows in the order they are painted: starred topics first, then the rest, each part in the
-   * daemon's order (most recently active first), and every topic followed by the ones its agent
-   * opened (Topic.parent), depth-first — unless it is folded. Only the painting is reordered: topics
-   * itself keeps the daemon's order, because topics[0] is read elsewhere as "the most recent topic" —
-   * where to land when the one on screen goes away.
+   * The rows in the order they are painted: what needs a decision first (needsYou, most pressing
+   * first), then every root by state — working, resident and idle, no agent — with a starred row
+   * ahead of its unstarred peers inside a state and the daemon's order (most recently active
+   * first) underneath. Every topic is followed by the ones its agent opened (Topic.parent),
+   * depth-first — unless it is folded. Only the painting is reordered: topics itself keeps the
+   * daemon's order, because topics[0] is read elsewhere as "the most recent topic" — where to land
+   * when the one on screen goes away.
    *
    * The topic on screen is never folded away: its ancestors are drawn open, without that being
    * saved, so a link into a sub-agent's topic lands on a row you can see. A parent field that loops
@@ -2403,7 +2410,7 @@ const SCRIPT = `
       if(seen[t.id]) return;
       seen[t.id]=true;
       var ch=kids[t.id]||[];
-      var shut=ch.length>0 && Boolean(folded[t.id]) && !open[t.id];
+      var shut=ch.length>0 && folded[t.id]!==false && !open[t.id];
       rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
       if(shut) return;
       for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
@@ -2412,33 +2419,29 @@ const SCRIPT = `
     var pinned=visible.filter(needsYou).sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
     for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
     var afterPinned=rows.length;
-    var starred=[], rest=[];
-    for(i=0;i<roots.length;i++) (roots[i].starred?starred:rest).push(roots[i]);
-    for(i=0;i<starred.length;i++) walk(starred[i], 0);
-    var firstRest=rows.length;
-    for(i=0;i<rest.length;i++) walk(rest[i], 0);
+    // Then everything else in the order the list is read: working, a resident agent with nothing
+    // to do, and no agent at all (the decision group is already drawn above). The daemon's order —
+    // most recently active first — holds inside a state, and a starred row leads its unstarred
+    // peers there: a star is a promise not to forget a topic, not a claim on the top of the column.
+    var ordered=roots.slice().sort(function(a,b){
+      var ra=stateRank(a), rb=stateRank(b), d=ra-rb;
+      if(d) return d;
+      if(ra===0) d=NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage];
+      return d || (b.starred?1:0)-(a.starred?1:0);
+    });
+    for(i=0;i<ordered.length;i++) walk(ordered[i], 0);
     for(i=0;i<visible.length;i++){
       // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
       var hidden=false, a=visible[i], n=0;
-      while(a && a.parent && byId[a.parent] && n++<32){ if(seen[a.parent] && folded[a.parent] && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
+      while(a && a.parent && byId[a.parent] && n++<32){ if(seen[a.parent] && folded[a.parent]!==false && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
       if(!seen[visible[i].id] && !hidden) walk(visible[i], 0);
     }
     if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
-    if(firstRest>afterPinned && firstRest<rows.length) dividers[firstRest]=true;
-    return {rows:rows, dividers:dividers, stars:starred.length};
+    var stars=0;
+    for(i=0;i<roots.length;i++) if(roots[i].starred) stars++;
+    return {rows:rows, dividers:dividers, stars:stars};
   }
 
-  /**
-   * What needs the person: every topic but the one on screen whose stage is a question, a failure,
-   * or a reply not yet read — the daemon decides the stage (core/topic-stage.ts) and sends it with
-   * the list. Drawn as the topic's own row, first in the list and green (paintTopics). It was a
-   * separate "Needs you" block above the list through 2.19.1, which put every such topic on screen
-   * twice — the same title, two rows — and read as two conversations.
-   *
-   * A sub-agent's topic (one with a parent) counts only for a question of its own: its replies and
-   * failures go to the agent that opened it, which says what comes of them (room.ts operatorStage,
-   * the same rule for notifications).
-   */
   /** Whether a topic this one opened, or one of theirs, is working or asking. */
   function busyBelow(id){
     var stack=[id], seenB={}, n=0;
@@ -2456,11 +2459,47 @@ const SCRIPT = `
     return false;
   }
 
+  /**
+   * Whether a row is drawn as working: its own turn, or a sub-agent's.
+   *
+   * A /super dispatcher hands its work to topics of its own and then sits idle between turns, so
+   * drawn from its own flag alone it was the one row that looked dead while the agents under it
+   * worked (reported 2026-11-04). busyBelow counts a question too — a sub-agent holding one has
+   * not finished either, and the fold pill is what says which of the two it is.
+   */
+  function rowRunning(t){
+    return Boolean(t.running) || busyBelow(t.id);
+  }
+
   var NEEDS_ORDER = {answer:0, failed:1, review:2};
   var NEEDS_WHAT = {answer:'Waiting on your answer', failed:'Failed', review:'Finished'};
+  /**
+   * What needs the person: every topic but the one on screen whose stage is a question, a failure,
+   * or a reply not yet read — the daemon decides the stage (core/topic-stage.ts) and sends it with
+   * the list. Drawn as the topic's own row, first in the list and green (paintTopics). It was a
+   * separate "Needs you" block above the list through 2.19.1, which put every such topic on screen
+   * twice — the same title, two rows — and read as two conversations.
+   *
+   * A sub-agent's topic (one with a parent) counts only for a question of its own: its replies and
+   * failures go to the agent that opened it, which says what comes of them (room.ts operatorStage,
+   * the same rule for notifications).
+   */
   function needsYou(t){
     if(t.id===topic || NEEDS_ORDER[t.stage]===undefined) return false;
     return !t.parent || t.stage==='answer';
+  }
+
+  /**
+   * The four states the list is ordered by, most pressing first: a decision to make, work under
+   * way, a resident agent with nothing to do, and no agent at all. stage already says the first,
+   * rowRunning the second (a /super dispatcher is working while its sub-agents are), and live
+   * splits the last two — the same facts the dot and the row's colours are drawn from, so the order
+   * cannot disagree with what the rows say.
+   */
+  function stateRank(t){
+    if(needsYou(t)) return 0;
+    if(rowRunning(t)) return 1;
+    return t.live ? 2 : 3;
   }
 
   /**
@@ -2507,7 +2546,7 @@ const SCRIPT = `
       var row=painted.rows[i];
       var t=row.t;
       var isCur=(t.id===topic);
-      var isRunning=Boolean(t.running);
+      var isRunning=rowRunning(t);
       // A question on screen holds its turn open, so t.running is true at the same time. Asked
       // first everywhere below: "waiting for you" is the state you can act on, and the one the
       // running blue would otherwise hide.
@@ -2516,7 +2555,7 @@ const SCRIPT = `
       var count=t.msgCount||0;
       var unread=isCur?0:Math.max(0, count - readCounts[t.id]);
       var cls='topic-item '+(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
-        +(t.starred?' starred':'')+(painted.dividers[i]?' after-stars':'')
+        +(t.starred?' starred':'')+(painted.dividers[i]?' after-needs':'')
         +(row.depth?' sub d'+Math.min(row.depth,3):'')
         +(needsYou(t)?' needs':'');
       var isFailed=t.stage==='failed';
@@ -2569,13 +2608,16 @@ const SCRIPT = `
     var idle=idleTopics().length;
     idleBtn.hidden = !idle;
     idleBtn.textContent = 'Close idle ('+idle+')';
+    var below = cur ? busyBelow(cur.id) : false;
     if(cur){
       chatTitle.textContent=cur.title || 'Untitled';
       // Same order as the dot, and the same reason: during an ask the turn is still open, so
-      // "running" is true and is the less useful of the two things to say.
-      var state=cur.asking?'awaiting you':(cur.running?'running':'');
+      // "running" is true and is the less useful of the two things to say. A dispatcher whose
+      // sub-agents work is running too: its own turn ended, the job did not.
+      var curRunning=Boolean(cur.running) || below;
+      var state=cur.asking?'awaiting you':(curRunning?'running':'');
       chatStatus.textContent=state;
-      chatStatus.className='chat-status'+(cur.asking?' asking':(cur.running?' running':''));
+      chatStatus.className='chat-status'+(cur.asking?' asking':(curRunning?' running':''));
     } else {
       chatTitle.textContent='';
       chatStatus.textContent='';
@@ -2588,7 +2630,6 @@ const SCRIPT = `
     // Also over a topic whose own turn is over while the sub-agents it started still work — the
     // usual state of a /super job, and the one where there was nothing to press: /stop there stops
     // them too (Delegation.stopOpened).
-    var below = cur ? busyBelow(cur.id) : false;
     stopBtn.hidden = !(cur && (cur.running || cur.asking || below));
     stopBtn.title = below
       ? 'Stop this topic and the sub-agents it started — their conversations are kept (/stop)'
@@ -3189,7 +3230,10 @@ const SCRIPT = `
       e.stopPropagation();
       var foldId = fold.getAttribute('data-fold');
       if(foldId){
-        if(folded[foldId]) delete folded[foldId]; else folded[foldId]=true;
+        // Folded is the default (an absent entry), so both choices are written down: false is
+        // "I opened this one", true is "I put it back".
+        var shutNow = folded[foldId] !== false;
+        folded[foldId] = !shutNow;
         saveFolded();
         paintTopics();
       }
@@ -3324,14 +3368,16 @@ const SCRIPT = `
   // ── Closing idle agents ────────────────────────────────────────────────────
   /**
    * The topics whose agent is up and doing nothing — the dim dot, read off the same flags it is
-   * drawn from, so the button's count and the dots cannot disagree. In the sidebar's order: starred
-   * first, so the dialog lists them where the eye already knows to find them.
+   * drawn from, so the button's count and the dots cannot disagree. A dispatcher whose sub-agents
+   * are still working is not one of them: its row is drawn as running (rowRunning), and offering
+   * to close it under that row would be the list contradicting itself. In the sidebar's order:
+   * starred first, so the dialog lists them where the eye already knows to find them.
    */
   function idleTopics(){
     var on=[], rest=[];
     for(var i=0;i<topics.length;i++){
       var t=topics[i];
-      if(!t.live || t.running || t.asking) continue;
+      if(!t.live || t.running || t.asking || busyBelow(t.id)) continue;
       (t.starred ? on : rest).push(t);
     }
     return on.concat(rest);
