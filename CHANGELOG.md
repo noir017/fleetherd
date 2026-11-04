@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.31.0] - 2026-11-04
+
 ### Added
 
 - **Past conversations, searchable from any agent.** Everything the gateway carries is now kept
