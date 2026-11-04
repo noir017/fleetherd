@@ -47,6 +47,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `skill-link.ts` | Links the bundled skills (`talkcode`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
 | `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
 | `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`): names, paths and size rules, content versions, `.usage.json`, `.archive/`, and `.history/` with `revert` |
+| `skills-panel.ts` | The web UI's skills page: store records → the page's shape, every operation forwarded to `skills-store.ts`, and the archive notice the reverse command sends |
 | `skill-usage.ts` | What counts as using a managed skill — a `Skill` tool call, `/<name>`, a file under its directory — once per turn, with `talkcode skills` excluded |
 | `skill-lifecycle.ts` | The daily check (14 days expired, 30 archived, pinned exempt) and its archive notice |
 | `managed-skills.ts` | Delivering active skills to `~/.talkcode/skills/` on an agent's machine and linking only links that point back there; taking an archived skill's links back |
@@ -1257,6 +1258,11 @@ hash, so a half-read edit cannot silently undo a newer one. Before each content 
 files go into `.history/<name>/<id>/` with one `meta.json`, and `revert` restores a whole snapshot
 and records the revert itself. `archive` moves the directory into `.archive/`; the next spawn takes the
 copy and every link of ours back, and the conversation the skill came from gets one line.
+
+The same store is behind the web UI's skills page (`skills-panel.ts`): the page lists, creates,
+edits, archives/restores and reverts through these functions, so its rules are these rules, and an
+archive made there calls the same `notifySkillArchived`. It has no hard delete because the store
+has none — its Delete is `archive`, and Restore is `restore`.
 
 Use is counted from events the gateway already has (`skill-usage.ts`): a `Skill` tool call naming
 the skill, a message starting with `/<name>`, or any tool call whose arguments mention

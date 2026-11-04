@@ -64,6 +64,7 @@ const PACING = {
   // Registers the task panel's list/operations; the page reads them over its own HTTP routes,
   // which are not chat traffic. Nothing here writes to a platform.
   useSchedulePanel: 'unpaced',
+  useSkillsPanel: 'unpaced',
   // Ends an agent process on this machine; nothing is written to the chat.
   useIdleReclaim: 'unpaced',
   // Registers a callback, read while drawing an empty topic; writes nothing to the chat.

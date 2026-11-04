@@ -46,6 +46,19 @@ CodeBuddy 和 AtomCode，本机的和远程的都算。你说「把这个记成�
   `write-file` 和 `remove-file` 不要求版本号，但每次也会产生新版本。
 - **不会真删。** `archive` 只是移动，`revert` 只是把旧快照放回去；两者都记在 `.history/` 里，回滚本身也能再回滚。
 
+## 在 Web UI 里管理
+
+Web UI 侧边栏底部有 **✦ Skills** 按钮。它列出所有自管技能，显示状态、是否钉住和最后使用时间，点开即可编辑：
+
+- **New**：填名字、一句用途说明和可选正文，新建技能。
+- **编辑**：修改 `SKILL.md`，或 `references/`、`templates/`、`scripts/` 下的任意文件；**New file**
+  可以新增一个。保存 `SKILL.md` 会带上页面读到的版本号，所以和 `patch` 一样是先读后写；被拒绝时会告诉你当前版本。
+- **History**：列出每次改动；**Restore this version** 就是 `revert`，这次回滚本身也会记成一次新改动。
+- **Delete** 就是 `archive`——整个技能移进 `.archive/`，可以在同一页 **Restore** 回来。网关里没有任何硬删除，这个页面也没有这个操作。
+
+它和 `talkcode skills` 用的是同一套存储和同一套规则，因为每次写入都走 `skills-store.ts`。从页面归档时，
+也会像在聊天里归档一样，通知创建这个技能的那个会话。
+
 ## 怎么到达智能体
 
 每次启动智能体时，网关把在用的技能复制到智能体所在机器的 `~/.talkcode/skills/<名字>/`，再链接进这个智能体读技能的目录：

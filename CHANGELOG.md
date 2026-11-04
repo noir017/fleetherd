@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A skills page in the web UI.** The gateway's managed skills could only be read and edited by
+  asking an agent to run `talkcode skills`, which is a fine way to write one and a poor way to see
+  what exists. The sidebar footer now has a **✦ Skills** button: every skill with its status, pin
+  and last use; **New** to create one; an editor for `SKILL.md` and for the files under
+  `references/`, `templates/` and `scripts/`; the recorded history with **Restore this version**;
+  and **Delete**, which is the store's `archive` — the skill moves into `.archive/` whole and
+  **Restore** brings it back, because there is no hard delete and this page does not add one.
+  Every write goes through `skills-store.ts`, the same functions the command uses, so the name and
+  path rules, the version `patch` demands and the `.history/` snapshot are the same; an archive
+  made here also tells the conversation that created the skill. [→](docs/skills.md)
+
 ## [2.32.0] - 2026-11-04
 
 ### Added

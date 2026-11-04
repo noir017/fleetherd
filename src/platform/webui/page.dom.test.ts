@@ -4991,3 +4991,277 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.window.localStorage.getItem('aa_sched_w')).toBeNull();
   });
 });
+
+describe('webui page: the skills page', () => {
+  const A = 'a1b2c3d4';
+  const MD = '---\nname: deploy-check\ndescription: "Use when checking a deployment"\n---\n\n# Steps\n';
+  const entry = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    name: 'deploy-check',
+    description: 'Use when checking a deployment',
+    version: '0123456789ab',
+    status: 'active',
+    pinned: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    lastUsedAt: '2026-11-02T00:00:00.000Z',
+    uses: 3,
+    agents: ['cc'],
+    ...over,
+  });
+  const detail = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    skill: entry(),
+    files: [
+      { path: 'SKILL.md', size: MD.length },
+      { path: 'references/api.md', size: 3 },
+    ],
+    file: { path: 'SKILL.md', content: MD, version: '0123456789ab' },
+    history: [
+      { id: '000000000000002-abcdef', at: '2026-11-02T00:00:00.000Z', action: 'patch', beforeVersion: '0123456789ab', afterVersion: 'fedcba987654' },
+      { id: '000000000000001-abcdef', at: '2026-11-01T00:00:00.000Z', action: 'create' },
+    ],
+    ...over,
+  });
+  const list = (skills: Array<Record<string, unknown>> = [entry()]): Record<string, unknown> => ({ enabled: true, skills });
+  const opReply = (skills: Array<Record<string, unknown>> = [entry()], d: Record<string, unknown> = detail()): Record<string, unknown> => ({
+    ok: true,
+    skills,
+    detail: d,
+  });
+
+  it('opens from the sidebar footer and lists status, pin and last use', async () => {
+    const h = await open({ replies: { 'api/skills': list([entry({ pinned: true })]) } });
+    await h.emit(sync(A, [], [A]));
+    expect(h.el('skills').hidden).toBe(true);
+
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    expect(h.el('skills').hidden).toBe(false);
+    expect(h.el('skills-title').textContent).toBe('Skills');
+    expect(h.el('skills-list').textContent).toContain('Active');
+    expect(h.el('skills-list').textContent).toContain('pinned');
+    expect(h.el('skills-list').textContent).toContain('last used');
+    expect(h.el('skills-list').textContent).toContain('3 uses');
+  });
+
+  it('opens a skill with its files, editor and history', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    expect(h.calls.find((c) => c.path === 'api/skills/op')?.body).toEqual({ action: 'show', name: 'deploy-check' });
+    expect(h.el('skills-detail').textContent).toContain('references/api.md');
+    expect(h.el('skills-detail').textContent).toContain('patch');
+    expect(h.el('skills-detail').textContent).toContain('Restore this version');
+    expect((h.el('skill-text') as HTMLTextAreaElement).value).toBe(MD);
+    expect((h.el('skill-path') as HTMLInputElement).value).toBe('SKILL.md');
+    expect((h.el('skill-path') as HTMLInputElement).readOnly).toBe(true);
+  });
+
+  it('saves SKILL.md with the version the detail carried', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    const next = MD.replace('# Steps', '# Steps\n\nNew line');
+    (h.el('skill-text') as HTMLTextAreaElement).value = next;
+    (h.doc.querySelector('[data-sop="save"]') as HTMLElement).click();
+    await until('the patch', () => h.calls.some((c) => c.body.action === 'patch'));
+
+    expect(h.calls.find((c) => c.body.action === 'patch')?.body).toEqual({
+      action: 'patch',
+      name: 'deploy-check',
+      version: '0123456789ab',
+      content: next,
+    });
+  });
+
+  it('writes a new reference file from the same editor', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    (h.doc.querySelector('[data-sop="new-file"]') as HTMLElement).click();
+    (h.el('skill-path') as HTMLInputElement).value = 'references/runbook.md';
+    (h.el('skill-text') as HTMLTextAreaElement).value = 'run it';
+    (h.doc.querySelector('[data-sop="save"]') as HTMLElement).click();
+    await until('the write', () => h.calls.some((c) => c.body.action === 'write-file'));
+
+    expect(h.calls.find((c) => c.body.action === 'write-file')?.body).toEqual({
+      action: 'write-file',
+      name: 'deploy-check',
+      file: 'references/runbook.md',
+      content: 'run it',
+    });
+  });
+
+  it('pins, unpins, and removes a reference file', async () => {
+    const ref = { path: 'references/api.md', content: 'API', version: '0123456789ab' };
+    const replies: Record<string, unknown> = {
+      'api/skills': list(),
+      'api/skills/op': opReply([entry()], detail({ file: ref })),
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    // Pin, then unpin. The reply flips between the two so the follow-up show draws the button the
+    // operator would see; the assertions are on what the page POSTED, which is the decision.
+    replies['api/skills/op'] = opReply([entry({ pinned: true })], detail({ skill: entry({ pinned: true }), file: ref }));
+    (h.doc.querySelector('[data-sop="pin"]') as HTMLElement).click();
+    await until('the pin', () => h.calls.some((c) => c.body.action === 'pin'));
+    expect(h.calls.find((c) => c.body.action === 'pin')?.body).toEqual({ action: 'pin', name: 'deploy-check', pinned: true });
+    await until('the Unpin button', () => h.doc.querySelector('[data-sop="pin"]')?.textContent === 'Unpin');
+
+    replies['api/skills/op'] = opReply([entry({ pinned: false })], detail({ file: ref }));
+    (h.doc.querySelector('[data-sop="pin"]') as HTMLElement).click();
+    await until('the unpin', () => h.calls.filter((c) => c.body.action === 'pin').length === 2);
+    expect(h.calls.filter((c) => c.body.action === 'pin')[1]?.body).toEqual({ action: 'pin', name: 'deploy-check', pinned: false });
+
+    // The unpin's own show is still in flight until the button reads "Pin" again; the Remove
+    // file control was already on screen from the previous detail, so waiting for it alone would
+    // click while the page is still busy and the write would be dropped by design.
+    await until('the Pin button back', () => h.doc.querySelector('[data-sop="pin"]')?.textContent === 'Pin');
+    await until('the Remove file button', () => Boolean(h.doc.querySelector('[data-sop="remove-file"]')));
+    (h.doc.querySelector('[data-sop="remove-file"]') as HTMLElement).click();
+    await until('the remove-file', () => h.calls.some((c) => c.body.action === 'remove-file'));
+    expect(h.confirms[0]).toContain('references/api.md');
+    expect(h.calls.find((c) => c.body.action === 'remove-file')?.body).toEqual({
+      action: 'remove-file',
+      name: 'deploy-check',
+      file: 'references/api.md',
+    });
+  });
+
+  it('creates a skill from the New form', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    await h.click('#skills-new');
+    (h.el('skill-new-name') as HTMLInputElement).value = 'release-check';
+    (h.el('skill-new-desc') as HTMLInputElement).value = 'Use before a release';
+    (h.el('skill-new-body') as HTMLTextAreaElement).value = '# Steps';
+    (h.doc.querySelector('[data-sop="create"]') as HTMLElement).click();
+    await until('the create', () => h.calls.some((c) => c.body.action === 'create'));
+
+    expect(h.calls.find((c) => c.body.action === 'create')?.body).toEqual({
+      action: 'create',
+      name: 'release-check',
+      description: 'Use before a release',
+      body: '# Steps',
+    });
+  });
+
+  it('reverts to a recorded version after a confirmation', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    (h.doc.querySelector('[data-revert]') as HTMLElement).click();
+    await until('the revert', () => h.calls.some((c) => c.body.action === 'revert'));
+
+    expect(h.confirms[0]).toContain('before this change');
+    expect(h.calls.find((c) => c.body.action === 'revert')?.body).toEqual({
+      action: 'revert',
+      name: 'deploy-check',
+      id: '000000000000002-abcdef',
+    });
+  });
+
+  it('deletes on the second tap, and the Delete is an archive', async () => {
+    const archived = entry({ status: 'archived' });
+    const replies = {
+      'api/skills': list(),
+      'api/skills/op': { ok: true, skills: [archived], detail: detail() },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+    const del = (): HTMLElement => h.doc.querySelector('[data-sop="archive"]') as HTMLElement;
+
+    del().click();
+    await tick();
+    expect(h.calls.some((c) => c.body.action === 'archive')).toBe(false);
+    expect(del().textContent).toBe('Delete?');
+
+    del().click();
+    await until('the archive', () => h.calls.some((c) => c.body.action === 'archive'));
+    expect(h.calls.find((c) => c.body.action === 'archive')?.body).toEqual({ action: 'archive', name: 'deploy-check' });
+    await until('the archived row', () => h.el('skills-list').textContent!.includes('Archived'));
+  });
+
+  it('restores an archived skill from its detail', async () => {
+    const archived = entry({ status: 'archived' });
+    const replies = {
+      'api/skills': list([archived]),
+      'api/skills/op': opReply([archived], detail({ skill: archived })),
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('Archived'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    (h.doc.querySelector('[data-sop="restore"]') as HTMLElement).click();
+    await until('the restore', () => h.calls.some((c) => c.body.action === 'restore'));
+    expect(h.calls.find((c) => c.body.action === 'restore')?.body).toEqual({ action: 'restore', name: 'deploy-check' });
+  });
+
+  it('closes on Escape and on the backdrop, and comes back to the list', async () => {
+    const h = await open({ replies: { 'api/skills': list(), 'api/skills/op': opReply() } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    await h.click('#skills-back');
+    expect(h.el('skills-detail').hidden).toBe(true);
+    expect(h.el('skills-list').hidden).toBe(false);
+
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(h.el('skills').hidden).toBe(true);
+
+    await h.click('#skills-toggle');
+    expect(h.el('skills').hidden).toBe(false);
+    h.el('skills').click();
+    await tick();
+    expect(h.el('skills').hidden).toBe(true);
+  });
+
+  it('says when the daemon has no skills store instead of showing an empty list', async () => {
+    const h = await open({ replies: { 'api/skills': { enabled: false, skills: [] } } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the disabled note', () => h.el('skills-list').textContent!.includes('not enabled'));
+
+    expect(h.el('skills-list').textContent).toContain('Skills are not enabled in this daemon');
+  });
+});

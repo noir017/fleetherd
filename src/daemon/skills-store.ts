@@ -271,8 +271,7 @@ function writeUsage(usage: UsageFile, dir = configDir()): void {
 }
 
 /** Every file a skill is made of: SKILL.md and the three directories. Nothing else is delivered. */
-export function readSkillFiles(name: string, dir = configDir()): Map<string, Buffer> {
-  const root = skillDir(name, dir);
+function readDeliveredFiles(root: string): Map<string, Buffer> {
   const files = new Map<string, Buffer>();
   const md = path.join(root, SKILL_FILE);
   if (fs.existsSync(md)) files.set(SKILL_FILE, fs.readFileSync(md));
@@ -281,6 +280,35 @@ export function readSkillFiles(name: string, dir = configDir()): Map<string, Buf
     for (const rel of listFiles(base)) files.set(`${sub}/${rel}`, fs.readFileSync(path.join(base, rel)));
   }
   return files;
+}
+
+export function readSkillFiles(name: string, dir = configDir()): Map<string, Buffer> {
+  return readDeliveredFiles(skillDir(name, dir));
+}
+
+/**
+ * The files of an ACTIVE or ARCHIVED skill, by path and size, sorted.
+ *
+ * The web UI's file list is the only caller: `readSkillFiles` reads the live directory and
+ * `show` returns one file's text, so neither can answer "what else does this skill carry" for
+ * something in `.archive/`. Read-only, and it validates the name before touching a path.
+ *
+ * An archived skill is read through the same delivered-files filter as a live one, not the whole
+ * directory: an agent can leave a root-level file there with a shell command, and listing it
+ * would offer the page a button whose every click `show` refuses (`validateFilePath` accepts only
+ * SKILL.md and the three directories).
+ */
+export function listSkillFiles(name: string, dir = configDir()): Array<{ path: string; size: number }> {
+  const clean = validateSkillName(name);
+  const active = fs.existsSync(skillDir(clean, dir));
+  const archived = archivedDir(clean, dir);
+  if (!active && !fs.existsSync(archived)) {
+    throw new Error(`no skill named "${clean}"; \`talkcode skills list\` shows them`);
+  }
+  const files = active ? readSkillFiles(clean, dir) : readDeliveredFiles(archived);
+  return [...files]
+    .map(([rel, data]) => ({ path: rel, size: data.length }))
+    .sort((a, b) => (a.path === SKILL_FILE ? -1 : b.path === SKILL_FILE ? 1 : a.path.localeCompare(b.path)));
 }
 
 function listFiles(dir: string, prefix = ''): string[] {

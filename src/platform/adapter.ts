@@ -107,6 +107,94 @@ export interface SchedulePanel {
 }
 
 /**
+ * One managed skill as the web UI's skills page lists it.
+ *
+ * A DTO rather than `daemon/skills-store.ts`'s `SkillRecord` for the same reason
+ * `SchedulePanelTask` is one: this module is the seam every platform implements, and it must not
+ * import a daemon module to name a shape. The record's `source` is deliberately absent — where a
+ * skill came from is the daemon's business, and the page has nothing to do with it.
+ */
+export interface SkillPanelEntry {
+  name: string;
+  description: string;
+  /** The content hash `show` prints and `patch` demands. */
+  version: string;
+  status: 'active' | 'expired' | 'archived';
+  pinned: boolean;
+  createdAt: string;
+  lastUsedAt?: string;
+  restoredAt?: string;
+  uses: number;
+  agents: string[];
+}
+
+/** One file a skill is made of, as the page's file list shows it. */
+export interface SkillPanelFile {
+  path: string;
+  size: number;
+}
+
+/** One recorded change in a skill's `.history/`, newest first. */
+export interface SkillPanelHistoryEntry {
+  id: string;
+  at: string;
+  action: string;
+  beforeVersion?: string;
+  afterVersion?: string;
+  note?: string;
+}
+
+/**
+ * A skill opened for editing: its files, the opened file's text, and every recorded change.
+ *
+ * `file` is always present: `show` refuses a path that does not exist, and the page asks only for
+ * paths it was just handed. `version` is the skill's current one and travels with the content,
+ * because `patch` is refused unless it names exactly this.
+ */
+export interface SkillPanelDetail {
+  skill: SkillPanelEntry;
+  files: SkillPanelFile[];
+  file: { path: string; content: string; version: string };
+  history: SkillPanelHistoryEntry[];
+}
+
+/**
+ * One operation on the gateway's skills.
+ *
+ * A closed union rather than free text, for the same reason `ScheduleOpRequestSchema` is: every
+ * verb here reaches a function in `skills-store.ts` that owns the rules, and there is no `delete`
+ * — an archive moves a skill and is reversible, and the store has no hard delete to expose.
+ */
+export type SkillPanelOp =
+  | { action: 'show'; name: string; file?: string }
+  | { action: 'create'; name: string; description: string; body?: string }
+  | { action: 'patch'; name: string; version: string; content: string }
+  | { action: 'write-file'; name: string; file: string; content: string }
+  | { action: 'remove-file'; name: string; file: string }
+  | { action: 'archive'; name: string }
+  | { action: 'restore'; name: string }
+  | { action: 'pin'; name: string; pinned: boolean }
+  | { action: 'revert'; name: string; id: string };
+
+/**
+ * The outcome of one operation, with the fresh list when it worked.
+ *
+ * The list comes back in the response for the reason `SchedulePanelResult` carries it: the page
+ * has just changed what it is showing, and racing a refresh against its own write is the one
+ * moment it could show the old state as the new one. A refusal is the store's own sentence, so
+ * the page never re-words a rule it does not own.
+ */
+export type SkillPanelResult =
+  | { ok: true; skills: SkillPanelEntry[]; detail?: SkillPanelDetail }
+  | { ok: false; error: string };
+
+/** What `useSkillsPanel` hands a platform: the list, and every operation the store allows. */
+export interface SkillsPanel {
+  list(): SkillPanelEntry[];
+  op(op: SkillPanelOp): SkillPanelResult;
+}
+
+/**
  * Platform capability interface. One layer above Satori so the core classes depend only on
  * capabilities, not concrete platforms; missing capabilities degrade gracefully in the
  * implementation (see capabilities).
@@ -280,6 +368,21 @@ export interface PlatformAdapter {
    * knows), so a push would have to invent an event the daemon does not otherwise need.
    */
   useSchedulePanel?(panel: SchedulePanel): void;
+
+  /**
+   * Hand the platform the gateway's own skills, to list, read, edit, archive and roll back — the
+   * web UI's skills page.
+   *
+   * Every write goes through `daemon/skills-store.ts`, the same functions `talkcode skills` calls:
+   * that module owns name and path validation, the version `patch` must carry, the `.history/`
+   * snapshot taken before each change, and the archive that is the only "delete" there is. The
+   * daemon wraps it in `daemon/skills-panel.ts` and also tells the conversation that created a
+   * skill when it is archived, exactly as the CLI path does.
+   *
+   * Optional and web-UI-only for the reason the seams above are: a chat app manages skills through
+   * `talkcode skills`, whose output is a message; a page has room for a file list and a history.
+   */
+  useSkillsPanel?(panel: SkillsPanel): void;
 
   /**
    * Hand the platform a way to end the agent process behind a conversation that is idle — what the

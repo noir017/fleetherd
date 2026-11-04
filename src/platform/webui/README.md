@@ -452,6 +452,33 @@ letting the page POST a prompt or a command would put a bash injection surface b
 form. Deleting asks twice, like the chat menu, and a refusal from the daemon is shown as its own
 sentence rather than a generic failure.
 
+## The skills page
+
+The **✦ Skills** button at the foot of the topic list opens the gateway's managed skills — the
+records `daemon/skills-store.ts` keeps and `talkcode skills` writes. It is a window over the
+transcript, like the reader, rather than a third column: an editor and a history row need more
+width than a sidebar, and the conversation stays visible around it. On a phone it takes the whole
+screen.
+
+**What it does.** The list is every skill with its status, pin and last use; **New** creates one
+from a name, a one-line description and an optional body; a skill opens onto its files, a
+`SKILL.md` editor and every recorded change. **Delete** archives it — **Restore** brings it back —
+and there is no hard delete, here or in the store. Saving `SKILL.md` sends the version the page
+read, so a stale edit is refused rather than overwriting a newer one; extra files go through
+`write-file`. **Restore this version** is `revert`, and is itself recorded as a new change.
+
+**Data.** `useSkillsPanel` (`../adapter.ts`) hands the room the list and every operation;
+`daemon/skills-panel.ts` builds it from `skills-store.ts`, the same functions the reverse command
+calls, and passes `notifySkillArchived` so an archive made here tells the conversation that created
+the skill exactly as one made from a chat does. Two routes carry it: `GET api/skills` and
+`POST api/skills/op`, the latter validated by `SkillOpRequestSchema` — a discriminated union with
+no `delete` arm, so a body the page could not have sent is refused before it reaches the store.
+
+**The page is a window, not a column.** `#skills` is one node with two views inside it (the list
+and the open skill), opened from the sidebar footer and closed by the ×, Escape, or the backdrop.
+Nothing about it is persisted: a management surface is opened on purpose, and one restored on load
+would sit over a conversation nobody asked it to cover.
+
 ## Notifications
 
 A phone freezes the page the moment it is put down, so nothing the event stream carries reaches it
@@ -1331,7 +1358,9 @@ with a stream open), `page.test.ts` (the script parses and nothing was eaten).
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the
 events `room.ts` actually emits — asserting on what a person would see: messages on screen, the
 drawer open or shut, where the URL points. Add to it whenever you touch `page.ts`; the string
-assertions in `page.test.ts` were green throughout the release that rendered nothing.
+assertions in `page.test.ts` were green throughout the release that rendered nothing. The skills
+page is driven there too: the list, an editor save carrying the version the detail read, the New
+form, a revert, and the two-tap archive.
 
 Four things about it that are not obvious:
 
