@@ -126,6 +126,21 @@ describe('webui adapter: topics', () => {
     expect(await a.fetchHistory(two, {})).toEqual([]);
   });
 
+  it('marks a topic a scheduled run opened, and only that one', async () => {
+    // The page reads this flag off the topic list to keep the run out of the switcher and in the
+    // panel's Sessions tab; it has to survive in the file, not just in memory.
+    const a = adapter();
+    const run = await a.createThread({ address: { channel: CHANNEL }, messageId: '' }, '[cc] ⏰ run', { scheduled: true });
+    const normal = await somewhere(a);
+
+    const stored = JSON.parse(fs.readFileSync(path.join(dir, 'webui-topics-webui.json'), 'utf8')) as Record<
+      string,
+      { scheduled?: boolean }
+    >;
+    expect(stored[run.address.thread!]?.scheduled).toBe(true);
+    expect(stored[normal.thread!]).not.toHaveProperty('scheduled');
+  });
+
   it('shows a status strip, and refuses one for an address that is not its topic', async () => {
     // The one platform that implements setStatus. It throws on a bad address like every outbound
     // method here; the daemon's status board is what swallows that.

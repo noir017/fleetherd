@@ -99,6 +99,16 @@ export interface Topic {
    */
   parent?: string;
   /**
+   * Opened by a scheduled task's new-session run, not by the person (`createThread`'s `scheduled`
+   * option). Persisted, because it is what keeps such a topic out of the switcher on every later
+   * reload — the title is not a record: it is editable, and a run can be renamed.
+   *
+   * The page leaves these out of the topic list and draws them in the scheduled panel's Sessions
+   * tab instead. They are still ordinary conversations in every other way: the daemon binds an
+   * agent to them, they count towards `MAX_TOPICS`, and they are evicted by age like anything else.
+   */
+  scheduled?: boolean;
+  /**
    * When the operator last looked at this topic, by this server's clock (`api/seen`). Persisted:
    * "you have not read this reply" has to survive the restart that an update is.
    */
@@ -145,9 +155,30 @@ export class TopicStore {
         if (topic) this.topics.set(id, topic);
       }
       this.orphan();
+      this.adoptScheduledRuns();
     } catch {
       /* first run or corrupt file: start with no topics, and create() makes the first one */
     }
+  }
+
+  /**
+   * Recognise the scheduled runs a file written before `Topic.scheduled` existed cannot mark.
+   *
+   * `openScheduledConversation` names a run `[agent] ⏰ <task> · <time>` and records that title
+   * as the conversation's own, so the automatic namer never replaces it (conversation.ts). That
+   * makes the title a reliable one-time trace for those topics; from this start on the flag is
+   * what the page reads. A topic renamed with `/title` before the upgrade is missed — nothing
+   * here can tell it from a conversation the person named themselves, and guessing from a clock
+   * glyph anywhere else in the name would move ordinary topics out of the switcher.
+   */
+  private adoptScheduledRuns(): void {
+    let changed = false;
+    for (const topic of this.topics.values()) {
+      if (topic.scheduled || !/^\[[^\]]+\]\s+⏰\s/.test(topic.title)) continue;
+      topic.scheduled = true;
+      changed = true;
+    }
+    if (changed) this.flush();
   }
 
   /** Most recently active first — the order the switcher reads in. */
@@ -195,7 +226,7 @@ export class TopicStore {
     return oldest;
   }
 
-  create(title = '', parent?: string): Topic {
+  create(title = '', parent?: string, opts: { scheduled?: boolean } = {}): Topic {
     if (this.full()) {
       throw new Error(`[webui] this instance already has ${MAX_TOPICS} topics; close one before opening another`);
     }
@@ -206,6 +237,7 @@ export class TopicStore {
       title,
       lastAt: Date.now(),
       ...(parent !== undefined && this.topics.has(parent) ? { parent } : {}),
+      ...(opts.scheduled ? { scheduled: true } : {}),
     };
     this.topics.set(topic.id, topic);
     this.flush();
@@ -345,6 +377,7 @@ export class TopicStore {
         title: t.title,
         lastAt: t.lastAt,
         ...(t.starred ? { starred: true } : {}),
+        ...(t.scheduled ? { scheduled: true } : {}),
         ...(t.parent !== undefined ? { parent: t.parent } : {}),
         ...(t.seenAt !== undefined ? { seenAt: t.seenAt } : {}),
         ...(t.outcome ? { outcome: t.outcome } : {}),
@@ -369,7 +402,15 @@ function dirOf(file: string): string {
 /** Validate one persisted entry; anything malformed is dropped rather than trusted. */
 function toTopic(id: string, value: unknown): Topic | undefined {
   if (!/^[0-9a-f]{8}$/.test(id) || typeof value !== 'object' || value === null) return undefined;
-  const rec = value as { title?: unknown; lastAt?: unknown; starred?: unknown; parent?: unknown; seenAt?: unknown; outcome?: unknown };
+  const rec = value as {
+    title?: unknown;
+    lastAt?: unknown;
+    starred?: unknown;
+    scheduled?: unknown;
+    parent?: unknown;
+    seenAt?: unknown;
+    outcome?: unknown;
+  };
   const title = typeof rec.title === 'string' ? rec.title : '';
   const lastAt = typeof rec.lastAt === 'number' && Number.isFinite(rec.lastAt) ? rec.lastAt : 0;
   const outcome = toOutcome(rec.outcome);
@@ -380,6 +421,7 @@ function toTopic(id: string, value: unknown): Topic | undefined {
     title,
     lastAt,
     ...(rec.starred === true ? { starred: true } : {}),
+    ...(rec.scheduled === true ? { scheduled: true } : {}),
     ...(typeof rec.parent === 'string' && /^[0-9a-f]{8}$/.test(rec.parent) && rec.parent !== id ? { parent: rec.parent } : {}),
     ...(typeof rec.seenAt === 'number' && Number.isFinite(rec.seenAt) ? { seenAt: rec.seenAt } : {}),
     ...(outcome ? { outcome } : {}),

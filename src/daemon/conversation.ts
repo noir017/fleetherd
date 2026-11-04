@@ -3610,7 +3610,10 @@ ${formatTokens(left)} left before compaction — ${name}`;
     let opened: ConversationAddress | undefined;
     if (adapter.capabilities.thread) {
       try {
-        opened = (await adapter.createThread({ address: opts.address, messageId: '' }, title)).address;
+        // `scheduled` is the web UI's: it keeps these lanes out of the topic switcher and lists
+        // them in the panel's Sessions tab. A chat platform has nowhere else to put a
+        // conversation and ignores it.
+        opened = (await adapter.createThread({ address: opts.address, messageId: '' }, title, { scheduled: true })).address;
       } catch (e) {
         console.warn(`[schedule] could not open a topic on ${opts.platform}; posting into the chat instead: ${e instanceof Error ? e.message : e}`);
       }

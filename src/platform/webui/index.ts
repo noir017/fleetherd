@@ -491,7 +491,7 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
      */
     async createThread(_r, name, opts) {
       const under = opts?.under?.channel === CHANNEL ? opts.under.thread : undefined;
-      const topic = room.createTopic(name, under);
+      const topic = room.createTopic(name, under, { scheduled: opts?.scheduled === true });
       return { address: { channel: CHANNEL, thread: topic.id } };
     },
     /** Name a topic. The string is `formatLaneTitle`'s `[agent] subject`. */

@@ -192,6 +192,12 @@ export interface PlatformAdapter {
        * show the relation (`parentOf`) nests the new lane under it. Ignored by every other.
        */
       under?: ConversationAddress;
+      /**
+       * A scheduled task's new-session run opened this lane, not a person. The web UI keeps such
+       * topics out of the switcher and lists them in its panel's Sessions tab; a chat platform
+       * has nowhere else to put a conversation, so every other adapter ignores this.
+       */
+      scheduled?: boolean;
     }
   ): Promise<{ address: ConversationAddress }>;
 
