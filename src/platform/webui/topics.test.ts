@@ -191,6 +191,38 @@ describe('TopicStore', () => {
     expect(fs.statSync(file).mtimeMs).toBe(before);
   });
 
+  it('keeps a scheduled run marked as one across a restart', () => {
+    // The page needs this on every later load: it is what keeps the run out of the switcher and
+    // in the panel's Sessions tab. The title cannot stand in for it — a run can be renamed.
+    const store = new TopicStore(file);
+    const run = store.create('[cc] ⏰ Morning CI · 2026-11-04 08:00', undefined, { scheduled: true });
+    const normal = store.create('[cc] an ordinary topic');
+
+    const reopened = new TopicStore(file);
+    expect(reopened.get(run.id)?.scheduled).toBe(true);
+    expect(reopened.get(normal.id)).not.toHaveProperty('scheduled');
+  });
+
+  it('recognises the scheduled runs a file written before the flag existed', () => {
+    // `openScheduledConversation` names a run `[agent] ⏰ <task> · <time>` and the automatic
+    // namer never replaces that title, so it is the one trace an older file has left.
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        aaaaaaaa: { title: '[cc] ⏰ Morning CI · 2026-11-04 08:00', lastAt: 5 },
+        bbbbbbbb: { title: '[cc] a clock in the middle ⏰ is not a run', lastAt: 4 },
+        cccccccc: { title: '⏰ no agent tag, so not one of ours', lastAt: 3 },
+      })
+    );
+
+    const store = new TopicStore(file);
+    expect(store.get('aaaaaaaa')?.scheduled).toBe(true);
+    expect(store.get('bbbbbbbb')).not.toHaveProperty('scheduled');
+    expect(store.get('cccccccc')).not.toHaveProperty('scheduled');
+    // Adopted once, into the file: the next start does not have to guess again.
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).aaaaaaaa.scheduled).toBe(true);
+  });
+
   it('starts empty on a corrupt file rather than taking the daemon down', () => {
     fs.writeFileSync(file, 'not json at all');
     expect(new TopicStore(file).list()).toEqual([]);

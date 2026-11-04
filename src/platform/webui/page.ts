@@ -311,24 +311,56 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* The scheduled-task panel's toggle. It owns the auto margin the terminal used to: the clock is
    always in the header, so it is what pushes the right-hand group to the edge whether the
    terminal button is there or not. */
-#schedules-toggle{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px;margin-left:auto}
+#schedules-toggle{position:relative;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px;margin-left:auto}
 #schedules-toggle.on{color:#4ade80}
+/* A scheduled run that is waiting on an answer has no row in the switcher any more, so without
+   this the one state that needs a person would be behind two clicks. Same amber as the asking dot,
+   and it disappears the moment the run is answered. */
+.sched-alert{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:#fbbf24;box-shadow:0 0 5px rgba(251,191,36,.8)}
 
 /* ── The scheduled-task panel ────────────────────────────────────────────────
    A column of its own on the right, not a section of the topic list: a task is not a
    conversation, and the sidebar is where conversations live. Hidden until asked for; pinned, it
    stays open across topics and reloads (localStorage, like the sidebar's width). Under 1024px
-   there is no room to dock a 300–380px column beside a 240px sidebar, so it slides over the
-   chat; under 640px it is the whole screen, like the reader. */
-#schedules{display:none;flex-direction:column;width:clamp(300px,26vw,380px);flex:0 0 clamp(300px,26vw,380px);height:100%;min-width:0;background:#171717;border-left:1px solid var(--line)}
+   there is no room to dock a 240–320px column beside a 240px sidebar, so it slides over the
+   chat; under 640px it is the whole screen, like the reader.
+
+   The width is deliberately narrower than the sidebar's topic column was before this: the panel
+   is a glance at background work, not a place to read a transcript. --schedw is set inline by
+   the drag handle; the clamp is both the default and the fallback when the operator has never
+   dragged it. Keep the 20vw arithmetic in schedWidth() in step with this line. */
+#schedules{position:relative;display:none;flex-direction:column;width:var(--schedw,clamp(240px,20vw,320px));flex:0 0 var(--schedw,clamp(240px,20vw,320px));height:100%;min-width:0;background:#171717;border-left:1px solid var(--line)}
 #app.sched #schedules{display:flex}
+#sched-resize{position:absolute;top:0;bottom:0;left:-4px;width:8px;cursor:col-resize;z-index:12;touch-action:none}
+#sched-resize:hover,#sched-resize.dragging{background:linear-gradient(90deg,transparent 3px,#3d3d3d 3px,#3d3d3d 5px,transparent 5px)}
 #schedules-head{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 12px;border-bottom:1px solid var(--line);min-height:42px}
 .sched-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .sched-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sched-summary{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #schedules-pin.on{color:#4ade80}
+/* Two lists, one panel: a task is a definition and a session is one run of it, so they are
+   tabs rather than one merged column that would make every run look like a task. */
+#sched-tabs{display:flex;flex:0 0 auto;border-bottom:1px solid var(--line)}
+.sched-tab{flex:1;min-width:0;background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);font:inherit;font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:8px 4px 6px;cursor:pointer;white-space:nowrap}
+.sched-tab:hover{color:var(--fg)}
+.sched-tab.on{color:var(--fg);border-bottom-color:#4ade80}
+.sched-count{font-weight:500;color:#6b7683;margin-left:2px}
+.sched-tab.on .sched-count{color:#8a8a8a}
 #schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
 #schedules-list{display:flex;flex-direction:column;gap:8px}
+/* A scheduled run, as the Sessions tab draws it: one line per topic, because there can be many
+   and the thing being scanned for is which one is still working or waiting. */
+#sched-sessions{display:flex;flex-direction:column;gap:2px}
+.sess-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 6px 8px 8px;border:1px solid transparent;border-radius:5px;text-align:left;font:inherit;cursor:pointer;position:relative}
+.sess-item:hover{background:#202020}
+.sess-item.on{background:#252525;border-color:var(--line)}
+.sess-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.sess-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess-item.on .sess-title{color:#fff}
+.sess-meta{font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess-del{opacity:.35;flex:none}
+.sess-item:hover .sess-del,.sess-item:focus-within .sess-del{opacity:1}
+.sess-del:hover{color:#f87171;background:rgba(248,113,113,.15)}
 .sched-item{border:1px solid var(--line);border-radius:6px;padding:10px;background:#1b1b1b;cursor:pointer}
 .sched-item:hover{background:#1e1e1e}
 .sched-item.open{background:#202020;border-color:#3a3a3a}
@@ -662,15 +694,17 @@ button:disabled{opacity:.5;cursor:default}
 /* Phones and tablets held upright. Everything here is about the parts of a handset a desktop
    layout has no concept of: a URL bar that eats viewport height, a home indicator under the
    composer, Safari's zoom-on-focus, and a finger instead of a pointer. */
-/* A 240px sidebar and a 300–380px panel leave too little chat on a laptop screen, so below
+/* A 240px sidebar and a 240–320px panel leave too little chat on a laptop screen, so below
    1024px the panel slides over the chat instead of taking a column. The backdrop is what
    dismisses it, as the sidebar drawer's is. */
 @media(max-width:1023px){
   #app.sched #schedules{position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px rgba(0,0,0,.6)}
   #app.sched #sched-backdrop{display:block}
   /* Nothing to dock it to here, so the pin would be a control that changes nothing until the
-     window is wide again. The choice is kept, not offered. */
+     window is wide again. The choice is kept, not offered. The same goes for the resize handle:
+     an overlay's width is the screen's, not the operator's. */
   #schedules-pin{display:none}
+  #sched-resize{display:none}
 }
 @media(max-width:640px){
   /* height:100% resolves against a viewport that still counts the collapsing browser chrome,
@@ -718,6 +752,10 @@ button:disabled{opacity:.5;cursor:default}
   #schedules-toggle svg{width:18px;height:18px}
   #schedules-body{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
   .sched-acts button{min-height:44px;padding:0 14px}
+  .sched-tab{min-height:44px}
+  /* A hover-revealed × does not exist on a finger, and the row is the only way to delete a
+     scheduled run now that the switcher no longer lists it. */
+  .sess-del{opacity:1;min-width:44px;height:44px}
   .chat-title{max-width:none}
   #log{padding:14px 12px 6px}
   #typing,#note{padding-left:12px;padding-right:12px}
@@ -771,8 +809,11 @@ const SCRIPT = `
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
-      schedToggle=$('schedules-toggle'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
+      schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
       schedPin=$('schedules-pin'), schedClose=$('schedules-close'), schedNote=$('schedules-note'), schedBackdrop=$('sched-backdrop'),
+      schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
+      schedTabTasks=$('sched-tab-tasks'), schedTabSessions=$('sched-tab-sessions'),
+      schedTabTasksN=$('sched-tab-tasks-n'), schedTabSessionsN=$('sched-tab-sessions-n'),
       lightbox=$('lightbox'), lightboxImg=$('lightbox-img'),
       reader=$('reader'), readerName=$('reader-name'), readerGet=$('reader-get'), readerBody=$('reader-body'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status');
@@ -820,6 +861,9 @@ const SCRIPT = `
   // The scheduled-task panel: whether it is showing, whether it was pinned to stay open, the
   // last list drawn, and its refresh timer. See "The scheduled-task panel" below.
   var schedOpen=false, schedPinned=false, schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
+  // Which of the panel's two lists is on screen. Persisted, because it is a preference about the
+  // workspace rather than about one visit.
+  var schedTab='tasks';
 
   function saveReads(){
     try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
@@ -1077,11 +1121,35 @@ const SCRIPT = `
    * the handle, because the pointer leaves an 8px handle on the first fast move.
    */
   var SB_MIN = 180;
-  // The panel's width is the stylesheet's clamp(300px,26vw,380px); this is the same arithmetic,
-  // used only to keep the sidebar's own maximum from leaving the chat a sliver when both are
-  // open. docked() is the stylesheet's 1023px breakpoint, read the other way round.
-  function schedWidth(){ return Math.min(380, Math.max(300, Math.round(window.innerWidth * 0.26))); }
+  // The panel's default width is the stylesheet's clamp(240px,20vw,320px); this is the same
+  // arithmetic, used only to keep the sidebar's own maximum from leaving the chat a sliver when
+  // both are open. A width the operator dragged is in --schedw and wins.
+  var SCHED_MIN = 220;
+  function schedWidth(){
+    var w = parseFloat(schedPanel.style.getPropertyValue('--schedw'));
+    if(w > 0) return w;
+    return Math.min(320, Math.max(240, Math.round(window.innerWidth * 0.20)));
+  }
   function docked(){ return window.innerWidth >= 1024; }
+  // How wide the panel may get: never so wide that the chat loses its 360px, whatever the sidebar
+  // is doing, and never wider than 640 — a side panel, not a second chat.
+  function schedMax(){
+    // The sidebar's width even while it is collapsed: collapsing slides it out of view with a
+    // negative margin, it does not give the column back, and expanding it later must not leave the
+    // chat narrower than the 360px this cap exists to protect.
+    var sbw = sidebar.getBoundingClientRect().width || 240;
+    return Math.max(SCHED_MIN, Math.min(640, window.innerWidth - sbw - 360));
+  }
+  function setSchedWidth(w, keep){
+    if(w == null){
+      schedPanel.style.removeProperty('--schedw');
+      try { localStorage.removeItem('aa_sched_w'); } catch(x){}
+      return;
+    }
+    w = Math.round(Math.max(SCHED_MIN, Math.min(schedMax(), w)));
+    schedPanel.style.setProperty('--schedw', w+'px');
+    if(keep) try { localStorage.setItem('aa_sched_w', String(w)); } catch(x){}
+  }
   function sbMax(){ return Math.max(SB_MIN, Math.min(640, window.innerWidth - 360 - (schedOpen && docked() ? schedWidth() : 0))); }
   function setSbWidth(w, keep){
     if(w == null){
@@ -1116,24 +1184,169 @@ const SCRIPT = `
   });
   sbHandle.addEventListener('dblclick', function(){ setSbWidth(null); });
 
+  // The panel's own width, dragged from its left edge. The saved value is applied before the
+  // first paint so a reload does not flash the default column and then jump to the operator's.
+  var savedSchedW = Number(localStorage.getItem('aa_sched_w'));
+  if(savedSchedW > 0) setSchedWidth(savedSchedW, false);
+  var schedDrag = null;
+  schedResize.addEventListener('pointerdown', function(e){
+    if(!docked() || !schedOpen) return;
+    e.preventDefault();
+    schedDrag = {right: schedPanel.getBoundingClientRect().right};
+    schedResize.className = 'dragging';
+    document.body.style.userSelect = 'none';
+  });
+  document.addEventListener('pointermove', function(e){
+    if(schedDrag) setSchedWidth(schedDrag.right - e.clientX, false);
+  });
+  document.addEventListener('pointerup', function(){
+    if(!schedDrag) return;
+    schedDrag = null;
+    schedResize.className = '';
+    document.body.style.userSelect = '';
+    var w = parseFloat(schedPanel.style.getPropertyValue('--schedw'));
+    if(w > 0) setSchedWidth(w, true);
+  });
+  schedResize.addEventListener('dblclick', function(){ setSchedWidth(null); });
+
   // ── The scheduled-task panel ────────────────────────────────────────────────
   /**
-   * The gateway's scheduled tasks, in a column of their own rather than in the topic list.
+   * The gateway's scheduled work, in a column of its own rather than in the topic list.
+   *
+   * Two tabs, because a task and a run of it are different things: Tasks is the definitions with
+   * their controls, Sessions is the topics a new-session run opened. Those topics are left out of
+   * the switcher (topicRows), so this tab is their only home — and the only place to delete one.
    *
    * Closed by default, and closed again on a topic switch unless pinned: the panel is a side
    * glance, and following a task's target into a topic should get it out of the way. Pinned, it
    * is part of the workspace and survives topic switches and reloads (aa_sched_pin). Closing
    * clears the pin — a close that the next reload undid would read as a panel that cannot be shut.
    *
-   * The list is pulled when the panel opens, after every action, and on a timer while it is
-   * visible (5s while a task is running, 30s otherwise). The daemon has no event for "a run
-   * finished", and polling every task forever would be worse than one small request from a page
-   * that is already open.
+   * The task list is pulled when the panel opens, after every action, and on a timer while it is
+   * visible (5s while a task is running, 30s otherwise). The sessions list needs no request: the
+   * topics event that keeps the switcher current carries their flags, state and unread counts too.
    */
   try { schedPinned = localStorage.getItem('aa_sched_pin') === '1'; } catch(x){}
+  try { if(localStorage.getItem('aa_sched_tab') === 'sessions') schedTab = 'sessions'; } catch(x){}
   // A pinned panel is docked by definition; a window with nowhere to dock it starts closed, and
   // the pin stays for the next wide window.
   if(schedPinned && docked()) schedOpen = true;
+
+  /** The topics a scheduled run opened, most recently active first (the order topics is in). */
+  function schedSessions(){
+    var out=[];
+    for(var i=0;i<topics.length;i++) if(topics[i].scheduled) out.push(topics[i]);
+    return out;
+  }
+
+  function schedAgo(at){
+    if(!at) return '';
+    var s=Math.max(0, Math.round((Date.now()-at)/1000));
+    if(s<60) return s+'s ago';
+    if(s<3600) return Math.round(s/60)+'m ago';
+    if(s<86400) return Math.round(s/3600)+'h ago';
+    return Math.round(s/86400)+'d ago';
+  }
+
+  /**
+   * One scheduled run, as the Sessions tab draws it.
+   *
+   * The row is the only way to reach these topics now that the switcher leaves them out, and the
+   * only way to delete one: the dot and the badge say whether it is working, waiting, unread; the
+   * × is the operator deciding about this run rather than the whole task.
+   */
+  function schedSessionRow(t){
+    var named=splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
+    var asking=Boolean(t.asking), running=Boolean(t.running);
+    var dot='topic-dot'+(asking?' asking':(running?' running':(t.stage==='failed'?' failed':(t.stage==='review'?' review':(t.live?' live':'')))));
+    var count=t.msgCount||0;
+    var unread=t.id===topic?0:Math.max(0, count-(readCounts[t.id]||0));
+    var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
+    var state=asking?'awaiting you':(running?'running':(t.stage==='failed'?'failed':(t.stage==='review'?'finished':'')));
+    var meta=schedAgo(t.lastAt)+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'');
+    return '<div class="sess-item'+(t.id===topic?' on':'')+'" data-sess="'+text(t.id)+'" role="button" tabindex="0">'
+      + '<span class="'+dot+'"></span>'
+      + '<span class="sess-main"><span class="sess-title">'
+      + (named.tag?'<span class="topic-tag">'+text(named.tag)+'</span> ':'')+text(named.rest)
+      + '</span><span class="sess-meta">'+text(meta)+'</span></span>'
+      + badge
+      + '<button type="button" class="btn-icon sess-del" data-sdel="'+text(t.id)+'" title="Delete this session" aria-label="Delete this session">&times;</button>'
+      + '</div>';
+  }
+
+  function paintSessions(){
+    var list=schedSessions();
+    if(!list.length){
+      schedSessionList.innerHTML='<div class="sched-empty">No scheduled sessions yet. A task that runs in a new session opens one here.</div>';
+      return;
+    }
+    var h='';
+    for(var i=0;i<list.length;i++) h+=schedSessionRow(list[i]);
+    schedSessionList.innerHTML=h;
+  }
+
+  function paintSchedCounts(){
+    schedTabTasksN.textContent = schedTasks ? String(schedTasks.length) : '';
+    schedTabSessionsN.textContent = String(schedSessions().length);
+  }
+
+  /**
+   * The clock's dot: a scheduled run is holding a question and nothing will move until it is
+   * answered. Those topics have no row in the switcher, so this is the one signal that reaches the
+   * operator without opening the panel.
+   */
+  function paintSchedAlert(){
+    var waiting=false;
+    for(var i=0;i<topics.length;i++){
+      if(topics[i].scheduled && topics[i].stage==='answer'){ waiting=true; break; }
+    }
+    schedAlert.hidden = !waiting;
+    var label = waiting ? 'Scheduled tasks — a run is waiting on your answer' : 'Scheduled tasks';
+    schedToggle.title = label;
+    schedToggle.setAttribute('aria-label', label);
+  }
+
+  function paintSummary(){
+    if(schedTab==='sessions'){
+      var list=schedSessions(), busy=0;
+      for(var i=0;i<list.length;i++) if(list[i].running || list[i].asking) busy++;
+      schedSummary.textContent = list.length
+        ? list.length + (list.length===1?' session':' sessions') + (busy?' · '+busy+' running':'')
+        : 'no sessions yet';
+      return;
+    }
+    if(schedTasks === null){ schedSummary.textContent = 'loading…'; return; }
+    var active=0, paused=0, ended=0;
+    for(var j=0;j<schedTasks.length;j++){
+      if(schedTasks[j].state === 'active') active++;
+      else if(schedTasks[j].state === 'paused') paused++;
+      else ended++;
+    }
+    schedSummary.textContent = !schedEnabled
+      ? 'not enabled'
+      : schedTasks.length
+        ? active + ' active' + (paused ? ' · ' + paused + ' paused' : '') + (ended ? ' · ' + ended + ' ended' : '')
+        : 'nothing scheduled';
+  }
+
+  function paintSchedTab(){
+    var sessions=schedTab==='sessions';
+    schedTabTasks.classList.toggle('on', !sessions);
+    schedTabSessions.classList.toggle('on', sessions);
+    schedTabTasks.setAttribute('aria-selected', sessions ? 'false' : 'true');
+    schedTabSessions.setAttribute('aria-selected', sessions ? 'true' : 'false');
+    schedList.hidden = sessions;
+    schedSessionList.hidden = !sessions;
+    if(sessions) paintSessions();
+    paintSchedCounts();
+    paintSummary();
+  }
+
+  function setSchedTab(tab){
+    schedTab = tab==='sessions' ? 'sessions' : 'tasks';
+    try { localStorage.setItem('aa_sched_tab', schedTab); } catch(x){}
+    paintSchedTab();
+  }
 
   function paintSchedules(){
     app.classList.toggle('sched', schedOpen);
@@ -1141,6 +1354,7 @@ const SCRIPT = `
     schedToggle.classList.toggle('on', schedOpen);
     schedPin.setAttribute('aria-pressed', schedPinned ? 'true' : 'false');
     schedPin.classList.toggle('on', schedPinned);
+    paintSchedTab();
   }
 
   function setPinned(v){
@@ -1183,9 +1397,14 @@ const SCRIPT = `
     }
     // The sidebar's maximum depends on whether the panel is taking a column; re-clamp it so
     // opening the panel cannot leave the chat a sliver. Not persisted: the width the operator
-    // chose is still what they get back when the panel closes.
+    // chose is still what they get back when the panel closes. The panel's own saved width is
+    // re-clamped for the same reason — the window may be narrower than when it was dragged.
     var w = parseFloat(sidebar.style.getPropertyValue('--sbw'));
     if(w > 0) setSbWidth(w, false);
+    if(open && docked()){
+      var sw = parseFloat(schedPanel.style.getPropertyValue('--schedw'));
+      if(sw > 0) setSchedWidth(sw, false);
+    }
     if(wasBottom) toBottom();
   }
 
@@ -1276,26 +1495,17 @@ const SCRIPT = `
 
   function paintSchedulesList(tasks){
     schedTasks = tasks || [];
-    var active = 0, paused = 0, ended = 0, i;
-    for(i=0;i<schedTasks.length;i++){
-      if(schedTasks[i].state === 'active') active++;
-      else if(schedTasks[i].state === 'paused') paused++;
-      else ended++;
-    }
-    schedSummary.textContent = !schedEnabled
-      ? 'not enabled'
-      : schedTasks.length
-        ? active + ' active' + (paused ? ' · ' + paused + ' paused' : '') + (ended ? ' · ' + ended + ' ended' : '')
-        : 'nothing scheduled';
     if(!schedTasks.length){
       schedList.innerHTML = '<div class="sched-empty">' + (schedEnabled
         ? 'No scheduled tasks yet. Ask an agent in a topic — for example “every morning at 8, summarise the CI failures” — and it will be registered here.'
         : 'Scheduled tasks are not enabled in this daemon.') + '</div>';
-      return;
+    } else {
+      var h = '';
+      for(var i=0;i<schedTasks.length;i++) h += schedCard(schedTasks[i]);
+      schedList.innerHTML = h;
     }
-    var h = '';
-    for(i=0;i<schedTasks.length;i++) h += schedCard(schedTasks[i]);
-    schedList.innerHTML = h;
+    paintSchedCounts();
+    paintSummary();
   }
 
   function schedOp(id, action, btn){
@@ -1325,6 +1535,33 @@ const SCRIPT = `
   schedClose.addEventListener('click', function(){ setSchedules(false); });
   schedBackdrop.addEventListener('click', function(){ setSchedules(false); });
   schedPin.addEventListener('click', function(){ setPinned(!schedPinned); });
+  schedTabTasks.addEventListener('click', function(){ setSchedTab('tasks'); });
+  schedTabSessions.addEventListener('click', function(){ setSchedTab('sessions'); });
+
+  schedSessionList.addEventListener('click', function(e){
+    var del = e.target.closest ? e.target.closest('[data-sdel]') : null;
+    if(del){
+      e.stopPropagation();
+      var delId = del.getAttribute('data-sdel');
+      if(delId) deleteTopic(delId);
+      return;
+    }
+    var row = e.target.closest ? e.target.closest('[data-sess]') : null;
+    if(!row) return;
+    var id = row.getAttribute('data-sess');
+    if(!id || id===topic) return;
+    switchTopic(id);
+  });
+
+  schedSessionList.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    if(e.target.closest && e.target.closest('[data-sdel]')) return;
+    var row = e.target.closest ? e.target.closest('[data-sess]') : null;
+    if(!row) return;
+    e.preventDefault();
+    var id = row.getAttribute('data-sess');
+    if(id && id!==topic) switchTopic(id);
+  });
 
   schedList.addEventListener('click', function(e){
     var opBtn = e.target.closest ? e.target.closest('[data-op]') : null;
@@ -2126,11 +2363,16 @@ const SCRIPT = `
    * roots rather than not at all.
    */
   function topicRows(){
+    // Scheduled runs are conversations, but not ones the person opened: the panel's Sessions tab
+    // is where they live. Filtering here, rather than at paint time, also keeps their unread
+    // badges and "needs you" rows out of the switcher — the same rooms must not appear twice.
+    var visible=[];
+    for(var v=0;v<topics.length;v++) if(!topics[v].scheduled) visible.push(topics[v]);
     var byId={}, kids={}, roots=[], i;
-    for(i=0;i<topics.length;i++) byId[topics[i].id]=topics[i];
-    for(i=0;i<topics.length;i++){
-      var p=topics[i].parent;
-      if(p && p!==topics[i].id && byId[p]) (kids[p]=kids[p]||[]).push(topics[i]); else roots.push(topics[i]);
+    for(i=0;i<visible.length;i++) byId[visible[i].id]=visible[i];
+    for(i=0;i<visible.length;i++){
+      var p=visible[i].parent;
+      if(p && p!==visible[i].id && byId[p]) (kids[p]=kids[p]||[]).push(visible[i]); else roots.push(visible[i]);
     }
     var open={}, up=byId[topic], hops=0;
     while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
@@ -2156,7 +2398,7 @@ const SCRIPT = `
       for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
     }
     // What needs the person first (needsYou), most pressing first, each with the topics it opened.
-    var pinned=topics.filter(needsYou).sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+    var pinned=visible.filter(needsYou).sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
     for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
     var afterPinned=rows.length;
     var starred=[], rest=[];
@@ -2164,11 +2406,11 @@ const SCRIPT = `
     for(i=0;i<starred.length;i++) walk(starred[i], 0);
     var firstRest=rows.length;
     for(i=0;i<rest.length;i++) walk(rest[i], 0);
-    for(i=0;i<topics.length;i++){
+    for(i=0;i<visible.length;i++){
       // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
-      var hidden=false, a=topics[i], n=0;
+      var hidden=false, a=visible[i], n=0;
       while(a && a.parent && byId[a.parent] && n++<32){ if(seen[a.parent] && folded[a.parent] && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
-      if(!seen[topics[i].id] && !hidden) walk(topics[i], 0);
+      if(!seen[visible[i].id] && !hidden) walk(visible[i], 0);
     }
     if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
     if(firstRest>afterPinned && firstRest<rows.length) dividers[firstRest]=true;
@@ -2240,12 +2482,20 @@ const SCRIPT = `
     var h='';
     var cur=null;
     var painted=topicRows();
+    // The topic on screen may be a scheduled run, which topicRows leaves out of the list. The
+    // header, Stop/power and the read marks still belong to it, so find it in the full list —
+    // and seed a mark for every topic, hidden ones included, or the Sessions tab would count a
+    // run's whole history as unread the first time it was opened.
+    for(var i=0;i<topics.length;i++){
+      var seed=topics[i];
+      if(readCounts[seed.id]===undefined){ readCounts[seed.id]=seed.msgCount||0; saveReads(); }
+      if(seed.id===topic){ cur=seed; readCounts[seed.id]=seed.msgCount||0; saveReads(); }
+    }
     var stars=painted.stars;
-    for(var i=0;i<painted.rows.length;i++){
+    for(i=0;i<painted.rows.length;i++){
       var row=painted.rows[i];
       var t=row.t;
       var isCur=(t.id===topic);
-      if(isCur) cur=t;
       var isRunning=Boolean(t.running);
       // A question on screen holds its turn open, so t.running is true at the same time. Asked
       // first everywhere below: "waiting for you" is the state you can act on, and the one the
@@ -2253,14 +2503,6 @@ const SCRIPT = `
       var isAsking=Boolean(t.asking);
       var isLive=Boolean(t.live);
       var count=t.msgCount||0;
-      if(isCur){
-        readCounts[t.id]=count;
-        saveReads();
-      }
-      if(readCounts[t.id]===undefined){
-        readCounts[t.id]=count;
-        saveReads();
-      }
       var unread=isCur?0:Math.max(0, count - readCounts[t.id]);
       var cls='topic-item '+(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
         +(t.starred?' starred':'')+(painted.dividers[i]?' after-stars':'')
@@ -2343,6 +2585,12 @@ const SCRIPT = `
     // The window's title bar names the same topic this row does, so a rename lands on both in
     // the same frame rather than leaving the bar holding the old name until the next switch.
     if(TERM_OK) paintFrames();
+    // The panel's Sessions tab is drawn from this same list, and its counts must move when a run
+    // opens or finishes even while the Tasks tab is the one on screen.
+    paintSchedCounts();
+    paintSummary();
+    paintSchedAlert();
+    if(schedOpen && schedTab==='sessions') paintSessions();
   }
 
   /**
@@ -4164,7 +4412,7 @@ __GATE__
       <!-- Always present, unlike the terminal's: the task panel is the only place on this page
            where scheduled tasks are managed. A clock rather than an emoji for the same reason
            the power button is an SVG — it has to sit on the header's text baseline. -->
-      <button type="button" class="btn-icon" id="schedules-toggle" aria-expanded="false" aria-controls="schedules" title="Scheduled tasks" aria-label="Scheduled tasks"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+      <button type="button" class="btn-icon" id="schedules-toggle" aria-expanded="false" aria-controls="schedules" title="Scheduled tasks" aria-label="Scheduled tasks"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="sched-alert" id="sched-alert" hidden></span></button>
     </div>
     <div id="log"></div>
     <div id="typing" hidden>...</div>
@@ -4212,6 +4460,9 @@ __GATE__
        1024px; the page toggles #app.sched and the stylesheet decides which of the two it is.
        Outside #chat because it is about the gateway, not about the topic being read. -->
   <aside id="schedules" aria-label="Scheduled tasks">
+    <!-- The docked panel's width, dragged like the sidebar's. Hidden below 1024px, where the
+         panel is an overlay and the screen decides its width. -->
+    <div id="sched-resize" role="separator" aria-orientation="vertical" aria-label="Resize the scheduled panel" title="Drag to resize · double-click for the default width"></div>
     <div id="schedules-head">
       <div class="sched-heading">
         <span class="sched-title">⏰ Scheduled tasks</span>
@@ -4220,9 +4471,16 @@ __GATE__
       <button type="button" class="btn-icon" id="schedules-pin" aria-pressed="false" title="Keep this panel open" aria-label="Keep this panel open"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 3h6l-1 6 4 4v2H6v-2l4-4z"/><path d="M12 15v6"/></svg></button>
       <button type="button" class="btn-icon" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
+    <!-- A task is a definition, a session is one run that opened a topic of its own. Two lists,
+         because a run is not a task and merging them would make every run look like one. -->
+    <div id="sched-tabs" role="tablist" aria-label="Scheduled tasks and sessions">
+      <button type="button" class="sched-tab on" id="sched-tab-tasks" role="tab" aria-selected="true" aria-controls="schedules-list">Tasks <span class="sched-count" id="sched-tab-tasks-n"></span></button>
+      <button type="button" class="sched-tab" id="sched-tab-sessions" role="tab" aria-selected="false" aria-controls="sched-sessions">Sessions <span class="sched-count" id="sched-tab-sessions-n"></span></button>
+    </div>
     <div id="schedules-body">
       <div id="schedules-note" hidden></div>
-      <div id="schedules-list"></div>
+      <div id="schedules-list" role="tabpanel" aria-labelledby="sched-tab-tasks"></div>
+      <div id="sched-sessions" role="tabpanel" aria-labelledby="sched-tab-sessions" hidden></div>
     </div>
   </aside>
   <div id="sched-backdrop"></div>

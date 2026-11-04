@@ -98,6 +98,14 @@ describe('webui page', () => {
     expect(html).toContain('api/schedules/op');
     expect(html).toContain('aa_sched_pin');
     expect(html).toContain('#app.sched #schedules{display:flex}');
+    // The definitions and the topics their runs opened are two lists, not one.
+    expect(html).toContain('id="sched-tabs"');
+    expect(html).toContain('id="sched-tab-sessions"');
+    expect(html).toContain('id="sched-sessions"');
+    // Narrower than the old fixed column, and the operator can drag it.
+    expect(html).toContain('clamp(240px,20vw,320px)');
+    expect(html).toContain('id="sched-resize"');
+    expect(html).toContain('aa_sched_w');
   });
 
   it('sends a nonce, without which its own retry would double-post', () => {

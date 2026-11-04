@@ -354,11 +354,12 @@ export class WebRoom {
    * says so, because the server hands it to the page verbatim and it is the only explanation the
    * operator will get for a + that did nothing.
    *
-   * `parent` nests it under the topic whose agent opened it (Topic.parent).
+   * `parent` nests it under the topic whose agent opened it (Topic.parent), and `scheduled` marks
+   * a lane a scheduled run opened for itself (Topic.scheduled).
    */
-  createTopic(title = '', parent?: string): Topic {
+  createTopic(title = '', parent?: string, opts: { scheduled?: boolean } = {}): Topic {
     if (this.topics.full()) this.makeRoom();
-    const topic = this.topics.create(title, parent);
+    const topic = this.topics.create(title, parent, opts);
     this.announceTopics();
     return topic;
   }
