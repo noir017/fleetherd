@@ -363,3 +363,55 @@ describe('reclaimIdleForRef', () => {
     expect(rig().reg.reclaimIdleForRef(ref)).toBe(false);
   });
 });
+
+/**
+ * What the review sweep asks the registry: the same facts the idle sweeper decides on, exposed as
+ * data. The point of pinning them here is that "quiet enough to review" must never be answered by
+ * a conversation that is mid-turn, waiting on a person, or still holding a child it can resume.
+ */
+describe('reviewFacts', () => {
+  it('reports the conversation as live until reclaim stops the child', async () => {
+    const h = rig();
+    h.reg.route(inbound('hello', 'm1'));
+    await drain();
+
+    const before = h.reg.reviewFacts();
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({
+      key: KEY,
+      busyTurn: false,
+      stopped: false,
+      unresumable: false,
+      pendingWork: false,
+      lane: { platform: 'discord', channel: 'c1' },
+    });
+
+    h.advance(IDLE_MS + 60_000);
+    h.reg.reclaimIdleSessions();
+    expect(h.reg.reviewFacts()[0]).toMatchObject({ stopped: true, busyTurn: false });
+    expect(h.reg.reviewFacts()[0]!.idleMs).toBeGreaterThanOrEqual(IDLE_MS);
+  });
+
+  it('reports a turn in flight as busy', async () => {
+    const h = rig({ hang: true });
+    h.reg.route(inbound('a long task', 'm1'));
+    await drain();
+    expect(h.reg.reviewFacts()[0]!.busyTurn).toBe(true);
+  });
+
+  it('reports a pending question, and a child that cannot resume', async () => {
+    const pending = rig({ pendingWork: true });
+    pending.reg.route(inbound('hello', 'm1'));
+    await drain();
+    expect(pending.reg.reviewFacts()[0]!.pendingWork).toBe(true);
+
+    const stuck = rig({ reclaimState: 'unresumable' });
+    stuck.reg.route(inbound('hello', 'm1'));
+    await drain();
+    expect(stuck.reg.reviewFacts()[0]).toMatchObject({ unresumable: true, stopped: false });
+  });
+
+  it('has nothing to say about a conversation that never ran here', () => {
+    expect(rig().reg.reviewFacts()).toEqual([]);
+  });
+});

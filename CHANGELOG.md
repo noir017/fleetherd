@@ -5,6 +5,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Quiet conversations review themselves.** The managed skills learn from what actually happened:
+  when a conversation has been idle for an hour and the person has said at least three things
+  since the last review, the gateway has an `agy` agent read it and propose `create`, `patch` and
+  `write-file` changes, plus any preference it noticed. The moment is idle reclaim's own — the
+  review runs once the agent process is stopped — and the three edges come with it: `/kill` and
+  `/new` are reviewed an hour later, a restart backfills what went quiet while it was down, and a
+  conversation whose agent can never be reclaimed is reviewed with its process still up.
+  Scheduled tasks, sub-agents and reviews themselves are never reviewed. The reviewer has no
+  tools: one `agy -p` in an empty temporary directory with every permission class denied — print
+  mode without `--dangerously-skip-permissions` still auto-approves file writes on agy 1.5.0, and
+  `deny: ["*"]` denies nothing at all (both measured 2026-11-04), so the explicit deny list is what
+  makes the reviewer unable to touch a file. Only the gateway writes, through `talkcode skills`'
+  own rules: a patch must carry the version the reviewer was given, and a change the store refuses
+  is dropped and logged. One review runs at a time, at most
+  ten a day; a failure waits six hours. When something changed, one line appears in the reviewed
+  conversation with the `revert` command; no change, no line. Reviews are filed in the conversation
+  library as `review` sessions, which search and `list` leave out. Off unless `review.agent` names
+  an agy agent. [→](docs/skills.md#auto-review)
+
 ## [2.31.0] - 2026-11-04
 
 ### Added

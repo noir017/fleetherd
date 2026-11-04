@@ -369,6 +369,50 @@ Verified resumable on the three harnesses in use: `claude` (claude-agent-acp adv
 `loadSession: true`), `opencode` 1.18.18 (same, plus `sessionCapabilities.resume`), and
 `agy` (`--conversation=<id>`, recorded as soon as its `init` event names one).
 
+### Automatic review
+
+`review.ts` reads a quiet conversation and, if it has anything to teach, has an `agy -p` propose
+changes to the managed skills; the gateway applies them through skills-store's own rules
+(`docs/skills.md#auto-review`). Off unless `review.agent` names an agy agent.
+
+**The trigger is reclaim's own moment, expressed as a sweep.** `eligible` is the whole rule:
+quiet for an hour, no turn running, no pending `ask`, and either the child is gone or it can
+never be reclaimed (reclaim off, or `reclaimState() === 'unresumable'`). That one predicate covers
+the four cases the plan names — the reclaim that just happened, `/kill` and `/new` an hour later,
+a conversation a harness will never let us reclaim, and the backfill after a restart (no state at
+all, so `reviewCandidatesFrom` defaults it to stopped and takes the idle clock from the library).
+It is a sweep rather than a hook on `reclaimSession` because a sweep is also the only thing that
+can see the last two cases at all, and because the timer already exists at the same coarse minute.
+
+**Three messages since the last review.** `reviews.json` (`review-state.ts`) holds, per
+conversation, the last message id a review saw — the same integer `reviewWindow` uses to decide
+what to quote. "Three" counts `role: user, kind: normal` rows, so a scheduled turn or a sub-agent
+prompt in the same topic does not count as the person speaking.
+
+**One at a time, ten a day, six-hour back-off.** `sweep` is guarded by a flag, so a review that
+outlives the minute simply makes the next tick a no-op; the counter is per UTC day, and a failed
+run records a retry time instead of advancing the watermark, so a broken reviewer is not retried
+every minute. The limit exists because one review is one `agy` call on the operator's account.
+
+**The reviewer cannot touch anything.** One `agy -p` on the agent's machine, in an empty directory
+that is removed afterwards, with every permission class denied (`AGY_NO_TOOLS`). Measured on agy
+1.5.0 (2026-11-04), and both halves contradict the plan: print mode WITHOUT
+`--dangerously-skip-permissions` still auto-approves file writes, and `deny: ["*"]` denies
+NOTHING (`"*"` names a permission class literally). The explicit list refuses `write_file`,
+`command`, `read_file` and `mcp` — each reported "Matches user-configured deny rule" — and the
+same prompt wrote nothing. A tool in a class not in that list would not be denied; the list is
+part of the security contract (AGENTS.md invariant 8). `runAgyReview` is injectable so no test starts a model.
+
+**Who writes.** Only the gateway, one change at a time through `createSkill` / `patchSkill` /
+`writeSkillFile`. A change the store refuses — a taken name, a file outside the three
+directories, a version that moved while the reviewer was thinking — is dropped and logged; the
+rest of the answer still applies. The reviewer's own output and the prompt are filed in the
+library as a `review` session, which search and `list` leave out (`history/store.ts`).
+
+**What the person sees.** One line, and only when something changed: the skills, the `revert`
+command for each (or `archive` for a create), and any preference the reviewer noticed. No change,
+no line — a review that says "nothing to do" every hour is noise, and the log has the preferences.
+
 ## Scheduled tasks
 
 An agent registers them (`talkcode schedule add …`, documented to it on demand by

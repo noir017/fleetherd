@@ -110,6 +110,19 @@ export interface HistorySearchOptions {
   limit?: number;
 }
 
+/** What one review reads: a tail of a conversation plus the two facts its trigger decides on. */
+export interface ReviewWindow {
+  session: HistorySessionRow;
+  /** Oldest first, at most `maxChars` characters in total (the newest row is always kept). */
+  messages: Array<{ id: number; at: string; role: string; kind: string; text: string }>;
+  /** The person's own messages in the span, before any character cut. */
+  userMessages: number;
+  /** The newest message in the conversation — where the next review starts. */
+  lastMessageId: number;
+  /** How many older messages the character budget left out. */
+  dropped: number;
+}
+
 const DEFAULT_SEARCH_LIMIT = 10;
 const DEFAULT_LIST_LIMIT = 30;
 const DEFAULT_LIST_DAYS = 7;
@@ -124,6 +137,13 @@ const READ_ALL_LIMIT = 500;
  * an ordinary conversation, with a note pointing at `--around` when it is not.
  */
 const READ_CHAR_BUDGET = 200_000;
+
+/**
+ * How many messages `reviewWindow` reads before the character budget is applied. A review runs
+ * after a few messages, so this only bounds the pathological case (a conversation nobody reviewed
+ * for months): the newest few hundred are what a reviewer can still act on.
+ */
+const REVIEW_WINDOW_ROWS = 500;
 
 function iso(ts: number): string {
   return new Date(ts).toISOString();
@@ -431,6 +451,81 @@ export class HistoryStore {
       )
       .all(Date.now() - days * 86_400_000, limit) as Array<Record<string, unknown>>;
     return rows.map(sessionRow);
+  }
+
+  /**
+   * One conversation's row by the key `conversations.json` uses, without reading its messages —
+   * what the review sweep asks before deciding whether a quiet conversation is worth reviewing.
+   */
+  sessionOf(key: string): HistorySessionRow | undefined {
+    try {
+      return this.findSession(key);
+    } catch {
+      // No database: the sweep has nothing to read, and says so once at startup instead.
+      return undefined;
+    }
+  }
+
+  /**
+   * What a review reads of one conversation: the rows after the last review's watermark, cut to a
+   * character budget from the newest end, plus the two facts the trigger needs — how many messages
+   * the person sent in that span, and the id a review starts after next time.
+   *
+   * Scheduled turns and sub-agent turns are left out: they share a topic with a person's
+   * conversation but are not what the person said. `review` rows are excluded for the same reason a
+   * review is never reviewed. `background` output is kept — the agent said it in this conversation.
+   *
+   * The window is a TAIL, not a head: when a conversation is longer than the budget, the newest
+   * messages are the ones a review can still act on, and `dropped` says how many were left out so
+   * the prompt can say so rather than presenting a partial log as whole.
+   */
+  reviewWindow(key: string, afterId: number, maxChars: number): ReviewWindow | undefined {
+    const db = this.requireDb();
+    const session = this.findSession(key);
+    if (!session) return undefined;
+    const excluded = "kind NOT IN ('schedule', 'subagent', 'review')";
+    const total = Number(
+      (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND id > ? AND ${excluded}`)
+          .get(session.id, afterId) as { n: number | bigint }
+      ).n
+    );
+    const lastRow = db.prepare('SELECT MAX(id) AS id FROM messages WHERE session_id = ?').get(session.id) as
+      | { id: number | bigint | null }
+      | undefined;
+    const userMessages = Number(
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND id > ? AND role = 'user' AND kind = 'normal'"
+          )
+          .get(session.id, afterId) as { n: number | bigint }
+      ).n
+    );
+    // Newest first, so a long conversation is cut from its oldest end rather than its newest.
+    const rows = db
+      .prepare(
+        `SELECT id, ts, role, kind, text FROM messages
+         WHERE session_id = ? AND id > ? AND ${excluded}
+         ORDER BY ts DESC, id DESC LIMIT ?`
+      )
+      .all(session.id, afterId, REVIEW_WINDOW_ROWS) as Array<Record<string, unknown>>;
+    const newestFirst = rows.map(messageRow);
+    const kept: typeof newestFirst = [];
+    let chars = 0;
+    for (const message of newestFirst) {
+      if (kept.length > 0 && chars + message.text.length > maxChars) break;
+      kept.push(message);
+      chars += message.text.length;
+    }
+    return {
+      session,
+      messages: kept.reverse(),
+      userMessages,
+      lastMessageId: Number(lastRow?.id ?? afterId),
+      dropped: total - kept.length,
+    };
   }
 
   // ── internals ────────────────────────────────────────────────────────────────

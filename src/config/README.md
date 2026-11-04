@@ -18,7 +18,8 @@ nothing else from the project.
 ## The central design decision: a small user surface
 
 The config file has exactly five sections — `platforms`, `agents`, `routing`,
-`session`, `access` — plus the optional `display`, `stream`, `title`, `voice` and `hosts`. Everything else that
+`session`, `access` — plus the optional `display`, `stream`, `title`, `voice`, `hosts` and
+`review`. Everything else that
 *looks* like config (stream throttling, tool-bubble rendering, inbound merge windows,
 attachment limits, reaction emoji, the IPC socket) is **not** user-configurable. It lives
 in the frozen `EXPERIENCE` constant in `schema.ts` and is merged into every loaded
@@ -43,6 +44,11 @@ destination, a key, a known_hosts file). The link's tuning — heartbeat, back-o
 orphan timeout — is constants in `src/remote/` and `remote/`, not config.
 
 `agents[].hooks.turnFailed` is user-side like `hooks.preLaunch`, and kept out of `/setting` for the same reason: `command` is a shell command.
+
+`review` is on the user side because "should anything review conversations on its own, and with
+which agent" is a per-deployment decision — and one that spends the reviewer's quota. Its tuning
+(the idle hour, the three-message floor, the daily cap, the back-off) is constants in
+[`daemon/review.ts`](../daemon/review.ts), not config.
 
 `voice` is on the user side because it is a credential and an endpoint (the transcriber), plus
 one decision — `confirm`, whether a transcript waits for a tap. Everything that tunes it (the

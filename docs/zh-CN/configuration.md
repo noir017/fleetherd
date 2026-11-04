@@ -24,6 +24,8 @@ agents:                       # 至少一个；路由按 id 选取
     cwd: ~/projects/main
   - id: codex
     harness: codex
+  - id: ag
+    harness: agy               # 也可以让它来复盘对话（见下文）
   - id: claude-devbox
     harness: claude
     host: devbox              # 跑在另一台机器上，见远程主机
@@ -49,6 +51,10 @@ session:
 
 access:
   allowFrom: ["discord-main:123456"]   # <实例id>:userId；留空 = 任何人
+
+review:                       # 可选；不指定 agy 智能体就是关闭
+  agent: ag                   # 由这个智能体所在机器上的一次 agy -p 复盘闲置对话
+  model: gemini-3.8-flash-high
 ```
 
 `${VAR}` 从环境变量及 `<配置目录>/.env` 展开，YAML 本身可以提交进仓库。
@@ -60,7 +66,7 @@ access:
 其余配置在用到它的地方讲：各 harness 的选项见[智能体](agents.md)，网页端的 `terminal:`、`sso:`
 见[网页端](web-ui.md)，`title:` 见[话题命名](topic-names.md)，`voice:` 见[语音消息](voice.md)，`hosts:` 和
 `agents[].host` 见[远程主机](remote-hosts.md)，`agents[].hooks` 见
-[智能体](agents.md#启动前钩子)。
+[智能体](agents.md#启动前钩子)，`review:` 见[技能](skills.md#自动复盘)。
 其中几项也能在聊天里直接改、不用重启——见[在聊天里改配置](settings.md)。
 
 ## 守护进程运行时改配置

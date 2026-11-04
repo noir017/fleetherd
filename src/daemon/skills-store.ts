@@ -69,6 +69,12 @@ export interface SkillSource {
   platform?: string;
   address?: { channel: string; thread?: string };
   agent?: string;
+  /**
+   * Set when the automatic review wrote it (`daemon/review.ts`) rather than an agent in a
+   * conversation. The conversation fields then name the conversation that was REVIEWED, which is
+   * where an archive notice still goes — this is the one bit that says nobody typed it there.
+   */
+  origin?: 'review';
 }
 
 export interface SkillUsage {

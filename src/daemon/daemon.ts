@@ -120,6 +120,8 @@ import type { WorkdirUsageStore } from './workdir-usage.js';
 import { resolvePageSize } from '../core/paging.js';
 import { IpcServer } from '../ipc/server.js';
 import { startSkillSweep } from './skill-lifecycle.js';
+import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
+import { ReviewStateStore } from './review-state.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
   archiveSkill,
@@ -818,6 +820,13 @@ export class Daemon {
   /** Scheduled tasks (see daemon/schedule-service.ts). Absent when started without a task store. */
   private readonly schedules?: ScheduleService;
 
+  /**
+   * Automatic review of quiet conversations (daemon/review.ts). Present whenever the library is:
+   * the sweep itself is a no-op until `review.agent` names a reviewer, so a `/reload` that adds or
+   * removes one needs no re-wiring.
+   */
+  private readonly reviews?: ReviewService;
+
   /** The IPC socket, which an agent on a remote host reaches through remoteHosts' CLI bridge. */
   private readonly socketPath: string;
   /** The last read of the pods, so the next one waits for it (refreshPods). */
@@ -955,6 +964,18 @@ export class Daemon {
       // turn on the chat's write budget.
       this.schedules = new ScheduleService(config, this.platforms, this.registry, clock, schedules.store, schedules.runsDir);
     }
+    if (history) {
+      // Constructed even when `review:` is absent: the sweep is what checks that, so a `/reload`
+      // that adds or removes the reviewer takes effect without restarting the daemon.
+      this.reviews = new ReviewService({
+        config,
+        history,
+        state: new ReviewStateStore(path.join(configDir(), 'reviews.json')),
+        clock,
+        candidates: () => this.reviewCandidates(),
+        notify: (lane, text) => this.notifyReview(lane, text),
+      });
+    }
     // Before anything can start an agent: an agent with `host:` reaches its machine through this.
     this.socketPath = socketPath;
     remoteHosts.configure(config, socketPath);
@@ -1026,6 +1047,10 @@ export class Daemon {
     // After the platforms and IPC are up: a run that is due right away (a catch-up after the update
     // that restarted us) needs somewhere to post, and an agent run needs its reverse commands.
     this.schedules?.scheduler.start();
+    // The review sweep's first pass is the backfill after a restart: every agent child is gone and
+    // the idle clock comes from the library, so conversations that went quiet during the update are
+    // reviewed now rather than waiting for a reclaim that will never come for them.
+    this.reviews?.start();
     // The managed skills' daily check: 14 days marks one expired, 30 archives it. Not from a test
     // worker, which is not the CLI and must not touch the operator's config directory.
     if (selfInvocation() && !process.env.TALKCODE_NO_SKILL_LINK) {
@@ -1116,6 +1141,10 @@ export class Daemon {
     this.signalCleanup = null;
     this.skillSweepStop?.();
     this.skillSweepStop = undefined;
+    // Before the platforms: a review that is mid-run when the gateway stops is left to finish its
+    // process (it is short and bounded), but no new one starts and no notice is posted to a lane
+    // that is about to go down.
+    this.reviews?.stop();
     // First, so nothing new starts while the rest goes down. Bash runs in flight are signalled and
     // record themselves as interrupted; agent runs end with the registry below.
     this.schedules?.scheduler.stop();
@@ -1624,6 +1653,28 @@ export class Daemon {
   private requireHistory(): HistoryStore {
     if (!this.history) throw new Error('the conversation history is not enabled in this daemon');
     return this.history;
+  }
+
+  /**
+   * Every conversation the review sweep may look at, as one list.
+   *
+   * Two sources, because neither is complete. `conversations.json` survives a restart and carries
+   * the lane a notice goes to; the registry knows only conversations this process has seen, but
+   * knows the things a stored record cannot — whether a turn is running, whether a child is
+   * resident, whether the daemon is holding a pending question. The merge itself is
+   * `reviewCandidatesFrom`, where it can be tested without a daemon.
+   */
+  private reviewCandidates(): ReviewCandidate[] {
+    const now = Date.now();
+    const live = this.registry.reviewFacts(now);
+    return reviewCandidatesFrom(this.store?.entries() ?? [], live, (key) => this.history?.sessionOf(key), now);
+  }
+
+  /** The review's one-line notice, in the conversation it reviewed. */
+  private async notifyReview(lane: ReviewLane, text: string): Promise<void> {
+    const adapter = this.platforms.get(lane.platform);
+    if (!adapter) throw new Error(`platform "${lane.platform}" is not configured any more`);
+    await adapter.sendMessage(lane.thread ? { channel: lane.channel, thread: lane.thread } : { channel: lane.channel }, text);
   }
 
   /**
