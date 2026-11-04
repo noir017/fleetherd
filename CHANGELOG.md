@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.27.1] - 2026-11-04
+
 ### Fixed
 
 - **The web UI's three column headers are one height.** The topics bar, the topic title and the
