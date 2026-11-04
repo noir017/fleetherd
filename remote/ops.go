@@ -82,6 +82,10 @@ func (d *daemon) op(ctx context.Context, h *Header, body []byte) (any, []byte, e
 		return opEnsureLink(expandHome(h.Target), path, expandHome(h.Requires), expandHome(h.Owned))
 	case "removeLink":
 		return opRemoveLink(path, expandHome(h.Owned))
+	case "removePath":
+		return opRemovePath(path, expandHome(h.Owned))
+	case "listFiles":
+		return opListFiles(path)
 	case "sweepSkillLinks":
 		return opSweepSkillLinks(path)
 	case "run":
@@ -425,6 +429,79 @@ func opRemoveLink(link, owned string) (any, []byte, error) {
 		return result("failed", err.Error())
 	}
 	return result("removed", dest)
+}
+
+// opRemovePath deletes one file or directory tree the gateway put on the host — a managed skill's
+// copy, or a file that version no longer carries. It is the remote counterpart of the local
+// delivery's prune, and it has the same limit: `path` must be strictly inside `owned`, and `owned`
+// is the skill's own copy directory (or the skills root when the copy itself goes). An empty
+// `owned` is refused rather than read as "anywhere": this deletes from the operator's home.
+//
+// The parent is resolved through symlinks before deleting, so a link planted inside the copy cannot
+// turn `removePath` into a delete outside it. The path itself is not resolved: removing a symlink
+// removes the link, never its target, which is what os.RemoveAll already does.
+func opRemovePath(path, owned string) (any, []byte, error) {
+	if owned == "" {
+		return nil, nil, errors.New("removePath needs the directory the path must stay inside")
+	}
+	if !under(path, path, owned) {
+		return nil, nil, fmt.Errorf("refusing to remove %s: not under %s", path, owned)
+	}
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return map[string]any{"removed": false, "path": path}, nil, nil
+	} else if err != nil {
+		return nil, nil, err
+	}
+	rootStat, err := os.Lstat(owned)
+	if err != nil {
+		return nil, nil, err
+	}
+	if rootStat.Mode()&fs.ModeSymlink != 0 {
+		return nil, nil, fmt.Errorf("refusing to remove %s: %s is a symlink", path, owned)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return nil, nil, err
+	}
+	root, err := filepath.EvalSymlinks(owned)
+	if err != nil {
+		return nil, nil, err
+	}
+	if parent != filepath.Clean(root) && !strings.HasPrefix(parent, filepath.Clean(root)+string(os.PathSeparator)) {
+		return nil, nil, fmt.Errorf("refusing to remove %s: %s is outside %s", path, parent, owned)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return nil, nil, err
+	}
+	return map[string]any{"removed": true, "path": path}, nil, nil
+}
+
+// opListFiles lists every file under `path`, relative and slash-separated, without following
+// symlinks. The gateway uses it to prune a managed skill's copy after a version change: the files
+// it no longer carries are the difference between this list and the version's own file set.
+func opListFiles(path string) (any, []byte, error) {
+	files := []string{}
+	err := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if p == path || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(path, p)
+		if err != nil {
+			return err
+		}
+		files = append(files, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return map[string]any{"files": files}, nil, nil
 }
 
 // opSweepSkillLinks removes dangling skill links in `dir` that point into this host's version

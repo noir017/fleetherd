@@ -138,6 +138,8 @@ Paths may start with `~/`, resolved against the host's home.
 | `writeFile` | `path mode append atomic` + body | written (or appended) owner-only, directories created; `atomic` replaces the file in one rename (one frame, no append) |
 | `ensureLink` | `target path requires owned` | `{outcome, detail}` — skill-link.ts's rules; with `owned`, an existing symlink is repointed only if it points inside that directory |
 | `removeLink` | `path owned` | `{outcome, detail}` — the symlink removed only if it points inside `owned` (`removed`), else `kept` / `absent` |
+| `removePath` | `path owned` | `{removed, path}` — one file or directory tree removed only if `path` is strictly inside `owned`; the parent is resolved through symlinks first, and the path itself is not followed |
+| `listFiles` | `path` | `{files: [relative, …]}` — every non-directory entry, slash-separated, without following symlinks |
 | `run` | `argv` or `bash`, `cwd env unset timeoutMs merge max` | `{code, signal, timedOut, cancelled, truncated, spawnError, stderr}` + body (the output's end) |
 
 ## Testing

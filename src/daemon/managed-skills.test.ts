@@ -7,7 +7,7 @@ import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import { RemoteHosts } from './remote-hosts.js';
 import { applyManagedSkills, managedSkillsHome, placeManagedSkills } from './managed-skills.js';
-import { archiveSkill, createSkill, patchSkill, showSkill, writeSkillFile } from './skills-store.js';
+import { archiveSkill, createSkill, patchSkill, removeSkillFile, showSkill, writeSkillFile } from './skills-store.js';
 
 /**
  * Delivery writes into a throwaway HOME, as skill-link.test.ts does: `applyManagedSkills` is the
@@ -111,8 +111,22 @@ describe('placeManagedSkills on a remote host', () => {
     readonly writes: string[] = [];
     readonly links = new Map<string, string>();
     readonly removed: string[] = [];
+    readonly removedPaths: Array<{ path: string; owned: string }> = [];
+    /** Every write and remove in call order, so a test can pin "write first, prune after". */
+    readonly ops: string[] = [];
+    /** What the copy looks like on the host; the prune asks for this before removing anything. */
+    remoteFiles: string[] = [];
     async writeFile(p: string): Promise<void> {
       this.writes.push(p);
+      this.ops.push(`write ${p}`);
+    }
+    async listFiles(): Promise<string[]> {
+      return this.remoteFiles;
+    }
+    async removePath(path: string, owned: string): Promise<{ removed: boolean; path: string }> {
+      this.removedPaths.push({ path, owned });
+      this.ops.push(`remove ${path}`);
+      return { removed: true, path };
     }
     async ensureLink(target: string, link: string): Promise<{ outcome: string; link: string }> {
       this.links.set(link, target);
@@ -133,6 +147,18 @@ describe('placeManagedSkills on a remote host', () => {
     os: 'linux',
     arch: 'amd64',
     resumed: false,
+  });
+
+  it('links a second harness on the same host and version, where the files are already cached', async () => {
+    const host = new FakeHost();
+    const hosts = new RemoteHosts();
+    const codex = { id: 'cx', harness: 'codex', env: {} } as unknown as AgentDef;
+    await hosts.placeManagedSkills(host as unknown as RemoteHost, codex, '/home/u', welcome('i1'), dir);
+    expect(host.links.get('/home/u/.agents/skills/deploy-check')).toBe('/home/u/.talkcode/skills/deploy-check');
+    expect(host.links.has('/home/u/.claude/skills/deploy-check')).toBe(false);
+    // The files are already on the host for this instance; the claude link must still be made.
+    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.talkcode/skills/deploy-check');
   });
 
   it('writes once per version, and links into the harness directories with `owned`', async () => {
@@ -164,7 +190,26 @@ describe('placeManagedSkills on a remote host', () => {
     expect(host.writes.length).toBeGreaterThan(afterChange);
   });
 
-  it('takes back an archived skill in every directory, then remembers it', async () => {
+  it('writes the new version before pruning a file it no longer carries', async () => {
+    const host = new FakeHost();
+    const hosts = new RemoteHosts();
+    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    removeSkillFile({ name: 'deploy-check', file: 'references/api.md', now: T0 + 2 }, dir);
+    // What the previous version left in the copy: the file that was just removed is still there.
+    host.remoteFiles = ['SKILL.md', 'references/api.md'];
+    host.ops.length = 0;
+    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    expect(host.removedPaths).toEqual([
+      { path: '/home/u/.talkcode/skills/deploy-check/references/api.md', owned: '/home/u/.talkcode/skills/deploy-check' },
+    ]);
+    // The write lands before the delete, so a reader never sees the skill half-deleted.
+    expect(host.ops.indexOf('write /home/u/.talkcode/skills/deploy-check/SKILL.md')).toBeGreaterThanOrEqual(0);
+    expect(host.ops.indexOf('write /home/u/.talkcode/skills/deploy-check/SKILL.md')).toBeLessThan(
+      host.ops.indexOf('remove /home/u/.talkcode/skills/deploy-check/references/api.md')
+    );
+  });
+
+  it('takes back an archived skill in every directory, removes its copy, then remembers it', async () => {
     const host = new FakeHost();
     const hosts = new RemoteHosts();
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
@@ -172,8 +217,11 @@ describe('placeManagedSkills on a remote host', () => {
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
     expect(host.removed).toContain('/home/u/.claude/skills/deploy-check');
     expect(host.removed).toContain('/home/u/.agents/skills/deploy-check');
+    expect(host.removedPaths).toContainEqual({ path: '/home/u/.talkcode/skills/deploy-check', owned: '/home/u/.talkcode/skills' });
     const removed = host.removed.length;
+    const removedPaths = host.removedPaths.length;
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
     expect(host.removed).toHaveLength(removed);
+    expect(host.removedPaths).toHaveLength(removedPaths);
   });
 });

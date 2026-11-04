@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -624,6 +625,85 @@ func TestWriteFileAtomicReplacesAReadOnlyFile(t *testing.T) {
 	}
 	if r, _, _ := rpc(t, g, &Header{Op: "writeFile", Path: "~/.talkcode/instructions/codex.md", Atomic: true, Append: true}, []byte("x")); r.T != "rpc-err" {
 		t.Fatalf("an atomic append must be refused: %+v", r)
+	}
+}
+
+// The managed-skill copy is pruned and, when archived, removed whole — but only inside the copy
+// directory the gateway owns. A symlinked directory is not a way out of it.
+func TestRemovePathStaysInRoot(t *testing.T) {
+	d := testDaemon(t, "removepath")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	home := homeDir()
+	copyDir := filepath.Join(home, ".talkcode", "skills", "foo")
+	_ = os.MkdirAll(filepath.Join(copyDir, "references"), 0o755)
+	_ = os.WriteFile(filepath.Join(copyDir, "SKILL.md"), []byte("x"), 0o600)
+	_ = os.WriteFile(filepath.Join(copyDir, "references", "a.md"), []byte("a"), 0o600)
+	remove := func(path, owned string) (*Header, map[string]any) {
+		r, res, _ := rpc(t, g, &Header{Op: "removePath", Path: path, Owned: owned}, nil)
+		return r, res
+	}
+
+	r, res := remove("~/.talkcode/skills/foo/references/a.md", "~/.talkcode/skills/foo")
+	if r.T != "rpc-ok" || res["removed"] != true {
+		t.Fatalf("remove a file: %+v %v", r, res)
+	}
+	if _, err := os.Lstat(filepath.Join(copyDir, "references", "a.md")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("file still there: %v", err)
+	}
+	if r, res := remove("~/.talkcode/skills/foo/references/missing.md", "~/.talkcode/skills/foo"); res["removed"] != false {
+		t.Fatalf("missing file: %+v %v", r, res)
+	}
+	if r, _ := remove("~/.talkcode/skills/foo", "~/.talkcode/skills/foo"); r.T != "rpc-err" {
+		t.Fatalf("the root itself must be refused: %+v", r)
+	}
+	if r, _ := remove("~/.talkcode/elsewhere", "~/.talkcode/skills/foo"); r.T != "rpc-err" {
+		t.Fatalf("outside the root must be refused: %+v", r)
+	}
+
+	// A symlinked subdirectory cannot carry the delete outside the copy.
+	outside := filepath.Join(home, "outside")
+	_ = os.MkdirAll(outside, 0o755)
+	_ = os.WriteFile(filepath.Join(outside, "keep"), []byte("keep"), 0o600)
+	_ = os.Symlink(outside, filepath.Join(copyDir, "sub"))
+	if r, _ := remove("~/.talkcode/skills/foo/sub/keep", "~/.talkcode/skills/foo"); r.T != "rpc-err" {
+		t.Fatalf("a symlinked parent must be refused: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("deleted outside the copy: %v", err)
+	}
+
+	// The copy itself goes when its parent is the root.
+	if r, res := remove("~/.talkcode/skills/foo", "~/.talkcode/skills"); r.T != "rpc-ok" || res["removed"] != true {
+		t.Fatalf("remove the copy: %+v %v", r, res)
+	}
+	if _, err := os.Lstat(copyDir); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("copy still there: %v", err)
+	}
+}
+
+func TestListFilesRelative(t *testing.T) {
+	d := testDaemon(t, "listfiles")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	home := homeDir()
+	dir := filepath.Join(home, ".talkcode", "skills", "foo")
+	_ = os.MkdirAll(filepath.Join(dir, "references"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("x"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "references", "a.md"), []byte("a"), 0o600)
+	_ = os.Symlink(filepath.Join(home, "outside"), filepath.Join(dir, "outside-link"))
+
+	_, res, _ := rpc(t, g, &Header{Op: "listFiles", Path: "~/.talkcode/skills/foo"}, nil)
+	files, _ := res["files"].([]any)
+	got := make([]string, 0, len(files))
+	for _, f := range files {
+		got = append(got, f.(string))
+	}
+	sort.Strings(got)
+	want := []string{"SKILL.md", "outside-link", "references/a.md"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("files %v, want %v", got, want)
+	}
+	if _, res, _ := rpc(t, g, &Header{Op: "listFiles", Path: "~/.talkcode/skills/none"}, nil); len(res["files"].([]any)) != 0 {
+		t.Fatalf("a missing directory: %v", res)
 	}
 }
 
