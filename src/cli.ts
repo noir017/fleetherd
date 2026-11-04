@@ -5,7 +5,8 @@ import { encode } from '@toon-format/toon';
 import { runSetup } from './commands/setup.js';
 import { runDoctor } from './commands/doctor.js';
 import { runReverse } from './commands/reverse.js';
-import { REVERSE_COMMANDS, CHANNEL_OPTION, renderHelpIndex, renderHelpTopic } from './ipc/commands.js';
+import { registerReverseCommand } from './commands/reverse-cli.js';
+import { REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './ipc/commands.js';
 
 // Note: the start path pulls in the heavy koishi + claude agent sdk stack, so it's
 // lazy-loaded to keep --help / setup / doctor / reverse commands lightweight to start.
@@ -60,18 +61,7 @@ program.command('start').description('Start the daemon').action(runStart);
 // --- Reverse commands (run by the agent in a shell; located by TALKCODE_TURN_TOKEN) ---
 // All derived from the single REVERSE_COMMANDS source, keeping cli, help pages, tools and IPC protocol consistent.
 for (const spec of REVERSE_COMMANDS) {
-  const cmd = program.command(spec.usage).description(spec.description);
-  for (const opt of [...spec.options, CHANNEL_OPTION]) {
-    if (opt.parse) cmd.option(opt.flags, opt.description ?? '', opt.parse);
-    else cmd.option(opt.flags, opt.description ?? '');
-  }
-  // commander passes (positional..., options, command); take the last two as options/command.
-  cmd.action((...args: unknown[]) => {
-    args.pop(); // command object
-    const opts = (args.pop() ?? {}) as Record<string, unknown>;
-    const positionals = args as string[];
-    return runReverse(spec.build(positionals, opts));
-  });
+  registerReverseCommand(program, spec, (action) => runReverse(action));
 }
 
 // The same commands' native-tool front door: an MCP server on stdio, started by the agent's harness
