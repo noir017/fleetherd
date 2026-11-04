@@ -224,6 +224,20 @@ describe('sessions <action> [arg]', () => {
     expect(sessions(['ls'])).toEqual({ kind: 'sessions-list', days: undefined, limit: undefined });
   });
 
+  it('ignores the undefined slot commander leaves for an omitted optional positional', () => {
+    // `sessions list` reaches build() as ['list', undefined]; length is not "was an argument given".
+    const phantom = undefined as unknown as string;
+    expect(sessions(['list', phantom])).toEqual({ kind: 'sessions-list', days: undefined, limit: undefined });
+    expect(sessions(['ls', phantom], { days: 7 })).toEqual({ kind: 'sessions-list', days: 7, limit: undefined });
+    expect(sessions(['read', '#12', phantom])).toEqual({
+      kind: 'sessions-read',
+      session: '#12',
+      around: undefined,
+      window: undefined,
+    });
+    expect(sessions(['search', 'x', phantom])).toMatchObject({ kind: 'sessions-search', query: 'x' });
+  });
+
   it.each([
     [['search'], {}, /needs a word/],
     [['read'], {}, /missing required argument <session>/],

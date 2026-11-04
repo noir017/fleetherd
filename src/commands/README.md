@@ -9,6 +9,7 @@ commander; this module implements them.
 | `doctor` | `doctor.ts` | Environment self-check — **the default command**. its probe of each remote host, in the PATH each agent will really have, is `daemon/host-probe.ts` (the daemon reads pods with it too) |
 | `start` | `start.ts` | Run the daemon |
 | *(reverse)* | `reverse.ts` | The agent-facing chat actions |
+| *(reverse wiring)* | `reverse-cli.ts` | Registers `REVERSE_COMMANDS` on commander — the one place an omitted optional positional's `undefined` is filtered out before `build()` |
 | `mcp` *(hidden)* | `mcp.ts` | The same actions as native tools: an MCP server on stdio, started by the agent's harness |
 
 ## `doctor` is the default
