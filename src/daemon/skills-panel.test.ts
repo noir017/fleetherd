@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildSkillsPanel } from './skills-panel.js';
 import type { SkillPanelDetail, SkillPanelResult } from '../platform/adapter.js';
@@ -21,8 +21,21 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-panel-'));
 });
 afterEach(() => {
+  vi.useRealTimers();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+/**
+ * History lists newest first by an id that starts with the millisecond, and two writes in the same
+ * millisecond tie on it; the random suffix then decides. On a fast CI runner a write and the removal
+ * right after it landed in one millisecond and came back in either order, so the tests that read
+ * the order put a second between their writes. Only `Date` is faked: the store's fs calls are real.
+ */
+const clock = (): (() => void) => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-05T00:00:00Z'));
+  return () => vi.setSystemTime(Date.now() + 1000);
+};
 
 const build = (notifyArchived?: (skill: SkillRecord) => void) => buildSkillsPanel({ dir, notifyArchived });
 
@@ -66,9 +79,11 @@ describe('skills panel', () => {
   });
 
   it('edits an extra file, records it, and reverts the whole skill to a snapshot', () => {
+    const later = clock();
     const panel = build();
     panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
     const created = detail(panel.op({ action: 'show', name: 'deploy-check' }));
+    later();
     expect(panel.op({ action: 'write-file', name: 'deploy-check', file: 'references/api.md', content: 'API' }).ok).toBe(true);
 
     const withFile = detail(panel.op({ action: 'show', name: 'deploy-check', file: 'references/api.md' }));
@@ -76,6 +91,7 @@ describe('skills panel', () => {
     expect(withFile.file).toMatchObject({ path: 'references/api.md', content: 'API' });
 
     const patch = withFile.history.find((h) => h.action === 'write-file')!;
+    later();
     expect(panel.op({ action: 'revert', name: 'deploy-check', id: patch.id }).ok).toBe(true);
     const back = detail(panel.op({ action: 'show', name: 'deploy-check' }));
     expect(back.files.map((f) => f.path)).toEqual(['SKILL.md']);
@@ -86,9 +102,12 @@ describe('skills panel', () => {
   });
 
   it('removes one extra file and records the removal', () => {
+    const later = clock();
     const panel = build();
     panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
+    later();
     panel.op({ action: 'write-file', name: 'deploy-check', file: 'references/api.md', content: 'API' });
+    later();
 
     const removed = panel.op({ action: 'remove-file', name: 'deploy-check', file: 'references/api.md' });
     expect(removed).toMatchObject({ ok: true });
