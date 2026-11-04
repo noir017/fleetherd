@@ -4788,4 +4788,101 @@ describe('webui page: the scheduled-task panel', () => {
 
     expect(h.el('schedules-list').textContent).toContain('Scheduled tasks are not enabled in this daemon');
   });
+
+  it('keeps a scheduled run out of the switcher and lists it under Sessions', async () => {
+    const C = 'c3d4e5f6';
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'an ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI · 2026-11-04 08:00', lastAt: 3000, msgCount: 3, stage: 'idle', scheduled: true },
+      ],
+    });
+
+    // One row, not two: a run is a conversation, but the switcher is where the person's own
+    // topics live. The panel is the only place the run is listed.
+    expect(h.rows()).toBe(1);
+    expect(h.el('topics').textContent).not.toContain('Morning CI');
+
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    expect(h.el('sched-sessions').hidden).toBe(false);
+    expect(h.el('schedules-list').hidden).toBe(true);
+    expect(h.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sched-sessions').textContent).toContain('Morning CI');
+    expect(h.el('sched-sessions').textContent).toContain('3 messages');
+    expect(h.el('sched-tab-sessions-n').textContent).toBe('1');
+
+    // A run holding a question has no row in the switcher, so the clock itself has to say so.
+    expect(h.el('sched-alert').hidden).toBe(true);
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'an ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 3, stage: 'answer', asking: true, scheduled: true },
+      ],
+    });
+    expect(h.el('sched-alert').hidden).toBe(false);
+    expect(h.el('schedules-toggle').getAttribute('title')).toContain('waiting');
+  });
+
+  it('opens a run from the Sessions tab, and remembers which tab was last read', async () => {
+    const C = 'c3d4e5f6';
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'an ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 3, stage: 'idle', scheduled: true },
+      ],
+    });
+
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+    expect(h.window.localStorage.getItem('aa_sched_tab')).toBe('sessions');
+
+    (h.doc.querySelector('.sess-item') as HTMLElement).click();
+    await until('the switch', () => h.window.location.search.includes(C));
+    // Following the run puts the panel away, exactly as following a task's target does.
+    expect(h.el('app').classList.contains('sched')).toBe(false);
+
+    const again = await open({ storage: { aa_sched_tab: 'sessions' } });
+    expect(again.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('true');
+    expect(again.el('sched-sessions').hidden).toBe(false);
+  });
+
+  it('deletes a run from its row, without switching to it first', async () => {
+    const C = 'c3d4e5f6';
+    const h = await open({ confirm: true });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'an ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 3, stage: 'idle', scheduled: true },
+      ],
+    });
+
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+    (h.doc.querySelector('.sess-del') as HTMLElement).click();
+    await until('the delete request', () => h.calls.some((c) => c.path === 'api/topics/delete'));
+
+    expect(h.calls.find((c) => c.path === 'api/topics/delete')?.body).toEqual({ topic: C });
+    expect(h.confirms[0]).toContain('Morning CI');
+    expect(h.window.location.search).not.toContain(C);
+  });
+
+  it('restores a dragged width, and double-clicking the handle returns to the default', async () => {
+    const h = await open({ storage: { aa_sched_w: '300' } });
+    expect(h.el('schedules').style.getPropertyValue('--schedw')).toBe('300px');
+
+    h.doc.getElementById('sched-resize')!.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
+    expect(h.el('schedules').style.getPropertyValue('--schedw')).toBe('');
+    expect(h.window.localStorage.getItem('aa_sched_w')).toBeNull();
+  });
 });
