@@ -74,6 +74,8 @@ type Header struct {
 	Mode      uint32          `json:"mode,omitempty"`
 	Target    string          `json:"target,omitempty"`
 	Requires  string          `json:"requires,omitempty"`
+	Owned     string          `json:"owned,omitempty"`
+	Atomic    bool            `json:"atomic,omitempty"`
 	Bash      string          `json:"bash,omitempty"`
 	Argv      []string        `json:"argv,omitempty"`
 	TimeoutMs int64           `json:"timeoutMs,omitempty"`

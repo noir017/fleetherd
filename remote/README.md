@@ -135,8 +135,9 @@ Paths may start with `~/`, resolved against the host's home.
 | `mkdirp` | `path mode` | |
 | `readFile` | `path offset max` | `{size}` + body: up to `max` bytes from `offset` |
 | `readTail` | `path max grep fields` | body: the last `max` bytes as whole lines, only those containing a `grep` string, each JSON line cut down to `fields` (dotted paths) |
-| `writeFile` | `path mode append` + body | written (or appended) owner-only, directories created |
-| `ensureLink` | `target path requires` | `{outcome, detail}` — skill-link.ts's rules |
+| `writeFile` | `path mode append atomic` + body | written (or appended) owner-only, directories created; `atomic` replaces the file in one rename (one frame, no append) |
+| `ensureLink` | `target path requires owned` | `{outcome, detail}` — skill-link.ts's rules; with `owned`, an existing symlink is repointed only if it points inside that directory |
+| `removeLink` | `path owned` | `{outcome, detail}` — the symlink removed only if it points inside `owned` (`removed`), else `kept` / `absent` |
 | `run` | `argv` or `bash`, `cwd env unset timeoutMs merge max` | `{code, signal, timedOut, cancelled, truncated, spawnError, stderr}` + body (the output's end) |
 
 ## Testing

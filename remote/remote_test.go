@@ -534,6 +534,99 @@ func TestEnsureLink(t *testing.T) {
 	}
 }
 
+// An instructions link sits at a harness's own global file, where a symlink may be the operator's:
+// with `owned`, only a link into that directory is ours to repoint.
+func TestEnsureLinkOwnedLeavesTheOperatorsLink(t *testing.T) {
+	d := testDaemon(t, "owned")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	home := homeDir()
+	_ = os.MkdirAll(filepath.Join(home, ".codex"), 0o755)
+	agents := filepath.Join(home, ".codex", "AGENTS.md")
+	link := func(target string) map[string]any {
+		_, res, _ := rpc(t, g, &Header{Op: "ensureLink", Target: target, Path: "~/.codex/AGENTS.md", Requires: "~/.codex", Owned: "~/.talkcode/instructions"}, nil)
+		return res
+	}
+
+	_ = os.Symlink(filepath.Join(home, "notes", "codex.md"), agents)
+	if res := link("~/.talkcode/instructions/codex.md"); res["outcome"] != "occupied" || !strings.Contains(res["detail"].(string), "notes") {
+		t.Fatalf("over the operator's link: %v", res)
+	}
+	_ = os.Remove(agents)
+	_ = os.Symlink(filepath.Join(home, ".talkcode", "instructions", "old.md"), agents)
+	if res := link("~/.talkcode/instructions/codex.md"); res["outcome"] != "relinked" {
+		t.Fatalf("over a link of ours: %v", res)
+	}
+	if dest, _ := os.Readlink(agents); dest != filepath.Join(home, ".talkcode", "instructions", "codex.md") {
+		t.Fatalf("points at %s", dest)
+	}
+}
+
+func TestRemoveLinkTakesBackOnlyItsOwn(t *testing.T) {
+	d := testDaemon(t, "unlink")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	home := homeDir()
+	_ = os.MkdirAll(filepath.Join(home, ".codex"), 0o755)
+	agents := filepath.Join(home, ".codex", "AGENTS.md")
+	remove := func() string {
+		_, res, _ := rpc(t, g, &Header{Op: "removeLink", Path: "~/.codex/AGENTS.md", Owned: "~/.talkcode/instructions"}, nil)
+		return res["outcome"].(string)
+	}
+
+	if got := remove(); got != "absent" {
+		t.Fatalf("nothing there: %s", got)
+	}
+	_ = os.WriteFile(agents, []byte("mine"), 0o644)
+	if got := remove(); got != "kept" {
+		t.Fatalf("a real file: %s", got)
+	}
+	_ = os.Remove(agents)
+	_ = os.Symlink(filepath.Join(home, "notes", "codex.md"), agents)
+	if got := remove(); got != "kept" {
+		t.Fatalf("the operator's link: %s", got)
+	}
+	_ = os.Remove(agents)
+	_ = os.Symlink(filepath.Join(home, ".talkcode", "instructions", "codex.md"), agents)
+	if got := remove(); got != "removed" {
+		t.Fatalf("a link of ours: %s", got)
+	}
+	if _, err := os.Lstat(agents); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("still there: %v", err)
+	}
+	if r, _, _ := rpc(t, g, &Header{Op: "removeLink", Path: "~/.codex/AGENTS.md"}, nil); r.T != "rpc-err" {
+		t.Fatalf("without `owned` it must refuse, not remove anything: %+v", r)
+	}
+}
+
+// The instructions copy is replaced while agents may be starting and reading it, and is kept
+// read-only: an atomic write lands whole, over a 0444 file, and leaves no temporary behind.
+func TestWriteFileAtomicReplacesAReadOnlyFile(t *testing.T) {
+	d := testDaemon(t, "atomic")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	file := filepath.Join(homeDir(), ".talkcode", "instructions", "codex.md")
+	write := func(text string) *Header {
+		r, _, _ := rpc(t, g, &Header{Op: "writeFile", Path: "~/.talkcode/instructions/codex.md", Mode: 0o444, Atomic: true}, []byte(text))
+		return r
+	}
+
+	for _, text := range []string{"first\n", "second\n"} {
+		if r := write(text); r.T != "rpc-ok" {
+			t.Fatalf("write %q: %+v", text, r)
+		}
+		got, _ := os.ReadFile(file)
+		st, _ := os.Stat(file)
+		if string(got) != text || st.Mode().Perm() != 0o444 {
+			t.Fatalf("after writing %q: %q %v", text, got, st.Mode().Perm())
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Dir(file))
+	if len(entries) != 1 {
+		t.Fatalf("left something behind: %v", entries)
+	}
+	if r, _, _ := rpc(t, g, &Header{Op: "writeFile", Path: "~/.talkcode/instructions/codex.md", Atomic: true, Append: true}, []byte("x")); r.T != "rpc-err" {
+		t.Fatalf("an atomic append must be refused: %+v", r)
+	}
+}
+
 func TestSweepSkillLinks(t *testing.T) {
 	d := testDaemon(t, "sweep")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)

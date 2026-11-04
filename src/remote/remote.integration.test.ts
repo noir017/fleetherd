@@ -255,6 +255,26 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
     expect(t.timedOut).toBe(true);
   }, 30_000);
 
+  it('places the operator\'s instructions: a whole read-only copy, a link only where it is ours', async () => {
+    const home = newHome();
+    const host = makeHost(home);
+    const owned = '~/.talkcode/instructions';
+    mkdirSync(join(home, '.codex'));
+
+    for (const text of ['first\n', 'second\n']) {
+      await host.writeFile(`${owned}/codex.md`, Buffer.from(text), 0o444, { atomic: true });
+      expect(readFileSync(join(home, '.talkcode', 'instructions', 'codex.md'), 'utf8')).toBe(text);
+    }
+    expect((await host.ensureLink(`${owned}/codex.md`, '~/.codex/AGENTS.md', '~/.codex', owned)).outcome).toBe('linked');
+    expect(readFileSync(join(home, '.codex', 'AGENTS.md'), 'utf8')).toBe('second\n');
+    expect((await host.removeLink('~/.codex/AGENTS.md', owned)).outcome).toBe('removed');
+
+    writeFileSync(join(home, '.codex', 'AGENTS.md'), 'mine');
+    expect((await host.ensureLink(`${owned}/codex.md`, '~/.codex/AGENTS.md', '~/.codex', owned)).outcome).toBe('occupied');
+    expect((await host.removeLink('~/.codex/AGENTS.md', owned)).outcome).toBe('kept');
+    expect(readFileSync(join(home, '.codex', 'AGENTS.md'), 'utf8')).toBe('mine');
+  }, 30_000);
+
   it('bridges an agent\'s `talkcode` command back to the gateway', async () => {
     const seen: Array<{ argv: string[]; token: string; cwd: string }> = [];
     const cli: CliBridge = (req, io) => {

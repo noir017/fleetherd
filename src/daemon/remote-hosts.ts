@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,16 @@ import { REVERSE_COMMANDS } from '../ipc/commands.js';
 import { packageVersion, remoteBinary, sshTransport } from '../remote/binaries.js';
 import type { Welcome } from '../remote/connection.js';
 import { RemoteHost, type CliBridge, type CliSession } from '../remote/host.js';
+import {
+  INSTRUCTIONS_MAX_BYTES,
+  SETTLED,
+  composeInstructions,
+  instructionsDir,
+  instructionsHome,
+  ownedDir,
+  reportInstructions,
+  type InstructionsResult,
+} from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes } from './skill-link.js';
 
@@ -79,6 +89,11 @@ export class RemoteHosts {
   private ns: string | undefined;
   /** host id + version → the skill is on that host for that version. */
   private readonly skillPlaced = new Set<string>();
+  /**
+   * host id + daemon instance + the harness's file → what was last delivered there and settled (a
+   * hash of the text, or `none` / `too-big`), so an unchanged text costs no round trip per spawn.
+   */
+  private readonly instructionsPlaced = new Map<string, string>();
 
   /** (Re)build the host table from config. Unchanged entries keep their live connection. */
   configure(cfg: Pick<Config, 'hosts'>, socketPath: string): void {
@@ -181,6 +196,44 @@ export class RemoteHosts {
       }
     } catch (e) {
       console.warn(`[skill] ${host.id}: could not place the skill:`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  /**
+   * Put the operator's instructions where `def`'s harness reads them on the host — the remote twin
+   * of instructions.ts placeInstructions, which says where and under what rules. The text is
+   * composed HERE, from this gateway's `instructions/` directory, and the host only receives the
+   * result: one copy of the operator's words, wherever the agents run.
+   *
+   * Settled outcomes are remembered per host, daemon instance and file, so an unchanged text costs
+   * no round trip on the next spawn; a new remote daemon (an upgrade, a restart) places it again.
+   * What is not settled — a real file in the way, a failure — is tried again at the next spawn, and
+   * warned about once. Best-effort like the skill.
+   */
+  async placeInstructions(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<void> {
+    if (process.env.TALKCODE_NO_SKILL_LINK) return;
+    const where = instructionsHome(def.harness, home, def.command);
+    if (!where) return;
+    const key = `${host.id}@${w.instance}@${where.file}`;
+    try {
+      const composed = composeInstructions(instructionsDir(), where.name);
+      const state = composed.kind === 'text' ? createHash('sha256').update(composed.text).digest('hex') : composed.kind;
+      if (this.instructionsPlaced.get(key) === state) return;
+      const owned = ownedDir(home);
+      let r: InstructionsResult;
+      if (composed.kind === 'none') {
+        r = (await host.removeLink(where.file, owned)) as InstructionsResult;
+      } else if (composed.kind === 'too-big') {
+        r = { link: where.file, outcome: 'too-big', detail: `${composed.bytes} bytes, over the ${INSTRUCTIONS_MAX_BYTES}-byte limit` };
+      } else {
+        const copy = path.join(owned, `${where.name}.md`);
+        await host.writeFile(copy, Buffer.from(composed.text, 'utf8'), 0o444, { atomic: true });
+        r = (await host.ensureLink(copy, where.file, where.requires, owned)) as InstructionsResult;
+      }
+      reportInstructions(r, host.id);
+      if (SETTLED.has(r.outcome)) this.instructionsPlaced.set(key, state);
+    } catch (e) {
+      reportInstructions({ link: where.file, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) }, host.id);
     }
   }
 

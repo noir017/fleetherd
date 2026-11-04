@@ -74,9 +74,14 @@ func (d *daemon) op(ctx context.Context, h *Header, body []byte) (any, []byte, e
 	case "readTail":
 		return opReadTail(path, h.Max, h.Grep, h.Fields)
 	case "writeFile":
+		if h.Atomic {
+			return opWriteFileAtomic(path, body, h.Mode, h.Append)
+		}
 		return opWriteFile(path, body, h.Mode, h.Append)
 	case "ensureLink":
-		return opEnsureLink(expandHome(h.Target), path, expandHome(h.Requires))
+		return opEnsureLink(expandHome(h.Target), path, expandHome(h.Requires), expandHome(h.Owned))
+	case "removeLink":
+		return opRemoveLink(path, expandHome(h.Owned))
 	case "sweepSkillLinks":
 		return opSweepSkillLinks(path)
 	case "run":
@@ -285,10 +290,68 @@ func opWriteFile(path string, body []byte, mode uint32, appendMode bool) (any, [
 	return map[string]any{"path": path}, nil, nil
 }
 
+// opWriteFileAtomic replaces `path` with `body` in one step: written beside it under a temporary
+// name, then renamed over it. For a file an agent may be reading at the moment it changes — the
+// operator's instructions (daemon/instructions.ts), which a harness reads at startup — where
+// opWriteFile's truncate-then-write would let a reader see an empty or half-written file. The
+// rename also replaces a read-only file, which is what lets that one be kept read-only on the host.
+// One frame only: a chunked append cannot be made atomic this way, so it is refused.
+func opWriteFileAtomic(path string, body []byte, mode uint32, appendMode bool) (any, []byte, error) {
+	if appendMode {
+		return nil, nil, errors.New("an atomic write cannot append")
+	}
+	perm := fs.FileMode(0o600)
+	if mode != 0 {
+		perm = fs.FileMode(mode)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, nil, err
+	}
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	tmp := f.Name()
+	fail := func(err error) (any, []byte, error) {
+		f.Close()
+		os.Remove(tmp)
+		return nil, nil, err
+	}
+	if _, err := f.Write(body); err != nil {
+		return fail(err)
+	}
+	if err := f.Chmod(perm); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		return fail(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return nil, nil, err
+	}
+	return map[string]any{"path": path}, nil, nil
+}
+
+// under reports whether a symlink's destination lies inside `dir`. A relative destination is read
+// against the link's own directory, as the kernel reads it.
+func under(link, dest, dir string) bool {
+	if !filepath.IsAbs(dest) {
+		dest = filepath.Join(filepath.Dir(link), dest)
+	}
+	return strings.HasPrefix(filepath.Clean(dest), filepath.Clean(dir)+string(os.PathSeparator))
+}
+
 // opEnsureLink makes `link` a symlink to `target`, with the same rules as the gateway's local
 // skill-link.ts — only where `requires` exists (the harness has been run here), never over a real
 // file or directory (that is the operator's own copy), repointing a link that points elsewhere.
-func opEnsureLink(target, link, requires string) (any, []byte, error) {
+//
+// With `owned`, a link is repointed only when it points inside that directory. The skill links have
+// names nobody else uses (`talkcode`, `super`); an instructions link sits at a harness's own global
+// file (`~/.codex/AGENTS.md`), where a symlink is just as likely the operator's way of keeping their
+// own file somewhere else — that one is theirs, and is reported as occupied like a real file.
+func opEnsureLink(target, link, requires, owned string) (any, []byte, error) {
 	result := func(outcome, detail string) (any, []byte, error) {
 		return map[string]any{"outcome": outcome, "detail": detail, "link": link}, nil, nil
 	}
@@ -309,6 +372,9 @@ func opEnsureLink(target, link, requires string) (any, []byte, error) {
 		if previous == target {
 			return result("current", "")
 		}
+		if owned != "" && !under(link, previous, owned) {
+			return result("occupied", "a link to "+previous)
+		}
 		if err := os.Remove(link); err != nil {
 			return result("failed", err.Error())
 		}
@@ -325,6 +391,40 @@ func opEnsureLink(target, link, requires string) (any, []byte, error) {
 		return result("relinked", previous)
 	}
 	return result("linked", "")
+}
+
+// opRemoveLink takes back a link the gateway made: `link` is removed only if it is a symlink
+// pointing inside `owned`. Anything else at that path — a real file, the operator's own link, or
+// nothing — is left as it is and said so (`kept` / `absent`). An empty `owned` is refused rather
+// than read as "anywhere": this deletes from directories the operator owns.
+func opRemoveLink(link, owned string) (any, []byte, error) {
+	result := func(outcome, detail string) (any, []byte, error) {
+		return map[string]any{"outcome": outcome, "detail": detail, "link": link}, nil, nil
+	}
+	if owned == "" {
+		return nil, nil, errors.New("removeLink needs the directory its links point into")
+	}
+	st, err := os.Lstat(link)
+	if errors.Is(err, fs.ErrNotExist) {
+		return result("absent", "")
+	}
+	if err != nil {
+		return result("failed", err.Error())
+	}
+	if st.Mode()&fs.ModeSymlink == 0 {
+		return result("kept", "not a link")
+	}
+	dest, err := os.Readlink(link)
+	if err != nil {
+		return result("failed", err.Error())
+	}
+	if !under(link, dest, owned) {
+		return result("kept", "a link to "+dest)
+	}
+	if err := os.Remove(link); err != nil {
+		return result("failed", err.Error())
+	}
+	return result("removed", dest)
 }
 
 // opSweepSkillLinks removes dangling skill links in `dir` that point into this host's version

@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Your instructions, for every agent.** How the operator wants to be worked with had to be
+  written into each harness's own file on each machine — `~/.claude/CLAUDE.md` here, a hand-copied
+  `AGENTS.md` there — and the copies drifted. Now it is one directory on the gateway,
+  `<config dir>/instructions/`: `common.md` for every agent, and `claude.md`, `codex.md`,
+  `opencode.md`, `agy.md`, `codebuddy.md`, `atomcode.md` for what suits only one (a rule about one
+  harness's prompt cache is not a rule for the others). At every agent start the gateway joins the
+  two, writes the result read-only to `~/.talkcode/instructions/` on that machine, and links the
+  harness's own user-level instruction file to it — each location probed by asking the harness for
+  a word planted there. It reaches the agent the way the harness's own settings do, with nothing
+  added to the conversation, and reaches an agent started from a terminal too. A real file or the
+  operator's own link at that path is left alone and logged; with nothing to deliver, a link of ours
+  is taken back, so deleting the directory turns it off. The remote side gains an atomic write, an
+  ownership check on links, and a `removeLink` that only removes its own. [→](docs/instructions.md)
+
 ## [2.29.0] - 2026-11-04
 
 ### Changed
