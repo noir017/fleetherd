@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A file the agent sends opens in a window, and its name is the way in.** Clicking the name of a
+  Markdown file, a log or any other file the server can render used to download it; the **Preview**
+  button beside it was the way to read it. The name now opens the preview, and the button beside it
+  is **Download**, which is what the name used to do. The preview itself is a window over the
+  conversation — a dimmed page behind a capped box — instead of an opaque full-screen page, so the
+  transcript stays visible around the document and a click on the dimmed page closes it.
+
 ## [2.28.1] - 2026-11-04
 
 ### Fixed

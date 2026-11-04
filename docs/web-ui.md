@@ -112,13 +112,13 @@ tap fills the screen with it. The daemon keeps that copy only while it is runnin
 restart, a message from before it keeps the picture's name but not the picture.
 
 **Reading a file without downloading it.** When the agent sends a Markdown file, a log, a
-CSV or a source file, **Preview** beside its name opens it over the conversation. Markdown is
-rendered like a reply, with headings, tables and code blocks; anything else is shown as plain
-text. An `.html` or `.svg` file is shown as its source and is never run. A file over 512 KB
-shows its first 512 KB and says so, and the **Download** link in the reader's bar fetches the
-whole file. PDFs, office documents and other binary files have no preview and stay downloads.
-Like the download link, Preview works only until the daemon restarts; a message from before a
-restart does not offer it.
+CSV or a source file, click its name and it opens in a window over the conversation; **Download**
+beside the name saves it as before. Markdown is rendered like a reply, with headings, tables and
+code blocks; anything else is shown as plain text. An `.html` or `.svg` file is shown as its source
+and is never run. A file over 512 KB shows its first 512 KB and says so, and the **Download** link
+in the window's bar fetches the whole file. PDFs, office documents and other binary files have no
+preview and stay downloads. Like the download link, preview works only until the daemon restarts;
+a message from before a restart keeps the plain download link.
 
 **Built for a bad connection.** Replies are sent when they settle rather than on
 every keystroke of the stream, everything on the wire is compressed, and a dropped
