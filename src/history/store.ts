@@ -340,8 +340,10 @@ export class HistoryStore {
     if (!db) return;
     const columns = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>;
     if (!columns.some((c) => c.name === 'turn')) db.exec('ALTER TABLE messages ADD COLUMN turn INTEGER');
-    // After the ALTER, so an old file gets the index too. Cheap, and every filtered read uses it.
-    db.exec('CREATE INDEX IF NOT EXISTS messages_turn ON messages(turn)');
+    // (session_id, turn), not (turn): every read starts from one conversation, and a turn number
+    // is per-conversation. A bare `turn` index cannot narrow by session, so the planner falls back
+    // to messages_session and walks the conversation's whole tail to prove there is no later row.
+    db.exec('CREATE INDEX IF NOT EXISTS messages_session_turn ON messages(session_id, turn)');
   }
 
   /**
@@ -734,16 +736,31 @@ export class HistoryStore {
       ).map((r) => Number(r.id));
     }
     const which = opts.turn ?? '';
-    if (which === 'last' || which === 'done') {
-      const clause = which === 'done' ? "AND outcome = 'done'" : '';
+    if (which === 'last') {
       const row = db
-        .prepare(`SELECT id FROM turns WHERE session_id = ? ${clause} ORDER BY seq DESC LIMIT 1`)
+        .prepare('SELECT id FROM turns WHERE session_id = ? ORDER BY seq DESC LIMIT 1')
         .get(session.id) as { id: number | bigint } | undefined;
+      if (!row) throw new Error(`conversation ${session.id} has no recorded turns`);
+      return [Number(row.id)];
+    }
+    if (which === 'done') {
+      // Scoped to the conversation's CURRENT context — the agent and generation of its newest
+      // turn. A `/new` followed by an agent switch starts a new context in the same conversation,
+      // and "the last turn that ended normally" must not reach back past it: that answer was
+      // another agent's, about context this one never had. (Explicit turn numbers and --turns
+      // still reach the older ones, because those ask for a turn rather than for "the last one".)
+      const current = db
+        .prepare('SELECT agent, generation FROM turns WHERE session_id = ? ORDER BY seq DESC LIMIT 1')
+        .get(session.id) as { agent: string; generation: number | bigint } | undefined;
+      if (!current) throw new Error(`conversation ${session.id} has no recorded turns`);
+      const row = db
+        .prepare(
+          "SELECT id FROM turns WHERE session_id = ? AND agent = ? AND generation = ? AND outcome = 'done' ORDER BY seq DESC LIMIT 1"
+        )
+        .get(session.id, current.agent, Number(current.generation)) as { id: number | bigint } | undefined;
       if (!row) {
         throw new Error(
-          which === 'done'
-            ? `no turn of conversation ${session.id} ended normally`
-            : `conversation ${session.id} has no recorded turns`
+          `no turn of conversation ${session.id} ended normally for agent ${current.agent} in generation ${Number(current.generation)}`
         );
       }
       return [Number(row.id)];

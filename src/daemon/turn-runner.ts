@@ -786,6 +786,12 @@ export class TurnRunner {
     const outcome = await turn.agent.steer({ prompt, ...(images.length > 0 ? { images } : {}) });
     // Recorded only when the harness really took it. A `refused` message stays queued and runs as
     // the next turn, which records it then — writing it here too would put it in the library twice.
+    //
+    // `joined` belongs to the running turn: the agent is still working on the same answer.
+    // `detached` does not: the harness had already finished the turn and started one of its own
+    // (see SteerOutcome), whose output reaches the gateway as a background burst. Filing the
+    // prompt under the old turn would leave that turn holding a question it never answered, and
+    // `--turn done` would then offer it as a finished turn.
     if (outcome !== 'refused') {
       this.recordHistory(conversationId, {
         type: 'prompt',
@@ -793,9 +799,7 @@ export class TurnRunner {
         attachments: attachmentNames(batch),
         kind: turn.kind,
         at: this.clock.now(),
-        // A message merged into a running turn belongs to THAT turn: the agent is still working
-        // on the same answer, so filing it anywhere else would split one piece of work in two.
-        turn: turn.turnId,
+        turn: outcome === 'joined' ? turn.turnId : undefined,
       });
     }
     console.log(`[turn] ${conversationId} ${batch.length} message(s) sent mid-turn: ${outcome}`);
@@ -1174,7 +1178,7 @@ export class TurnRunner {
         facts = {};
         return this.buildFollowUpHandlers(conversationId, open, () => render, facts);
       },
-      close: () => {
+      close: (reason = 'done') => {
         const done = render;
         const release = releaseTyping;
         const turn = burstTurn;
@@ -1195,8 +1199,9 @@ export class TurnRunner {
           .catch((e) => console.error('[follow-up] failed to finalize:', describeOutboundError(e)))
           .then(() => {
             // After the flush: the reply row is written by finalize, and a turn must not be
-            // closed before the last row that names it exists.
-            this.endHistoryTurn(turn, { outcome: 'done', at: this.clock.now() });
+            // closed before the last row that names it exists. `reason` is the caller's fact —
+            // `/stop`, a new turn, or the child going away — never inferred here.
+            this.endHistoryTurn(turn, { outcome: reason, at: this.clock.now() });
             return letGo(release);
           });
       },

@@ -8,7 +8,7 @@ import { ConversationStore } from './conversation-store.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers, FollowUpSink } from './agent.js';
-import type { InboundMessage } from '../types.js';
+import type { InboundMessage, SteerOutcome } from '../types.js';
 import { HistoryStore } from '../history/store.js';
 
 /**
@@ -60,7 +60,9 @@ const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 80));
 
 function rig(
   runTurn: (h: AgentStreamHandlers) => Promise<void>,
-  history?: HistoryStore
+  history?: HistoryStore,
+  /** When set, the fake agent has a `steer` that answers with this outcome. */
+  steerOutcome?: SteerOutcome
 ) {
   const parsed = parseConfig({
     platforms: { discord: { type: 'discord', token: 't' } },
@@ -99,6 +101,7 @@ function rig(
         conversationId,
         runTurn: async (_input, h) => runTurn(h),
         abort: () => {},
+        ...(steerOutcome ? { steer: async () => steerOutcome } : {}),
         setFollowUpSink: (s) => {
           sink = s;
         },
@@ -206,6 +209,49 @@ describe('a turn in the conversation library', () => {
       '1:person:done',
       '2:background:done',
     ]);
+    store.close();
+  });
+
+  it('records a background burst cut off by /stop as stopped, not done', async () => {
+    const { store, file } = tempStore();
+    const h = rig(async (t) => void t.onText('收到'), store);
+    h.reg.route(inbound('跑个后台任务'));
+    await drain();
+    const sink = h.sink()!;
+    sink.handlers().onText('后台汇报到一半');
+    // The runtime's stopBackground passes this reason after telling the person it stopped.
+    await sink.close('stopped');
+
+    const session = store.list({ days: 30 })[0]!;
+    const rows = store.read(String(session.id), { role: 'agent' });
+    expect(rows.messages.map((m) => `${m.turn}:${m.outcome}`)).toEqual(['1:done', '2:stopped']);
+    expect(rawTurns(file).map((t) => `${t.seq}:${t.trigger}:${t.outcome}`)).toEqual([
+      '1:person:done',
+      '2:background:stopped',
+    ]);
+    store.close();
+  });
+
+  it('does not file a detached interjection under the turn that just ended', async () => {
+    const { store } = tempStore();
+    let release: () => void = () => {};
+    const h = rig(async () => {
+      await new Promise<void>((r) => (release = r));
+    }, store, 'detached');
+    h.reg.route(inbound('开始'));
+    await drain();
+    // The harness had finished its turn and answers this in one of its own; the answer will come
+    // back as a background burst, so the prompt belongs to no recorded turn.
+    h.reg.route(inbound('插话'));
+    await drain();
+    release();
+    await drain();
+
+    const session = store.list({ days: 30 })[0]!;
+    const users = store.read(String(session.id), { role: 'user' });
+    expect(users.messages.map((m) => `${m.turn}:${m.text}`)).toEqual(['1:开始', 'null:插话']);
+    // The finished turn holds one question, not a question it never answered.
+    expect(store.read(String(session.id), { turn: '1' }).messages.filter((m) => m.role === 'user')).toHaveLength(1);
     store.close();
   });
 

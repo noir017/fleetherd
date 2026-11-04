@@ -272,6 +272,20 @@ const intArg = (label: string) => (value: string): number => {
 };
 
 /**
+ * A message id, as `sessions read` prints it (`#87`) or bare (`87`). The `#` is display, and the
+ * docs quote ids with it; a parser that only took the bare number made the documented example
+ * fail. Used by `--around` and `--since`, which both take an id a reader copies from output.
+ */
+const idArg = (label: string) => {
+  const parse = intArg(label);
+  return (value: string): number => {
+    const n = parse(value.trim().replace(/^#/, ''));
+    if (n < 1) throw new Error(`${label} must be a positive message id, got ${JSON.stringify(value)}`);
+    return n;
+  };
+};
+
+/**
  * The task commands name the conversation they act on as a positional, and a `--channel` beside it
  * would be a second, contradicting answer to the same question — refused, not ignored.
  */
@@ -283,25 +297,34 @@ const refuseChannel = (command: string, opts: Record<string, unknown>): void => 
 const collect = (value: string, previous: string[] = []): string[] => [...previous, value];
 
 /**
- * The read filters, defined ONCE: `sessions read` uses them now, and `task-read` will use the
- * same list when it moves onto the conversation library. A second copy would drift in wording
- * first and in meaning next, and both are consumed by agents that cannot see the source.
+ * The READ FILTERS, defined once for every command that will select rows from the library:
+ * `sessions read` uses them now, and `task-read` will use the same `readFilters()` builder when it
+ * moves onto the library. A second copy would drift in wording first and in meaning next, and both
+ * are consumed by agents that cannot see the source.
+ *
+ * `--tail` is deliberately NOT in this list. `task-read` already has a `--tail` meaning "the last
+ * n lines of each message", which is about a row's text, not about choosing rows — one command
+ * cannot carry both under one name. When task-read adopts these filters (phase 2) its existing
+ * `--tail` has to be renamed; until then only `sessions read` offers this one.
  */
 export const READ_FILTER_OPTIONS: ReverseOption[] = [
   { flags: '--role <role>', description: 'read: only user | agent | tool rows' },
   {
     flags: '--turn <which>',
-    description: 'read: last | done (the newest turn that ended normally) | a turn number (1 = the first)',
+    description:
+      'read: last | done (the newest turn of this agent and generation that ended normally) | a turn number (1 = the first)',
   },
   { flags: '--turns <n>', description: 'read: only the last n turns', parse: intArg('--turns') },
-  { flags: '--since <message>', description: 'read: rows after this message id (from an earlier read)', parse: intArg('--since') },
+  { flags: '--since <message>', description: 'read: rows after this message id (from an earlier read)', parse: idArg('--since') },
   { flags: '--grep <text>', description: 'read: only rows of this conversation containing this text' },
-  {
-    flags: '--tail <n>',
-    description: 'read: with --role tool, the newest n tool lines (what it is doing, not the whole log)',
-    parse: intArg('--tail'),
-  },
 ];
+
+/** `sessions read --tail`, which `task-read`'s differently-meant `--tail` keeps out of the list above. */
+const SESSIONS_READ_TAIL: ReverseOption = {
+  flags: '--tail <n>',
+  description: 'read: with --role tool, the newest n tool lines (what it is doing, not the whole log)',
+  parse: intArg('--tail'),
+};
 
 type ReadFilterFields = Pick<
   Extract<IpcAction, { kind: 'sessions-read' }>,
@@ -741,9 +764,10 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '-a, --agent <id>', description: 'search: only conversations answered by this agent' },
       { flags: '-d, --days <n>', description: 'search/list: only the last n days', parse: intArg('--days') },
       { flags: '-l, --limit <n>', description: 'search/list: how many rows (search default 10, list 30)', parse: intArg('--limit') },
-      { flags: '--around <message>', description: 'read: a message id from a search hit, to read around', parse: intArg('--around') },
+      { flags: '--around <message>', description: 'read: a message id from a search hit, to read around', parse: idArg('--around') },
       { flags: '--window <n>', description: 'read: messages on each side of --around (default 10)', parse: intArg('--window') },
       ...READ_FILTER_OPTIONS,
+      SESSIONS_READ_TAIL,
     ],
     build: buildSessions,
   },

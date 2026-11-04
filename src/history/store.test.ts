@@ -453,6 +453,46 @@ describe('HistoryStore turns', () => {
     expect(() => store.read(String(old), { turn: 'last' })).toThrow(/no recorded turns/);
     store.close();
   });
+
+  it('scopes --turn done to the current agent and generation', () => {
+    const { store } = tempStore();
+    const at = Date.UTC(2026, 10, 5, 9, 0);
+    const session = store.session({ key: 'tg#context#', platform: 'tg', agent: 'cc', at })!;
+    const add = (turn: number, ts: number, text: string): void =>
+      store.message(session, { ts, role: 'user', kind: 'normal', text, turn });
+    const t1 = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
+    add(t1, at, 'cc 答完的');
+    store.endTurn(t1, { outcome: 'done', at: at + 1 });
+
+    // /new, then another agent: its only turn fails. The previous context's finished answer is
+    // not this context's "last completed turn".
+    const t2 = store.startTurn(session, { agent: 'oc', generation: 1, trigger: 'person', at: at + 10 })!;
+    add(t2, at + 10, 'oc 失败');
+    store.endTurn(t2, { outcome: 'failed', at: at + 11 });
+    expect(() => store.read(String(session), { turn: 'done' })).toThrow(/for agent oc in generation 1/);
+
+    const t3 = store.startTurn(session, { agent: 'oc', generation: 1, trigger: 'person', at: at + 20 })!;
+    add(t3, at + 20, 'oc 答完');
+    store.endTurn(t3, { outcome: 'done', at: at + 21 });
+    expect(store.read(String(session), { turn: 'done' }).messages.map((m) => m.text)).toEqual(['oc 答完']);
+    // An explicit number still reaches the older context: it asks for a turn, not "the last one".
+    expect(store.read(String(session), { turn: '1' }).messages.map((m) => m.text)).toEqual(['cc 答完的']);
+    store.close();
+  });
+
+  it('plans a turn read on the (session, turn) index', () => {
+    const { store, file } = tempStore();
+    const { session } = seedThreeTurns(store);
+    store.close();
+    const raw = new Sqlite(file);
+    const plan = raw
+      .prepare('EXPLAIN QUERY PLAN SELECT id FROM messages WHERE session_id = ? AND turn = ?')
+      .all(session, 1) as Array<{ detail: string }>;
+    raw.close();
+    // A bare `turn` index cannot narrow by session; the planner would walk the conversation's
+    // messages from its start instead.
+    expect(plan.some((p) => p.detail.includes('messages_session_turn'))).toBe(true);
+  });
 });
 
 /** A raw connection, for building an old file and for reading what `read` does not print. */

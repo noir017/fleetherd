@@ -1122,8 +1122,8 @@ function createAcpSession(
     // Whatever background output was mid-render died with the child, so finalize it rather than
     // leaving a half-streamed message open forever. Not awaited here — resetHandles is called from
     // synchronous teardown paths (the child's 'exit' callback), and the flush targets the chat
-    // platform, which does not care that the child is gone.
-    void closeFollowUp();
+    // platform, which does not care that the child is gone. Stopped, not done: it never finished.
+    void closeFollowUp('stopped');
     // A rebuilt child starts from nothing again: its `session/load` replay must not be rendered
     // (see promptedYet).
     promptedYet = false;
@@ -1658,7 +1658,7 @@ function createAcpSession(
    * Finish the current burst of out-of-turn output: close any tool bubbles it left open and let the
    * sink flush and decorate the message. Idempotent — every path that could end a burst calls it.
    */
-  async function closeFollowUp(): Promise<void> {
+  async function closeFollowUp(reason: 'done' | 'stopped' = 'done'): Promise<void> {
     cancelFollowUpQuiet?.();
     cancelFollowUpQuiet = undefined;
     const burst = followUpState;
@@ -1669,7 +1669,7 @@ function createAcpSession(
     try {
       // Awaited so a caller that is about to write to the same lane can order itself behind the
       // flush; the pump's own closes have nothing to race and simply `void` it.
-      await burst.sink.close();
+      await burst.sink.close(reason);
     } catch (e) {
       console.error('[acp] follow-up sink failed to close:', e instanceof Error ? e.message : e);
     }
@@ -1987,8 +1987,8 @@ function createAcpSession(
         // not fired and forgotten: in the default `once` delivery mode the burst's whole body is
         // sent by this call, and the new turn is about to start sending through a different buffer —
         // unordered, they would interleave and the background report would appear underneath an
-        // answer it has nothing to do with.
-        await closeFollowUp();
+        // answer it has nothing to do with. Stopped: this turn cut it off.
+        await closeFollowUp('stopped');
       } catch (err) {
         closePromptWindow();
         // Stopped (or disposed) while the preLaunch hook ran: nothing failed, so nothing to report.
@@ -2285,7 +2285,7 @@ function createAcpSession(
       flushPendingTools(followUpState.state, false);
       // Sealed now rather than left to the quiet timer: the user has just been told it stopped,
       // and a message still streaming (or, in `once` mode, not yet sent at all) says otherwise.
-      void closeFollowUp();
+      void closeFollowUp('stopped');
       return true;
     },
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { HELP_TOPICS, REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './commands.js';
+import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './commands.js';
 import type { IpcAction } from './protocol.js';
 
 /**
@@ -233,6 +233,21 @@ describe('sessions <action> [arg]', () => {
     });
     expect(sessions(['read', '12'], { turn: 'last' })).toMatchObject({ kind: 'sessions-read', turn: 'last' });
     expect(sessions(['read', '12'], { turns: 2 })).toMatchObject({ kind: 'sessions-read', turns: 2 });
+  });
+
+  it('takes a message id exactly as read prints it, with or without #', () => {
+    const parse = (flag: string) => spec('sessions').options.find((o) => o.flags.includes(flag))!.parse!;
+    expect(parse('--since')('#87')).toBe(87);
+    expect(parse('--since')('87')).toBe(87);
+    expect(parse('--around')('#12')).toBe(12);
+    expect(() => parse('--since')('#')).toThrow(/positive message id/);
+  });
+
+  it('keeps --tail out of the shared filter list task-read will reuse', () => {
+    // task-read's own --tail means "the last n lines of each message"; one command cannot carry
+    // two --tail options, so the phase-2 reuse is the builder, not this list.
+    expect(READ_FILTER_OPTIONS.some((o) => o.flags.includes('--tail'))).toBe(false);
+    expect(spec('sessions').options.some((o) => o.flags.includes('--tail'))).toBe(true);
   });
 
   it('builds a list', () => {

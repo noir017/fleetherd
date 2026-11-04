@@ -31,7 +31,7 @@ not.
 
 ## Turns
 
-Every recorded row belongs to a turn. A turn is one piece of work the gateway gave an agent: the
+Every row the gateway writes from now on belongs to a turn. A turn is one piece of work the gateway gave an agent: the
 prompt that opened it (or a mid-turn message merged into it), the tool calls it made, and the
 reply it ended with. Each turn also has one row of its own, carrying:
 
@@ -50,8 +50,12 @@ reply it ended with. Each turn also has one row of its own, carrying:
 Who owns which row:
 
 - a message typed while a turn is running and merged into it belongs to **that** turn;
+- a message the harness took but answered in a turn of its own (`detached`) is recorded with no
+  turn: its answer arrives as a background burst, and filing the prompt under the turn that had
+  just ended would leave that turn holding a question it never answered;
 - output an agent reports after its reply was sealed is a turn of its own (`background`):
-  filing it with the turn that asked would put words after that turn had ended;
+  filing it with the turn that asked would put words after that turn had ended. A burst cut off
+  by `/stop`, by a new turn taking the lane, or by the agent process exiting is `stopped`;
 - a scheduled run is a turn of its own (`schedule`), even when it speaks into a normal topic;
 - a stopped turn keeps what it had written. The turn ran, and its partial reply is real.
 
@@ -71,8 +75,9 @@ talkcode sessions read '#12' --role tool --tail 20
 ```
 
 - `--role user|agent|tool` — only rows of that role.
-- `--turn last|done|<n>` — the newest turn, the newest turn that ended normally, or turn number
-  `n` counted from 1 in that conversation. `--turns <n>` takes the last `n`.
+- `--turn last|done|<n>` — the newest turn, the newest turn **of the current agent and
+  generation** that ended normally, or turn number `n` counted from 1 in that conversation.
+  `--turns <n>` takes the last `n`.
 - `--since <message>` — rows after that message id (exclusive), from an earlier read.
 - `--grep <text>` — rows containing this text, in this conversation only.
 - `--tail <n>` — with `--role tool`, the newest `n` tool lines.

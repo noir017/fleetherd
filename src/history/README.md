@@ -50,12 +50,16 @@ library from reaching into the conversation registry.
 
 - **A turn's own rows** are the prompt that opened it, every tool line it produced, and the reply
   its render sealed. They are written with the id `startTurn` returned.
-- **A mid-turn message** that the harness accepted (`TurnRunner.steer`) belongs to the running
-  turn: the agent is still working on the same answer. A message the harness refused is not
-  written there — it becomes the next turn and is recorded then, once.
+- **A mid-turn message** the harness accepted belongs to the running turn when the outcome is
+  `joined`: the agent is still working on the same answer. `detached` means the harness had
+  already finished the turn and started one of its own; its answer arrives as a background burst,
+  so the prompt is written with NO turn rather than into the turn that just ended. A message the
+  harness refused is not written there — it becomes the next turn and is recorded then, once.
 - **Background output** (a follow-up burst after the reply was sealed) is a turn of its own with
   `trigger: background`, opened when the burst first renders and closed when the runtime seals
-  it. Filing it with the turn that asked would place it after that turn's end.
+  it. Filing it with the turn that asked would place it after that turn's end. The reason the
+  runtime gives `close()` decides the outcome: `done` when it finished (a completed result, or
+  quiet), `stopped` when `/stop`, a new turn taking the lane, or the child exiting cut it off.
 - **A scheduled run** is its own turn (`schedule`), even in a normal topic. The conversation's
   `kind` still comes from its first turn; the trigger and the rows say what this run was.
 - **`/new` and `/cd`** bump `generation`. `seq` keeps counting across them: the number identifies
@@ -74,9 +78,13 @@ an upgraded file opens without a rewrite and its old rows stay unknown.
 `read(session, opts)` has three shapes: no filter (the whole conversation, unchanged), `around`
 (the old window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n),
 `since` (message id, exclusive), `grep` (text, this conversation only) and `tail` (newest n tool
-lines, only with `role: 'tool'`). They combine with AND. A filtered result adds each row's turn
-number, that turn's outcome and agent; the unfiltered result keeps its original five fields
-because `sessions read <id>` must not change under anyone.
+lines, only with `role: 'tool'`). They combine with AND. `done` means the newest normally-ended
+turn of the conversation's CURRENT context: the agent and generation of its newest turn. A `/new`
+followed by an agent switch starts a new context, and its "last completed turn" must not be the
+previous agent's answer. Explicit `turn` numbers and `turns` are not scoped — they ask for a turn,
+not for "the last one". A filtered result adds each row's turn number, that turn's outcome and
+agent; the unfiltered result keeps its original five fields because `sessions read <id>` must not
+change under anyone.
 
 A turn/tail/since read is a tail: when the 200k character budget cuts it, the newest rows are
 kept and the note says how many older ones went. A role/grep read is not, and drops later rows
