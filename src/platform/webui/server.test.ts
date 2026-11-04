@@ -8,6 +8,7 @@ import { createGunzip, inflateSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
+import type { SchedulePanelTask } from '../adapter.js';
 import { WebAuth } from './auth.js';
 import { diskUploadStore } from './index.js';
 import { MAX_READ_BYTES } from './reading.js';
@@ -1014,6 +1015,101 @@ describe('webui server: traffic', () => {
         body,
       });
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe('scheduled tasks', () => {
+    const task: SchedulePanelTask = {
+      id: 'a1b2c3',
+      name: 'Morning CI',
+      state: 'active',
+      when: '0 8 * * * (Asia/Shanghai)',
+      next: '2026-11-05 08:00',
+      nextAt: Date.UTC(2026, 10, 5, 0, 0, 0),
+      run: 'cc · fixed session',
+      target: 'web:main#a1b2c3d4',
+      targetTopic: 'a1b2c3d4',
+      runs: 2,
+      running: false,
+      detail: 'summarise the failures',
+      kind: 'agent',
+    };
+
+    it('lists what the daemon handed the room, and says when it offered none', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      expect(await (await fetch(`${base}/api/schedules`, { headers: { cookie } })).json()).toEqual({
+        enabled: false,
+        tasks: [],
+      });
+
+      room.useSchedulePanel({ list: () => [task], op: () => ({ ok: true, tasks: [task] }) });
+      const res = await fetch(`${base}/api/schedules`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ enabled: true, tasks: [task] });
+    });
+
+    it('carries out one action and answers with the fresh list', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const calls: string[] = [];
+      const paused: SchedulePanelTask = { ...task, state: 'paused' };
+      room.useSchedulePanel({
+        list: () => [task],
+        op: (id, action) => {
+          calls.push(`${id}:${action}`);
+          return { ok: true, tasks: [paused] };
+        },
+      });
+
+      const res = await fetch(`${base}/api/schedules/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ id: 'a1b2c3', action: 'pause' }),
+      });
+      expect(res.status).toBe(200);
+      expect(calls).toEqual(['a1b2c3:pause']);
+      expect(await res.json()).toEqual({ ok: true, tasks: [paused] });
+    });
+
+    it('hands back the service refusal, and refuses a body the page could not have sent', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      let called = 0;
+      room.useSchedulePanel({
+        list: () => [task],
+        op: () => {
+          called += 1;
+          return { ok: false, error: '#a1b2c3 is already paused' };
+        },
+      });
+
+      const refused = await fetch(`${base}/api/schedules/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ id: 'a1b2c3', action: 'pause' }),
+      });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ ok: false, error: '#a1b2c3 is already paused' });
+
+      const malformed = await fetch(`${base}/api/schedules/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ id: 'a1b2c3', action: 'rm -rf /' }),
+      });
+      expect(malformed.status).toBe(400);
+      expect(called).toBe(1);
+    });
+
+    it('is behind the session like every other route', async () => {
+      const { base } = await boot();
+      expect((await fetch(`${base}/api/schedules`)).status).toBe(401);
+      const res = await fetch(`${base}/api/schedules/op`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ id: 'a1b2c3', action: 'pause' }),
+      });
+      expect(res.status).toBe(401);
     });
   });
 });

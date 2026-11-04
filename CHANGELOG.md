@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI has a scheduled-task panel of its own.** The clock at the right of the chat header
+  opens a column listing every task the gateway has registered: what it runs, when it runs next,
+  where its output goes, and how the last run ended. A task opens for its full prompt or command,
+  and can be paused, resumed, run now, or deleted (two taps) — through the same service the agent's
+  `schedule` commands and `/setting schedule` use, so a change made here is a change made there.
+  The panel is hidden by default; 📌 pins it open across topic switches and reloads, and without
+  the pin a topic switch puts it away. It is a column at 1024px and wider and a slide-over below
+  that, so it never takes the chat's room on a phone. It does not create tasks: that stays a
+  sentence to an agent in a topic.
+
 ## [2.25.0] - 2026-11-04
 
 ### Changed

@@ -39,6 +39,74 @@ export interface ConversationWorkdir {
 }
 
 /**
+ * One scheduled task as the web UI's side panel draws it.
+ *
+ * A DTO rather than `core/schedule.ts`'s `ScheduleTask`, because this module is the seam every
+ * platform implements and it must not import a core module just to name a shape. The daemon
+ * builds it (`daemon/schedule-panel.ts`), so the page never sees a cron expression it has to
+ * parse and the sentence about a task is written once, where the chat menus write it.
+ *
+ * `nextAt` travels beside the formatted `next` so the page can turn it into "in 3h 12m" without
+ * asking again; every other time is already formatted in the task's own zone, which is what
+ * makes a task registered in Shanghai read the same in a browser in Berlin.
+ */
+export interface SchedulePanelTask {
+  id: string;
+  name: string;
+  state: 'active' | 'paused' | 'expired' | 'done';
+  /** `0 8 * * * (Asia/Shanghai)` or `once at 2026-11-05 08:00 (Asia/Shanghai)`. */
+  when: string;
+  /** Epoch ms of the next run; absent when it will not run again. */
+  nextAt?: number;
+  /** The next run in the task's own zone, already formatted. */
+  next?: string;
+  /** `agent cc · fixed session` or `bash · 90s · devbox`. */
+  run: string;
+  /** Where the output goes, as `targetId` writes it. */
+  target: string;
+  /** The target's topic id, when the target is a topic of the instance showing the panel. */
+  targetTopic?: string;
+  last?: {
+    at: number;
+    /** `at` in the task's own zone, already formatted. */
+    atText: string;
+    status: 'ok' | 'failed' | 'interrupted' | 'skipped' | 'missed';
+    durationMs?: number;
+    exitCode?: number;
+    error?: string;
+  };
+  runs: number;
+  /** A run of this task is in flight right now. */
+  running: boolean;
+  /** The full prompt or command, for the expanded row. */
+  detail: string;
+  kind: 'agent' | 'bash';
+  cwd?: string;
+  /** When a fixed-session task stops being active, already formatted in its own zone. */
+  expires?: string;
+}
+
+/** The four things the panel can do to one task. The daemon's `ScheduleService.op` names them. */
+export type SchedulePanelAction = 'pause' | 'resume' | 'run' | 'remove';
+
+/**
+ * The outcome of one action, with the fresh list when it worked.
+ *
+ * The list comes back in the response rather than being left for a second read: the panel has
+ * just changed what it is showing, and racing a refresh against its own write is the one moment
+ * it could show the old state as if it were the new one.
+ */
+export type SchedulePanelResult =
+  | { ok: true; tasks: SchedulePanelTask[] }
+  | { ok: false; error: string };
+
+/** What `useSchedulePanel` hands a platform: the list, and the four operations. */
+export interface SchedulePanel {
+  list(): SchedulePanelTask[];
+  op(id: string, action: SchedulePanelAction): SchedulePanelResult;
+}
+
+/**
  * Platform capability interface. One layer above Satori so the core classes depend only on
  * capabilities, not concrete platforms; missing capabilities degrade gracefully in the
  * implementation (see capabilities).
@@ -190,6 +258,22 @@ export interface PlatformAdapter {
    * and the question is only asked at the moment a topic has to be chosen.
    */
   useScheduleLookup?(lookup: (ref: ConversationRef) => boolean): void;
+
+  /**
+   * Hand the platform the gateway's scheduled tasks, to list and to act on — the web UI's side
+   * panel.
+   *
+   * Unlike useScheduleLookup, which is a yes/no read taken only when a topic is about to be
+   * evicted, this is the whole list and the four operations: a panel needs both, and
+   * `ScheduleService.op` is already the one place that validates a transition, so the page can
+   * never invent one. Optional and web-UI-only for the reason the lookups above are — a chat app
+   * manages tasks through `/setting schedule`, whose menu is a message, not a surface.
+   *
+   * A pull rather than a push: the panel asks when it opens, after every action, and on a timer
+   * while it is visible. Nothing announces a run finishing (the scheduler is the only thing that
+   * knows), so a push would have to invent an event the daemon does not otherwise need.
+   */
+  useSchedulePanel?(panel: SchedulePanel): void;
 
   /**
    * Hand the platform a way to end the agent process behind a conversation that is idle — what the

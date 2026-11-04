@@ -59,6 +59,7 @@ import {
   SendRequestSchema,
   PushSubscribeSchema,
   PushUnsubscribeSchema,
+  ScheduleOpRequestSchema,
   SeenRequestSchema,
   StarTopicRequestSchema,
   parseBody,
@@ -318,6 +319,10 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/push/subscribe', run: pushSubscribe },
   { method: 'POST', path: '/api/push/unsubscribe', run: pushUnsubscribe },
   { method: 'POST', path: '/api/topics/close-idle', run: closeIdle },
+  // The scheduled-task panel: the list, and one action on one task. Behind the same session as
+  // everything else; the four verbs are validated in protocol.ts before they reach the daemon.
+  { method: 'GET', path: '/api/schedules', run: scheduleList },
+  { method: 'POST', path: '/api/schedules/op', run: scheduleOp },
   { method: 'DELETE', path: '/api/topics', run: deleteTopic },
   { method: 'POST', path: '/api/logout', run: logout },
   { method: 'GET', path: '/f/', prefix: true, run: ({ req, res, rest }, ctx) => download(req, res, ctx.room, rest) },
@@ -694,6 +699,28 @@ async function closeIdle({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, CloseIdleRequestSchema);
   if (!parsed) return;
   send(req, res, 200, ctx.room.closeIdle(parsed.topics));
+}
+
+/**
+ * Every scheduled task, for the page's side panel. `enabled: false` when this daemon was started
+ * without a schedule store (tests, mostly), so the panel can say so instead of pretending the
+ * gateway has no tasks.
+ */
+function scheduleList({ req, res }: Req, ctx: Ctx): void {
+  send(req, res, 200, ctx.room.schedules());
+}
+
+/**
+ * One action on one task. A refusal is the service's own sentence — "already paused", "no such
+ * scheduled task", "running right now" — handed back as-is so the panel can show it without a
+ * second copy of the rules. `announce: false` is the room's side (see `WebRoom.scheduleOp`): the
+ * panel is the acknowledgement, and posting a card into a conversation would say it twice.
+ */
+async function scheduleOp({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, ScheduleOpRequestSchema);
+  if (!parsed) return;
+  const result = ctx.room.scheduleOp(parsed.id, parsed.action);
+  send(req, res, result.ok ? 200 : 400, result);
 }
 
 async function download(req: IncomingMessage, res: ServerResponse, room: WebRoom, token: string): Promise<void> {

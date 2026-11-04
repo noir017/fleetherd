@@ -18,6 +18,8 @@ channels` lists them). A run the gateway missed by less than an hour — it was 
 made when it comes back; older is recorded as missed. Every change posts a card with the task's
 details, written by the gateway rather than the agent, so what you read is what will run.
 
-`/setting` has a **⏰ Scheduled tasks** button: every task with its next and last run, and
+On the web UI, the clock at the right of the chat header opens a **⏰ Scheduled tasks** panel of
+its own: the same list, plus "run now", and a pin that keeps it open beside the chat. `/setting`
+has a **⏰ Scheduled tasks** button everywhere: every task with its next and last run, and
 pause, resume and delete (delete asks twice). Where there are no buttons,
 `/setting schedule [pause|resume|delete|run <id>]` does the same by typing.
