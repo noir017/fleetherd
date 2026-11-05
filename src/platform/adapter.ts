@@ -100,6 +100,38 @@ export type SchedulePanelResult =
   | { ok: true; tasks: SchedulePanelTask[] }
   | { ok: false; error: string };
 
+/**
+ * What the model switch shows for one conversation (`useModelPicker`, the web UI's status line):
+ * the agent answering it, the models it offers right now, which one is in use, the default it
+ * starts with (config), and the `/model` override when there is one.
+ *
+ * `ok: false` says why there is no list, as a sentence for the person: a harness that offers no
+ * model choice (`none`), or an agent that would not start (`error`).
+ */
+export type ModelPickerList =
+  | {
+      ok: true;
+      agent: string;
+      current?: string;
+      configured?: string;
+      override?: string;
+      options: Array<{ value: string; name: string }>;
+    }
+  | { ok: false; agent: string; reason: 'none' | 'error'; text: string };
+
+/** The outcome of a pick, with the sentence `/model` would have answered. */
+export type ModelPickerResult = { ok: true; model: string; text: string } | { ok: false; text: string };
+
+/**
+ * What `useModelPicker` hands a platform: the list for a conversation, and the switch. The same
+ * switch `/model <id>` makes (a runtime override for that conversation, config untouched), so the
+ * status line and `/model` cannot disagree about which model is in use.
+ */
+export interface ModelPicker {
+  list(ref: ConversationRef): Promise<ModelPickerList>;
+  choose(ref: ConversationRef, value: string): Promise<ModelPickerResult>;
+}
+
 /** What `useSchedulePanel` hands a platform: the list, and the four operations. */
 export interface SchedulePanel {
   list(): SchedulePanelTask[];
@@ -411,6 +443,13 @@ export interface PlatformAdapter {
    * question, and the only moment the answer matters is when an empty topic is drawn.
    */
   useAgentCatalog?(lookup: (ref: ConversationRef) => AgentCatalog | undefined): void;
+
+  /**
+   * Hand the platform a model switch for its conversations: what each can switch to, and the switch
+   * itself — `/model` without typing it. Optional and web-UI-only for the reason the seams above
+   * are: a chat app has `/model` and its menu, and nowhere persistent to put a control.
+   */
+  useModelPicker?(picker: ModelPicker): void;
 
   /**
    * Show the agent's live status for the conversation at an address — model, context, cost, cache

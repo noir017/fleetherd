@@ -69,6 +69,7 @@ const PACING = {
   useIdleReclaim: 'unpaced',
   // Registers a callback, read while drawing an empty topic; writes nothing to the chat.
   useAgentCatalog: 'unpaced',
+  useModelPicker: 'unpaced',
   // Not chat traffic at all: the one implementor draws it in its own page, and the status board
   // already throttles it. Queueing a status behind a platform's flood pause would only show a
   // stale one later.

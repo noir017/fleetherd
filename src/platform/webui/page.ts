@@ -782,7 +782,7 @@ button{background:var(--field);color:var(--fg);border:1px solid var(--line);bord
 button:hover{border-color:#3a3a3a}
 button:disabled{opacity:.5;cursor:default}
 #typing{color:var(--dim);font-size:13px;padding:0 16px 6px;max-width:860px;width:100%;margin:0 auto}
-#bar{border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
+#bar{position:relative;border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
 #hints{margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px}
 #hints button{font-size:12px}
 #hints .arg-hint{font-size:12px;color:var(--dim)}
@@ -857,6 +857,40 @@ button:disabled{opacity:.5;cursor:default}
    lead it with a stray dot (seen in Chromium at 390px). Spacing does the separating instead. */
 #status.open .st+.st::before{content:none}
 .st-who{color:#a8a8a8}
+/* The model in the status line is a switch: /model without typing it (openModelPop). Drawn as the
+   text it was with a caret and a background on hover, so the line still reads as a status line;
+   the caret is what says it opens. A pseudo-element, so the line's text is still the model's. */
+.st-model{display:inline-flex;align-items:center;gap:3px;min-width:0;max-width:44ch;padding:0 4px;margin:0 -4px;border:0;border-radius:4px;background:none;color:#cfd8e2;font:inherit;cursor:pointer}
+.st-model:hover,.st-model[aria-expanded="true"]{background:var(--field);color:#fff}
+.st-model:focus-visible{outline:2px solid var(--own-edge);outline-offset:0}
+.st-model .st-mtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-model::after{content:'\\25be';flex:none;font-size:9px;opacity:.8}
+/* The list it opens: above the composer, inside #bar so it moves with it, and closed by Escape, a
+   click outside, a pick, or a topic switch. A filter field first — opencode offers ~90 models. */
+#model-pop{position:absolute;left:16px;bottom:calc(100% - 6px);z-index:15;display:flex;flex-direction:column;width:min(440px,calc(100% - 32px));max-height:min(60vh,480px);background:#181818;border:1px solid #333;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.55);overflow:hidden}
+.mp-head{display:flex;align-items:center;gap:8px;padding:8px 6px 6px 12px;border-bottom:1px solid var(--line)}
+.mp-title{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.mp-title b{font-size:13px;font-weight:600}
+#mp-agent{font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mp-close{font-size:17px;padding:4px 10px}
+#mp-filter{margin:8px 10px 4px;min-height:32px;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--fg);font:inherit;font-size:13px}
+#mp-filter:focus{outline:none;border-color:var(--own-edge)}
+#mp-list{flex:1;min-height:0;overflow-y:auto;padding:4px 0}
+.mp-opt{display:flex;align-items:center;gap:8px;width:100%;min-height:36px;padding:6px 12px;border:0;border-radius:0;background:none;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.mp-opt:hover,.mp-opt:focus-visible{background:#222;outline:none}
+.mp-opt[hidden]{display:none}
+.mp-opt.on{background:#1b2430}
+.mp-check{flex:none;width:14px;color:#38bdf8;text-align:center}
+.mp-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.mp-v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;overflow-wrap:anywhere}
+.mp-n{font-size:11.5px;color:var(--dim)}
+.mp-tag{flex:none;font-size:10.5px;color:var(--dim);border:1px solid #333;border-radius:999px;padding:0 6px;line-height:16px}
+.mp-opt.busy{background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
+.mp-msg{padding:12px;font-size:12.5px;line-height:1.5;color:#a8a8a8;white-space:pre-line}
+.mp-msg.err{color:#fecaca}
+.mp-msg code,.mp-foot code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em;background:var(--field);padding:0 4px;border-radius:3px}
+.mp-wait{display:flex;align-items:center;gap:8px}
+.mp-foot{margin:0;padding:7px 12px 9px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim)}
 .st-meter{display:inline-block;width:32px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
 .st-meter i{display:block;height:100%;background:var(--dim)}
 .st.warn{color:#fbbf24}
@@ -1008,6 +1042,13 @@ button:disabled{opacity:.5;cursor:default}
      meter says the same thing in four characters, and a tap brings the counts back. Without this
      the line clipped before the cache and quota — the parts that change. */
   #status:not(.open) .st-x{display:none}
+  /* The model switch is a finger target here: 44px tall, which makes the status line that tall —
+     the price of a control that can be hit first time. The list is the composer's width. */
+  .st-model{min-height:44px;padding:0 8px;margin:-8px -8px -8px -4px}
+  #model-pop{left:8px;right:8px;width:auto;max-height:min(62dvh,520px)}
+  #mp-filter{min-height:44px;font-size:16px}
+  #mp-close{min-width:44px;min-height:44px}
+  .mp-opt{min-height:48px}
   /* The same 44px for taking an attachment back off. A miss lands on the thumbnail, which only
      opens it — but a 15px glyph with no padding is a target a finger finds on the third try. */
   .chip-x{min-width:44px;min-height:44px}
@@ -1039,7 +1080,8 @@ const SCRIPT = `
       skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
       settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
-      killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status');
+      killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'),
+      modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent');
   var data={}, els={}, files=[], commands=[], stream=null, done=false;
   // Last markup written per message, so a sync that re-sends an unchanged message touches no DOM.
   var sig={};
@@ -3531,6 +3573,7 @@ const SCRIPT = `
     dividerEl=null;
     syncingEl=null;
     // The strip describes the topic being left; the incoming sync says what the new one's is.
+    closeModelPop();
     setStatus(null);
     entering=true;
     synced=false;
@@ -3647,7 +3690,7 @@ const SCRIPT = `
 
   function statusSegments(s, now, open){
     var out = [];
-    out.push(seg('st-who', '', text(s.agent)+(s.model ? ' \\u00b7 '+text(s.model) : '')+(s.effort ? ' \\u00b7 '+text(s.effort) : '')));
+    out.push(seg('st-who', '', text(s.agent)+' \\u00b7 '+modelChip(s.model || 'Model')+(s.effort ? ' \\u00b7 '+text(s.effort) : '')));
     if(s.context && s.context.size > 0){
       var pct = Math.min(100, Math.max(0, Math.round(s.context.used / s.context.size * 100)));
       out.push(seg(pct >= 80 ? 'bad' : (pct >= 50 ? 'warn' : ''),
@@ -3684,7 +3727,11 @@ const SCRIPT = `
 
   function paintStatus(){
     var s = agentStatus;
-    var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open')) : '';
+    // With no status yet (a restart, a conversation that has not reported), the line still offers
+    // the switch once the topic has a conversation in it — not in a new one, where the agent
+    // launcher is the choice to make first.
+    var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open'))
+      : (topic && synced && !launch && log.querySelector('.m') ? seg('st-who', '', modelChip('Model')) : '');
     // Compared before writing: the tick redraws twice a minute, and most of those change nothing.
     if(html === statusHtml) return;
     statusHtml = html;
@@ -3692,9 +3739,137 @@ const SCRIPT = `
     statusEl.hidden = !html;
   }
 
-  statusEl.addEventListener('click', function(){
+  statusEl.addEventListener('click', function(e){
+    if(e.target.closest && e.target.closest('.st-model')){
+      if(modelPop.hidden) openModelPop(); else closeModelPop();
+      return;
+    }
     statusEl.classList.toggle('open');
     paintStatus();
+  });
+
+  // ── The model switch ─────────────────────────────────────────────────────────
+  // /model as a control: the list the topic's agent offers (GET api/models, which starts a cold
+  // agent the way /model does — hence "Asking…"), and the switch (POST api/models), which is
+  // /model's own: a runtime override for this topic, config untouched. mp.seq drops an answer that
+  // belongs to a list closed or reopened since.
+  var mp = { topic: null, data: null, err: '', loading: false, busy: false, seq: 0 };
+  var MODEL_WAIT_MS = 45000;
+
+  function modelChip(label){
+    return '<button type="button" class="st-model" aria-haspopup="dialog" aria-expanded="'+(modelPop.hidden ? 'false' : 'true')+'"'
+      + ' title="Switch the model for this topic (/model)"><span class="st-mtext">'+text(label)+'</span></button>';
+  }
+
+  function openModelPop(){
+    if(!topic) return;
+    var n = ++mp.seq, t = topic;
+    mp.topic = t; mp.data = null; mp.err = ''; mp.loading = true; mp.busy = false;
+    mpFilter.value = '';
+    modelPop.hidden = false;
+    paintStatus();
+    renderModelPop();
+    // Not on a phone: the keyboard would take half the screen before the list was read.
+    if(!narrow()) mpFilter.focus();
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function(){ if(ctl) ctl.abort(); }, MODEL_WAIT_MS);
+    fetch('api/models?t='+encodeURIComponent(t), ctl ? {credentials:'same-origin', signal: ctl.signal} : {credentials:'same-origin'})
+      .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
+      .then(function(x){
+        clearTimeout(timer);
+        if(n !== mp.seq) return;
+        mp.loading = false;
+        if(!x.r.ok) mp.err = 'The daemon did not give a list (HTTP '+x.r.status+').';
+        else mp.data = x.j;
+        renderModelPop();
+      }, function(){
+        clearTimeout(timer);
+        if(n !== mp.seq) return;
+        mp.loading = false;
+        mp.err = 'Could not reach the daemon for the list. Check the connection and try again.';
+        renderModelPop();
+      });
+  }
+
+  function closeModelPop(){
+    if(modelPop.hidden) return;
+    mp.seq++;
+    modelPop.hidden = true;
+    mpList.innerHTML = '';
+    paintStatus();
+  }
+
+  /** The list, or what stands in for it: asking, why there is none, or what went wrong. */
+  function renderModelPop(){
+    var d = mp.data;
+    mpAgent.textContent = d && d.agent ? d.agent : '';
+    mpFilter.hidden = !(d && d.ok && d.options.length > 8);
+    if(mp.loading){ mpList.innerHTML = '<div class="mp-msg mp-wait"><span class="set-spin" aria-hidden="true"></span>Asking the agent for its models\u2026 a cold one takes a second or two to start.</div>'; return; }
+    if(mp.err){ mpList.innerHTML = '<div class="mp-msg err">'+inl(mp.err)+'</div>'; return; }
+    if(!d || !d.ok){ mpList.innerHTML = '<div class="mp-msg">'+inl(d ? d.text : '')+'</div>'; return; }
+    var h = '';
+    for(var i=0;i<d.options.length;i++){
+      var o = d.options[i], on = o.value === d.current, def = d.configured && o.value === d.configured;
+      var name = o.name && o.name !== o.value ? o.name : '';
+      h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(o.value)+'"'
+        + ' data-q="'+text((o.value+' '+name).toLowerCase())+'">'
+        + '<span class="mp-check" aria-hidden="true">'+(on ? '\u2713' : '')+'</span>'
+        + '<span class="mp-main"><span class="mp-v">'+text(o.value)+'</span>'+(name ? '<span class="mp-n">'+text(name)+'</span>' : '')+'</span>'
+        + (def ? '<span class="mp-tag" title="What this agent starts a new session with (Settings)">default</span>' : '')
+        + '</button>';
+    }
+    mpList.innerHTML = h;
+    filterModels();
+  }
+
+  function filterModels(){
+    var q = mpFilter.value.trim().toLowerCase();
+    var opts = mpList.querySelectorAll('.mp-opt');
+    for(var i=0;i<opts.length;i++) opts[i].hidden = !!q && (opts[i].getAttribute('data-q') || '').indexOf(q) < 0;
+  }
+
+  /** Switch to one, as /model would. A refusal is /model's own sentence, shown in the list. */
+  function chooseModel(b){
+    if(mp.busy || !mp.topic) return;
+    var n = mp.seq, t = mp.topic, v = b.getAttribute('data-v');
+    mp.busy = true;
+    b.classList.add('busy');
+    post('api/models', {topic: t, value: v}, 1, MODEL_WAIT_MS)
+      .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
+      .then(function(x){
+        mp.busy = false;
+        if(n !== mp.seq) return;
+        if(x.r.ok && x.j.ok){
+          if(t === topic && agentStatus) agentStatus = Object.assign({}, agentStatus, { model: x.j.model });
+          closeModelPop();
+          note.textContent = String(x.j.text || '').replace(/\\x60/g, '');
+          return;
+        }
+        mp.err = x.j && x.j.text ? x.j.text : 'The daemon refused that (HTTP '+x.r.status+').';
+        renderModelPop();
+      }, function(){
+        mp.busy = false;
+        if(n !== mp.seq) return;
+        mp.err = 'Could not reach the daemon, so the model was not changed. Try again.';
+        renderModelPop();
+      });
+  }
+
+  mpList.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.mp-opt') : null;
+    if(b) chooseModel(b);
+  });
+  mpFilter.addEventListener('input', filterModels);
+  $('mp-close').addEventListener('click', closeModelPop);
+  // Its own Escape and outside click, ahead of nothing else: the list is not a window over the
+  // page, so it does not join the overlays the page-wide Escape closes.
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && !modelPop.hidden){ closeModelPop(); e.stopPropagation(); }
+  }, true);
+  document.addEventListener('click', function(e){
+    if(modelPop.hidden || !e.target.closest) return;
+    if(e.target.closest('#model-pop') || e.target.closest('.st-model')) return;
+    closeModelPop();
   });
   // A countdown is redrawn the moment the page is looked at again, rather than up to a tick late.
   document.addEventListener('visibilitychange', function(){
@@ -3776,6 +3951,7 @@ const SCRIPT = `
       claim(ev.msg);
       upsert(ev.msg);
       cacheSave();
+      if(!agentStatus) paintStatus();
       readCounts[topic] = (readCounts[topic] || 0) + 1;
       saveReads();
       for(var i=0;i<topics.length;i++){
@@ -5563,6 +5739,16 @@ __GATE__
       <!-- The agent's live status. Inside #bar rather than above it so it goes away with the
            composer in terminal mode, and so it reads as part of the place you type. -->
       <div id="status" hidden title="Tap for details"></div>
+      <!-- The model switch's list, opened from the model in the status line (openModelPop). -->
+      <div id="model-pop" hidden role="dialog" aria-labelledby="mp-heading">
+        <div class="mp-head">
+          <div class="mp-title"><b id="mp-heading">Model for this topic</b><span id="mp-agent"></span></div>
+          <button type="button" class="btn-icon" id="mp-close" title="Close (Esc)" aria-label="Close">&times;</button>
+        </div>
+        <input id="mp-filter" type="text" placeholder="Filter models" aria-label="Filter models" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <div id="mp-list" role="listbox" aria-labelledby="mp-heading"></div>
+        <p class="mp-foot">This topic only, like <code>/model</code>. Each agent's default is in Settings.</p>
+      </div>
       <div id="hints" hidden></div>
       <div id="chips"></div>
       <form id="composer">

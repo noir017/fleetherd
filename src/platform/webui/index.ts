@@ -546,6 +546,7 @@ function lifecycle(
   | 'useSkillsPanel'
   | 'useIdleReclaim'
   | 'useAgentCatalog'
+  | 'useModelPicker'
   | 'registerCommands'
   | 'start'
   | 'stop'
@@ -593,6 +594,11 @@ function lifecycle(
      * agent as one tap — where a chat app has a message box and the `/agent` menu's two levels.
      */
     useAgentCatalog: (lookup) => room.useAgentCatalog(lookup),
+    /**
+     * The only implementor because it is the only platform with a status line to put a switch
+     * in: a chat app has `/model` and its menu, which is a message.
+     */
+    useModelPicker: (picker) => room.useModelPicker(picker),
     /**
      * Accepted and never called.
      *

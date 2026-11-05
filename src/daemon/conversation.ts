@@ -52,7 +52,7 @@ import type {
   PermissionAnswer,
   InboundMessage,
 } from '../types.js';
-import type { ConversationWorkdir, PlatformAdapter } from '../platform/adapter.js';
+import type { ConversationWorkdir, ModelPickerList, ModelPickerResult, PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentUsage } from './agent.js';
 import type { EffortSelector, ModelSelector, ToolEvent, TopicActivity } from '../types.js';
 import {
@@ -3102,6 +3102,53 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
+   * What the conversation at an ADDRESS can switch its model to — the list handed to a platform
+   * that draws a switch (`PlatformAdapter.useModelPicker`, the web UI's status line).
+   *
+   * The same warm-up `/model` does (warmModelSelector, refreshModels first for agy): the child the
+   * next message would start is started now, because a model list exists only on a live session.
+   * A conversation this daemon has not seen yet is bound to the agent its first message would
+   * reach — the binding, else the route's default — as that message would have bound it.
+   */
+  async modelPickerForRef(ref: ConversationRef): Promise<ModelPickerList> {
+    const id = this.idForRef(ref);
+    const agentId =
+      this.conversations.get(id)?.agentId ?? this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const state = this.ensureState(id, ref.platform, agentId, { opener: 'the model switch' });
+    await this.agents.getOrCreate(id, state.agentId).refreshModels?.();
+    const warm = await this.warmModelSelector(id, state.agentId);
+    if (warm.error) return { ok: false, agent: state.agentId, reason: 'error', text: modelStartFailedText(warm.error) };
+    if (!warm.selector || warm.selector.options.length === 0) {
+      return { ok: false, agent: state.agentId, reason: 'none', text: modelNoSelectorText() };
+    }
+    const configured = findAgent(this.config, state.agentId)?.model;
+    return {
+      ok: true,
+      agent: state.agentId,
+      ...(warm.selector.current ? { current: warm.selector.current } : {}),
+      ...(configured ? { configured } : {}),
+      ...(state.modelOverride ? { override: state.modelOverride } : {}),
+      options: warm.selector.options.map((o) => ({ value: o.value, name: o.name })),
+    };
+  }
+
+  /**
+   * Switch the model of the conversation at an ADDRESS, as `/model <id>` does — applyModelChoice,
+   * so the value is checked against the list the agent offers now and the override is the one
+   * `/model` reads. The status line hears the new model at once rather than at the next turn.
+   */
+  async chooseModelForRef(ref: ConversationRef, value: string): Promise<ModelPickerResult> {
+    const id = this.idForRef(ref);
+    const state = this.conversations.get(id);
+    const result = state ? await this.applyModelChoice(id, state.agentId, value) : ({ kind: 'gone' } as const);
+    const text = modelChoiceText(result);
+    if (result.kind !== 'applied') return { ok: false, text };
+    this.status.model(id, result.model);
+    console.log(`[model] ${id}: switched to ${result.model} from the model switch`);
+    return { ok: true, model: result.model, text };
+  }
+
+  /**
    * The conversation an address belongs to, taking the long way round through the scope and the
    * alias table rather than letting the caller build a key — because neither is a platform's
    * business to know: under `per_channel` every lane shares one conversation, under `shared` all
@@ -4047,7 +4094,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     key: ConversationId,
     platform: string,
     agentId: string,
-    opts: { fresh?: boolean } = {}
+    opts: { fresh?: boolean; opener?: string } = {}
   ): ConversationState {
     let state = this.conversations.get(key);
     if (!state) {
@@ -4055,7 +4102,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
       state = { merger: this.buildMerger(key), agentId: bound, platform, lastActivityAt: this.clock.now() };
       this.conversations.set(key, state);
       this.store?.bind(key, bound);
-      console.log(`[conversation] ${key} bound to agent "${bound}" (scheduled run)`);
+      console.log(`[conversation] ${key} bound to agent "${bound}" (${opts.opener ?? 'scheduled run'})`);
     }
     return state;
   }

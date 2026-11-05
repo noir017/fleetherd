@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Switch a topic's model from the web UI's status line.** The model named above the composer is a
+  button: it lists what the topic's agent offers — the one in use ticked, the agent's default
+  marked, a filter for a long list (opencode offers ~90) — and a tap switches the model for this
+  topic, exactly as `/model <id>` does: a runtime choice, config.yaml untouched, and a typed `/model`
+  afterwards says the same. A cold agent is started to ask, and the list says so meanwhile; a harness
+  with no model choice says that instead. A 44px target on a phone. [→](docs/web-ui.md)
+
 - **The default model of an agent a host's pod declares can be set from the gateway.** Since pods
   declare their own agents (`~/.talkcode/pod.yaml`, 2026-11-03), `/setting model.<id>@<host>` and its
   row on the web UI's settings page were refused — the agent is not in config.yaml — so the page

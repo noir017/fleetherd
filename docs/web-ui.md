@@ -36,6 +36,13 @@ each change did, or why it was refused. The bar says these are saved to config.y
 *this topic*; switching topics puts the page away. What you type stays in the transcript as your
 message — the page does not. See [settings](settings.md).
 
+**Switching the model.** The line above the composer names the agent and its model, and the model
+is a button: it opens the models the topic's agent offers, the one in use ticked and the agent's
+default marked, with a filter when the list is long. A tap switches this topic only — the same as
+typing `/model <id>`, so a typed `/model` afterwards says the same — and config.yaml is not
+touched; each agent's default is in **All settings**. An agent with no session yet is started to
+ask (a second or two, said while it happens); a harness that offers no model choice says so.
+
 **Topics.** The sidebar on the left lists parallel conversations and switches between them,
 the same way a Telegram forum topic or a Feishu 话题 does: each has its own agent
 session and its own context, and each gets named automatically from what it turned

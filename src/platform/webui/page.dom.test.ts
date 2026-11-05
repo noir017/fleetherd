@@ -4607,6 +4607,200 @@ describe('webui page: recording a voice message', () => {
   });
 });
 
+describe('webui page: the model switch in the status line', () => {
+  const T = 'a1b2c3d4';
+  const OTHER = 'b2c3d4e5';
+  const OC = { agent: 'oc@p', model: 'opencode/glm-5', effort: 'high' };
+  const LIST = {
+    ok: true,
+    agent: 'oc@p',
+    current: 'opencode/glm-5',
+    configured: 'opencode/big-pickle',
+    options: [
+      { value: 'opencode/big-pickle', name: 'Big Pickle' },
+      { value: 'opencode/glm-5', name: 'GLM-5' },
+      ...Array.from({ length: 10 }, (_, i) => ({ value: `newapi/model-${i}`, name: `Model ${i}` })),
+      { value: 'newapi/kimi-k3', name: 'Kimi K3' },
+    ],
+  };
+  const URL_T = `api/models?t=${T}`;
+  const chip = (h: Harness) => h.doc.querySelector('#status .st-model') as HTMLButtonElement | null;
+  const pop = (h: Harness) => h.el('model-pop');
+  const rows = (h: Harness) => Array.from(h.doc.querySelectorAll('#mp-list .mp-opt')) as HTMLButtonElement[];
+
+  async function ready(o: Parameters<typeof open>[0] = {}): Promise<Harness> {
+    const h = await open({ ...o, replies: { [URL_T]: LIST, 'api/models': { ok: true, model: 'newapi/kimi-k3', text: 'Model set to `newapi/kimi-k3` for this conversation.' }, ...(o.replies ?? {}) } });
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T, OTHER]));
+    await h.emit({ t: 'status', status: OC });
+    return h;
+  }
+
+  it('makes the model in the status line a button, without changing what the line says', async () => {
+    const h = await ready();
+    expect(chip(h)?.textContent).toBe('opencode/glm-5');
+    expect(h.el('status').textContent).toContain('oc@p · opencode/glm-5 · high');
+    expect(chip(h)?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens the list the agent offers, with the one in use ticked and the default marked', async () => {
+    const h = await ready();
+    await h.click('#status .st-model');
+    expect(pop(h).hidden).toBe(false);
+    // A tap on the switch is not a tap on the line: it does not open the line's details.
+    expect(h.el('status').classList.contains('open')).toBe(false);
+    expect(h.calls.find((c) => c.path === URL_T)).toBeTruthy();
+    await tick();
+    expect(h.el('mp-agent').textContent).toBe('oc@p');
+    expect(rows(h)).toHaveLength(13);
+    const on = rows(h).find((r) => r.classList.contains('on'));
+    expect(on?.getAttribute('data-v')).toBe('opencode/glm-5');
+    expect(on?.getAttribute('aria-selected')).toBe('true');
+    const def = rows(h).find((r) => r.querySelector('.mp-tag'));
+    expect(def?.getAttribute('data-v')).toBe('opencode/big-pickle');
+    expect(def?.querySelector('.mp-n')?.textContent).toBe('Big Pickle');
+    expect(chip(h)?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('says it is asking while a cold agent starts', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await ready({ held: { [URL_T]: held } });
+    await h.click('#status .st-model');
+    expect(h.el('mp-list').textContent).toContain('Asking the agent for its models');
+    expect(h.el('mp-list').querySelector('.set-spin')).not.toBeNull();
+    release();
+    await tick();
+    await tick();
+    expect(rows(h)).toHaveLength(13);
+  });
+
+  it('filters a long list as it is typed into', async () => {
+    const h = await ready();
+    await h.click('#status .st-model');
+    await tick();
+    expect(h.el('mp-filter').hidden).toBe(false);
+    const f = h.el('mp-filter') as HTMLInputElement;
+    f.value = 'kimi';
+    f.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(rows(h).filter((r) => !r.hidden).map((r) => r.getAttribute('data-v'))).toEqual(['newapi/kimi-k3']);
+    // By name too.
+    f.value = 'pickle';
+    f.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(rows(h).filter((r) => !r.hidden).map((r) => r.getAttribute('data-v'))).toEqual(['opencode/big-pickle']);
+  });
+
+  it('switches with a tap, as /model does, and the line says the new model at once', async () => {
+    const h = await ready();
+    await h.click('#status .st-model');
+    await tick();
+    await h.click('#mp-list .mp-opt[data-v="newapi/kimi-k3"]');
+    await tick();
+    expect(h.calls.find((c) => c.path === 'api/models')?.body).toEqual({ topic: T, value: 'newapi/kimi-k3' });
+    expect(pop(h).hidden).toBe(true);
+    expect(chip(h)?.textContent).toBe('newapi/kimi-k3');
+    // /model's own sentence, as plain text.
+    expect(h.el('note').textContent).toBe('Model set to newapi/kimi-k3 for this conversation.');
+  });
+
+  it('keeps the list open with /model’s reason when the switch is refused', async () => {
+    const h = await ready({
+      status: { 'api/models': 409 },
+      replies: { 'api/models': { ok: false, text: '`newapi/kimi-k3` is no longer offered by this agent. Run /model again for the current list.' } },
+    });
+    await h.click('#status .st-model');
+    await tick();
+    await h.click('#mp-list .mp-opt[data-v="newapi/kimi-k3"]');
+    await tick();
+    expect(pop(h).hidden).toBe(false);
+    const err = h.el('mp-list').querySelector('.mp-msg.err');
+    expect(err?.innerHTML).toContain('<code>newapi/kimi-k3</code> is no longer offered');
+    expect(chip(h)?.textContent).toBe('opencode/glm-5');
+  });
+
+  it('says why there is no list for a harness that offers none', async () => {
+    const h = await ready({ replies: { [URL_T]: { ok: false, agent: 'cbc@p', reason: 'none', text: 'This agent offers no model selector.' } } });
+    await h.click('#status .st-model');
+    await tick();
+    expect(rows(h)).toHaveLength(0);
+    expect(h.el('mp-list').textContent).toContain('This agent offers no model selector.');
+    expect(h.el('mp-agent').textContent).toBe('cbc@p');
+  });
+
+  it('says so when the list cannot be fetched, rather than spinning for ever', async () => {
+    const h = await ready({ hang: [URL_T], shortenLong: true });
+    await h.click('#status .st-model');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(h.longTimers).toContain(45000);
+    expect(h.el('mp-list').textContent).toContain('Could not reach the daemon for the list');
+  });
+
+  it('closes on Escape, on the ×, on a click outside, and with the topic', async () => {
+    const h = await ready();
+    const shut = () => pop(h).hidden;
+    await h.click('#status .st-model');
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(shut()).toBe(true);
+    await h.click('#status .st-model');
+    await h.click('#mp-close');
+    expect(shut()).toBe(true);
+    await h.click('#status .st-model');
+    await h.click('#log');
+    expect(shut()).toBe(true);
+    await h.click('#status .st-model');
+    expect(shut()).toBe(false);
+    await h.click('[data-topic="' + OTHER + '"]');
+    expect(shut()).toBe(true);
+  });
+
+  it('drops a list that arrives after the switch was closed', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await ready({ held: { [URL_T]: held } });
+    await h.click('#status .st-model');
+    await h.click('#mp-close');
+    release();
+    await tick();
+    await tick();
+    expect(pop(h).hidden).toBe(true);
+    expect(rows(h)).toHaveLength(0);
+  });
+
+  it('offers the switch in a topic with a conversation but no status yet, and not in a new one', async () => {
+    const h = await open({ replies: { [URL_T]: LIST } });
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T]));
+    expect(h.el('status').hidden).toBe(false);
+    expect(chip(h)?.textContent).toBe('Model');
+    // A new topic offers its agents instead; the switch would commit it to the default one.
+    await h.emit(sync(T, [], [T], { agents: { groups: [{ name: '', agents: [{ id: 'oc@p', kind: 'OpenCode' }] }], current: 'oc@p' } }));
+    expect(chip(h)).toBeNull();
+  });
+
+  it('is a finger target on a phone, and does not zoom the page when filtering', () => {
+    const html = renderPage('Chat', false);
+    const at = html.indexOf('@media(max-width:640px){');
+    let depth = 0;
+    let css = '';
+    for (let i = html.indexOf('{', at); i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}' && --depth === 0) {
+        css = html.slice(at, i + 1);
+        break;
+      }
+    }
+    expect(css).toMatch(/\.st-model\{min-height:44px/);
+    expect(css).toMatch(/#mp-filter\{min-height:44px;font-size:16px\}/);
+    expect(css).toMatch(/#mp-close\{min-width:44px;min-height:44px\}/);
+    expect(css).toMatch(/#model-pop\{left:8px;right:8px;width:auto/);
+  });
+
+  it('does not take the keyboard on a phone when it opens', async () => {
+    const h = await ready({ width: 390, height: 844 });
+    await h.click('#status .st-model');
+    await tick();
+    expect(h.doc.activeElement?.id).not.toBe('mp-filter');
+  });
+});
+
 describe('webui page: the agent status strip', () => {
   const T = 'a1b2c3d4';
   const OTHER = 'b2c3d4e5';
@@ -4708,7 +4902,8 @@ describe('webui page: the agent status strip', () => {
     await h.click(`[data-topic="${OTHER}"]`);
     expect(strip(h).hidden).toBe(true);
     await h.emit(sync(OTHER, [], [T, OTHER], { status: { agent: 'agy' } }));
-    expect(strip(h).textContent).toBe('agy');
+    // No model reported yet: the switch is there all the same, under its own name.
+    expect(strip(h).textContent).toBe('agy · Model');
   });
 
   it('runs its countdown timer only while there is a countdown on screen', async () => {

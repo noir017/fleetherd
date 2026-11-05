@@ -153,6 +153,18 @@ export const ScheduleOpRequestSchema = z
   .strict();
 
 /**
+ * The status line's model switch: this topic, this model. The value is matched by the daemon
+ * against the list the agent offers right now (applyModelChoice), exactly as a `/model` menu tap
+ * is, so a name the agent does not list is refused there rather than here.
+ */
+export const ModelChooseRequestSchema = z
+  .object({
+    topic: TopicId,
+    value: z.string().min(1).max(200),
+  })
+  .strict();
+
+/**
  * One operation on one managed skill.
  *
  * A discriminated union, so each verb carries exactly the fields it needs and a body carrying
@@ -222,6 +234,7 @@ export type EndTerminalRequest = z.infer<typeof EndTerminalRequestSchema>;
 export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;
 export type ScheduleOpRequest = z.infer<typeof ScheduleOpRequestSchema>;
+export type ModelChooseRequest = z.infer<typeof ModelChooseRequestSchema>;
 export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;
 
 /**

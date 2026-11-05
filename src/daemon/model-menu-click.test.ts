@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Daemon } from './daemon.js';
 import { parseConfig, type Config } from '../config/schema.js';
-import type { PlatformAdapter } from '../platform/adapter.js';
+import type { ModelPickerList, ModelPickerResult, PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession } from './agent.js';
 import type { ButtonInteraction, InboundMessage, MessageRef, ModelSelector } from '../types.js';
 
@@ -177,10 +177,17 @@ function rig(opts: RigOptions = {}) {
   const pickIds = () => menu().buttons.filter((b) => b.id.startsWith('mdl:')).map((b) => b.id);
   const navIds = () => menu().buttons.filter((b) => b.id.startsWith('mpg:')).map((b) => b.id);
 
+  const registry = (daemon as unknown as {
+    registry: {
+      modelPickerForRef(ref: typeof CONVERSATION): Promise<ModelPickerList>;
+      chooseModelForRef(ref: typeof CONVERSATION, value: string): Promise<ModelPickerResult>;
+    };
+  }).registry;
+
   return {
     send, click, replies, menu, pickIds, navIds, selector, onRefresh,
     sent, buttonSends, buttonEdits, setModelCalls,
-    cfg, agents, platform,
+    cfg, agents, platform, registry,
   };
 }
 
@@ -420,5 +427,48 @@ describe('access control', () => {
     await r.send('/model');
     await r.click(r.pickIds()[4]!, 'u1');
     expect(r.setModelCalls).toEqual(['newapi/GLM-5.2']);
+  });
+});
+
+describe('the model switch a platform draws (useModelPicker)', () => {
+  it('lists what the conversation can switch to, binding a new one as its first message would', async () => {
+    const r = rig();
+    const list = await r.registry.modelPickerForRef(CONVERSATION);
+    expect(list).toMatchObject({ ok: true, agent: 'oc', current: 'opencode/big-pickle' });
+    if (!list.ok) throw new Error('no list');
+    expect(list.options.map((o) => o.value)).toEqual(OPTIONS.map((o) => o.value));
+    // Re-asked, as /model re-asks: a list served outside the session may have grown.
+    expect(r.onRefresh.calls).toBe(1);
+  });
+
+  it('switches the way /model does, and the override is the one /model reads', async () => {
+    const r = rig();
+    await r.send('hello');
+    const result = await r.registry.chooseModelForRef(CONVERSATION, 'newapi/GLM-5.2');
+    expect(result).toEqual({ ok: true, model: 'newapi/GLM-5.2', text: 'Model set to `newapi/GLM-5.2` for this conversation.' });
+    expect(r.setModelCalls).toEqual(['newapi/GLM-5.2']);
+    const list = await r.registry.modelPickerForRef(CONVERSATION);
+    expect(list.ok && list.override).toBe('newapi/GLM-5.2');
+  });
+
+  it('refuses a model the agent does not offer, in /model’s words', async () => {
+    const r = rig();
+    await r.send('hello');
+    const result = await r.registry.chooseModelForRef(CONVERSATION, 'newapi/not-there');
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain('is no longer offered by this agent');
+    expect(r.setModelCalls).toEqual([]);
+  });
+
+  it('says why there is no list for a harness that offers no model choice', async () => {
+    const r = rig({ noSelector: true });
+    const list = await r.registry.modelPickerForRef(CONVERSATION);
+    expect(list).toMatchObject({ ok: false, agent: 'oc', reason: 'none' });
+  });
+
+  it('cannot switch a conversation that does not exist', async () => {
+    const r = rig();
+    const result = await r.registry.chooseModelForRef({ ...CONVERSATION, channel: 'nowhere' }, 'newapi/GLM-5.2');
+    expect(result).toEqual({ ok: false, text: 'That conversation is gone — send a message first, then /model.' });
   });
 });

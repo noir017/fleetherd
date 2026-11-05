@@ -294,6 +294,32 @@ Closed, the strip is one line, shows only the quota pools the serving model spen
 narrow screen drops the token counts beside the meter (the percentage says the same). A tap opens
 it: it wraps, and the other pools appear, dimmed.
 
+**The model in the strip is a switch** (since 2026-11-05): `/model` as a control. It opens a list
+above the composer (`#model-pop`) of what the topic's agent offers, the one in use ticked and the
+agent's configured default marked, filtered as it is typed into. Decisions in it:
+
+- **It is `/model`, not a second way to set a model.** `GET api/models?t=` is
+  `ConversationRegistry.modelPickerForRef`, which does `/model`'s warm-up (refreshModels, then
+  warmModelSelector) — a cold agent is started, which is why the list says it is asking — and
+  `POST api/models` is `chooseModelForRef`, which is `applyModelChoice`: checked against the list
+  the agent offers now, written as the conversation's `modelOverride`. So a typed `/model` afterwards
+  names the same model, and config.yaml is untouched; the defaults are the settings page's.
+- **A conversation the daemon has not seen is bound as its first message would bind it** — the
+  binding, else the route's default — because a model list belongs to an agent. For the same reason
+  the switch is not offered in a new, empty topic: the agent launcher is the choice made there first,
+  and opening the switch would quietly make it.
+- **No transcript line.** The strip and the next reply's footer name the model; a line per switch
+  would be noise in exactly the conversation being worked in. The daemon's own sentence goes to
+  `#note`, and a refusal stays in the open list.
+- **Present without a status.** A topic that has a conversation but no status yet (after a restart)
+  shows the switch alone, named "Model", rather than no way to switch at all.
+- **The caret is CSS** (`.st-model::after`), so the strip's text is still the model's name.
+- **A finger target on a phone**: 44px, which makes the strip that tall there; the list spans the
+  composer, and the filter is not focused on open, for the reason the composer is not.
+
+Its own Escape and outside click close it, rather than joining the page-wide overlay handling — it
+is a menu in the composer, not a window over the page.
+
 **`access.allowFrom` identity is `<instance id>:owner`**, the same for every topic. An existing
 config that already lists other identities will silently ignore every message typed into this
 page until that entry is added — `doctor` checks for exactly this.

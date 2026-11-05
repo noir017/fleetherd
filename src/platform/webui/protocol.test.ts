@@ -6,6 +6,7 @@ import {
   DeleteTopicRequestSchema,
   ClearTopicsRequestSchema,
   LoginRequestSchema,
+  ModelChooseRequestSchema,
   ScheduleOpRequestSchema,
   SendRequestSchema,
   StarTopicRequestSchema,
@@ -144,5 +145,24 @@ describe('webui protocol: inbound validation', () => {
     ['an extra key', { id: 'a1b2c3', action: 'pause', prompt: 'x' }, false],
   ])('acting on a scheduled task with %s', (_label, body, want) => {
     expect(parseBody(ScheduleOpRequestSchema, body).ok).toBe(want);
+  });
+
+  it.each([
+    ['a model id', { topic: TOPIC, value: 'opencode/glm-5' }, true],
+    // The daemon checks the value against the agent's own list; here only the envelope.
+    ['an empty value', { topic: TOPIC, value: '' }, false],
+    ['a value the length of a prompt', { topic: TOPIC, value: 'x'.repeat(201) }, false],
+    ['a malformed topic', { topic: 'nope', value: 'opencode/glm-5' }, false],
+    ['an extra key', { topic: TOPIC, value: 'opencode/glm-5', agent: 'cc' }, false],
+  ])('switching a model with %s', (_label, body, want) => {
+    expect(parseBody(ModelChooseRequestSchema, body).ok).toBe(want);
+  });
+
+  it.each([
+    ['a typed value', { topic: TOPIC, messageId: 'm1', buttonId: 'stt:r:0', value: 'opus' }, true],
+    ['an empty value', { topic: TOPIC, messageId: 'm1', buttonId: 'stt:r:0', value: '' }, false],
+    ['a value too long to be one', { topic: TOPIC, messageId: 'm1', buttonId: 'stt:r:0', value: 'x'.repeat(201) }, false],
+  ])('a click carrying %s', (_label, body, want) => {
+    expect(parseBody(ClickRequestSchema, body).ok).toBe(want);
   });
 });

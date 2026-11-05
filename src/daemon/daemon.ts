@@ -1064,6 +1064,11 @@ export class Daemon {
       // …and one with room to lay out the agents a new conversation could be given to (the web UI's
       // empty topic) gets a way to ask which, and who answers if nobody picks.
       adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
+      // The status line's model switch: `/model` as a control (ConversationRegistry.modelPickerForRef).
+      adapter.useModelPicker?.({
+        list: (ref) => this.registry.modelPickerForRef(ref),
+        choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
+      });
       await adapter.start();
       console.log(`[daemon] platform instance "${id}" (${adapter.platformType}) started`);
     }
