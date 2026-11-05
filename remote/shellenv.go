@@ -39,7 +39,7 @@ const (
 var envDrop = []string{
 	"SSH_CLIENT", "SSH_CONNECTION", "SSH_TTY", "SSH_AUTH_SOCK", "SSH_ORIGINAL_COMMAND",
 	"SHLVL", "PWD", "OLDPWD", "_", "PS1", "PROMPT_COMMAND",
-	"TALKCODE_REMOTE_SOCK", "TALKCODE_TURN_TOKEN", "TALKCODE_SOCKET",
+	"TALKCODE_REMOTE_SOCK", "TALKCODE_REMOTE_CLI", "TALKCODE_TURN_TOKEN", "TALKCODE_SOCKET",
 }
 
 // captureEnv is captureLoginEnv, as a variable so a test can count or replace the capture.

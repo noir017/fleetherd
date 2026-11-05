@@ -177,6 +177,12 @@ the config.yaml entry and `/reload`.
 | `/cd`, `/skills` | list the host's directories and skills |
 | The `talkcode` skill | placed in the harness's skill directory on the host |
 
+`talkcode` works from a login shell too. Agents often run shell commands with `bash -lc` (codex
+does), and a login shell rebuilds `PATH` from `/etc/profile` — so `talkcode` there is whatever the
+machine installed, not the helper's copy. That one hands the command to the helper instead of
+looking for a gateway config that is not on this machine. Only the reverse commands, `mcp` and
+`help` are handed over; `start`, `setup` and `doctor` are refused on the host.
+
 ## When the connection drops
 
 - The agent keeps working on the host. What it writes is kept there (up to 64 MiB per gateway,
@@ -197,6 +203,11 @@ Each gateway version installs its own helper on a host, under `~/.talkcode/remot
 When an upgraded gateway connects, the previous version's helper is stopped, and its directory is
 removed once no gateway uses it. The helper is about 4 MiB; a gateway brings both builds with it
 and downloads nothing.
+
+The `talkcode` on the machine's own `PATH` (in the uniagent image, for one) is a separate install,
+and the login-shell handoff needs it to be at least as new as the gateway: an older one still
+answers "config not found", and one newer than the gateway says the host's helper is older. Upgrade
+both to get it.
 
 ## Choosing an agent: `/agent`
 

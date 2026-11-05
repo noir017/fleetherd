@@ -158,6 +158,11 @@ Include /home/<用户>/.talkcode/ssh/config
 | `/cd`、`/skills` | 列出主机上的目录和 skill |
 | `talkcode` skill | 放进主机上对应 harness 的 skill 目录 |
 
+`talkcode` 在登录 shell 里也能用。智能体执行 shell 命令常用 `bash -lc`（codex 就是），而登录 shell 会按
+`/etc/profile` 重建 `PATH`——所以那里的 `talkcode` 是机器上装的那个，不是小服务放的那份。那份会把命令交给小服务，
+而不是去找一个这台机器上根本不存在的网关配置。交出去的只有反向命令、`mcp` 和 `help`；`start`、`setup`、`doctor`
+在主机上会被直接拒绝。
+
 ## 断网时
 
 - 智能体在主机上继续干活。它的输出留在主机上（每个网关最多 64 MiB，远超一轮长对话），连接恢复后按顺序送达。
@@ -173,6 +178,9 @@ Include /home/<用户>/.talkcode/ssh/config
 每个版本的网关都会在主机上安装自己的小服务，放在 `~/.talkcode/remote/<版本>/`。升级后的网关连上时，
 上一个版本的小服务会被停掉；等没有网关再用它，它的目录也会被删除。小服务大约 4 MiB；网关自带两种架构的构建，
 不会从别处下载任何东西。
+
+机器自己 `PATH` 上的那个 `talkcode`（比如 uniagent 镜像里装的）是另一份安装。登录 shell 里的转发要求它不比网关旧：
+更旧的仍然会报 "config not found"，比网关新的则会说主机上的小服务太旧。两边都升级才有这个效果。
 
 ## 选择智能体：`/agent`
 

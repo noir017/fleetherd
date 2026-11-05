@@ -8,14 +8,15 @@ import { normalizeActionPaths } from '../commands/reverse.js';
 import { expandRemoteHome, remoteAgentEnv, remoteAgentHome, remoteAgentRoot } from './agent-common.js';
 import { remoteClaudeProjectsDir } from './claude-transcript.js';
 import { diffConfig } from './config-reload.js';
-import { gatewayNamespace, isBridgedCommand } from './remote-hosts.js';
+import { gatewayNamespace } from './remote-hosts.js';
 import { workdirScanFrom } from './workdir-scan.js';
 
 /**
- * The daemon's side of agents on remote hosts, short of a connection: config, the namespace, which
- * commands an agent over there may run back here, and how paths and environments are worked out for
- * a machine that is not this one. The connection itself is covered end to end against the real
- * talkcode-remote binary in remote/remote.integration.test.ts.
+ * The daemon's side of agents on remote hosts, short of a connection: config, the namespace, and how
+ * paths and environments are worked out for a machine that is not this one. The commands such an
+ * agent may run back here are tested with the catalog that defines them (ipc/commands.test.ts); the
+ * connection itself is covered end to end against the real talkcode-remote binary in
+ * remote/remote.integration.test.ts.
  */
 
 const cfg = (over: Record<string, unknown> = {}) =>
@@ -58,17 +59,6 @@ describe('/reload and hosts', () => {
     const d = diffConfig(cfg(), cfg({ hosts: { box: { ssh: 'me@10.0.0.6' } } }));
     expect(d.agentsChanged).toEqual(['cc']);
     expect(d.sections).toContain('hosts');
-  });
-});
-
-describe('isBridgedCommand', () => {
-  it('lets a remote agent run reverse commands, the tools server and help — nothing else', () => {
-    for (const ok of [['send-message', 'hi'], ['send-file', 'x'], ['schedule', 'list'], ['mcp'], ['help'], ['--help']]) {
-      expect(isBridgedCommand(ok)).toBe(true);
-    }
-    for (const no of [[], ['start'], ['setup'], ['doctor'], ['--migrate-config']]) {
-      expect(isBridgedCommand(no)).toBe(false);
-    }
   });
 });
 

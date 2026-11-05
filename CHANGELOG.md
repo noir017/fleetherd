@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`talkcode` works in an agent's login shell on a remote host.** codex runs the shell commands it
+  is asked to run with `bash -lc`, and a login shell rebuilds PATH from `/etc/profile` — so on a
+  host whose image installs talkcode (uniagent's does) `talkcode` became that full Node CLI, which
+  looked for a config file on the host that does not exist and answered `config not found at
+  ~/.config/talkcode/config.yaml; run talkcode setup first`. Every reverse command that agent ran
+  in a shell was dead, while the same command worked through the tools server. The host's helper now
+  tells each agent where its `talkcode` shim is (`TALKCODE_REMOTE_CLI`), and the full CLI, finding
+  itself in an agent's shell on a host, hands its argv to that shim instead of reading a config. It
+  hands over only what the gateway already accepts from a host — the reverse commands, `mcp` and
+  `help`; `start`, `setup` and `doctor` are refused on the host, before anything leaves the machine.
+  Nothing changes where there is no host: without `TALKCODE_REMOTE_SOCK` the CLI is the CLI it was.
+  [→](docs/remote-hosts.md)
+
 ## [2.34.0] - 2026-11-05
 
 ### Added

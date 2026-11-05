@@ -1041,3 +1041,20 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     },
   },
 ];
+
+/**
+ * The commands an agent on a host the gateway reaches over ssh may run back here: the reverse
+ * commands, the native-tools server, and help. Nothing else — the process on the other end is the
+ * gateway, and `talkcode start` or `setup` run by a remote agent would be that agent running the
+ * gateway's own administration.
+ *
+ * Defined here, beside the catalog it is derived from, because two sides refuse with it: the gateway,
+ * which turns away anything else a shim sends (daemon/remote-hosts.ts), and the full Node CLI on the
+ * host itself, which refuses before forwarding (commands/remote-cli.ts). One list, so a command added
+ * to REVERSE_COMMANDS is allowed by both.
+ */
+const BRIDGED = new Set([...REVERSE_COMMANDS.map((s) => s.usage.split(' ')[0]!), 'mcp', 'help', '--help', '-h', '--version', '-V']);
+
+export function isBridgedCommand(argv: string[]): boolean {
+  return argv.length > 0 && BRIDGED.has(argv[0]!);
+}

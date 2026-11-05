@@ -43,9 +43,11 @@ ssh ──► sh -c '<bootstrap>' ──► talkcode-remote attach ──unix so
   stops its agents and exits.
 - **Agents** get the user's LOGIN environment (`shellenv.go`: `$SHELL -i -l -c '<self> dumpenv'`,
   parsed between markers, re-read after a minute), the gateway's per-agent overlay, the shim's
-  directory first on PATH and `TALKCODE_REMOTE_SOCK`. Commands are looked up on that PATH, not the
-  daemon's. Started from one locked OS thread with Pdeathsig, so a crashed daemon takes its agents
-  with it.
+  directory first on PATH, `TALKCODE_REMOTE_SOCK`, and `TALKCODE_REMOTE_CLI` — the shim's absolute
+  path, for the full Node CLI a login shell's PATH reset can land on instead (`bash -lc` re-reads
+  /etc/profile, which rebuilds PATH; the CLI then hands its argv to the shim rather than looking for
+  a gateway config). Commands are looked up on that PATH, not the daemon's. Started from one locked
+  OS thread with Pdeathsig, so a crashed daemon takes its agents with it.
 
 Layout, all owner-only: `~/.talkcode/remote/<version>/{talkcode-remote,bin/talkcode,skill/}`,
 `~/.talkcode/remote/run/<ns>/daemon.{sock,pid,lock,log}`. `<ns>` is the gateway's id

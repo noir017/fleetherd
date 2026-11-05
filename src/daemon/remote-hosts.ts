@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
-import { REVERSE_COMMANDS } from '../ipc/commands.js';
+import { isBridgedCommand } from '../ipc/commands.js';
 import { packageVersion, remoteBinary, sshTransport } from '../remote/binaries.js';
 import type { Welcome } from '../remote/connection.js';
 import { RemoteHost, type CliBridge, type CliSession } from '../remote/host.js';
@@ -34,17 +34,6 @@ import { activeSkillFiles, archivedSkillNames } from './skills-store.js';
  * that need it are built by factories far from the daemon's constructor, and a host must be ONE
  * connection however many agents and conversations use it.
  */
-
-/**
- * The commands an agent on a remote host may run back here: the reverse commands, the native-tools
- * server, and help. Nothing else — this process is the gateway, and `talkcode start` or `setup`
- * invoked by a remote agent would be that agent running the gateway's own administration.
- */
-const BRIDGED = new Set([...REVERSE_COMMANDS.map((s) => s.usage.split(' ')[0]!), 'mcp', 'help', '--help', '-h', '--version', '-V']);
-
-export function isBridgedCommand(argv: string[]): boolean {
-  return argv.length > 0 && BRIDGED.has(argv[0]!);
-}
 
 export function defaultIdentityFile(): string {
   return path.join(configDir(), 'ssh', 'id_ed25519');
