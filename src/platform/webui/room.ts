@@ -1425,19 +1425,22 @@ export class WebRoom {
   }
 
   /**
-   * Put the operator's message into the topic, or — for a quiet request — hand back an id without
-   * one.
+   * Put the operator's message into the topic, or — for the one request that is allowed to be
+   * quiet — hand back an id without one.
    *
-   * A quiet request is a control asking the daemon for something the page draws itself (the
-   * settings page), not something the person said: the daemon still needs a message id for the
-   * inbound, but the conversation gets no row, no echo, and no title seeded from a command nobody
-   * typed.
+   * A quiet request is the page asking the daemon for the settings screen it draws itself: the
+   * daemon still needs a message id for the inbound, but the conversation gets no row, no echo,
+   * and no title seeded from a command nobody typed. It is deliberately narrow — a bare
+   * `/setting` with no attachments. Any other text that carries the flag is delivered as an
+   * ordinary message: a client must not be able to make something it sent disappear from the
+   * conversation by asking.
    */
   private record(
     req: SendRequest,
     attachments: Array<NonNullable<InboundMessage['attachments']>[number]>
   ): { id: string; at: number } {
-    if (req.quiet === true) return { id: this.nextId(), at: Date.now() };
+    const quiet = req.quiet === true && attachments.length === 0 && req.text.trim() === '/setting';
+    if (quiet) return { id: this.nextId(), at: Date.now() };
     if (this.topics.seed(req.topic, req.text)) this.announceTopics();
     // The nonce rides back out on the echo: the page has already shown this message locally, and
     // that placeholder is retired by the echo that claims it. Absent when the client did not send

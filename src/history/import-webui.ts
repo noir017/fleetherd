@@ -28,7 +28,7 @@ export interface WebuiImportSummary {
 }
 
 interface KeptMessage {
-  msg?: { own?: unknown; at?: unknown; kind?: unknown };
+  msg?: { own?: unknown; at?: unknown; kind?: unknown; settings?: unknown; wasSettings?: unknown };
   text?: unknown;
 }
 
@@ -161,6 +161,10 @@ function kindOf(topic: TopicRecord | undefined): HistoryKind {
  * the library's tool rows read `Bash: git status`, the same as the live recorder writes them.
  */
 function toMessages(kept: KeptMessage, kind: HistoryKind): HistoryMessage[] {
+  // A `/setting` screen is a control surface, not something anyone said: the web UI draws it in
+  // a page of its own and never in the transcript, and a retired one is marked `wasSettings`.
+  // Neither belongs in the library, where a later search would find the same rows over and over.
+  if (kept.msg?.settings !== undefined || kept.msg?.wasSettings === true) return [];
   const text = typeof kept.text === 'string' ? kept.text.trim() : '';
   if (!text) return [];
   const ts = kept.msg?.at as number;

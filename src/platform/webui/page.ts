@@ -1021,7 +1021,19 @@ const SCRIPT = `
   // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
   // settingsClosed is per message id, so an edit to the page that was put away does not reopen
   // it — a new /setting is a new message, and that does open.
+  //
+  // A request made from the menu has no message id yet, so closing it while it is still Loading
+  // cannot be remembered that way. It gets a token (settingsReq); the answers are matched to the
+  // tokens by order, since the daemon answers one /setting with one screen, and closing cancels
+  // every token issued so far (settingsClosedUpTo). An answer to a cancelled request is dropped;
+  // a later request has a later token and still opens. A token is also tagged with the topic it
+  // was asked in: an answer arriving after a topic switch belongs to that topic's queue, not the
+  // one on screen.
   var settingsMsg=null, settingsTopic=null, settingsClosed={};
+  var settingsReq=0, settingsPending=[], settingsClosedUpTo=0, settingsTimer=0;
+  // How long the page waits for the screen before saying the daemon did not answer. The send
+  // itself gives up after fifteen seconds on one attempt, so this is the same patience.
+  var SETTINGS_WAIT_MS=15000;
 
   function saveReads(){
     try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
@@ -1229,6 +1241,9 @@ const SCRIPT = `
   function applySidebar(){
     var open = sidebarOpen !== '0';
     sidebar.className = open ? '' : 'collapsed';
+    // A drawer moved off-screen is still in the tab order: without this, Tab walks into a column
+    // nobody can see. Removed as soon as it is open, and harmless on a docked column.
+    if(open) sidebar.removeAttribute('inert'); else sidebar.setAttribute('inert', '');
     expandBtn.hidden = open;
     // Hidden wins over the media query's display:block, so on a wide screen this stays off
     // regardless of the drawer's state.
@@ -1266,11 +1281,13 @@ const SCRIPT = `
    */
   settingsOpenBtn.addEventListener('click', function(){
     setOpts(false);
-    openSettingsLoading();
+    var token = openSettingsLoading();
     var t = settingsTopic;
-    if(!t) return;
+    if(!token || !t) return;
     quietCommand('/setting', t).then(function(ok){
-      if(!ok && !settingsMsg) settingsSay('Could not reach the daemon. Close this and try again.');
+      if(ok) return;
+      forgetSettingsRequest(token);
+      if(!settingsMsg && !settingsPage.hidden) settingsSay('Could not reach the daemon. Close this and try again.');
     });
   });
   settingsClose.addEventListener('click', closeSettings);
@@ -1528,6 +1545,9 @@ const SCRIPT = `
 
   function paintSchedules(){
     app.classList.toggle('sched', schedOpen);
+    // The overlay is laid out and translated off-screen rather than hidden, so its buttons would
+    // still take Tab. inert keeps the keyboard in the chat until the panel is opened.
+    if(schedOpen) schedPanel.removeAttribute('inert'); else schedPanel.setAttribute('inert', '');
     schedToggle.setAttribute('aria-expanded', schedOpen ? 'true' : 'false');
     schedToggle.classList.toggle('on', schedOpen);
     paintSchedTab();
@@ -2153,35 +2173,81 @@ const SCRIPT = `
    * A live settings screen arrived: draw it, or update the page already drawing it.
    *
    * An edit of a page the operator closed is dropped; a new message is a new page. That is the
-   * whole rule, and it is why the id is remembered rather than a boolean.
+   * whole rule, and it is why the id is remembered rather than a boolean. An answer that belongs
+   * to a request the operator closed while it was still Loading is dropped too — the request is
+   * identified by its token, and the answers come back in the order they were asked for.
    */
   function takeSettings(m){
     m._g = m.g || epoch;
     var k = settingsKey(m);
-    if(settingsPage.hidden && settingsClosed[k]) return;
-    if(!topic) return;
+    // An edit of the screen already on the page: update it in place, and do not consume a
+    // pending request — this answer belongs to the message, not to a new question.
     if(!settingsPage.hidden && settingsMsg && settingsMsg.id === m.id){
       settingsMsg = m;
       renderSettings();
       return;
     }
+    var wasHidden = settingsPage.hidden;
+    if(wasHidden && settingsClosed[k]) return;
+    if(!topic) return;
+    var token = 0;
+    for(var i=0;i<settingsPending.length;i++){
+      if(settingsPending[i].t !== topic) continue;
+      token = settingsPending[i].n;
+      settingsPending.splice(i, 1);
+      break;
+    }
+    if(wasHidden && token && token <= settingsClosedUpTo) return;
     settingsMsg = m;
     settingsTopic = topic;
     paintSettingsTopic();
     renderSettings();
     settingsPage.hidden = false;
     settingsBody.scrollTop = 0;
+    disarmSettingsWait();
   }
 
   /** The page, before the daemon has answered: it says which topic it is about at once. */
   function openSettingsLoading(){
-    if(!topic) return;
+    if(!topic) return 0;
     settingsMsg = null;
     settingsTopic = topic;
     settingsBody.innerHTML = '<div class="set-loading">Loading settings…</div>';
     paintSettingsTopic();
     settingsPage.hidden = false;
     settingsBody.scrollTop = 0;
+    var token = ++settingsReq;
+    settingsPending.push({ t: topic, n: token });
+    armSettingsWait();
+    return token;
+  }
+
+  /** Stop waiting for an answer: the page is open, closed, or the request failed. */
+  function disarmSettingsWait(){
+    if(settingsTimer){ clearTimeout(settingsTimer); settingsTimer = 0; }
+  }
+
+  /**
+   * Say so rather than sitting on Loading for ever: the daemon may have dropped the request, or
+   * answered with something that is not a screen at all. The page stays up, so the operator can
+   * close it and try again.
+   */
+  function armSettingsWait(){
+    disarmSettingsWait();
+    settingsTimer = setTimeout(function(){
+      settingsTimer = 0;
+      if(settingsPage.hidden || settingsMsg) return;
+      settingsSay('The daemon did not answer. Close this and try again.');
+    }, SETTINGS_WAIT_MS);
+  }
+
+  /** The answer to a request that failed on the way out will never arrive; let its token go. */
+  function forgetSettingsRequest(token){
+    for(var i=0;i<settingsPending.length;i++){
+      if(settingsPending[i].n !== token) continue;
+      settingsPending.splice(i, 1);
+      return;
+    }
   }
 
   function settingsSay(s){
@@ -2191,6 +2257,10 @@ const SCRIPT = `
   function closeSettings(){
     if(settingsPage.hidden) return;
     if(settingsMsg) settingsClosed[settingsKey(settingsMsg)] = 1;
+    // Every request issued so far is cancelled, including one still in flight while Loading —
+    // otherwise its answer would reopen the page the operator just put away.
+    if(settingsReq) settingsClosedUpTo = Math.max(settingsClosedUpTo, settingsReq);
+    disarmSettingsWait();
     settingsPage.hidden = true;
     settingsMsg = null;
     settingsTopic = null;

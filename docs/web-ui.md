@@ -85,15 +85,18 @@ registered by asking an agent in a topic — the panel manages them, it does not
 with a line under the group: a question to answer first (amber dot), then a turn that failed (red
 dot), then a reply you have not read yet (green dot). Hover a row for what it is — a reply's first
 line, which is usually the conclusion. A reply goes back to its place once you have looked at it. A
-failure stays until the next turn runs, and its dot stays red after that. A sub-agent's topic is
-not one of these: its finished replies and failures are the news of the agent that opened it, so it
-is never moved up, and its finished turn keeps the ordinary idle/online dot instead of the green
-one. Its questions (amber) and its work (blue) are unchanged, and the topic that started it is what
-turns green when the answer is waiting for you.
+failure stays until the next turn runs, and its dot stays red after that.
+
+A sub-agent's topic is not one of these: its finished replies and failures are the news of the
+agent that opened it, so it is never moved up, and its finished turn keeps the ordinary idle/online
+dot instead of the green one. Its questions (amber) and its work (blue) are unchanged, and the
+topic that started it is what turns green when the answer is waiting for you.
+
 Below that group the list is ordered by what each topic is doing: working, then an agent that is up
-with nothing to do, then one with no process behind it. The directory menu a new topic shows after you pick its agent is not one of
-these: it is a control for your own next step rather than something an agent is blocked on, so a
-topic you leave half set up keeps its place and sends no notification.
+with nothing to do, then one with no process behind it. The directory menu a new topic shows after
+you pick its agent is not one of these: it is a control for your own next step rather than
+something an agent is blocked on, so a topic you leave half set up keeps its place and sends no
+notification.
 [Sub-agent](sub-agents.md) topics are folded under the topic that opened
 them — tap the count to open them — and a topic whose sub-agents are still working is shown as
 working itself, even between its own turns. They move up only for a question of their own — the

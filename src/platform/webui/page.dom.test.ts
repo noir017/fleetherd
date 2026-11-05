@@ -2401,6 +2401,77 @@ describe('webui page: the settings page', () => {
     expect(h.painted()).toBe(0);
   });
 
+  it('does not reopen a page closed while it was still Loading — and a new request still opens', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+
+    await h.click('#opts-toggle');
+    await h.click('#settings-open');
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(h.el('settings-body').textContent).toContain('Loading settings');
+    await h.click('#settings-close');
+    expect(h.el('settings-page').hidden).toBe(true);
+
+    // The answer to the request that was cancelled on the way out must not reopen the page.
+    await h.emit({ t: 'msg', msg: list('m1') });
+    expect(h.el('settings-page').hidden).toBe(true);
+    expect(h.painted()).toBe(0);
+
+    // A later request has a later token, so its answer does open.
+    await h.click('#opts-toggle');
+    await h.click('#settings-open');
+    await h.emit({ t: 'msg', msg: list('m2') });
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(text(h, '#settings-body .set-group')).toContain('Agent defaults');
+  });
+
+  it('does not let a cancelled request in one topic swallow an answer in another', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A, B]));
+
+    await h.click('#opts-toggle');
+    await h.click('#settings-open');
+    await h.click('#settings-close');
+
+    // Another topic, and a /setting the operator typed there: its answer is not the one the
+    // cancelled request in A is waiting for.
+    await h.click('[data-topic="' + B + '"]');
+    const input = h.el('input') as HTMLTextAreaElement;
+    input.value = '/setting';
+    await h.click('#composer button[type="submit"]');
+    await h.emit({ t: 'msg', msg: list('mB') });
+
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(h.el('settings-topic').textContent).toBe('Topic · Topic ' + B);
+  });
+
+  it('says the daemon did not answer instead of sitting on Loading for ever', async () => {
+    const h = await open({ shortenLong: true });
+    await h.emit(sync(A, [], [A]));
+
+    await h.click('#opts-toggle');
+    await h.click('#settings-open');
+    expect(h.el('settings-body').textContent).toContain('Loading settings');
+
+    await new Promise((r) => setTimeout(r, 60));
+    expect(h.el('settings-body').textContent).toContain('did not answer');
+    // The wait is the send's own patience, and it is a real timer rather than a permanent state.
+    expect(h.longTimers).toContain(15000);
+  });
+
+  it('puts the page away when the message becomes the scheduled-task menu', async () => {
+    const h = await opened();
+    // The daemon hands the settings message to the task list: buttons, no screen. That is a menu
+    // again, so the page goes and the menu is painted in the transcript.
+    await h.emit({
+      t: 'msg',
+      msg: { ...message('m1', '<p>Scheduled tasks</p>'), buttons: [{ id: 'sct:r:0', label: 'Morning CI' }] },
+    });
+    expect(h.el('settings-page').hidden).toBe(true);
+    expect(h.painted()).toBe(1);
+    expect(h.doc.querySelector('#log button[data-btn="sct:r:0"]')).not.toBeNull();
+  });
+
   it('keeps every control a finger target, and only widens the list on a wide screen', () => {
     const html = renderPage('Chat', false);
     expect(html).toMatch(/\.set-row\{[^}]*min-height:44px/);
@@ -3648,6 +3719,8 @@ describe('webui page: a screen held upright', () => {
     await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4', 'b2c3d4e5']));
 
     expect(h.el('sidebar').className).toBe('collapsed');
+    // Off-screen but still laid out: without inert, Tab walks into buttons nobody can see.
+    expect(h.el('sidebar').hasAttribute('inert')).toBe(true);
     expect(h.el('backdrop').hidden).toBe(true);
     expect(h.el('expand-sidebar').hidden).toBe(false);
     // Focusing on open would put the keyboard over half a portrait viewport before a word of
@@ -3663,11 +3736,13 @@ describe('webui page: a screen held upright', () => {
 
     await h.click('#expand-sidebar');
     expect(h.el('sidebar').className).toBe('');
+    expect(h.el('sidebar').hasAttribute('inert')).toBe(false);
     expect(h.el('backdrop').hidden).toBe(false);
 
     // The only other way out is the collapse button, which the open drawer covers the chat to show.
     await h.click('#backdrop');
     expect(h.el('sidebar').className).toBe('collapsed');
+    expect(h.el('sidebar').hasAttribute('inert')).toBe(true);
     expect(h.el('backdrop').hidden).toBe(true);
   });
 
@@ -5032,13 +5107,17 @@ describe('webui page: the scheduled-task panel', () => {
     const h = await open({ width: 390, height: 844, replies: { 'api/schedules': listReply([task()]) } });
     await h.emit(sync(A, [], [A]));
 
+    // Closed, the drawer is off-screen but laid out: inert is what keeps Tab out of it.
+    expect(h.el('schedules').hasAttribute('inert')).toBe(true);
     await h.click('#schedules-toggle');
     expect(h.el('app').classList.contains('sched')).toBe(true);
+    expect(h.el('schedules').hasAttribute('inert')).toBe(false);
     // The panel is an overlay here, so the dimmed chat behind it is the way out — the same
     // backdrop the topic drawer uses, not a second one.
     await h.click('#sched-backdrop');
 
     expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.el('schedules').hasAttribute('inert')).toBe(true);
     expect(h.window.localStorage.getItem('aa_sched_open')).toBeNull();
   });
 

@@ -77,6 +77,10 @@ export const SendRequestSchema = z
      * from the live config, and it answers with a message of its own, but a page opening must not
      * leave a command nobody typed in the transcript. It still carries a nonce, so a retry after a
      * timeout is deduplicated like any other send.
+     *
+     * Honoured for a bare `/setting` with no attachments and nothing else — `WebRoom.record` is
+     * the judge. Any other text carrying the flag is delivered as an ordinary message; a client
+     * must not be able to make something it sent vanish from the conversation by asking.
      */
     quiet: z.boolean().optional(),
   })

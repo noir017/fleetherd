@@ -658,6 +658,20 @@ describe('WebRoom: inbound', () => {
     expect(room.topics.get(topic)?.title).toBe('');
   });
 
+  it('does not let any other text hide behind quiet', () => {
+    // The flag is for the page's own settings request and nothing else. A client that sends
+    // something else with it gets an ordinary message, echo and title included — a message the
+    // operator wrote must not be able to vanish by asking.
+    const { room, topic, seen } = attached();
+    room.submit({ topic, text: 'hello', quiet: true });
+    expect(seen.filter((s) => s.ev.t === 'msg')).toHaveLength(1);
+    expect(room.topics.get(topic)?.title).toBe('hello');
+
+    // `/setting` with arguments is not the bare request the menu makes, so it is not quiet either.
+    room.submit({ topic, text: '/setting idle', quiet: true });
+    expect(seen.filter((s) => s.ev.t === 'msg')).toHaveLength(2);
+  });
+
   it('names a blank topic from the first thing said in it', () => {
     const { room, topic } = attached();
     room.submit({ topic, text: 'why is login timing out' });
