@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.34.0] - 2026-11-05
+
 ### Added
 
 - **Turns in the conversation library.** `history.db` now keeps one row per turn: the agent that
