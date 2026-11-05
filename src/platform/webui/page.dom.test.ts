@@ -2096,15 +2096,17 @@ describe('webui page: menus', () => {
   });
 });
 
-describe('webui page: the settings screen', () => {
+describe('webui page: the settings page', () => {
   /**
    * A `/setting` list as the daemon sends it with `capabilities.settingsScreen`: the buttons it
    * would send a chat app, plus the same rows as data. The model row's value is deliberately
    * longer than the 40-character label budget — the thing this screen exists to stop cutting.
    */
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
   const LONG_MODEL = 'openrouter/anthropic/claude-opus-4.6-thinking:high';
-  const list = (): Record<string, unknown> => ({
-    ...message('m1', '<p>Settings — saved to config.yaml, not just this conversation.</p>'),
+  const list = (id = 'm1'): Record<string, unknown> => ({
+    ...message(id, '<p>Settings — saved to config.yaml, not just this conversation.</p>'),
     buttons: [
       { id: 'stg:r:0', label: 'Default agent · cc · claude' },
       { id: 'stg:r:1', label: 'Default model · cc · (harness default)' },
@@ -2147,8 +2149,8 @@ describe('webui page: the settings screen', () => {
   });
 
   /** The value level of `Idle reclaim`, with `15m` current and nothing to page. */
-  const values = (): Record<string, unknown> => ({
-    ...message('m1', '<p><strong>Idle reclaim</strong> — <code>15m</code></p>'),
+  const values = (id = 'm1'): Record<string, unknown> => ({
+    ...message(id, '<p><strong>Idle reclaim</strong> — <code>15m</code></p>'),
     buttons: [
       { id: 'stv:r:0', label: 'off (never reclaim)' },
       { id: 'stv:r:1', label: '● 15m' },
@@ -2169,15 +2171,26 @@ describe('webui page: the settings screen', () => {
   const text = (h: Harness, sel: string): string[] =>
     Array.from(h.doc.querySelectorAll(sel)).map((e) => e.textContent ?? '');
 
-  it('draws grouped rows with the label and the whole value on separate lines', async () => {
+  /** A page with a topic on screen and one live settings screen delivered into it. */
+  async function opened(msg: Record<string, unknown> = list()): Promise<Harness> {
     const h = await open();
-    await h.emit(sync('a1b2c3d4', [list()], ['a1b2c3d4']));
+    await h.emit(sync(A, [], [A, B]));
+    await h.emit({ t: 'msg', msg });
+    return h;
+  }
 
-    expect(text(h, '.set-group')).toEqual(['Agent defaults', 'Conversation', 'More']);
-    // The old grid is not also drawn: the screen replaces it, it does not sit under it.
-    expect(h.doc.querySelector('.btns')).toBeNull();
-    // Every row, in the daemon's order, is a button that posts its own id.
-    expect(Array.from(h.doc.querySelectorAll('.set-row')).map((b) => b.getAttribute('data-btn'))).toEqual([
+  it('draws the daemon’s screen in a page of its own, not in the transcript', async () => {
+    const h = await opened();
+
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(text(h, '#settings-body .set-group')).toEqual(['Agent defaults', 'Conversation', 'More']);
+    // The old grid is not drawn either: the page replaces it, it does not sit under it.
+    expect(h.doc.querySelector('#log .btns')).toBeNull();
+    // And the screen is not a message: nothing was added to the transcript for it.
+    expect(h.painted()).toBe(0);
+    expect(h.doc.querySelector('#log .set')).toBeNull();
+
+    expect(Array.from(h.doc.querySelectorAll('#settings-body .set-row')).map((b) => b.getAttribute('data-btn'))).toEqual([
       'stg:r:0',
       'stg:r:1',
       'stg:r:2',
@@ -2186,55 +2199,54 @@ describe('webui page: the settings screen', () => {
       'sco:r:0',
     ]);
 
-    const model = h.doc.querySelector('button[data-btn="stg:r:2"]');
+    const model = h.doc.querySelector('#settings-body button[data-btn="stg:r:2"]');
     expect(model?.querySelector('.set-label')?.textContent).toBe('Default model');
     expect(model?.querySelector('.set-meta')?.textContent).toBe('oc · next session');
     // The whole value, not the button's 40-character label: this is the bug the screen fixes.
     expect(model?.querySelector('.set-value')?.textContent).toBe(LONG_MODEL);
     expect(model?.textContent).not.toContain('…');
+    // Which topic the per-topic rows are about is on the page, not left to be guessed.
+    expect(h.el('settings-topic').textContent).toBe('Topic · Topic ' + A);
   });
 
   it('marks the current value in the value list, and says what each value means', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [values()], ['a1b2c3d4']));
+    const h = await opened(values());
     expect(h.doc.querySelector('.btns')).toBeNull();
 
-    const current = h.doc.querySelector('.set-opt.on');
+    const current = h.doc.querySelector('#settings-body .set-opt.on');
     expect(current?.getAttribute('data-btn')).toBe('stv:r:1');
     expect(current?.getAttribute('aria-current')).toBe('true');
     expect(current?.querySelector('.set-check')?.textContent).toBe('✓');
     expect(current?.querySelector('.set-opt-label')?.textContent).toBe('15m');
 
-    const off = h.doc.querySelector('button[data-btn="stv:r:0"]');
+    const off = h.doc.querySelector('#settings-body button[data-btn="stv:r:0"]');
     expect(off?.classList.contains('on')).toBe(false);
     expect(off?.querySelector('.set-check')?.textContent).toBe('');
     expect(off?.querySelector('.set-opt-detail')?.textContent).toBe('never reclaim');
   });
 
   it('opens a setting by posting its row id, and the daemon’s edit turns the list into values', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [list()], ['a1b2c3d4']));
+    const h = await opened();
 
-    await h.click('button[data-btn="stg:r:3"]');
+    await h.click('#settings-body button[data-btn="stg:r:3"]');
     expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
-      topic: 'a1b2c3d4',
+      topic: A,
       messageId: 'm1',
       buttonId: 'stg:r:3',
     });
 
     await h.emit({ t: 'msg', msg: values() });
-    expect(h.doc.querySelector('.set-opts')).not.toBeNull();
-    expect(h.doc.querySelector('.set-rows')).toBeNull();
-    expect(h.doc.querySelector('.set-row')).toBeNull();
+    expect(h.doc.querySelector('#settings-body .set-opts')).not.toBeNull();
+    expect(h.doc.querySelector('#settings-body .set-rows')).toBeNull();
+    expect(h.doc.querySelector('#settings-body .set-row')).toBeNull();
   });
 
   it('writes the value the row names, and the list comes back with the new value on it', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [values()], ['a1b2c3d4']));
+    const h = await opened(values());
 
-    await h.click('button[data-btn="stv:r:2"]');
+    await h.click('#settings-body button[data-btn="stv:r:2"]');
     expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
-      topic: 'a1b2c3d4',
+      topic: A,
       messageId: 'm1',
       buttonId: 'stv:r:2',
     });
@@ -2243,17 +2255,16 @@ describe('webui page: the settings screen', () => {
     const settings = updated.settings as { rows: Array<Record<string, unknown>> };
     settings.rows[3]!.value = '1h';
     await h.emit({ t: 'msg', msg: updated });
-    expect(h.doc.querySelector('.set-opts')).toBeNull();
-    expect(h.doc.querySelector('button[data-btn="stg:r:3"] .set-value')?.textContent).toBe('1h');
+    expect(h.doc.querySelector('#settings-body .set-opts')).toBeNull();
+    expect(h.doc.querySelector('#settings-body button[data-btn="stg:r:3"] .set-value')?.textContent).toBe('1h');
   });
 
   it('posts the Back id, which is how the daemon puts the list back on the same message', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [values()], ['a1b2c3d4']));
+    const h = await opened(values());
 
-    await h.click('button[data-btn="stb:r:0"]');
+    await h.click('#settings-body button[data-btn="stb:r:0"]');
     expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
-      topic: 'a1b2c3d4',
+      topic: A,
       messageId: 'm1',
       buttonId: 'stb:r:0',
     });
@@ -2269,43 +2280,125 @@ describe('webui page: the settings screen', () => {
       ],
       nav: { page: 2, pageCount: 3, prev: 'stp:r:0', next: 'stp:r:2', back: 'stb:r:0' },
     };
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [paged], ['a1b2c3d4']));
+    const h = await opened(paged);
 
-    expect(h.doc.querySelector('.set-page')?.textContent).toBe('2 / 3');
-    await h.click('button[data-btn="stp:r:2"]');
+    expect(h.doc.querySelector('#settings-body .set-page')?.textContent).toBe('2 / 3');
+    await h.click('#settings-body button[data-btn="stp:r:2"]');
     expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
-      topic: 'a1b2c3d4',
+      topic: A,
       messageId: 'm1',
       buttonId: 'stp:r:2',
     });
 
     // A repaint re-enables the button, as every other menu relies on.
     await h.emit({ t: 'msg', msg: paged });
-    await h.click('button[data-btn="stp:r:0"]');
+    await h.click('#settings-body button[data-btn="stp:r:0"]');
     expect(h.calls.filter((c) => c.path === 'api/click').at(-1)?.body).toEqual({
-      topic: 'a1b2c3d4',
+      topic: A,
       messageId: 'm1',
       buttonId: 'stp:r:0',
     });
   });
 
-  it('draws nothing once the menu is retired, or when the message is history', async () => {
+  it('asks the daemon quietly from the Settings menu, and never posts a bubble for it', async () => {
     const h = await open();
-    await h.emit(sync('a1b2c3d4', [list()], ['a1b2c3d4']));
-    expect(h.doc.querySelector('.set')).not.toBeNull();
+    await h.emit(sync(A, [], [A, B]));
 
-    // The daemon retires a menu by editing it with no buttons — and the structured screen goes
-    // with them, or a dead screen would outlive every control on it.
-    const retired = { ...list(), buttons: [] } as Record<string, unknown>;
+    await h.click('#opts-toggle');
+    await h.click('#settings-open');
+
+    // The page is up before the answer, so a slow daemon reads as loading rather than as nothing.
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(h.el('settings-body').textContent).toContain('Loading settings');
+    expect(h.el('settings-topic').textContent).toBe('Topic · Topic ' + A);
+
+    const sent = h.calls.find((c) => c.path === 'api/send');
+    expect(sent?.body.text).toBe('/setting');
+    expect(sent?.body.topic).toBe(A);
+    // A control the operator pressed must not become a message they never wrote.
+    expect(sent?.body.quiet).toBe(true);
+    expect(h.painted()).toBe(0);
+
+    await h.emit({ t: 'msg', msg: list() });
+    expect(text(h, '#settings-body .set-group')).toEqual(['Agent defaults', 'Conversation', 'More']);
+    expect(h.painted()).toBe(0);
+  });
+
+  it('opens on a typed /setting too, and leaves only the command in the transcript', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+
+    const input = h.el('input') as HTMLTextAreaElement;
+    input.value = '/setting';
+    await h.click('#composer button[type="submit"]');
+
+    const sent = h.calls.find((c) => c.path === 'api/send');
+    expect(sent?.body.text).toBe('/setting');
+    expect(sent?.body.quiet).toBeUndefined();
+    // The operator's own command is their message and stays; the screen does not.
+    expect(h.painted()).toBe(1);
+
+    await h.emit({ t: 'msg', msg: list() });
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(h.painted()).toBe(1);
+    expect(h.doc.querySelector('#log .set')).toBeNull();
+  });
+
+  it('keeps a retired screen out of the transcript, and a new one replaces the page', async () => {
+    const h = await opened();
+
+    // The daemon retires a menu by editing it with no buttons; room.revise marks it so a reload
+    // cannot turn its farewell line into a chat message.
+    const retired = { ...list(), buttons: [], wasSettings: true } as Record<string, unknown>;
     delete retired.settings;
     await h.emit({ t: 'msg', msg: retired });
-    expect(h.doc.querySelector('.set')).toBeNull();
+    expect(h.painted()).toBe(0);
+    // The page stays up: the menu was retired because a new one is about to arrive.
+    expect(h.el('settings-page').hidden).toBe(false);
 
-    // A message restored from another run is history: its buttons are dropped, and so is the
-    // screen that would have drawn them. (`g` is only ever compared with the sync's epoch.)
-    await h.emit(sync('a1b2c3d4', [{ ...list(), g: 2 }], ['a1b2c3d4']));
-    expect(h.doc.querySelector('.set')).toBeNull();
+    await h.emit({ t: 'msg', msg: values('m2') });
+    expect(h.doc.querySelector('#settings-body .set-opts')).not.toBeNull();
+    expect(h.painted()).toBe(0);
+
+    // A message restored from another run is history: it is not a message on screen either.
+    await h.emit(sync(A, [{ ...list('m3'), g: 2 }], [A]));
+    expect(h.painted()).toBe(0);
+    expect(h.doc.querySelector('#log .set')).toBeNull();
+  });
+
+  it('closes on the ×, on Escape, on the backdrop, and when the topic changes', async () => {
+    const h = await opened();
+    const shut = (): boolean => h.el('settings-page').hidden;
+
+    await h.click('#settings-close');
+    expect(shut()).toBe(true);
+
+    await h.emit({ t: 'msg', msg: list('m2') });
+    expect(shut()).toBe(false);
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(shut()).toBe(true);
+
+    await h.emit({ t: 'msg', msg: list('m3') });
+    h.doc.getElementById('settings-page')!.click();
+    await tick();
+    expect(shut()).toBe(true);
+
+    await h.emit({ t: 'msg', msg: list('m4') });
+    expect(shut()).toBe(false);
+    await h.click('[data-topic="' + B + '"]');
+    expect(shut()).toBe(true);
+  });
+
+  it('does not reopen a page the operator closed when the daemon edits that message', async () => {
+    const h = await opened();
+    await h.click('#settings-close');
+    expect(h.el('settings-page').hidden).toBe(true);
+
+    // An edit of the same message (a value list, say) is not a new /setting: it stays closed.
+    await h.emit({ t: 'msg', msg: values() });
+    expect(h.el('settings-page').hidden).toBe(true);
+    expect(h.painted()).toBe(0);
   });
 
   it('keeps every control a finger target, and only widens the list on a wide screen', () => {
@@ -3621,17 +3714,18 @@ describe('webui page: the narrow-screen stylesheet', () => {
    * were perfectly correct. Slicing keeps this about the stylesheet the daemon serves rather
    * than about one parser's coverage of modern CSS.
    */
-  const narrowBlock = (): string => {
+  const blockAt = (start: string): string => {
     const html = renderPage('Chat', false);
-    const at = html.indexOf('@media(max-width:640px){');
-    if (at < 0) throw new Error('there is no narrow-screen block in the stylesheet');
+    const at = html.indexOf(start);
+    if (at < 0) throw new Error(`there is no ${start} block in the stylesheet`);
     let depth = 0;
     for (let i = html.indexOf('{', at); i < html.length; i++) {
       if (html[i] === '{') depth++;
       else if (html[i] === '}' && --depth === 0) return html.slice(at, i + 1);
     }
-    throw new Error('the narrow-screen block is never closed');
+    throw new Error(`the ${start} block is never closed`);
   };
+  const narrowBlock = (): string => blockAt('@media(max-width:640px){');
 
   it('turns the sidebar into a drawer that clears the screen when shut', () => {
     const css = narrowBlock();
@@ -3639,6 +3733,20 @@ describe('webui page: the narrow-screen stylesheet', () => {
     // -240px would leave a strip of the wider drawer still on screen.
     expect(css).toContain('#sidebar.collapsed{margin-left:-100%}');
     expect(css).toContain('#backdrop{display:block}');
+  });
+
+  it('slides the scheduled panel in from the right instead of covering the screen', () => {
+    // The old rule made the panel the whole phone screen. It is now the same drawer the topic
+    // sidebar is, on the other edge: the overlay rule (below 1024px) keeps it laid out and moves
+    // it off-screen, because display:none has nothing to animate.
+    expect(narrowBlock()).not.toContain('#app.sched #schedules{width:100%');
+    const overlay = blockAt('@media(max-width:1023px){');
+    expect(overlay).toContain('#schedules{display:flex;position:fixed');
+    expect(overlay).toContain('width:min(88vw,380px)');
+    expect(overlay).toContain('transform:translateX(100%)');
+    expect(overlay).toContain('transition:transform .18s ease');
+    expect(overlay).toContain('#app.sched #schedules{transform:none}');
+    expect(overlay).toContain('#app.sched #sched-backdrop{display:block}');
   });
 
   it('measures height in dvh, which is the viewport the URL bar has left', () => {
@@ -4880,6 +4988,20 @@ describe('webui page: the scheduled-task panel', () => {
 
     h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
     await tick();
+
+    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.window.localStorage.getItem('aa_sched_open')).toBeNull();
+  });
+
+  it('closes on the backdrop, which is how a drawer is dismissed on a phone', async () => {
+    const h = await open({ width: 390, height: 844, replies: { 'api/schedules': listReply([task()]) } });
+    await h.emit(sync(A, [], [A]));
+
+    await h.click('#schedules-toggle');
+    expect(h.el('app').classList.contains('sched')).toBe(true);
+    // The panel is an overlay here, so the dimmed chat behind it is the way out — the same
+    // backdrop the topic drawer uses, not a second one.
+    await h.click('#sched-backdrop');
 
     expect(h.el('app').classList.contains('sched')).toBe(false);
     expect(h.window.localStorage.getItem('aa_sched_open')).toBeNull();

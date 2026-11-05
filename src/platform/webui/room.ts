@@ -1123,8 +1123,17 @@ export class WebRoom {
     // same bubble with another line or another ✓ (see SendOptions in adapter.ts).
     const html = rec.msg.kind === 'tools' ? renderWebToolLines(text) : renderWebMarkdown(text);
     rec.msg = { ...rec.msg, html, ...(buttons ? { buttons } : {}) };
-    if (screen) rec.msg.settings = screen;
-    else delete rec.msg.settings;
+    if (screen) {
+      rec.msg.settings = screen;
+      delete rec.msg.wasSettings;
+    } else {
+      // Retired rather than handed to another menu (the scheduled-task list keeps its buttons and
+      // is a menu again). The page draws settings screens in a page of their own, so the record
+      // has to say this message used to be one — otherwise a reload would put its farewell line
+      // into the transcript.
+      if (rec.msg.settings && (!buttons || buttons.length === 0)) rec.msg.wasSettings = true;
+      delete rec.msg.settings;
+    }
     room.stored.set(id, rec);
     this.enqueue(room, topicId, id);
     this.keep(topicId);
@@ -1384,19 +1393,7 @@ export class WebRoom {
     // The inbound gate drops an empty message anyway; stopping here keeps an accidental Enter
     // from appearing in the transcript as a blank bubble the agent never saw.
     if (!text && attachments.length === 0) return 'accepted';
-    if (this.topics.seed(req.topic, req.text)) this.announceTopics();
-    // The nonce rides back out on the echo: the page has already shown this message locally,
-    // and that placeholder is retired by the echo that claims it. Absent when the client did
-    // not send one, in which case the page had no placeholder to retire either.
-    const msg = this.post(
-      req.topic,
-      {
-        own: true,
-        html: renderBody(req.text, attachments, this.keepPictures(req.files ?? [])),
-        ...(req.nonce !== undefined ? { nonce: req.nonce } : {}),
-      },
-      req.text
-    );
+    const msg = this.record(req, attachments);
     const inbound: InboundMessage = {
       conversation: this.conversation(req.topic),
       platformType: 'webui',
@@ -1425,6 +1422,35 @@ export class WebRoom {
     // default agent's machine for the rest of the TTL, and nothing announced the list after it.
     this.dirCache.delete(req.topic);
     return 'accepted';
+  }
+
+  /**
+   * Put the operator's message into the topic, or — for a quiet request — hand back an id without
+   * one.
+   *
+   * A quiet request is a control asking the daemon for something the page draws itself (the
+   * settings page), not something the person said: the daemon still needs a message id for the
+   * inbound, but the conversation gets no row, no echo, and no title seeded from a command nobody
+   * typed.
+   */
+  private record(
+    req: SendRequest,
+    attachments: Array<NonNullable<InboundMessage['attachments']>[number]>
+  ): { id: string; at: number } {
+    if (req.quiet === true) return { id: this.nextId(), at: Date.now() };
+    if (this.topics.seed(req.topic, req.text)) this.announceTopics();
+    // The nonce rides back out on the echo: the page has already shown this message locally, and
+    // that placeholder is retired by the echo that claims it. Absent when the client did not send
+    // one, in which case the page had no placeholder to retire either.
+    return this.post(
+      req.topic,
+      {
+        own: true,
+        html: renderBody(req.text, attachments, this.keepPictures(req.files ?? [])),
+        ...(req.nonce !== undefined ? { nonce: req.nonce } : {}),
+      },
+      req.text
+    );
   }
 
   /**

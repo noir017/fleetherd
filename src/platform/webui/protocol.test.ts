@@ -38,6 +38,10 @@ describe('webui protocol: inbound validation', () => {
     expect(parseBody(SendRequestSchema, body).ok).toBe(true);
   });
 
+  it('accepts a quiet send, which the Settings menu uses to ask for its screen', () => {
+    expect(parseBody(SendRequestSchema, { topic: TOPIC, text: '/setting', quiet: true }).ok).toBe(true);
+  });
+
   it.each([
     ['too short', 'a1b2c3d'],
     ['too long', 'a1b2c3d4e'],

@@ -410,13 +410,16 @@ footer is a size container so the word "Settings" drops at the narrowest sidebar
 ## The scheduled-task panel
 
 The clock at the right of the chat header toggles a panel of the gateway's scheduled work. It is
-a column of its own on a screen at least 1024px wide and a slide-over below that; closed on a first
-visit, then open until the operator closes it (`aa_sched_open`), so opening a session from it leaves
-it beside the transcript. Only a docked panel is restored on load: an overlay that came back would
-cover the chat it is supposed to sit beside. The docked width defaults to
-`clamp(240px, 20vw, 320px)` — narrower than the topic sidebar, because this is a glance at
-background work — and the left edge is a drag handle (`aa_sched_w`, double-click to reset). The
-overlay and full-screen layouts below 1024px take their width from the screen.
+a column of its own on a screen at least 1024px wide and a drawer from the right below that —
+`transform: translateX(100%)` while closed, the sidebar's `.18s ease` while it slides, and the
+backdrop that dismisses it. It stays laid out while closed rather than `display:none`, because a
+hidden element has nothing to animate; the drawer is `min(88vw, 380px)`, so a phone keeps a strip
+of the chat visible. Closed on a first visit, then open until the operator closes it
+(`aa_sched_open`), so opening a session from it leaves it beside the transcript. Only a docked
+panel is restored on load: a drawer that came back would cover the chat it is supposed to sit
+beside. The docked width defaults to `clamp(240px, 20vw, 320px)` — narrower than the topic
+sidebar, because this is a glance at background work — and the left edge is a drag handle
+(`aa_sched_w`, double-click to reset).
 
 It is deliberately not a section of the topic list. A task is not a conversation — a bash task has
 none, and a new-session task makes one per run — and the sidebar is the conversation switcher. The
@@ -564,16 +567,27 @@ Every message with buttons — `/cd`, `/model`, `/agent`, an `ask` — is drawn 
 a ragged block). Columns are sized from the widest label, so short names get more of them, and there
 are never fewer than two: a label longer than half the row wraps inside its cell.
 
-`/setting` is the exception. A chat app has only buttons, so its settings rows squeeze the label and
-the value into one 40-character string; a page does not have to. The daemon declares
-`settingsScreen` for this platform, builds the same menu as a `SettingsScreen`
-(`WebMessage.settings`), and `settingsScreen()` draws it: a section per group, a row per setting
-with the label and its whole current value on separate lines, and a value list whose current option
-is lit and ticked. Nothing on the page parses a label for it — the groups, values, current marks and
+`/setting` is the exception, and it is not a menu at all. A chat app has only buttons, so its
+settings rows squeeze the label and the value into one 40-character string; a page does not have
+to. The daemon declares `settingsScreen` for this platform, builds the same menu as a
+`SettingsScreen` (`WebMessage.settings`), and the page draws it in a window of its own
+(`#settings-page`) instead of in the transcript: a section per group, a row per setting with the
+label and its whole current value on separate lines, and a value list whose current option is lit
+and ticked. Nothing on the page parses a label for it — the groups, values, current marks and
 button ids all arrive as data, which is what makes a long model id readable instead of
-`(harness …`. The screen rides with the buttons: an edit without one clears it, so a retired menu
-or a message handed to the scheduled-task list cannot leave a dead screen behind. `page.dom.test.ts`
-pins the list, the current mark, a row tap, Back and paging.
+`(harness …`.
+
+The page opens from **All settings** in the ⚙ menu, or when the daemon answers a typed
+`/setting`. The menu's request is sent with `quiet: true` (`SendRequestSchema`, `WebRoom.record`),
+so the daemon gets the command but the transcript gets no row and the topic is not named
+`/setting`; a typed command is the operator's own message and stays. The page is bound to the
+topic it opened in and closes when that changes — the agent and model rows are that
+conversation's — and its bar names that topic. A settings message is never painted: `upsert`,
+`reconcile`, `adopt` and `paint` all skip one. A retired screen is marked `wasSettings` by
+`room.revise` (only when it keeps no buttons — a message handed to the scheduled-task list is a
+menu again and must show), so a reload cannot turn its farewell line into a chat message. Closing
+the page records the message id, so a late edit does not reopen it; a new `/setting` is a new
+message and does. `page.dom.test.ts` pins the list, the current mark, a row tap, Back and paging.
 
 **For every other menu, the page reads two conventions off the labels, because a label is all the
 daemon sends.** If you change the labels in `core/`, this is what moves:
@@ -1360,7 +1374,10 @@ events `room.ts` actually emits — asserting on what a person would see: messag
 drawer open or shut, where the URL points. Add to it whenever you touch `page.ts`; the string
 assertions in `page.test.ts` were green throughout the release that rendered nothing. The skills
 page is driven there too: the list, an editor save carrying the version the detail read, the New
-form, a revert, and the two-tap archive.
+form, a revert, and the two-tap archive. So is the settings page — the menu's quiet request, a
+typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
+drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
+it.
 
 Four things about it that are not obvious:
 
