@@ -94,6 +94,8 @@ describe('the settings screen', () => {
       'idle',
       'scope',
       'stream',
+      'review.agent',
+      'review.model',
     ]);
   });
 
@@ -109,6 +111,9 @@ describe('the settings screen', () => {
     expect(values.get('scope')).toBe('per_thread');
     // A boolean reads as the same word the parser takes back, so a value can be typed as shown.
     expect(values.get('stream')).toBe('off');
+    // Auto review is off until a reviewer is named, and its model says whose it would follow.
+    expect(values.get('review.agent')).toBe('off');
+    expect(values.get('review.model')).toBe('off');
   });
 
   it('names the key to type next to every row, and it resolves back', () => {
@@ -149,6 +154,8 @@ describe('the settings screen', () => {
       ['Idle reclaim', undefined, '1h', 'Conversations'],
       ['Conversation scope', undefined, 'per_thread', 'Conversations'],
       ['Live streaming', undefined, 'off', 'Replies'],
+      ['Auto review', undefined, 'off', 'Reviews'],
+      ['Review model', undefined, 'off', 'Reviews'],
       ['⏰ Scheduled tasks · 2 active', undefined, undefined, 'More'],
     ]);
     expect(screen.groups.map((g) => g.name)).toEqual([
@@ -157,6 +164,7 @@ describe('the settings screen', () => {
       'Sub-agents',
       'Conversations',
       'Replies',
+      'Reviews',
       'More',
     ]);
     // "Next session" is said once, for the group, rather than on every model row.
@@ -853,8 +861,9 @@ describe('the voice-confirmation switch', () => {
     expect(settingsRows(cfg).some((r) => r.id === 'voice')).toBe(false);
     expect(settingsRows(cfg).some((r) => r.id === 'cleanup')).toBe(false);
     const rows = settingsRows(withVoice);
-    // Last, so every row above them keeps its menu index whether or not the feature is on.
-    expect(rows.slice(-2)).toMatchObject([
+    // After the always-present rows, so every row above them keeps its menu index whether or not
+    // the feature is on (the two review rows follow, last of all).
+    expect(rows.slice(-4, -2)).toMatchObject([
       { id: 'voice', value: 'on', effect: 'live' },
       { id: 'cleanup', value: 'on', effect: 'live' },
     ]);
@@ -895,5 +904,123 @@ describe('the voice-confirmation switch', () => {
     expect(resolveSettingKey('voice.vocabulary', withVoice, voiceCtx).kind).toBe('refused');
     expect(resolveSettingKey('voice', cfg, ctx).kind).toBe('refused');
     expect(resolveSettingKey('cleanup', cfg, ctx).kind).toBe('refused');
+  });
+});
+
+describe('auto review', () => {
+  const reviewCfg: Config = parseConfig({
+    platforms: { tg: { type: 'telegram', token: 't' } },
+    agents: [
+      { id: 'cc', harness: 'claude' },
+      { id: 'ag', harness: 'agy' },
+      { id: 'ag2', harness: 'agy', model: 'gemini-2.5-pro' },
+    ],
+    routing: { default: 'cc' },
+    review: { agent: 'ag' },
+  });
+  const AGY_MODELS = [
+    { value: 'gemini-3.8-flash-high', name: 'Gemini 3.8 Flash High' },
+    { value: 'gemini-3.8-pro', name: 'Gemini 3.8 Pro' },
+  ];
+  const reviewCtx: SettingsContext = {
+    boundAgent: 'cc',
+    models: [],
+    lists: (id) => (id === 'ag' ? { kind: 'list', options: AGY_MODELS } : undefined),
+  };
+  const reviewRow = (key: string, cfg: Config = reviewCfg, ctx: SettingsContext = reviewCtx): SettingRow => {
+    const resolved = resolveSettingKey(key, cfg, ctx);
+    if (resolved.kind !== 'row') throw new Error(`${key} did not resolve to a row: ${resolved.kind}`);
+    return resolved.row;
+  };
+
+  it('offers off and the agy agents only — a non-agy agent cannot review', () => {
+    const r = reviewRow('review.agent');
+    expect(settingOptions(r, reviewCfg, reviewCtx).map((o) => [o.raw, o.title])).toEqual([
+      ['off', 'off'],
+      ['ag', undefined],
+      ['ag2', undefined],
+    ]);
+    const refused = parseSettingValue(r, 'cc', reviewCfg, reviewCtx);
+    expect(refused.kind).toBe('invalid');
+    if (refused.kind === 'invalid') {
+      expect(refused.reason).toContain('claude');
+      expect(refused.reason).toContain('agy -p');
+    }
+    // An unknown id names the agy agents there are, rather than the whole roster.
+    const unknown = parseSettingValue(r, 'nope', reviewCfg, reviewCtx);
+    if (unknown.kind !== 'invalid') throw new Error('expected a refusal');
+    expect(unknown.reason).toContain('ag, ag2');
+    expect(unknown.reason).not.toContain('cc');
+  });
+
+  it('turns off by deleting the whole block, and says the model goes with it', () => {
+    const withModel = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'ag', harness: 'agy' }],
+      routing: { default: 'ag' },
+      review: { agent: 'ag', model: 'gemini-3.8-pro' },
+    });
+    const r = reviewRow('review.agent', withModel);
+    expect(parseSettingValue(r, 'off', withModel, reviewCtx)).toMatchObject({
+      kind: 'value',
+      value: undefined,
+      display: 'off',
+      note: expect.stringContaining('review model'),
+    });
+    expect(settingLocation(r)).toEqual({ kind: 'path', path: ['review', 'agent'] });
+  });
+
+  it('names the reviewer by id and harness, and follows its own model until one is set', () => {
+    const values = new Map(settingsRows(reviewCfg).map((r) => [settingKeyOf(r), r]));
+    expect(values.get('review.agent')?.value).toBe('ag · agy');
+    expect(values.get('review.model')?.value).toBe("agent's own");
+    expect(values.get('review.agent')?.effect).toBe('live');
+    expect(values.get('review.model')?.effect).toBe('live');
+    expect(settingLocation(values.get('review.model')!)).toEqual({
+      kind: 'path',
+      path: ['review', 'model'],
+    });
+  });
+
+  it('takes a model from the reviewer list, refuses an ambiguous one, and clears back to the agent', () => {
+    const r = reviewRow('review.model');
+    expect(settingOptions(r, reviewCfg, reviewCtx).map((o) => o.raw)).toEqual(AGY_MODELS.map((m) => m.value));
+    expect(parseSettingValue(r, 'flash-high', reviewCfg, reviewCtx)).toMatchObject({
+      kind: 'value',
+      value: 'gemini-3.8-flash-high',
+    });
+    expect(parseSettingValue(r, 'gemini', reviewCfg, reviewCtx).kind).toBe('invalid');
+    const cleared = parseSettingValue(r, '-', reviewCfg, reviewCtx);
+    expect(cleared).toMatchObject({ kind: 'value', value: undefined, display: 'follow ag (its own model)' });
+  });
+
+  it('refuses a model while review is off, and says how to turn it on', () => {
+    const offCfg: Config = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }, { id: 'ag', harness: 'agy' }],
+      routing: { default: 'cc' },
+    });
+    const r = reviewRow('review.model', offCfg);
+    expect(settingOptions(r, offCfg, reviewCtx)).toEqual([]);
+    const parsed = parseSettingValue(r, 'gemini-3.8-pro', offCfg, reviewCtx);
+    expect(parsed.kind).toBe('invalid');
+    if (parsed.kind === 'invalid') expect(parsed.reason).toContain('/setting review.agent');
+    expect(settingTypedOnlyHint(r, offCfg, reviewCtx)).toContain('/setting review.agent');
+    // And it reads as off, not as a model nobody chose.
+    expect(settingsRows(offCfg).find((x) => x.id === 'review.model')?.value).toBe('off');
+  });
+
+  it('accepts a typed name when the reviewer offers no list, saying it was not advertised', () => {
+    const r = reviewRow('review.model');
+    const noList: SettingsContext = { boundAgent: 'cc', models: [] };
+    const parsed = parseSettingValue(r, 'some-model', reviewCfg, noList);
+    expect(parsed).toMatchObject({ kind: 'value', value: 'some-model' });
+    if (parsed.kind === 'value') expect(parsed.note).toContain('did not offer its model list');
+  });
+
+  it('resolves `review` to the reviewer and both dotted keys to their rows', () => {
+    expect(settingKeyOf(reviewRow('review'))).toBe('review.agent');
+    expect(settingKeyOf(reviewRow('reviewer'))).toBe('review.agent');
+    expect(settingKeyOf(reviewRow('review.model'))).toBe('review.model');
   });
 });

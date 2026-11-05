@@ -62,6 +62,7 @@ import {
 import {
   buildSettingValueMenu,
   buildSettingsMenu,
+  modelListAgent,
   parseSettingButtonId,
   settingNotice,
   settingValuePage,
@@ -3167,7 +3168,10 @@ export class Daemon {
 
   /** What a value screen needs beyond the options: the config, the ack, and whether it is still asking. */
   private valueScreenInput(row: SettingRow, notice?: SettingsAck): { cfg: Config; notice?: SettingsAck; loading?: boolean } {
-    const loading = row.id === 'model' && row.target !== undefined && this.registry.modelListLoading(row.target);
+    // The review model asks the reviewer's list (modelListAgent), so its screen must spin for the
+    // same reason a per-agent row does — otherwise it says "no list" while the ask is still running.
+    const listAgent = modelListAgent(row, this.config);
+    const loading = listAgent !== undefined && this.registry.modelListLoading(listAgent);
     return { cfg: this.config, ...(notice ? { notice } : {}), ...(loading ? { loading } : {}) };
   }
 

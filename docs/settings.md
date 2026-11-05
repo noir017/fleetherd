@@ -17,6 +17,8 @@ and restarting, which stops every resident agent.
 | live streaming | `stream.enabled` | `on`, `off` (default `off`) | immediately — the next reply |
 | confirm voice transcripts | `voice.confirm` | `on`, `off` (default `on`; only with a `voice:` block) | immediately — the next voice message |
 | clean up voice transcripts | `voice.cleanup` | `on`, `off` (default `on`; only with a `voice:` block) | immediately — the next voice message |
+| auto review | `review.agent` | `off`, or an `agy` agent id | immediately — the next sweep, within a minute |
+| review model | `review.model` | the reviewer's reported models, any name, or `-` to follow the reviewer's own | immediately — the next review |
 
 ```
 /setting                       →  the whole screen (a settings page in the web UI, buttons elsewhere)
@@ -34,7 +36,7 @@ never advertised (`opusplan`) is taken as typed.
 In the web UI `/setting` is a settings page: **All settings** in the ⚙ menu at the
 foot of the topic list opens it, and typing `/setting` does the same. It is one
 column of sections — Agents, Default model, Sub-agents, Conversations, Replies,
-Voice — and each row is changed in place with the control that fits it:
+Voice, Reviews — and each row is changed in place with the control that fits it:
 
 - **on/off** (sub-agent confirmation, live streaming, the two voice switches) is a
   switch: one tap writes it;
@@ -67,6 +69,19 @@ over the `model:` in the host's pod.yaml, and the row says whether the value is 
 pod's or set here; clearing it goes back to the pod's. Which model a conversation
 starts with, from highest: its `/model` → `podModels` → pod.yaml → the harness's
 default.
+
+**Auto review** is set here too. `/setting review.agent ag@uniagent` turns it on,
+`/setting review.agent off` turns it off, and the row offers only `agy` agents: a
+review is one `agy -p` with every tool denied, so any other harness is refused
+rather than saved to fail at the next sweep. `/setting review.model` gives reviews
+a model of their own; left unset, reviews use the reviewer's own model, which the
+row says as *agent's own*. The list offered is that reviewer's, and when it cannot
+be obtained the name is taken as typed. Both fields are read from the live config
+at the start of every sweep, so a change lands within a minute — no restart. The
+reviewer is checked against the agents config.yaml and each host's pod.yaml
+actually declare, not only against the running config, so a row left behind by a
+failed `/reload` is refused instead of being written into a file the next start
+would reject. See [auto review](skills.md#auto-review).
 
 Each answer says **when** the change lands, because they differ: the scope is
 written but not applied until a restart, since changing what counts as one

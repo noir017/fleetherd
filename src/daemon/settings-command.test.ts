@@ -111,17 +111,24 @@ interface RigOptions {
   idleTimeoutMs?: number;
   /** Configure voice transcription (the file must carry the same block — see VOICE_BLOCK). */
   voice?: boolean;
+  /** Add an `agy` agent (`ag`) to the file and the injected config, for auto-review settings. */
+  agy?: boolean;
+  /** A model probe that never answers, so a screen can be observed while it is still asking. */
+  slowModels?: boolean;
+  /** Turn auto review on for this agent in the file and the injected config. */
+  reviewAgent?: string;
   /**
    * A host whose pod declares `oc` (so the agent is `oc@box`), with this model in its pod.yaml —
-   * written to the file and pods.json and read back the way the daemon reads them.
+   * written to the file and pods.json and read back the way the daemon reads them. `agy` adds a
+   * second pod agent, `ag@box`, for the reviewer rows.
    */
-  pod?: { model?: string; gateway?: string };
+  pod?: { model?: string; gateway?: string; agy?: boolean };
   /** Every session's warm-up fails with this (an agent that will not start). */
   ensureFails?: string;
 }
 
-/** A host entry and a pod declaring `oc`, as config.yaml and pods.json would hold them. */
-function writePod(pod: { model?: string; gateway?: string }): void {
+/** A host entry and a pod declaring `oc` (and `ag` when asked for), as config.yaml and pods.json would hold them. */
+function writePod(pod: { model?: string; gateway?: string; agy?: boolean }): void {
   fs.appendFileSync(
     file,
     `hosts:\n  box:\n    ssh: dev@box.lan\n` + (pod.gateway ? `podModels:\n  oc@box: ${pod.gateway}\n` : '')
@@ -131,7 +138,10 @@ function writePod(pod: { model?: string; gateway?: string }): void {
     JSON.stringify({
       box: {
         source: 'file',
-        agents: [{ id: 'oc', harness: 'opencode', ...(pod.model ? { model: pod.model } : {}) }],
+        agents: [
+          { id: 'oc', harness: 'opencode', ...(pod.model ? { model: pod.model } : {}) },
+          ...(pod.agy ? [{ id: 'ag', harness: 'agy' }] : []),
+        ],
         at: new Date().toISOString(),
       },
     })
@@ -169,6 +179,7 @@ function rig(opts: RigOptions = {}) {
           dispose: () => {},
           modelSelector: () => selector.value,
           setModel: async (value: string) => value,
+          ...(opts.slowModels ? { refreshModels: () => new Promise<void>(() => {}) } : {}),
           ...(opts.ensureFails
             ? { ensureSession: () => Promise.reject(new Error(opts.ensureFails)) }
             : {}),
@@ -222,16 +233,27 @@ function rig(opts: RigOptions = {}) {
   // The injected config mirrors the file (expanded token, agents in file order), as loadConfig
   // would have produced it at startup.
   if (opts.pod) writePod(opts.pod);
+  if (opts.agy) {
+    // The file must carry the reviewer too: a review.agent naming an agent the file does not have
+    // would be a config the next start refuses, which is exactly what this suite exists to catch.
+    fs.writeFileSync(
+      file,
+      text().replace('\nrouting:', '\n  - id: ag\n    harness: agy\nrouting:')
+    );
+  }
+  if (opts.reviewAgent) fs.appendFileSync(file, `review:\n  agent: ${opts.reviewAgent}\n`);
   const parsed = opts.pod ? loadConfig() : parseConfig({
     version: 1,
     platforms: { tg: { type: 'telegram', token: 'tok-from-env' } },
     agents: [
       { id: 'oc', harness: 'opencode' },
       { id: 'cc', harness: 'claude', model: 'claude-opus-4-5' },
+      ...(opts.agy ? [{ id: 'ag', harness: 'agy' as const }] : []),
     ],
     routing: { default: 'oc' },
     session: { idleTimeoutMs: opts.idleTimeoutMs ?? 3_600_000 },
     ...(opts.access ? { access: { allowFrom: opts.access } } : {}),
+    ...(opts.reviewAgent ? { review: { agent: opts.reviewAgent } } : {}),
     ...(opts.voice
       ? { voice: { transcriber: { baseUrl: 'http://newapi:3000/v1beta', apiKey: 'k', model: 'gemini-3-flash' } } }
       : {}),
@@ -563,7 +585,7 @@ describe('the button menu', () => {
     expect(r.buttonSends).toHaveLength(1);
     expect(r.replies()).toEqual([]); // the text surface must not also fire
     expect(r.menu().text).toContain('saved to config.yaml');
-    expect(r.ids('stg:')).toHaveLength(7); // agent + 2 models + delegation + idle + scope + stream
+    expect(r.ids('stg:')).toHaveLength(9); // agent + 2 models + 4 rows + auto review's 2
   });
 
   it('labels each row with its current value', async () => {
@@ -651,7 +673,7 @@ describe('the button menu', () => {
     await r.click(r.ids('stg:')[5]!);
     await r.click(r.ids('stb:')[0]!);
     expect(r.screen().text).toContain('saved to config.yaml');
-    expect(r.ids('stg:')).toHaveLength(7);
+    expect(r.ids('stg:')).toHaveLength(9);
     expect(text()).toBe(before);
   });
 
@@ -944,5 +966,139 @@ describe('the voice-confirmation switch', () => {
     await r.send('/setting voice off');
     expect(r.replies().at(-1)).toContain('not editable from chat');
     expect(text()).toBe(before);
+  });
+});
+
+describe('auto review', () => {
+  it('turns it on, writing review.agent and applying it to the running config', async () => {
+    const r = textRig({ agy: true });
+    await r.send('/setting review.agent ag');
+    expect(r.replies().at(-1)).toContain('Auto review → ag · agy');
+    expect(r.replies().at(-1)).toContain('in effect now');
+    expect(onDisk()['review']).toEqual({ agent: 'ag' });
+    expect(r.cfg.review?.agent).toBe('ag');
+    // The file the next start reads agrees, so this is a setting and not a running-only switch.
+    expect(loadConfig().review?.agent).toBe('ag');
+  });
+
+  it('refuses a non-agy agent by name, and writes nothing', async () => {
+    const r = textRig({ agy: true });
+    const before = text();
+    await r.send('/setting review.agent cc');
+    expect(r.replies().at(-1)).toContain('claude agent');
+    expect(r.replies().at(-1)).toContain('agy -p');
+    expect(text()).toBe(before);
+    expect(r.cfg.review).toBeUndefined();
+  });
+
+  it('sets a model for reviews, and clearing it goes back to the reviewer’s own', async () => {
+    const r = textRig({ agy: true });
+    await r.send('/setting review.agent ag');
+    await r.send('/setting review.model gemini-3.8-pro');
+    expect(onDisk()['review']).toEqual({ agent: 'ag', model: 'gemini-3.8-pro' });
+    expect(r.cfg.review?.model).toBe('gemini-3.8-pro');
+    // No list could be asked for here, so the ack says the name was taken as typed.
+    expect(r.replies().at(-1)).toContain('did not offer its model list');
+    await r.send('/setting review.model -');
+    expect(onDisk()['review']).toEqual({ agent: 'ag' }); // clearing the model keeps the reviewer
+    expect(r.cfg.review?.model).toBeUndefined();
+  });
+
+  it('turns off by removing the whole block the schema requires', async () => {
+    const r = textRig({ agy: true });
+    await r.send('/setting review.agent ag');
+    await r.send('/setting review.model gemini-3.8-pro');
+    await r.send('/setting review.agent off');
+    expect(r.replies().at(-1)).toContain('review model');
+    expect(onDisk()['review']).toBeUndefined();
+    expect(r.cfg.review).toBeUndefined();
+    expect(loadConfig().review).toBeUndefined();
+  });
+
+  it('refuses a review model while review is off', async () => {
+    const r = textRig({ agy: true });
+    const before = text();
+    await r.send('/setting review.model gemini-3.8-pro');
+    expect(r.replies().at(-1)).toContain('Turn auto review on first');
+    expect(text()).toBe(before);
+  });
+
+  it('offers only off and the agy agents on the screen, and writes the tapped one', async () => {
+    const r = rig({ agy: true, caps: { settingsScreen: true } });
+    await r.send('/setting');
+    const list = r.menu().screen;
+    if (list?.level !== 'list') throw new Error('no list screen');
+    const reviewer = list.rows.find((x) => x.label === 'Auto review');
+    if (reviewer?.control.kind !== 'choice') throw new Error('reviewer is not a choice');
+    expect(reviewer.control.options.map((o) => o.label)).toEqual(['off', 'ag · agy']);
+    const model = list.rows.find((x) => x.label === 'Review model');
+    expect(model?.control).toEqual({ kind: 'list' });
+    await r.click(reviewer.control.options[1]!.buttonId);
+    expect(onDisk()['review']).toEqual({ agent: 'ag' });
+    expect(r.cfg.review?.agent).toBe('ag');
+  });
+});
+
+describe('auto review against the files', () => {
+  it('refuses a reviewer the file no longer has, instead of writing a config that will not load', async () => {
+    const r = textRig({ agy: true });
+    // Removed by hand, without /reload: the running config still has `ag`.
+    fs.writeFileSync(file, text().replace('  - id: ag\n    harness: agy\n', ''));
+    const before = text();
+    await r.send('/setting review.agent ag');
+    expect(r.replies().at(-1)).toContain('changed since the daemon started');
+    expect(r.replies().at(-1)).toContain('/reload');
+    expect(text()).toBe(before); // no review: block was added
+    expect(r.cfg.review).toBeUndefined();
+  });
+
+  it('refuses a reviewer the file now declares as another harness', async () => {
+    const r = textRig({ agy: true });
+    fs.writeFileSync(file, text().replace('  - id: ag\n    harness: agy\n', '  - id: ag\n    harness: claude\n'));
+    const before = text();
+    await r.send('/setting review.agent ag');
+    expect(r.replies().at(-1)).toContain('claude agent in the file');
+    expect(text()).toBe(before);
+    expect(r.cfg.review).toBeUndefined();
+  });
+
+  it('accepts a pod reviewer the files still declare', async () => {
+    const r = textRig({ pod: { agy: true } });
+    expect(r.cfg.agents.some((a) => a.id === 'ag@box')).toBe(true);
+    await r.send('/setting review.agent ag@box');
+    expect(onDisk()['review']).toEqual({ agent: 'ag@box' });
+    expect(r.cfg.review?.agent).toBe('ag@box');
+  });
+
+  it('refuses a pod reviewer pods.json no longer declares', async () => {
+    const r = textRig({ pod: { agy: true } });
+    // What a /reload leaves behind when its second read fails: pods.json is the new one, the running
+    // config is the old one, and `ag@box` exists only in the latter.
+    fs.writeFileSync(
+      path.join(dir, 'pods.json'),
+      JSON.stringify({ box: { source: 'file', agents: [], at: new Date().toISOString() } })
+    );
+    const before = text();
+    await r.send('/setting review.agent ag@box');
+    expect(r.replies().at(-1)).toContain('changed since the daemon started');
+    expect(text()).toBe(before);
+    expect(r.cfg.review).toBeUndefined();
+  });
+});
+
+describe('the reviewer model screen', () => {
+  it('spins while the reviewer’s models are being asked for', async () => {
+    const r = rig({ agy: true, reviewAgent: 'ag', slowModels: true, caps: { settingsScreen: true } });
+    await r.send('/setting');
+    const list = r.menu().screen;
+    if (list?.level !== 'list') throw new Error('no list screen');
+    const row = list.rows.find((x) => x.label === 'Review model');
+    if (!row) throw new Error('no review model row');
+    await r.click(row.buttonId);
+    const screen = r.screen().screen;
+    expect(screen?.level).toBe('values');
+    if (screen?.level !== 'values') throw new Error('no value screen');
+    expect(screen.loading).toBe(true);
+    expect(screen.head?.hint).toContain('Asking ag for its models');
   });
 });

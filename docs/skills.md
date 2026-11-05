@@ -135,6 +135,12 @@ review:
   model: gemini-3.8-flash-high   # optional; the agent's own model otherwise
 ```
 
+Both fields are also [settings from chat](settings.md): `/setting review.agent ag@uniagent`
+turns it on, `/setting review.agent off` turns it off, and `/setting review.model` chooses a
+model for reviews alone. The row offers only `agy` agents, because a review runs `agy -p` with
+every tool denied; a change is read at the start of the next sweep, within a minute, without a
+restart.
+
 A review runs when a conversation has been idle for an hour, nothing is running there, and the
 person has sent at least three messages since the last review. In practice it fires the moment
 [idle reclaim](chat-commands.md) stops the agent process; `/kill` and `/new` are

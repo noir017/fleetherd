@@ -79,6 +79,7 @@ import {
   type ModelChoiceResult,
 } from '../core/model-menu.js';
 import {
+  modelListAgent,
   resolveSettingKey,
   settingAckText,
   settingDetailText,
@@ -2243,9 +2244,12 @@ export class ConversationRegistry {
   ): { options: SettingOption[]; hint?: string; asking?: Promise<unknown> } {
     let ctx = this.settingsContext(id, this.config.routing.default);
     let asking: Promise<unknown> | undefined;
-    if (ask && row.id === 'model' && row.target && !(row.target === ctx.boundAgent && ctx.models.length > 0)) {
-      if (this.modelCatalog.shouldAsk(row.target)) {
-        asking = this.modelCatalog.ask(row.target);
+    // The review model's list belongs to the reviewer (modelListAgent), not to the row's target:
+    // asking the same agent the list screen will name keeps the two from disagreeing.
+    const listAgent = modelListAgent(row, this.config);
+    if (ask && listAgent && !(listAgent === ctx.boundAgent && ctx.models.length > 0)) {
+      if (this.modelCatalog.shouldAsk(listAgent)) {
+        asking = this.modelCatalog.ask(listAgent);
         ctx = this.settingsContext(id, this.config.routing.default);
       }
     }

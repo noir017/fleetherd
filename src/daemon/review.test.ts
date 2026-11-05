@@ -818,3 +818,23 @@ describe('noticeLine', () => {
     expect(line).not.toContain('\n');
   });
 });
+
+describe('the config is read live', () => {
+  it('picks up a reviewer and model written after startup on the very next sweep', async () => {
+    // What `/setting review.agent` and `/setting review.model` do: mutate this same Config object.
+    // The sweep must see it without a restart — a restart would stop every resident agent child.
+    const cfg = config({ review: undefined });
+    const h = harness({ cfg });
+    seed('telegram:chat:1', 3);
+    await h.service.sweep();
+    expect(h.service.enabled()).toBe(false);
+    expect(h.calls).toHaveLength(0);
+
+    cfg.review = { agent: 'ag', model: 'gemini-3.8-pro' };
+    expect(h.service.enabled()).toBe(true);
+    await h.service.sweep();
+    expect(h.calls).toEqual([
+      { agent: 'ag', model: 'gemini-3.8-pro', prompt: expect.any(String) },
+    ]);
+  });
+});

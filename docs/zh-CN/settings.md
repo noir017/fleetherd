@@ -16,6 +16,8 @@
 | 流式输出 | `stream.enabled` | `on`、`off`（默认 `off`） | 立即 —— 下一条回复生效 |
 | 确认语音识别结果 | `voice.confirm` | `on`、`off`（默认 `on`；仅在配了 `voice:` 时出现） | 立即 —— 下一条语音生效 |
 | 整理语音识别结果 | `voice.cleanup` | `on`、`off`（默认 `on`；仅在配了 `voice:` 时出现） | 立即 —— 下一条语音生效 |
+| 自动复盘 | `review.agent` | `off`，或某个 `agy` 智能体的 id | 立即 —— 下一轮扫描，一分钟内 |
+| 复盘模型 | `review.model` | 复盘者上报的模型、任意名字，或 `-` 跟随复盘者自己的模型 | 立即 —— 下一次复盘 |
 
 ```
 /setting                       →  整个设置面板（Web UI 是设置页，其他平台是按钮）
@@ -31,7 +33,7 @@
 
 Web UI 里 `/setting` 是一个设置页：话题列表底部 ⚙ 菜单里的 **All settings** 打开
 它，直接输入 `/setting` 也一样。页面是一列分组 —— Agents、Default model、
-Sub-agents、Conversations、Replies、Voice —— 每一行用适合它的控件就地修改：
+Sub-agents、Conversations、Replies、Voice、Reviews —— 每一行用适合它的控件就地修改：
 
 - **开关类**（确认子代理开跑、流式输出、两个语音开关）是开关，点一下就写入；
 - **短列表**是分段按钮（空闲回收：off、15m、1h、4h、12h）或下拉框（默认智能体、
@@ -57,6 +59,15 @@ Sub-agents、Conversations、Replies、Voice —— 每一行用适合它的控�
 config.yaml 的 `podModels`，优先于主机 pod.yaml 里的 `model:`；那一行会标明当前值来自 pod 还是在这里
 设的，清掉就回到 pod 的值。会话启动时用哪个模型，从高到低：它的 `/model` → `podModels` → pod.yaml →
 harness 默认。
+
+**自动复盘**也在这里设置。`/setting review.agent ag@uniagent` 打开它，`/setting review.agent off`
+关掉；这一行只列出 `agy` 智能体 —— 一次复盘就是一次 `agy -p`，所有工具都被拒绝，所以其他 harness
+的 id 会被直接拒绝，而不是写进文件、等下一轮扫描时才失败。`/setting review.model` 给复盘单独指定
+模型；不设就是跟随复盘者自己的模型，行上显示 *agent's own*。列表来自这个复盘者，拿不到列表时按你
+输入的名字保存。这两项都在每轮扫描开始时从运行中的配置读取，所以改完一分钟内生效，不用重启。复盘者
+会按 config.yaml 和各主机 pod.yaml 里实际声明的智能体核对，而不只看运行中的配置——`/reload`
+失败后残留的旧行会被拒绝，不会写进一份下次启动加载不了的文件。详见
+[自动复盘](skills.md#自动复盘)。
 
 每条回执都会说清**这次改动什么时候生效**，因为它们并不一样：会话粒度只写文件、
 重启后才应用 —— 在会话还开着的时候换掉「什么算一个会话」，会悄悄把所有现存会话

@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Auto review can be turned on and tuned from chat and the web UI.** `review.agent` and
+  `review.model` were config.yaml-only, so the feature could only be switched on from a shell on
+  the machine that runs the daemon. `/setting review.agent <agy agent>` (or `off`) and `/setting
+  review.model` now write the same fields through the same validated patch path as every other
+  setting, and the web UI's settings page has a Reviews section for them. Only `agy` agents are
+  offered or accepted, because a review is one `agy -p` with every tool denied; any other id is
+  refused with the reason rather than saved to fail at the next sweep. The model follows the
+  reviewer's own until one is set, and is chosen from that agent's list when it can be asked for —
+  a name typed while no list is available is saved as typed, and the ack says so. The reviewer is
+  checked against the agents the files actually declare — config.yaml plus each host's pod.yaml —
+  before the write, so a row left over from a failed `/reload` is refused instead of producing a
+  config the next start rejects. Both fields are read from the live config at the start of every
+  sweep, so a change lands within a minute without a restart. [→](docs/settings.md)
+
 ### Changed
 
 - **Automatic review no longer has a daily cap.** Ten reviews per UTC day was meant to bound a bug
