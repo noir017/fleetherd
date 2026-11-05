@@ -294,6 +294,24 @@ describe('writing a setting', () => {
     expect(onDisk()['routing']).toEqual({ default: 'cc' });
   });
 
+  it('turns sub-agent confirmation off in the file and in the running daemon', async () => {
+    const r = textRig();
+    await r.send('/setting delegation off');
+    expect(r.replies().at(-1)).toContain('Confirm sub-agent starts → off');
+    expect(r.replies().at(-1)).toContain('in effect now');
+    // The live config is what Delegation.propose reads, so the very next task-new follows it.
+    expect(r.cfg.delegation.confirm).toBe(false);
+    expect(onDisk()['delegation']).toEqual({ confirm: false });
+  });
+
+  it('turns it back on the same way', async () => {
+    const r = textRig();
+    await r.send('/setting delegation off');
+    await r.send('/setting delegation on');
+    expect(r.cfg.delegation.confirm).toBe(true);
+    expect(onDisk()['delegation']).toEqual({ confirm: true });
+  });
+
   it('routes the next new conversation to the agent just made default', async () => {
     const r = textRig();
     await r.send('/setting agent cc');
@@ -511,7 +529,7 @@ describe('the button menu', () => {
     expect(r.buttonSends).toHaveLength(1);
     expect(r.replies()).toEqual([]); // the text surface must not also fire
     expect(r.menu().text).toContain('saved to config.yaml');
-    expect(r.ids('stg:')).toHaveLength(6); // agent + 2 models + idle + scope
+    expect(r.ids('stg:')).toHaveLength(7); // agent + 2 models + delegation + idle + scope + stream
   });
 
   it('labels each row with its current value', async () => {
@@ -554,7 +572,7 @@ describe('the button menu', () => {
   it('opens a setting on the same message, with a way back', async () => {
     const r = rig();
     await r.send('/setting');
-    await r.click(r.ids('stg:')[4]!); // scope
+    await r.click(r.ids('stg:')[5]!); // scope
     expect(r.buttonSends).toHaveLength(1); // edited, not reposted
     expect(r.buttonEdits).toHaveLength(1);
     expect(r.buttonEdits[0]!.messageId).toBe(MENU_MSG);
@@ -594,10 +612,10 @@ describe('the button menu', () => {
     const r = rig();
     const before = text();
     await r.send('/setting');
-    await r.click(r.ids('stg:')[4]!);
+    await r.click(r.ids('stg:')[5]!);
     await r.click(r.ids('stb:')[0]!);
     expect(r.screen().text).toContain('saved to config.yaml');
-    expect(r.ids('stg:')).toHaveLength(6);
+    expect(r.ids('stg:')).toHaveLength(7);
     expect(text()).toBe(before);
   });
 
@@ -616,7 +634,7 @@ describe('the button menu', () => {
     // Tapping the ● value writes nothing, and a level change would suggest otherwise.
     const r = rig();
     await r.send('/setting');
-    await r.click(r.ids('stg:')[4]!); // scope
+    await r.click(r.ids('stg:')[5]!); // scope
     await r.click(r.ids('stv:')[0]!); // per_thread — already the value
     expect(r.screen().text).toContain('already');
     expect(r.ids('stv:').length).toBeGreaterThan(0);

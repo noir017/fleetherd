@@ -41,6 +41,9 @@ const RELOAD_KIND = {
   // Live: the review service reads config.review on every sweep, and one already queued is
   // abandoned rather than run against a definition the operator just removed.
   review: 'live',
+  // Live: Delegation.propose reads it per task-new, so a /reload that flips it lands on the next
+  // proposal — the same place /setting applies it.
+  delegation: 'live',
 } as const satisfies Record<keyof UserConfig, 'ignore' | 'restart' | 'agents' | 'live'>;
 
 type LiveSection = { [K in keyof typeof RELOAD_KIND]: (typeof RELOAD_KIND)[K] extends 'live' ? K : never }[keyof typeof RELOAD_KIND];

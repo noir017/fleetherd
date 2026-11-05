@@ -189,7 +189,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     summary: 'Hand parts of a job to other agents (sub-agents), in parallel, and follow them',
     notes: [
       'Web UI only: each sub-agent gets a topic of its own, nested under this one, where the person can also talk to it directly.',
-      'task-new proposes ONE sub-task; call it once per sub-task. Everything proposed before the person answers goes on one card, however far apart the calls are. Nothing starts until the person confirms the card. Then they all start at once and run in parallel. If the person writes instead, they want changes: propose again, and the new card replaces the old one.',
+      'task-new proposes ONE sub-task; call it once per sub-task. Everything proposed before the person answers goes on one card, however far apart the calls are. Nothing starts until the person confirms the card — unless confirmation is off, then task-new starts each one at once and a card lists what started, and its result says it is running. Once confirmed (or started), they all run in parallel. If the person writes instead, they want changes: propose again, and the new card replaces the old one.',
       'A sub-agent sees nothing of this conversation: <text> is all it gets. Make it whole — the goal, the constraints, how to tell it is done — and leave the how to the agent.',
       'The first row of task-agents is the agent answering this conversation; the next ones with here=true are on the same machine. Those are the ones to prefer — they have the same checkouts and tools. Agents on other machines work in their own checkouts.',
       'When a sub-agent finishes, fails or asks something, you are told here in a message beginning `[sub-agent updates]`, which says how many are still working. Its questions are the person\'s to answer in its topic unless they are only about what your task meant.',
@@ -717,7 +717,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-new <text>',
     topic: 'tasks',
-    description: 'Propose a sub-task: <text> for one agent, in a topic of its own — started once the person confirms',
+    description: 'Propose a sub-task: <text> for one agent, in a topic of its own — started once the person confirms, or at once when confirmation is off',
     options: [
       { flags: '--agent <id>', description: 'who does the work: an id from task-agents (required)' },
       { flags: '--cwd <dir>', description: "where it starts: a directory task-agents lists (default: the agent's own)" },

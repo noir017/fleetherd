@@ -11,7 +11,8 @@ description: >-
 
 You coordinate; the sub-agents do the work. Their commands are `talkcode task-*` — run
 `talkcode help tasks` once before the first one. Sub-agents open as topics nested under this
-one in the web UI; the person confirms every start, and can talk to any of them directly.
+one in the web UI; by default the person confirms every start, and can talk to any of them
+directly.
 
 ## 1. Split
 
@@ -35,7 +36,9 @@ one in the web UI; the person confirms every start, and can talk to any of them 
   goal, the constraints, and how it will know it is done (a test that passes, a command whose
   output changes). Not the steps: it will read the code and choose them.
 - End your turn with one line saying what you proposed. Nothing starts until the person taps
-  Start. If they write instead, they want changes: propose again — the new card replaces the old.
+  Start, unless confirmation is off — then each `task-new` says it is already running and a card
+  lists what started. If they write instead, they want changes: propose again — the new card
+  replaces the old.
 
 ## 3. Follow
 

@@ -238,12 +238,16 @@ Do not weaken these without saying so explicitly in the PR:
    the pod-to-pod ssh mesh (`daemon/pod-peers.ts`) only by its own `peer:`; the gateway then lets
    every member log in to every other, from private addresses only, vouching for each with the host
    key it pins itself. Opening one host to another is never the gateway's own initiative.
-6. **No sub-agent starts without the person.** `task-new` only proposes: every sub-task waits on
-   a card that shows it in full until the person taps Start (`Delegation.putUp`, buttons only — a
-   typed reply is the person's next message, never a yes), and nothing an agent says can start one.
-   A conversation acts only on the topics it opened (`Delegation.child`), so one agent cannot steer
-   or stop another's. Spawning agents is spending the operator's machines and money; an agent that
-   could do it unasked would be an agent with powers nobody granted.
+6. **No sub-agent starts without the person — unless the operator turned confirmation off.** By
+   default `task-new` only proposes: every sub-task waits on a card that shows it in full until the
+   person taps Start (`Delegation.putUp`, buttons only — a typed reply is the person's next message,
+   never a yes), and nothing an agent says can start one. `delegation.confirm: false` — set only
+   through `/setting delegation off` or the file, never by a reverse command — removes that tap:
+   `task-new` opens each sub-task at once, and a card listing every one and its topic is still
+   posted afterwards, without buttons. What the switch does not remove: a conversation acts only on
+   the topics it opened (`Delegation.child`), so one agent cannot steer or stop another's. Spawning
+   agents is spending the operator's machines and money; the default is that an agent cannot do it
+   unasked, and turning that off is a decision only the person who owns the machines can make.
 7. **The web UI POSTs only to push services.** A push subscription's endpoint is a URL a browser
    chose, and the server sends to it; `webui/webpush.ts` allowedEndpoint holds it to HTTPS on the
    push services browsers use, at subscribe time and again before every send — the outbound twin

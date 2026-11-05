@@ -605,6 +605,27 @@ export const ConfigSchema = z
       .optional(),
 
     /**
+     * Sub-agents (`daemon/delegation.ts`): one agent handing parts of its job to other agents, each
+     * in a topic of its own nested under the asking one.
+     */
+    delegation: z
+      .object({
+        /**
+         * Whether `task-new` waits for the person to tap Start on a card listing every sub-task
+         * before any of them runs (the default), or starts each one as it is proposed and posts a
+         * card listing what started — without buttons — so the chat still shows it.
+         *
+         * On by default because spawning an agent spends the operator's machines and quota, and
+         * the person is the only one who knows whether that part of the job is worth starting now.
+         * Turning it off is a decision for a deployment that trusts its agents with that spend.
+         * Only a person can change it: `/setting delegation` or this file. No reverse command
+         * reaches it — an agent can propose sub-tasks, never decide whether they need a tap.
+         */
+        confirm: z.boolean().default(true),
+      })
+      .default({}),
+
+    /**
      * Reply delivery. Alongside `display`, the part of outbound rendering an operator legitimately
      * decides; the throttling and chunking guardrails stay in the frozen EXPERIENCE block.
      */

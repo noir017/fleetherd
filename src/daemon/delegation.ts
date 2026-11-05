@@ -23,10 +23,10 @@ import { FAILURE_NOTICE_CHARS, UPDATE_SENDER } from './turn-runner.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
- * of its own nested under it, running in parallel — once the person has confirmed them — and is told
- * when each one finishes, fails or asks something. `/super` (the bundled skill of that name) is the
- * person asking for exactly that; any agent may do it unprompted, because nothing starts without the
- * person's say-so.
+ * of its own nested under it, running in parallel — once the person has confirmed them, unless
+ * `delegation.confirm` is off, in which case each starts as it is proposed and a card lists what
+ * started. `/super` (the bundled skill of that name) is the person asking for exactly that; any
+ * agent may do it unprompted, because by default nothing starts without the person's say-so.
  *
  * ── Why ─────────────────────────────────────────────────────────────────────────────────────────
  * One person watching their agents is the ceiling on how many they can run: on this deployment's own
@@ -39,10 +39,13 @@ import { FAILURE_NOTICE_CHARS, UPDATE_SENDER } from './turn-runner.js';
  * of hands that splits a job, hands the pieces out and reads what comes back. That is this.
  *
  * ── What is structure and what is instruction ────────────────────────────────────────────────────
- * Structure, enforced here: nothing starts until the person taps Start on the card that lists every
- * sub-task in full (the agent cannot start one itself, whatever it is told); a conversation acts only
- * on topics it opened; a sub-agent's topic is an ordinary topic the person can walk into; and the
- * relation is the platform's own record (`PlatformAdapter.parentOf`), so deleting a topic ends it.
+ * Structure, enforced here: by default nothing starts until the person taps Start on the card that
+ * lists every sub-task in full (the agent cannot start one itself, whatever it is told); with
+ * `delegation.confirm` off, `task-new` opens each sub-task at once and a card — the same list,
+ * without buttons — is posted for the record. A conversation acts only on topics it opened; a
+ * sub-agent's topic is an ordinary topic the person can walk into; and the relation is the
+ * platform's own record (`PlatformAdapter.parentOf`), so deleting a topic ends it. The switch is a
+ * person's decision only: `/setting delegation` writes it, and no reverse command reaches it.
  * Instruction, in the skills (`skill/`): how to split a job, which agent to prefer, what to do with
  * the updates.
  *
@@ -181,6 +184,19 @@ interface Item {
   title?: string;
 }
 
+/** One sub-task that has started, as the card that stands in for a confirmation lists it. */
+interface OpenedTask {
+  /** The topic's name, without the `[agent] ` prefix. */
+  title: string;
+  /** The id `tasks` and `task-read` take (`web:main/3a9f0c12`). */
+  topic: string;
+  /** `?t=…`, what opens it in place. */
+  link?: string;
+  agent: string;
+  host?: string;
+  cwd?: string;
+}
+
 /** What one sub-agent said, as the card quotes it. */
 interface CardQuote {
   label: 'question' | 'failure' | 'reply';
@@ -212,6 +228,12 @@ export class Delegation {
   private readonly gathering = new Map<ConversationId, { items: Item[]; cancel: () => void; card?: AbortController }>();
   /** The card on screen per proposing conversation: a newer one replaces it. */
   private readonly onScreen = new Map<ConversationId, AbortController>();
+  /**
+   * Sub-tasks started without a confirmation (`delegation.confirm: false`), per conversation,
+   * gathered for PROPOSAL_GATHER_MS so a burst is one card. Nothing waits on it — the work is
+   * already running — so unlike `gathering` it is never dropped by the person writing.
+   */
+  private readonly started = new Map<ConversationId, { opened: OpenedTask[]; failed: string[]; cancel: () => void }>();
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
   private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void }>();
   /**
@@ -228,9 +250,11 @@ export class Delegation {
   /** Shutdown: drop what is gathering, and take every card off the screen. */
   dispose(): void {
     for (const g of this.gathering.values()) g.cancel();
+    for (const s of this.started.values()) s.cancel();
     for (const u of this.updates.values()) u.cancel();
     for (const c of this.onScreen.values()) c.abort();
     this.gathering.clear();
+    this.started.clear();
     this.updates.clear();
     this.onScreen.clear();
     this.handedOut.clear();
@@ -315,21 +339,40 @@ export class Delegation {
   }
 
   /**
-   * Add one sub-task to the proposal waiting in this conversation.
+   * Add one sub-task to the proposal waiting in this conversation — or start it at once when
+   * `delegation.confirm` is off.
    *
-   * The proposal lives until the person answers it: while the card is on screen, another `task-new`
-   * re-renders that same card with the new item on it. Batching used to be a 3-second window, so an
-   * agent that made its three calls a few seconds apart — the normal case, one tool call per step —
-   * got three cards, each replacing the one before, and the person's Start covered only the last.
+   * With confirmation on, the proposal lives until the person answers it: while the card is on
+   * screen, another `task-new` re-renders that same card with the new item on it. Batching used to be
+   * a 3-second window, so an agent that made its three calls a few seconds apart — the normal case,
+   * one tool call per step — got three cards, each replacing the one before, and the person's Start
+   * covered only the last.
+   *
+   * With it off, the sub-task is opened before this returns, so the answer can say it is running.
+   * The card is still posted, without buttons, so the person sees what an agent started on its own;
+   * it gathers a burst the same way, only for the record.
    */
-  private propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): TaskNewResult {
+  private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): Promise<TaskNewResult> {
     const def = findAgent(this.deps.config, a.agent);
     if (!def) {
       throw new Error(`no agent "${a.agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
     }
+    const item: Item = {
+      agent: a.agent,
+      text: a.text,
+      ...(a.cwd ? { cwd: a.cwd } : {}),
+      ...(a.title ? { title: a.title } : {}),
+    };
+    if (!this.deps.config.delegation.confirm) {
+      const { opened, failed } = await this.start(here, [item]);
+      this.queueStartedCard(here.key, opened, failed);
+      // The card's position, the same fact `item` carries when a confirmation card is gathering.
+      const card = this.started.get(here.key);
+      return { item: card ? card.opened.length + card.failed.length : 1, result: startedResult(opened, failed) };
+    }
     const g = this.gathering.get(here.key) ?? { items: [], cancel: () => undefined };
     g.cancel();
-    g.items.push({ agent: a.agent, text: a.text, ...(a.cwd ? { cwd: a.cwd } : {}), ...(a.title ? { title: a.title } : {}) });
+    g.items.push(item);
     this.gathering.set(here.key, g);
     if (this.onScreen.has(here.key)) {
       // A card is up and unanswered: re-render it now, so it shows every item proposed so far.
@@ -393,7 +436,8 @@ export class Delegation {
     g.items = g.items.filter((item) => !items.includes(item));
     if (g.items.length) void this.putUp(key);
     else this.gathering.delete(key);
-    await this.start(here, items);
+    const { opened, failed } = await this.start(here, items);
+    await this.announceStarted(here, items.length, opened, failed);
   }
 
   /**
@@ -430,10 +474,10 @@ export class Delegation {
     return lines.join('\n');
   }
 
-  /** Open every confirmed sub-task, say where they went, and tell the agent of any that could not start. */
-  private async start(here: Place, items: Item[]): Promise<void> {
+  /** Open every sub-task, returning what started and what could not; the caller says so. */
+  private async start(here: Place, items: Item[]): Promise<{ opened: OpenedTask[]; failed: string[] }> {
     const header = this.headerOf(here);
-    const opened: string[] = [];
+    const opened: OpenedTask[] = [];
     const failed: string[] = [];
     // One after another, not all at once: each is a topic created, named and bound, and the order
     // they appear in under the parent is the order on the card. Their turns run in parallel all the
@@ -451,7 +495,15 @@ export class Delegation {
         });
         this.handedOut.add(key);
         const title = subjectOf(this.titleOf(key, { platformId: here.platformId, address }));
-        opened.push(`- [${title}](?t=${address.thread ?? ''}) — ${item.agent}`);
+        const host = findAgent(this.deps.config, item.agent)?.host;
+        opened.push({
+          title,
+          topic: `${here.platformId}:${address.channel}${address.thread ? `/${address.thread}` : ''}`,
+          ...(address.thread ? { link: `?t=${address.thread}` } : {}),
+          agent: item.agent,
+          ...(host ? { host } : {}),
+          ...(item.cwd ? { cwd: item.cwd } : {}),
+        });
         console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
       } catch (e) {
         const why = e instanceof Error ? e.message : String(e);
@@ -459,14 +511,68 @@ export class Delegation {
         console.warn(`[delegation] ${here.key}: sub-task ${i + 1} for "${item.agent}" could not start: ${why}`);
       }
     }
+    return { opened, failed };
+  }
+
+  /** The confirmed card's answer: where every sub-task went, and the agent told of any that failed. */
+  private async announceStarted(here: Place, total: number, opened: OpenedTask[], failed: string[]): Promise<void> {
     const said = [
-      ...(opened.length ? [`Started ${opened.length}:`, ...opened] : []),
+      ...(opened.length ? [`Started ${opened.length}:`, ...opened.map((o) => `- [${o.title}](${o.link ?? '?t='}) — ${o.agent}`)] : []),
       ...(failed.length ? [`${opened.length ? '\n' : ''}Could not start ${failed.length}:`, ...failed] : []),
     ].join('\n');
     await here.adapter
       .sendMessage(here.address, said)
       .catch((e) => console.warn('[delegation] could not say which sub-agents started:', e instanceof Error ? e.message : e));
-    if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${items.length} could not be started:`, ...failed], [], failed.length);
+    if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${total} could not be started:`, ...failed], [], failed.length);
+  }
+
+  /**
+   * Add a started sub-task to the card this conversation will get, and schedule that card.
+   *
+   * Nothing is waiting on it — the work is already running — so this gathers only long enough to
+   * name a burst in one message, exactly as the proposal card does. A person writing in between
+   * does not drop it (`personSpoke` only touches `gathering`): the record of what started still
+   * belongs in the chat.
+   */
+  private queueStartedCard(key: ConversationId, opened: OpenedTask[], failed: string[]): void {
+    if (!opened.length && !failed.length) return;
+    const s = this.started.get(key) ?? { opened: [], failed: [], cancel: () => undefined };
+    s.cancel();
+    s.opened.push(...opened);
+    s.failed.push(...failed);
+    s.cancel = this.deps.clock.schedule(() => this.postStartedCard(key), PROPOSAL_GATHER_MS);
+    this.started.set(key, s);
+  }
+
+  private postStartedCard(key: ConversationId): void {
+    const s = this.started.get(key);
+    this.started.delete(key);
+    const here = this.place(key);
+    if (!s || !here) return;
+    void here.adapter
+      .sendMessage(here.address, this.startedCardText(here, s.opened, s.failed))
+      .catch((e) => console.warn('[delegation] could not post the started card:', e instanceof Error ? e.message : e));
+  }
+
+  /**
+   * What the person sees when confirmation is off: the same list a confirmation card carries, with
+   * the topics already open and no buttons. The last line says how to put the gate back.
+   */
+  private startedCardText(here: Place, opened: OpenedTask[], failed: string[]): string {
+    const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
+    const head = opened.length
+      ? `**${asker} started ${opened.length === 1 ? 'a sub-agent' : `${opened.length} sub-agents`}** — each in a topic of its own under this one:`
+      : `**${asker} could not start the sub-agent** — no confirmation is asked here, so it was tried at once:`;
+    const lines = [head];
+    for (const t of opened) {
+      const where = t.host ? ` @ ${t.host}` : '';
+      const dir = t.cwd ? ` · \`${t.cwd}\`` : '';
+      const name = t.link ? `[${t.title}](${t.link})` : t.title;
+      lines.push(`- ${name} — ${t.agent}${where}${dir} · ${t.topic}`);
+    }
+    if (failed.length) lines.push('', `Could not start ${failed.length}:`, ...failed);
+    lines.push('', '`/setting delegation on` makes new sub-tasks wait for Start again.');
+    return lines.join('\n');
   }
 
   private async send(here: Place, topic: string, text: string, interrupt: boolean): Promise<TaskActionResult> {
@@ -867,6 +973,22 @@ function contextOf(status: AgentStatus | undefined): string {
 function lastAtOf(activity: TopicActivity | undefined, live: LiveTurn | undefined): string {
   const at = activity?.outcome?.at ?? live?.current?.at;
   return at === undefined ? '' : new Date(at).toISOString();
+}
+
+/**
+ * What `task-new` answers when confirmation is off: the sub-task is already running, so the answer
+ * says where — never that it waits. A failure is the honest exception, and it is returned to the
+ * agent here rather than through an update, because the agent is still in the turn that asked.
+ */
+function startedResult(opened: OpenedTask[], failed: string[]): string {
+  const parts: string[] = [];
+  const first = opened[0];
+  if (first) {
+    parts.push(`Started in topic ${first.topic} ("${first.title}") — it is running now.`);
+  }
+  if (failed.length) parts.push(`Could not start: ${failed.map((f) => f.replace(/^- \d+\. /, '')).join('; ')}`);
+  parts.push('The person sees a card listing what started; you are told here as it finishes, fails or asks something.');
+  return parts.join(' ');
 }
 
 /**

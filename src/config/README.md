@@ -18,8 +18,8 @@ nothing else from the project.
 ## The central design decision: a small user surface
 
 The config file has exactly five sections — `platforms`, `agents`, `routing`,
-`session`, `access` — plus the optional `display`, `stream`, `title`, `voice`, `hosts` and
-`review`. Everything else that
+`session`, `access` — plus the optional `display`, `stream`, `title`, `voice`, `hosts`,
+`review` and `delegation`. Everything else that
 *looks* like config (stream throttling, tool-bubble rendering, inbound merge windows,
 attachment limits, reaction emoji, the IPC socket) is **not** user-configurable. It lives
 in the frozen `EXPERIENCE` constant in `schema.ts` and is merged into every loaded
@@ -55,6 +55,12 @@ one decision — `confirm`, whether a transcript waits for a tap. Everything tha
 size cap, the card TTL, the retry and per-attempt deadlines) is a constant in `core/voice.ts` /
 `daemon/voice.ts` rather than in `EXPERIENCE`, because a key `EXPERIENCE` owned would overwrite the
 operator's `voice:` block at load.
+
+`delegation` is on the user side because "may an agent start sub-agents without my tap" is a
+per-deployment trust decision, not a tuning knob. Its one field is `confirm` (default `true`); the
+card's gather window, text budget and update delay stay constants in
+[`daemon/delegation.ts`](../daemon/delegation.ts). It is the one setting with no reverse command
+behind it: `/setting delegation` and the file are the only writers.
 
 Two fields were deliberately promoted from `EXPERIENCE` to the user surface when they
 turned out to be per-deployment decisions after all: `freeResponseChannels` and
@@ -150,9 +156,10 @@ Three writers, in increasing order of how much they claim:
 
 `/setting` is the one that changed the assumption that this file is only ever
 hand-edited: config.yaml is now written **while the daemon is running**, from a chat
-message. Seven fields are reachable that way (`routing.default`, `agents[].model`,
-`session.idleTimeoutMs`, `session.scope`, `stream.enabled`, and `voice.confirm` and
-`voice.cleanup` where a `voice:` block exists) and the rest are refused by name — see
+message. Eight fields are reachable that way (`routing.default`, `agents[].model`,
+`delegation.confirm`, `session.idleTimeoutMs`, `session.scope`, `stream.enabled`, and
+`voice.confirm` and `voice.cleanup` where a `voice:` block exists) and the rest are refused by
+name — see
 [`core/settings.ts`](../core/README.md#settingsts) for the table and
 [`daemon/settings-store.ts`](../daemon/README.md#settings-storets) for the order the write
 happens in. Two constraints from that path land here:
