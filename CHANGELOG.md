@@ -31,6 +31,17 @@ All notable changes to this project are documented here. The format is based on
   cron and a platform that can open a topic — refused at registration otherwise, and a failed
   create fails the run and says so, because the alternative (a throwaway conversation) is one the
   person cannot reply into. `fixed` and `new` are unchanged.
+- **A scheduled task can name its model.** `schedule add --model <id>` gives a new- or
+  daily-session task its own model instead of whatever its agent's config happens to carry; the
+  previous way was to duplicate a whole agent entry just to change `model`, and keep every other
+  field in step by hand. The id is checked at registration against the agent's own `/model` list
+  (the caller's session for its own agent, a throwaway one for another), and a name it does not
+  offer is refused with the list, so the agent can fix it in the same turn. Each run applies it
+  through the `/model` path before the first request, with the session started first: a harness
+  that refuses it fails that run and says why, instead of the best-effort fallback an operator's
+  configured model gets. In a daily topic a `/model` typed by a person during the day wins. A
+  fixed-session task runs in a person's conversation, whose model is that conversation's own, so
+  `--model` is refused for it. [→](docs/scheduled-tasks.md)
 
 - **Sub-agent starts can be left unconfirmed.** By default `task-new` still only proposes: every
   sub-task waits on a card listing all of them until the person taps Start. `/setting delegation

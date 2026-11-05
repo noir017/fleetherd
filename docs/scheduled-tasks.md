@@ -28,6 +28,16 @@ a new one. It cannot run where no topic can be opened — that is refused when t
 and a run whose topic cannot be created fails and says so in the chat, rather than posting into a
 conversation nobody can reply into.
 
+A **new-session** or **daily** task can name the model its conversations use with `--model <id>`.
+The id must be one the agent's own `/model` list offers: a name it does not offer is refused when
+the task is registered, and the error lists what it does offer; a harness with no model selector
+cannot take one at all. Each conversation the task opens starts on that model — in a daily task,
+when the day's session opens — and a model the agent refuses fails that run with the reason, never
+a silent fallback to another model. A **fixed-session** task runs in your own conversation and
+keeps that conversation's model (set it with `/model` there), so `--model` is refused for it. In a
+daily topic, a `/model` you type during the day wins over the task's choice for the rest of that
+day.
+
 On the web UI, the clock at the right of the chat header opens a **⏰ Scheduled tasks** panel of
 its own: the **Tasks** tab is the same list, plus "run now", and a pin that keeps it open beside
 the chat. A task that runs in a new or daily session opens topics; the **Sessions** tab lists

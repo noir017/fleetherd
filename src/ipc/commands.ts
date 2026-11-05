@@ -97,6 +97,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '--prompt with --session fixed (the default): each run is a turn in THIS conversation (or the one --channel names), with the agent answering it — context accumulates and the user can follow up in place. A fixed-session task lives 24h from registration, then expires; anything longer needs --session new.',
       '--prompt with --session new: every run is a fresh session, in a new topic where the platform can open one (web UI, Telegram forum groups, Discord), otherwise posted straight into the chat. --agent picks who answers; --cwd where it starts.',
       '--prompt with --session daily: the first run of each day opens a new topic, and later runs that day join it — one conversation per day, named with the date. The day is counted in --tz, by each run\'s planned time, so a catch-up after midnight joins the day it was meant for. Needs --cron and a platform that can open a topic; --agent and --cwd work as with new.',
+      '--model names the model a --session new or daily task\'s conversations use. A fixed-session task runs in this conversation and keeps the model /model set here, so --model there is refused. The id must be in the agent\'s own /model list: a name it does not offer is refused when the task is added, with the list, and a run that cannot apply the model fails with the reason instead of quietly using another.',
       '--bash: the gateway runs the command with `bash -lc` in --cwd (default: your working directory) and posts the exit code, duration and the end of the output; long output is attached as a file. --timeout defaults to 10m, at most 6h.',
       '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday). Both are read in --tz, default the gateway\'s own zone.',
       '--channel is where output goes (ids from `talkcode channels`); default this conversation.',
@@ -462,7 +463,7 @@ const durationArg = (value: string): number => {
 };
 
 /** `schedule add`'s own options, by commander's camel-cased key — refused on every other action. */
-const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'prompt', 'bash', 'agent', 'session', 'cwd', 'timeout'] as const;
+const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'prompt', 'bash', 'agent', 'session', 'cwd', 'model', 'timeout'] as const;
 
 function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
   const session = str(opts.session);
@@ -481,6 +482,7 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
     agent: str(opts.agent),
     session,
     cwd: str(opts.cwd),
+    model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
   };
 }
@@ -828,6 +830,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '--bash <command>', description: 'add: the gateway runs this with bash and posts the output' },
       { flags: '--session <mode>', description: 'add: fixed = a turn in this conversation, 24h max (default) | new = a fresh session each run | daily = one session a day: the first run opens a topic, later runs that day join it' },
       { flags: '--agent <id>', description: "add: who runs --prompt (default: this conversation's agent)" },
+      { flags: '--model <id>', description: "add: model for a --session new or daily task (default: the agent's configured model)" },
       { flags: '--name <name>', description: 'add: short name for lists and cards' },
       { flags: '--cwd <dir>', description: 'add: working directory for --bash, --session new or --session daily' },
       { flags: '--timeout <duration>', description: 'add: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },

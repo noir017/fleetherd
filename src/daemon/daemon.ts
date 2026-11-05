@@ -1334,16 +1334,17 @@ export class Daemon {
   /**
    * The reverse commands that ask the GATEWAY something rather than act on a chat: they never touch
    * the adapter handleReverse resolved, and read the caller's conversation only to scope or mark
-   * their answer. Split out so the chat-action switch stays about chat actions — and synchronous
-   * here, because every one reads the scratch slots, which are only valid before the first await.
+   * their answer. Split out so the chat-action switch stays about chat actions. Async for
+   * `schedule-add` alone, which waits on the agent's model list — every scratch slot it needs is
+   * read before that await, exactly as the synchronous ones read theirs.
    *
    * `address` is only read by `schedule-add`, where it is the task's target: the `--channel` the
    * agent named, else its own lane (resolveAddress already chose). The platform comes the same way.
    */
-  private handleGatewayQuery(
+  private async handleGatewayQuery(
     action: GatewayQuery,
     address: ConversationAddress
-  ): unknown {
+  ): Promise<unknown> {
     const id = this.lastResolvedConversationId;
     switch (action.kind) {
       case 'voice-log': {
@@ -1367,7 +1368,7 @@ export class Daemon {
         const platform = this.lastResolvedPlatform ?? this.registry.platformFor(id);
         if (!platform) throw new Error('cannot resolve the platform for this conversation');
         const { kind: _kind, channelId: _channel, ...input } = action;
-        return { task: schedules.add(input, id, { platform, address }) };
+        return { task: await schedules.add(input, id, { platform, address }) };
       }
       case 'schedule-list':
         return this.requireSchedules().list(id, action.id);

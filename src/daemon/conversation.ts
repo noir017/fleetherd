@@ -3535,6 +3535,87 @@ ${formatTokens(left)} left before compaction — ${name}`;
     return state.merger.enqueueSolo(msg);
   }
 
+  /**
+   * Whether `agentId` offers `model`, for `schedule add --model` — the same list `/model` shows,
+   * resolved the same way (refresh, then warm the session if that is what it takes to learn it).
+   *
+   * The registering conversation already has a session for its own agent, so that agent's list is
+   * read there. Another agent's is not: a conversation belongs to one agent, and building a
+   * second handle under the caller's key would collide with the topic it is actually answering.
+   * A throwaway key keeps them apart, and the session is disposed before returning; nothing runs
+   * in it.
+   *
+   * Returns undefined when the model is offered, else a sentence naming the fix — including the
+   * whole list, because the reader is the agent that just typed the wrong id and can retry in the
+   * same turn.
+   */
+  async scheduledModelProblem(agentId: string, model: string, from: ConversationId): Promise<string | undefined> {
+    const same = this.boundAgentOf(from) === agentId;
+    const key = same ? from : `__schedule-model__#${agentId}`;
+    const session = this.agents.getOrCreate(key, agentId);
+    try {
+      await session.refreshModels?.();
+      let selector = session.modelSelector?.();
+      if (!selector && session.ensureSession) {
+        try {
+          await session.ensureSession(this.tokens.tokenFor(key));
+        } catch (e) {
+          return `could not ask agent "${agentId}" for its models: ${e instanceof Error ? e.message : String(e)}`;
+        }
+        selector = session.modelSelector?.();
+      }
+      if (!selector) {
+        return `agent "${agentId}" has no model list (its harness has no model selector), so --model cannot be used with it; drop --model to use the agent's configured model`;
+      }
+      if (!selector.options.some((o) => o.value === model)) {
+        return `unknown model "${model}" for agent "${agentId}"; choose one of: ${selector.options.map((o) => o.value).join(', ')}`;
+      }
+      return undefined;
+    } finally {
+      if (!same) {
+        this.agents.dispose(key);
+        this.tokens.release(key);
+      }
+    }
+  }
+
+  /**
+   * Put a scheduled task's model on the conversation it is about to run in, before the turn —
+   * the same `session.setModel` path `/model` takes, because the ACP runtime does not read a
+   * model off the turn input.
+   *
+   * An override already on the conversation wins: it is either the task's own earlier application
+   * (a daily topic's first run) or a person typing `/model` in the topic, and the person's choice
+   * must not be undone by a timer.
+   *
+   * Strict, unlike `applyModelPreference` at spawn: that one keeps the harness's default rather
+   * than fail a turn, which is right for an operator's config mistake but wrong for an explicit
+   * `--model`. The session is brought up first so `setModel` reaches a live child and the harness
+   * answers now; a refusal is the run's failure, never a silent switch to another model.
+   * Returns a sentence for the chat when it cannot be applied, undefined on success or when the
+   * conversation's existing choice is left alone.
+   */
+  async applyScheduledModel(key: ConversationId, platform: string, agentId: string, model: string): Promise<string | undefined> {
+    const state = this.ensureState(key, platform, agentId);
+    if (state.agentId !== agentId) return `this topic is now answered by ${state.agentId}, not ${agentId}`;
+    if (state.modelOverride !== undefined) return undefined;
+    const session = this.agents.getOrCreate(key, agentId);
+    if (!session.setModel) return `agent "${agentId}" cannot switch models at runtime`;
+    if (session.ensureSession) {
+      try {
+        await session.ensureSession(this.tokens.tokenFor(key));
+      } catch (e) {
+        return `could not start the session to set model "${model}": ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+    try {
+      state.modelOverride = await session.setModel(model);
+      return undefined;
+    } catch (e) {
+      return `could not set model "${model}": ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+
   // ── Sub-agents' topics (daemon/delegation.ts) ──────────────────────────────────────────────
 
   /**

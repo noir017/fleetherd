@@ -10,6 +10,7 @@ import {
   nextRunOf,
   parseAt,
   taskCardText,
+  taskView,
   zonedToEpoch,
   type BashOutcome,
   type NewTaskContext,
@@ -148,6 +149,30 @@ describe('buildTask', () => {
   it('refuses a daily one-shot and a daily bash task, each naming why', () => {
     expect(refusal({ at: '+1h', prompt: 'x', session: 'daily' })).toMatch(/needs --cron.*no rest of the day.*--session new/);
     expect(refusal({ cron: '0 8 * * *', bash: 'true', session: 'daily' })).toMatch(/--session daily is for --prompt tasks.*run by the daemon/);
+  });
+
+  it('a new-session task can name its model', () => {
+    const t = built({ cron: '0 8 * * *', prompt: 'brief', session: 'new', model: ' deepseek-v4-flash ' });
+    expect(t.run).toEqual({ kind: 'agent', agent: 'cc', prompt: 'brief', session: 'new', cwd: '/work', model: 'deepseek-v4-flash' });
+    expect(taskCardText(t, 'registered', NOW)).toContain('cc · deepseek-v4-flash · new session each run');
+    expect(taskView(t, NOW, { detail: true })).toMatchObject({ model: 'deepseek-v4-flash' });
+  });
+
+  it('a daily-session task can name its model', () => {
+    const t = built({ cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'deepseek-v4-pro' });
+    expect(t.run).toMatchObject({ session: 'daily', model: 'deepseek-v4-pro' });
+    expect(taskCardText(t, 'registered', NOW)).toContain('cc · deepseek-v4-pro · one session a day');
+  });
+
+  it('refuses --model on a fixed-session task and on a bash task, each naming why', () => {
+    expect(refusal({ cron: '0 * * * *', prompt: 'x', model: 'deepseek-v4-flash' })).toMatch(
+      /fixed-session.*\/model there.*--session new or --session daily/s
+    );
+    expect(refusal({ cron: '0 3 * * *', bash: 'ls', model: 'deepseek-v4-flash' })).toMatch(/--model is for --prompt tasks/);
+  });
+
+  it('refuses an empty --model rather than passing it on', () => {
+    expect(refusal({ cron: '0 8 * * *', prompt: 'x', session: 'new', model: '   ' })).toMatch(/--model is empty/);
   });
 
   it('refuses a daily task where no topic can be opened, rather than falling back to a throwaway', () => {

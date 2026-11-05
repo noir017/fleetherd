@@ -49,7 +49,19 @@ export const MAX_BASH_TIMEOUT_MS = 6 * 3_600_000;
 export type ScheduleWhen = { cron: string; tz: string } | { at: number; tz: string };
 
 export type ScheduleRun =
-  | { kind: 'agent'; agent: string; prompt: string; session: 'fixed' | 'new' | 'daily'; cwd?: string }
+  | {
+      kind: 'agent';
+      agent: string;
+      prompt: string;
+      session: 'fixed' | 'new' | 'daily';
+      cwd?: string;
+      /**
+       * The model this task's own conversations use. Only `new` and `daily` may name one: a
+       * fixed-session task runs in a person's topic, whose model is that topic's `/model` choice,
+       * and a bash run has no model at all.
+       */
+      model?: string;
+    }
   /**
    * `host`: the `hosts:` entry the registering agent ran on. A command an agent wrote names that
    * agent's machine — its paths, its tools — so it runs there, not on the gateway.
@@ -296,6 +308,7 @@ export interface NewTaskInput {
   agent?: string;
   session?: 'fixed' | 'new' | 'daily';
   cwd?: string;
+  model?: string;
   timeoutMs?: number;
 }
 
@@ -345,6 +358,7 @@ export function buildTask(input: NewTaskInput, ctx: NewTaskContext): Built {
   if ((input.prompt === undefined) === (input.bash === undefined)) {
     return fail('give exactly one of --prompt <text> (an agent runs it) or --bash <command> (the daemon runs it)');
   }
+  if (input.model !== undefined && !input.model.trim()) return fail('--model is empty');
   // A daily session means "the rest of today joins the first run" — a one-shot has no rest of
   // the day to join, and the run after it would be a different task.
   if (input.session === 'daily' && input.at !== undefined) {
@@ -409,6 +423,9 @@ function buildBashTask(input: NewTaskInput, command: string, ctx: NewTaskContext
   if (input.session === 'daily') {
     return fail('--session daily is for --prompt tasks: a --bash task is run by the daemon and has no conversation to keep for the day');
   }
+  if (input.model !== undefined) {
+    return fail('--model is for --prompt tasks; a --bash task is run by the daemon and has no model of its own');
+  }
   if (input.agent !== undefined || input.session !== undefined) {
     return fail('--agent and --session are for --prompt tasks; a --bash task is run by the daemon, not an agent');
   }
@@ -434,6 +451,11 @@ function checkAgent(agent: string, ctx: NewTaskContext): string | undefined {
 
 /** One conversation, one agent, 24 hours. */
 function buildFixedTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext, base: TaskBase): Built {
+  if (input.model !== undefined) {
+    return fail(
+      'a fixed-session task runs in this conversation, whose model is set with /model there and belongs to whoever is talking; use --session new or --session daily to give a task its own model'
+    );
+  }
   const conv = ctx.targetConversation;
   if (!conv) {
     return fail('a fixed-session task needs one conversation to run in, and this target does not name one under the current session scope; use --session new');
@@ -468,11 +490,12 @@ function buildFreshTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext
   const unknown = checkAgent(agent, ctx);
   if (unknown) return fail(unknown);
   const cwd = input.cwd ?? ctx.from.cwd;
+  const model = input.model?.trim();
   return firstRunCheck(
     {
       ...base,
       name: input.name?.trim() || defaultName(prompt),
-      run: { kind: 'agent', agent, prompt, session: 'new', ...(cwd ? { cwd } : {}) },
+      run: { kind: 'agent', agent, prompt, session: 'new', ...(cwd ? { cwd } : {}), ...(model ? { model } : {}) },
     },
     ctx.now
   );
@@ -491,11 +514,12 @@ function buildDailyTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext
   const unknown = checkAgent(agent, ctx);
   if (unknown) return fail(unknown);
   const cwd = input.cwd ?? ctx.from.cwd;
+  const model = input.model?.trim();
   return firstRunCheck(
     {
       ...base,
       name: input.name?.trim() || defaultName(prompt),
-      run: { kind: 'agent', agent, prompt, session: 'daily', ...(cwd ? { cwd } : {}) },
+      run: { kind: 'agent', agent, prompt, session: 'daily', ...(cwd ? { cwd } : {}), ...(model ? { model } : {}) },
     },
     ctx.now
   );
@@ -517,7 +541,7 @@ export function describeRun(run: ScheduleRun): string {
   if (run.kind === 'bash') return 'bash';
   const session =
     run.session === 'fixed' ? 'fixed session' : run.session === 'daily' ? 'one session a day' : 'new session each run';
-  return `${run.agent} · ${session}`;
+  return `${run.agent}${run.model ? ` · ${run.model}` : ''} · ${session}`;
 }
 
 /**
@@ -631,7 +655,7 @@ export function taskView(task: ScheduleTask, now: number, opts: { detail?: boole
     ...view,
     ...(task.run.kind === 'bash'
       ? { command: task.run.command, timeout: formatDuration(task.run.timeoutMs) }
-      : { prompt: task.run.prompt }),
+      : { prompt: task.run.prompt, ...(task.run.model ? { model: task.run.model } : {}) }),
     cwd: task.run.cwd ?? '',
   };
 }

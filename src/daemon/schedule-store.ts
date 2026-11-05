@@ -35,6 +35,7 @@ const RunSchema = z.discriminatedUnion('kind', [
       prompt: z.string().min(1),
       session: z.enum(['fixed', 'new', 'daily']),
       cwd: z.string().min(1).optional(),
+      model: z.string().min(1).optional(),
     })
     .strict(),
   z
@@ -86,6 +87,11 @@ const TaskSchema = z
     // A daily task's day comes from its cron; a one-shot has no second run to join.
     if (t.run.kind === 'agent' && t.run.session === 'daily' && 'at' in t.when) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a daily-session task needs a cron, not a one-shot time' });
+    }
+    // buildTask refuses this too; repeated here so a hand-edited file cannot give a task a model
+    // for a person's own topic, where the model belongs to whoever is talking.
+    if (t.run.kind === 'agent' && t.run.session === 'fixed' && t.run.model !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a fixed-session task cannot name a model' });
     }
   });
 

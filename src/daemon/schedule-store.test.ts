@@ -67,6 +67,30 @@ describe('ScheduleStore', () => {
     expect(error.mock.calls[0]!.join(' ')).toMatch(/daily-session task needs a cron/);
   });
 
+  it('keeps a model a new or daily task names', () => {
+    for (const session of ['new', 'daily'] as const) {
+      const store = new ScheduleStore(
+        fileWith([{ ...base, run: { kind: 'agent', agent: 'cc', prompt: 'x', session, model: 'deepseek-v4-flash' } }])
+      );
+      expect(store.get('a1b2c3')!.run).toMatchObject({ session, model: 'deepseek-v4-flash' });
+    }
+  });
+
+  it('drops a fixed-session task that names a model, and says why', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new ScheduleStore(
+      fileWith([
+        {
+          ...base,
+          conversation: 'web#main#t1',
+          run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'fixed', model: 'deepseek-v4-flash' },
+        },
+      ])
+    );
+    expect(store.list()).toEqual([]);
+    expect(error.mock.calls[0]!.join(' ')).toMatch(/fixed-session task cannot name a model/);
+  });
+
   it('round-trips a daily task through a reload', () => {
     const file = fileWith([{ ...base, run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'daily' } }]);
     const store = new ScheduleStore(file);

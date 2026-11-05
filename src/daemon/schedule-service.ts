@@ -42,6 +42,8 @@ type Registry = Pick<
   ConversationRegistry,
   | 'conversationAt'
   | 'runScheduledPrompt'
+  | 'scheduledModelProblem'
+  | 'applyScheduledModel'
   | 'openScheduledConversation'
   | 'releaseScheduled'
   | 'boundAgentOf'
@@ -74,7 +76,7 @@ export class ScheduleService {
   // ─────────────────────────────── the agent's commands ───────────────────────────────
 
   /** `schedule add`. Throws a sentence the agent can act on when the task is refused. */
-  add(input: NewTaskInput, caller: ConversationId, target: { platform: string; address: ConversationAddress }): ScheduleTaskView {
+  async add(input: NewTaskInput, caller: ConversationId, target: { platform: string; address: ConversationAddress }): Promise<ScheduleTaskView> {
     const from = {
       key: caller,
       platform: this.registry.platformFor(caller) ?? target.platform,
@@ -95,6 +97,12 @@ export class ScheduleService {
       ...(targetConversation ? { targetConversation } : {}),
     });
     if (!built.ok) throw new Error(built.error);
+    if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
+      // The list is the agent's own (`/model` shows the same one), so a typo is refused HERE,
+      // while the registering agent can still retry in this turn with a name that exists.
+      const why = await this.registry.scheduledModelProblem(built.task.run.agent, built.task.run.model, caller);
+      if (why) throw new Error(why);
+    }
     this.scheduler.add(built.task);
     this.card(caller, built.task, 'registered');
     return taskView(built.task, this.clock.now(), { detail: true, here: caller });
@@ -263,6 +271,17 @@ export class ScheduleService {
       ephemeralKey: `schedule#${task.id}#${planned}`,
     });
     try {
+      if (run.model) {
+        // Before the notice: a run that cannot use the model it was given must not announce
+        // itself as started. Strict by design — see applyScheduledModel.
+        const why = await this.registry.applyScheduledModel(opened.key, task.target.platform, run.agent, run.model);
+        if (why) {
+          await platform
+            .sendMessage(opened.address, `⏰ \`#${task.id}\` **${task.name}** failed — ${why}.`)
+            .catch((e) => warn('model failure notice', e));
+          return { status: 'failed', error: why };
+        }
+      }
       await platform.sendMessage(opened.address, runNoticeText(task, planned)).catch((e) => warn('run notice', e));
       return toResult(
         await this.registry.runScheduledPrompt({ key: opened.key, platform: task.target.platform, address: opened.address, agentId: run.agent, prompt })
@@ -333,6 +352,17 @@ export class ScheduleService {
       this.rememberDay(task.id, { day, conversation: key, address });
     }
 
+    if (run.model) {
+      // A daily topic applies its model on the day's first run; a `/model` typed there since is
+      // the person's choice and the conversation's override wins (applyScheduledModel).
+      const why = await this.registry.applyScheduledModel(key, task.target.platform, run.agent, run.model);
+      if (why) {
+        await platform
+          .sendMessage(address, `⏰ \`#${task.id}\` **${task.name}** failed — ${why}.`)
+          .catch((e) => warn('model failure notice', e));
+        return { status: 'failed', error: why };
+      }
+    }
     await platform.sendMessage(address, runNoticeText(task, planned)).catch((e) => warn('run notice', e));
     return toResult(
       await this.registry.runScheduledPrompt({ key, platform: task.target.platform, address, agentId: run.agent, prompt: run.prompt })

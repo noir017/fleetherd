@@ -24,6 +24,10 @@ const parsed = parseConfig({
   agents: [
     { id: 'cc', harness: 'claude' },
     { id: 'oc', harness: 'opencode' },
+    // A harness with no model selector at all.
+    { id: 'nosel', harness: 'opencode' },
+    // A harness whose list only arrives once the session is up.
+    { id: 'lazy', harness: 'opencode' },
   ],
   routing: { default: 'cc' },
 });
@@ -114,17 +118,42 @@ async function rig(existing?: string, alive?: Set<string>) {
   const sent: Sent[] = [];
   const tokens: string[] = [];
   const turns: Array<{ conversation: string; agent: string; prompt: string }> = [];
+  const models: Array<{ conversation: string; model: string }> = [];
+  const ensured: string[] = [];
   const disposed: string[] = [];
   const sessions = new Map<string, AgentSession>();
   const agents: AgentFactory = {
     getOrCreate(conversationId, agentId) {
       let s = sessions.get(conversationId);
       if (!s) {
+        // `lazy` has no list until something brings the session up, as ACP's session/new does.
+        let warm = agentId !== 'lazy';
         s = {
           conversationId,
           runTurn: async (input: { prompt: string; sessionToken: string }) => {
             tokens.push(input.sessionToken);
             turns.push({ conversation: conversationId, agent: agentId, prompt: input.prompt });
+          },
+          ...(agentId === 'nosel'
+            ? {}
+            : {
+                modelSelector: () =>
+                  warm
+                    ? {
+                        current: 'base-model',
+                        options: ['base-model', 'fast-model', 'runtime-fail'].map((value) => ({ value, name: value })),
+                      }
+                    : undefined,
+              }),
+          ensureSession: async () => {
+            ensured.push(conversationId);
+            warm = true;
+          },
+          refreshModels: async () => {},
+          setModel: async (value: string) => {
+            if (value === 'runtime-fail') throw new Error('the harness refused this model');
+            models.push({ conversation: conversationId, model: value });
+            return value;
           },
           abort: () => {},
           dispose: () => {},
@@ -184,7 +213,7 @@ async function rig(existing?: string, alive?: Set<string>) {
     const i = daemons.indexOf(daemon);
     if (i >= 0) daemons.splice(i, 1);
   };
-  return { dir, sent, turns, disposed, tg, web, menus, inbound, call, tap, targets, stop };
+  return { dir, sent, turns, models, ensured, disposed, tg, web, menus, inbound, call, tap, targets, stop };
 }
 
 const settle = (ms = 60): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -343,6 +372,99 @@ describe('schedule over IPC', () => {
     expect((oneShot as { error: string }).error).toMatch(/needs --cron/);
     const bash = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', bash: 'true', session: 'daily' });
     expect((bash as { error: string }).error).toMatch(/--session daily is for --prompt tasks/);
+  });
+
+  it('a new-session task names its model on the card and applies it before the turn', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', model: 'fast-model', name: 'brief' });
+    expect(task.runs).toBe('cc · fast-model · new session each run');
+    expect(r.sent.at(-1)!.text).toContain('cc · fast-model · new session each run');
+    // The caller's own agent is read there; no throwaway session is started for it.
+    expect(r.disposed).not.toContain('__schedule-model__#cc');
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
+    expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new1', prompt: 'brief' });
+    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+      tasks: Array<{ run: { model?: string } }>;
+    };
+    expect(saved.tasks[0]!.run.model).toBe('fast-model');
+  });
+
+  it('refuses a model the agent does not offer, naming the ones it does', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const resp = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', model: 'nope' });
+    expect(resp).toMatchObject({ ok: false });
+    expect((resp as { error: string }).error).toMatch(/unknown model "nope" for agent "cc"; choose one of: base-model, fast-model, runtime-fail/);
+    expect((await r.call({ kind: 'schedule-list' }) as { data: ScheduleListResult }).data.tasks).toEqual([]);
+  });
+
+  it('asks another agent for its own list in a throwaway session, then disposes it', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'oc', model: 'fast-model' });
+    expect(task.runs).toBe('oc · fast-model · new session each run');
+    expect(r.disposed).toContain('__schedule-model__#oc');
+    expect(r.turns).toHaveLength(1); // only the user's own hello; no work in the throwaway session
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
+    expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new1', agent: 'oc' });
+  });
+
+  it('brings a session up to read the list when the agent has none yet, and disposes it', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'lazy', model: 'fast-model' });
+    expect(task.runs).toBe('lazy · fast-model · new session each run');
+    expect(r.ensured).toContain('__schedule-model__#lazy');
+    expect(r.disposed).toContain('__schedule-model__#lazy');
+  });
+
+  it('refuses --model when the agent has no model selector, and on a fixed-session task', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const none = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'nosel', model: 'fast-model' });
+    expect((none as { error: string }).error).toMatch(/has no model list.*drop --model/);
+    const fixed = await r.call({ kind: 'schedule-add', cron: '0 * * * *', prompt: 'x', model: 'fast-model' });
+    expect((fixed as { error: string }).error).toMatch(/fixed-session.*--session new or --session daily/);
+    const bash = await r.call({ kind: 'schedule-add', cron: '0 3 * * *', bash: 'ls', model: 'fast-model' });
+    expect((bash as { error: string }).error).toMatch(/--model is for --prompt tasks/);
+  });
+
+  it('a model the harness refuses fails the run and says so, with no turn', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', model: 'runtime-fail', name: 'brief' });
+    const before = r.turns.length;
+    r.sent.length = 0;
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.turns).toHaveLength(before);
+    // The failure replaces the run notice: the run never announced itself as started.
+    expect(r.sent).toHaveLength(1);
+    expect(r.sent[0]!.text).toContain('failed — could not set model "runtime-fail": the harness refused this model');
+    const list = await r.call({ kind: 'schedule-list', id: task.id });
+    expect((list as { data: { tasks: ScheduleTaskView[] } }).data.tasks[0]!.last).toMatch(/^failed /);
+  });
+
+  it('daily: applies its model on the first run and leaves a person\'s /model alone after', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'fast-model', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
+
+    await r.inbound({ ...WEB, thread: 'new1' }, '/model base-model');
+    expect(r.models.at(-1)).toEqual({ conversation: 'web#main#new1', model: 'base-model' });
+
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.models).toHaveLength(2); // the person's choice stands; the task does not put its own back
+    expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
   });
 
   it('says which conversations a task can still post into, so the web UI will not evict them', async () => {

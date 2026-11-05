@@ -480,6 +480,16 @@ What each piece is shaped by, one line each:
   meanwhile is reopened on the next run (the web UI answers `hasThread`). There is no throwaway
   fallback: a platform that cannot open a topic is refused at registration, and a failed create
   fails the run and says so — a conversation the user cannot reply into is not a session.
+- **A new- or daily-session task can name its model** (`--model`). The id is checked at
+  registration against the agent's own `/model` list — the caller's session for its own agent, a
+  throwaway one for another — and a name it does not offer is refused there, with the list. Each
+  run then applies it through `session.setModel` (the `/model` path), with the session brought up
+  first so the harness answers now: `applyModelPreference` at spawn is best-effort and would keep
+  its default, which is right for an operator's config typo but not for an explicit instruction,
+  so a refusal here fails the run and says why. A conversation that already has an override is
+  left alone — that is the task's own earlier application in a daily topic, or a person's
+  `/model`, and the person wins. A fixed-session task runs in a person's topic and keeps its
+  model, so `--model` is refused for it.
 - **A bash run is not an agent**: `bash -lc` in its own process group (killed whole on timeout — `a |
   b` forks), the daemon's environment minus the reverse-command token, a 16 KB tail kept for the chat
   and the full output in `<configDir>/schedule-runs/<id>/` (20 per task). Longer than 3000 characters
