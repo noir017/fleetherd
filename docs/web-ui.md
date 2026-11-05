@@ -26,7 +26,7 @@ every other platform gets: streaming replies, tool bubbles, the `/model`, `/effo
 and `/cd` button menus, `ask` questions, file upload and download. Menus are
 laid out as a grid with the current choice lit, and hold 24 to a page where chat apps hold 12.
 `/setting` is a page of its own rather than a message in the transcript: **All settings** in the
-**⚙ Settings** menu at the foot of the topic list opens it, and typing `/setting` does the same.
+**⚙ Menu** at the foot of the topic list opens it, and typing `/setting` does the same.
 Rows are grouped by what they decide, each shows its label and its whole current value, and a row
 opens its values with the current one ticked. The bar names the topic the per-topic rows (agent,
 model) apply to, because those are a different setting in each conversation; switching topics puts
@@ -40,9 +40,11 @@ the machine is named on the line below — and hovering the title shows the whol
 one; the agent can open one itself with
 `talkcode create-thread`, and write into one with `--channel main/<topic id>`. Under each
 title is the directory the topic works in, led by the machine when its agent runs on a
-[remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. On a narrow
-screen the sidebar becomes a drawer. Drag its right edge to make it wider or narrower — the width
-is kept in this browser — and double-click the edge for the default.
+[remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. Drag its right
+edge to make it wider or narrower — the width is kept in this browser — and double-click the edge
+for the default. On a narrow screen it becomes a drawer. The × in its header closes it at any
+width, and the same × closes the task panel on the right: the two are one component, with the
+same header and footer rows, the same slide and the same dimmed backdrop.
 
 **Choosing an agent.** With more than one agent configured, a new topic opens on all of them,
 grouped by machine: each card shows the agent's id, what it is (Claude Code, Codex, OpenCode,
@@ -59,11 +61,12 @@ conversation is kept, and the next message picks up where it left off. Both simp
 send the command, so a draft in the composer is left where it is.
 
 **Closing idle agents.** An agent process stays up after its turn until the daemon's idle
-timeout reclaims it (the dim blue dot). **Close idle (N)** at the bottom of the topic
-list ends all of them at once: it lists the topics it is about to close, asks, and then says
-which were closed. Each conversation is kept, and the next message in a topic starts its agent
-again where it left off. A topic that starts working in the meantime is left running, and
-starred topics are closed like the rest.
+timeout reclaims it (the dim blue dot). **Close idle (N)** in the **⋯ Manage** menu at the bottom
+of the topic list ends all of them at once: it lists the topics it is about to close, asks, and
+then says which were closed. The count is on Manage's own face, so you see it without opening
+anything. Each conversation is kept, and the next message in a topic starts its agent again where
+it left off. A topic that starts working in the meantime is left running, and starred topics are
+closed like the rest. **Clear all topics** is in the same menu.
 
 **Scheduled tasks.** The clock at the right of the chat header opens a panel with two tabs at its
 foot. **Sessions** lists the topics a new-session run opened; those topics are kept out of the topic
@@ -72,12 +75,15 @@ task the gateway has registered — what it runs, when it runs next, where its o
 last run ended.
 A run waiting on an answer puts an amber dot on the clock itself, since it has no row in the topic
 list to show it.
-The panel is a column of its own on a wide screen. Below 1024px it is a drawer that slides in from
-the right — at most 88% of the screen wide, with a strip of the chat still visible — and the dimmed
-chat behind it is what closes it, the same backdrop the topic drawer uses. It is closed by default,
-and only a docked panel is restored on a reload; on a narrow screen it opens from the clock each
-time. Opening a session leaves a docked panel where it is. It is narrower than the topic sidebar —
-drag its left edge to resize it, double-click the edge for the default width. Tap a task for the
+The panel is a column of its own on a wide screen. It is the same component as the topic sidebar
+on the other edge — same header and footer rows, same ×, same slide and backdrop — and only its
+default width and the width at which it stops being a column differ. Below 1024px it is a drawer
+that slides in from the right, at most 88% of the screen wide, with a strip of the chat still
+visible; below 640px the topic sidebar is that same drawer on the left. The dimmed chat behind it
+is what closes it. It is closed by default, and only a docked panel is restored on a reload; on a
+narrow screen it opens from the clock each time. Opening a session leaves a docked panel where it
+is. It is narrower than the topic sidebar — drag its left edge to resize it, double-click the edge
+for the default width. Tap a task for the
 full prompt or command, pause or resume it, run it now, or delete it (two taps). Tasks are still
 registered by asking an agent in a topic — the panel manages them, it does not create them.
 
@@ -105,12 +111,12 @@ reply opens it in place.
 
 **Low attention.** With several agents working at once the list keeps moving: every running
 topic's dot pulses, and its unread count climbs in a bright blue pill with each message. Turn on
-**Low attention** in **⚙ Settings** at the bottom of the topic list and that stops: a running
+**Low attention** in the **⚙ Menu** at the bottom of the topic list and that stops: a running
 topic's dot stays bright blue but holds still, and unread counts turn grey. A question waiting on
 you (its amber dot still pulses), a failed turn and a reply you have not read still move to the
 top in green, so they are the only things that stand out. The setting is kept in this browser
-only. **All settings** (the page above), Notifications and **Clear all topics** are in the same
-menu.
+only. **All settings** (the page above), Notifications and **Skills** are in the same menu;
+**Close idle** and **Clear all topics** are in **⋯ Manage** beside it.
 
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here
 a row carries the whole command — up to 2000 characters — where a chat app gets the
@@ -154,7 +160,7 @@ composer's draft is saved too, a second after you stop typing.
 
 ## Skills
 
-**✦ Skills** at the bottom of the topic list opens the gateway's managed skills — the ones every
+**Skills** in the **⚙ Menu** at the bottom of the topic list opens the gateway's managed skills — the ones every
 agent is given (see [Skills the gateway keeps](skills.md)). The page lists each skill with its
 status (active, expired or archived), whether it is pinned and when it was last used. **New**
 creates one; opening a skill shows its files, a `SKILL.md` editor and every recorded change, and
@@ -165,7 +171,7 @@ the conversation that created the skill.
 
 ## Notifications
 
-**Notifications** in **⚙ Settings** at the bottom of the topic list turns on push notifications
+**Notifications** in the **⚙ Menu** at the bottom of the topic list turns on push notifications
 for this device. The browser asks for permission once. After that the device is notified even when the
 page is closed or the phone is locked. Tapping a notification opens the topic.
 

@@ -48,7 +48,7 @@ CodeBuddy 和 AtomCode，本机的和远程的都算。你说「把这个记成�
 
 ## 在 Web UI 里管理
 
-Web UI 侧边栏底部有 **✦ Skills** 按钮。它列出所有自管技能，显示状态、是否钉住和最后使用时间，点开即可编辑：
+Web UI 话题列表底部 **⚙ Menu** 里的 **Skills**。它列出所有自管技能，显示状态、是否钉住和最后使用时间，点开即可编辑：
 
 - **New**：填名字、一句用途说明和可选正文，新建技能。
 - **编辑**：修改 `SKILL.md`，或 `references/`、`templates/`、`scripts/` 下的任意文件；**New file**
