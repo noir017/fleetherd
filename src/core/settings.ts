@@ -352,8 +352,9 @@ export function settingDescription(row: SettingRow): string {
     case 'delegation':
       return (
         'Whether `task-new` waits for you to tap Start on a card listing every sub-task (`on`, the ' +
-        'default), or starts each one at once and posts a card showing what started (`off`). Only ' +
-        'you can change this; no agent command reaches it.'
+        'default), or starts each one at once and posts a card showing what started (`off`). Off ' +
+        'reaches only conversations you talk to directly; a sub-agent\'s own topic still asks. ' +
+        'Only you can change this; no agent command reaches it.'
       );
     case 'idle':
       return 'How long a conversation may sit quiet before its agent child is stopped. It resumes on the next message.';

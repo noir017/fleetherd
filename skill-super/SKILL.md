@@ -29,16 +29,17 @@ directly.
   this conversation; then come the others with `here=true` — your own machine, with the same
   checkouts and tools. Prefer those. Use another machine only when the part needs it (a repository
   or a tool that only exists there), and say why on the card's title.
-- One `talkcode task-new --agent <id> [--cwd <dir>] --title "<short name>" "<text>"` per part. They
-  all land on the card that is waiting for the person, however far apart you send them; only the
-  first one waits a few seconds for the rest.
+- One `talkcode task-new --agent <id> [--cwd <dir>] --title "<short name>" "<text>"` per part. With
+  confirmation on, they all land on the card waiting for the person, however far apart you send
+  them; only the first waits a few seconds for the rest. With it off where the person talks to you
+  directly, each starts at once and the card lists what started.
 - The text is everything the sub-agent will see — it has not read this conversation. Give it the
   goal, the constraints, and how it will know it is done (a test that passes, a command whose
   output changes). Not the steps: it will read the code and choose them.
-- End your turn with one line saying what you proposed. Nothing starts until the person taps
-  Start, unless confirmation is off — then each `task-new` says it is already running and a card
-  lists what started. If they write instead, they want changes: propose again — the new card
-  replaces the old.
+- End your turn with one line saying what you proposed. With confirmation on, nothing starts until
+  the person taps Start; if they write instead, they want changes — propose again and the new card
+  replaces the old. With it off (in a conversation the person talks to directly), each `task-new`
+  starts at once and its result says so; a comment does not mean re-propose.
 
 ## 3. Follow
 

@@ -613,7 +613,10 @@ export const ConfigSchema = z
         /**
          * Whether `task-new` waits for the person to tap Start on a card listing every sub-task
          * before any of them runs (the default), or starts each one as it is proposed and posts a
-         * card listing what started — without buttons — so the chat still shows it.
+         * card listing what started — without buttons — so the chat still shows it. Off applies
+         * only in a conversation the person talks to directly: in a sub-agent's own topic (one
+         * with a parent), `task-new` still puts up the card, so an agent cannot chain more agents
+         * without a tap.
          *
          * On by default because spawning an agent spends the operator's machines and quota, and
          * the person is the only one who knows whether that part of the job is worth starting now.

@@ -11,7 +11,7 @@ and restarting, which stops every resident agent.
 |---|---|---|---|
 | default agent | `routing.default` | any configured agent id | immediately |
 | an agent's default model | `agents[].model` | that agent's reported models, any name, or `-` to clear | its next agent session (`/new` starts one) |
-| confirm sub-agent starts | `delegation.confirm` | `on`, `off` (default `on`) | immediately — the next `task-new` |
+| confirm sub-agent starts | `delegation.confirm` | `on`, `off` (default `on`) | immediately — the next `task-new` in a topic you talk to directly; a sub-agent's topic still confirms |
 | idle reclaim window | `session.idleTimeoutMs` | `off`, `15m`, `4h`, … | immediately |
 | conversation scope | `session.scope` | `per_thread`, `per_channel`, `per_user`, `shared` | after a restart |
 | live streaming | `stream.enabled` | `on`, `off` (default `off`) | immediately — the next reply |

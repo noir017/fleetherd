@@ -363,7 +363,7 @@ export class Delegation {
       ...(a.cwd ? { cwd: a.cwd } : {}),
       ...(a.title ? { title: a.title } : {}),
     };
-    if (!this.deps.config.delegation.confirm) {
+    if (!this.deps.config.delegation.confirm && !this.nested(here)) {
       const { opened, failed } = await this.start(here, [item]);
       this.queueStartedCard(here.key, opened, failed);
       // The card's position, the same fact `item` carries when a confirmation card is gathering.
@@ -387,6 +387,17 @@ export class Delegation {
         `join the same card while it waits. Nothing starts until they confirm. Then each gets a topic nested under ` +
         `this one, all start at once, and you are told here as each finishes, fails or asks something.`,
     };
+  }
+
+  /**
+   * Whether this conversation is a sub-agent's own topic (it has a parent).
+   *
+   * The switch is the person's: it removes the tap in the conversation the person talks to the
+   * agent in, never one an agent opened. Otherwise a sub-agent could open more sub-agents — and
+   * those more — with nobody asked, which is the spend the default exists to bound.
+   */
+  private nested(here: Place): boolean {
+    return here.adapter.parentOf?.(here.address) !== undefined;
   }
 
   /**
@@ -985,9 +996,9 @@ function startedResult(opened: OpenedTask[], failed: string[]): string {
   const first = opened[0];
   if (first) {
     parts.push(`Started in topic ${first.topic} ("${first.title}") — it is running now.`);
+    parts.push('The person sees a card listing what started; you are told here as it finishes, fails or asks something.');
   }
   if (failed.length) parts.push(`Could not start: ${failed.map((f) => f.replace(/^- \d+\. /, '')).join('; ')}`);
-  parts.push('The person sees a card listing what started; you are told here as it finishes, fails or asks something.');
   return parts.join(' ');
 }
 

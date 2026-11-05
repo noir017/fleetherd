@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 默认智能体 | `routing.default` | 任一已配置的 agent id | 立即 |
 | 某个智能体的默认模型 | `agents[].model` | 该智能体上报的模型、任意名字，或 `-` 清空 | 它的下一个会话（`/new` 可立刻开一个） |
-| 确认子代理开跑 | `delegation.confirm` | `on`、`off`（默认 `on`） | 立即 —— 下一个 `task-new` 生效 |
+| 确认子代理开跑 | `delegation.confirm` | `on`、`off`（默认 `on`） | 立即 —— 你自己直接对话的话题里，下一个 `task-new` 生效；子代理的话题仍然要确认 |
 | 空闲回收窗口 | `session.idleTimeoutMs` | `off`、`15m`、`4h` …… | 立即 |
 | 会话粒度 | `session.scope` | `per_thread`、`per_channel`、`per_user`、`shared` | 重启后 |
 | 流式输出 | `stream.enabled` | `on`、`off`（默认 `off`） | 立即 —— 下一条回复生效 |

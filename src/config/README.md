@@ -59,8 +59,9 @@ operator's `voice:` block at load.
 `delegation` is on the user side because "may an agent start sub-agents without my tap" is a
 per-deployment trust decision, not a tuning knob. Its one field is `confirm` (default `true`); the
 card's gather window, text budget and update delay stay constants in
-[`daemon/delegation.ts`](../daemon/delegation.ts). It is the one setting with no reverse command
-behind it: `/setting delegation` and the file are the only writers.
+[`daemon/delegation.ts`](../daemon/delegation.ts). Off applies only where the person talks to the
+agent directly — a sub-agent's own topic still confirms. It is the one setting with no reverse
+command behind it: `/setting delegation` and the file are the only writers.
 
 Two fields were deliberately promoted from `EXPERIENCE` to the user surface when they
 turned out to be per-deployment decisions after all: `freeResponseChannels` and

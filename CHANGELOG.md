@@ -14,6 +14,8 @@ All notable changes to this project are documented here. The format is based on
   so the chat still shows what an agent started on its own. `task-new` answers with the topic it is
   running in, and a sub-task that could not start is returned as a failure instead of reported as
   running. Only a person can change the switch: `/setting` or the file, never a reverse command.
+  It applies only where the person talks to the agent directly — in a sub-agent's own topic,
+  `task-new` still waits for a tap, so agents cannot chain more agents without one.
   [→](docs/sub-agents.md)
 
 ## [2.33.0] - 2026-11-05

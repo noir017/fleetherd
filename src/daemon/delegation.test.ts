@@ -428,10 +428,27 @@ describe('Delegation: with confirmation off', () => {
     const res = (await r.d.handle(P, task('cx', 'b', { cwd: 'nowhere' }))) as TaskNewResult;
     expect(res.result).toContain('Could not start');
     expect(res.result).not.toContain('running now');
+    expect(res.result).not.toContain('The person sees a card');
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
     const card = r.posted.find((p) => p.text.includes('could not start the sub-agent'))!;
     expect(card.text).toContain('no directory nowhere');
+  });
+
+  it("still asks the person inside a sub-agent's own topic, so agents cannot chain without a tap", async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    const child = 'web#main#d0000000';
+    r.parents.set(child, P); // the platform says this topic was opened under the person's topic
+    r.bound.set(child, 'cc');
+    const res = (await r.d.handle(child, task('cx', 'dig deeper'))) as TaskNewResult;
+    // The switch is the person's, not an agent's: a conversation with a parent still asks.
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+    expect(res.result).toContain('Nothing starts until they confirm');
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(1);
+    expect(r.cards[0]!.labels).toEqual(['Start it', 'Cancel']);
   });
 });
 

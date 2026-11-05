@@ -664,7 +664,9 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   re-proposal that follows starts a fresh card rather than appending to the one it means to replace.
   A newer card aborts the one on screen (`signal`). With `delegation.confirm` off, `task-new` opens
   the part at once (so its answer can say it is running) and queues the same list as a card without
-  buttons, gathered the same way and never dropped by a message from the person. `task-agents` lists
+  buttons, gathered the same way and never dropped by a message from the person — but only in a
+  conversation with no parent: a sub-agent's own topic still puts up the confirmation card, so an
+  agent cannot chain more agents without a tap. `task-agents` lists
   the conversation's own agent first: `task-new` has no default, and the first usable row is what an
   agent picks.
   Start opens each part with `ConversationRegistry.openTask` (`createThread` with `under`), whose

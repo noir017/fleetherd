@@ -244,8 +244,12 @@ Do not weaken these without saying so explicitly in the PR:
    a typed reply is the person's next message, never a yes), and nothing an agent says can start
    one. Turned off, `task-new` opens each sub-task at once and a card listing every one and its
    topic is still posted afterwards, without buttons — but the agent may now spend the operator's
-   machines and money without being asked. Only a person can turn it off: `/setting delegation`
-   or `delegation.confirm: false` in config.yaml; no reverse command reaches it. Either way a
+   machines and money without being asked. The switch reaches only conversations the person talks
+   to directly: a sub-agent's own topic (one with a parent) still puts up the card, so an agent
+   cannot chain more agents without a tap. Only a person can turn it off: `/setting delegation`
+   or `delegation.confirm: false` in config.yaml; no reverse command reaches it. That is an
+   interface boundary, not code enforcement: an agent on the gateway's own machine as the same
+   user can edit config.yaml, which is invariant 1's existing trust boundary. Either way a
    conversation acts only on the topics it opened (`Delegation.child`), so one agent cannot steer
    or stop another's.
 7. **The web UI POSTs only to push services.** A push subscription's endpoint is a URL a browser
