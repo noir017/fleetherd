@@ -25,14 +25,11 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function panel(over: { used?: number; running?: boolean; instance?: string } = {}) {
+function panel(over: { running?: boolean; instance?: string } = {}) {
   return buildReviewPanel({
     history,
-    state: { countToday: () => over.used ?? 0 },
-    limit: 10,
     instance: over.instance ?? 'web',
     enabled: () => over.running ?? true,
-    now: () => now,
   });
 }
 
@@ -161,10 +158,10 @@ describe('buildReviewPanel', () => {
     expect(panel().list().reviews[0]!.topic).toBe('abcdef12');
   });
 
-  it('reports today’s quota and the next UTC midnight', () => {
+  it('reports no quota: the sweep has no daily limit', () => {
     reviewSession('review:web#main#abcdef12:1', '复盘：部署', now, '{"changes":[]}');
-    const list = panel({ used: 3 }).list();
-    expect(list.quota).toEqual({ used: 3, limit: 10, resetsAt: Date.UTC(2026, 10, 6, 0, 0) });
+    const list = panel().list();
+    expect(list).not.toHaveProperty('quota');
   });
 
   it('says whether a reviewer is configured right now', () => {

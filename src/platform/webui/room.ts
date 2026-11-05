@@ -715,7 +715,7 @@ export class WebRoom {
     this.reviewPanel = panel;
   }
 
-  /** Every recorded review and today's quota. `enabled: false` when the daemon offered none. */
+  /** Every recorded review. `enabled: false` when the daemon offered none. */
   reviews(): ReviewPanelList {
     if (!this.reviewPanel) return { enabled: false, running: false, reviews: [] };
     return this.reviewPanel.list();

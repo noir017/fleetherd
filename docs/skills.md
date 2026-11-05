@@ -156,10 +156,14 @@ When something changed, one line appears in the conversation that was reviewed:
 📝 复盘：更新技能 `deploy-check`（回滚 `talkcode skills revert deploy-check 0000000000172-abc123`）。偏好建议：回答先给结论
 ```
 
-No change, no line. One review runs at a time and at most ten a day (UTC), so a quiet library
-cannot spend the reviewer's quota; a failed review waits six hours before it is tried again.
-Reviews are filed in the conversation library as `review` sessions, which search and `list` leave
-out.
+No change, no line. One review runs at a time. A conversation this feature has never seen is
+reviewed only when its newest message is under 24 hours old — so turning this on for the first
+time reads the recent tail, not months of history; once it has a record (reviewed or failed), its
+watermark and the retry schedule decide. A failed review waits six hours before it is tried again,
+and the same batch of messages gets at most three attempts; after the third failure the review
+gives up, moves past that batch, and waits for three new messages. There is no daily cap, because
+each conversation's watermark already stops it being reviewed twice. Reviews are filed in the
+conversation library as `review` sessions, which search and `list` leave out.
 
 **Where the results are.** The web UI's side panel has a **Reviews** tab: every review, including
 the ones that changed nothing and posted no line. A row is the reviewed conversation, when, and
@@ -167,7 +171,6 @@ what happened — a skill created or updated, only preference suggestions, a cha
 refused, nothing found, or a failed run. Opening it shows each change with the reviewer's reason,
 whether it actually took effect (and the store's sentence when it did not), the preference
 suggestions in full, and the `talkcode skills revert` / `archive` command that undoes a change.
-A row whose reviewed conversation is still in the topic list links back to it. The tab also shows
-today's quota (`3/10 today`) and, when it is used up, the local time reviews resume — the counter
-resets at UTC midnight. Reviews recorded before results were kept show only what the raw answer
-proposed, marked **inferred**: nothing in the library says whether those changes were applied.
+A row whose reviewed conversation is still in the topic list links back to it. Reviews recorded
+before results were kept show only what the raw answer proposed, marked **inferred**: nothing in
+the library says whether those changes were applied.

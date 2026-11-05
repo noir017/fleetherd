@@ -453,11 +453,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
 /* ── The Reviews tab ─────────────────────────────────────────────────────────
-   A review is a background event, not a control: one line per review, and the rest behind a tap.
-   The quota sits at the top of the list because "why did nothing run today" is the question this
-   tab exists to answer, and a counter buried in a footer is not an answer. */
-.rev-quota{margin:0 2px 8px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
-.rev-quota.full{color:#fbbf24}
+   A review is a background event, not a control: one line per review, and the rest behind a tap. */
 #sched-reviews-list{display:flex;flex-direction:column;gap:6px}
 .rev-item{border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px}
 .rev-item:hover{background:#1e1e1e}
@@ -1130,7 +1126,7 @@ const SCRIPT = `
       schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
       schedTabTasks=$('sched-tab-tasks'), schedTabSessions=$('sched-tab-sessions'), schedTabReviews=$('sched-tab-reviews'),
       schedTabTasksN=$('sched-tab-tasks-n'), schedTabSessionsN=$('sched-tab-sessions-n'), schedTabReviewsN=$('sched-tab-reviews-n'),
-      revPane=$('sched-reviews'), revList=$('sched-reviews-list'), revQuota=$('sched-reviews-quota'),
+      revPane=$('sched-reviews'), revList=$('sched-reviews-list'),
       lightbox=$('lightbox'), lightboxImg=$('lightbox-img'),
       reader=$('reader'), readerName=$('reader-name'), readerGet=$('reader-get'), readerBody=$('reader-body'),
       skillsWin=$('skills'), skillsToggle=$('skills-toggle'), skillsBack=$('skills-back'),
@@ -1744,9 +1740,8 @@ const SCRIPT = `
    * What the automatic review did with the conversations that went quiet.
    *
    * Read-only, and pulled rather than pushed: a review is a rare, slow background event and the
-   * daemon has no event for one finishing. The quota line is the daemon's own counter, not a
-   * second one counted here; when it is full the line says at what local time reviews resume,
-   * because "tomorrow" is not a time and the reset is UTC midnight.
+   * daemon has no event for one finishing. There is no daily quota: the sweep has no cap, so the
+   * list is the whole story.
    */
   function loadReviews(){
     if(app.hidden) return;
@@ -1768,23 +1763,12 @@ const SCRIPT = `
 
   function paintReviews(){
     if(reviewData === null){
-      revQuota.hidden = true;
       revList.innerHTML = '<div class="sched-empty">Loading…</div>';
       return;
     }
     if(!reviewData.enabled){
-      revQuota.hidden = true;
       revList.innerHTML = '<div class="sched-empty">This daemon has no conversation library, so there is no review history.</div>';
       return;
-    }
-    var q = reviewData.quota;
-    if(q && q.limit > 0){
-      var full = q.used >= q.limit;
-      revQuota.hidden = false;
-      revQuota.className = 'rev-quota' + (full ? ' full' : '');
-      revQuota.textContent = q.used + '/' + q.limit + ' today' + (full ? ' · quota used up, reviews resume at ' + revClock(q.resetsAt) : '');
-    } else {
-      revQuota.hidden = true;
     }
     if(!reviewData.reviews.length){
       revList.innerHTML = '<div class="sched-empty">' + (reviewData.running
@@ -1850,11 +1834,6 @@ const SCRIPT = `
     if(c.undo) h += '<code class="rev-undo">' + text(c.undo) + '</code>';
     h += '</div>';
     return h;
-  }
-
-  function revClock(ms){
-    try { return new Date(ms).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
-    catch(x){ return new Date(ms).toISOString().slice(11,16) + ' UTC'; }
   }
 
   function revWhen(at){
@@ -6107,7 +6086,6 @@ __GATE__
       <div id="sched-sessions" role="tabpanel" aria-labelledby="sched-tab-sessions" hidden></div>
       <div id="schedules-list" role="tabpanel" aria-labelledby="sched-tab-tasks"></div>
       <div id="sched-reviews" role="tabpanel" aria-labelledby="sched-tab-reviews" hidden>
-        <div id="sched-reviews-quota" class="rev-quota" hidden></div>
         <div id="sched-reviews-list"></div>
       </div>
     </div>

@@ -607,8 +607,8 @@ export const ConfigSchema = z
      * Off unless `agent` names one, because a review spends the reviewer's quota on every
      * conversation that goes quiet and writes into a skill library every agent reads. The
      * deployment decision is which agent reviews (and, when that agent's own model is not the
-     * right one for the job, which model it uses); when a review runs, how much it sees and how
-     * many run a day are constants in `daemon/review.ts`.
+     * right one for the job, which model it uses); when a review runs and how much it sees are
+     * constants in `daemon/review.ts`, and there is no daily cap.
      *
      * The agent must be an `agy` one: a review is one `agy -p` process on the machine that agent
      * runs on, in an empty directory, with every tool denied. It never touches a file itself —

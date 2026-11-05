@@ -4,15 +4,19 @@ import path from 'node:path';
 /**
  * What the review sweep remembers between runs (`<configDir>/reviews.json`).
  *
- * Two things, both small:
- *  - per conversation, the id of the last message a review saw. A review reads what came AFTER
- *    it, so "the person said three things since the last review" is one integer comparison, and a
- *    gateway restart does not review the same conversation again;
- *  - one counter per UTC day, so a bug that keeps finding candidates cannot spend a day's worth
- *    of the reviewer's quota in a minute.
+ * One thing: per conversation, the id of the last message a review saw. A review reads what came
+ * AFTER it, so "the person said three things since the last review" is one integer comparison, and
+ * a gateway restart does not review the same conversation again. There is no daily counter: this
+ * watermark is the only thing that stops a conversation from being reviewed twice.
  *
  * A failed run keeps the watermark where it was and records a retry time: the conversation will
- * be reviewed again later, but a broken reviewer is not retried every minute.
+ * be reviewed again later, but a broken reviewer is not retried every minute. A batch that keeps
+ * failing is abandoned after three attempts (`gaveUp` moves the watermark past it), so an
+ * exhausted reviewer cannot retry the same messages forever.
+ *
+ * A mark that cannot be written to disk is kept in memory for this process. That is the second
+ * half of the same guarantee: with no daily cap, a full disk would otherwise leave the watermark
+ * unchanged and the sweep would review the same conversation on the next minute, forever.
  *
  * The file is 0600 like everything else beside it. A missing or unreadable file degrades to empty
  * — the cost is one repeated review, never a daemon that will not start.
@@ -27,30 +31,36 @@ export interface ReviewMark {
   attemptAt?: string;
   /** Do not try again before this. Set by a failure. */
   retryAt?: string;
+  /** Consecutive failures on the current batch. Reset by a review or a give-up. */
+  attempts?: number;
   /** Why the last attempt failed, for the log line. */
   error?: string;
 }
 
+/**
+ * Version 1 is still the on-disk shape. A file written before the daily cap was removed also
+ * carries `day` and `count`; they are ignored when reading and dropped on the next write.
+ */
 interface ReviewFile {
   version: 1;
   conversations: Record<string, ReviewMark>;
-  /** UTC date (`YYYY-MM-DD`) the counter belongs to. */
-  day: string;
-  count: number;
 }
 
 /** How long a failed review waits before the same conversation is tried again. */
 export const REVIEW_RETRY_MS = 6 * 3_600_000;
 
 function empty(): ReviewFile {
-  return { version: 1, conversations: {}, day: '', count: 0 };
+  return { version: 1, conversations: {} };
 }
 
-function dayOf(now: number): string {
-  return new Date(now).toISOString().slice(0, 10);
+function clipped(error: string): string {
+  return error.length > 300 ? `${error.slice(0, 299)}…` : error;
 }
 
 export class ReviewStateStore {
+  /** Marks whose write failed; `markOf` prefers them over what is still on disk. */
+  private readonly unpersisted = new Map<string, ReviewMark>();
+
   constructor(
     private readonly file: string,
     private readonly log: (message: string) => void = (m) => console.warn(m)
@@ -58,28 +68,44 @@ export class ReviewStateStore {
 
   /** One conversation's mark, or undefined when it has never been reviewed. */
   markOf(key: string): ReviewMark | undefined {
-    return this.read().conversations[key];
+    return this.unpersisted.get(key) ?? this.read().conversations[key];
   }
 
-  /** A successful review: move the watermark and clear any retry. */
+  /** A successful review: move the watermark, clear any retry and the attempt count. */
   reviewed(key: string, messageId: number, now = Date.now()): void {
-    const data = this.read();
-    data.conversations[key] = { messageId, at: new Date(now).toISOString(), attemptAt: new Date(now).toISOString() };
-    this.write(data);
+    this.save(key, { messageId, at: new Date(now).toISOString(), attemptAt: new Date(now).toISOString() });
   }
 
-  /** A failed review: keep the watermark, wait before trying again. */
-  failed(key: string, error: string, now = Date.now()): void {
-    const data = this.read();
-    const previous = data.conversations[key];
-    data.conversations[key] = {
+  /**
+   * A failed review: keep the watermark, wait before trying again. Returns the number of
+   * consecutive failed attempts on this batch, which the caller uses to decide when to give up.
+   */
+  failed(key: string, error: string, now = Date.now()): number {
+    const previous = this.markOf(key);
+    const attempts = (previous?.attempts ?? 0) + 1;
+    this.save(key, {
       messageId: previous?.messageId ?? 0,
       at: previous?.at ?? new Date(now).toISOString(),
       attemptAt: new Date(now).toISOString(),
       retryAt: new Date(now + REVIEW_RETRY_MS).toISOString(),
-      error: error.length > 300 ? `${error.slice(0, 299)}…` : error,
-    };
-    this.write(data);
+      error: clipped(error),
+      attempts,
+    });
+    return attempts;
+  }
+
+  /**
+   * Give up on the current batch: move the watermark past it so only messages that arrive later
+   * can start another review, and clear the retry. The error is kept for the record's sake;
+   * nothing about scheduling reads it.
+   */
+  gaveUp(key: string, messageId: number, error: string, now = Date.now()): void {
+    this.save(key, {
+      messageId,
+      at: new Date(now).toISOString(),
+      attemptAt: new Date(now).toISOString(),
+      error: clipped(error),
+    });
   }
 
   /** Whether a failure's back-off has passed. */
@@ -88,27 +114,15 @@ export class ReviewStateStore {
     return !retryAt || Date.parse(retryAt) <= now;
   }
 
-  /** Today's used reviews. */
-  countToday(now = Date.now()): number {
-    const data = this.read();
-    return data.day === dayOf(now) ? data.count : 0;
-  }
-
   /**
-   * Claim one review from today's budget. Returns false when it is gone — the caller stops the
-   * sweep rather than logging once per remaining conversation.
+   * Store one mark. A write that fails is not fatal — the mark lives in memory until the file can
+   * be written again, and the sweep treats the conversation as seen either way.
    */
-  takeSlot(limit: number, now = Date.now()): boolean {
+  private save(key: string, mark: ReviewMark): void {
     const data = this.read();
-    const day = dayOf(now);
-    if (data.day !== day) {
-      data.day = day;
-      data.count = 0;
-    }
-    if (data.count >= limit) return false;
-    data.count += 1;
-    this.write(data);
-    return true;
+    data.conversations[key] = mark;
+    if (this.write(data)) this.unpersisted.delete(key);
+    else this.unpersisted.set(key, mark);
   }
 
   private read(): ReviewFile {
@@ -118,12 +132,7 @@ export class ReviewStateStore {
         this.log(`[review] ${this.file} is not a version-1 review file; starting its records over`);
         return empty();
       }
-      return {
-        version: 1,
-        conversations: parsed.conversations,
-        day: typeof parsed.day === 'string' ? parsed.day : '',
-        count: typeof parsed.count === 'number' ? parsed.count : 0,
-      };
+      return { version: 1, conversations: parsed.conversations };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
         this.log(`[review] could not read ${this.file}: ${e instanceof Error ? e.message : e}`);
@@ -132,14 +141,16 @@ export class ReviewStateStore {
     }
   }
 
-  private write(data: ReviewFile): void {
+  private write(data: ReviewFile): boolean {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const tmp = `${this.file}.tmp-${process.pid}`;
       fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
       fs.renameSync(tmp, this.file);
+      return true;
     } catch (e) {
       this.log(`[review] could not write ${this.file}: ${e instanceof Error ? e.message : e}`);
+      return false;
     }
   }
 }

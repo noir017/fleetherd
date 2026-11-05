@@ -6140,11 +6140,10 @@ describe('webui page: the Reviews tab', () => {
     enabled: true,
     running: true,
     reviews,
-    quota: { used: 3, limit: 10, resetsAt: Date.now() + 3_600_000 },
     ...over,
   });
 
-  it('lists reviews under a tab of their own, with today’s quota', async () => {
+  it('lists reviews under a tab of their own, with no daily quota', async () => {
     const h = await open({ replies: { 'api/reviews': reply() } });
     await h.emit(sync(A, [], [A]));
     await h.click('#schedules-toggle');
@@ -6157,7 +6156,9 @@ describe('webui page: the Reviews tab', () => {
     expect(h.el('schedules-list').hidden).toBe(true);
     expect(h.el('sched-tab-reviews-n').textContent).toBe('1');
     expect(h.el('schedules-summary').textContent).toBe('1 review');
-    expect(h.el('sched-reviews-quota').textContent).toBe('3/10 today');
+    // The cap is gone, so there is no counter and no "used up" line to draw.
+    expect(h.doc.getElementById('sched-reviews-quota')).toBeNull();
+    expect(h.el('sched-reviews').textContent).not.toContain('/10');
     const row = h.doc.querySelector('.rev-item')!;
     expect(row.textContent).toContain('Right sidebar');
     expect(row.textContent).toContain('updated deploy-check · 1 preference');
@@ -6272,17 +6273,17 @@ describe('webui page: the Reviews tab', () => {
     expect(h.calls.some((c) => c.path === 'api/reviews')).toBe(true);
   });
 
-  it('says when today’s quota is gone, and at what local time reviews resume', async () => {
+  it('ignores a quota an older daemon still sends', async () => {
     const h = await open({
       replies: { 'api/reviews': reply([review()], { quota: { used: 10, limit: 10, resetsAt: Date.now() + 3_600_000 } }) },
     });
     await h.click('#schedules-toggle');
     await h.click('#sched-tab-reviews');
-    await until('the quota line', () => h.el('sched-reviews-quota').textContent!.includes('10/10 today'));
+    await until('the review row', () => Boolean(h.doc.querySelector('.rev-item')));
 
-    expect(h.el('sched-reviews-quota').className).toContain('full');
-    expect(h.el('sched-reviews-quota').textContent).toContain('quota used up');
-    expect(h.el('sched-reviews-quota').textContent).toMatch(/resume at \d{1,2}:\d{2}/);
+    expect(h.doc.getElementById('sched-reviews-quota')).toBeNull();
+    expect(h.el('sched-reviews').textContent).not.toContain('/10');
+    expect(h.el('sched-reviews').textContent).not.toContain('quota used up');
   });
 });
 

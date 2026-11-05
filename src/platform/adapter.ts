@@ -272,26 +272,19 @@ export interface ReviewPanelEntry {
   inferred?: boolean;
 }
 
-/** Today's reviews, and when the counter starts over (the next UTC midnight). */
-export interface ReviewPanelQuota {
-  used: number;
-  limit: number;
-  /** Epoch ms. The page shows it in the browser's own timezone. */
-  resetsAt: number;
-}
-
 /**
  * Everything the Reviews tab draws.
  *
  * `enabled` is the conversation library being open at all; `running` is `review.agent` naming an
  * agent that exists. They are separate because old reviews remain worth reading after the reviewer
  * is turned off, while an empty tab should say which of the two is the reason it is empty.
+ *
+ * There is no quota field: the review sweep has no daily limit, so there is no counter to show.
  */
 export interface ReviewPanelList {
   enabled: boolean;
   running: boolean;
   reviews: ReviewPanelEntry[];
-  quota?: ReviewPanelQuota;
 }
 
 /** What `useReviewPanel` hands a platform: the list, and nothing to write — a review is not a control. */

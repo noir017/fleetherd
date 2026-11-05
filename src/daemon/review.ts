@@ -65,8 +65,12 @@ import {
  * dropped and logged, never retried in a loop. The reviewer itself never has a write path.
  *
  * ── What it costs ───────────────────────────────────────────────────────────────────────────────
- * One review at a time and at most REVIEW_DAILY_LIMIT a day, so a bug that keeps finding
- * candidates cannot spend the reviewer's quota. A failed review backs off for six hours.
+ * One review at a time, a six-hour back-off after a failure, and at most REVIEW_MAX_ATTEMPTS tries
+ * on the same batch of messages before the sweep gives up on it. There is no daily cap: each
+ * conversation's watermark is what stops it being reviewed again, and REVIEW_LAST_MESSAGE_MAX_MS
+ * keeps the first start from replaying months of history for conversations it has never seen. A
+ * watermark that cannot be written is held in memory (review-state.ts), so a full disk does not
+ * become a review loop.
  */
 
 /** A conversation has to be quiet this long before a review — the reclaim deadline's own hour. */
@@ -75,8 +79,20 @@ export const REVIEW_IDLE_MS = 3_600_000;
 /** How often the sweep looks. The same coarse minute as the idle sweeper, for the same reason. */
 export const REVIEW_SWEEP_MS = 60_000;
 
-/** Reviews per UTC day. One review is one `agy` call; ten leaves room for a busy day. */
-export const REVIEW_DAILY_LIMIT = 10;
+/**
+ * How old the newest message may be, for a conversation this feature has never seen. This is what
+ * the daily cap used to do on the first start: review the conversations that just went quiet, not
+ * every conversation since the gateway was installed. A conversation with a mark (reviewed or
+ * failed) is not subject to it — its watermark and retry time do that job.
+ */
+export const REVIEW_LAST_MESSAGE_MAX_MS = 24 * 3_600_000;
+
+/**
+ * Failed attempts allowed on one batch of messages. After this the sweep gives up on the batch and
+ * moves the watermark past it: an exhausted reviewer (or a host that is down) must not hold the
+ * single review lane forever, retrying the same messages every six hours.
+ */
+export const REVIEW_MAX_ATTEMPTS = 3;
 
 /** How many of the person's messages make a conversation worth reviewing. */
 export const REVIEW_MIN_USER_MESSAGES = 3;
@@ -220,26 +236,24 @@ export class ReviewService {
     if (!reviewer || !this.deps.history.available) return;
     this.busy = true;
     try {
-      const now = this.deps.clock.now();
       const reclaimOff = !(this.deps.config.session.idleTimeoutMs > 0);
       const candidates = this.deps
         .candidates()
         .filter((c) => eligible(c, reclaimOff))
-        // Freshest first. On the first start with this feature every conversation has no
-        // watermark and so looks reviewable; taking the ones that just went quiet is useful, while
-        // replaying months of history is not. The daily cap bounds both.
+        // Freshest first: on the first start with this feature every conversation looks
+        // reviewable, and the ones that just went quiet are the useful ones. The freshness rule
+        // in `plan` is what keeps months of history out; there is no daily cap any more.
         .sort((a, b) => a.idleMs - b.idleMs);
       for (const candidate of candidates) {
         const current = this.reviewer();
         if (!current || this.stopped) break;
         // One conversation's broken row must not end the pass: the next candidate may be fine.
         try {
+          // Per candidate, not once per pass: with no cap a pass can outlive the hour, and a
+          // retry that is six hours old by now must not be held back by a stale clock.
+          const now = this.deps.clock.now();
           const plan = this.plan(candidate, now);
           if (!plan) continue;
-          if (!this.deps.state.takeSlot(REVIEW_DAILY_LIMIT, now)) {
-            this.log(`[review] ${REVIEW_DAILY_LIMIT} reviews already ran today; the rest wait for tomorrow`);
-            break;
-          }
           await this.runOne(candidate, plan, current, now);
         } catch (e) {
           this.log(`[review] ${candidate.key}: ${e instanceof Error ? e.message : e}`);
@@ -253,7 +267,8 @@ export class ReviewService {
   /**
    * Whether this conversation is worth reviewing now: the library has it, it is a person's
    * conversation rather than a scheduled, sub-agent or review one, its last failure has backed
-   * off, and the person has said enough since the last review.
+   * off, its newest message is under a day old when this feature has never seen it, and the person
+   * has said enough since the last review.
    */
   private plan(candidate: ReviewCandidate, now: number): Plan | undefined {
     const session = this.deps.history.sessionOf(candidate.key);
@@ -262,17 +277,55 @@ export class ReviewService {
     const mark = this.deps.state.markOf(candidate.key);
     const window = this.deps.history.reviewWindow(candidate.key, mark?.messageId ?? 0, REVIEW_CONVERSATION_CHARS);
     if (!window || window.messages.length === 0) return undefined;
+    // The freshness rule applies only to a conversation with no mark at all: it exists so the
+    // first start after enabling cannot replay months of history. Once a mark exists — reviewed or
+    // failed — the watermark and the six-hour retry decide; applying the age here too would make a
+    // failed conversation permanently unreviewable once its messages turned a day old.
+    const newest = window.messages[window.messages.length - 1];
+    if (!newest) return undefined;
+    if (!mark && now - (Date.parse(newest.at) || 0) > REVIEW_LAST_MESSAGE_MAX_MS) return undefined;
     if (window.userMessages < REVIEW_MIN_USER_MESSAGES) return undefined;
     return { session, window };
   }
 
+  /**
+   * Record one failed attempt and return the sentence for the log and the Reviews row. The third
+   * failure gives up on this batch: the watermark moves past it, so only messages that arrive
+   * afterwards can start another review.
+   */
+  private fail(candidate: ReviewCandidate, plan: Plan, error: string, now: number): string {
+    const attempts = this.deps.state.failed(candidate.key, error, now);
+    const message = attempts < REVIEW_MAX_ATTEMPTS ? error : `gave up after ${attempts} attempts: ${error}`;
+    if (attempts >= REVIEW_MAX_ATTEMPTS) {
+      this.deps.state.gaveUp(candidate.key, plan.window.lastMessageId, message, now);
+    }
+    this.log(`[review] ${candidate.key}: ${message}`);
+    return message;
+  }
+
   private async runOne(candidate: ReviewCandidate, plan: Plan, reviewer: AgentDef, now: number): Promise<void> {
-    const prompt = this.promptFor(plan);
+    let prompt: string;
+    try {
+      prompt = this.promptFor(plan);
+    } catch (e) {
+      // Building the prompt reads the skill library and every skill the conversation used. A
+      // failure there — an unreadable directory, a broken `SKILL.md` — is a failed review like any
+      // other: back off, and leave a row so the Reviews tab can say why nothing happened.
+      const error = this.fail(candidate, plan, `could not prepare the review: ${e instanceof Error ? e.message : String(e)}`, now);
+      const failedId = this.record(plan, '', '', reviewer, candidate, now);
+      this.writeResult(failedId, plan, candidate, now, {
+        outcome: 'failed',
+        changes: [],
+        preferences: [],
+        invalid: [],
+        error,
+      });
+      return;
+    }
     const model = this.deps.config.review?.model ?? reviewer.model;
     const result = await this.run(reviewer, model, prompt);
     if (!result.ok) {
-      this.deps.state.failed(candidate.key, result.error, now);
-      this.log(`[review] ${candidate.key}: ${result.error}`);
+      const error = this.fail(candidate, plan, result.error, now);
       // A failed attempt is a review too. Until this row existed the reason a quiet conversation
       // was never reviewed lived only in the log, which is not where a person looks; the Reviews
       // tab is. The session has no answer to file, only the prompt and the failure.
@@ -282,7 +335,7 @@ export class ReviewService {
         changes: [],
         preferences: [],
         invalid: [],
-        error: result.error,
+        error,
       });
       return;
     }
@@ -413,7 +466,8 @@ export class ReviewService {
   /**
    * File the review itself in the library, as a `review` session no search returns, and answer its
    * id so the result row can be attached. An empty `output` is a run that never answered: the
-   * session then holds the prompt alone.
+   * session then holds the prompt alone. An empty `prompt` is a preparation failure, before
+   * anything was sent: the session holds no messages at all.
    */
   private record(
     plan: Plan,
@@ -433,7 +487,7 @@ export class ReviewService {
         kind: 'review',
         at: now,
       });
-      this.deps.history.message(id, { ts: now, role: 'user', kind: 'review', text: prompt });
+      if (prompt) this.deps.history.message(id, { ts: now, role: 'user', kind: 'review', text: prompt });
       if (output) this.deps.history.message(id, { ts: now, role: 'agent', kind: 'review', text: output });
       return id;
     } catch (e) {

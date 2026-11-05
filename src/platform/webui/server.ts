@@ -778,7 +778,7 @@ async function skillsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
 }
 
 /**
- * Every recorded automatic review, plus today's quota, for the panel's Reviews tab.
+ * Every recorded automatic review, for the panel's Reviews tab.
  *
  * A GET and nothing else: a review is written by the sweep through the skill store's own rules,
  * and the only way to undo one is the `talkcode skills revert` / `archive` command the row names.

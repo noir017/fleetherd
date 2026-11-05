@@ -2,11 +2,10 @@ import type { HistoryReviewChange, HistoryReviewRecord, HistoryReviewRow, Histor
 import type { ReviewPanel, ReviewPanelEntry, ReviewPanelList } from '../platform/adapter.js';
 import { parseReviewOutput } from './review-prompt.js';
 import { inferOutcome, summaryOf, undoOf, type AppliedChange } from './review-result.js';
-import type { ReviewStateStore } from './review-state.js';
 
 /**
  * The daemon's side of the web UI's Reviews tab: `history.db`'s review sessions → the flat rows
- * the panel draws, plus today's quota.
+ * the panel draws.
  *
  * A review recorded since results were kept has a `reviews` row saying what was applied, what was
  * refused and why. One recorded before that table existed has only the prompt and the reviewer's
@@ -14,32 +13,25 @@ import type { ReviewStateStore } from './review-state.js';
  * in the library says whether any of the proposed changes took effect. Showing them as facts would
  * be inventing the one thing the feature is for.
  *
- * The quota is `ReviewStateStore`'s own counter, read live: the panel is the place a person sees
- * that today's ten reviews are gone, so it must not be a second counter that can drift.
+ * There is no quota: the sweep has no daily cap, so a "used up" line would describe a limit that
+ * does not exist.
  */
 
-/** How many reviews the tab carries. A review happens at most ten times a day. */
+/** How many reviews the tab carries. Reviews are slow; this is a screenful of history. */
 export const REVIEW_PANEL_LIMIT = 50;
 
 export interface ReviewPanelOptions {
   history: HistoryStore;
-  state: Pick<ReviewStateStore, 'countToday'>;
-  /** Reviews per UTC day, from `review.ts` (REVIEW_DAILY_LIMIT). */
-  limit: number;
   /** The platform instance showing the panel; a topic of another instance gets no link. */
   instance: string;
   /** Whether a reviewer is configured right now — read per call, so `/reload` shows at once. */
   enabled: () => boolean;
-  /** Injected by a test; the system clock otherwise. */
-  now?: () => number;
   max?: number;
 }
 
 export function buildReviewPanel(options: ReviewPanelOptions): ReviewPanel {
-  const now = options.now ?? Date.now;
   return {
     list(): ReviewPanelList {
-      const at = now();
       const rows = options.history.reviewSessions(options.max ?? REVIEW_PANEL_LIMIT);
       return {
         enabled: true,
@@ -47,13 +39,6 @@ export function buildReviewPanel(options: ReviewPanelOptions): ReviewPanel {
         reviews: rows.map((row) =>
           row.record ? recordedEntry(row.record, row.session, options.instance) : inferredEntry(row, options.history, options.instance)
         ),
-        quota: {
-          used: options.state.countToday(at),
-          limit: options.limit,
-          // The next UTC midnight: when `countToday` starts answering zero again. The page turns
-          // it into the browser's own clock, which is the only one the person reading it has.
-          resetsAt: Math.floor(at / 86_400_000) * 86_400_000 + 86_400_000,
-        },
       };
     },
   };

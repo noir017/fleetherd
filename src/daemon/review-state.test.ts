@@ -48,19 +48,67 @@ describe('ReviewStateStore', () => {
     expect(store().ready('a', T0 + 1_000 + REVIEW_RETRY_MS)).toBe(true);
   });
 
+  it('counts consecutive failures on a batch and resets them on a review', () => {
+    const s = store();
+    expect(s.failed('a', 'agy exited 1', T0)).toBe(1);
+    expect(s.failed('a', 'agy exited 1', T0)).toBe(2);
+    s.reviewed('a', 42, T0);
+    expect(s.markOf('a')?.attempts).toBeUndefined();
+    expect(s.failed('a', 'agy exited 1', T0)).toBe(1);
+  });
+
+  it('gives up on a batch by moving the watermark and clearing the retry', () => {
+    const s = store();
+    s.failed('a', 'agy exited 1', T0);
+    s.gaveUp('a', 42, 'gave up after 3 attempts: agy exited 1', T0);
+    const mark = s.markOf('a');
+    expect(mark?.messageId).toBe(42);
+    expect(mark?.retryAt).toBeUndefined();
+    expect(mark?.attempts).toBeUndefined();
+    expect(mark?.error).toContain('gave up after 3 attempts');
+  });
+
   it('writes the file 0600', () => {
     store().reviewed('a', 1, T0);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });
 
-  it('counts a day and starts over on the next one', () => {
+  it('reads a file written before the daily cap was removed', () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        conversations: { a: { messageId: 42, at: new Date(T0).toISOString() } },
+        day: '2026-11-04',
+        count: 7,
+      })
+    );
     const s = store();
-    expect(s.takeSlot(2, T0)).toBe(true);
-    expect(s.takeSlot(2, T0 + 1)).toBe(true);
-    expect(s.takeSlot(2, T0 + 2)).toBe(false);
-    expect(s.countToday(T0)).toBe(2);
-    expect(s.countToday(T0 + 86_400_000)).toBe(0);
-    expect(s.takeSlot(2, T0 + 86_400_000)).toBe(true);
+    expect(s.markOf('a')?.messageId).toBe(42);
+    // The old fields are not a reason to reject the file, and the next write drops them.
+    s.reviewed('b', 1, T0);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(saved.conversations.a.messageId).toBe(42);
+    expect(saved.conversations.b.messageId).toBe(1);
+    expect(saved.day).toBeUndefined();
+    expect(saved.count).toBeUndefined();
+  });
+
+  it('keeps a mark in memory when the file cannot be written, so the sweep does not loop', () => {
+    // A directory where the file should be: every write fails, whatever the process can do.
+    fs.mkdirSync(file);
+    const s = store();
+    s.reviewed('a', 42, T0);
+    expect(s.markOf('a')?.messageId).toBe(42);
+    expect(logs.some((l) => l.includes('could not write'))).toBe(true);
+  });
+
+  it('remembers a failure in memory too, so a broken reviewer is not retried on the next tick', () => {
+    fs.mkdirSync(file);
+    const s = store();
+    s.failed('a', 'agy exited 1', T0);
+    expect(s.ready('a', T0 + 60_000)).toBe(false);
+    expect(s.ready('a', T0 + REVIEW_RETRY_MS)).toBe(true);
   });
 
   it('degrades to empty on a corrupt file instead of throwing', () => {

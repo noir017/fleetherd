@@ -122,7 +122,7 @@ import type { WorkdirUsageStore } from './workdir-usage.js';
 import { resolvePageSize } from '../core/paging.js';
 import { IpcServer } from '../ipc/server.js';
 import { startSkillSweep } from './skill-lifecycle.js';
-import { ReviewService, REVIEW_DAILY_LIMIT, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
+import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
 import { ReviewStateStore } from './review-state.js';
 import { buildReviewPanel } from './review-panel.js';
 import { selfInvocation } from './reverse-cli-shim.js';
@@ -838,9 +838,9 @@ export class Daemon {
   private readonly reviews?: ReviewService;
 
   /**
-   * The review sweep's own file (`reviews.json`), held beside the service because the web UI's
-   * Reviews tab reads today's counter from it. One instance for both: two readers would be fine,
-   * but a second writer is how a counter and a sweep start disagreeing.
+   * The review sweep's store (`reviews.json`). It is constructed here because `configDir()` is
+   * only known here; the service holds it from then on, and the sweep is its only reader and
+   * writer now that the Reviews tab no longer shows a counter.
    */
   private readonly reviewState?: ReviewStateStore;
 
@@ -1768,8 +1768,8 @@ export class Daemon {
   }
 
   /**
-   * The web UI's Reviews tab, bound to one platform instance: the review sessions in `history.db`
-   * and today's quota. Read-only by construction — see `useReviewPanel`.
+   * The web UI's Reviews tab, bound to one platform instance: the review sessions in `history.db`.
+   * Read-only by construction — see `useReviewPanel`.
    *
    * The instance id is only for the link back to the reviewed topic: a review of a Telegram
    * conversation has no topic here, and a topic id from another instance would point the page at a
@@ -1777,13 +1777,10 @@ export class Daemon {
    */
   private reviewPanel(instance: string): ReviewPanel | undefined {
     const history = this.history;
-    const state = this.reviewState;
     const reviews = this.reviews;
-    if (!history || !state || !reviews) return undefined;
+    if (!history || !reviews) return undefined;
     return buildReviewPanel({
       history,
-      state,
-      limit: REVIEW_DAILY_LIMIT,
       instance,
       enabled: () => reviews.enabled(),
     });
