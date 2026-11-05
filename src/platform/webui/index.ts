@@ -544,6 +544,7 @@ function lifecycle(
   | 'useScheduleLookup'
   | 'useSchedulePanel'
   | 'useSkillsPanel'
+  | 'useReviewPanel'
   | 'useIdleReclaim'
   | 'useAgentCatalog'
   | 'useModelPicker'
@@ -584,6 +585,12 @@ function lifecycle(
      * of them.
      */
     useSkillsPanel: (panel) => room.useSkillsPanel(panel),
+    /**
+     * The only implementor, for the same kind of reason again: a chat app already gets the one line
+     * a review posts when it changed a skill, and nothing for the reviews that changed nothing.
+     * This page has a column where the whole history can be read, including the quiet ones.
+     */
+    useReviewPanel: (panel) => room.useReviewPanel(panel),
     /**
      * The only implementor because it is the only platform that lists its conversations' agents
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".

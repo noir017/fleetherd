@@ -385,6 +385,101 @@ describe('ReviewService', () => {
     expect(history.search('读下面的对话记录')).toHaveLength(0);
   });
 
+  it('records what each change became, with the command that undoes it', async () => {
+    seed('telegram:chat:1', 3);
+    const output = JSON.stringify({
+      changes: [
+        { action: 'create', name: 'deploy-check', description: '部署前检查', body: '先跑测试。', reason: '两次漏了测试' },
+      ],
+      preferences: ['回答先给结论'],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+
+    const [row] = history.reviewSessions();
+    expect(row!.record).toMatchObject({
+      reviewedKey: 'telegram:chat:1',
+      reviewedTitle: 'telegram:chat:1',
+      platform: 'telegram',
+      channel: 'chat',
+      outcome: 'changed',
+      preferences: ['回答先给结论'],
+      invalid: [],
+    });
+    expect(row!.record!.changes[0]).toMatchObject({
+      action: 'create',
+      name: 'deploy-check',
+      reason: '两次漏了测试',
+      applied: true,
+    });
+    // The result is a fact about the review, not the notice: the undo command is derived from it
+    // by the panel, and a create has no history entry to revert to.
+    expect(row!.record!.changes[0]!.revertId).toBeUndefined();
+  });
+
+  it('records a change the store refused, with the store’s own sentence', async () => {
+    seed('telegram:chat:1', 3);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '旧正文。' }, dir);
+    const output = JSON.stringify({
+      changes: [
+        { action: 'patch', name: 'deploy-check', version: 'deadbeef0000', content: SKILL_MD('deploy-check'), reason: '旧版本' },
+      ],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+
+    const [row] = history.reviewSessions();
+    expect(row!.record!.outcome).toBe('refused');
+    expect(row!.record!.changes[0]).toMatchObject({ action: 'patch', name: 'deploy-check', applied: false });
+    expect(row!.record!.changes[0]!.error).toContain('version mismatch');
+  });
+
+  it('records a change that never passed the shape check under invalid', async () => {
+    seed('telegram:chat:1', 3);
+    const output = JSON.stringify({
+      changes: [
+        { action: 'create', name: 'bad-skill', description: '' },
+        { action: 'create', name: 'good-skill', description: '好技能', body: '正文' },
+      ],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+    const [row] = history.reviewSessions();
+    expect(row!.record!.outcome).toBe('changed');
+    expect(row!.record!.invalid).toHaveLength(1);
+    expect(row!.record!.invalid[0]).toContain('change #1');
+    expect(row!.record!.changes.map((c) => c.name)).toEqual(['good-skill']);
+  });
+
+  it('records only preference suggestions, so they are not lost to the log', async () => {
+    seed('telegram:chat:1', 3);
+    const h = harness({ output: '{"changes":[],"preferences":["别用表情"]}' });
+    await h.service.sweep();
+    const [row] = history.reviewSessions();
+    expect(row!.record).toMatchObject({ outcome: 'preferences', preferences: ['别用表情'], changes: [] });
+  });
+
+  it('files a failed run too, so the tab can say why nothing was reviewed', async () => {
+    seed('telegram:chat:1', 3);
+    const h = harness({ run: async () => ({ ok: false, error: 'agy exited 1' }) });
+    await h.service.sweep();
+
+    const [row] = history.reviewSessions();
+    expect(row!.session.kind).toBe('review');
+    expect(row!.record).toMatchObject({ outcome: 'failed', error: 'agy exited 1', changes: [], preferences: [] });
+    // The prompt is what was sent; there is no answer to file.
+    expect(history.reviewAnswer(row!.session.id)).toBeUndefined();
+  });
+
+  it('records an answer it could not read as a failed review, not as "nothing"', async () => {
+    seed('telegram:chat:1', 3);
+    const h = harness({ output: '我觉得这段对话没什么可改的' });
+    await h.service.sweep();
+    const [row] = history.reviewSessions();
+    expect(row!.record!.outcome).toBe('failed');
+    expect(row!.record!.error).toContain('could not be read');
+  });
+
   it('backs off for six hours after a failed run', async () => {
     seed('telegram:chat:1', 3);
     const calls: number[] = [];

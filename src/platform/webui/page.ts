@@ -345,9 +345,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #term-bar{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;background:#161616;border-bottom:1px solid var(--line);flex:0 0 auto}
 .term-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 #term-end:hover{color:#f87171;background:rgba(248,113,113,.15)}
-/* The scheduled-task panel's toggle. It owns the auto margin the terminal used to: the clock is
-   always in the header, so it is what pushes the right-hand group to the edge whether the
-   terminal button is there or not. */
+/* The side panel's toggle. It owns the auto margin the terminal used to: the clock is always in
+   the header, so it is what pushes the right-hand group to the edge whether the terminal button
+   is there or not. */
 #schedules-toggle{position:relative;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px;margin-left:auto}
 #schedules-toggle.on{color:#4ade80}
 /* A scheduled run that is waiting on an answer has no row in the switcher any more, so without
@@ -355,7 +355,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    and it disappears the moment the run is answered. */
 .sched-alert{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:#fbbf24;box-shadow:0 0 5px rgba(251,191,36,.8)}
 
-/* ── The scheduled-task panel ────────────────────────────────────────────────
+/* ── The side panel ──────────────────────────────────────────────────────────
    A panel of its own on the right, not a section of the topic list: a task is not a
    conversation, and the sidebar is where conversations live. It is the same component as
    the sidebar (.panel above), on the other edge; what it does not share is the width it
@@ -378,11 +378,15 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    and a flex:1 title inside a column would grow down over the summary instead. */
 .sched-heading .panel-title{flex:none}
 .sched-summary{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* Two lists, one panel: a task is a definition and a session is one run of it, so they are
-   tabs rather than one merged column that would make every run look like a task. The tabs sit
-   at the foot of the panel, in the same .panel-foot row the sidebar keeps its menus in, so
-   the two columns end on one line. */
-.panel-foot>.sched-tab{flex:1;min-width:0;text-align:center}
+/* Three lists, one panel: a task is a definition, a session is one run of it, and a review is
+   what the gateway learned afterwards. They are tabs rather than one merged column that would
+   make every run look like a task and every review like either. The tabs sit at the foot of the
+   panel, in the same .panel-foot row the sidebar keeps its menus in, so the two columns end on
+   one line. */
+/* Three tabs in a 240px panel: the shared 9px padding leaves "Sessions" too little at that width,
+   so these are tighter and a hair smaller. They still take a third each, and the count stays
+   beside its word rather than wrapping. */
+.panel-foot>.sched-tab{flex:1;min-width:0;text-align:center;padding-left:5px;padding-right:5px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
 .sched-count{font-weight:500;color:#6b7683;margin-left:2px}
 .sched-tab.on .sched-count{color:#8a8a8a}
 #schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
@@ -448,6 +452,43 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-acts button.confirm{background:rgba(248,113,113,.16);border-color:#7f1d1d;color:#fca5a5}
 #schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
+/* ── The Reviews tab ─────────────────────────────────────────────────────────
+   A review is a background event, not a control: one line per review, and the rest behind a tap.
+   The quota sits at the top of the list because "why did nothing run today" is the question this
+   tab exists to answer, and a counter buried in a footer is not an answer. */
+.rev-quota{margin:0 2px 8px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+.rev-quota.full{color:#fbbf24}
+#sched-reviews-list{display:flex;flex-direction:column;gap:6px}
+.rev-item{border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px}
+.rev-item:hover{background:#1e1e1e}
+.rev-item.open{background:#202020;border-color:#3a3a3a}
+.rev-row{display:flex;align-items:center;gap:6px;min-width:0}
+.rev-dot{width:8px;height:8px;border-radius:50%;background:#555;flex:none}
+.rev-item.changed .rev-dot{background:#4ade80}
+.rev-item.preferences .rev-dot{background:#38bdf8}
+.rev-item.refused .rev-dot{background:#fbbf24}
+.rev-item.proposed .rev-dot{background:#8a8a8a}
+.rev-item.failed .rev-dot{background:#f87171}
+.rev-topic{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
+.rev-when{flex:none;font-size:11px;color:var(--dim)}
+.rev-badge{flex:none;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.02em;padding:1px 4px;border-radius:999px;background:#2a2a2a;color:#a8a8a8}
+.rev-result{font-size:11.5px;color:#c9c9c9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rev-item.failed .rev-result{color:#f87171}
+.rev-detail{margin-top:6px;padding-top:8px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.rev-label{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.rev-change{font-size:12px;color:#d0d0d0;line-height:1.5;overflow-wrap:anywhere}
+.rev-change .rev-name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#fff}
+.rev-reason{color:var(--dim)}
+.rev-status{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-left:5px}
+.rev-status.ok{color:#4ade80}
+.rev-status.bad{color:#fbbf24}
+.rev-status.unknown{color:#8a8a8a}
+.rev-undo{display:block;margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:#8a8a8a;overflow-wrap:anywhere;user-select:all}
+.rev-pref{font-size:12px;color:#d0d0d0;line-height:1.5;overflow-wrap:anywhere}
+.rev-note{font-size:11.5px;color:var(--dim);line-height:1.5;overflow-wrap:anywhere}
+.rev-note.bad{color:#f87171}
+.rev-open{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer;align-self:flex-start}
+.rev-open:hover{border-color:#3a3a3a;background:#2a2a2a}
 /* ── The skills page ─────────────────────────────────────────────────────────
    A window over the transcript rather than a column: an editor needs width, and a history row
    needs more than a sidebar's 240px. The backdrop dims the chat for the same reason the reader's
@@ -979,6 +1020,7 @@ button:disabled{opacity:.5;cursor:default}
   #schedules-toggle{min-width:44px;height:44px}
   #schedules-toggle svg{width:18px;height:18px}
   .sched-acts button{min-height:44px;padding:0 14px}
+  .rev-open{min-height:44px;padding:0 14px}
   /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
      phone is an editor with a sliver of transcript behind it, and the transcript is not what the
      operator opened. */
@@ -1086,8 +1128,9 @@ const SCRIPT = `
       schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
       schedClose=$('schedules-close'), schedNote=$('schedules-note'),
       schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
-      schedTabTasks=$('sched-tab-tasks'), schedTabSessions=$('sched-tab-sessions'),
-      schedTabTasksN=$('sched-tab-tasks-n'), schedTabSessionsN=$('sched-tab-sessions-n'),
+      schedTabTasks=$('sched-tab-tasks'), schedTabSessions=$('sched-tab-sessions'), schedTabReviews=$('sched-tab-reviews'),
+      schedTabTasksN=$('sched-tab-tasks-n'), schedTabSessionsN=$('sched-tab-sessions-n'), schedTabReviewsN=$('sched-tab-reviews-n'),
+      revPane=$('sched-reviews'), revList=$('sched-reviews-list'), revQuota=$('sched-reviews-quota'),
       lightbox=$('lightbox'), lightboxImg=$('lightbox-img'),
       reader=$('reader'), readerName=$('reader-name'), readerGet=$('reader-get'), readerBody=$('reader-body'),
       skillsWin=$('skills'), skillsToggle=$('skills-toggle'), skillsBack=$('skills-back'),
@@ -1139,12 +1182,15 @@ const SCRIPT = `
   var topics = [];
   var readCounts = {};
   try { readCounts = JSON.parse(localStorage.getItem('aa_reads') || '{}'); } catch(x){}
-  // The scheduled-task panel: whether it is showing, the last list drawn, and its refresh timer.
-  // See "The scheduled-task panel" below.
+  // The side panel: whether it is showing, the last task list drawn, and its refresh timer.
+  // See "The side panel" below.
   var schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
-  // Which of the panel's two lists is on screen. Persisted, because it is a preference about the
+  // Which of the panel's three lists is on screen. Persisted, because it is a preference about the
   // workspace rather than about one visit.
   var schedTab='tasks';
+  // The Reviews tab's last answer, and the rows the reader has opened. null is "not asked yet",
+  // which is different from an empty list and is what the tab shows as Loading….
+  var reviewData=null, reviewSeq=0, revOpen={};
   // The skills window: its list, the skill open in it, and whether the New form is showing. Not
   // persisted — a management surface is opened on purpose, and a window that came back on load
   // would sit over a conversation nobody asked it to cover.
@@ -1495,6 +1541,7 @@ const SCRIPT = `
       if(open){
         if(schedTasks === null) schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
         loadSchedules();
+        if(schedTab === 'reviews') loadReviews();
         armSched();
       } else {
         disarmSched();
@@ -1608,13 +1655,16 @@ const SCRIPT = `
   });
   paintCalm();
 
-  // ── The scheduled-task panel ────────────────────────────────────────────────
+  // ── The side panel ──────────────────────────────────────────────────────────
   /**
-   * The gateway's scheduled work, in a column of its own rather than in the topic list.
+   * The gateway's background work, in a column of its own rather than in the topic list.
    *
-   * Two tabs, because a task and a run of it are different things: Tasks is the definitions with
-   * their controls, Sessions is the topics a new-session run opened. Those topics are left out of
-   * the switcher (topicRows), so this tab is their only home — and the only place to delete one.
+   * Three tabs, because a task, a run of it and a review of a conversation are different things:
+   * Tasks is the definitions with their controls, Sessions is the topics a new-session run opened,
+   * and Reviews is what the automatic review learned from quiet conversations. Those session
+   * topics are left out of the switcher (topicRows), so the Sessions tab is their only home — and
+   * the only place to delete one. Reviews have no home anywhere else: a review that changed
+   * nothing posts no line, and its result used to live only in the log.
    *
    * Closed on a first visit, then open until the operator closes it: the choice is kept in
    * localStorage (aa_sched_open), so opening a session from the panel leaves the panel where it
@@ -1626,9 +1676,14 @@ const SCRIPT = `
    * The task list is pulled when the panel opens, after every action, and on a timer while it is
    * visible (5s while a task is running, 30s otherwise). The sessions list needs no request: the
    * topics event that keeps the switcher current carries their flags, state and unread counts too.
+   * Reviews are pulled on the same timer when their tab is the one on screen.
    */
   try {
-    if(localStorage.getItem('aa_sched_tab') === 'sessions'){ schedTab = 'sessions'; paintSchedTab(); }
+    var savedSchedTab = localStorage.getItem('aa_sched_tab');
+    if(savedSchedTab === 'sessions' || savedSchedTab === 'reviews'){
+      schedTab = savedSchedTab;
+      paintSchedTab();
+    }
   } catch(x){}
 
   /** The topics a scheduled run opened, most recently active first (the order topics is in). */
@@ -1684,9 +1739,138 @@ const SCRIPT = `
     schedSessionList.innerHTML=h;
   }
 
+  // ── Reviews ────────────────────────────────────────────────────────────────
+  /**
+   * What the automatic review did with the conversations that went quiet.
+   *
+   * Read-only, and pulled rather than pushed: a review is a rare, slow background event and the
+   * daemon has no event for one finishing. The quota line is the daemon's own counter, not a
+   * second one counted here; when it is full the line says at what local time reviews resume,
+   * because "tomorrow" is not a time and the reset is UTC midnight.
+   */
+  function loadReviews(){
+    if(app.hidden) return;
+    var seq = ++reviewSeq;
+    fetch('api/reviews', {credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      if(seq !== reviewSeq) return;
+      reviewData = d || { enabled:false, running:false, reviews:[] };
+      paintReviews();
+      paintSchedCounts();
+      paintSummary();
+    }).catch(function(e){
+      if(seq !== reviewSeq) return;
+      showSchedNote('Could not refresh reviews: ' + ((e && e.message) || 'network error'));
+    });
+  }
+
+  function paintReviews(){
+    if(reviewData === null){
+      revQuota.hidden = true;
+      revList.innerHTML = '<div class="sched-empty">Loading…</div>';
+      return;
+    }
+    if(!reviewData.enabled){
+      revQuota.hidden = true;
+      revList.innerHTML = '<div class="sched-empty">This daemon has no conversation library, so there is no review history.</div>';
+      return;
+    }
+    var q = reviewData.quota;
+    if(q && q.limit > 0){
+      var full = q.used >= q.limit;
+      revQuota.hidden = false;
+      revQuota.className = 'rev-quota' + (full ? ' full' : '');
+      revQuota.textContent = q.used + '/' + q.limit + ' today' + (full ? ' · quota used up, reviews resume at ' + revClock(q.resetsAt) : '');
+    } else {
+      revQuota.hidden = true;
+    }
+    if(!reviewData.reviews.length){
+      revList.innerHTML = '<div class="sched-empty">' + (reviewData.running
+        ? 'No reviews yet. A conversation is reviewed once it has been quiet for an hour, after three messages from you.'
+        : 'Automatic review is off. Name an agent under review.agent to turn it on; reviews recorded before then still appear here.') + '</div>';
+      return;
+    }
+    var h='';
+    for(var i=0;i<reviewData.reviews.length;i++) h += revRow(reviewData.reviews[i]);
+    revList.innerHTML = h;
+  }
+
+  /** The panel is a column: a review is one line until it is opened, like a task card. */
+  function revRow(r){
+    var open = Boolean(revOpen[r.id]);
+    var h = '<div class="rev-item ' + text(r.outcome) + (open ? ' open' : '') + '" data-rev="' + text(r.id) + '" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">';
+    h += '<div class="rev-row"><span class="rev-dot"></span><span class="rev-topic">' + text(r.title) + '</span>';
+    if(r.inferred) h += '<span class="rev-badge">inferred</span>';
+    h += '<span class="rev-when" title="' + text(revWhen(r.at)) + '">' + text(schedAgo(r.at)) + '</span></div>';
+    h += '<div class="rev-result">' + text(r.summary) + '</div>';
+    if(open) h += revDetail(r);
+    h += '</div>';
+    return h;
+  }
+
+  function revDetail(r){
+    var h = '<div class="rev-detail">';
+    if(r.error) h += '<div class="rev-note bad">' + text(r.error) + '</div>';
+    if(r.changes.length){
+      h += '<div class="rev-label">Changes</div>';
+      for(var i=0;i<r.changes.length;i++) h += revChange(r.changes[i]);
+    }
+    if(r.invalid.length){
+      h += '<div class="rev-label">Rejected</div>';
+      for(var j=0;j<r.invalid.length;j++) h += '<div class="rev-note">' + text(r.invalid[j]) + '</div>';
+    }
+    if(r.preferences.length){
+      h += '<div class="rev-label">Preferences</div>';
+      for(var k=0;k<r.preferences.length;k++) h += '<div class="rev-pref">' + text(r.preferences[k]) + '</div>';
+    }
+    if(r.inferred) h += '<div class="rev-note">Read from the raw answer: whether any of it took effect was not recorded.</div>';
+    if(!r.changes.length && !r.preferences.length && !r.invalid.length && !r.error) h += '<div class="rev-note">Nothing worth changing.</div>';
+    // Only when the topic is still in the switcher: a link to a topic the page does not have
+    // would look like one and do nothing.
+    if(r.topic && topicExists(r.topic)) h += '<button type="button" class="rev-open" data-rev-topic="' + text(r.topic) + '">Open the reviewed topic</button>';
+    h += '</div>';
+    return h;
+  }
+
+  /**
+   * One change. applied is three-state on purpose: true and false are what the gateway recorded,
+   * and absent is an old review whose raw answer never said — marked unknown rather than guessed.
+   */
+  function revChange(c){
+    var what = c.action==='create' ? 'Create ' : (c.action==='patch' ? 'Update ' : 'Write ');
+    var name = c.action==='write-file' ? (c.file || 'a file') + ' in ' + c.name : c.name;
+    var status = c.applied===true ? '<span class="rev-status ok">applied</span>'
+      : c.applied===false ? '<span class="rev-status bad">refused</span>'
+      : '<span class="rev-status unknown">unknown</span>';
+    var h = '<div class="rev-change">' + what + '<span class="rev-name">' + text(name) + '</span>' + status;
+    if(c.reason) h += '<div class="rev-reason">' + text(c.reason) + '</div>';
+    if(c.error) h += '<div class="rev-note bad">' + text(c.error) + '</div>';
+    if(c.undo) h += '<code class="rev-undo">' + text(c.undo) + '</code>';
+    h += '</div>';
+    return h;
+  }
+
+  function revClock(ms){
+    try { return new Date(ms).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+    catch(x){ return new Date(ms).toISOString().slice(11,16) + ' UTC'; }
+  }
+
+  function revWhen(at){
+    try { return new Date(at).toLocaleString(); }
+    catch(x){ return new Date(at).toISOString(); }
+  }
+
+  function topicExists(id){
+    for(var i=0;i<topics.length;i++) if(topics[i].id === id) return true;
+    return false;
+  }
+
   function paintSchedCounts(){
     schedTabTasksN.textContent = schedTasks ? String(schedTasks.length) : '';
     schedTabSessionsN.textContent = String(schedSessions().length);
+    schedTabReviewsN.textContent = reviewData ? String(reviewData.reviews.length) : '';
   }
 
   /**
@@ -1700,12 +1884,20 @@ const SCRIPT = `
       if(topics[i].scheduled && topics[i].stage==='answer'){ waiting=true; break; }
     }
     schedAlert.hidden = !waiting;
-    var label = waiting ? 'Scheduled tasks — a run is waiting on your answer' : 'Scheduled tasks';
+    var label = waiting ? 'Side tasks — a run is waiting on your answer' : 'Side tasks';
     schedToggle.title = label;
     schedToggle.setAttribute('aria-label', label);
   }
 
   function paintSummary(){
+    if(schedTab==='reviews'){
+      schedSummary.textContent = reviewData
+        ? (reviewData.reviews.length
+            ? reviewData.reviews.length + (reviewData.reviews.length===1?' review':' reviews')
+            : 'no reviews yet')
+        : 'loading…';
+      return;
+    }
     if(schedTab==='sessions'){
       var list=schedSessions(), busy=0;
       for(var i=0;i<list.length;i++) if(list[i].running || list[i].asking) busy++;
@@ -1729,21 +1921,26 @@ const SCRIPT = `
   }
 
   function paintSchedTab(){
-    var sessions=schedTab==='sessions';
-    schedTabTasks.classList.toggle('on', !sessions);
+    var sessions=schedTab==='sessions', reviews=schedTab==='reviews';
+    schedTabTasks.classList.toggle('on', !sessions && !reviews);
     schedTabSessions.classList.toggle('on', sessions);
-    schedTabTasks.setAttribute('aria-selected', sessions ? 'false' : 'true');
+    schedTabReviews.classList.toggle('on', reviews);
+    schedTabTasks.setAttribute('aria-selected', (!sessions && !reviews) ? 'true' : 'false');
     schedTabSessions.setAttribute('aria-selected', sessions ? 'true' : 'false');
-    schedList.hidden = sessions;
+    schedTabReviews.setAttribute('aria-selected', reviews ? 'true' : 'false');
+    schedList.hidden = sessions || reviews;
     schedSessionList.hidden = !sessions;
+    revPane.hidden = !reviews;
     if(sessions) paintSessions();
+    if(reviews) paintReviews();
     paintSchedCounts();
     paintSummary();
   }
 
   function setSchedTab(tab){
-    schedTab = tab==='sessions' ? 'sessions' : 'tasks';
+    schedTab = tab==='sessions' ? 'sessions' : (tab==='reviews' ? 'reviews' : 'tasks');
     try { localStorage.setItem('aa_sched_tab', schedTab); } catch(x){}
+    if(schedTab==='reviews') loadReviews();
     paintSchedTab();
   }
 
@@ -1761,6 +1958,8 @@ const SCRIPT = `
       if(!schedPane.isOpen()) return;
       if(document.visibilityState === 'hidden'){ armSched(); return; }
       loadSchedules();
+      // A review takes minutes, so the same 30s poll is plenty; only the visible tab is asked for.
+      if(schedTab === 'reviews') loadReviews();
     }, wait);
   }
 
@@ -1922,6 +2121,34 @@ const SCRIPT = `
   schedClose.addEventListener('click', function(){ setSchedules(false); });
   schedTabTasks.addEventListener('click', function(){ setSchedTab('tasks'); });
   schedTabSessions.addEventListener('click', function(){ setSchedTab('sessions'); });
+  schedTabReviews.addEventListener('click', function(){ setSchedTab('reviews'); });
+
+  revList.addEventListener('click', function(e){
+    var openBtn = e.target.closest ? e.target.closest('[data-rev-topic]') : null;
+    if(openBtn){
+      e.stopPropagation();
+      switchTopic(openBtn.getAttribute('data-rev-topic'));
+      return;
+    }
+    var row = e.target.closest ? e.target.closest('[data-rev]') : null;
+    if(!row) return;
+    var id = row.getAttribute('data-rev');
+    if(!id) return;
+    revOpen[id] = !revOpen[id];
+    paintReviews();
+  });
+
+  revList.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    if(e.target.closest && e.target.closest('[data-rev-topic]')) return;
+    var row = e.target.closest ? e.target.closest('[data-rev]') : null;
+    if(!row) return;
+    e.preventDefault();
+    var id = row.getAttribute('data-rev');
+    if(!id) return;
+    revOpen[id] = !revOpen[id];
+    paintReviews();
+  });
 
   schedSessionList.addEventListener('click', function(e){
     var del = e.target.closest ? e.target.closest('[data-sdel]') : null;
@@ -1989,7 +2216,10 @@ const SCRIPT = `
   document.addEventListener('visibilitychange', function(){
     if(!schedPane.isOpen()) return;
     if(document.visibilityState === 'hidden') disarmSched();
-    else loadSchedules();
+    else {
+      loadSchedules();
+      if(schedTab === 'reviews') loadReviews();
+    }
   });
 
   // The panel's own choice, restored only where there is a column to dock it to. Its width was
@@ -3362,11 +3592,13 @@ const SCRIPT = `
     // the same frame rather than leaving the bar holding the old name until the next switch.
     if(TERM_OK) paintFrames();
     // The panel's Sessions tab is drawn from this same list, and its counts must move when a run
-    // opens or finishes even while the Tasks tab is the one on screen.
+    // opens or finishes even while the Tasks tab is the one on screen. The Reviews tab draws the
+    // same list for a different reason: a link back to a topic exists only while that topic does.
     paintSchedCounts();
     paintSummary();
     paintSchedAlert();
     if(schedPane.isOpen() && schedTab==='sessions') paintSessions();
+    else if(schedPane.isOpen() && schedTab==='reviews') paintReviews();
   }
 
   /**
@@ -4073,9 +4305,10 @@ const SCRIPT = `
     stream.onopen = function(){
       gate.hidden=true; app.hidden=false; note.textContent=''; if(!narrow()) input.focus(); initNotify();
       // A panel opened (or restored from aa_sched_open) before the gate came down asked too
-      // early (loadSchedules refuses while #app is hidden); this is the first moment the answer
-      // can be had.
-      if(schedPane.isOpen()){ loadSchedules(); armSched(); }
+      // early (loadSchedules and loadReviews refuse while #app is hidden); this is the first
+      // moment the answer can be had. The restored tab is read here too: on a reload that comes
+      // back to Reviews the panel opens before the gate does, so nothing else would ask.
+      if(schedPane.isOpen()){ loadSchedules(); if(schedTab === 'reviews') loadReviews(); armSched(); }
     };
     stream.onerror = function(){
       if(done) return;
@@ -5800,7 +6033,7 @@ __GATE__
       <!-- Always present, unlike the terminal's: the task panel is the only place on this page
            where scheduled tasks are managed. A clock rather than an emoji for the same reason
            the power button is an SVG — it has to sit on the header's text baseline. -->
-      <button type="button" class="btn-icon" id="schedules-toggle" aria-expanded="false" aria-controls="schedules" title="Scheduled tasks" aria-label="Scheduled tasks"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="sched-alert" id="sched-alert" hidden></span></button>
+      <button type="button" class="btn-icon" id="schedules-toggle" aria-expanded="false" aria-controls="schedules" title="Side tasks" aria-label="Side tasks"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="sched-alert" id="sched-alert" hidden></span></button>
     </div>
     <div id="log"></div>
     <div id="typing" hidden>...</div>
@@ -5854,17 +6087,17 @@ __GATE__
       </form>
     </div>
   </section>
-  <!-- The scheduled-task panel: the same .panel as the sidebar, on the right. A column of its
-       own on a wide screen and a drawer below 1024px; the stylesheet decides which of the two it
-       is from the width, and .collapsed is what moves it off-screen either way. Outside #chat
-       because it is about the gateway, not about the topic being read. -->
-  <aside id="schedules" class="panel panel-right" aria-label="Scheduled tasks">
+  <!-- The side panel: the same .panel as the sidebar, on the right. A column of its own on a wide
+       screen and a drawer below 1024px; the stylesheet decides which of the two it is from the
+       width, and .collapsed is what moves it off-screen either way. Outside #chat because it is
+       about the gateway, not about the topic being read. -->
+  <aside id="schedules" class="panel panel-right" aria-label="Side tasks">
     <!-- The docked panel's width, dragged like the sidebar's. Not offered below 1024px, where
          the panel is a drawer and the screen decides its width. -->
-    <div id="sched-resize" class="panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize the scheduled panel" title="Drag to resize · double-click for the default width"></div>
+    <div id="sched-resize" class="panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" title="Drag to resize · double-click for the default width"></div>
     <div id="schedules-head" class="panel-head">
       <div class="sched-heading">
-        <span class="panel-title">Scheduled tasks</span>
+        <span class="panel-title">Side tasks</span>
         <span id="schedules-summary" class="sched-summary"></span>
       </div>
       <button type="button" class="btn-icon panel-close" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
@@ -5873,14 +6106,20 @@ __GATE__
       <div id="schedules-note" hidden></div>
       <div id="sched-sessions" role="tabpanel" aria-labelledby="sched-tab-sessions" hidden></div>
       <div id="schedules-list" role="tabpanel" aria-labelledby="sched-tab-tasks"></div>
+      <div id="sched-reviews" role="tabpanel" aria-labelledby="sched-tab-reviews" hidden>
+        <div id="sched-reviews-quota" class="rev-quota" hidden></div>
+        <div id="sched-reviews-list"></div>
+      </div>
     </div>
-    <!-- A task is a definition, a session is one run that opened a topic of its own. Two lists,
-         because a run is not a task and merging them would make every run look like one. The tabs
-         sit at the foot, in the same row the sidebar keeps its menus in, because they choose
-         between two views of this column rather than heading its content. -->
-    <div id="sched-tabs" class="panel-foot" role="tablist" aria-label="Scheduled sessions and tasks">
+    <!-- A task is a definition, a session is one run that opened a topic of its own, and a review
+         is what the gateway learned from a conversation afterwards. Three lists, because a run is
+         not a task and a review is not either; merging them would make every run look like one.
+         The tabs sit at the foot, in the same row the sidebar keeps its menus in, because they
+         choose between views of this column rather than heading its content. -->
+    <div id="sched-tabs" class="panel-foot" role="tablist" aria-label="Side sessions, tasks and reviews">
       <button type="button" class="sched-tab" id="sched-tab-sessions" role="tab" aria-selected="false" aria-controls="sched-sessions">Sessions <span class="sched-count" id="sched-tab-sessions-n"></span></button>
       <button type="button" class="sched-tab on" id="sched-tab-tasks" role="tab" aria-selected="true" aria-controls="schedules-list">Tasks <span class="sched-count" id="sched-tab-tasks-n"></span></button>
+      <button type="button" class="sched-tab" id="sched-tab-reviews" role="tab" aria-selected="false" aria-controls="sched-reviews">Reviews <span class="sched-count" id="sched-tab-reviews-n"></span></button>
     </div>
   </aside>
 </main>

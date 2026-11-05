@@ -160,3 +160,14 @@ No change, no line. One review runs at a time and at most ten a day (UTC), so a 
 cannot spend the reviewer's quota; a failed review waits six hours before it is tried again.
 Reviews are filed in the conversation library as `review` sessions, which search and `list` leave
 out.
+
+**Where the results are.** The web UI's side panel has a **Reviews** tab: every review, including
+the ones that changed nothing and posted no line. A row is the reviewed conversation, when, and
+what happened — a skill created or updated, only preference suggestions, a change the store
+refused, nothing found, or a failed run. Opening it shows each change with the reviewer's reason,
+whether it actually took effect (and the store's sentence when it did not), the preference
+suggestions in full, and the `talkcode skills revert` / `archive` command that undoes a change.
+A row whose reviewed conversation is still in the topic list links back to it. The tab also shows
+today's quota (`3/10 today`) and, when it is used up, the local time reviews resume — the counter
+resets at UTC midnight. Reviews recorded before results were kept show only what the raw answer
+proposed, marked **inferred**: nothing in the library says whether those changes were applied.

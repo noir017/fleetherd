@@ -6100,6 +6100,192 @@ describe('webui page: the scheduled-task panel', () => {
   });
 });
 
+describe('webui page: the Reviews tab', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const at = Date.now() - 2 * 3_600_000;
+
+  const review = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'review:web#main#' + A + ':1',
+    title: 'Right sidebar',
+    at,
+    outcome: 'changed',
+    summary: 'updated deploy-check · 1 preference',
+    changes: [
+      {
+        action: 'patch',
+        name: 'deploy-check',
+        reason: 'two runs forgot the tests',
+        applied: true,
+        undo: 'talkcode skills revert deploy-check 0001-abc',
+      },
+      {
+        action: 'write-file',
+        name: 'ci-logs',
+        file: 'references/grep.md',
+        applied: false,
+        error: 'files may only go in references/',
+      },
+    ],
+    preferences: ['answers lead with the conclusion'],
+    invalid: [],
+    topic: A,
+    ...over,
+  });
+
+  const reply = (
+    reviews: Array<Record<string, unknown>> = [review()],
+    over: Record<string, unknown> = {}
+  ): Record<string, unknown> => ({
+    enabled: true,
+    running: true,
+    reviews,
+    quota: { used: 3, limit: 10, resetsAt: Date.now() + 3_600_000 },
+    ...over,
+  });
+
+  it('lists reviews under a tab of their own, with today’s quota', async () => {
+    const h = await open({ replies: { 'api/reviews': reply() } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the review row', () => h.el('sched-reviews-list').textContent!.includes('Right sidebar'));
+
+    expect(h.el('sched-tab-reviews').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sched-tab-tasks').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('sched-reviews').hidden).toBe(false);
+    expect(h.el('schedules-list').hidden).toBe(true);
+    expect(h.el('sched-tab-reviews-n').textContent).toBe('1');
+    expect(h.el('schedules-summary').textContent).toBe('1 review');
+    expect(h.el('sched-reviews-quota').textContent).toBe('3/10 today');
+    const row = h.doc.querySelector('.rev-item')!;
+    expect(row.textContent).toContain('Right sidebar');
+    expect(row.textContent).toContain('updated deploy-check · 1 preference');
+    // The tab is remembered like the other two.
+    expect(h.window.localStorage.getItem('aa_sched_tab')).toBe('reviews');
+  });
+
+  it('opens a review for its changes, reasons, undo command and preferences', async () => {
+    const h = await open({ replies: { 'api/reviews': reply() } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the review row', () => Boolean(h.doc.querySelector('.rev-item')));
+
+    const row = h.doc.querySelector('.rev-item') as HTMLElement;
+    expect(row.querySelector('.rev-detail')).toBeNull();
+    row.click();
+    await tick();
+
+    const detail = h.doc.querySelector('.rev-detail')!;
+    expect(detail.textContent).toContain('deploy-check');
+    expect(detail.textContent).toContain('two runs forgot the tests');
+    expect(detail.textContent).toContain('applied');
+    expect(detail.textContent).toContain('refused');
+    expect(detail.textContent).toContain('files may only go in references/');
+    expect(detail.textContent).toContain('talkcode skills revert deploy-check 0001-abc');
+    expect(detail.textContent).toContain('answers lead with the conclusion');
+  });
+
+  it('opens the reviewed topic, and offers no link when that topic is gone', async () => {
+    const h = await open({ replies: { 'api/reviews': reply() } });
+    await h.emit(sync(B, [], [A, B]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the review row', () => Boolean(h.doc.querySelector('.rev-item')));
+    (h.doc.querySelector('.rev-item') as HTMLElement).click();
+    await tick();
+
+    const openTopic = h.doc.querySelector('.rev-open') as HTMLElement;
+    expect(openTopic).not.toBeNull();
+    openTopic.click();
+    await until('the switch', () => h.window.location.search.includes(A));
+
+    // A review of a topic this page does not have: the row stays, the link does not.
+    const gone = await open({ replies: { 'api/reviews': reply([review({ topic: 'deadbeef' })]) } });
+    await gone.emit(sync(A, [], [A]));
+    await gone.click('#schedules-toggle');
+    await gone.click('#sched-tab-reviews');
+    await until('the review row', () => Boolean(gone.doc.querySelector('.rev-item')));
+    (gone.doc.querySelector('.rev-item') as HTMLElement).click();
+    await tick();
+    expect(gone.doc.querySelector('.rev-open')).toBeNull();
+  });
+
+  it('marks an old review as inferred and leaves its changes unknown', async () => {
+    const h = await open({
+      replies: {
+        'api/reviews': reply([
+          review({
+            id: 'review:web#main#a1b2c3d4:0',
+            outcome: 'proposed',
+            summary: '1 change proposed',
+            inferred: true,
+            changes: [{ action: 'patch', name: 'deploy-check', reason: '补一条' }],
+            preferences: [],
+          }),
+        ]),
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the review row', () => Boolean(h.doc.querySelector('.rev-item')));
+    const row = h.doc.querySelector('.rev-item') as HTMLElement;
+    expect(row.textContent).toContain('inferred');
+    row.click();
+    await tick();
+
+    const detail = h.doc.querySelector('.rev-detail')!;
+    expect(detail.textContent).toContain('unknown');
+    expect(detail.textContent).toContain('whether any of it took effect was not recorded');
+  });
+
+  it('says why the list is empty: no reviews yet, review off, or no library', async () => {
+    const none = await open({ replies: { 'api/reviews': reply([]) } });
+    await none.click('#schedules-toggle');
+    await none.click('#sched-tab-reviews');
+    await until('the empty note', () => none.el('sched-reviews-list').textContent!.includes('No reviews yet'));
+    expect(none.el('sched-reviews-list').textContent).toContain('quiet for an hour');
+
+    const off = await open({ replies: { 'api/reviews': reply([], { running: false }) } });
+    await off.click('#schedules-toggle');
+    await off.click('#sched-tab-reviews');
+    await until('the off note', () => off.el('sched-reviews-list').textContent!.includes('Automatic review is off'));
+
+    const noLibrary = await open({ replies: { 'api/reviews': { enabled: false, running: false, reviews: [] } } });
+    await noLibrary.click('#schedules-toggle');
+    await noLibrary.click('#sched-tab-reviews');
+    await until('the library note', () => noLibrary.el('sched-reviews-list').textContent!.includes('no conversation library'));
+  });
+
+  it('asks for the list on a reload that restores the tab and the open panel', async () => {
+    const h = await open({
+      storage: { aa_sched_open: '1', aa_sched_tab: 'reviews' },
+      replies: { 'api/reviews': reply() },
+    });
+    await h.emit(sync(A, [], [A]));
+
+    expect(h.el('app').classList.contains('sched-open')).toBe(true);
+    expect(h.el('sched-tab-reviews').getAttribute('aria-selected')).toBe('true');
+    await until('the review row', () => Boolean(h.doc.querySelector('.rev-item')));
+    expect(h.calls.some((c) => c.path === 'api/reviews')).toBe(true);
+  });
+
+  it('says when today’s quota is gone, and at what local time reviews resume', async () => {
+    const h = await open({
+      replies: { 'api/reviews': reply([review()], { quota: { used: 10, limit: 10, resetsAt: Date.now() + 3_600_000 } }) },
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the quota line', () => h.el('sched-reviews-quota').textContent!.includes('10/10 today'));
+
+    expect(h.el('sched-reviews-quota').className).toContain('full');
+    expect(h.el('sched-reviews-quota').textContent).toContain('quota used up');
+    expect(h.el('sched-reviews-quota').textContent).toMatch(/resume at \d{1,2}:\d{2}/);
+  });
+});
+
 describe('webui page: the skills page', () => {
   const A = 'a1b2c3d4';
   const MD = '---\nname: deploy-check\ndescription: "Use when checking a deployment"\n---\n\n# Steps\n';

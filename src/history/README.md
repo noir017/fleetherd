@@ -46,6 +46,15 @@ library from reaching into the conversation registry.
 - `imported` — one row per web UI transcript file already folded in. This is what makes the
   import idempotent; the transcript files themselves are rewritten every few seconds and must
   not be re-read into duplicate rows.
+- `reviews` — one row per automatic review, keyed by its `review` session, holding what the
+  answer did: the reviewed conversation's key, title and lane, the outcome
+  (`changed` \| `preferences` \| `refused` \| `proposed` \| `nothing` \| `failed`), each change
+  with `applied` / `error` / `revertId`, the preference suggestions, and the changes the shape
+  check rejected. `changes`, `preferences` and `invalid` are JSON text. A review recorded before
+  this table existed has no row here — its raw answer in `messages` is all there is, and
+  `daemon/review-panel.ts` marks what it infers from that as inferred. `recordReview` upserts by
+  session, and a failed run writes the row too (with `error`), which is why a failure is visible in
+  the web UI's Reviews tab and not only in the log.
 
 ### Which turn owns which row
 

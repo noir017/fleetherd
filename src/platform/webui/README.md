@@ -443,7 +443,7 @@ shows the icons with (N) on Manage — the count is the one thing that stays.
 
 ## The two side panels
 
-The topic list on the left and the scheduled work on the right are one component (`makePanel` in
+The topic list on the left and the background work on the right are one component (`makePanel` in
 the script, `.panel` in the stylesheet), not two. A panel is a header row, a scrolling body, a
 footer row and a drag handle on its inner edge; the edge decides only the border, the direction it
 slides and the direction its handle measures. The rest is written once for both: the width and its
@@ -461,9 +461,9 @@ both are `min(88vw, 380px)` wide so a phone keeps a strip of the chat visible. A
 `--pw`, set inline by the handle and kept per browser (`aa_sb_w` / `aa_sched_w`); the stylesheet's
 `--pw-default` is the fallback, and double-click clears both.
 
-## The scheduled-task panel
+## The side panel
 
-The clock at the right of the chat header toggles a panel of the gateway's scheduled work. It is
+The clock at the right of the chat header toggles a panel of the gateway's background work. It is
 the right-hand `.panel` described above: a column on a screen at least 1024px wide, a drawer from
 the right below that, animated by the same margin/transform transition and dismissed by the same
 backdrop and Escape as the topic list. Closed on a first visit, then open until the operator closes
@@ -478,7 +478,7 @@ none, and a new-session task makes one per run — and the sidebar is the conver
 panel is also the only place on this page where a task can be managed, so its toggle is always in
 the header, unlike the terminal's.
 
-**Two tabs, at the foot of the panel.** **Sessions** is the topics a new-session run opened
+**Three tabs, at the foot of the panel.** **Sessions** is the topics a new-session run opened
 (`Topic.scheduled`): the switcher leaves those out (`topicRows` filters them), so the tab is their
 only listing and its × is the only delete. **Tasks** is the definitions and their controls. The tab
 row is the panel's last line — literally the same `.panel-foot` the sidebar keeps its menus in — so
@@ -493,6 +493,21 @@ it is not the ordinary `active`), the schedule, the next run and the target, and
 only when it did not end `ok`. The prompt or command, the run mode and the bookkeeping are behind a
 tap, so a column of tasks stays scannable.
 
+**Reviews** is the automatic review of quiet conversations (`daemon/review.ts`), and the one tab
+with no operation at all. A review that changed nothing posts no line in any chat, so this is the
+only place it can be read; the tab is therefore read-only by construction, and undoing a change is
+the `talkcode skills revert` / `archive` command the detail shows, not a button. A row is the
+reviewed topic, how long ago, and what happened (`changed`, `preferences`, `refused`, `proposed`,
+`nothing`, `failed`); opening it lists each change with its reason, whether the store applied it or
+refused it and why, the undo command, the preference suggestions, and — only while the topic is
+still in `topics` — a button that opens the reviewed topic. The quota line (`3/10 today`, and the
+local time reviews resume when it is full) is the daemon's own counter, not one kept here.
+
+A review recorded before results were kept has only its raw answer in the library. `review-panel.ts`
+parses that with `parseReviewOutput`, marks the entry `inferred` and leaves every change's `applied`
+absent: the row says *unknown* rather than guessing. That is why `HistoryReviewChange.applied` is
+three-state.
+
 **Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the four
 operations; the daemon builds it in `daemon/schedule-panel.ts` from `ScheduleService`, the same
 service the agent's `schedule` commands and `/setting schedule` use. Two routes carry it:
@@ -501,6 +516,11 @@ service the agent's `schedule` commands and `/setting schedule` use. Two routes 
 timer while visible (5s while a run is in flight, 30s otherwise) — the daemon has no event for a
 run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
 arrives formatted in the task's own zone.
+
+Reviews travel the same way and on the same timer: `useReviewPanel` hands the room one `list()`,
+`daemon/review-panel.ts` builds it from `history.db` and `reviews.json`, and `GET api/reviews` is
+the only route — there is no POST, because a review has no writer but the sweep. The list is pulled
+when the tab is selected and on the panel's timer while it is the visible one.
 
 **What it cannot do.** It does not create tasks. Creation is a sentence to an agent in a topic, and
 letting the page POST a prompt or a command would put a bash injection surface behind the login
@@ -1461,7 +1481,10 @@ page is driven there too: the list, an editor save carrying the version the deta
 form, a revert, and the two-tap archive. So is the settings page — the menu's quiet request, a
 typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
 drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
-it. The two side panels are driven as one component there (`one panel component on both edges`):
+it. The Reviews tab is driven there too: the list and its quota, a review opened for its changes
+and undo command, the link back to a topic that exists and its absence when the topic is gone, the
+inferred old record, and all three empty states. The two side panels are driven as one component
+there (`one panel component on both edges`):
 both close with the same ×, both go inert while shut, Escape puts away the right and then the
 left, each keeps its own width and clears it on a double-click, and the footer's two menus are
 checked by the items they hold and what each item does — All settings, Skills, Close idle, Clear.

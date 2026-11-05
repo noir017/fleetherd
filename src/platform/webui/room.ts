@@ -65,6 +65,8 @@ import type {
   ModelPicker,
   ModelPickerList,
   ModelPickerResult,
+  ReviewPanel,
+  ReviewPanelList,
   SchedulePanelAction,
   SchedulePanelResult,
   SchedulePanelTask,
@@ -336,6 +338,8 @@ export class WebRoom {
   private modelPicker: ModelPicker | null = null;
   /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
   private skillsPanel: SkillsPanel | null = null;
+  /** The automatic reviews the daemon recorded — see `useReviewPanel`. */
+  private reviewPanel: ReviewPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
@@ -697,6 +701,24 @@ export class WebRoom {
   skillOp(op: SkillPanelOp): SkillPanelResult {
     if (!this.skillsPanel) return { ok: false, error: 'skills are not enabled in this daemon' };
     return this.skillsPanel.op(op);
+  }
+
+  /**
+   * Accept the daemon's automatic reviews, for the Reviews tab.
+   *
+   * Read-only: the list is rebuilt from `history.db` on every request, and there is no operation
+   * here at all — a review is written by the sweep, through the skill store's own rules, and undoing
+   * one is the `talkcode skills revert` command the row names. A page that could trigger a review
+   * would be a second writer, which AGENTS.md invariant 8 does not allow.
+   */
+  useReviewPanel(panel: ReviewPanel): void {
+    this.reviewPanel = panel;
+  }
+
+  /** Every recorded review and today's quota. `enabled: false` when the daemon offered none. */
+  reviews(): ReviewPanelList {
+    if (!this.reviewPanel) return { enabled: false, running: false, reviews: [] };
+    return this.reviewPanel.list();
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */

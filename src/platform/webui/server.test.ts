@@ -8,7 +8,7 @@ import { createGunzip, inflateSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
-import type { SchedulePanelTask, SkillPanelEntry } from '../adapter.js';
+import type { ReviewPanelEntry, SchedulePanelTask, SkillPanelEntry } from '../adapter.js';
 import { WebAuth } from './auth.js';
 import { diskUploadStore } from './index.js';
 import { MAX_READ_BYTES } from './reading.js';
@@ -1208,6 +1208,61 @@ describe('webui server: traffic', () => {
         body: JSON.stringify({ action: 'archive', name: 'deploy-check' }),
       });
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe('reviews', () => {
+    const review: ReviewPanelEntry = {
+      id: 'review:web#main#a1b2c3d4:1762300000000',
+      title: 'Right sidebar',
+      at: 1762300000000,
+      outcome: 'changed',
+      summary: 'updated deploy-check',
+      changes: [
+        {
+          action: 'patch',
+          name: 'deploy-check',
+          reason: 'two runs forgot the tests',
+          applied: true,
+          undo: 'talkcode skills revert deploy-check 0001-abc',
+        },
+      ],
+      preferences: ['answers lead with the conclusion'],
+      invalid: [],
+      topic: 'a1b2c3d4',
+    };
+    const list = { enabled: true, running: true, reviews: [review], quota: { used: 3, limit: 10, resetsAt: 1762300800000 } };
+
+    it('lists what the daemon handed the room, and says when it offered none', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      expect(await (await fetch(`${base}/api/reviews`, { headers: { cookie } })).json()).toEqual({
+        enabled: false,
+        running: false,
+        reviews: [],
+      });
+
+      room.useReviewPanel({ list: () => list });
+      const res = await fetch(`${base}/api/reviews`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(list);
+    });
+
+    it('has no write side: only a GET is routed', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      room.useReviewPanel({ list: () => list });
+      const res = await fetch(`${base}/api/reviews`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'run' }),
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('is behind the session like every other route', async () => {
+      const { base } = await boot();
+      expect((await fetch(`${base}/api/reviews`)).status).toBe(401);
     });
   });
 });

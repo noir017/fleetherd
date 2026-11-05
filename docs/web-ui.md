@@ -79,11 +79,15 @@ anything. Each conversation is kept, and the next message in a topic starts its 
 it left off. A topic that starts working in the meantime is left running, and starred topics are
 closed like the rest. **Clear all topics** is in the same menu.
 
-**Scheduled tasks.** The clock at the right of the chat header opens a panel with two tabs at its
+**Side tasks.** The clock at the right of the chat header opens a panel with three tabs at its
 foot. **Sessions** lists the topics a new-session run opened; those topics are kept out of the topic
 list, so this is where they live, and tapping one opens it (the × deletes it). **Tasks** lists every
 task the gateway has registered — what it runs, when it runs next, where its output goes, and how the
-last run ended.
+last run ended. **Reviews** lists the automatic reviews of quiet conversations (see
+[skills](skills.md#auto-review)): what each one changed, what the store refused and why, the
+preferences it noticed, and the command that undoes each change. A review that changed nothing posts
+no line anywhere else, so this tab is its only home; it also carries today's quota (`3/10 today`),
+and when that is used up it says at what local time reviews resume.
 A run waiting on an answer puts an amber dot on the clock itself, since it has no row in the topic
 list to show it.
 The panel is a column of its own on a wide screen. It is the same component as the topic sidebar

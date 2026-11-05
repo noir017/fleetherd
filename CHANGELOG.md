@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI's side panel has a Reviews tab.** Automatic review used to be visible only when it
+  changed a skill: the one line posted in the reviewed conversation, and nothing for the reviews
+  that found nothing, only noticed a preference, or failed. Every review is now listed with the
+  conversation it read, when, and what it produced — a skill created or updated, only preferences,
+  a change the skill store refused, nothing found, or a failed run. Opening one shows each change
+  with the reviewer's reason, whether it actually took effect (and the store's own sentence when it
+  did not), the preference suggestions, the `talkcode skills revert` / `archive` command that undoes
+  a change, and a link back to the reviewed topic while that topic still exists. The tab also shows
+  today's quota (`3/10 today`) and, once it is used up, the local time reviews resume (the counter
+  resets at UTC midnight). A review now records its result in `history.db` — a failed run included
+  — so the reason a quiet conversation was never reviewed is answerable without the log. The ten
+  reviews recorded before this only kept their raw answer; those are shown as *inferred*, and the
+  detail says that whether the proposed changes landed was never written down. The tab is
+  read-only: reviews are still written by the sweep through the skill store's own validation and
+  history, and undo is the command the row names. [→](docs/skills.md#auto-review)
+
 ### Changed
 
 - **Raised web UI limits to 200 concurrent topics and 1000 messages per topic.** The previous ceiling
@@ -12,6 +30,11 @@ All notable changes to this project are documented here. The format is based on
   navigate larger lists via pinned, starred, and "needs you" ordering. The message ring per topic is
   doubled from 500 to 1000 messages (estimated ~460 MB if all 200 topics were completely full at ~2.3 KB
   per message, with actual production usage well below that). [→](docs/web-ui.md)
+
+- **The scheduled-task panel is now Side tasks.** It holds more than scheduled work — Sessions,
+  Tasks and now Reviews — so its title, the clock's tooltip and its accessible name say what the
+  column is rather than what one tab of it does. The icon stays the clock, because scheduled work
+  is still most of what is in it. [→](docs/web-ui.md)
 
 ### Fixed
 
