@@ -13,26 +13,30 @@ in parallel, and come back with one report — so you follow one topic instead o
 ## What happens
 
 1. The agent reads what it needs and splits the job. For each part it picks an agent — one on its
-   own machine unless the part needs another — and writes the task that agent will get.
+   own machine unless the part needs another — and writes the task that agent will get. It asks for
+   a reply it can act on: the conclusion first, then the evidence, under 2,000 characters.
 2. A card lists every part: the agent, its machine, the directory, and the full text of the task.
    **Nothing starts until you tap Start** — unless confirmation is off (`/setting delegation off`),
    in which case each part starts as it is proposed and the card is posted after it, listing what
    started and where, with no Start button. That applies only where you talk to the agent directly:
    in a sub-agent's own topic, `task-new` still puts up the card, so agents cannot open more agents
    without you. With confirmation on, to change something, write what instead of tapping, and it
-   proposes again; the new card replaces the old one.
+   proposes again; the new card replaces the old one. A part that changes code is reviewed before
+   it counts as done: once its change is in, the agent proposes a review part — another agent, the
+   same checkout, told to read the diff and run the tests.
 3. Each part gets a topic of its own, nested under this one, and they all run at once. The first
    message in each says which topic it came from.
 4. When a sub-agent finishes, fails or asks something, the agent that started it is told. A folded
    🔔 line in its topic shows exactly what it was told. The notice quotes what the sub-agent said
    in full when it fits the card's budget — the reply, the question or the error, line breaks kept —
    so the agent can act on the conclusion without opening the topic. A cut adds one line with the
-   text's full length and where the rest is: a reply or question is read from the topic with
-   `task-read <topic> --full`; a failed turn's ❌ notice in the topic has only its opening, and the
-   cut says so. A burst longer than 20 sub-agents is one card with the rest folded into a line
-   pointing at `talkcode tasks`. The agent checks the result itself — reads the diff, runs the
-   tests — and sends fixes where needed. When every part is done, it writes one summary with a link
-   to each topic.
+   text's full length and where the rest is: a reply is read whole with `task-read <topic>
+   --reply`, and a failed turn's whole error is in that turn's record (`task-read <topic> --turn
+   last`), because the ❌ notice in the topic carries only its opening. A burst longer than 20
+   sub-agents is one card with the rest folded into a line pointing at `talkcode tasks`. The agent
+   reads each reply's conclusion and the review part's verdict, and sends fixes where needed; it
+   does not read the diff itself. When every part is done, it writes one summary with a link to each
+   topic.
 
 ## Talking to a sub-agent
 
@@ -51,9 +55,11 @@ need to decide — scope, merging, releasing, deleting — is passed to you.
 
 The agent that started a sub-agent can see what it is doing without opening its topic: `tasks` shows
 the tool it is running, how many steps into the turn it is, how long that turn has run, and the
-context it has used; `task-status` gives one topic's last three tool calls. A long tool list can be
-read whole or from its newest lines (`task-read --full`, `--tail`), so an hour-long turn is not a
-black box.
+context it has used; `task-status` gives one topic's last three tool calls. `task-read <topic>` reads
+the topic from the conversation library — the same rows `sessions read` reads, with the same
+`--role`/`--turn`/`--turns`/`--since`/`--grep` filters. `--reply` gives the last turn that ended
+normally, its reply whole; `--full` raises the per-message cut and `--tail` keeps the newest lines,
+so an hour-long turn is not a black box.
 
 When a sub-agent is going the wrong way, `task-send --interrupt` stops the turn it is running and
 sends the correction as the next one. Its conversation is kept: it carries on with the context it

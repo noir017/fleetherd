@@ -59,6 +59,17 @@ All notable changes to this project are documented here. The format is based on
   `task-new` still waits for a tap, so agents cannot chain more agents without one.
   [→](docs/sub-agents.md)
 
+- **`task-read` reads the conversation library, and a cut update card points at the whole text.**
+  A sub-agent's topic is read from `history.db` now, with the same `--role`, `--turn`, `--turns`,
+  `--since` and `--grep` as `sessions read` — one definition, `READ_FILTER_OPTIONS` — while its own
+  `--tail` still means the last lines of each message. `--reply` gives the last turn that ended
+  normally, its reply whole: the card that sends the parent there carried only 4,000 characters of
+  it. A failed turn's error is kept whole in that turn's record (`turns.detail`, up to 200,000
+  characters) instead of its first 500, and `--turn last` reads it, so an error longer than the card
+  is no longer unreadable. The `super` skill hands review to a sub-agent — the agent that split the
+  job reads the verdict, not the diff — and asks each sub-agent for a conclusion-first reply under
+  2,000 characters. [→](docs/sub-agents.md)
+
 ### Changed
 
 - **The scheduled-task panel is a drawer on a phone.** Below 640px it took the whole screen, which

@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { AgentStatus, TopicActivity } from '../types.js';
@@ -12,6 +15,7 @@ import type {
   TaskStatusResult,
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
+import { HistoryStore } from '../history/store.js';
 import {
   CARD_DELAY_MS,
   CARD_ITEM_CHARS,
@@ -23,14 +27,54 @@ import {
 } from './delegation.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 import type { LiveTurn } from './turn-progress.js';
-import { FAILURE_NOTICE_CHARS, jobInCommand, UPDATE_SENDER } from './turn-runner.js';
+import { jobInCommand, UPDATE_SENDER } from './turn-runner.js';
 
 /**
  * Sub-agents (delegation.ts): who may run the task commands and on what, the confirmation card every
  * start waits on, and the `[sub-agent updates]` card — gathered, and sent only to the conversation
  * that opened the topics. The registry and the platform are fakes: what openTask does to a real
  * conversation is ConversationRegistry's to test (delegation-registry.test.ts).
+ *
+ * `task-read` reads the real library, so the rig opens one in a temporary directory: the filters and
+ * the turn records are SQL, and a fake that re-implemented them would test the fake.
  */
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+function tempHistory(): HistoryStore {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-delegation-'));
+  dirs.push(dir);
+  return new HistoryStore(path.join(dir, 'history.db'));
+}
+
+/**
+ * One turn of a sub-agent topic, filed the way a real one ends up in the library. Each call is a
+ * minute later than the one before, so rows sort the way turns happened even when a test seeds
+ * several turns into one topic.
+ */
+let seedClock = Date.UTC(2026, 10, 1, 9, 0);
+function seedTurn(
+  store: HistoryStore,
+  key: string,
+  rows: Array<{ role: 'user' | 'agent' | 'tool'; text: string }>,
+  outcome: 'done' | 'failed' | 'stopped' | 'running' = 'done',
+  detail = ''
+): number {
+  const at = seedClock;
+  seedClock += 60_000;
+  const sid = store.session({ key, platform: 'web', agent: 'cc', at })!;
+  const turn = store.startTurn(sid, { agent: 'cc', generation: 0, trigger: 'delegate', at })!;
+  rows.forEach((row, i) =>
+    store.message(sid, { ts: at + i * 1_000, role: row.role, kind: 'subagent', text: row.text, turn })
+  );
+  if (outcome !== 'running') {
+    store.endTurn(turn, { outcome, at: at + rows.length * 1_000, ...(detail ? { detail } : {}) });
+  }
+  return turn;
+}
 
 const P = 'web#main#aaaaaaaa';
 const keyOf = (a: ConversationAddress): string => `web#${a.channel}#${a.thread ?? ''}`;
@@ -95,10 +139,7 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
   const cards: Array<{ text: string; labels: string[]; signal: AbortSignal }> = [];
   let threads = 0;
   let handResult: 'started' | 'joined' | 'queued' = 'started';
-  const history = [
-    { conversation: {}, messageId: '1', content: 'do it', timestamp: 0, authorIsBot: false },
-    { conversation: {}, messageId: '2', content: 'done', timestamp: 1000, authorIsBot: true },
-  ];
+  const history = tempHistory();
   const platform = {
     capabilities: { thread: true },
     parentOf: (a: ConversationAddress) => {
@@ -111,7 +152,6 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
       posted.push({ to: keyOf(a), text, ...(o?.kind === 'tools' ? { tools: true } : {}) });
       return { address: a, messageId: 'm' };
     },
-    fetchHistory: async () => history,
   } as unknown as PlatformAdapter;
   const telegram = { capabilities: { thread: true }, sendMessage: async () => ({ messageId: 'm' }) } as unknown as PlatformAdapter;
 
@@ -187,6 +227,7 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
     ]),
     registry: registry as unknown as DelegationDeps['registry'],
     clock,
+    history,
     questionOf: (k: string) => questions.get(k),
     confirm: ({ text, labels, signal }) => {
       cards.push({ text, labels, signal });
@@ -472,8 +513,15 @@ describe('Delegation: acting on the topics it opened, and only those', () => {
       text: 'also the docs',
       header: '**↳ From [Release](?t=aaaaaaaa)**',
     });
-    const read = (await r.d.handle(P, { kind: 'task-read', topic: 'web:main/c1000000' })) as { messages: unknown[] };
-    expect(read.messages).toHaveLength(2);
+    seedTurn(r.history, 'web#main#c1000000', [
+      { role: 'user', text: 'do it' },
+      { role: 'agent', text: 'done' },
+    ]);
+    const read = (await r.d.handle(P, { kind: 'task-read', topic: 'web:main/c1000000' })) as TaskReadResult;
+    expect(read.messages.map((m) => [m.role, m.text])).toEqual([
+      ['user', 'do it'],
+      ['agent', 'done'],
+    ]);
     await r.d.handle(P, { kind: 'task-stop', topic: 'c1000000' });
     expect(r.calls).toContainEqual(['stop', 'web#main#c1000000']);
   });
@@ -555,13 +603,7 @@ describe('Delegation: seeing what a sub-agent is doing', () => {
   it('reads a whole long message with --full, and the newest lines with --tail', async () => {
     const r = await withChild();
     const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
-    r.history.splice(0, r.history.length, {
-      conversation: {},
-      messageId: '1',
-      content: lines.join('\n'),
-      timestamp: 0,
-      authorIsBot: true,
-    });
+    seedTurn(r.history, 'web#main#c1000000', [{ role: 'agent', text: lines.join('\n') }]);
     const whole = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', full: true })) as TaskReadResult;
     expect(whole.messages[0]!.text).toBe(lines.join('\n'));
 
@@ -572,21 +614,111 @@ describe('Delegation: seeing what a sub-agent is doing', () => {
 
   it('keeps the newest messages when --full would blow the total budget, and says what it left out', async () => {
     const r = await withChild();
-    r.history.splice(
-      0,
-      r.history.length,
-      ...Array.from({ length: 6 }, (_, i) => ({
-        conversation: {},
-        messageId: String(i),
-        content: `${i}:`.padEnd(20_000, 'x'),
-        timestamp: i,
-        authorIsBot: true,
-      }))
+    seedTurn(
+      r.history,
+      'web#main#c1000000',
+      Array.from({ length: 6 }, (_, i) => ({ role: 'agent' as const, text: `${i}:`.padEnd(20_000, 'x') }))
     );
     const read = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', full: true, limit: 10 })) as TaskReadResult;
     expect(read.messages).toHaveLength(4);
     expect(read.note).toMatch(/the 2 oldest of 6 messages were left out/);
     expect(read.messages[3]!.text.startsWith('5:')).toBe(true);
+  });
+
+  it('says a topic has no record yet, rather than calling the topic wrong', async () => {
+    const r = await withChild();
+    const read = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000' })) as TaskReadResult;
+    expect(read.messages).toEqual([]);
+    expect(read.note).toMatch(/nothing has been recorded in this topic yet/);
+  });
+
+  it('selects rows with the same filters sessions read uses, and shows the id --since resumes from', async () => {
+    const r = await withChild();
+    const key = 'web#main#c1000000';
+    seedTurn(r.history, key, [
+      { role: 'user', text: 'first prompt' },
+      { role: 'tool', text: 'Bash: ls' },
+      { role: 'agent', text: 'first answer' },
+    ]);
+    seedTurn(r.history, key, [
+      { role: 'user', text: 'second prompt' },
+      { role: 'agent', text: 'second answer about needles' },
+    ]);
+
+    const first = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', turn: '1' })) as TaskReadResult;
+    expect(first.messages.map((m) => m.text)).toEqual(['first prompt', 'Bash: ls', 'first answer']);
+    expect(first.turn).toMatchObject({ turn: 1, outcome: 'done', agent: 'cc' });
+
+    const agentRows = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', role: 'agent' })) as TaskReadResult;
+    expect(agentRows.messages.map((m) => m.text)).toEqual(['first answer', 'second answer about needles']);
+
+    const grepped = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', grep: 'needles' })) as TaskReadResult;
+    expect(grepped.messages.map((m) => m.text)).toEqual(['second answer about needles']);
+
+    const lastTwo = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', turns: 2 })) as TaskReadResult;
+    expect(lastTwo.messages.map((m) => m.text)).toEqual([
+      'first prompt',
+      'Bash: ls',
+      'first answer',
+      'second prompt',
+      'second answer about needles',
+    ]);
+
+    // The newest n, oldest first — the default 10 is the same rule, and --since is the other
+    // direction: it resumes from a row id this output prints.
+    const newest = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', limit: 2 })) as TaskReadResult;
+    expect(newest.messages.map((m) => m.text)).toEqual(['second prompt', 'second answer about needles']);
+    const since = (await r.d.handle(P, {
+      kind: 'task-read',
+      topic: 'c1000000',
+      since: lastTwo.messages[2]!.id,
+    })) as TaskReadResult;
+    expect(since.messages.map((m) => m.text)).toEqual(['second prompt', 'second answer about needles']);
+  });
+
+  it('does not cut a --turn read at the default ten messages', async () => {
+    // The default 10 is "the newest ten messages"; a turn read is about that turn, and ten of its
+    // rows is an answer to a question nobody asked.
+    const r = await withChild();
+    seedTurn(
+      r.history,
+      'web#main#c1000000',
+      Array.from({ length: 12 }, (_, i) => ({ role: 'tool' as const, text: `Bash: step ${i}` }))
+    );
+    const read = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', turn: 'last' })) as TaskReadResult;
+    expect(read.messages).toHaveLength(12);
+  });
+
+  it('--reply gives the last normally-ended turn’s reply whole, past every cut', async () => {
+    const r = await withChild();
+    const key = 'web#main#c1000000';
+    const long = 'r'.repeat(30_000);
+    seedTurn(r.history, key, [{ role: 'agent', text: 'first reply' }]);
+    seedTurn(r.history, key, [{ role: 'agent', text: long }]);
+    // A later failed turn must not hide the last one that finished.
+    seedTurn(r.history, key, [{ role: 'user', text: 'next question' }, { role: 'agent', text: 'half' }], 'failed', 'boom');
+
+    const reply = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', reply: true })) as TaskReadResult;
+    expect(reply.reply).toEqual({ turn: 2, at: expect.any(String), text: long });
+    expect(reply.messages).toEqual([]);
+  });
+
+  it('--reply says when no turn has ended normally, rather than an older reply', async () => {
+    const r = await withChild();
+    seedTurn(r.history, 'web#main#c1000000', [{ role: 'user', text: 'go' }], 'running');
+    const reply = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', reply: true })) as TaskReadResult;
+    expect(reply.reply).toBeUndefined();
+    expect(reply.note).toMatch(/no turn in this topic has ended normally yet/);
+  });
+
+  it('--turn last carries a failed turn’s whole error, which the card could not', async () => {
+    const r = await withChild();
+    const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(300)}`;
+    seedTurn(r.history, 'web#main#c1000000', [{ role: 'user', text: 'go' }], 'failed', error);
+    const read = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', turn: 'last' })) as TaskReadResult;
+    expect(read.turn).toMatchObject({ turn: 1, outcome: 'failed', agent: 'cc' });
+    expect(read.turn!.detail).toBe(error);
+    expect(read.turn!.detail!.length).toBeGreaterThan(CARD_ITEM_CHARS);
   });
 
   it('says whether task-send joined the turn or is waiting behind it', async () => {
@@ -761,7 +893,7 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(body).toBeDefined();
     expect(body!.length).toBe(CARD_ITEM_CHARS);
     expect(body).toContain('5000 chars total, cut at');
-    expect(body).toContain('task-read web:main/c1000000 --full');
+    expect(body).toContain('task-read web:main/c1000000 --reply');
   });
 
   it('shares CARD_TOTAL_CHARS across a burst, and every cut says where the rest is', async () => {
@@ -787,7 +919,7 @@ describe('Delegation: [sub-agent updates]', () => {
     // The frame takes its room first, so the third gets what is left of the 8000, not 1000.
     expect(list[2]!.length).toBeLessThan(CARD_TOTAL_CHARS - 2 * 3_500);
     expect(list[2]).toContain('3500 chars total, cut at');
-    expect(list[2]).toContain('task-read web:main/c3000000 --full');
+    expect(list[2]).toContain('task-read web:main/c3000000 --reply');
     expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
   });
 
@@ -878,8 +1010,8 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(body!.length).toBe(CARD_ITEM_CHARS);
     expect(body).toContain('at step (file.ts:1:1)');
     expect(body).toContain(`${error.length} chars total, cut at`);
-    expect(body).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`);
-    expect(body).not.toContain('task-read');
+    expect(body).toContain("the whole error is in this topic's record — task-read web:main/c1000000 --turn last");
+    expect(body).not.toContain('--full');
   });
 
   it('keeps task-status to a short preview while the card carries the long reply', async () => {
@@ -910,7 +1042,7 @@ describe('Delegation: [sub-agent updates]', () => {
     const prompt = cardOf(chain.r);
     expect(prompt).toContain('  failure: Process exited 1:');
     expect(prompt).toContain(`${error.length} chars total, cut at`);
-    expect(prompt).toContain(`the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`);
+    expect(prompt).toContain("the whole error is in this topic's record — task-read web:main/c1000000 --turn last");
   });
 
   it('does not tell the parent about a turn the person started in the sub-agent’s topic', async () => {

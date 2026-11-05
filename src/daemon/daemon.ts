@@ -951,6 +951,14 @@ export class Daemon {
       platforms: this.platforms,
       registry: this.registry,
       clock,
+      history: this.history,
+      // The same live context `sessions read --turn done` is answered with: the binding now and the
+      // generation `/new`/`/cd` last set, which the library cannot infer from its own rows.
+      currentContext: (id) => {
+        const agent = this.store?.boundAgent(id);
+        if (!agent) return undefined;
+        return { agent, generation: this.store?.conversationGeneration(id) ?? 0 };
+      },
       questionOf: (id) => this.questionOf(id),
       // Buttons only, like a permission request: a sentence typed instead ("use cx for the second")
       // is the person's next message to the agent, which proposes again — not a guess at a button.

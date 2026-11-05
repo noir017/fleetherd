@@ -5,6 +5,7 @@ import { parseTarget, type ConversationAddress } from '../core/conversation.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
 import { LINE_MAX, topicStage } from '../core/topic-stage.js';
+import type { HistoryReadOptions, HistoryStore, HistoryTurnRow } from '../history/store.js';
 import type {
   IpcAction,
   TaskActionResult,
@@ -19,7 +20,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentStatus, ConversationId, TopicActivity, TopicStage } from '../types.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { ConversationRegistry } from './conversation.js';
-import { FAILURE_NOTICE_CHARS, UPDATE_SENDER } from './turn-runner.js';
+import { UPDATE_SENDER } from './turn-runner.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
@@ -151,6 +152,18 @@ export interface DelegationDeps {
   platforms: Map<string, PlatformAdapter>;
   registry: Registry;
   clock: { now(): number; schedule(fn: () => void, ms: number): () => void };
+  /**
+   * The conversation library `task-read` reads. Absent means no `history.db` (a Node without
+   * node:sqlite, or a daemon started without one), and the command says so rather than answering
+   * from a different source with different rows.
+   */
+  history?: Pick<HistoryStore, 'read' | 'turnRecord' | 'sessionOf'>;
+  /**
+   * The conversation's live context — the agent bound now and the generation `/new`/`/cd` last
+   * set — which `--turn done` is defined against. The library cannot infer it from its own rows
+   * (see HistoryReadOptions.current); absent, it falls back to the newest turn's.
+   */
+  currentContext?: (id: ConversationId) => { agent: string; generation: number } | undefined;
   /** The question waiting on the person in a conversation, when there is one (the daemon's asks). */
   questionOf?(id: ConversationId): string | undefined;
   /**
@@ -282,7 +295,7 @@ export class Delegation {
       case 'task-send':
         return this.send(here, action.topic, action.text, action.interrupt === true);
       case 'task-read':
-        return this.read(here, action.topic, action.limit ?? 10, { full: action.full === true, tail: action.tail });
+        return this.read(here, action);
       case 'task-status':
         return this.status(here, action.topic);
       case 'task-stop':
@@ -605,7 +618,9 @@ export class Delegation {
   }
 
   /**
-   * A sub-agent topic's messages, as the agent that opened it reads them.
+   * A sub-agent topic's messages, as the agent that opened it reads them — from the conversation
+   * library (`history.db`), the same rows and the same filters `sessions read` uses, so a
+   * `--turn`/`--role`/`--since` means the same thing in both commands.
    *
    * `full` and `tail` answer the two ways the default cut fails. A tool bubble in accumulate mode is
    * one message holding the turn's commands, so a head cut shows the oldest of them and hides what it
@@ -613,19 +628,28 @@ export class Delegation {
    * a `--full` read of a hundred messages: the newest whole messages are kept and the rest is said
    * in `note`, never silently dropped.
    */
-  private async read(
-    here: Place,
-    topic: string,
-    limit: number,
-    opts: { full: boolean; tail?: number }
-  ): Promise<TaskReadResult> {
-    const c = this.child(here, topic);
-    const messages = await c.adapter.fetchHistory(c.address, { limit });
-    const cap = opts.full || opts.tail !== undefined ? READ_FULL_CHARS : READ_CHARS;
-    const shaped = messages.map((m) => ({
-      from: m.authorIsBot ? ('agent' as const) : ('person' as const),
-      at: new Date(m.timestamp).toISOString(),
-      text: clip(m.content, cap, opts.tail),
+  private read(here: Place, a: Extract<TaskAction, { kind: 'task-read' }>): TaskReadResult {
+    const c = this.child(here, a.topic);
+    const history = this.deps.history;
+    if (!history) {
+      throw new Error('the conversation library is unavailable, and task-read reads it; `task-status` shows the live turn');
+    }
+    // A topic that has not run a turn yet has no session row, and the store would answer with
+    // "no conversation" — which reads like a wrong topic id rather than a topic that just started.
+    if (!history.sessionOf(c.key)) {
+      return { topic: a.topic, messages: [], note: 'nothing has been recorded in this topic yet — no turn has run there' };
+    }
+    if (a.reply) return this.replyOfTurn(c, a.topic, history);
+    const current = this.deps.currentContext;
+    const result = history.read(c.key, taskReadOptions(a, current));
+    const cap = a.full || a.tail !== undefined ? READ_FULL_CHARS : READ_CHARS;
+    const shaped = result.messages.map((m) => ({
+      id: m.id,
+      role: roleOf(m.role),
+      at: m.at,
+      text: clip(m.text, cap, a.tail),
+      ...(m.turn !== undefined ? { turn: m.turn } : {}),
+      ...(m.outcome !== undefined ? { outcome: m.outcome } : {}),
     }));
     let used = 0;
     let from = shaped.length;
@@ -636,17 +660,49 @@ export class Delegation {
       from = i;
     }
     const dropped = from;
+    const notes = [
+      result.note,
+      dropped > 0
+        ? `the ${dropped} oldest of ${shaped.length} messages were left out to keep this under ` +
+          `${READ_TOTAL_CHARS} characters; ask for fewer messages (--limit) or fewer lines (--tail) to fit the rest`
+        : undefined,
+    ].filter((n): n is string => n !== undefined);
+    // Only a read scoped to ONE turn has a record worth carrying: it is where a failed turn's whole
+    // error lives, and what the update card points at when it cuts the error it quotes.
+    const record = a.turn !== undefined ? history.turnRecord(c.key, a.turn, current) : undefined;
     return {
-      topic,
+      topic: a.topic,
       messages: shaped.slice(from),
-      ...(dropped > 0
-        ? {
-            note:
-              `the ${dropped} oldest of ${shaped.length} messages were left out to keep this under ` +
-              `${READ_TOTAL_CHARS} characters; ask for fewer messages (--limit) or fewer lines (--tail) to fit the rest`,
-          }
-        : {}),
+      ...(record ? { turn: turnRecordOf(record) } : {}),
+      ...(notes.length > 0 ? { note: notes.join(' ') } : {}),
     };
+  }
+
+  /**
+   * `--reply`: the last turn that ended normally, and the reply it ended on — whole, because the
+   * card that sent the parent here carried only its first 4,000 characters.
+   *
+   * The turn is selected the way `sessions read --turn done` selects it (this agent, this
+   * generation, so a `/new` in the topic does not answer with the answer it discarded). The reply
+   * is the last thing the agent said in that turn — the segment the turn ended on.
+   */
+  private replyOfTurn(
+    c: Place,
+    topic: string,
+    history: Pick<HistoryStore, 'read' | 'turnRecord' | 'sessionOf'>
+  ): TaskReadResult {
+    const record = history.turnRecord(c.key, 'done', this.deps.currentContext);
+    if (!record) {
+      return {
+        topic,
+        messages: [],
+        note: 'no turn in this topic has ended normally yet — nothing to reply with; --turn last shows how the newest one ended',
+      };
+    }
+    const read = history.read(c.key, { turn: String(record.turn), role: 'agent' });
+    const last = read.messages[read.messages.length - 1];
+    if (!last) return { topic, messages: [], note: `turn ${record.turn} ended normally without a reply` };
+    return { topic, messages: [], reply: { turn: record.turn, at: last.at, text: last.text } };
   }
 
   /** One sub-agent topic in detail: its live row, its last tool calls, and its last reply. */
@@ -1078,17 +1134,60 @@ function quoteBody(q: CardQuote, topic: string, cut: number): string {
 /**
  * What a cut leaves out, and where the rest is.
  *
- * A reply or question is still in its topic when the card stops. An error is not: turn-runner
- * posts only its opening (up to FAILURE_NOTICE_CHARS characters of it) there, so pointing at
- * `task-read` would send the parent after text nobody kept. The note says what the topic actually
- * has instead.
+ * A reply is in the turn it ended, whole, and a failure's error is in that turn's record — the
+ * topic's ❌ notice carries only its opening, and the record keeps the whole message the turn was
+ * thrown with. A question is neither: it is the ask waiting on the person, not a row any turn
+ * ended with, so it keeps the pointer it always had.
  */
 function cutNote(q: CardQuote, topic: string, cut: number): string {
   const rest =
     q.label === 'failure'
-      ? `the topic's ❌ notice carries at most ${FAILURE_NOTICE_CHARS} characters of the error`
-      : `the rest is in this topic — task-read ${topic} --full`;
+      ? `the whole error is in this topic's record — task-read ${topic} --turn last`
+      : q.label === 'reply'
+        ? `the whole reply is in this topic — task-read ${topic} --reply`
+        : `the rest is in this topic — task-read ${topic} --full`;
   return `\n…[${q.total} chars total, cut at ${cut}; ${rest}]`;
+}
+
+/**
+ * The library options `task-read`'s flags name.
+ *
+ * The default 10 is "the newest 10 messages", so it applies only to an unfiltered read: a
+ * `--turn`/`--turns` read is about those turns, and a `--role`/`--grep` read is a search over the
+ * whole log — cutting either at ten rows would answer a question nobody asked. `--since` resumes
+ * forward from a cursor and carries no limit at all (the CLI refuses the two together).
+ */
+function taskReadOptions(
+  a: Extract<TaskAction, { kind: 'task-read' }>,
+  current?: (key: string) => { agent: string; generation: number } | undefined
+): HistoryReadOptions {
+  const filtered =
+    a.role !== undefined || a.turn !== undefined || a.turns !== undefined || a.grep !== undefined;
+  const limit = a.limit ?? (filtered ? undefined : 10);
+  return {
+    ...(a.since !== undefined ? { since: a.since } : limit !== undefined ? { limit } : {}),
+    ...(a.role !== undefined ? { role: a.role } : {}),
+    ...(a.turn !== undefined ? { turn: a.turn } : {}),
+    ...(a.turns !== undefined ? { turns: a.turns } : {}),
+    ...(a.grep !== undefined ? { grep: a.grep } : {}),
+    ...(current ? { current } : {}),
+  };
+}
+
+/** A turn's record as `task-read` returns it: the failure detail only when there is one. */
+function turnRecordOf(record: HistoryTurnRow): NonNullable<TaskReadResult['turn']> {
+  return {
+    turn: record.turn,
+    at: record.at,
+    outcome: record.outcome,
+    agent: record.agent,
+    ...(record.detail ? { detail: record.detail } : {}),
+  };
+}
+
+/** The library's three roles, narrowed for the result (writes are typed; nothing else is stored). */
+function roleOf(role: string): 'user' | 'agent' | 'tool' {
+  return role === 'user' || role === 'tool' ? role : 'agent';
 }
 
 /** The least an entry needs to say anything at all: its cut notice (or its whole text, if short). */

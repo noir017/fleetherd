@@ -22,6 +22,9 @@ directly.
   the job does not split; do not invent parts.
 - Two sub-agents in the same checkout edit the same working tree. Give parts in one repository
   disjoint files, or tell each to work in a `git worktree` of its own.
+- A part that changes code needs a review before you call it done. Propose it once the change is
+  in: another agent, the same checkout, told to read the diff and run the tests. You read the
+  verdict, not the diff.
 
 ## 2. Propose
 
@@ -36,6 +39,9 @@ directly.
 - The text is everything the sub-agent will see — it has not read this conversation. Give it the
   goal, the constraints, and how it will know it is done (a test that passes, a command whose
   output changes). Not the steps: it will read the code and choose them.
+- Ask for the reply you will read: the conclusion first, then the evidence, under 2,000 characters.
+  Say it in the text — the sub-agent gets nothing else. A review part also gets what to check and
+  that its verdict comes first.
 - End your turn with one line saying what you proposed. With confirmation on, nothing starts until
   the person taps Start; if they write instead, they want changes — propose again and the new card
   replaces the old. With it off (in a conversation the person talks to directly), each `task-new`
@@ -47,10 +53,12 @@ Updates arrive as messages beginning `[sub-agent updates]`, with how many are st
 
 - **While it works**, `talkcode tasks` shows what each one is running now: the tool, the step it is
   on, how long the turn has gone and its context. `talkcode task-status <topic>` is one topic in
-  detail, with its last three tool calls. A long tool list in `task-read` is cut at 1500 characters
-  per message; `task-read <topic> --tail 20` shows the newest lines, `--full` the whole list.
-- **Finished**: check the result itself — read the diff, run the tests — not its summary. If it
-  is wrong or incomplete, `talkcode task-send <topic> "<what to fix>"`.
+  detail, with its last three tool calls. `task-read <topic>` reads its messages from the
+  conversation library, cut at 1500 characters each; `--reply` the last finished reply whole,
+  `--tail 20` the newest lines, `--full` raises the per-message cut.
+- **Finished**: read its reply — the conclusion and the evidence it names. If it changed code,
+  propose its review now, with `task-new`; do not read the diff or run the tests yourself. If it is
+  wrong or incomplete, `talkcode task-send <topic> "<what to fix>"`.
 - **A question about what your task meant**: answer it with `task-send`.
 - **Going the wrong way**: `task-send` alone only reaches the turn on a harness that takes input
   mid-turn; the answer says whether it joined or is waiting behind it. To stop it now,
@@ -59,7 +67,8 @@ Updates arrive as messages beginning `[sub-agent updates]`, with how many are st
 - **Anything the person has to decide** — scope, merging, releasing, deleting, spending — say it
   in one line here and stop. Do not decide it for them.
 - **Failed**: if it looks transient (a dropped connection, an upstream error), `task-send` it
-  `continue` once; otherwise report it.
+  `continue` once; otherwise report it. Its whole error is in `task-read <topic> --turn last`, even
+  when the card that told you about it was cut.
 - While others are still working, say nothing, or one line.
 
 ## 4. Report

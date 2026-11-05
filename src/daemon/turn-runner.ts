@@ -61,9 +61,9 @@ export const UPDATE_SENDER = 'sub-agent-updates';
 /**
  * How much of a failed turn's reason the ❌ notice in its topic carries.
  *
- * Shared with delegation.ts: an update card that cuts an error says what the topic actually holds,
- * and the number it quotes has to be the one this notice was cut with. Too long for a chat line,
- * too short to be the whole error — the card is where the fuller copy reaches the parent agent.
+ * The notice is a chat line, so it keeps the opening only. The whole error is in the turn's record
+ * (`turns.detail`), which the update card points at when it cuts its own quote — the card itself
+ * carries at most CARD_ITEM_CHARS.
  */
 export const FAILURE_NOTICE_CHARS = 300;
 
@@ -329,8 +329,9 @@ export type TurnEnd =
 
 /**
  * How a finished turn is filed. A stopped turn is still a turn that ran — its partial reply is
- * in the library — so it gets `stopped`, not a silent absence. The failure detail is the message
- * the chat was told, capped: the database keeps a reason, not a stack trace.
+ * in the library — so it gets `stopped`, not a silent absence. A failure keeps the message the
+ * turn was thrown with, whole: the ❌ notice in the topic carries only its opening, and the
+ * update card points at this record when it cuts its own quote.
  */
 function historyEndOf(end: TurnEnd, at: number): HistoryTurnEnd {
   switch (end.kind) {
@@ -340,7 +341,11 @@ function historyEndOf(end: TurnEnd, at: number): HistoryTurnEnd {
       return { outcome: 'stopped', at };
     case 'failed': {
       const reason = end.error instanceof Error ? end.error.message : String(end.error);
-      return { outcome: 'failed', at, detail: reason.length > 500 ? `${reason.slice(0, 499)}…` : reason };
+      return {
+        outcome: 'failed',
+        at,
+        detail: reason.length > HISTORY_FAILURE_KEEP ? `${reason.slice(0, HISTORY_FAILURE_KEEP - 1)}…` : reason,
+      };
     }
     default: {
       const _exhaustive: never = end;
@@ -411,6 +416,16 @@ interface TurnRef {
 
 /** How much of one render's text the library keeps (see TurnRef.replyText). */
 const HISTORY_REPLY_KEEP = 200_000;
+
+/**
+ * How much of a failed turn's error the library keeps in `turns.detail`.
+ *
+ * The update card carries CARD_ITEM_CHARS (4,000) of it and points at the record for the rest, so
+ * the record has to hold more than the card — a long ACP error was unreadable past 4,000 characters
+ * before this. Bounded at the same size a reply row is, which is what one row can be read back in;
+ * an error longer than that is not a message a model wrote.
+ */
+const HISTORY_FAILURE_KEEP = 200_000;
 
 /** How much of a segment's text a TurnRef keeps for TurnEnd (see TurnRef.segmentText). */
 const REPLY_TEXT_KEEP = 4_000;

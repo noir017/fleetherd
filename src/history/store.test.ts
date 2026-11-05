@@ -375,6 +375,50 @@ describe('HistoryStore turns', () => {
     store.close();
   });
 
+  it('takes the newest n rows with limit, oldest first, without a cut note', () => {
+    const { store } = tempStore();
+    const { session } = seedThreeTurns(store);
+    const newest = store.read(String(session), { limit: 2 });
+    expect(newest.messages.map((m) => m.text)).toEqual(['第三轮问题', '第三轮回答']);
+    expect(newest.note).toBeUndefined();
+    // A role filter narrows first, then the newest n of what matched.
+    expect(store.read(String(session), { role: 'agent', limit: 2 }).messages.map((m) => m.text)).toEqual([
+      '第二轮回答',
+      '第三轮回答',
+    ]);
+    store.close();
+  });
+
+  it('reads one turn’s record, whole error and all, and has none to read when nothing ran', () => {
+    const { store } = tempStore();
+    const { session } = seedThreeTurns(store);
+    expect(store.turnRecord(String(session), 'last')).toEqual({
+      turn: 3,
+      at: new Date(Date.UTC(2026, 10, 2, 9, 0) + 22).toISOString(),
+      outcome: 'done',
+      agent: 'cc',
+      detail: '',
+    });
+    // `done` is the newest turn that ended normally; turn 3 did, so it is the answer.
+    expect(store.turnRecord(String(session), 'done')?.turn).toBe(3);
+
+    // The error is kept as the turn runner wrote it — the whole message, not the 300-character
+    // opening the chat's ❌ notice carries.
+    const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(400)}`;
+    const failed = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: 99_000 })!;
+    store.endTurn(failed, { outcome: 'failed', at: 99_500, detail: error });
+    const record = store.turnRecord(String(session), 'last')!;
+    expect(record.outcome).toBe('failed');
+    expect(record.detail).toBe(error);
+
+    // A conversation with no turns yet answers "none", not an error; a turn number that names no
+    // turn is still a wrong request.
+    const fresh = store.session({ key: 'tg#fresh#', platform: 'tg', agent: 'cc', at: 5 })!;
+    expect(store.turnRecord(String(fresh), 'last')).toBeUndefined();
+    expect(() => store.turnRecord(String(session), '9')).toThrow(/there is no turn 9/);
+    store.close();
+  });
+
   it('combines role, grep, since and tail', () => {
     const { store } = tempStore();
     const { session } = seedThreeTurns(store);
@@ -455,6 +499,7 @@ describe('HistoryStore turns', () => {
     expect(() => store.read(String(session), { since: 1, turn: 'last' })).toThrow(/cannot be combined/);
     expect(() => store.read(String(session), { since: 1, turns: 2 })).toThrow(/cannot be combined/);
     expect(() => store.read(String(session), { since: 1, role: 'tool', tail: 2 })).toThrow(/cannot be combined/);
+    expect(() => store.read(String(session), { since: 1, limit: 2 })).toThrow(/cannot be combined/);
     const old = store.session({ key: 'tg#pre#', platform: 'tg', at: 5 })!;
     expect(() => store.read(String(old), { turn: 'last' })).toThrow(/no recorded turns/);
     store.close();
