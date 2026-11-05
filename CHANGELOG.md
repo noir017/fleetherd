@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.35.0] - 2026-11-05
+
 ### Added
 
 - **Switch a topic's model from the web UI's status line.** The model named above the composer is a
