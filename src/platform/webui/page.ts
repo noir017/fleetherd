@@ -253,7 +253,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    one: its finished turn is the news of the agent that opened it (see the dot class in
    paintTopics), so the row stays the ordinary idle/online grey. */
 .topic-dot.review{background:#4ade80}
-/* Low attention (the Settings menu, per device: calmBtn). With several agents working at once the
+/* Low attention (the Menu, per device: calmBtn). With several agents working at once the
    list never stops moving — a pulsing dot per running topic, and an unread count in a bright pill
    that climbs with every message a running turn posts — and none of that is anything to act on.
    Here work is shown and not announced: the running dot keeps its colour and halo and stops
@@ -462,7 +462,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #skills-close{font-size:18px;padding:6px 10px}
 #skills-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 #skills-note{margin:0 0 10px;font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
-/* /setting as a page of its own, opened from the Settings menu or by typing the command, rather
+/* /setting as a page of its own, opened from the Menu or by typing the command, rather
    than a screen inserted into the transcript. A window over the conversation like the reader and
    the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
    rows, the values, the validation and the write all stay on the daemon's side. The bar carries
@@ -1344,9 +1344,9 @@ const SCRIPT = `
     el: sidebar, handle: $('sidebar-resize'), side:'left',
     min:180, max:640, width:240, storeKey:'aa_sb_open', widthKey:'aa_sb_w',
     dockAt: NARROW + 1,
-    // The sidebar's width even while it is collapsed: collapsing slides it out of view with a
-    // negative margin, it does not give the column back, and expanding it later must not leave
-    // the chat narrower than the 360px this cap exists to protect.
+    // The cap leaves the chat 360px with the right panel docked. It counts the sidebar's width
+    // even while the sidebar is collapsed: collapsing hands the column's space back to the chat,
+    // but expanding it again takes that space back, and the 360px has to hold in both states.
     maxWidth: function(){
       return window.innerWidth - 360 - (schedPane && schedPane.isOpen() && schedPane.docked() ? schedPane.width() : 0);
     },
@@ -1362,6 +1362,8 @@ const SCRIPT = `
     width: function(){ return Math.min(320, Math.max(240, Math.round(window.innerWidth * 0.20))); },
     storeKey:'aa_sched_open', widthKey:'aa_sched_w',
     dockAt: 1024,
+    // The sidebar's stored width, not its current on-screen one: that is the width the chat
+    // loses whenever the sidebar is open, which is what this cap has to keep room for.
     maxWidth: function(){ return window.innerWidth - sbPane.width() - 360; },
     onPaint: function(open){
       app.classList.toggle('sched-open', open);
@@ -1383,8 +1385,8 @@ const SCRIPT = `
 
   /**
    * Both widths are capped against the other column, so opening or closing one can leave the
-   * other past its maximum. Re-clamped, not persisted: the width the operator chose is what
-   * they get back when the other column goes away again.
+   * other past its maximum. The clamp rewrites --pw, not storage: the narrower width stays until
+   * the page is reloaded, when the stored one is applied again.
    */
   function clampPanels(){
     // Only a column has a width of its own; in drawer mode the screen decides it, and a clamp
@@ -1449,7 +1451,7 @@ const SCRIPT = `
   });
 
   /**
-   * The gateway's settings page, from the Settings menu. The command is sent quietly — the daemon
+   * The gateway's settings page, from the Menu. The command is sent quietly — the daemon
    * has to build the screen from the live config, and it answers with a message of its own, but a
    * page opening must not leave a /setting bubble in the transcript.
    */
@@ -2316,7 +2318,7 @@ const SCRIPT = `
   }
 
   /**
-   * Send a command the operator did not type — the Settings menu asking the daemon for its own
+   * Send a command the operator did not type — the Menu asking the daemon for its own
    * settings screen. quiet tells the room not to write it into the conversation: a page opening
    * must not leave a /setting bubble in the transcript, and nothing on the daemon's side needs
    * the echo (the answer is a new message of its own).
@@ -4030,10 +4032,19 @@ const SCRIPT = `
   lightbox.addEventListener('click', closeShot);
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
-    // Close the topmost thing first: Escape over a picture or the reader must not also put away
-    // a menu or a panel behind it.
-    var overlay = !lightbox.hidden || !reader.hidden || !idleDialog.hidden || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
+    // An IME uses Escape to cancel its candidate list. That keystroke belongs to the composition,
+    // not to the page: dismissing a panel (and remembering the dismissal) mid-word is not
+    // something the person asked for.
+    if(e.isComposing) return;
+    // A recording is cancelled by Escape too, and the recorder's own listener below does that.
+    // The same keystroke must not also put away what is behind the composer.
+    if(rec) return;
+    // Close the topmost thing first: Escape over a picture, the reader or a menu must not also
+    // put away a panel behind it. The command suggestions are the composer's own overlay.
+    var hintsOpen = !hints.hidden;
+    var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
     closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
+    if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
     var m = openMenu();
     if(m){ setMenu(null, false); m.btn.focus(); }
     // The two panels answer Escape alike: the right one first, then the left. Each is a choice
@@ -4782,7 +4793,12 @@ const SCRIPT = `
     if(rec) stopRec(true);
     else if(!recStarting && topic) startRec();
   });
-  document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && rec) stopRec(false); });
+  // Escape throws a recording away — unless it is an IME cancelling its candidate list, which is
+  // a different Escape and must not also cost the recording.
+  document.addEventListener('keydown', function(e){
+    if(e.isComposing) return;
+    if(e.key === 'Escape' && rec) stopRec(false);
+  });
 
   function suggest(){
     var v=input.value;

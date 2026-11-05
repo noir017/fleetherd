@@ -899,6 +899,11 @@ describe('webui page: closing the idle agents', () => {
     { id: 'd4e5f6a7', title: 'cold', lastAt: 997, live: false, msgCount: 0 },
     { id: 'e5f6a7b8', title: 'kept warm', lastAt: 996, live: true, starred: true, msgCount: 0 },
   ];
+  /** The item lives in the Manage menu now; open it the way a person would. */
+  const closeIdle = async (h: Harness): Promise<void> => {
+    await h.click('#manage-toggle');
+    await h.click('#close-idle');
+  };
   const rows = (h: Harness) =>
     Array.from(h.doc.querySelectorAll('#idle-list li')).map((li) => ({
       id: li.getAttribute('data-idle'),
@@ -923,7 +928,7 @@ describe('webui page: closing the idle agents', () => {
   it('lists each topic it would close, starred first, before closing anything', async () => {
     const h = await open();
     await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await h.click('#close-idle');
+    await closeIdle(h);
 
     expect(h.el('idle-dialog').hidden).toBe(false);
     expect(h.el('idle-title').textContent).toBe('Close 2 idle agents?');
@@ -943,7 +948,7 @@ describe('webui page: closing the idle agents', () => {
   it('closes exactly the listed topics and says what became of each', async () => {
     const h = await open({ replies: { 'api/topics/close-idle': { closed: ['e5f6a7b8'], kept: ['c3d4e5f6'] } } });
     await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await h.click('#close-idle');
+    await closeIdle(h);
     // A topic that goes idle while the dialog is open was not shown, so it is not closed either.
     await h.emit({ t: 'topics', topics: fleet().map((t) => (t.id === 'b2c3d4e5' ? { ...t, running: false } : t)) });
     await h.click('#idle-go');
@@ -963,7 +968,7 @@ describe('webui page: closing the idle agents', () => {
   it('keeps the question open, and says why, when the request fails', async () => {
     const h = await open({ status: { 'api/topics/close-idle': 500 } });
     await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await h.click('#close-idle');
+    await closeIdle(h);
     await h.click('#idle-go');
     await until('the failure', () => h.el('idle-title').textContent !== 'Close 2 idle agents?');
 
@@ -976,14 +981,14 @@ describe('webui page: closing the idle agents', () => {
   it('goes away on Escape and on a click outside the box', async () => {
     const h = await open();
     await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await h.click('#close-idle');
+    await closeIdle(h);
     h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
     expect(h.el('idle-dialog').hidden).toBe(true);
 
-    await h.click('#close-idle');
+    await closeIdle(h);
     await h.click('#idle-dialog');
     expect(h.el('idle-dialog').hidden).toBe(true);
-    await h.click('#close-idle');
+    await closeIdle(h);
     await h.click('#idle-box');
     expect(h.el('idle-dialog').hidden).toBe(false);
   });
@@ -5130,6 +5135,108 @@ describe('webui page: one panel component on both edges', () => {
   });
 });
 
+describe('webui page: Escape belongs to what is in front of it', () => {
+  const A = 'a1b2c3d4';
+
+  /** Both panels out, so a stray Escape has something visible to put away. */
+  const openBoth = async (opts: NonNullable<Parameters<typeof open>[0]> = {}): Promise<Harness> => {
+    const h = await open({ width: 1440, height: 900, ...opts });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    expect(h.el('schedules').classList.contains('collapsed')).toBe(false);
+    return h;
+  };
+  const bothOpen = (h: Harness): boolean =>
+    !h.el('sidebar').classList.contains('collapsed') && !h.el('schedules').classList.contains('collapsed');
+  const esc = async (h: Harness, init: KeyboardEventInit = {}): Promise<void> => {
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', ...init }));
+    await tick();
+  };
+
+  it('leaves both panels alone when Escape cancels an IME composition', async () => {
+    const h = await openBoth();
+    // A stored choice first, so a stray close would also be visible in storage.
+    await h.click('#collapse-sidebar');
+    await h.click('#expand-sidebar');
+    expect(h.window.localStorage.getItem('aa_sb_open')).toBe('1');
+
+    const input = h.el('input') as HTMLTextAreaElement;
+    input.focus();
+    await esc(h, { isComposing: true });
+
+    expect(bothOpen(h)).toBe(true);
+    expect(h.window.localStorage.getItem('aa_sb_open')).toBe('1');
+    expect(h.window.localStorage.getItem('aa_sched_open')).toBe('1');
+  });
+
+  it('stops a recording without putting either panel away', async () => {
+    const h = await openBoth({ mic: { types: ['audio/webm;codecs=opus'] } });
+    await h.click('#mic');
+    await tick();
+    expect(h.el('mic').classList.contains('rec')).toBe(true);
+
+    await esc(h);
+
+    expect(h.el('mic').classList.contains('rec')).toBe(false);
+    expect(h.recorders[0]!.tracksStopped()).toBe(true);
+    // Thrown away, not sent: Escape means cancel.
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+    expect(bothOpen(h)).toBe(true);
+  });
+
+  it('closes only the idle dialog when it is the thing in front', async () => {
+    const h = await openBoth();
+    await h.emit({
+      t: 'topics',
+      topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true }],
+    });
+    await h.click('#manage-toggle');
+    await h.click('#close-idle');
+    expect(h.el('idle-dialog').hidden).toBe(false);
+
+    await esc(h);
+
+    expect(h.el('idle-dialog').hidden).toBe(true);
+    expect(bothOpen(h)).toBe(true);
+  });
+
+  it('closes only the picture when it is the thing in front', async () => {
+    const h = await openBoth();
+    await h.emit(sync(A, [{ ...message('m1', '<p>here</p>'), file: { name: 'shot.png', url: 'f/abc123', image: true } }], [A]));
+    await h.click('#log img.shot');
+    expect(h.el('lightbox').hidden).toBe(false);
+
+    await esc(h);
+
+    expect(h.el('lightbox').hidden).toBe(true);
+    expect(bothOpen(h)).toBe(true);
+  });
+
+  it('closes only the menu when it is the thing in front', async () => {
+    const h = await openBoth();
+    await h.click('#opts-toggle');
+    expect(h.el('opts-menu').hidden).toBe(false);
+
+    await esc(h);
+
+    expect(h.el('opts-menu').hidden).toBe(true);
+    expect(bothOpen(h)).toBe(true);
+  });
+
+  it('dismisses the command suggestions without touching the panels', async () => {
+    const h = await openBoth();
+    const input = h.el('input') as HTMLTextAreaElement;
+    input.value = '/';
+    input.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(h.el('hints').hidden).toBe(false);
+
+    await esc(h);
+
+    expect(h.el('hints').hidden).toBe(true);
+    expect(bothOpen(h)).toBe(true);
+  });
+});
+
 describe('webui page: the scheduled-task panel', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
@@ -5411,6 +5518,25 @@ describe('webui page: the scheduled-task panel', () => {
     h.doc.getElementById('sched-resize')!.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
     expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('');
     expect(h.window.localStorage.getItem('aa_sched_w')).toBeNull();
+  });
+
+  it('drags from its left edge: moving the pointer left widens it', async () => {
+    // jsdom has no layout, so pin the right edge where a docked panel's is. The drag measures
+    // from that edge; the reversed arithmetic would clamp to the 220px minimum instead of 280.
+    const h = await open({ width: 1440, height: 900 });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    h.el('schedules').getBoundingClientRect = () =>
+      ({ left: 1024, right: 1280, width: 256, top: 0, bottom: 800, height: 800, x: 1024, y: 0, toJSON: () => ({}) }) as DOMRect;
+
+    const handle = h.el('sched-resize');
+    handle.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientX: 1024 }));
+    h.doc.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientX: 1000 }));
+    h.doc.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientX: 1000 }));
+    await tick();
+
+    expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('280px');
+    expect(h.window.localStorage.getItem('aa_sched_w')).toBe('280');
   });
 });
 

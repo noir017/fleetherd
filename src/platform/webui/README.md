@@ -248,7 +248,8 @@ daemon ends the child synchronously before it sends the ack (`answerDaemonComman
 is a posted message, which announces the list.
 
 **"Close idle" ends every dim-blue topic's process at once** (since 2.16.0), from the
-sidebar footer beside Settings; it shows the count and is hidden at zero. Unlike the power button it is
+sidebar footer's Manage menu; the count is on the Manage button itself, and the item inside is
+hidden at zero. Unlike the power button it is
 not a typed command, and that is deliberate: a `/kill` per topic would leave an echo and an ack in
 every room it touched, twenty messages for ten topics. Instead `POST api/topics/close-idle` carries
 the ids, `WebRoom.closeIdle` hands each to the daemon (`PlatformAdapter.useIdleReclaim`), and the
