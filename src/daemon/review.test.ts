@@ -293,6 +293,45 @@ describe('ReviewService', () => {
     expect(h.calls).toHaveLength(0);
   });
 
+  it('retries a failed conversation after 24 hours once the six-hour back-off is up', async () => {
+    seed('telegram:chat:1', 3);
+    let attempts = 0;
+    const h = harness({
+      run: async () => {
+        attempts += 1;
+        return { ok: false, error: 'agy exited 1' };
+      },
+    });
+    await h.service.sweep();
+    expect(attempts).toBe(1);
+
+    // The messages are now over a day old, but this conversation has a mark: the retry rule is
+    // the six-hour back-off, not the first-start freshness rule.
+    now += 25 * 3_600_000;
+    await h.service.sweep();
+    expect(attempts).toBe(2);
+  });
+
+  it('backs off for six hours when the prompt cannot be prepared', async () => {
+    seed('telegram:chat:1', 3);
+    // A file where the skills directory should be: listSkills throws ENOTDIR.
+    fs.writeFileSync(path.join(dir, 'skills'), 'not a directory');
+    const h = harness();
+    const prepared = () => h.logs.filter((l) => l.includes('could not prepare the review')).length;
+
+    await h.service.sweep();
+    expect(prepared()).toBe(1);
+    expect(h.calls).toHaveLength(0);
+
+    now += 3_600_000;
+    await h.service.sweep();
+    expect(prepared()).toBe(1); // still backing off
+
+    now += 6 * 3_600_000;
+    await h.service.sweep();
+    expect(prepared()).toBe(2);
+  });
+
   it('does not review the same conversation again when the watermark cannot be written', async () => {
     seed('telegram:chat:1', 3);
     // A directory where reviews.json should be: every write fails, whatever the process can do.

@@ -838,9 +838,9 @@ export class Daemon {
   private readonly reviews?: ReviewService;
 
   /**
-   * The review sweep's own file (`reviews.json`), held beside the service because the web UI's
-   * Reviews tab reads today's counter from it. One instance for both: two readers would be fine,
-   * but a second writer is how a counter and a sweep start disagreeing.
+   * The review sweep's store (`reviews.json`). It is constructed here because `configDir()` is
+   * only known here; the service holds it from then on, and the sweep is its only reader and
+   * writer now that the Reviews tab no longer shows a counter.
    */
   private readonly reviewState?: ReviewStateStore;
 

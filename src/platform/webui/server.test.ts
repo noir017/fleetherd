@@ -1231,7 +1231,7 @@ describe('webui server: traffic', () => {
       invalid: [],
       topic: 'a1b2c3d4',
     };
-    const list = { enabled: true, running: true, reviews: [review], quota: { used: 3, limit: 10, resetsAt: 1762300800000 } };
+    const list = { enabled: true, running: true, reviews: [review] };
 
     it('lists what the daemon handed the room, and says when it offered none', async () => {
       const { base, room } = await boot();

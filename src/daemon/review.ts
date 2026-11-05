@@ -67,8 +67,9 @@ import {
  * ── What it costs ───────────────────────────────────────────────────────────────────────────────
  * One review at a time and a six-hour back-off after a failure. There is no daily cap: each
  * conversation's watermark is what stops it being reviewed again, and REVIEW_LAST_MESSAGE_MAX_MS
- * keeps the first start from replaying months of history. A watermark that cannot be written is
- * held in memory (review-state.ts), so a full disk does not become a review loop.
+ * keeps the first start from replaying months of history for conversations it has never seen. A
+ * watermark that cannot be written is held in memory (review-state.ts), so a full disk does not
+ * become a review loop.
  */
 
 /** A conversation has to be quiet this long before a review — the reclaim deadline's own hour. */
@@ -78,9 +79,10 @@ export const REVIEW_IDLE_MS = 3_600_000;
 export const REVIEW_SWEEP_MS = 60_000;
 
 /**
- * How old a conversation's newest message may be. This is what the daily cap used to do on the
- * first start: review the conversations that just went quiet, not every conversation since the
- * gateway was installed.
+ * How old the newest message may be, for a conversation this feature has never seen. This is what
+ * the daily cap used to do on the first start: review the conversations that just went quiet, not
+ * every conversation since the gateway was installed. A conversation with a mark (reviewed or
+ * failed) is not subject to it — its watermark and retry time do that job.
  */
 export const REVIEW_LAST_MESSAGE_MAX_MS = 24 * 3_600_000;
 
@@ -226,7 +228,6 @@ export class ReviewService {
     if (!reviewer || !this.deps.history.available) return;
     this.busy = true;
     try {
-      const now = this.deps.clock.now();
       const reclaimOff = !(this.deps.config.session.idleTimeoutMs > 0);
       const candidates = this.deps
         .candidates()
@@ -240,6 +241,9 @@ export class ReviewService {
         if (!current || this.stopped) break;
         // One conversation's broken row must not end the pass: the next candidate may be fine.
         try {
+          // Per candidate, not once per pass: with no cap a pass can outlive the hour, and a
+          // retry that is six hours old by now must not be held back by a stale clock.
+          const now = this.deps.clock.now();
           const plan = this.plan(candidate, now);
           if (!plan) continue;
           await this.runOne(candidate, plan, current, now);
@@ -255,8 +259,8 @@ export class ReviewService {
   /**
    * Whether this conversation is worth reviewing now: the library has it, it is a person's
    * conversation rather than a scheduled, sub-agent or review one, its last failure has backed
-   * off, its newest message is under a day old, and the person has said enough since the last
-   * review.
+   * off, its newest message is under a day old when this feature has never seen it, and the person
+   * has said enough since the last review.
    */
   private plan(candidate: ReviewCandidate, now: number): Plan | undefined {
     const session = this.deps.history.sessionOf(candidate.key);
@@ -265,17 +269,31 @@ export class ReviewService {
     const mark = this.deps.state.markOf(candidate.key);
     const window = this.deps.history.reviewWindow(candidate.key, mark?.messageId ?? 0, REVIEW_CONVERSATION_CHARS);
     if (!window || window.messages.length === 0) return undefined;
-    // The newest message is the last one in the window (`reviewWindow` cuts from the oldest end).
-    // A conversation that has been quiet for longer than a day is left alone rather than replayed;
-    // this is the check that replaces the daily cap's protection on the first start.
+    // The freshness rule applies only to a conversation with no mark at all: it exists so the
+    // first start after enabling cannot replay months of history. Once a mark exists — reviewed or
+    // failed — the watermark and the six-hour retry decide; applying the age here too would make a
+    // failed conversation permanently unreviewable once its messages turned a day old.
     const newest = window.messages[window.messages.length - 1];
-    if (!newest || now - (Date.parse(newest.at) || 0) > REVIEW_LAST_MESSAGE_MAX_MS) return undefined;
+    if (!newest) return undefined;
+    if (!mark && now - (Date.parse(newest.at) || 0) > REVIEW_LAST_MESSAGE_MAX_MS) return undefined;
     if (window.userMessages < REVIEW_MIN_USER_MESSAGES) return undefined;
     return { session, window };
   }
 
   private async runOne(candidate: ReviewCandidate, plan: Plan, reviewer: AgentDef, now: number): Promise<void> {
-    const prompt = this.promptFor(plan);
+    let prompt: string;
+    try {
+      prompt = this.promptFor(plan);
+    } catch (e) {
+      // Building the prompt reads the skill library and every skill the conversation used. A
+      // failure there — an unreadable directory, a broken `SKILL.md` — used to escape to the sweep,
+      // which logged it and tried again on the next minute, forever. It is a failed review like any
+      // other: back off six hours for this conversation.
+      const error = e instanceof Error ? e.message : String(e);
+      this.deps.state.failed(candidate.key, error, now);
+      this.log(`[review] ${candidate.key}: could not prepare the review: ${error}`);
+      return;
+    }
     const model = this.deps.config.review?.model ?? reviewer.model;
     const result = await this.run(reviewer, model, prompt);
     if (!result.ok) {
