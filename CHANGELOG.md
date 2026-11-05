@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's settings page is a settings page.** It was the chat menu redrawn: ten rows all
+  titled "Default model" in a two-column zig-zag, sub-agent confirmation filed among them, the topic
+  named in the bar as though these were its settings, and every value the same blue text with a ›.
+  Now it is one column of sections — Agents, Default model, Sub-agents, Conversations, Replies,
+  Voice — and each setting is changed in place with the control that fits it: a switch for on/off, a
+  segmented control or a dropdown for a short list (one tap, where the menu needed two and a Back),
+  and a row per agent for the default models, named by the agent, showing its whole model id or
+  *harness default* in grey, with the agent answering the current topic marked. The bar says these
+  are saved to config.yaml for every topic; "next session" is said once for the model rows rather
+  than on each, and *after restart* only where it applies. What each change did — saved, already set,
+  refused and why — is a banner, and a request that never reached the gateway puts the control back
+  and says so. Every row is listed, not the chat menu's first 20. Chat platforms' `/setting` menus
+  are unchanged. [→](docs/settings.md)
+
 ## [2.34.0] - 2026-11-05
 
 ### Added

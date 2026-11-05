@@ -27,16 +27,32 @@ and restarting, which stops every resident agent.
 
 Where buttons can be posted *and* replaced (Discord, Telegram, Slack, Lark) the
 bare form opens a two-level menu — tap a setting, tap a value, and the screen
-returns to the list with the new value on it. In the web UI the same two levels
-are a page of its own: **All settings** in the ⚙ menu at the foot of the topic
-list opens it, and typing `/setting` does the same. Rows are grouped by what
-they decide, each showing its label and its whole current value, and tapping a
-row opens its values with the current one marked; Back returns to the list. The
-page is bound to the topic it was opened in — the agent and model rows are that
-conversation's — and its bar names that topic. It is not a message in the
-transcript: what you type stays as your message, the page does not. Everywhere
-else the same commands work as text. A long list of models is paged, and a name your harness
-accepts but never advertised (`opusplan`) is taken as typed.
+returns to the list with the new value on it. Everywhere else the same commands
+work as text. A long list of models is paged, and a name your harness accepts but
+never advertised (`opusplan`) is taken as typed.
+
+In the web UI `/setting` is a settings page: **All settings** in the ⚙ menu at the
+foot of the topic list opens it, and typing `/setting` does the same. It is one
+column of sections — Agents, Default model, Sub-agents, Conversations, Replies,
+Voice — and each row is changed in place with the control that fits it:
+
+- **on/off** (sub-agent confirmation, live streaming, the two voice switches) is a
+  switch: one tap writes it;
+- **a short list** is a segmented control (idle reclaim: off, 15m, 1h, 4h, 12h) or a
+  dropdown (default agent, conversation scope), written as soon as you pick;
+- **a model** is a row per agent, named by the agent, with its whole model id — or
+  *harness default* in grey when none is set. The agent answering the topic you
+  opened the page from is marked *this topic*. Tapping a row opens that agent's
+  models, with the current one ticked.
+
+What each change did is said in a banner at the top — saved, already set, or why
+it was refused — and a request that never reached the gateway puts the control
+back and says so. The page says where these live — config.yaml, every topic —
+because none of them is the topic's own: `/model` and `/agent` are how one topic
+differs. A change applies at once unless its row says otherwise: the model rows
+apply from each agent's next session, and conversation scope is marked *after
+restart*. The page is not a message in the transcript: a typed `/setting` stays as
+your message, the page does not.
 
 Each answer says **when** the change lands, because they differ: the scope is
 written but not applied until a restart, since changing what counts as one

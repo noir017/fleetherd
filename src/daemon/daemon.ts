@@ -63,11 +63,12 @@ import {
   buildSettingValueMenu,
   buildSettingsMenu,
   parseSettingButtonId,
-  settingAckText,
+  settingNotice,
   settingValuePage,
   settingsMenuExpiredText,
   settingsMenuSupersededText,
   type SettingButtonClick,
+  type SettingChoice,
   type SettingOption,
   type SettingRow,
 } from '../core/settings.js';
@@ -642,6 +643,17 @@ interface PendingEffortMenu {
  * model menus, by "at most one per conversation" rather than by a TTL — expiry should be caused by
  * something the user did.
  */
+/**
+ * The line a redrawn settings menu carries above itself: what the last tap did. A chat app reads it
+ * as the first paragraph of the text; a screen gets it as a banner with its tone.
+ */
+type SettingsAck = { tone: 'ok' | 'info' | 'error'; text: string };
+
+/** A click that no longer matches the menu it landed on. */
+function expiredAck(): SettingsAck {
+  return { tone: 'error', text: settingsMenuExpiredText() };
+}
+
 interface PendingSettingsMenu {
   conversationId: ConversationId;
   /** Where the menu was posted (the ack and any error go back here). */
@@ -650,6 +662,11 @@ interface PendingSettingsMenu {
   rows: SettingRow[];
   /** The open setting, with the frozen option list its `stv:` indices point into. */
   open?: { row: SettingRow; options: SettingOption[]; hint?: string };
+  /**
+   * What each `sts:` id on the list screen writes (core/settings.ts SettingChoice), from the last
+   * time the list was drawn. Only a platform that draws a screen has any.
+   */
+  choices?: SettingChoice[];
   /** Items per page on the value level; frozen for the reason PendingModelMenu.pageSize records. */
   pageSize: number;
   /** The menu message itself, captured from the send — every level change edits it. */
@@ -3068,12 +3085,13 @@ export class Daemon {
     reqId: string,
     menu: PendingSettingsMenu,
     page = 0,
-    prefix?: string
+    ack?: SettingsAck
   ): { text: string; buttons: Array<{ id: string; label: string }>; screen?: SettingsScreen } {
     // Only a platform that draws a screen asks for the structured form; every chat platform gets
     // exactly the text and buttons it has always had (adapter.ts settingsScreen).
     const wantsScreen =
       this.platforms.get(menu.conversation.platform)?.capabilities.settingsScreen === true;
+    const notice = ack ? { tone: ack.tone, text: ack.text } : undefined;
     const view = menu.open
       ? buildSettingValueMenu({
           reqId,
@@ -3082,17 +3100,31 @@ export class Daemon {
           page,
           pageSize: menu.pageSize,
           ...(menu.open.hint ? { hint: menu.open.hint } : {}),
-          screen: wantsScreen,
+          ...(wantsScreen ? { screen: { agents: this.config.agents, ...(notice ? { notice } : {}) } } : {}),
         })
       : buildSettingsMenu({
           reqId,
           rows: menu.rows,
           // The way into the scheduled tasks, after the settings themselves (core/schedule-menu.ts).
           ...(this.schedules ? { extra: { id: scheduleOpenButtonId(reqId), label: scheduleEntryLabel(this.schedules.tasks()) } } : {}),
-          screen: wantsScreen,
+          ...(wantsScreen
+            ? {
+                screen: {
+                  agents: this.config.agents,
+                  options: (row: SettingRow) => this.registry.settingOptionsFor(menu.conversationId, row).options,
+                  here: this.registry.settingsBoundAgent(menu.conversationId),
+                  ...(notice ? { notice } : {}),
+                },
+              }
+            : {}),
         });
+    // The list just drawn is the one its `sts:` ids index; a value level draws none.
+    if (!menu.open) {
+      if (view.choices) menu.choices = view.choices;
+      else delete menu.choices;
+    }
     return {
-      text: prefix ? `${prefix}\n\n${view.text}` : view.text,
+      text: ack ? `${ack.text}\n\n${view.text}` : view.text,
       buttons: view.buttons,
       ...(view.screen ? { screen: view.screen } : {}),
     };
@@ -3181,6 +3213,9 @@ export class Daemon {
       case 'choose':
         this.chooseSettingValue(click.reqId, menu, click.index);
         return;
+      case 'set':
+        this.setSettingFromList(click.reqId, menu, click.index);
+        return;
       case 'page':
         this.editSettingsMenu(menu, ...this.viewParts(click.reqId, menu, click.page));
         return;
@@ -3202,9 +3237,9 @@ export class Daemon {
     reqId: string,
     menu: PendingSettingsMenu,
     page = 0,
-    prefix?: string
+    ack?: SettingsAck
   ): [string, Array<{ id: string; label: string }>, SettingsScreen?] {
-    const view = this.renderSettingsMenu(reqId, menu, page, prefix);
+    const view = this.renderSettingsMenu(reqId, menu, page, ack);
     return [view.text, view.buttons, view.screen];
   }
 
@@ -3253,12 +3288,12 @@ export class Daemon {
     const option = open.options[index];
     if (!option) {
       console.warn(`[setting] value index ${index} is outside ${open.options.length} options`);
-      this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, settingsMenuExpiredText()));
+      this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, expiredAck()));
       return;
     }
 
     const result = this.registry.applySetting(menu.conversationId, open.row, option.raw);
-    const ack = settingAckText(result);
+    const ack = settingNotice(result);
     console.log(`[setting] ${menu.conversationId}: ${open.row.label} ← ${option.raw} → ${result.kind}`);
 
     if (result.kind !== 'saved') {
@@ -3271,6 +3306,31 @@ export class Daemon {
     delete menu.open;
     menu.rows = this.registry.settingRows();
     this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, ack));
+  }
+
+  /**
+   * A switch or a choice on the list screen: write the value it names without opening the setting.
+   *
+   * The same freeze-identity / re-read-value split as openSettingLevel — the row is the one the id
+   * was drawn for, read fresh — and the same write as a tapped value, so the two ways of setting
+   * one cannot disagree. Whatever the outcome, the answer is the list again with the ack above it:
+   * there is no value level to stay on, and the row shows what is in force either way.
+   */
+  private setSettingFromList(reqId: string, menu: PendingSettingsMenu, index: number): void {
+    const choice = menu.open ? undefined : menu.choices?.[index];
+    const frozen = choice ? menu.rows[choice.row] : undefined;
+    if (!choice || !frozen) {
+      console.warn(`[setting] list choice ${index} does not match the screen on this menu`);
+      delete menu.open;
+      this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, expiredAck()));
+      return;
+    }
+    const row =
+      this.registry.settingRows().find((r) => r.id === frozen.id && r.target === frozen.target) ?? frozen;
+    const result = this.registry.applySetting(menu.conversationId, row, choice.raw);
+    console.log(`[setting] ${menu.conversationId}: ${row.label} ← ${choice.raw} → ${result.kind}`);
+    menu.rows = this.registry.settingRows();
+    this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, settingNotice(result)));
   }
 
   // ───────────────────── scheduled tasks under /setting (core/schedule-menu.ts) ─────────────────────

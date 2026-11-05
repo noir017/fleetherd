@@ -551,11 +551,13 @@ describe('the button menu', () => {
     if (list?.level !== 'list') throw new Error('no list screen');
     // The same rows the buttons carry, with the label and value split apart.
     expect(list.rows.map((r) => [r.label, r.target, r.value])).toContainEqual([
-      'Default model',
+      'cc',
       'cc',
       'claude-opus-4-5',
     ]);
     expect(list.rows.map((r) => r.buttonId)).toEqual(web.menu().buttons.map((b) => b.id));
+    // The agent answering here is named, and so is what it is.
+    expect(list.rows.find((r) => r.target === 'oc')).toMatchObject({ here: true, targetKind: 'OpenCode' });
 
     // A level change is the same message edited, and the screen follows it down and back up.
     await web.click(web.ids('stg:')[0]!);
@@ -652,6 +654,63 @@ describe('the button menu', () => {
     const r = rig(); // no turn has run, so no model list has been reported
     await r.send('/setting model.cc');
     expect(r.menu().text).toContain('not answering this conversation');
+  });
+});
+
+describe('setting a value from the list screen', () => {
+  /** The id a list row's control posts: a switch's one id, or the option of a choice named `label`. */
+  const control = (s: SettingsScreen | undefined, rowLabel: string, option?: string): string => {
+    if (s?.level !== 'list') throw new Error('not the list');
+    const c = s.rows.find((r) => r.label === rowLabel)?.control;
+    if (c?.kind === 'switch') return c.set;
+    if (c?.kind === 'choice') return c.options.find((o) => o.label === option)!.buttonId;
+    throw new Error(`${rowLabel} has no inline control`);
+  };
+
+  it('flips a switch in one tap: the file, the running daemon, and the list with a banner', async () => {
+    const r = rig({ caps: { settingsScreen: true } });
+    await r.send('/setting');
+    await r.click(control(r.menu().screen, 'Confirm sub-agent starts'));
+    expect(onDisk()['delegation']).toEqual({ confirm: false });
+    expect(r.cfg.delegation.confirm).toBe(false);
+    const after = r.screen().screen;
+    if (after?.level !== 'list') throw new Error('not the list');
+    expect(after.notice).toEqual({ tone: 'ok', text: expect.stringContaining('Confirm sub-agent starts → off') });
+    expect(after.rows.find((x) => x.label === 'Confirm sub-agent starts')?.control).toMatchObject({ kind: 'switch', on: false });
+    // And back, from the redrawn list's own id.
+    await r.click(control(after, 'Confirm sub-agent starts'));
+    expect(r.cfg.delegation.confirm).toBe(true);
+  });
+
+  it('writes a choice from the row, and says so when it is already the value', async () => {
+    const r = rig({ caps: { settingsScreen: true } });
+    await r.send('/setting');
+    await r.click(control(r.menu().screen, 'Idle reclaim', '4h'));
+    expect(onDisk()['session']).toMatchObject({ idleTimeoutMs: 14_400_000 });
+    await r.click(control(r.screen().screen, 'Idle reclaim', '4h'));
+    const s = r.screen().screen;
+    if (s?.level !== 'list') throw new Error('not the list');
+    expect(s.notice).toEqual({ tone: 'info', text: expect.stringContaining('already') });
+  });
+
+  it('answers a refused value as an error banner on the list, writing nothing', async () => {
+    const r = rig({ caps: { settingsScreen: true } });
+    const before = text();
+    await r.send('/setting');
+    // Default agent → cc is fine; the refusal path is driven by a choice id the list never drew.
+    await r.click('sts:' + r.menu().buttons[0]!.id.split(':')[1] + ':999');
+    const s = r.screen().screen;
+    if (s?.level !== 'list') throw new Error('not the list');
+    expect(s.notice?.tone).toBe('error');
+    expect(s.notice?.text).toContain('expired');
+    expect(text()).toBe(before);
+  });
+
+  it('never reaches a chat platform: its list carries no screen and no set ids', async () => {
+    const r = rig();
+    await r.send('/setting');
+    expect(r.menu().screen).toBeUndefined();
+    expect(r.menu().buttons.some((b) => b.id.startsWith('sts:'))).toBe(false);
   });
 });
 

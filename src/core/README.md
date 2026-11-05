@@ -699,6 +699,14 @@ surface they would use to fix it; credentials because a chat log is the wrong pl
 them; `routing.pipeline` because a rule is a structure, not a value a picker can offer; and
 the `EXPERIENCE` knobs because they are not in the file at all.
 
+A platform that draws its own screen (the web UI, `capabilities.settingsScreen`) gets the same
+table as data as well (`SettingsScreen`): the group each row sits under, a one-line hint, when a
+change lands where that is not "now", and the control it is changed with (`settingControl` —
+switch, choice, or a screen of its own). Those are presentation, but they are decided here with the
+rest of the table so a new setting cannot compile without them. A switch or a choice posts
+`sts:<reqId>:<n>`, an index into the `choices` the list was drawn with, which the daemon freezes
+with the menu exactly as it freezes `stv:` options. A chat platform never builds any of it.
+
 The write half lives in [`daemon/settings-store.ts`](../daemon/README.md) — this module
 decides, that one touches the file.
 

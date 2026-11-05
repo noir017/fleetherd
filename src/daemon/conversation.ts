@@ -2152,6 +2152,11 @@ export class ConversationRegistry {
     return settingsRows(this.config);
   }
 
+  /** The agent answering a conversation, as the settings screen names it ("this topic"). */
+  settingsBoundAgent(id: ConversationId): string {
+    return this.settingsContext(id, this.config.routing.default).boundAgent;
+  }
+
   /** The values one row can offer right now, or the sentence explaining why it offers none. */
   settingOptionsFor(
     id: ConversationId,
