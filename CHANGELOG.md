@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The web UI's model switch is there as soon as a new topic has an agent.** It waited for the
+  first reply: the line above the composer hides the switch while the new-topic agent list is up,
+  and it tested that against the sync's snapshot of the empty room, which nothing after a tap on an
+  agent replaced. So the model the first message went to could not be chosen at all. The switch
+  now appears the moment an agent is picked; opening it starts that agent to ask for its list, as
+  it already did for a topic with no session yet. [→](docs/web-ui.md)
+- **The model and effort chosen for a conversation are remembered.** Both lived only in memory,
+  so a daemon restart dropped them, and `/new` and `/cd` — which replace the session object holding
+  them — quietly put the conversation back on the configured model while the status line still
+  named the chosen one. The new web UI flow made that the common case: pick an agent, pick a model,
+  pick a directory, and the first message ran on the default. Both are now written to
+  `conversations.json` when a person picks them (typed, from a menu or the web UI's switch; never a
+  scheduled task's `--model`), applied to every new session, and put back after a session is
+  reloaded — a harness that reloads at its default model would otherwise have dropped the choice on
+  the first idle reclaim. `/new`, `/cd` and restarts keep them; choosing another agent for the
+  conversation forgets them, since its lists are different ones. [→](docs/chat-commands.md#model)
+
 ## [2.38.0] - 2026-11-05
 
 ### Added

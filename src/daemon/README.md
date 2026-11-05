@@ -263,7 +263,12 @@ orchestration.
 
 **The IM side is a client. It must never make an agent restart a task.** That rule
 decides the store's shape: `ConversationStore` (`<configDir>/conversations.json`) holds,
-per conversation, the bound agent *and* a map of `agentId → that agent's own session id`.
+per conversation, the bound agent *and* a map of `agentId → that agent's own session id` —
+plus how the conversation is set up: its directory (`/cd`) and the model and effort the person
+chose (`/model`, `/effort`). Those last two are values from the bound agent's lists, so a rebind
+drops them; `/new` and `/cd` keep them. They are on disk because the runtimes' own copies live in
+a session object that `/new`, `/cd` and a restart replace — before 2.38.1 each of those quietly put
+the conversation back on the configured model while the status line still named the chosen one.
 
 Keying sessions by `(conversation, agent)` is what stops claude from ever being handed
 opencode's session id — and what once made `/oc` → `/cc` → `/oc` *resume* opencode's thread,
@@ -1049,12 +1054,15 @@ drops the level, so the footer never keeps showing a level the session left.
 
 `/effort` writes that same option (`setEffort`, sent to whatever id the harness gave it), and
 the choice is held beside `modelPreference` as `effortPreference`, surviving `resetHandles`.
-Unlike the model's, it is re-applied after `session/load` as well as `session/new`, and after
-a runtime `/model` — the first because it is not optional: probed 2026-09-23, claude-agent-acp
+Both are seeded from the conversation's record when a session object is created (the registry
+writes the record for a person's choice only, never a scheduled task's `--model`). Both are
+re-applied after `session/load` as well as `session/new` — the model only when someone chose one
+here, since the configured model was enforced when the session was created — and the effort after
+a runtime `/model` too. Re-applying on load is not optional: probed 2026-09-23, claude-agent-acp
 0.81.0 and codex-acp 1.13.0 both reload at their default level, so every idle reclaim would
 otherwise undo the user's choice (opencode 2.0.14 keeps it, and then the re-apply costs
-nothing, since an unchanged level is not re-sent). The order on a fresh session is model
-first, then effort, because the levels on offer are the model's.
+nothing, since an unchanged value is not re-sent). The order is model first, then effort,
+because the levels on offer are the model's.
 
 ### `agent-agy.ts` — the Antigravity runtime
 

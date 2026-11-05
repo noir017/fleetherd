@@ -689,9 +689,9 @@ export function dshModelDisplayValue(value: string): string {
 }
 
 /**
- * Enforce `agents[].model` on a freshly created session, returning the option list the harness
- * reports afterwards (undefined when nothing was applied, so the caller keeps what session/new
- * reported).
+ * Enforce a model on a started session — `agents[].model` or the conversation's `/model` choice on
+ * session/new, the choice alone on session/load — returning the option list the harness reports
+ * afterwards (undefined when nothing was applied, so the caller keeps what the session reported).
  *
  * The whole list rather than just the resulting model name, because the model is not the only
  * thing a model switch changes: the effort levels belong to the model too, and the caller re-applies
@@ -710,13 +710,14 @@ export function dshModelDisplayValue(value: string): string {
  * mismatch stays visible in the footer either way.
  */
 async function applyModelPreference(
-  ctx: ClientContext,
-  session: ActiveSession,
+  ctx: Pick<ClientContext, 'request'>,
+  sessionId: string,
   def: AgentDef,
-  /** Runtime choice for this conversation (`/model`); outranks the configured model when set. */
-  override?: string
+  /** The session's option list as it just reported it (session/new or session/load). */
+  options: SessionConfigOption[] | undefined,
+  /** The model to enforce — a `/model` choice, or the configured one; undefined enforces nothing. */
+  want: string | undefined
 ): Promise<SessionConfigOption[] | undefined> {
-  const want = override ?? def.model;
   if (!want) return undefined;
   // DSH's selector values are JSON.stringify([provider, model]) (see dshModelSelectorValue), so
   // translate the "provider/model" config spelling before comparing against currentValue, checking
@@ -724,7 +725,7 @@ async function applyModelPreference(
   const wireWant = def.harness === 'dsh' ? dshModelSelectorValue(want) : want;
   const display = (v: string): string => (def.harness === 'dsh' ? dshModelDisplayValue(v) : v);
 
-  const opt = (session.newSessionResponse?.configOptions ?? []).find((o) => o.id === MODEL_CONFIG_ID);
+  const opt = (options ?? []).find((o) => o.id === MODEL_CONFIG_ID);
   // No model selector at all (the claude harness pins its model via ANTHROPIC_MODEL instead):
   // nothing to set, and saying so at debug avoids a scary warning for a supported setup.
   if (!opt || opt.type !== 'select') {
@@ -737,7 +738,7 @@ async function applyModelPreference(
   const offered = opt.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
   if (offered.length > 0 && !offered.some((o) => o.value === wireWant)) {
     console.warn(
-      `[acp] agent "${def.id}": configured model "${want}" is not among the models it offers; ` +
+      `[acp] agent "${def.id}": model "${want}" is not among the models it offers; ` +
         `continuing with "${display(opt.currentValue)}". Available: ${offered.map((o) => display(o.value)).join(', ')}`
     );
     return undefined;
@@ -745,7 +746,7 @@ async function applyModelPreference(
 
   try {
     const res = await ctx.request('session/set_config_option', {
-      sessionId: session.sessionId,
+      sessionId,
       configId: MODEL_CONFIG_ID,
       value: wireWant,
     });
@@ -1093,18 +1094,20 @@ function createAcpSession(
   /**
    * Model chosen at runtime for THIS conversation (`/model`), outranking `agents[].model`.
    *
-   * Held here rather than in config so it survives what it must and no more: a child that crashes
-   * or is evicted rebuilds with the user's choice re-applied (resetHandles deliberately leaves this
-   * untouched), while a new conversation starts its own closure from the configured default.
+   * Held here so a child that crashes or is evicted rebuilds with the person's choice re-applied
+   * (resetHandles deliberately leaves this untouched). Seeded from the conversation's record because
+   * this closure does not outlive everything the choice must: `/new` and `/cd` replace the session
+   * object, and a daemon restart replaces all of them — each of which used to put the conversation
+   * back on the configured model while the status line still named the chosen one. The registry
+   * writes the record (only for a person's choice); this side only reads it.
    */
-  let modelPreference: string | undefined;
+  let modelPreference: string | undefined = store?.conversationChoice?.(conversationId, def.id, 'model');
   /**
-   * Reasoning effort chosen at runtime for THIS conversation (`/effort`). Same lifetime as
-   * modelPreference and kept for the same reason — resetHandles leaves it alone — but re-applied on
-   * session/load too, where the model's is not: two of three harnesses reload at their default level
-   * (see applyEffortPreference).
+   * Reasoning effort chosen at runtime for THIS conversation (`/effort`). Same lifetime and seeding
+   * as modelPreference, and re-applied on every rebuilt child for the reason it is not optional: two
+   * of three harnesses reload at their default level (see applyEffortPreference).
    */
-  let effortPreference: string | undefined;
+  let effortPreference: string | undefined = store?.conversationChoice?.(conversationId, def.id, 'effort');
 
   /**
    * Reset the three connection handles to undefined (without killing the process). Shared by the child
@@ -1196,20 +1199,30 @@ function createAcpSession(
   }
 
   /**
-   * A freshly created session's runtime choices, in the only order that works: the model first,
-   * then the effort, because the levels on offer are the model's (see applyEffortPreference) and
-   * must be checked against the list the model switch produced, not the one it replaced.
+   * A started session's runtime choices, in the only order that works: the model first, then the
+   * effort, because the levels on offer are the model's (see applyEffortPreference) and must be
+   * checked against the list the model switch produced, not the one it replaced.
+   *
+   * `model` is what to enforce: on session/new the person's choice or else the configured model; on
+   * session/load only the person's choice. A reloaded session is left on whatever it was on unless
+   * someone chose otherwise here — the configured model was enforced when it was created — but a
+   * choice IS put back, because a harness that reloads at its default would otherwise drop it on the
+   * first idle reclaim or restart, exactly as it does the effort. A session already on it costs no
+   * round trip (applyModelPreference compares first).
    */
-  async function reapplyPreferences(ctx: ClientContext, session: ActiveSession): Promise<void> {
+  async function reapplyPreferences(
+    ctx: Pick<ClientContext, 'request'>,
+    sessionId: string,
+    model: string | undefined
+  ): Promise<void> {
     // _meta.model is a hint some harnesses ignore (verified: opencode reports its own default
-    // regardless), so enforce the choice through the protocol's own setter. A runtime /model
-    // choice outranks config, so a rebuilt child keeps answering as the user asked.
-    const afterModel = await applyModelPreference(ctx, session, def, modelPreference);
+    // regardless), so enforce the choice through the protocol's own setter.
+    const afterModel = await applyModelPreference(ctx, sessionId, def, liveConfigOptions, model);
     if (afterModel) {
       liveConfigOptions = afterModel;
       liveModel = liveModelName(afterModel) ?? liveModel;
     }
-    await reapplyEffort(ctx, session.sessionId);
+    await reapplyEffort(ctx, sessionId);
   }
 
   /**
@@ -1412,8 +1425,9 @@ function createAcpSession(
           console.log(`[acp] resumed persisted session for "${def.id}" (${persistedId})`);
           // claude-agent-acp and codex-acp reload at their DEFAULT level, not the one this session
           // was left on — so a `/effort` choice made before an idle reclaim is put back here or lost.
+          // The model chosen here goes back first, for the same reason (see reapplyPreferences).
           // Cannot throw (best-effort by design), so it cannot send a good load down the catch below.
-          await reapplyEffort(ctx, persistedId);
+          await reapplyPreferences(ctx, persistedId, modelPreference);
         } catch (err) {
           // Stored id no longer loadable (history pruned, cwd moved, harness downgraded): start fresh.
           resumed.dispose();
@@ -1425,6 +1439,9 @@ function createAcpSession(
       }
       if (active) return;
 
+      // The person's choice when there is one, else the configured model — the same order
+      // reapplyPreferences enforces below.
+      const hint = modelPreference ?? def.model;
       try {
         const session = await ctx
           .buildSession({
@@ -1436,10 +1453,10 @@ function createAcpSession(
             // uses initialSelection(config)) — so the hint is kept well-formed (JSON-encoded like
             // set_config_option expects) in case a future version reads it; the real enforcement is
             // applyModelPreference below.
-            ...(def.model
+            ...(hint
               ? {
                   _meta: {
-                    model: def.harness === 'dsh' ? dshModelSelectorValue(def.model) : def.model,
+                    model: def.harness === 'dsh' ? dshModelSelectorValue(hint) : hint,
                   },
                 }
               : {}),
@@ -1450,7 +1467,7 @@ function createAcpSession(
         liveModel = liveModelName(liveConfigOptions);
         // _meta.model above is a hint some harnesses ignore; reapplyPreferences enforces it, and
         // puts back a `/effort` choice after it.
-        await reapplyPreferences(ctx, session);
+        await reapplyPreferences(ctx, session.sessionId, hint);
         store?.setAgentSession(conversationId, def.id, session.sessionId); // for post-restart session/load resume
       } catch (err) {
         // session/new returning auth_required (un-logged-in harness) surfaces as an opaque reject. Build

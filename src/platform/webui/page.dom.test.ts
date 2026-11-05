@@ -4782,6 +4782,36 @@ describe('webui page: the model switch in the status line', () => {
     expect(chip(h)).toBeNull();
   });
 
+  it('offers the switch as soon as an agent is chosen, before the first message and its status', async () => {
+    // Reported 2026-11-05: the switch waited on the sync's snapshot of the empty room, which no
+    // event after the tap replaces, so it stayed away until the first reply reported a status —
+    // too late to choose the model that first message goes to.
+    const agents = { groups: [{ name: '', agents: [{ id: 'oc@p', harness: 'opencode', kind: 'OpenCode' }] }], current: 'oc@p' };
+    const h = await open({ replies: { [URL_T]: LIST } });
+    await h.emit(sync(T, [], [T], { agents }));
+    expect(chip(h)).toBeNull();
+
+    await h.click('.agent-card[data-agent="oc@p"]');
+    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['/agent oc@p']);
+    // No status has arrived and no sync followed: the tap alone puts it up, and it works.
+    expect(chip(h)?.textContent).toBe('Model');
+    await h.click('#status .st-model');
+    expect(h.calls.find((c) => c.path === URL_T)).toBeTruthy();
+    await tick();
+    expect(rows(h)).toHaveLength(13);
+  });
+
+  it('takes the switch away again when a failed send empties the room and the choice comes back', async () => {
+    const agents = { groups: [{ name: '', agents: [{ id: 'oc@p', harness: 'opencode', kind: 'OpenCode' }] }], current: 'oc@p' };
+    const h = await open();
+    await h.emit(sync(T, [], [T], { agents }));
+    await h.emit({ t: 'msg', msg: message('w1', '<p>a scheduled task said this</p>') });
+    expect(chip(h)?.textContent).toBe('Model');
+    await h.emit({ t: 'del', id: 'w1' });
+    expect(h.el('log').querySelector('.launch')).not.toBeNull();
+    expect(chip(h)).toBeNull();
+  });
+
   it('is a finger target on a phone, and does not zoom the page when filtering', () => {
     const html = renderPage('Chat', false);
     const at = html.indexOf('@media(max-width:640px){');

@@ -82,12 +82,19 @@ afterEach(() => {
   live = undefined;
 });
 
-function rig(): {
+function rig(opts: {
+  /** What the conversation's record says the person chose (ConversationStore.conversationChoice). */
+  choices?: { model?: string; effort?: string };
+  /** A session id already on record, as after a restart: the first start takes `session/load`. */
+  stored?: string;
+} = {}): {
   session: AgentSession;
   /** Every request the fake received, in order. */
   log: () => Array<{ method: string; params: Record<string, unknown> }>;
   /** Just the effort writes, as `configId=value`. */
   effortWrites: () => string[];
+  /** Just the model writes, as their values. */
+  modelWrites: () => string[];
 } {
   const dir = mkdtempSync(join(tmpdir(), 'aa-acp-effort-'));
   const script = join(dir, 'fake-acp-agent.cjs');
@@ -102,13 +109,15 @@ function rig(): {
 
   // A store that remembers the session id it is given, so a restarted child takes the
   // `session/load` path — the one an idle reclaim takes in production.
-  let stored: string | undefined;
+  let stored: string | undefined = opts.stored;
   const store = {
     agentSession: () => stored,
     setAgentSession: (_c: string, _a: string, id: string) => {
       stored = id;
     },
     conversationCwd: () => undefined,
+    conversationChoice: (c: string, a: string, which: 'model' | 'effort') =>
+      c === 'conv#1' && a === 'fake' ? opts.choices?.[which] : undefined,
   } as unknown as Parameters<typeof createAcpAgentFactory>[2];
 
   const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store).getOrCreate('conv#1', 'fake');
@@ -124,7 +133,11 @@ function rig(): {
     log()
       .filter((r) => r.method === 'session/set_config_option' && r.params.configId !== 'model')
       .map((r) => `${String(r.params.configId)}=${String(r.params.value)}`);
-  return { session, log, effortWrites };
+  const modelWrites = () =>
+    log()
+      .filter((r) => r.method === 'session/set_config_option' && r.params.configId === 'model')
+      .map((r) => String(r.params.value));
+  return { session, log, effortWrites, modelWrites };
 }
 
 describe('effort selector and switch', () => {
@@ -198,5 +211,66 @@ describe('a /model switch', () => {
     expect(session.effortSelector!()?.current).toBe('max');
     // Written for the choice and for the return to `a` — never attempted against `b`.
     expect(effortWrites()).toEqual(['reasoning_effort=max', 'reasoning_effort=max']);
+  });
+});
+
+describe('the model choice outlives the child', () => {
+  // The fake reloads at its default model (`a`), as it does the effort level: whatever the session
+  // was left on is process state there.
+  it('is put back after a reclaim, before the effort, because the levels are the model’s', async () => {
+    const { session, log, modelWrites } = rig();
+    await session.ensureSession!('tok');
+    await session.setModel!('b');
+    session.dispose(); // what the idle sweeper does
+    await session.ensureSession!('tok');
+
+    expect(modelWrites()).toEqual(['b', 'b']);
+    const methods = log().map((r) => r.method);
+    expect(methods.lastIndexOf('session/set_config_option')).toBeGreaterThan(methods.indexOf('session/load'));
+    expect(session.modelSelector!()?.current).toBe('b');
+  });
+
+  it('leaves a reloaded session alone when nobody chose a model here', async () => {
+    const { session, log, modelWrites } = rig();
+    await session.ensureSession!('tok');
+    session.dispose();
+    await session.ensureSession!('tok');
+    expect(log().filter((r) => r.method === 'session/load')).toHaveLength(1);
+    expect(modelWrites()).toEqual([]);
+  });
+});
+
+describe('a choice on the conversation’s record', () => {
+  // What `/new`, `/cd` and a daemon restart hand the runtime: a new session object, with only the
+  // record to say what the person chose.
+  it('is applied to a new session, model then effort', async () => {
+    const { session, log, modelWrites, effortWrites } = rig({ choices: { model: 'b', effort: 'low' } });
+    await session.ensureSession!('tok');
+    const sent = log().find((r) => r.method === 'session/new');
+    // The hint names the choice too, for a harness that reads it.
+    expect((sent?.params._meta as { model?: string } | undefined)?.model).toBe('b');
+    expect(modelWrites()).toEqual(['b']);
+    expect(effortWrites()).toEqual(['reasoning_effort=low']);
+    const writes = log().filter((r) => r.method === 'session/set_config_option').map((r) => r.params.configId);
+    expect(writes).toEqual(['model', 'reasoning_effort']);
+    expect(session.modelSelector!()?.current).toBe('b');
+    expect(session.effortSelector!()?.current).toBe('low');
+  });
+
+  it('is applied to a session resumed after a restart', async () => {
+    const { session, log, modelWrites, effortWrites } = rig({ choices: { model: 'b', effort: 'low' }, stored: 's1' });
+    await session.ensureSession!('tok');
+    expect(log().map((r) => r.method)).toContain('session/load');
+    expect(log().map((r) => r.method)).not.toContain('session/new');
+    expect(modelWrites()).toEqual(['b']);
+    expect(effortWrites()).toEqual(['reasoning_effort=low']);
+  });
+
+  it('costs one write when the same model is chosen again before the child starts', async () => {
+    const { session, modelWrites } = rig({ choices: { model: 'b' } });
+    // Deferred as before: recorded, applied on start — once.
+    await session.setModel!('b');
+    await session.ensureSession!('tok');
+    expect(modelWrites()).toEqual(['b']);
   });
 });

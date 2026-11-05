@@ -3149,13 +3149,17 @@ const SCRIPT = `
     if(launchEl && launchEl.parentNode) launchEl.parentNode.removeChild(launchEl);
     launchEl = null;
     launchSig = '';
-    if(!want) return;
-    clearSkeleton();
-    launchEl = document.createElement('div');
-    launchEl.className = 'launch';
-    launchEl.innerHTML = launchHtml(launch);
-    log.appendChild(launchEl);
-    launchSig = s;
+    if(want){
+      clearSkeleton();
+      launchEl = document.createElement('div');
+      launchEl.className = 'launch';
+      launchEl.innerHTML = launchHtml(launch);
+      log.appendChild(launchEl);
+      launchSig = s;
+    }
+    // The model switch waits on the launcher (paintStatus), so it follows it at once: up the moment
+    // an agent is chosen, gone again if a failed send empties the room and the choice comes back.
+    paintStatus();
   }
 
   /**
@@ -3994,9 +3998,12 @@ const SCRIPT = `
     var s = agentStatus;
     // With no status yet (a restart, a conversation that has not reported), the line still offers
     // the switch once the topic has a conversation in it — not in a new one, where the agent
-    // launcher is the choice to make first.
+    // launcher is the choice to make first. Asked of the launcher on screen, not of launch: that
+    // is the last sync's snapshot of the empty room and stays set until the next sync, so testing it
+    // hid the switch from the moment an agent was chosen until the first reply reported a status —
+    // exactly when someone wants to pick the model the first message goes to.
     var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open'))
-      : (topic && synced && !launch && log.querySelector('.m') ? seg('st-who', '', modelChip('Model')) : '');
+      : (topic && synced && !launchEl && log.querySelector('.m') ? seg('st-who', '', modelChip('Model')) : '');
     // Compared before writing: the tick redraws twice a minute, and most of those change nothing.
     if(html === statusHtml) return;
     statusHtml = html;

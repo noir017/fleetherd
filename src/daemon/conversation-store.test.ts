@@ -192,6 +192,55 @@ describe('ConversationStore: working directory (/cd)', () => {
   });
 });
 
+describe('ConversationStore: model and effort the person chose (/model, /effort)', () => {
+  it('records both for the bound agent and survives a reload, as a restart needs', () => {
+    const s = new ConversationStore(file);
+    s.bind('tg#c1#', 'oc');
+    s.setConversationChoice('tg#c1#', 'oc', 'model', 'newapi/kimi-k3');
+    s.setConversationChoice('tg#c1#', 'oc', 'effort', 'low');
+    const reloaded = new ConversationStore(file);
+    expect(reloaded.conversationChoice('tg#c1#', 'oc', 'model')).toBe('newapi/kimi-k3');
+    expect(reloaded.conversationChoice('tg#c1#', 'oc', 'effort')).toBe('low');
+  });
+
+  it('never answers for another agent, and a rebind drops what belonged to the old one', () => {
+    const s = new ConversationStore(file);
+    s.bind('tg#c1#', 'oc');
+    s.setConversationChoice('tg#c1#', 'oc', 'model', 'newapi/kimi-k3');
+    // A value from opencode's list is not something claude could be handed.
+    expect(s.conversationChoice('tg#c1#', 'cc', 'model')).toBeUndefined();
+    s.bind('tg#c1#', 'cc');
+    s.bind('tg#c1#', 'oc');
+    expect(s.conversationChoice('tg#c1#', 'oc', 'model')).toBeUndefined();
+  });
+
+  it('writes nothing for an agent that is not the bound one', () => {
+    const s = new ConversationStore(file);
+    s.bind('tg#c1#', 'oc');
+    s.setConversationChoice('tg#c1#', 'cc', 'model', 'opus');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))['tg#c1#'].model).toBeUndefined();
+  });
+
+  it('is kept by /cd (clearAgentSessions) and forgotten by undefined', () => {
+    const s = new ConversationStore(file);
+    s.bind('tg#c1#', 'oc');
+    s.setAgentSession('tg#c1#', 'oc', 'oc-1');
+    s.setConversationChoice('tg#c1#', 'oc', 'model', 'newapi/kimi-k3');
+    s.clearAgentSessions('tg#c1#');
+    expect(s.conversationChoice('tg#c1#', 'oc', 'model')).toBe('newapi/kimi-k3');
+    s.setConversationChoice('tg#c1#', 'oc', 'model', undefined);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))['tg#c1#'].model).toBeUndefined();
+  });
+
+  it('drops a malformed value rather than the whole record', () => {
+    fs.writeFileSync(file, JSON.stringify({ 'tg#c1#': { agent: 'oc', agentSessions: { oc: 'oc-1' }, model: 7, effort: '' } }));
+    const s = new ConversationStore(file);
+    expect(s.agentSession('tg#c1#', 'oc')).toBe('oc-1');
+    expect(s.conversationChoice('tg#c1#', 'oc', 'model')).toBeUndefined();
+    expect(s.conversationChoice('tg#c1#', 'oc', 'effort')).toBeUndefined();
+  });
+});
+
 describe('ConversationStore: lane and last use (what `channels` lists)', () => {
   it('records where and when a turn ran, and survives a reload', () => {
     const s = new ConversationStore(file);

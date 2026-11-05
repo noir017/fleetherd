@@ -708,9 +708,11 @@ function createAgySession(
   const statusWaiters: Array<() => void> = [];
   /**
    * Per-conversation model preference set via setModel() (/model command or menu).
-   * Kept in the session closure across child respawns (same pattern as ACP runtime's modelPreference).
+   * Kept in the session closure across child respawns, and seeded from the conversation's record
+   * like the ACP runtime's modelPreference — so the first child after a restart, `/new` or `/cd` is
+   * spawned on the chosen model rather than started on the default and respawned by the first turn.
    */
-  let modelPreference: string | undefined;
+  let modelPreference: string | undefined = store?.conversationChoice?.(conversationId, def.id, 'model');
   /** Intentional-abort flag: set by abort()/dispose() so a killed turn resolves silently. */
   let aborting = false;
   /**
