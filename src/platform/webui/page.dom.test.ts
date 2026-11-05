@@ -5103,13 +5103,18 @@ describe('webui page: one panel component on both edges', () => {
     expect(appHas(h, 'calm')).toBe(true);
     h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
 
-    // Manage → Close idle: the confirmation, not the action.
+    // Manage → Close idle: the confirmation, not the action. One resident agent is enough.
+    await h.emit({
+      t: 'topics',
+      topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true }],
+    });
     await h.click('#manage-toggle');
     expect(h.el('manage-menu').hidden).toBe(false);
+    expect(h.el('close-idle').hidden).toBe(false);
     await h.click('#close-idle');
     expect(h.el('manage-menu').hidden).toBe(true);
-    // No agent is resident in this fixture, so the item is hidden and there is nothing to ask.
-    expect(h.el('idle-dialog').hidden).toBe(true);
+    expect(h.el('idle-dialog').hidden).toBe(false);
+    expect(h.el('idle-title').textContent).toBe('Close 1 idle agent?');
     expect(h.calls.some((c) => c.path === 'api/topics/close-idle')).toBe(false);
   });
 
