@@ -31,13 +31,22 @@ describe('planRemoteCli', () => {
     expect(planRemoteCli(['task-agents'], { TALKCODE_REMOTE_CLI: '/somewhere/talkcode' })).toEqual({ kind: 'local' });
   });
 
-  it('forwards the commands the gateway accepts from a host', () => {
+  it('forwards what only the gateway can answer', () => {
     const { shim } = fakeShim();
-    for (const argv of [['task-agents'], ['send-file', 'x'], ['mcp'], ['help'], ['--help']]) {
+    for (const argv of [['task-agents'], ['send-file', 'x'], ['mcp']]) {
       expect(planRemoteCli(argv, { TALKCODE_REMOTE_SOCK: '/tmp/s', TALKCODE_REMOTE_CLI: shim })).toEqual({
         kind: 'forward',
         shim,
       });
+    }
+  });
+
+  it('answers help and the version itself, so they still work on a host whose helper is older', () => {
+    const { shim } = fakeShim();
+    for (const argv of [['help'], ['help', 'tasks'], ['--help'], ['--version']]) {
+      // No TALKCODE_REMOTE_CLI: the helper predates this CLI. These read nothing but this program.
+      expect(planRemoteCli(argv, { TALKCODE_REMOTE_SOCK: '/tmp/s' })).toEqual({ kind: 'local' });
+      expect(planRemoteCli(argv, { TALKCODE_REMOTE_SOCK: '/tmp/s', TALKCODE_REMOTE_CLI: shim })).toEqual({ kind: 'local' });
     }
   });
 

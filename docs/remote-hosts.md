@@ -180,8 +180,9 @@ the config.yaml entry and `/reload`.
 `talkcode` works from a login shell too. Agents often run shell commands with `bash -lc` (codex
 does), and a login shell rebuilds `PATH` from `/etc/profile` — so `talkcode` there is whatever the
 machine installed, not the helper's copy. That one hands the command to the helper instead of
-looking for a gateway config that is not on this machine. Only the reverse commands, `mcp` and
-`help` are handed over; `start`, `setup` and `doctor` are refused on the host.
+looking for a gateway config that is not on this machine. Only the reverse commands and `mcp` are
+handed over: `help` and `--version` are answered on the host, and `start`, `setup` and `doctor` are
+refused there.
 
 ## When the connection drops
 

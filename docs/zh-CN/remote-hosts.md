@@ -160,8 +160,8 @@ Include /home/<用户>/.talkcode/ssh/config
 
 `talkcode` 在登录 shell 里也能用。智能体执行 shell 命令常用 `bash -lc`（codex 就是），而登录 shell 会按
 `/etc/profile` 重建 `PATH`——所以那里的 `talkcode` 是机器上装的那个，不是小服务放的那份。那份会把命令交给小服务，
-而不是去找一个这台机器上根本不存在的网关配置。交出去的只有反向命令、`mcp` 和 `help`；`start`、`setup`、`doctor`
-在主机上会被直接拒绝。
+而不是去找一个这台机器上根本不存在的网关配置。交出去的只有反向命令和 `mcp`：`help`、`--version` 由主机上这份
+直接回答，`start`、`setup`、`doctor` 在主机上会被直接拒绝。
 
 ## 断网时
 

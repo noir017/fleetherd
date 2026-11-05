@@ -21,19 +21,28 @@ import { isBridgedCommand } from '../ipc/commands.js';
  * socket's path does not, since the socket is per gateway and the shim is per version
  * (remote/daemon.go agentEnv) — and argv goes there unchanged.
  *
- * What may go there is the same set the gateway's bridge accepts (ipc/commands.ts isBridgedCommand):
- * the reverse commands, `mcp`, `help` and the version/help flags. Anything else is refused HERE,
- * before it leaves the machine: `start` / `setup` / `doctor` are the gateway's own administration,
- * and a login shell must not be able to turn this binary into a way to run them on the gateway.
+ * What may go there is what only the gateway can answer: the reverse commands and `mcp` — the same
+ * set the gateway's bridge accepts (ipc/commands.ts isBridgedCommand), minus the pages this program
+ * renders itself. `help`, `--help` and `--version` are answered here, because they read nothing but
+ * this program's own catalog and must keep working when the host's helper is older than the CLI.
+ * Everything else is refused HERE, before it leaves the machine: `start` / `setup` / `doctor` are
+ * the gateway's own administration, and a login shell must not be able to turn this binary into a
+ * way to run them on the gateway.
  */
 
 export type RemoteCliPlan =
-  /** Not an agent's shell on a host: the CLI behaves as it always has. */
+  /** Not an agent's shell on a host, or a page this program renders itself: behave as always. */
   | { kind: 'local' }
   /** Hand argv to the host's `talkcode` shim, which carries it to the gateway. */
   | { kind: 'forward'; shim: string }
   /** Say why not, and exit 2 — the same shape the gateway's bridge uses for a command it turns away. */
   | { kind: 'refuse'; message: string };
+
+/**
+ * The invocations answered by the binary itself: its help pages and its version. They need no
+ * gateway, so sending them there would only add a way for them to fail.
+ */
+const SELF_ANSWERED = new Set(['help', '--help', '-h', '--version', '-V']);
 
 /**
  * The decision, with everything it reads passed in: the CLI calls it with process.argv and
@@ -51,6 +60,7 @@ export function planRemoteCli(argv: string[], env: NodeJS.ProcessEnv): RemoteCli
           : `talkcode: "${command}" is the gateway's own administration; an agent on a host can run only the reverse commands, \`mcp\` and \`help\` (\`talkcode help\` lists them)`,
     };
   }
+  if (SELF_ANSWERED.has(command!)) return { kind: 'local' };
   const shim = env.TALKCODE_REMOTE_CLI;
   if (!shim) {
     // A talkcode-remote older than this CLI: the host's helper predates the variable that says where

@@ -15,10 +15,10 @@ All notable changes to this project are documented here. The format is based on
   in a shell was dead, while the same command worked through the tools server. The host's helper now
   tells each agent where its `talkcode` shim is (`TALKCODE_REMOTE_CLI`), and the full CLI, finding
   itself in an agent's shell on a host, hands its argv to that shim instead of reading a config. It
-  hands over only what the gateway already accepts from a host — the reverse commands, `mcp` and
-  `help`; `start`, `setup` and `doctor` are refused on the host, before anything leaves the machine.
-  Nothing changes where there is no host: without `TALKCODE_REMOTE_SOCK` the CLI is the CLI it was.
-  [→](docs/remote-hosts.md)
+  hands over only what needs the gateway — the reverse commands and `mcp`; `help` and `--version`
+  are answered on the host, and `start`, `setup` and `doctor` are refused there, before anything
+  leaves the machine. Nothing changes where there is no host: without `TALKCODE_REMOTE_SOCK` the
+  CLI is the CLI it was. [→](docs/remote-hosts.md)
 
 ## [2.34.0] - 2026-11-05
 
