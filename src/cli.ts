@@ -6,7 +6,15 @@ import { runSetup } from './commands/setup.js';
 import { runDoctor } from './commands/doctor.js';
 import { runReverse } from './commands/reverse.js';
 import { registerReverseCommand } from './commands/reverse-cli.js';
+import { handOffRemoteCli } from './commands/remote-cli.js';
 import { REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './ipc/commands.js';
+
+// Before commander sees anything: inside an agent on a host the gateway reaches over ssh, this
+// binary is not the CLI — it is a stand-in for the host's `talkcode` shim, which carries the command
+// back to the gateway (commands/remote-cli.ts says why). Nothing is parsed here, so a command that
+// is not the gateway's own never gets far enough to look for a config file on the wrong machine.
+const remoteExit = await handOffRemoteCli();
+if (remoteExit !== null) process.exit(remoteExit);
 
 // Note: the start path pulls in the heavy koishi + claude agent sdk stack, so it's
 // lazy-loaded to keep --help / setup / doctor / reverse commands lightweight to start.

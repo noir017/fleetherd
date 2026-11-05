@@ -11,6 +11,7 @@ commander; this module implements them.
 | *(reverse)* | `reverse.ts` | The agent-facing chat actions |
 | *(reverse wiring)* | `reverse-cli.ts` | Registers `REVERSE_COMMANDS` on commander — the one place an omitted optional positional's `undefined` is filtered out before `build()` |
 | `mcp` *(hidden)* | `mcp.ts` | The same actions as native tools: an MCP server on stdio, started by the agent's harness |
+| *(on a host)* | `remote-cli.ts` | Not a command: what `cli.ts` does first when an agent on a remote host runs this binary — hand argv to the host's `talkcode` shim, or refuse a management command. See its header. |
 
 ## `doctor` is the default
 

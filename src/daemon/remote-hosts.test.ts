@@ -8,14 +8,16 @@ import { normalizeActionPaths } from '../commands/reverse.js';
 import { expandRemoteHome, remoteAgentEnv, remoteAgentHome, remoteAgentRoot } from './agent-common.js';
 import { remoteClaudeProjectsDir } from './claude-transcript.js';
 import { diffConfig } from './config-reload.js';
-import { gatewayNamespace, isBridgedCommand } from './remote-hosts.js';
+import { gatewayNamespace, RemoteHosts } from './remote-hosts.js';
+import type { RemoteHost } from '../remote/host.js';
 import { workdirScanFrom } from './workdir-scan.js';
 
 /**
- * The daemon's side of agents on remote hosts, short of a connection: config, the namespace, which
- * commands an agent over there may run back here, and how paths and environments are worked out for
- * a machine that is not this one. The connection itself is covered end to end against the real
- * talkcode-remote binary in remote/remote.integration.test.ts.
+ * The daemon's side of agents on remote hosts, short of a connection: config, the namespace, and how
+ * paths and environments are worked out for a machine that is not this one. The commands such an
+ * agent may run back here are tested with the catalog that defines them (ipc/commands.test.ts); the
+ * connection itself is covered end to end against the real talkcode-remote binary in
+ * remote/remote.integration.test.ts.
  */
 
 const cfg = (over: Record<string, unknown> = {}) =>
@@ -61,13 +63,39 @@ describe('/reload and hosts', () => {
   });
 });
 
-describe('isBridgedCommand', () => {
-  it('lets a remote agent run reverse commands, the tools server and help — nothing else', () => {
-    for (const ok of [['send-message', 'hi'], ['send-file', 'x'], ['schedule', 'list'], ['mcp'], ['help'], ['--help']]) {
-      expect(isBridgedCommand(ok)).toBe(true);
+describe('the shim bridge', () => {
+  /** Drive runCli the way a host's cli-open frame does; nothing on the refusal path reads the host. */
+  const run = (argv: string[]): { out: string; code?: number } => {
+    let out = '';
+    let code: number | undefined;
+    new RemoteHosts().runCli(
+      { argv, cwd: '/', token: 't', env: {}, host: {} as unknown as RemoteHost },
+      {
+        out: (_fd, d) => {
+          out += d.toString();
+        },
+        exit: (c) => {
+          code = c;
+        },
+      }
+    );
+    return { out, code };
+  };
+
+  it('turns away a command an agent may not run here — the boundary itself, not just the list', () => {
+    // If the isBridgedCommand call here is dropped, the run falls through to the CLI and this fails.
+    for (const argv of [['start'], ['setup'], ['doctor'], ['--migrate-config']]) {
+      const r = run(argv);
+      expect(r.code).toBe(2);
+      expect(r.out).toContain(`"${argv[0]}" is not a command an agent can run here`);
     }
-    for (const no of [[], ['start'], ['setup'], ['doctor'], ['--migrate-config']]) {
-      expect(isBridgedCommand(no)).toBe(false);
+  });
+
+  it('lets the reverse commands, mcp and help through to the CLI', () => {
+    // Past the gate the next refusal is about this process not being the CLI — under vitest it is
+    // not — which is how we know the command was not turned away here.
+    for (const argv of [['task-agents'], ['send-file', 'x'], ['mcp'], ['help']]) {
+      expect(run(argv).out).toContain('this gateway is not running as the talkcode CLI');
     }
   });
 });

@@ -261,10 +261,13 @@ func TestSpawnEchoAndExit(t *testing.T) {
 func TestAgentGetsShimOnPathAndSocket(t *testing.T) {
 	d := testDaemon(t, "env")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)
-	g.send(&Header{T: "spawn", ID: "p1", Cmd: "sh", Args: []string{"-c", `echo "$PATH|$TALKCODE_REMOTE_SOCK|$FOO"`}, Env: map[string]string{"FOO": "bar"}}, nil)
+	g.send(&Header{T: "spawn", ID: "p1", Cmd: "sh", Args: []string{"-c", `echo "$PATH|$TALKCODE_REMOTE_SOCK|$TALKCODE_REMOTE_CLI|$FOO"`}, Env: map[string]string{"FOO": "bar"}}, nil)
 	_, _, out := g.until("exit", "p1", 5*time.Second)
 	parts := strings.Split(strings.TrimSpace(out), "|")
-	if len(parts) != 3 || !strings.HasPrefix(parts[0], binDirFor("v1")+":") || parts[1] != d.sockPath || parts[2] != "bar" {
+	// TALKCODE_REMOTE_CLI is the absolute path of the shim, for the Node CLI that a login shell's
+	// PATH reset can land on instead (remote/README.md, "Agents").
+	if len(parts) != 4 || !strings.HasPrefix(parts[0], binDirFor("v1")+":") || parts[1] != d.sockPath ||
+		parts[2] != filepath.Join(binDirFor("v1"), "talkcode") || parts[3] != "bar" {
 		t.Fatalf("env seen by the agent: %q", out)
 	}
 }
@@ -842,6 +845,8 @@ func TestCaptureLoginEnvReadsTheShell(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("SHELL", "/bin/bash")
+	// Whatever started the daemon must not decide where an agent's talkcode is; agentEnv sets it.
+	t.Setenv("TALKCODE_REMOTE_CLI", "/opt/stale/bin/talkcode")
 	if _, err := os.Stat("/bin/bash"); err != nil {
 		t.Skip("no bash")
 	}
@@ -853,6 +858,9 @@ func TestCaptureLoginEnvReadsTheShell(t *testing.T) {
 	}
 	if envGet(env, "SSH_CONNECTION") != "" || envGet(env, "SHLVL") != "" {
 		t.Fatal("connection and shell bookkeeping must be dropped")
+	}
+	if envGet(env, "TALKCODE_REMOTE_CLI") != "" {
+		t.Fatalf("a talkcode variable inherited from the daemon must be dropped, got %q", envGet(env, "TALKCODE_REMOTE_CLI"))
 	}
 }
 

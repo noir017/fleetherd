@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './commands.js';
+import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, isBridgedCommand, renderHelpIndex, renderHelpTopic } from './commands.js';
 import type { IpcAction } from './protocol.js';
 
 /**
@@ -320,5 +320,20 @@ describe('sessions <action> [arg]', () => {
     [['read', '1'], { around: 3, role: 'tool' }, /--around reads a window of its own/],
   ])('refuses %j %j', (positionals, opts, why) => {
     expect(() => sessions(positionals, opts)).toThrow(why);
+  });
+});
+
+describe('isBridgedCommand', () => {
+  it('lets a remote agent run reverse commands, the tools server and help — nothing else', () => {
+    for (const ok of [['send-message', 'hi'], ['send-file', 'x'], ['schedule', 'list'], ['mcp'], ['help'], ['--help']]) {
+      expect(isBridgedCommand(ok)).toBe(true);
+    }
+    for (const no of [[], ['start'], ['setup'], ['doctor'], ['--migrate-config']]) {
+      expect(isBridgedCommand(no)).toBe(false);
+    }
+  });
+
+  it('follows the catalog, so a new reverse command is bridged without a second list', () => {
+    for (const spec of REVERSE_COMMANDS) expect(isBridgedCommand([spec.usage.split(' ')[0]!])).toBe(true);
   });
 });

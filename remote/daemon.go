@@ -140,7 +140,17 @@ func startDaemon(ns, version string) (*daemon, error) {
 }
 
 // agentEnv is the environment for anything this daemon starts: the login environment, the
-// gateway's per-agent overrides, the `talkcode` shim leading PATH, and the socket the shim dials.
+// gateway's per-agent overrides, the `talkcode` shim leading PATH, the socket the shim dials, and
+// the shim's own path.
+//
+// TALKCODE_REMOTE_CLI exists because PATH is not reliable where an agent runs commands: codex runs
+// them with `bash -lc`, and a login shell re-reads /etc/profile, which rebuilds PATH from the
+// system default — so `talkcode` there is whatever the image installed (the full Node CLI in
+// uniagent) rather than the shim this daemon put first. The Node CLI cannot work out where the
+// shim is from the socket alone (the socket is per gateway, the shim per version), so the daemon
+// says it: with this variable set the Node CLI hands its argv straight to the shim instead of
+// looking for a config file that is not on this machine. An environment variable, unlike PATH,
+// survives the login shell.
 func (d *daemon) agentEnv(set map[string]string, unset []string) []string {
 	env := envMerge(d.env.get(), set, unset)
 	path := envGet(env, "PATH")
@@ -149,7 +159,11 @@ func (d *daemon) agentEnv(set map[string]string, unset []string) []string {
 	} else {
 		path = d.binDir + string(os.PathListSeparator) + path
 	}
-	return envMerge(env, map[string]string{"PATH": path, "TALKCODE_REMOTE_SOCK": d.sockPath}, nil)
+	return envMerge(env, map[string]string{
+		"PATH":                 path,
+		"TALKCODE_REMOTE_SOCK": d.sockPath,
+		"TALKCODE_REMOTE_CLI":  filepath.Join(d.binDir, "talkcode"),
+	}, nil)
 }
 
 func (d *daemon) acceptLoop() {
