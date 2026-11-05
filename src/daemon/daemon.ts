@@ -20,7 +20,7 @@ import {
   SLASH_NAME_RE,
   type CommandSurface,
 } from '../core/command-translate.js';
-import { parseButtonId } from '../core/button-id.js';
+import { parseButtonId, PICK_PREFIX, parsePickButtonId } from '../core/button-id.js';
 import {
   buildAgentMenu,
   flatAgents,
@@ -274,8 +274,7 @@ const ASK_PREFIX = 'ask:';
  */
 const ASK_ECHO_MAX = 300;
 
-/** Harness-picker button custom_id prefix. Format `cmd:<reqId>:<index>`. */
-const PICK_PREFIX = 'cmd:';
+export { parsePickButtonId };
 
 /**
  * Parse a `<prefix><reqId>:<index>` button custom_id (pure, testable). Returns null when the
@@ -299,15 +298,6 @@ export function parseAskButtonId(
   buttonId: string
 ): { reqId: string; index: number } | null {
   return parsePrefixedButtonId(buttonId, ASK_PREFIX);
-}
-
-/**
- * Parse a harness-picker button custom_id (pure, testable). Recognizes only `cmd:<reqId>:<index>`.
- */
-export function parsePickButtonId(
-  buttonId: string
-): { reqId: string; index: number } | null {
-  return parsePrefixedButtonId(buttonId, PICK_PREFIX);
 }
 
 /**

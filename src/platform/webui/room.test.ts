@@ -10,6 +10,8 @@ import {
   CHANNEL,
   DIR_TTL_MS,
   inlineImageType,
+  isControlMenu,
+  isControlMenuButton,
   OWNER,
   WebRoom,
   type Kept,
@@ -21,6 +23,21 @@ import { MAX_TOPICS, TopicStore } from './topics.js';
 import { hasTopic } from './index.js';
 import type { InboundMessage } from '../../types.js';
 import type { WebEvent, WebMessage } from './protocol.js';
+import { WORKDIR_PICK_PREFIX, WORKDIR_PAGE_PREFIX } from '../../core/workdir-menu.js';
+import { MODEL_PICK_PREFIX, MODEL_PAGE_PREFIX } from '../../core/model-menu.js';
+import { EFFORT_PICK_PREFIX } from '../../core/effort-menu.js';
+import { AGENT_GROUP_PREFIX, AGENT_PICK_PREFIX, AGENT_BACK_PREFIX, AGENT_PAGE_PREFIX } from '../../core/agent-menu.js';
+import {
+  SETTING_ROW_PREFIX,
+  SETTING_VALUE_PREFIX,
+  SETTING_PAGE_PREFIX,
+  SETTING_BACK_PREFIX,
+  SETTING_SET_PREFIX,
+  SETTING_TYPE_PREFIX,
+} from '../../core/settings.js';
+import { SCHEDULE_OPEN_PREFIX, SCHEDULE_TASK_PREFIX, SCHEDULE_ACTION_PREFIX } from '../../core/schedule-menu.js';
+import { PICK_PREFIX } from '../../core/button-id.js';
+import { VOICE_BUTTON_PREFIX } from '../../core/voice.js';
 
 let dir = '';
 beforeEach(() => {
@@ -1366,6 +1383,104 @@ describe('WebRoom: what the switcher dot is saying', () => {
     const unkMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'custom:1', label: 'Custom' }] }, 'Choose:');
     expect(flagsOf(room, topic).asking).toBe(true);
     room.remove(topic, unkMsg.id);
+  });
+
+  it('recognizes every control menu prefix and rejects non-control prefixes (single source of truth)', () => {
+    const CONTROL_PREFIXES = [
+      WORKDIR_PICK_PREFIX,
+      WORKDIR_PAGE_PREFIX,
+      MODEL_PICK_PREFIX,
+      MODEL_PAGE_PREFIX,
+      EFFORT_PICK_PREFIX,
+      AGENT_GROUP_PREFIX,
+      AGENT_PICK_PREFIX,
+      AGENT_BACK_PREFIX,
+      AGENT_PAGE_PREFIX,
+      SETTING_ROW_PREFIX,
+      SETTING_VALUE_PREFIX,
+      SETTING_PAGE_PREFIX,
+      SETTING_BACK_PREFIX,
+      SETTING_SET_PREFIX,
+      SETTING_TYPE_PREFIX,
+      SCHEDULE_OPEN_PREFIX,
+      SCHEDULE_TASK_PREFIX,
+      SCHEDULE_ACTION_PREFIX,
+      PICK_PREFIX,
+    ];
+
+    for (const prefix of CONTROL_PREFIXES) {
+      const id = `${prefix}req1:0`;
+      expect(isControlMenuButton(id), `prefix ${prefix} must be recognized as a control menu`).toBe(true);
+      const msg: WebMessage = { id: 'w1', own: false, html: '', at: 1, g: 1, reactions: [], buttons: [{ id, label: 'btn' }] };
+      expect(isControlMenu(msg), `message with ${prefix} button must be exempted`).toBe(true);
+    }
+
+    const NON_CONTROL_PREFIXES = ['ask:', VOICE_BUTTON_PREFIX];
+    for (const prefix of NON_CONTROL_PREFIXES) {
+      const id = `${prefix}req1:0`;
+      expect(isControlMenuButton(id), `prefix ${prefix} must not be a control menu`).toBe(false);
+      const msg: WebMessage = { id: 'w1', own: false, html: '', at: 1, g: 1, reactions: [], buttons: [{ id, label: 'btn' }] };
+      expect(isControlMenu(msg), `message with ${prefix} button must not be exempted`).toBe(false);
+    }
+  });
+
+  it('treats a message with both control buttons and ask buttons as a question (every, not some)', () => {
+    const { room, topic } = attached();
+    const mixedMsg = room.post(
+      topic,
+      {
+        own: false,
+        html: '',
+        buttons: [
+          { id: `${SETTING_ROW_PREFIX}req:0`, label: 'Default model' },
+          { id: 'ask:req:0', label: 'Confirm' },
+        ],
+      },
+      'Mixed buttons'
+    );
+    expect(isControlMenu(mixedMsg)).toBe(false);
+    expect(flagsOf(room, topic).asking).toBe(true);
+  });
+
+  it('does not exempt a settings screen message if it also carries ask or unknown buttons', () => {
+    const mixedSettings: WebMessage = {
+      id: 'w1',
+      own: false,
+      html: '',
+      at: 1,
+      g: 1,
+      reactions: [],
+      settings: { level: 'list', groups: [], rows: [] },
+      buttons: [
+        { id: `${SETTING_SET_PREFIX}req:0`, label: 'Switch' },
+        { id: 'ask:req:0', label: 'Approve' },
+      ],
+    };
+    expect(isControlMenu(mixedSettings)).toBe(false);
+
+    const pureSettings: WebMessage = {
+      id: 'w2',
+      own: false,
+      html: '',
+      at: 1,
+      g: 1,
+      reactions: [],
+      settings: { level: 'list', groups: [], rows: [] },
+      buttons: [{ id: `${SETTING_SET_PREFIX}req:0`, label: 'Switch' }],
+    };
+    expect(isControlMenu(pureSettings)).toBe(true);
+
+    const noButtonSettings: WebMessage = {
+      id: 'w3',
+      own: false,
+      html: '',
+      at: 1,
+      g: 1,
+      reactions: [],
+      settings: { level: 'list', groups: [], rows: [] },
+      buttons: [],
+    };
+    expect(isControlMenu(noButtonSettings)).toBe(true);
   });
 
   it('picks the text of the actual question for questionLine when both control menus and asks exist', () => {

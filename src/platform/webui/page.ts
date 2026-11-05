@@ -278,7 +278,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .panel-foot>button:hover,.panel-foot>button[aria-expanded="true"],.panel-foot>button.on{color:var(--fg);background:var(--field)}
 /* line-height:1 keeps the 13px glyph from setting a taller line box than the 12px text
    beside it — without it the sidebar footer was 52px against the task panel's 50px. */
-.opts-gear{font-size:13px;line-height:1}
+.opts-gear{font-size:13px;line-height:1;display:inline-flex;align-items:center;justify-content:center;vertical-align:-1px}
 @container (max-width:200px){.opts-word{display:none}}
 #manage-toggle{margin-left:auto}
 /* The idle count stays on Manage's face when its word drops: it is the one number on
@@ -5691,8 +5691,8 @@ __GATE__
          still seen without opening anything. Both open upward with the same box and the same
          dismissal (setMenu). -->
     <div id="sidebar-footer" class="panel-foot">
-      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙</span><span class="opts-word"> Menu</span></button>
-      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear">⚡</span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
+      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙&#xFE0E;</span><span class="opts-word"> Menu</span></button>
+      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3L21 9"/><path d="M17.5 5.5L11 12"/><path d="M5 21l6.5-2-3-3-5 1.5z"/><path d="M3 21l4-1"/></svg></span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
       <div id="opts-menu" class="panel-menu" hidden>
         <!-- The gateway's own settings: agents, models, idle reclaim, scope. A page rather than a
              chat command, because the rows need the width a message never had. -->

@@ -5406,8 +5406,9 @@ describe('webui page: the sidebar footer, and low attention', () => {
     // The footer itself holds two buttons and nothing else — the two menus are its children.
     const buttons = Array.from(h.el('sidebar-footer').children).filter((e) => e.tagName === 'BUTTON');
     expect(buttons.map((b) => b.id)).toEqual(['opts-toggle', 'manage-toggle']);
-    expect(h.el('opts-toggle').querySelector('.opts-gear')?.textContent).toBe('⚙');
-    expect(h.el('manage-toggle').querySelector('.opts-gear')?.textContent).toBe('⚡');
+    expect(h.el('opts-toggle').querySelector('.opts-gear')?.textContent).toContain('⚙');
+    expect(h.el('manage-toggle').querySelector('.opts-gear svg')).not.toBeNull();
+    expect(h.el('manage-toggle').querySelector('.opts-gear svg')?.getAttribute('viewBox')).toBe('0 0 24 24');
     expect(menuOpen(h)).toBe(false);
     expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
     expect(h.el('manage-toggle').getAttribute('aria-expanded')).toBe('false');

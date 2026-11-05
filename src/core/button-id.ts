@@ -21,6 +21,19 @@ export function formatButtonId(prefix: string, reqId: string, n: number): string
   return `${prefix}${reqId}:${n}`;
 }
 
+/** Button prefix for agent command picker menus (bare /cc, /oc, /agy when session already has context). */
+export const PICK_PREFIX = 'cmd:';
+
+/**
+ * Decode a command picker button id (`cmd:<reqId>:<index>`), or null when malformed or not a picker.
+ */
+export function parsePickButtonId(
+  buttonId: string
+): { reqId: string; index: number } | null {
+  const parsed = parseButtonId(buttonId, PICK_PREFIX);
+  return parsed ? { reqId: parsed.reqId, index: parsed.n } : null;
+}
+
 /**
  * Parse a `<prefix><reqId>:<n>` id, or null when the prefix does not match or the shape is invalid.
  *

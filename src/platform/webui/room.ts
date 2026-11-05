@@ -42,7 +42,7 @@ import {
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
 import { needsPerson, replyLine, topicStage } from '../../core/topic-stage.js';
 import { parseAgentButtonId } from '../../core/agent-menu.js';
-import { parseButtonId } from '../../core/button-id.js';
+import { parsePickButtonId } from '../../core/button-id.js';
 import { parseEffortButtonId } from '../../core/effort-menu.js';
 import { parseModelButtonId } from '../../core/model-menu.js';
 import { parseScheduleButtonId } from '../../core/schedule-menu.js';
@@ -1637,20 +1637,19 @@ export function isControlMenuButton(id: string): boolean {
     parseAgentButtonId(id) !== null ||
     parseSettingButtonId(id) !== null ||
     parseScheduleButtonId(id) !== null ||
-    parseButtonId(id, 'cmd:') !== null
+    parsePickButtonId(id) !== null
   );
 }
 
 /**
  * Whether a message is an operator control menu rather than a question.
  *
- * Fails safe: a message is only exempted when every button on it is a recognized control menu
- * button (or it carries a structured settings screen). Any unrecognized button or ask button
- * treats the message as a question.
+ * Fails safe: when buttons are present, every button must be a recognized control menu button,
+ * even on a settings screen message. An ask or unrecognized button treats the message as a question.
  */
 export function isControlMenu(msg: WebMessage): boolean {
-  if (msg.settings !== undefined) return true;
-  return msg.buttons.length > 0 && msg.buttons.every((b) => isControlMenuButton(b.id));
+  if (msg.buttons.length === 0) return msg.settings !== undefined;
+  return msg.buttons.every((b) => isControlMenuButton(b.id));
 }
 
 function flagsOf(topics: Topic[]): string {

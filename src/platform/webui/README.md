@@ -431,7 +431,7 @@ amber dot still pulses, and the green rows above are unchanged. It is CSS over t
 purpose: `page.dom.test.ts` checks that the rows are identical either way and that the stylesheet's
 `#app.calm` rules are exactly those two, so a rule that quiets a question or a failure fails there.
 
-**The sidebar footer is one row, two menus**: ⚙ Menu and ⚡ Manage (one row since 2.20.0, split
+**The sidebar footer is one row, two menus**: ⚙ Menu and Manage (one row since 2.20.0, split
 in two when the three buttons stopped fitting).
 Menu holds All settings, Notifications, Low attention and Skills — things set once per device or
 visited rarely. Manage holds Close idle and Clear all topics, and carries the idle count on its own
@@ -439,7 +439,7 @@ face so the number is still seen without opening anything. The two menus are the
 upward over the list, one at a time, and dismissed by a click outside either (the drawer's backdrop
 included) or Escape, which also gives the focus back to the button that opened it (`setMenu`). The
 footer is a size container: at the narrowest sidebar (180px) both words drop and the row
-is ⚙ and ⚡(N) — the count is the one thing that stays.
+shows the icons with (N) on Manage — the count is the one thing that stays.
 
 ## The two side panels
 

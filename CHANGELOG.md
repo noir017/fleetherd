@@ -25,13 +25,13 @@ All notable changes to this project are documented here. The format is based on
   protections. Real questions (`ask`, permission requests, elicitation, sub-agent cards) and
   unrecognized buttons continue to be treated as questions. [→](docs/web-ui.md)
 
-- **The web UI sidebar footer aligns Menu and Manage to opposite ends, and Manage uses `⚡`.**
+- **The web UI sidebar footer aligns Menu and Manage to opposite ends, with an inline SVG cleanup icon.**
   In 2.35.0, the sidebar footer moved `Close idle` into a new `Manage` menu but left `#manage-toggle`
   clustered to the left beside `#opts-toggle` because `#close-idle`'s `margin-left: auto` was not
   connected to the new button. `#manage-toggle` now connects `margin-left: auto`, cleanly aligning
-  Menu to the left and Manage to the right. The button icon replaces `⋯` with `⚡`, harmonizing with
-  Menu's `⚙` while remaining visually distinct and preserving the idle count even when narrow sidebar
-  collapses the text. [→](docs/web-ui.md)
+  Menu to the left and Manage to the right. The button icon replaces `⋯` with an inline SVG broom icon
+  rendered in `currentColor`, staying strictly monochrome across all operating systems and fonts while
+  clearly representing housekeeping and cleanup. [→](docs/web-ui.md)
 
 ## [2.35.0] - 2026-11-05
 
