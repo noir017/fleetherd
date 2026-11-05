@@ -54,7 +54,7 @@ export function checkRenames(raw: unknown): string | undefined {
   return undefined;
 }
 
-/** Rename in config.yaml: `agents[].id`, `routing.default`, `routing.pipeline[].use.agent`. Comments are kept. */
+/** Rename in config.yaml: `agents[].id`, `routing.default`, `routing.pipeline[].use.agent`, `review.agent`. Comments are kept. */
 export function renameAgentsInConfig(renames: ReadonlyMap<string, string>): number {
   const raw = readRawConfigIfExists();
   if (!raw) return 0;
@@ -73,6 +73,12 @@ export function renameAgentsInConfig(renames: ReadonlyMap<string, string>): numb
     const to = renames.get(idOf(use, 'agent'));
     if (to) patch.push({ path: ['routing', 'pipeline', i, 'use', 'agent'], value: to });
   });
+  // The reviewer is an agent reference too: left on the old id, `review.agent` names an agent the
+  // renamed config no longer has and the gateway refuses to start. Only the id moves; the model
+  // (which belongs to the review, not the agent) stays.
+  const review = raw.review && typeof raw.review === 'object' ? (raw.review as Record<string, unknown>) : {};
+  const reviewer = typeof review.agent === 'string' ? renames.get(review.agent) : undefined;
+  if (reviewer) patch.push({ path: ['review', 'agent'], value: reviewer });
   if (patch.length) saveConfigPatch(patch);
   return patch.length;
 }

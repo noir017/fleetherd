@@ -42,10 +42,32 @@ import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.
  * `/model` sets a RUNTIME override for one conversation and is forgotten on restart. `/setting
  * model.<agent>` writes the persisted default. The override outranks the default (see
  * agent-acp.ts applyModelPreference), so an ack says so when one is in the way.
+ *
+ * ── Why auto review is in this table ──────────────────────────────────────────
+ * `review.agent` and `review.model` are the same kind of Tuesday decision as the rest: which agent
+ * reviews a quiet conversation — and, when its own model is the wrong trade for the job, which
+ * model reviews use — is a judgement about cost and quality, not deployment plumbing. Leaving it
+ * to a file edit meant the feature could only be turned on by someone with a shell, on the machine
+ * that runs the daemon. Two things make it safe enough for chat. The reviewer must be an `agy`
+ * agent, because a review is one `agy -p` with every tool denied (AGENTS.md invariant 8) — so the
+ * rows offer only agy agents, and a typed claude/opencode id is refused with the reason rather than
+ * saved to fail at the next sweep. And the sweep re-reads `review` from the live Config at the start
+ * of every pass (daemon/review.ts `reviewer()`), so a change lands on the next sweep, within a
+ * minute, without restarting anything.
  */
 
 /** The settings this gateway can write. Everything else is refused by name. */
-export type SettingId = 'agent' | 'model' | 'delegation' | 'idle' | 'scope' | 'stream' | 'voice' | 'cleanup';
+export type SettingId =
+  | 'agent'
+  | 'model'
+  | 'delegation'
+  | 'idle'
+  | 'scope'
+  | 'stream'
+  | 'voice'
+  | 'cleanup'
+  | 'review.agent'
+  | 'review.model';
 
 /**
  * When a change reaches the running daemon.
@@ -190,6 +212,13 @@ const MAX_IDLE_MS = 30 * 24 * 3_600_000;
 const CLEAR_TOKENS = new Set(['-', 'default', 'unset', 'clear', 'none']);
 
 /**
+ * Tokens that turn auto review off. `off` is the word both surfaces print, and the rest are the
+ * clearing vocabulary this table already uses, so `/setting review -` does what it says everywhere
+ * else rather than looking for an agent literally named "-".
+ */
+const REVIEW_OFF = new Set(['off', ...CLEAR_TOKENS]);
+
+/**
  * Most options a text answer lists before it stops being scannable on a phone. Past this the answer
  * is a narrower query (or the menu), not a longer message — the same cap MODEL_MATCH_MAX sets.
  */
@@ -284,6 +313,13 @@ const KEY_ALIASES: Record<string, SettingId> = {
   'voice.cleanup': 'cleanup',
   voicecleanup: 'cleanup',
   'voice-cleanup': 'cleanup',
+  // `review` alone is the reviewer: the model is the optional half, and the one a bare word would
+  // surprise someone into setting ("/setting review off" must turn the feature off, not clear a
+  // model that is following its agent).
+  review: 'review.agent',
+  'review.agent': 'review.agent',
+  reviewer: 'review.agent',
+  'review.model': 'review.model',
 };
 
 // ─────────────────────────────── reading ───────────────────────────────
@@ -306,6 +342,24 @@ export function formatIdle(ms: number): string {
 
 /** What an unset `agents[].model` means: the harness picks. */
 const MODEL_UNSET = '(harness default)';
+
+/**
+ * What an unset `review.model` means: the reviewer's own `model`, or the harness default when the
+ * agent has none either. Deliberately not MODEL_UNSET — a review does not fall back to the harness
+ * before it falls back to the agent.
+ */
+const REVIEW_MODEL_UNSET = "agent's own";
+
+/** The reviewer's row value: off, the agent, never a stale id dressed up as a name. */
+function reviewAgentValue(cfg: Config): string {
+  return cfg.review ? agentLabel(cfg, cfg.review.agent) : 'off';
+}
+
+/** The review model's row value, with the inherited case said rather than left blank. */
+function reviewModelValue(cfg: Config): string {
+  if (!cfg.review) return 'off';
+  return cfg.review.model ?? REVIEW_MODEL_UNSET;
+}
 
 /**
  * Every row of the settings screen, in a stable order.
@@ -379,6 +433,23 @@ export function settingsRows(cfg: Config, pods?: PodModels): SettingRow[] {
       }
     );
   }
+  // Last, so every row above keeps the index a menu frozen earlier may still carry. Both are shown
+  // even when review is off: the model row is where "follow the reviewer's own model" is read, and
+  // hiding it would leave the screen unable to say what turning review on would use.
+  rows.push(
+    {
+      id: 'review.agent',
+      label: 'Auto review',
+      value: reviewAgentValue(cfg),
+      effect: 'live',
+    },
+    {
+      id: 'review.model',
+      label: 'Review model',
+      value: reviewModelValue(cfg),
+      effect: 'live',
+    }
+  );
   return rows;
 }
 
@@ -416,6 +487,17 @@ export function settingDescription(row: SettingRow): string {
         'Whether a voice message is also written up as the message you meant — fillers, repeats and ' +
         'self-corrections removed — and shown above the words as heard, with ✅ Send sending that ' +
         'version (`on`, the default); or transcribed word for word only (`off`).'
+      );
+    case 'review.agent':
+      return (
+        'Which `agy` agent reviews conversations that go quiet and writes what it learns into the ' +
+        'skill library. A review is one `agy -p` with every tool denied, so only an `agy` agent can ' +
+        'be named; `off` turns auto review off. The next sweep reads the new value — within a minute.'
+      );
+    case 'review.model':
+      return (
+        'The model reviews run with (`agy --model`). Unset follows the reviewer’s own model; pick one ' +
+        'here to give reviews a different model from the agent’s. A change lands on the next sweep.'
       );
     default: {
       const _exhaustive: never = row.id;
@@ -500,6 +582,9 @@ function settingGroup(row: SettingRow): string {
     case 'voice':
     case 'cleanup':
       return 'Voice';
+    case 'review.agent':
+    case 'review.model':
+      return 'Reviews';
     default: {
       const _exhaustive: never = row.id;
       return String(_exhaustive);
@@ -509,9 +594,13 @@ function settingGroup(row: SettingRow): string {
 
 /** A sentence under a group heading, for what every row in it shares. */
 function settingGroupNote(row: SettingRow): string | undefined {
-  return row.id === 'model'
-    ? 'What each agent starts a new session with. A change applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only.'
-    : undefined;
+  if (row.id === 'model') {
+    return 'What each agent starts a new session with. A change applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only.';
+  }
+  if (row.id === 'review.agent') {
+    return 'An `agy` agent reads a conversation that has gone quiet and writes what it learned into the skill library. Only `agy` agents can do this: reviews run with every tool denied.';
+  }
+  return undefined;
 }
 
 /**
@@ -536,6 +625,10 @@ function settingHint(row: SettingRow): string | undefined {
       return 'Hold a voice message’s transcript until you tap ✅ Send.';
     case 'cleanup':
       return 'Also write a voice message up as the message you meant, and send that version.';
+    case 'review.agent':
+      return 'Have an `agy` agent review a quiet conversation and write what it learned into the skill library. Off by default.';
+    case 'review.model':
+      return 'The model reviews run with. Unset follows the reviewer’s own model.';
     default: {
       const _exhaustive: never = row.id;
       return String(_exhaustive);
@@ -562,8 +655,10 @@ export function settingControl(row: SettingRow): 'switch' | 'choice' | 'list' {
     case 'agent':
     case 'idle':
     case 'scope':
+    case 'review.agent':
       return 'choice';
     case 'model':
+    case 'review.model':
       return 'list';
     default: {
       const _exhaustive: never = row.id;
@@ -660,12 +755,40 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
       return [
         // A chat button shows the name; a screen shows the id, which is what the status line and
         // `/model` print, with the name under it when they differ.
-        ...modelList(row, ctx).map((m) => {
+        ...modelList(row, cfg, ctx).map((m) => {
           const name = m.name.trim();
           return { raw: m.value, label: name || m.value, ...(name && name !== m.value ? { title: m.value, detail: name } : {}) };
         }),
         ...(readSettingValue(row, cfg) !== undefined ? [{ raw: '-', label: clearedModelLabel(row) }] : []),
       ];
+    case 'review.agent': {
+      // Only agy agents: a review is `agy -p` with every tool denied (AGENTS.md invariant 8).
+      // Offering the others and refusing the tap would be a menu that lists what it will not write.
+      const off = {
+        raw: 'off',
+        label: 'off — no automatic reviews',
+        title: 'off',
+        detail: 'no automatic reviews',
+      };
+      return [
+        off,
+        ...cfg.agents
+          .filter((a) => a.harness === 'agy')
+          .map((a) => ({ raw: a.id, label: agentLabel(cfg, a.id) })),
+      ];
+    }
+    case 'review.model': {
+      if (!cfg.review) return [];
+      return [
+        ...modelList(row, cfg, ctx).map((m) => {
+          const name = m.name.trim();
+          return { raw: m.value, label: name || m.value, ...(name && name !== m.value ? { title: m.value, detail: name } : {}) };
+        }),
+        ...(cfg.review.model !== undefined
+          ? [{ raw: '-', label: clearedReviewModelLabel(cfg) }]
+          : []),
+      ];
+    }
     case 'idle':
       return IDLE_PRESETS.map((p) => ({
         raw: p,
@@ -748,12 +871,28 @@ function cfgModel(cfg: Config, agentId: string | undefined): string | undefined 
 }
 
 /**
+ * The agent whose model list a row offers. A per-agent model row names it in `target`; the review
+ * model is the reviewer's list, because that is the model a review would actually pass to
+ * `agy --model` (and the one "follow the reviewer" means).
+ *
+ * Exported because the daemon has to ask the SAME agent for a cold list — see conversation.ts
+ * settingOptionsFor, which warms the catalog before the screen is drawn.
+ */
+export function modelListAgent(row: SettingRow, cfg: Config): string | undefined {
+  if (row.id === 'model') return row.target;
+  if (row.id === 'review.model') return cfg.review?.agent;
+  return undefined;
+}
+
+/**
  * What a model row offers to choose from: the bound agent's live list when there is one, else what
  * the daemon has learned of this agent's (SettingsContext.lists). Empty when neither is known.
  */
-function modelList(row: SettingRow, ctx: SettingsContext): readonly ModelOption[] {
-  if (row.target === ctx.boundAgent && ctx.models.length > 0) return ctx.models;
-  const known = row.target ? ctx.lists?.(row.target) : undefined;
+function modelList(row: SettingRow, cfg: Config, ctx: SettingsContext): readonly ModelOption[] {
+  const agentId = modelListAgent(row, cfg);
+  if (!agentId) return [];
+  if (agentId === ctx.boundAgent && ctx.models.length > 0) return ctx.models;
+  const known = ctx.lists?.(agentId);
   return known?.kind === 'list' ? known.options : [];
 }
 
@@ -761,6 +900,11 @@ function modelList(row: SettingRow, ctx: SettingsContext): readonly ModelOption[
 function clearedModelLabel(row: SettingRow): string {
   if (row.pod?.model) return `${row.pod.model} (pod.yaml)`;
   return MODEL_UNSET;
+}
+
+/** What a review model falls back to: the reviewer's own model, named so the choice is explicit. */
+function clearedReviewModelLabel(cfg: Config): string {
+  return cfg.review ? `follow ${cfg.review.agent} (its own model)` : REVIEW_MODEL_UNSET;
 }
 
 /**
@@ -799,7 +943,11 @@ export function parseSettingValue(
       return { kind: 'value', value: match.id, display: agentLabel(cfg, match.id) };
     }
     case 'model':
-      return parseModelValue(input, row, ctx);
+      return parseModelValue(input, row, cfg, ctx);
+    case 'review.agent':
+      return parseReviewAgentValue(input, cfg);
+    case 'review.model':
+      return parseReviewModelValue(input, row, cfg, ctx);
     case 'delegation':
       return parseBooleanValue(input);
     case 'idle':
@@ -840,12 +988,43 @@ export function parseSettingValue(
  *   Refusing here would block a legitimate value on the strength of an incomplete list, so the ack
  *   says the name was not advertised instead.
  */
-function parseModelValue(input: string, row: SettingRow, ctx: SettingsContext): ParsedSettingValue {
+function parseModelValue(
+  input: string,
+  row: SettingRow,
+  cfg: Config,
+  ctx: SettingsContext
+): ParsedSettingValue {
+  return parseModelName(
+    input,
+    modelList(row, cfg, ctx),
+    row.target ?? 'the agent',
+    clearedModelLabel(row)
+  );
+}
+
+/**
+ * A model name against a list that may be empty. The third outcome is the interesting one: a name
+ * the list does not have is ACCEPTED (see parseModelValue), with `unlistedNote` saying so when the
+ * row's list simply could not be asked for.
+ */
+function parseModelName(
+  input: string,
+  listed: readonly ModelOption[],
+  target: string,
+  cleared: string,
+  unlistedNote?: string
+): ParsedSettingValue {
   if (CLEAR_TOKENS.has(input.toLowerCase())) {
-    return { kind: 'value', value: undefined, display: clearedModelLabel(row) };
+    return { kind: 'value', value: undefined, display: cleared };
   }
-  const listed = modelList(row, ctx);
-  if (listed.length === 0) return { kind: 'value', value: input, display: input };
+  if (listed.length === 0) {
+    return {
+      kind: 'value',
+      value: input,
+      display: input,
+      ...(unlistedNote ? { note: unlistedNote } : {}),
+    };
+  }
 
   const match = matchModels([...listed], input);
   if (match.kind === 'one') return { kind: 'value', value: match.option.value, display: match.option.value };
@@ -853,15 +1032,70 @@ function parseModelValue(input: string, row: SettingRow, ctx: SettingsContext): 
     const shown = match.matches.slice(0, 12).map((o) => `\`${o.value}\``).join('\n');
     return {
       kind: 'invalid',
-      reason: `"${input}" matches ${match.matches.length} of ${row.target}'s models:\n${shown}`,
+      reason: `"${input}" matches ${match.matches.length} of ${target}'s models:\n${shown}`,
     };
   }
   return {
     kind: 'value',
     value: input,
     display: input,
-    note: `${row.target} does not advertise that name — saved as typed, so check it is one the harness accepts.`,
+    note: `${target} does not advertise that name — saved as typed, so check it is one the harness accepts.`,
   };
+}
+
+/**
+ * The reviewer: `off`, or an agy agent. Refused rather than coerced for anything else — a review
+ * is `agy -p` with every tool denied (AGENTS.md invariant 8), and a claude/opencode id here would
+ * be a config the schema rejects, written by a chat command that claimed it worked.
+ */
+function parseReviewAgentValue(input: string, cfg: Config): ParsedSettingValue {
+  if (REVIEW_OFF.has(input.toLowerCase())) {
+    return {
+      kind: 'value',
+      value: undefined,
+      display: 'off',
+      ...(cfg.review?.model ? { note: 'The review model set here is removed with it.' } : {}),
+    };
+  }
+  const match = cfg.agents.find((a) => a.id.toLowerCase() === input.toLowerCase());
+  if (!match) {
+    const agy = cfg.agents.filter((a) => a.harness === 'agy').map((a) => a.id);
+    return {
+      kind: 'invalid',
+      reason: agy.length
+        ? `No agy agent named \`${input}\`. agy agents here: ${agy.join(', ')}.`
+        : 'This deployment has no agy agent, so auto review cannot be turned on here.',
+    };
+  }
+  if (match.harness !== 'agy') {
+    return {
+      kind: 'invalid',
+      reason: `\`${match.id}\` is a ${match.harness} agent. A review is one \`agy -p\` with every tool denied, so only an agy agent can review.`,
+    };
+  }
+  return { kind: 'value', value: match.id, display: agentLabel(cfg, match.id) };
+}
+
+/** A review model: only meaningful with a reviewer, and following it until one is named. */
+function parseReviewModelValue(
+  input: string,
+  row: SettingRow,
+  cfg: Config,
+  ctx: SettingsContext
+): ParsedSettingValue {
+  if (!cfg.review) {
+    return {
+      kind: 'invalid',
+      reason: 'Turn auto review on first: `/setting review.agent <agy agent>`.',
+    };
+  }
+  return parseModelName(
+    input,
+    modelList(row, cfg, ctx),
+    cfg.review.agent,
+    clearedReviewModelLabel(cfg),
+    `${cfg.review.agent} did not offer its model list here — saved as typed, so check it is a name \`agy --model\` accepts.`
+  );
 }
 
 /** A duration for `session.idleTimeoutMs`: `off`, or a number with a unit. */
@@ -908,6 +1142,13 @@ export function settingLocation(row: SettingRow): SettingLocation {
       return { kind: 'path', path: ['voice', 'confirm'] };
     case 'cleanup':
       return { kind: 'path', path: ['voice', 'cleanup'] };
+    case 'review.agent':
+      // Clearing this deletes the whole `review:` block — `agent` is required whenever the block
+      // exists, so a lone `review.model` would be a config the next start refuses. See the
+      // `emptied` substitution in daemon/settings-store.ts.
+      return { kind: 'path', path: ['review', 'agent'] };
+    case 'review.model':
+      return { kind: 'path', path: ['review', 'model'] };
     default: {
       const _exhaustive: never = row.id;
       return _exhaustive;
@@ -958,6 +1199,10 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
       return cfg.voice?.confirm;
     case 'cleanup':
       return cfg.voice?.cleanup;
+    case 'review.agent':
+      return cfg.review?.agent;
+    case 'review.model':
+      return cfg.review?.model;
     default: {
       const _exhaustive: never = row.id;
       return _exhaustive;
@@ -1074,31 +1319,38 @@ export function settingTypedOnlyHint(
   cfg: Config,
   ctx: SettingsContext
 ): string | undefined {
-  if (row.id === 'model') return modelListHint(row, ctx);
+  if (row.id === 'model') return modelListHint(row, cfg, ctx);
+  if (row.id === 'review.model') {
+    return cfg.review
+      ? modelListHint(row, cfg, ctx)
+      : 'Turn auto review on first: `/setting review.agent <agy agent>`.';
+  }
   return settingOptions(row, cfg, ctx).length > 0 ? undefined : 'Type a value instead.';
 }
 
 /**
  * The model row's sentence: nothing when there is a list, else why there is none and what to type.
  * Each reason is its own sentence because each is a different problem: one is a moment's wait, one
- * is the harness, one is an agent that would not start.
+ * is the harness, one is an agent that would not start. The agent is the row's list owner
+ * (modelListAgent), so the review model speaks about the reviewer rather than about itself.
  */
-function modelListHint(row: SettingRow, ctx: SettingsContext): string | undefined {
-  if (modelList(row, ctx).length > 0) return undefined;
+function modelListHint(row: SettingRow, cfg: Config, ctx: SettingsContext): string | undefined {
+  if (modelList(row, cfg, ctx).length > 0) return undefined;
+  const agentId = modelListAgent(row, cfg);
   const typed = `\`/setting ${settingKeyOf(row)} <name>\``;
-  const known = row.target ? ctx.lists?.(row.target) : undefined;
+  const known = agentId ? ctx.lists?.(agentId) : undefined;
   switch (known?.kind) {
     case 'loading':
-      return `Asking ${row.target} for its models… A name can be typed meanwhile: ${typed}.`;
+      return `Asking ${agentId} for its models… A name can be typed meanwhile: ${typed}.`;
     case 'none':
-      return `${row.target} does not offer a model list: its harness reports no model choice. Type a name it accepts: ${typed}.`;
+      return `${agentId} does not offer a model list: its harness reports no model choice. Type a name it accepts: ${typed}.`;
     case 'error':
-      return `${row.target} did not start, so it could not be asked for its models (${known.reason}). Type a name: ${typed}.`;
+      return `${agentId} did not start, so it could not be asked for its models (${known.reason}). Type a name: ${typed}.`;
     case 'list':
     case undefined:
-      return row.target === ctx.boundAgent
-        ? `No model list from ${row.target} yet — it arrives with the agent's first reply. Any name still works: ${typed}.`
-        : `${row.target} is not answering this conversation, so its model list is not available here. Type a name: ${typed}.`;
+      return agentId === ctx.boundAgent
+        ? `No model list from ${agentId} yet — it arrives with the agent's first reply. Any name still works: ${typed}.`
+        : `${agentId} is not answering this conversation, so its model list is not available here. Type a name: ${typed}.`;
     default: {
       const _exhaustive: never = known;
       return String(_exhaustive);
@@ -1522,17 +1774,21 @@ function settingsValueScreen(
   const def = row.target ? findAgent(extra.cfg, row.target) : undefined;
   const unset = row.id === 'model' && row.value === MODEL_UNSET;
   const source = row.id === 'model' ? modelSourceSentence(row, extra.cfg) : undefined;
+  // The review model's list is the reviewer's, so the header names that agent the way a per-agent
+  // row names its own — otherwise "Now: agent's own" would leave the agent implicit.
+  const listAgent = modelListAgent(row, extra.cfg);
+  const listDef = listAgent && listAgent !== row.target ? findAgent(extra.cfg, listAgent) : def;
   return {
     level: 'values',
     ...(extra.loading ? { loading: true } : {}),
     // A model is taken by any name the harness accepts, listed or not (parseModelValue).
-    ...(row.id === 'model'
+    ...(row.id === 'model' || row.id === 'review.model'
       ? { typed: { buttonId: settingTypeButtonId(reqId), placeholder: 'Or type a model name' } }
       : {}),
     head: {
       label: row.id === 'model' ? 'Default model' : row.label,
-      ...(row.target ? { target: row.target } : {}),
-      ...(def ? { targetKind: agentKindOf(def) } : {}),
+      ...(listAgent ? { target: listAgent } : {}),
+      ...(listDef ? { targetKind: agentKindOf(listDef) } : {}),
       value: unset ? 'harness default' : row.value,
       ...(unset ? { unset: true } : {}),
       description: settingDescription(row),
@@ -1585,8 +1841,13 @@ export function settingCurrentRaw(row: SettingRow): string {
   switch (row.id) {
     case 'agent':
       return row.value.split(' · ')[0] ?? row.value;
+    case 'review.agent':
+      // `off` has no harness suffix to strip; an agent's label does (`ag · agy`).
+      return row.value === 'off' ? 'off' : (row.value.split(' · ')[0] ?? row.value);
     case 'model':
       return row.value === MODEL_UNSET ? '-' : row.value;
+    case 'review.model':
+      return row.value === REVIEW_MODEL_UNSET ? '-' : row.value;
     default:
       return row.value;
   }

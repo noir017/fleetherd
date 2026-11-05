@@ -1,6 +1,6 @@
 import { ConfigSchema, findAgent, type Config, type SessionScope } from '../config/schema.js';
 import { configDir, configPath, readRawConfigIfExists, saveConfigPatch } from '../config/load.js';
-import { readPods } from '../config/pods.js';
+import { readPods, mergePodAgents } from '../config/pods.js';
 import { POD_FILE } from './pods.js';
 import {
   parseSettingValue,
@@ -84,19 +84,14 @@ export class SettingsStore {
       };
     }
 
-    const path = this.diskPath(row);
-    if (!path) {
-      // A pod's agent is written to `podModels` (settingLocation) — reaching here means its row was
-      // built without knowing it is a pod's (pods.json unreadable), so say where it lives instead.
-      const pod = podOf(row.target);
-      return {
-        kind: 'failed',
-        row,
-        reason: pod
-          ? `${row.target} is declared on ${pod}, in ~/${POD_FILE} there — change it in that file and /reload; \`/model\` changes it for this conversation only`
-          : `no \`agents:\` entry with id "${row.target}" in ${configPath()} — the file has changed since the daemon started; edit it directly`,
-      };
-    }
+    // The next start reads the FILE, which may already disagree with the running config: an agent
+    // deleted by hand (no `/reload` yet), or a pod that stopped declaring one when pods.json was
+    // rewritten by a reload whose second read failed. The candidate check above only sees the
+    // running config, so writing the reviewer it still knows would leave a config.yaml the next
+    // start refuses (`review.agent references a non-existent agent id`). See writeTarget.
+    const target = this.writeTarget(row, parsed.value);
+    if ('reason' in target) return { kind: 'failed', row, reason: target.reason };
+    const path = target.path;
 
     try {
       saveConfigPatch([emptied(path, parsed.value, this.config) ?? { path, value: parsed.value }]);
@@ -126,6 +121,29 @@ export class SettingsStore {
   }
 
   /**
+   * The path to patch, or the sentence explaining why there is none. A model row's path can be
+   * missing because the file no longer has that agent; `review.agent` asks the same question of the
+   * file's and the pods' agents (see staleReviewAgent) before it is used.
+   */
+  private writeTarget(
+    row: SettingRow,
+    value: string | number | boolean | undefined
+  ): { path: Array<string | number> } | { reason: string } {
+    const stale = this.staleReviewAgent(row, value);
+    if (stale) return { reason: stale };
+    const path = this.diskPath(row);
+    if (path) return { path };
+    // A pod's agent is written to `podModels` (settingLocation) — reaching here means its row was
+    // built without knowing it is a pod's (pods.json unreadable), so say where it lives instead.
+    const pod = podOf(row.target);
+    return {
+      reason: pod
+        ? `${row.target} is declared on ${pod}, in ~/${POD_FILE} there — change it in that file and /reload; \`/model\` changes it for this conversation only`
+        : `no \`agents:\` entry with id "${row.target}" in ${configPath()} — the file has changed since the daemon started; edit it directly`,
+    };
+  }
+
+  /**
    * The path to patch in the FILE.
    *
    * A per-agent setting is the reason this is not just `settingLocation().path`: `agents:` is a
@@ -144,6 +162,36 @@ export class SettingsStore {
       (a) => typeof a === 'object' && a !== null && (a as { id?: unknown }).id === location.agentId
     );
     return index < 0 ? null : ['agents', index, location.key];
+  }
+
+  /**
+   * Why `review.agent` cannot be written, when the file no longer backs the running config — the
+   * same guard diskPath gives a model row, asked of config.yaml plus every host's pod.yaml.
+   *
+   * `review.agent` is a plain path (`review.agent`), so it never went through diskPath: the running
+   * config was the only thing checked, and it can be ahead of the file. The rewrite of pods.json
+   * before a reload's second read is the case that makes this more than a hand-edit: pods.json is
+   * already the new one, the running config still holds the agent, and a write here would name an
+   * agent no host declares any more. Being agy is checked from the same merged view, because the
+   * schema's rule is about the agent the file defines, not the one the daemon remembers.
+   */
+  private staleReviewAgent(
+    row: SettingRow,
+    value: string | number | boolean | undefined
+  ): string | undefined {
+    if (row.id !== 'review.agent' || typeof value !== 'string') return undefined;
+    const merged = mergePodAgents(readRawConfigIfExists() ?? {}, readPods(configDir())).raw;
+    const agents = Array.isArray(merged['agents']) ? (merged['agents'] as unknown[]) : [];
+    const def = agents.find(
+      (a) => typeof a === 'object' && a !== null && (a as { id?: unknown }).id === value
+    ) as { harness?: unknown } | undefined;
+    if (!def) {
+      return `no \`agents:\` entry with id "${value}" in ${configPath()} or any host's pod.yaml — the files have changed since the daemon started; /reload, then pick again`;
+    }
+    if (def.harness !== 'agy') {
+      return `\`${value}\` is a ${String(def.harness)} agent in the file; a review runs \`agy -p\` with every tool denied, so it must be an agy agent`;
+    }
+    return undefined;
   }
 }
 
@@ -190,6 +238,22 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
       // Live, for the same reason: read when each voice note's transcription request is built.
       if (cfg.voice) cfg.voice.cleanup = Boolean(value);
       return;
+    case 'review.agent':
+      // Live: ReviewService.reviewer() re-reads `review.agent` at the start of every sweep (every
+      // minute), and the sweep in flight re-reads it before each candidate — so this lands on the
+      // next pass, not on a restart. Off deletes the whole block because the schema requires an
+      // agent whenever `review:` exists (the patch's `emptied` does the same to the file).
+      if (value === undefined) delete cfg.review;
+      else cfg.review = { ...cfg.review, agent: String(value) };
+      return;
+    case 'review.model':
+      // Live for the same reason: runOne reads `review.model` per review, so a review that starts
+      // after this write uses it. parseSettingValue refuses this when no reviewer is set, so the
+      // block exists; an undefined value deletes only the optional key, keeping the reviewer.
+      if (!cfg.review) return;
+      if (value === undefined) delete cfg.review.model;
+      else cfg.review = { ...cfg.review, model: String(value) };
+      return;
     default: {
       const _exhaustive: never = row.id;
       throw new Error(`no config location for setting ${String(_exhaustive)}`);
@@ -209,6 +273,7 @@ function candidateOf(config: Config): Config {
     session: { ...config.session },
     delegation: { ...config.delegation },
     agents: config.agents.map((a) => ({ ...a })),
+    ...(config.review ? { review: { ...config.review } } : {}),
     ...(config.podModels ? { podModels: { ...config.podModels } } : {}),
   };
 }
@@ -236,15 +301,22 @@ function applyModel(cfg: Config, row: SettingRow, value: string | number | boole
 }
 
 /**
- * The patch that clears the last `podModels` entry: the whole map rather than its one key, so a
- * file is not left holding `podModels: {}`. Undefined for every other write.
+ * A patch that has to replace the row's own path. Two cases: clearing the last `podModels` entry
+ * writes the whole map rather than its one key, so a file is not left holding `podModels: {}`; and
+ * turning auto review off deletes `review:` whole, because `review.agent` is required whenever the
+ * block exists and a file left with a lone `review.model` would not load. Undefined for every
+ * other write.
  */
 function emptied(
   path: Array<string | number>,
   value: unknown,
   cfg: Config
 ): { path: Array<string | number>; value: undefined } | undefined {
-  if (value !== undefined || path[0] !== 'podModels' || path.length !== 2) return undefined;
+  if (value !== undefined) return undefined;
+  if (path.length === 2 && path[0] === 'review' && path[1] === 'agent') {
+    return { path: ['review'], value: undefined };
+  }
+  if (path[0] !== 'podModels' || path.length !== 2) return undefined;
   const left = Object.keys(cfg.podModels ?? {}).filter((k) => k !== path[1]);
   return left.length === 0 ? { path: ['podModels'], value: undefined } : undefined;
 }

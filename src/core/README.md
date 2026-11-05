@@ -684,6 +684,8 @@ The editable set is deliberately narrow (`model` expands to one row per configur
 | `stream` | `stream.enabled` | `on` / `off` | **now** — `TurnRunner` resolves the delivery mode per turn |
 | `voice` | `voice.confirm` | `on` / `off` | **now** — read when each transcript is ready. A row only where a `voice:` block exists |
 | `cleanup` | `voice.cleanup` | `on` / `off` | **now** — read when each voice note's transcription starts. A row only where a `voice:` block exists |
+| `review.agent` | `review.agent` | `off`, or a configured `agy` agent id | **now** — `ReviewService.reviewer()` re-reads it at the start of every sweep (within a minute) |
+| `review.model` | `review.model` | the reviewer's reported list, any name, or `-` to follow its own | **now** — read before each review |
 
 `scope` is the one that is written but not applied, and that is the interesting decision.
 The scope decides how `conversationKey` is computed, so changing it live would silently

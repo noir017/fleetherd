@@ -78,6 +78,29 @@ describe('a rename', () => {
     expect(config.routing.pipeline[0]?.when.command).toBe('oc2');
   });
 
+  it('moves review.agent with the reviewer, so the renamed config still loads', () => {
+    fs.writeFileSync(
+      path.join(dir, 'config.yaml'),
+      `platforms:
+  tg: { type: telegram, token: t }
+agents:
+  - id: ag
+    harness: agy
+routing:
+  default: ag
+review:
+  agent: ag
+  model: gemini-3.8-pro
+`
+    );
+    // agents[].id, routing.default and review.agent — the model belongs to the review, not the id.
+    expect(renameAgentsInConfig(new Map([['ag', 'ag2']]))).toBe(3);
+    const { config } = readConfig();
+    expect(config.agents.map((a) => a.id)).toEqual(['ag2']);
+    expect(config.review?.agent).toBe('ag2');
+    expect(config.review?.model).toBe('gemini-3.8-pro');
+  });
+
   it('moves each conversation’s binding and session ids with the agent', () => {
     const file = path.join(dir, 'conversations.json');
     fs.writeFileSync(
