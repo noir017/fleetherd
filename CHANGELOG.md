@@ -5,8 +5,6 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-## [2.33.0] - 2026-11-05
-
 ### Added
 
 - **Turns in the conversation library.** `history.db` now keeps one row per turn: the agent that
@@ -20,6 +18,10 @@ All notable changes to this project are documented here. The format is based on
   turn's outcome and its agent. Without a filter the output is exactly what it was. An existing
   file is migrated in place: old rows keep a NULL turn and read as unknown rather than being
   guessed into a neighbour. [→](docs/conversation-history.md)
+
+## [2.33.0] - 2026-11-05
+
+### Added
 
 - **A skills page in the web UI.** The gateway's managed skills could only be read and edited by
   asking an agent to run `talkcode skills`, which is a fine way to write one and a poor way to see
