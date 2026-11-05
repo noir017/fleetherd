@@ -37,7 +37,7 @@ import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.
  */
 
 /** The settings this gateway can write. Everything else is refused by name. */
-export type SettingId = 'agent' | 'model' | 'idle' | 'scope' | 'stream' | 'voice' | 'cleanup';
+export type SettingId = 'agent' | 'model' | 'delegation' | 'idle' | 'scope' | 'stream' | 'voice' | 'cleanup';
 
 /**
  * When a change reaches the running daemon.
@@ -229,6 +229,8 @@ const KEY_ALIASES: Record<string, SettingId> = {
   'routing.default': 'agent',
   default: 'agent',
   model: 'model',
+  delegation: 'delegation',
+  'delegation.confirm': 'delegation',
   scope: 'scope',
   'session.scope': 'scope',
   idle: 'idle',
@@ -295,6 +297,12 @@ export function settingsRows(cfg: Config): SettingRow[] {
   }
   rows.push(
     {
+      id: 'delegation',
+      label: 'Confirm sub-agent starts',
+      value: cfg.delegation.confirm ? 'on' : 'off',
+      effect: 'live',
+    },
+    {
       id: 'idle',
       label: 'Idle reclaim',
       value: formatIdle(cfg.session.idleTimeoutMs),
@@ -341,6 +349,13 @@ export function settingDescription(row: SettingRow): string {
       return 'Which agent answers when no routing rule matches.';
     case 'model':
       return `The model \`${row.target}\` starts its sessions with. \`/model\` still overrides it for one conversation.`;
+    case 'delegation':
+      return (
+        'Whether `task-new` waits for you to tap Start on a card listing every sub-task (`on`, the ' +
+        'default), or starts each one at once and posts a card showing what started (`off`). Off ' +
+        'reaches only conversations you talk to directly; a sub-agent\'s own topic still asks. ' +
+        'Only you can change this; no agent command reaches it.'
+      );
     case 'idle':
       return 'How long a conversation may sit quiet before its agent child is stopped. It resumes on the next message.';
     case 'scope':
@@ -413,6 +428,7 @@ function settingGroup(row: SettingRow): string {
   switch (row.id) {
     case 'agent':
     case 'model':
+    case 'delegation':
       return 'Agent defaults';
     case 'idle':
     case 'scope':
@@ -527,6 +543,21 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
         title: p,
         ...(p === 'off' ? { detail: 'never reclaim' } : {}),
       }));
+    case 'delegation':
+      return [
+        {
+          raw: 'on',
+          label: 'on — wait for Start before any sub-task runs',
+          title: 'on',
+          detail: 'wait for Start before any sub-task runs',
+        },
+        {
+          raw: 'off',
+          label: 'off — start each sub-task at once, and post a card for the record',
+          title: 'off',
+          detail: 'start each sub-task at once, and post a card for the record',
+        },
+      ];
     case 'scope':
       return SCOPE_OPTIONS.map(([value, gloss]) => ({
         raw: value,
@@ -611,6 +642,8 @@ export function parseSettingValue(
     }
     case 'model':
       return parseModelValue(input, row, ctx);
+    case 'delegation':
+      return parseBooleanValue(input);
     case 'idle':
       return parseIdleValue(input);
     case 'scope': {
@@ -703,6 +736,8 @@ export function settingLocation(row: SettingRow): SettingLocation {
       return { kind: 'path', path: ['routing', 'default'] };
     case 'model':
       return { kind: 'agent', agentId: row.target!, key: 'model' };
+    case 'delegation':
+      return { kind: 'path', path: ['delegation', 'confirm'] };
     case 'idle':
       return { kind: 'path', path: ['session', 'idleTimeoutMs'] };
     case 'scope':
@@ -748,6 +783,8 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
       return cfg.routing.default;
     case 'model':
       return cfgModel(cfg, row.target);
+    case 'delegation':
+      return cfg.delegation.confirm;
     case 'idle':
       return cfg.session.idleTimeoutMs;
     case 'scope':

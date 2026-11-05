@@ -66,7 +66,8 @@ review:                       # 可选；不指定 agy 智能体就是关闭
 其余配置在用到它的地方讲：各 harness 的选项见[智能体](agents.md)，网页端的 `terminal:`、`sso:`
 见[网页端](web-ui.md)，`title:` 见[话题命名](topic-names.md)，`voice:` 见[语音消息](voice.md)，`hosts:` 和
 `agents[].host` 见[远程主机](remote-hosts.md)，`agents[].hooks` 见
-[智能体](agents.md#启动前钩子)，`review:` 见[技能](skills.md#自动复盘)。
+[智能体](agents.md#启动前钩子)，`review:` 见[技能](skills.md#自动复盘)，`delegation:` 见
+[子代理](sub-agents.md)。
 其中几项也能在聊天里直接改、不用重启——见[在聊天里改配置](settings.md)。
 
 ## 守护进程运行时改配置

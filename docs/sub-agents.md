@@ -15,8 +15,12 @@ in parallel, and come back with one report — so you follow one topic instead o
 1. The agent reads what it needs and splits the job. For each part it picks an agent — one on its
    own machine unless the part needs another — and writes the task that agent will get.
 2. A card lists every part: the agent, its machine, the directory, and the full text of the task.
-   **Nothing starts until you tap Start.** To change something, write what instead of tapping, and
-   it proposes again; the new card replaces the old one.
+   **Nothing starts until you tap Start** — unless confirmation is off (`/setting delegation off`),
+   in which case each part starts as it is proposed and the card is posted after it, listing what
+   started and where, with no Start button. That applies only where you talk to the agent directly:
+   in a sub-agent's own topic, `task-new` still puts up the card, so agents cannot open more agents
+   without you. With confirmation on, to change something, write what instead of tapping, and it
+   proposes again; the new card replaces the old one.
 3. Each part gets a topic of its own, nested under this one, and they all run at once. The first
    message in each says which topic it came from.
 4. When a sub-agent finishes, fails or asks something, the agent that started it is told. A folded
@@ -70,7 +74,11 @@ input mid-turn; elsewhere it waits for the turn to end, and the agent is told wh
   command list and nowhere else's; typed on another platform it is answered with that, and no turn
   runs.
 - Any agent can propose sub-agents when you ask it to split work, without `/super`, and any
-  configured agent can be one. The card still waits for your tap.
+  configured agent can be one. The card waits for your tap by default.
+- `/setting delegation off` (or `delegation.confirm: false`) starts each sub-task as the agent
+  proposes it and posts the card afterwards as a record; `/setting delegation on` restores the tap.
+  It reaches only conversations you talk to directly — a sub-agent's own topic still confirms.
+  Only you can change it — no agent command reaches it.
 - With agents on several [machines](remote-hosts.md), the agent prefers those on its own machine,
   which have the same checkouts and tools. A part that runs elsewhere shows `@ <host>` on the card.
 - `/super` is a skill the gateway links into each agent's skill directory, next to the `talkcode`

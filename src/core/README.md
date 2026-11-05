@@ -662,6 +662,7 @@ The editable set is deliberately narrow (`model` expands to one row per configur
 |---|---|---|---|
 | `agent` | `routing.default` | a configured agent id | **now** — `resolveAgent` re-reads it per message |
 | `model` / `model.<agent>` | `agents[<id>].model` | the agent's reported list, any name, or `-` to clear | **next agent session** — the value is read at spawn |
+| `delegation` | `delegation.confirm` | `on` / `off` | **now** — read per `task-new`; `off` starts each sub-task at once and posts a card without buttons, in a conversation with no parent |
 | `idle` | `session.idleTimeoutMs` | `off`, `<n>m`, `<n>h` | **now** — the sweeper is re-armed |
 | `scope` | `session.scope` | the four `SessionScope` values | **on restart** — file only |
 | `stream` | `stream.enabled` | `on` / `off` | **now** — `TurnRunner` resolves the delivery mode per turn |

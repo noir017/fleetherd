@@ -70,10 +70,10 @@ the YAML can be committed.
 The rest is described where it is used: each harness's options in [Agents](agents.md), the web
 UI's `terminal:` and `sso:` in [Web UI](web-ui.md), `title:` in [Topic names](topic-names.md),
 `voice:` in [Voice messages](voice.md), `hosts:` with `agents[].host` in
-[Remote hosts](remote-hosts.md), `agents[].hooks` in [Agents](agents.md#pre-launch-hook), and
-`review:` in [Skills](skills.md#auto-review). A
-handful of fields can also be changed from chat,
-without a restart — see [Settings from chat](settings.md).
+[Remote hosts](remote-hosts.md), `agents[].hooks` in [Agents](agents.md#pre-launch-hook),
+`review:` in [Skills](skills.md#auto-review), and `delegation:` in
+[Sub-agents](sub-agents.md). A handful of fields can also be changed from chat, without a
+restart — see [Settings from chat](settings.md).
 
 ## Changing it while the daemon runs
 

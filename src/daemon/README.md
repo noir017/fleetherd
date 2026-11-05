@@ -53,7 +53,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `managed-skills.ts` | Delivering active skills to `~/.talkcode/skills/` on an agent's machine and linking only links that point back there; taking an archived skill's links back |
 | `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
 | `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
-| `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on, and the `[sub-agent updates]` card |
+| `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on by default (or the record card when it is off), and the `[sub-agent updates]` card |
 | `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `talkcode …` back here (the allowlisted bridge); placing the skill on a host |
 | `pods.ts` | What each host's pod declares: its `~/.talkcode/pod.yaml`, or the harness commands on its login PATH when it has none. Read at startup and on every `/reload` (`Daemon.reloadAll`) into `pods.json`, which `config/pods.ts` merges into `agents` as `<id>@<host>`. A host that cannot be read, or whose file does not validate, keeps what it had |
 | `pod-admin.ts` | `talkcode pod-add` / `pod-remove`: a `hosts:` entry in config.yaml and its pinned host key, changed together and refused before anything is written when either would end up wrong; and the authorized_keys line `talkcode pods` offers a new host |
@@ -655,14 +655,20 @@ topic of its own nested under the asking one — on a platform that records that
 (`PlatformAdapter.parentOf` / `childrenOf`, today the web UI's `Topic.parent`), which is the only copy
 of it: the daemon keeps none, so deleting a topic on the page is what ends it. Three structural rules:
 
-- `task-new` only proposes. The proposal stays open until the person answers: the first card goes up
+- By default (`delegation.confirm`) `task-new` only proposes. The proposal stays open until the
+  person answers: the first card goes up
   after `PROPOSAL_GATHER_MS`, and a later call while that card is on screen re-renders it with the new
   item on it, so a burst is one card however far apart the calls are. It is put up through the
   daemon's `askButtons` with `acceptsText: false`: a typed reply is the person's next message to the
   agent, never a yes — and it drops the proposal (`supersedeProposals` → `personSpoke`), so the
   re-proposal that follows starts a fresh card rather than appending to the one it means to replace.
-  A newer card aborts the one on screen (`signal`). `task-agents` lists the conversation's own agent
-  first: `task-new` has no default, and the first usable row is what an agent picks.
+  A newer card aborts the one on screen (`signal`). With `delegation.confirm` off, `task-new` opens
+  the part at once (so its answer can say it is running) and queues the same list as a card without
+  buttons, gathered the same way and never dropped by a message from the person — but only in a
+  conversation with no parent: a sub-agent's own topic still puts up the confirmation card, so an
+  agent cannot chain more agents without a tap. `task-agents` lists
+  the conversation's own agent first: `task-new` has no default, and the first usable row is what an
+  agent picks.
   Start opens each part with `ConversationRegistry.openTask` (`createThread` with `under`), whose
   `handTo` shows the text under a `↳ From [parent]` header and ingests it with `DELEGATE_SENDER`.
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).

@@ -22,6 +22,17 @@ All notable changes to this project are documented here. The format is based on
   a NULL turn and read as unknown rather than being guessed into a neighbour.
   [→](docs/conversation-history.md)
 
+- **Sub-agent starts can be left unconfirmed.** By default `task-new` still only proposes: every
+  sub-task waits on a card listing all of them until the person taps Start. `/setting delegation
+  off` (or `delegation.confirm: false`) removes that tap — each sub-task starts as the agent
+  proposes it, and a card listing every one and its topic is posted afterwards, without buttons,
+  so the chat still shows what an agent started on its own. `task-new` answers with the topic it is
+  running in, and a sub-task that could not start is returned as a failure instead of reported as
+  running. Only a person can change the switch: `/setting` or the file, never a reverse command.
+  It applies only where the person talks to the agent directly — in a sub-agent's own topic,
+  `task-new` still waits for a tap, so agents cannot chain more agents without one.
+  [→](docs/sub-agents.md)
+
 ## [2.33.0] - 2026-11-05
 
 ### Added

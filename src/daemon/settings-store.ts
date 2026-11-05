@@ -77,6 +77,7 @@ export class SettingsStore {
       ...this.config,
       routing: { ...this.config.routing },
       session: { ...this.config.session },
+      delegation: { ...this.config.delegation },
       agents: this.config.agents.map((a) => ({ ...a })),
     };
     applyToConfig(candidate, row, parsed.value);
@@ -174,6 +175,11 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
       if (def) def.model = value === undefined ? undefined : String(value);
       return;
     }
+    case 'delegation':
+      // Live: Delegation.propose reads this per `task-new`, so the very next proposal follows it —
+      // including one an agent is about to make in the turn that asked for the change.
+      cfg.delegation.confirm = Boolean(value);
+      return;
     case 'idle':
       cfg.session.idleTimeoutMs = Number(value);
       return;

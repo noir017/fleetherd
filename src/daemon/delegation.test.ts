@@ -7,6 +7,7 @@ import type {
   TaskActionResult,
   TaskAgentsResult,
   TaskListResult,
+  TaskNewResult,
   TaskReadResult,
   TaskStatusResult,
 } from '../ipc/protocol.js';
@@ -366,6 +367,88 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     const prompt = r.calls.find(([c]) => c === 'prompt')![1] as { prompt: string; user: string };
     expect(prompt.prompt).toMatch(/^\[sub-agent updates\] 1 of 2 could not be started/);
     expect(prompt.user).toBe(UPDATE_SENDER);
+  });
+});
+
+describe('Delegation: with confirmation off', () => {
+  it('still waits for Start when the switch is on, which is the default', async () => {
+    const r = rig();
+    expect(r.deps.config.delegation.confirm).toBe(true);
+    await r.d.handle(P, task('cc', 'x'));
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(1);
+    expect(r.cards[0]!.labels).toEqual(['Start it', 'Cancel']);
+  });
+
+  it('opens the sub-task before task-new returns, and says it is running', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    const res = (await r.d.handle(P, task('cc', 'Fix the bump workflow', { title: 'bump' }))) as TaskNewResult;
+    // Nothing to tap: the confirmation is not asked at all.
+    expect(r.cards).toEqual([]);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+    expect(res.result).toContain('running now');
+    expect(res.result).not.toMatch(/confirm|until they|wait/i);
+  });
+
+  it('posts a card listing what started and where, with no Start to tap', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    await r.d.handle(P, task('cc', 'Fix the bump workflow'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const card = r.posted.find((p) => p.to === P && p.text.includes('started a sub-agent'))!;
+    expect(card).toBeDefined();
+    expect(card.tools).toBeUndefined(); // a message in the transcript, not a folded tool card
+    expect(card.text).toContain('- [part](?t=c1000000) — cc @ near · web:main/c1000000');
+    expect(card.text).toContain('/setting delegation on');
+  });
+
+  it('gathers a burst into one card, and the person writing does not drop it', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    await r.d.handle(P, task('cc', 'a'));
+    await r.d.handle(P, task('cx', 'b'));
+    // Already running: a message from the person is their next turn, not a reason to lose the record.
+    r.d.personSpoke(P);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const cards = r.posted.filter((p) => p.to === P && p.text.includes('started 2 sub-agents'));
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.text).toContain('— cc @ near');
+    expect(cards[0]!.text).toContain('— cx @ near');
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+  });
+
+  it('says a sub-task could not start instead of claiming it is running', async () => {
+    const r = rig({ failOpen: 'cx' });
+    r.deps.config.delegation.confirm = false;
+    const res = (await r.d.handle(P, task('cx', 'b', { cwd: 'nowhere' }))) as TaskNewResult;
+    expect(res.result).toContain('Could not start');
+    expect(res.result).not.toContain('running now');
+    expect(res.result).not.toContain('The person sees a card');
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const card = r.posted.find((p) => p.text.includes('could not start the sub-agent'))!;
+    expect(card.text).toContain('no directory nowhere');
+  });
+
+  it("still asks the person inside a sub-agent's own topic, so agents cannot chain without a tap", async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    const child = 'web#main#d0000000';
+    r.parents.set(child, P); // the platform says this topic was opened under the person's topic
+    r.bound.set(child, 'cc');
+    const res = (await r.d.handle(child, task('cx', 'dig deeper'))) as TaskNewResult;
+    // The switch is the person's, not an agent's: a conversation with a parent still asks.
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+    expect(res.result).toContain('Nothing starts until they confirm');
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(1);
+    expect(r.cards[0]!.labels).toEqual(['Start it', 'Cancel']);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   settingAckText,
   settingBackButtonId,
   settingDetailText,
+  settingDescription,
   settingKeyOf,
   settingLocation,
   settingOptions,
@@ -87,6 +88,7 @@ describe('the settings screen', () => {
       'model.cc',
       'model.oc',
       'model.own',
+      'delegation',
       'idle',
       'scope',
       'stream',
@@ -139,6 +141,7 @@ describe('the settings screen', () => {
       ['Default model', 'cc', '(harness default)', 'Agent defaults'],
       ['Default model', 'oc', 'opencode/big-pickle', 'Agent defaults'],
       ['Default model', 'own', '(harness default)', 'Agent defaults'],
+      ['Confirm sub-agent starts', undefined, 'on', 'Agent defaults'],
       ['Idle reclaim', undefined, '1h', 'Conversation'],
       ['Conversation scope', undefined, 'per_thread', 'Conversation'],
       ['Live streaming', undefined, 'off', 'Replies'],
@@ -148,7 +151,7 @@ describe('the settings screen', () => {
     // would have posted.
     expect(screen.rows.map((r) => r.buttonId)).toEqual(view.buttons.map((b) => b.id));
     expect(screen.rows[1]!.effectLabel).toBe('next session');
-    expect(screen.rows[5]!.effectLabel).toBe('after restart');
+    expect(screen.rows[6]!.effectLabel).toBe('after restart');
     // The whole value, which the chat label truncates at 40 characters.
     expect(screen.rows[2]!.value).toBe('opencode/big-pickle');
   });
@@ -600,6 +603,37 @@ describe('opening a value menu', () => {
   it('falls back to the first page when the current value is not in the list', () => {
     const options = settingOptions(row('model.oc'), cfg, ctx);
     expect(settingValuePage({ ...row('model.oc'), value: 'opusplan' }, options)).toBe(0);
+  });
+});
+
+describe('the sub-agent confirmation switch', () => {
+  it('is on by default, live, and resolves from `delegation` and `delegation.confirm`', () => {
+    const r = resolveSettingKey('delegation', cfg, ctx);
+    expect(r.kind).toBe('row');
+    if (r.kind !== 'row') throw new Error('expected a row');
+    expect(r.row).toMatchObject({
+      id: 'delegation',
+      label: 'Confirm sub-agent starts',
+      value: 'on',
+      effect: 'live',
+    });
+    expect(settingLocation(r.row)).toEqual({ kind: 'path', path: ['delegation', 'confirm'] });
+    expect(resolveSettingKey('delegation.confirm', cfg, ctx).kind).toBe('row');
+  });
+
+  it('takes on/off like every toggle, and reads back the boolean', () => {
+    const r = row('delegation');
+    expect(parseSettingValue(r, 'off', cfg, ctx)).toMatchObject({ value: false, display: 'off' });
+    expect(parseSettingValue(r, 'on', cfg, ctx)).toMatchObject({ value: true, display: 'on' });
+    expect(settingOptions(r, cfg, ctx).map((o) => o.raw)).toEqual(['on', 'off']);
+    expect(readSettingValue(r, cfg)).toBe(true);
+  });
+
+  it('says what off means: each starts at once, and a card still shows what started', () => {
+    const text = settingDescription(row('delegation'));
+    expect(text).toContain('starts each one at once');
+    expect(text).toContain('posts a card showing what started');
+    expect(text).toContain('Only you can change this');
   });
 });
 
