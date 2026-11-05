@@ -59,6 +59,30 @@ All notable changes to this project are documented here. The format is based on
   `task-new` still waits for a tap, so agents cannot chain more agents without one.
   [→](docs/sub-agents.md)
 
+### Changed
+
+- **The scheduled-task panel is a drawer on a phone.** Below 640px it took the whole screen, which
+  made it a mode rather than a glance: the clock opened a surface with no chat behind it and the
+  only way out was the ×. It is now the same drawer the topic sidebar is, on the other edge —
+  sliding in from the right over a dimmed chat, at most 88% of the screen wide, dismissed by the
+  backdrop, the ×, Escape or the clock. Below 1024px it keeps the slide; the docked column is
+  unchanged, and only a docked panel is restored on a reload.
+- **`/setting` is a page of its own in the web UI.** It used to arrive as a message in the
+  transcript drawn as a settings screen: the screen was right, the message was not — opening
+  settings left a row in the conversation, and changing one thing later meant scrolling back to
+  it. The page opens from **All settings** in the ⚙ menu at the foot of the topic list, or by
+  typing `/setting`, and never enters the transcript; the command you type stays as your message.
+  It names the topic it is bound to, because the agent and model rows are that conversation's,
+  and switching topics puts it away. The rows, values, validation and writes are still the
+  daemon's (`core/settings.ts` and the existing apply path) — the page only draws the screen the
+  daemon already sends. Every other platform keeps its button grid.
+- **A finished sub-agent no longer lights the sidebar green.** A topic a `/super` job opened took
+  the same green "unread reply" dot as a conversation the person is expected to read when its turn
+  ended — but its reply goes to the agent that opened it, which acts on it and reports, so the row
+  was pointing at work nobody had to pick up. It now keeps the ordinary idle/online grey (dim blue
+  while its agent is resident); its blue "working" and amber "question" dots are unchanged, and
+  the topic that opened it still turns green when the agent's answer is waiting to be read.
+
 ## [2.33.0] - 2026-11-05
 
 ### Added

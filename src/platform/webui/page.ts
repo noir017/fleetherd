@@ -231,6 +231,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* :not(.on) for the weight, not the meaning (a topic on screen is never one of these): the idle and
    live greys above are four classes deep, and a lighter rule lost to them on an idle agent. */
 #topics .topic-item.needs:not(.on) .topic-title{color:#4ade80}
+/* An unread reply, on a topic the person is expected to read. A sub-agent's row never takes this
+   one: its finished turn is the news of the agent that opened it (see the dot class in
+   paintTopics), so the row stays the ordinary idle/online grey. */
 .topic-dot.review{background:#4ade80}
 /* Low attention (the Settings menu, per device: calmBtn). With several agents working at once the
    list never stops moving — a pulsing dot per running topic, and an unread count in a bright pill
@@ -443,6 +446,28 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #skills-close{font-size:18px;padding:6px 10px}
 #skills-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 #skills-note{margin:0 0 10px;font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
+/* /setting as a page of its own, opened from the Settings menu or by typing the command, rather
+   than a screen inserted into the transcript. A window over the conversation like the reader and
+   the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
+   rows, the values, the validation and the write all stay on the daemon's side. The bar carries
+   the one thing the old in-transcript screen could not say — which topic the per-topic rows
+   (agent, model) are about. */
+#settings-page{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#settings-page[hidden]{display:none}
+#settings-box{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#settings-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh)}
+.set-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
+#settings-title{font-size:13px;font-weight:600}
+#settings-topic{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#settings-close{font-size:18px;padding:6px 10px}
+#settings-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+/* The screen's own top margin was for a bubble in the transcript; as the page's whole content it
+   only pushes the first group down. */
+#settings-body .set{margin-top:0}
+#settings-body .set-text{margin-bottom:10px;font-size:13px;color:var(--dim)}
+#settings-body .set-text p{margin:0 0 .5em}
+#settings-body .set-text p:last-child{margin-bottom:0}
+#settings-body .set-loading{padding:8px 2px;font-size:12.5px;color:var(--dim)}
 .skills-empty{padding:10px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
 .skill-item{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
 .skill-item:hover{background:#1e1e1e}
@@ -659,9 +684,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* A finger, not a pointer: the cells keep roughly the height they had as loose buttons, and the
    gap between two choices is what a near miss lands in. */
 @media(hover:none){.btns{--gap:6px}.btns button{padding:8px 10px}.btns .nav button{padding:7px 14px}}
-/* The settings screen a /setting menu becomes on this page (see settingsScreen()). A chat app can
-   only offer buttons, so /setting arrives there as a grid of labels with the value squeezed into
-   the same string and cut at 40 characters. This page has a message's width, so it draws the
+/* The settings screen, drawn in the settings page (see settingsScreen()). A chat app can only
+   offer buttons, so /setting arrives there as a grid of labels with the value squeezed into the
+   same string and cut at 40 characters. The page has the width, so it draws the
    screen instead: a section per group, a row per setting with the label on top and the whole value
    underneath it, wrapping rather than ellipsised, and the whole row as the target. Rows rather
    than cells because a setting is read, not scanned as a keyboard; a wide screen may put two or
@@ -669,9 +694,13 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    control is at least 44px tall: this page is used on a phone more than on a desktop. */
 .set{margin-top:10px;border:1px solid var(--line);border-radius:8px;background:#181818;overflow:hidden}
 .set-group{padding:10px 12px 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
-.set-rows{display:grid;grid-template-columns:1fr;gap:1px;background:var(--line)}
+.set-rows{display:grid;grid-template-columns:1fr;background:#181818}
 @media(min-width:560px){.set-rows{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}}
-.set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"main chev" "value chev";gap:1px 10px;align-items:center;width:100%;min-height:44px;padding:9px 12px;background:#181818;border:0;border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+/* Separated by each row's own edge rather than by a 1px gap over a line-coloured container: a
+   group with an odd number of rows leaves a cell empty in the last column, and a gap-coloured
+   grid paints that cell as a block of --line down the side of the section (seen in Chromium at
+   760px). The border keeps the separation and leaves the empty cell the section's own colour. */
+.set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"main chev" "value chev";gap:1px 10px;align-items:center;width:100%;min-height:44px;padding:9px 12px;background:#181818;border:0;border-bottom:1px solid var(--line);border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
 .set-row:hover{background:#202020}
 .set-row:focus-visible,.set-opt:focus-visible,.set-nav button:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
 .set-main{grid-area:main;min-width:0;display:flex;flex-direction:column;gap:1px}
@@ -786,10 +815,13 @@ button:disabled{opacity:.5;cursor:default}
    layout has no concept of: a URL bar that eats viewport height, a home indicator under the
    composer, Safari's zoom-on-focus, and a finger instead of a pointer. */
 /* A 240px sidebar and a 240–320px panel leave too little chat on a laptop screen, so below
-   1024px the panel slides over the chat instead of taking a column. The backdrop is what
-   dismisses it, as the sidebar drawer's is. */
+   1024px the panel slides over the chat instead of taking a column — the same drawer the topic
+   sidebar becomes at 640px, on the other edge. It stays laid out and is moved off-screen rather
+   than hidden, because display:none has nothing to animate; the transition is the sidebar's
+   .18s ease. The backdrop is what dismisses it, as the sidebar drawer's is. */
 @media(max-width:1023px){
-  #app.sched #schedules{position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px rgba(0,0,0,.6)}
+  #schedules{display:flex;position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px rgba(0,0,0,.6);transform:translateX(100%);transition:transform .18s ease}
+  #app.sched #schedules{transform:none}
   #app.sched #sched-backdrop{display:block}
   /* Nothing to dock it to here, so the resize handle is not offered: an overlay's width is the
      screen's, not the operator's. */
@@ -832,9 +864,9 @@ button:disabled{opacity:.5;cursor:default}
      a target three times its size and reads as a stray mark rather than a control. */
   #kill-agent{min-width:44px;height:44px}
   #kill-agent svg{width:18px;height:18px}
-  /* The panel is the whole screen here: 88vw of a phone is a sliver of chat behind a surface
-     that is already modal. */
-  #app.sched #schedules{width:100%;left:0}
+  /* The panel keeps the drawer's width here rather than taking the whole screen: it is the same
+     overlay the 1023px rule makes, sliding in from the right, and a strip of the conversation
+     stays visible behind it. Only the header and the targets grow for a finger. */
   #schedules-head{padding:0 4px 0 12px;min-height:49px}
   #schedules-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   #schedules-toggle{min-width:44px;height:44px}
@@ -855,6 +887,12 @@ button:disabled{opacity:.5;cursor:default}
   #skills-new{min-height:44px;padding:0 14px}
   .skill-acts button,.skill-file{min-height:44px;padding:0 12px}
   .skill-text{min-height:40dvh;font-size:14px}
+  /* The settings page, for the same reason and the same way: a 760px window shrunk into a phone
+     is a column of rows behind a sliver of transcript nobody opened it to read. */
+  #settings-page{padding:0}
+  #settings-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #settings-bar{padding:0 4px 0 12px;min-height:49px}
+  #settings-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   /* A hover-revealed × does not exist on a finger, and the row is the only way to delete a
      scheduled run now that the switcher no longer lists it. */
   .sess-del{opacity:1;min-width:44px;height:44px}
@@ -924,6 +962,8 @@ const SCRIPT = `
       skillsTitle=$('skills-title'), skillsCount=$('skills-count'), skillsNewBtn=$('skills-new'),
       skillsClose=$('skills-close'), skillsBody=$('skills-body'), skillsNote=$('skills-note'),
       skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
+      settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
+      settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status');
   var data={}, els={}, files=[], commands=[], stream=null, done=false;
   // Last markup written per message, so a sync that re-sends an unchanged message touches no DOM.
@@ -976,6 +1016,24 @@ const SCRIPT = `
   // persisted — a management surface is opened on purpose, and a window that came back on load
   // would sit over a conversation nobody asked it to cover.
   var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false;
+  // The /setting page: the live settings message it draws, the topic it was opened in, and the
+  // one message whose page the operator closed. A settings message is never a row in the
+  // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
+  // settingsClosed is per message id, so an edit to the page that was put away does not reopen
+  // it — a new /setting is a new message, and that does open.
+  //
+  // A request made from the menu has no message id yet, so closing it while it is still Loading
+  // cannot be remembered that way. It gets a token (settingsReq); the answers are matched to the
+  // tokens by order, since the daemon answers one /setting with one screen, and closing cancels
+  // every token issued so far (settingsClosedUpTo). An answer to a cancelled request is dropped;
+  // a later request has a later token and still opens. A token is also tagged with the topic it
+  // was asked in: an answer arriving after a topic switch belongs to that topic's queue, not the
+  // one on screen.
+  var settingsMsg=null, settingsTopic=null, settingsClosed={};
+  var settingsReq=0, settingsPending=[], settingsClosedUpTo=0, settingsTimer=0;
+  // How long the page waits for the screen before saying the daemon did not answer. The send
+  // itself gives up after fifteen seconds on one attempt, so this is the same patience.
+  var SETTINGS_WAIT_MS=15000;
 
   function saveReads(){
     try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
@@ -1183,6 +1241,9 @@ const SCRIPT = `
   function applySidebar(){
     var open = sidebarOpen !== '0';
     sidebar.className = open ? '' : 'collapsed';
+    // A drawer moved off-screen is still in the tab order: without this, Tab walks into a column
+    // nobody can see. Removed as soon as it is open, and harmless on a docked column.
+    if(open) sidebar.removeAttribute('inert'); else sidebar.setAttribute('inert', '');
     expandBtn.hidden = open;
     // Hidden wins over the media query's display:block, so on a wide screen this stays off
     // regardless of the drawer's state.
@@ -1212,6 +1273,25 @@ const SCRIPT = `
     if(optsMenu.hidden || optsMenu.contains(e.target) || optsBtn.contains(e.target)) return;
     setOpts(false);
   });
+
+  /**
+   * The gateway's settings page, from the Settings menu. The command is sent quietly — the daemon
+   * has to build the screen from the live config, and it answers with a message of its own, but a
+   * page opening must not leave a /setting bubble in the transcript.
+   */
+  settingsOpenBtn.addEventListener('click', function(){
+    setOpts(false);
+    var token = openSettingsLoading();
+    var t = settingsTopic;
+    if(!token || !t) return;
+    quietCommand('/setting', t).then(function(ok){
+      if(ok) return;
+      forgetSettingsRequest(token);
+      if(!settingsMsg && !settingsPage.hidden) settingsSay('Could not reach the daemon. Close this and try again.');
+    });
+  });
+  settingsClose.addEventListener('click', closeSettings);
+  settingsPage.addEventListener('click', function(e){ if(e.target === settingsPage) closeSettings(); });
 
   /**
    * Low attention (#app.calm in the stylesheet, which says what it changes and why). Per device,
@@ -1465,6 +1545,9 @@ const SCRIPT = `
 
   function paintSchedules(){
     app.classList.toggle('sched', schedOpen);
+    // The overlay is laid out and translated off-screen rather than hidden, so its buttons would
+    // still take Tab. inert keeps the keyboard in the chat until the panel is opened.
+    if(schedOpen) schedPanel.removeAttribute('inert'); else schedPanel.setAttribute('inert', '');
     schedToggle.setAttribute('aria-expanded', schedOpen ? 'true' : 'false');
     schedToggle.classList.toggle('on', schedOpen);
     paintSchedTab();
@@ -1892,6 +1975,10 @@ const SCRIPT = `
    */
   function paint(key, before){
     var m=data[key]; if(!m) return;
+    // A settings screen is drawn in the settings page, never in the transcript (see takeSettings).
+    // The guard is here as well as at every call site because paint is the one funnel: an edit
+    // that arrives through a path nobody thought of must not put the screen back in the log.
+    if(m.settings || m.wasSettings) return;
     var el=els[key];
     if(!el){
       clearSkeleton();
@@ -1932,7 +2019,7 @@ const SCRIPT = `
     // Buttons are dropped from a message that came out of the cache: the process that would
     // answer them is gone, and the id they name now means a different message or nothing at
     // all. A control that cannot act is worse than no control.
-    if(!hist && m.buttons && m.buttons.length) h += m.settings ? settingsScreen(m) : menu(m);
+    if(!hist && m.buttons && m.buttons.length) h += menu(m);
     if(stuck(m)) h += failedActions(m);
     var meta = clock(m.at) + (m.reactions && m.reactions.length ? '  '+m.reactions.join(' ') : '');
     h += '<div class="t">'+text(meta)+(tools ? allToggle(key) : '')+'</div>';
@@ -1982,7 +2069,7 @@ const SCRIPT = `
   }
 
   /**
-   * A /setting message drawn as a screen rather than as the grid every other menu uses.
+   * A /setting screen as markup, for the settings page rather than for the transcript.
    *
    * The daemon sends the screen as data (WebMessage.settings): labels, values, groups, and the
    * button id each row posts. Nothing here parses a label — the grid did, because a label was all
@@ -2046,6 +2133,164 @@ const SCRIPT = `
     if(n.prev) h += '<button type="button" data-msg="'+msg+'" data-btn="'+text(n.prev)+'">◀ Prev</button>';
     if(n.next) h += '<button type="button" data-msg="'+msg+'" data-btn="'+text(n.next)+'">Next ▶</button>';
     return h + '</div>';
+  }
+
+  // ── The settings page ────────────────────────────────────────────────────────
+  /**
+   * /setting as a page of its own, not a message in the transcript.
+   *
+   * The daemon already answers /setting with one message carrying the structured screen
+   * (SettingsScreen) and the button ids that write config.yaml. That is still the only source of
+   * the rows, the values and the writes — this page never parses a label or builds a value. It
+   * only moves the drawing out of the transcript and into a window: the message is taken out of
+   * the log before it is painted, and its updates (the daemon edits the same message when a row is
+   * tapped) are painted into this page instead. Closing the page is remembered per message id, so
+   * a late edit does not reopen what the operator put away.
+   *
+   * It is bound to the topic it was opened in. The per-topic rows (agent, model) mean
+   * different things in each conversation, and the buttons carry that conversation's message id,
+   * so switching topics closes the page rather than leaving it pointing at the old one.
+   */
+  function settingsKey(m){ return (m._g || m.g || epoch) + ':' + m.id; }
+
+  function settingsTopicName(id){
+    for(var i=0;i<topics.length;i++) if(topics[i].id===id) return topics[i].title || 'Untitled';
+    return 'Untitled';
+  }
+
+  function paintSettingsTopic(){
+    settingsTopicEl.textContent = 'Topic · ' + settingsTopicName(settingsTopic);
+    settingsTopicEl.title = 'These settings apply to the topic “' + settingsTopicName(settingsTopic) + '”';
+  }
+
+  function renderSettings(){
+    if(!settingsMsg) return;
+    settingsBody.innerHTML = '<div class="set-text">'+(settingsMsg.html||'')+'</div>'
+      + (settingsScreen(settingsMsg) || '');
+  }
+
+  /**
+   * A live settings screen arrived: draw it, or update the page already drawing it.
+   *
+   * An edit of a page the operator closed is dropped; a new message is a new page. That is the
+   * whole rule, and it is why the id is remembered rather than a boolean. An answer that belongs
+   * to a request the operator closed while it was still Loading is dropped too — the request is
+   * identified by its token, and the answers come back in the order they were asked for.
+   */
+  function takeSettings(m){
+    m._g = m.g || epoch;
+    var k = settingsKey(m);
+    // An edit of the screen already on the page: update it in place, and do not consume a
+    // pending request — this answer belongs to the message, not to a new question.
+    if(!settingsPage.hidden && settingsMsg && settingsMsg.id === m.id){
+      settingsMsg = m;
+      renderSettings();
+      return;
+    }
+    var wasHidden = settingsPage.hidden;
+    if(wasHidden && settingsClosed[k]) return;
+    if(!topic) return;
+    var token = 0;
+    for(var i=0;i<settingsPending.length;i++){
+      if(settingsPending[i].t !== topic) continue;
+      token = settingsPending[i].n;
+      settingsPending.splice(i, 1);
+      break;
+    }
+    if(wasHidden && token && token <= settingsClosedUpTo) return;
+    settingsMsg = m;
+    settingsTopic = topic;
+    paintSettingsTopic();
+    renderSettings();
+    settingsPage.hidden = false;
+    settingsBody.scrollTop = 0;
+    disarmSettingsWait();
+  }
+
+  /** The page, before the daemon has answered: it says which topic it is about at once. */
+  function openSettingsLoading(){
+    if(!topic) return 0;
+    settingsMsg = null;
+    settingsTopic = topic;
+    settingsBody.innerHTML = '<div class="set-loading">Loading settings…</div>';
+    paintSettingsTopic();
+    settingsPage.hidden = false;
+    settingsBody.scrollTop = 0;
+    var token = ++settingsReq;
+    settingsPending.push({ t: topic, n: token });
+    armSettingsWait();
+    return token;
+  }
+
+  /** Stop waiting for an answer: the page is open, closed, or the request failed. */
+  function disarmSettingsWait(){
+    if(settingsTimer){ clearTimeout(settingsTimer); settingsTimer = 0; }
+  }
+
+  /**
+   * Say so rather than sitting on Loading for ever: the daemon may have dropped the request, or
+   * answered with something that is not a screen at all. The page stays up, so the operator can
+   * close it and try again.
+   */
+  function armSettingsWait(){
+    disarmSettingsWait();
+    settingsTimer = setTimeout(function(){
+      settingsTimer = 0;
+      if(settingsPage.hidden || settingsMsg) return;
+      settingsSay('The daemon did not answer. Close this and try again.');
+    }, SETTINGS_WAIT_MS);
+  }
+
+  /** The answer to a request that failed on the way out will never arrive; let its token go. */
+  function forgetSettingsRequest(token){
+    for(var i=0;i<settingsPending.length;i++){
+      if(settingsPending[i].n !== token) continue;
+      settingsPending.splice(i, 1);
+      return;
+    }
+  }
+
+  function settingsSay(s){
+    settingsBody.innerHTML = '<div class="set-loading">'+text(s)+'</div>';
+  }
+
+  function closeSettings(){
+    if(settingsPage.hidden) return;
+    if(settingsMsg) settingsClosed[settingsKey(settingsMsg)] = 1;
+    // Every request issued so far is cancelled, including one still in flight while Loading —
+    // otherwise its answer would reopen the page the operator just put away.
+    if(settingsReq) settingsClosedUpTo = Math.max(settingsClosedUpTo, settingsReq);
+    disarmSettingsWait();
+    settingsPage.hidden = true;
+    settingsMsg = null;
+    settingsTopic = null;
+    settingsBody.textContent = '';
+  }
+
+  /**
+   * Send a command the operator did not type — the Settings menu asking the daemon for its own
+   * settings screen. quiet tells the room not to write it into the conversation: a page opening
+   * must not leave a /setting bubble in the transcript, and nothing on the daemon's side needs
+   * the echo (the answer is a new message of its own).
+   */
+  function quietCommand(cmd, t){
+    var nonce = Math.random().toString(36).slice(2)+Date.now().toString(36);
+    return post('api/send', {topic:t, text:cmd, nonce:nonce, quiet:true}, 2)
+      .then(function(r){ return r.ok; }, function(){ return false; });
+  }
+
+  /**
+   * A button in a menu or in the settings page. Disabled and lit as well as disabled: the answer
+   * is a round trip away, and a button that only greys out reads as "nothing happened" for
+   * exactly that long. A refusal (409: that message is gone) leaves it disabled, but no longer
+   * lit — nothing is coming.
+   */
+  function postButton(b, t){
+    b.disabled = true;
+    b.classList.add('busy');
+    post('api/click',{topic:t,messageId:b.getAttribute('data-msg'),buttonId:b.getAttribute('data-btn')},2)
+      .then(function(r){ if(!r.ok) b.classList.remove('busy'); })
+      .catch(function(){ b.disabled=false; b.classList.remove('busy'); });
   }
 
   /**
@@ -2150,6 +2395,8 @@ const SCRIPT = `
 
   function upsert(m){
     m._g = m.g || epoch;
+    // The settings screen lives in its own page; it is not a message here. See takeSettings.
+    if(m.settings || m.wasSettings) return;
     var stick=atBottom();
     var key = keyOf(m);
     data[key]=m; paint(key); syncEmptyNote(); if(stick) toBottom();
@@ -2194,6 +2441,9 @@ const SCRIPT = `
       // A message a topic kept on disk from an earlier run says which run (g): it is that
       // run's history, under the key this browser's cache already has it by.
       m._g = m.g || epoch;
+      // A settings screen — live or retired — is drawn in its own page, never in the transcript.
+      // The sync is where a reload would otherwise bring one back as a plain bubble.
+      if(m.settings || m.wasSettings) continue;
       claim(m);
       var key=keyOf(m);
       keep[key]=1;
@@ -2464,6 +2714,8 @@ const SCRIPT = `
       var m=list[i];
       if(!m || !m.id) continue;
       if(m._local){ moved = adoptLegacy(m) || moved; continue; }
+      // Never a transcript row, and not something a cached copy should bring back either.
+      if(m.settings || m.wasSettings) continue;
       var key = keyOf(m);
       if(data[key] || els[key]) continue;
       if(synced && !isHistory(m)) continue;
@@ -2676,7 +2928,12 @@ const SCRIPT = `
         +(row.depth?' sub d'+Math.min(row.depth,3):'')
         +(needsYou(t)?' needs':'');
       var isFailed=t.stage==='failed';
-      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'?' review':(isLive?' live':'')))));
+      // A sub-agent's finished turn is news for the agent that opened it, not for the person
+      // (needsYou says the same): its row keeps the ordinary idle/online grey instead of the
+      // green "unread reply" dot, and the parent turns green when the report is waiting to be
+      // read. Work and a question are still its own — blue and amber — because both are states a
+      // person acts on, or watches, in that topic.
+      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'&&!t.parent?' review':(isLive?' live':'')))));
       // What the Needs-you block used to say on a second line, now on hover: the row keeps its shape.
       var says=needsYou(t)?' title="'+text(NEEDS_WHAT[t.stage]+(t.line?': '+t.line:''))+'"':'';
       var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
@@ -2975,6 +3232,10 @@ const SCRIPT = `
 
   function switchTopic(id){
     if(!id || id===topic) return;
+    // The settings page is bound to the topic it was opened in: its rows write that conversation's
+    // agent and model, and its buttons name a message that topic holds. Following another topic
+    // puts it away rather than leaving it pointing at the one being left.
+    closeSettings();
     // The panel stays where it is: it is part of the workspace, and following a run out of it
     // should leave the list of runs beside the transcript. The one exception is the overlay under
     // 1024px, which covers the chat it just opened — there is nothing to keep it beside there.
@@ -3248,6 +3509,14 @@ const SCRIPT = `
       view = null;
     }
     else if(ev.t==='msg'){
+      // /setting is a page here, not a message: the daemon's screen goes to it, and a retired
+      // one (wasSettings) stays out of the transcript for good. Anything else that edits the
+      // message the page is drawing — the scheduled-task handover does — puts the page away and
+      // is drawn as the menu it has become.
+      var sm = ev.msg;
+      if(sm && sm.settings){ takeSettings(sm); return; }
+      if(sm && sm.wasSettings) return;
+      if(sm && settingsMsg && sm.id === settingsMsg.id) closeSettings();
       // Before the upsert: if this is the echo of something typed here, it takes over the node
       // that local message is already occupying rather than appearing underneath it.
       claim(ev.msg);
@@ -3668,15 +3937,16 @@ const SCRIPT = `
     if(line) return toggleLine(line);
     var b = e.target.closest ? e.target.closest('button[data-btn]') : null;
     if(!b) return;
-    // Lit as well as disabled: the answer is a round trip away, and a button that only greys out
-    // reads as "nothing happened" for exactly that long. The repaint that answers the tap rewrites
-    // the menu and takes the class with it. A refusal (409: that message is gone) leaves the
-    // button disabled as it always did, but no longer lit — nothing is coming.
-    b.disabled = true;
-    b.classList.add('busy');
-    post('api/click',{topic:topic,messageId:b.getAttribute('data-msg'),buttonId:b.getAttribute('data-btn')},2)
-      .then(function(r){ if(!r.ok) b.classList.remove('busy'); })
-      .catch(function(){ b.disabled=false; b.classList.remove('busy'); });
+    postButton(b, topic);
+  });
+
+  // The settings page's rows and values are the same buttons the transcript's menus carry, so
+  // they post through the same function — with the topic the page was opened in, not whichever
+  // one is on screen (the page is closed when that changes, but the two are not the same fact).
+  settingsBody.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('button[data-btn]') : null;
+    if(!b || !settingsMsg || !settingsTopic) return;
+    postButton(b, settingsTopic);
   });
 
   /**
@@ -3710,8 +3980,8 @@ const SCRIPT = `
     if(e.key !== 'Escape') return;
     // Close the topmost thing first: Escape over a picture or the reader must not also put away
     // an open task panel behind it.
-    var overlay = !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !optsMenu.hidden || !skillsWin.hidden;
-    closeShot(); closeReader(); closeIdle(); closeSkills();
+    var overlay = !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !optsMenu.hidden || !skillsWin.hidden || !settingsPage.hidden;
+    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
     if(!optsMenu.hidden){ setOpts(false); optsBtn.focus(); }
     if(!overlay && schedOpen) setSchedules(false);
   });
@@ -4899,6 +5169,9 @@ __GATE__
       <button type="button" id="skills-toggle" title="Skills the gateway gives every agent"><span class="opts-gear">✦</span><span class="opts-word"> Skills</span></button>
       <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle</button>
       <div id="opts-menu" hidden>
+        <!-- The gateway's own settings: agents, models, idle reclaim, scope. A page rather than a
+             chat command, because the rows need the width a message never had. -->
+        <button type="button" id="settings-open" title="Agents, models and conversation settings for this topic"><span>All settings</span></button>
         <button type="button" id="notify-toggle" hidden aria-pressed="false" title="Notify this device when something needs you"><span>Notifications</span><span class="opt-state" id="notify-state">off</span></button>
         <button type="button" id="calm-toggle" aria-pressed="false" title="Running topics stop pulsing and unread counts go grey; a question, a failure or an unread reply still stands out. This device only."><span>Low attention</span><span class="opt-state" id="calm-state">off</span></button>
         <div class="opts-sep"></div>
@@ -4943,6 +5216,23 @@ __GATE__
         <div id="skills-list"></div>
         <div id="skills-detail" hidden></div>
       </div>
+    </div>
+  </div>
+  <!-- /setting as a page rather than a message in the transcript. It is filled from the same
+       structured screen the daemon already sends (settingsScreen), so the rows, the values and
+       the write all stay on the daemon's side; this element only draws them. The bar names the
+       topic the per-topic rows apply to, because "default model" is a different setting in each
+       conversation. -->
+  <div id="settings-page" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div id="settings-box">
+      <div id="settings-bar">
+        <div class="set-heading">
+          <span id="settings-title">Settings</span>
+          <span id="settings-topic"></span>
+        </div>
+        <button type="button" class="btn-icon" id="settings-close" title="Close (Esc)" aria-label="Close">&times;</button>
+      </div>
+      <div id="settings-body"></div>
     </div>
   </div>
   <!-- "Close idle agents", confirmed against the list it will act on (openIdle), then showing what

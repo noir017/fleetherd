@@ -70,6 +70,19 @@ export const SendRequestSchema = z
      * retry mints a fresh one.
      */
     nonce: z.string().min(1).max(64).optional(),
+    /**
+     * Deliver this to the daemon without writing it into the conversation.
+     *
+     * The page's Settings menu sends `/setting` this way: the daemon still has to build the screen
+     * from the live config, and it answers with a message of its own, but a page opening must not
+     * leave a command nobody typed in the transcript. It still carries a nonce, so a retry after a
+     * timeout is deduplicated like any other send.
+     *
+     * Honoured for a bare `/setting` with no attachments and nothing else — `WebRoom.record` is
+     * the judge. Any other text carrying the flag is delivered as an ordinary message; a client
+     * must not be able to make something it sent vanish from the conversation by asking.
+     */
+    quiet: z.boolean().optional(),
   })
   .strict();
 
@@ -338,6 +351,16 @@ export interface WebMessage {
    * buttons and this with them, for the same reason.
    */
   settings?: SettingsScreen;
+  /**
+   * This message WAS a settings screen and has been retired in place.
+   *
+   * The page keeps settings screens out of the transcript — it draws them in a page of their own
+   * (see page.ts `takeSettings`) — and a retired one would otherwise come back as a line of text
+   * the moment the page is reloaded, or the transcript is re-synced. Set by `room.revise` when a
+   * screen is removed without the message becoming another menu: the scheduled-task handover
+   * keeps its buttons and IS a menu again, so it is not marked and does show.
+   */
+  wasSettings?: boolean;
   /** Lifecycle reactions currently on this message (👀 / ✅ / ❌). Empty, never absent, for the same reason. */
   reactions: string[];
   /** Set when the agent used a native reply; rendered as a quote above the body. */

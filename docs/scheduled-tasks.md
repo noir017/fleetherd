@@ -44,9 +44,11 @@ day, including after the gateway restarts: the task records that the topic was s
 stops applying its own model.
 
 On the web UI, the clock at the right of the chat header opens a **⏰ Scheduled tasks** panel of
-its own: the **Tasks** tab is the same list, plus "run now", and a pin that keeps it open beside
-the chat. A task that runs in a new or daily session opens topics; the **Sessions** tab lists
-those topics, and they no longer appear in the ordinary topic list. `/setting` has a **⏰ Scheduled
-tasks** button everywhere: every task with its next and last run, and pause, resume and delete
-(delete asks twice). Where there are no buttons, `/setting schedule [pause|resume|delete|run <id>]`
-does the same by typing.
+its own: the **Tasks** tab is the same list, plus "run now", and on a wide screen a pin that keeps
+it open beside the chat. On a phone the same panel is a drawer from the right, with the chat still
+visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
+session opens topics; the **Sessions** tab lists those topics, and they no longer appear in the
+ordinary topic list. `/setting` has a **⏰ Scheduled tasks** button everywhere: every task with its
+next and last run, and pause, resume and delete (delete asks twice). Where there are no buttons,
+`/setting schedule [pause|resume|delete|run <id>]` does the same by typing.
+

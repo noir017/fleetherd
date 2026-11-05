@@ -63,6 +63,36 @@ describe('importWebuiTranscripts', () => {
     store.close();
   });
 
+  it('leaves settings screens out of the library, live or retired', () => {
+    // A /setting screen is a control surface, not something anyone said: the page draws it in a
+    // page of its own, and the daemon marks a retired one `wasSettings`. Neither should come back
+    // as a search hit after the next start.
+    const dir = tempDir();
+    const at = Date.now() - 60_000;
+    fs.mkdirSync(path.join(dir, 'webui-transcripts-webui'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'webui-topics-webui.json'),
+      JSON.stringify({ abcdef12: { title: '设置' } })
+    );
+    fs.writeFileSync(
+      path.join(dir, 'webui-transcripts-webui', 'abcdef12.json'),
+      JSON.stringify([
+        kept(at, '看下设置', { own: true }),
+        kept(at + 1, 'Settings — saved to config.yaml, not just this conversation.', {
+          settings: { level: 'list', rows: [] },
+        }),
+        kept(at + 2, 'Settings — superseded by a newer /setting menu.', { wasSettings: true }),
+        kept(at + 3, '好了'),
+      ])
+    );
+    const store = new HistoryStore(path.join(dir, 'history.db'));
+    const summary = importWebuiTranscripts(dir, store);
+    expect(summary).toMatchObject({ files: 1, imported: 1, messages: 2 });
+    const read = store.read(String(store.list({ days: 30 })[0]!.id));
+    expect(read.messages.map((m) => m.text)).toEqual(['看下设置', '好了']);
+    store.close();
+  });
+
   it('is idempotent across starts', () => {
     const dir = tempDir();
     fixture(dir);

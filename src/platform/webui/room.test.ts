@@ -643,6 +643,35 @@ describe('WebRoom: inbound', () => {
     expect(posted[1]).not.toHaveProperty('nonce');
   });
 
+  it('delivers a quiet command to the daemon without echoing it or naming the topic', () => {
+    // The Settings menu asks for the screen it draws itself. The daemon needs the command, but a
+    // control the operator pressed must not leave a bubble in the conversation — or a topic named
+    // "/setting" — and the answer is a message of its own, so no echo is needed either.
+    const { room, topic, seen } = attached();
+    const got: InboundMessage[] = [];
+    room.onMessage((m) => got.push(m));
+    expect(room.submit({ topic, text: '/setting', quiet: true })).toBe('accepted');
+    expect(got).toHaveLength(1);
+    expect(got[0]?.content).toBe('/setting');
+    expect(got[0]?.messageId).toMatch(/^w\d+$/);
+    expect(seen.filter((s) => s.ev.t === 'msg')).toHaveLength(0);
+    expect(room.topics.get(topic)?.title).toBe('');
+  });
+
+  it('does not let any other text hide behind quiet', () => {
+    // The flag is for the page's own settings request and nothing else. A client that sends
+    // something else with it gets an ordinary message, echo and title included — a message the
+    // operator wrote must not be able to vanish by asking.
+    const { room, topic, seen } = attached();
+    room.submit({ topic, text: 'hello', quiet: true });
+    expect(seen.filter((s) => s.ev.t === 'msg')).toHaveLength(1);
+    expect(room.topics.get(topic)?.title).toBe('hello');
+
+    // `/setting` with arguments is not the bare request the menu makes, so it is not quiet either.
+    room.submit({ topic, text: '/setting idle', quiet: true });
+    expect(seen.filter((s) => s.ev.t === 'msg')).toHaveLength(2);
+  });
+
   it('names a blank topic from the first thing said in it', () => {
     const { room, topic } = attached();
     room.submit({ topic, text: 'why is login timing out' });
@@ -1566,6 +1595,41 @@ describe('WebRoom: the agent status strip', () => {
     const resumed: Seen[] = [];
     room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
     expect(last(resumed)).toEqual({ t: 'status' });
+  });
+});
+
+describe('WebRoom: a settings screen retired in place', () => {
+  const screen = { level: 'list' as const, rows: [] };
+
+  it('marks a retired screen so the page can keep it out of the transcript', () => {
+    // The page draws settings screens in a page of their own. A message that stops being one must
+    // say so, or a reload would put its farewell line into the chat as an ordinary message.
+    const { room, topic, seen } = attached();
+    const msg = room.post(
+      topic,
+      { own: false, html: '<p>Settings</p>', buttons: [{ id: 'stg:r:0', label: 'Agent' }], settings: screen },
+      'Settings'
+    );
+    room.revise(topic, msg.id, 'Settings — superseded by a newer /setting menu.', []);
+    const edit = lastOf(seen, 'msg') as { msg: WebMessage };
+    expect(edit.msg.wasSettings).toBe(true);
+    expect(edit.msg.settings).toBeUndefined();
+  });
+
+  it('does not mark one handed to another menu, which has to show', () => {
+    // The scheduled-task list takes over the same message with its own buttons; that menu is a
+    // real message and must reach the transcript.
+    const { room, topic, seen } = attached();
+    const msg = room.post(
+      topic,
+      { own: false, html: '<p>Settings</p>', buttons: [{ id: 'sco:r:0', label: 'Tasks' }], settings: screen },
+      'Settings'
+    );
+    room.revise(topic, msg.id, 'Scheduled tasks', [{ id: 'sct:r:0', label: 'Morning CI' }]);
+    const edit = lastOf(seen, 'msg') as { msg: WebMessage };
+    expect(edit.msg.wasSettings).toBeUndefined();
+    expect(edit.msg.settings).toBeUndefined();
+    expect(edit.msg.buttons).toHaveLength(1);
   });
 });
 

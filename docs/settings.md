@@ -28,10 +28,14 @@ and restarting, which stops every resident agent.
 Where buttons can be posted *and* replaced (Discord, Telegram, Slack, Lark) the
 bare form opens a two-level menu — tap a setting, tap a value, and the screen
 returns to the list with the new value on it. In the web UI the same two levels
-are a settings screen instead: rows grouped by what they decide, each showing
-its label and its whole current value, and tapping a row opens its values with
-the current one marked; Back returns to the list. Everywhere else the same
-commands work as text. A long list of models is paged, and a name your harness
+are a page of its own: **All settings** in the ⚙ menu at the foot of the topic
+list opens it, and typing `/setting` does the same. Rows are grouped by what
+they decide, each showing its label and its whole current value, and tapping a
+row opens its values with the current one marked; Back returns to the list. The
+page is bound to the topic it was opened in — the agent and model rows are that
+conversation's — and its bar names that topic. It is not a message in the
+transcript: what you type stays as your message, the page does not. Everywhere
+else the same commands work as text. A long list of models is paged, and a name your harness
 accepts but never advertised (`opusplan`) is taken as typed.
 
 Each answer says **when** the change lands, because they differ: the scope is

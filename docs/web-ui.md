@@ -25,9 +25,12 @@ Open `http://<host>:8787`, enter the token, and you have the same conversation
 every other platform gets: streaming replies, tool bubbles, the `/model`, `/effort`
 and `/cd` button menus, `ask` questions, file upload and download. Menus are
 laid out as a grid with the current choice lit, and hold 24 to a page where chat apps hold 12.
-`/setting` is a screen rather than a grid: rows grouped by what they decide, each
-showing its label and its whole current value, and a row opens its values with the
-current one ticked.
+`/setting` is a page of its own rather than a message in the transcript: **All settings** in the
+**⚙ Settings** menu at the foot of the topic list opens it, and typing `/setting` does the same.
+Rows are grouped by what they decide, each shows its label and its whole current value, and a row
+opens its values with the current one ticked. The bar names the topic the per-topic rows (agent,
+model) apply to, because those are a different setting in each conversation; switching topics puts
+the page away. What you type stays in the transcript as your message — the screen does not.
 
 **Topics.** The sidebar on the left lists parallel conversations and switches between them,
 the same way a Telegram forum topic or a Feishu 话题 does: each has its own agent
@@ -69,22 +72,31 @@ task the gateway has registered — what it runs, when it runs next, where its o
 last run ended.
 A run waiting on an answer puts an amber dot on the clock itself, since it has no row in the topic
 list to show it.
-The panel is a column of its own on a wide screen and an overlay on a narrow one, closed by default;
-once opened it stays open across topic switches and reloads, until you close it. Opening a session
-leaves it where it is. It is narrower than the topic sidebar — drag its left edge to resize it,
-double-click the edge for the default width. Tap a task for the full prompt or command, pause or
-resume it, run it now, or delete it (two taps). Tasks are still registered by asking an agent in a
-topic — the panel manages them, it does not create them.
+The panel is a column of its own on a wide screen. Below 1024px it is a drawer that slides in from
+the right — at most 88% of the screen wide, with a strip of the chat still visible — and the dimmed
+chat behind it is what closes it, the same backdrop the topic drawer uses. It is closed by default,
+and only a docked panel is restored on a reload; on a narrow screen it opens from the clock each
+time. Opening a session leaves a docked panel where it is. It is narrower than the topic sidebar —
+drag its left edge to resize it, double-click the edge for the default width. Tap a task for the
+full prompt or command, pause or resume it, run it now, or delete it (two taps). Tasks are still
+registered by asking an agent in a topic — the panel manages them, it does not create them.
 
 **What needs you.** Every topic waiting on you moves to the top of the list, its title in green,
 with a line under the group: a question to answer first (amber dot), then a turn that failed (red
 dot), then a reply you have not read yet (green dot). Hover a row for what it is — a reply's first
 line, which is usually the conclusion. A reply goes back to its place once you have looked at it. A
-failure stays until the next turn runs, and its dot stays red after that. Below that group the list
-is ordered by what each topic is doing: working, then an agent that is up with nothing to do, then
-one with no process behind it. The directory menu a new topic shows after you pick its agent is not one of
-these: it is a control for your own next step rather than something an agent is blocked on, so a
-topic you leave half set up keeps its place and sends no notification.
+failure stays until the next turn runs, and its dot stays red after that.
+
+A sub-agent's topic is not one of these: its finished replies and failures are the news of the
+agent that opened it, so it is never moved up, and its finished turn keeps the ordinary idle/online
+dot instead of the green one. Its questions (amber) and its work (blue) are unchanged, and the
+topic that started it is what turns green when the answer is waiting for you.
+
+Below that group the list is ordered by what each topic is doing: working, then an agent that is up
+with nothing to do, then one with no process behind it. The directory menu a new topic shows after
+you pick its agent is not one of these: it is a control for your own next step rather than
+something an agent is blocked on, so a topic you leave half set up keeps its place and sends no
+notification.
 [Sub-agent](sub-agents.md) topics are folded under the topic that opened
 them — tap the count to open them — and a topic whose sub-agents are still working is shown as
 working itself, even between its own turns. They move up only for a question of their own — the
@@ -97,7 +109,8 @@ topic's dot pulses, and its unread count climbs in a bright blue pill with each 
 topic's dot stays bright blue but holds still, and unread counts turn grey. A question waiting on
 you (its amber dot still pulses), a failed turn and a reply you have not read still move to the
 top in green, so they are the only things that stand out. The setting is kept in this browser
-only. Notifications and **Clear all topics** are in the same menu.
+only. **All settings** (the page above), Notifications and **Clear all topics** are in the same
+menu.
 
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here
 a row carries the whole command — up to 2000 characters — where a chat app gets the
