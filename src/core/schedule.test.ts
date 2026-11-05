@@ -149,6 +149,24 @@ describe('buildTask', () => {
     expect(taskCardText(t, 'registered', NOW)).toContain('oc · one session a day');
   });
 
+  it('supports compound cron expressions separated by semicolons', () => {
+    // NOW is 2026-09-30 10:00:00 (Wednesday)
+    const t = built({ cron: '20 9 * * 1-5; 30 10 * * 1-5; 0 11 * * 1-5', prompt: 'check market', session: 'daily', agent: 'oc' });
+    expect(t.when).toEqual({ cron: '20 9 * * 1-5; 30 10 * * 1-5; 0 11 * * 1-5', tz: SH });
+
+    // next run from NOW (10:00) should be 10:30
+    const first = nextRunOf(t, NOW);
+    expect(formatInZone(first!, SH)).toBe('2026-09-30 10:30');
+
+    // next run from 10:30 should be 11:00
+    const second = nextRunOf(t, first!);
+    expect(formatInZone(second!, SH)).toBe('2026-09-30 11:00');
+
+    // next run from 11:00 should be tomorrow 09:20 (2026-10-01)
+    const third = nextRunOf(t, second!);
+    expect(formatInZone(third!, SH)).toBe('2026-10-01 09:20');
+  });
+
   it('refuses a daily one-shot and a daily bash task, each naming why', () => {
     expect(refusal({ at: '+1h', prompt: 'x', session: 'daily' })).toMatch(/needs --cron.*no rest of the day.*--session new/);
     expect(refusal({ cron: '0 8 * * *', bash: 'true', session: 'daily' })).toMatch(/--session daily is for --prompt tasks.*run by the daemon/);

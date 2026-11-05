@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Compound cron expressions in scheduled tasks.** `--cron` accepts multiple 5-field expressions separated by semicolons (e.g. `"20 9 * * 1-5; 35 9 * * 1-5; 0,30 10 * * 1-5"`), and schedules the earliest next run among them.
+
 ## [2.35.0] - 2026-11-05
 
 ### Added

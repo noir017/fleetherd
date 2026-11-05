@@ -237,7 +237,7 @@ export function parseAt(raw: string, tz: string, now: number): number | undefine
 }
 
 /** Five fields or a croner nickname (`@daily`). Six-field (seconds) patterns are refused. */
-function cronFor(expr: string, tz: string): Cron {
+function singleCronFor(expr: string, tz: string): Cron {
   const trimmed = expr.trim();
   if (!trimmed.startsWith('@') && trimmed.split(/\s+/).length !== 5) {
     throw new Error(`"${expr}" is not a 5-field cron expression (minute hour day month weekday)`);
@@ -246,10 +246,28 @@ function cronFor(expr: string, tz: string): Cron {
   return new Cron(trimmed, { timezone: tz, paused: true });
 }
 
+/** Parses one or more 5-field cron expressions separated by semicolons. */
+function cronsFor(expr: string, tz: string): Cron[] {
+  const parts = expr.split(';').map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    throw new Error('cron expression is empty');
+  }
+  return parts.map((p) => singleCronFor(p, tz));
+}
+
 /** The first planned time strictly after `after`, ignoring state and window. */
 function plannedAfter(when: ScheduleWhen, after: number): number | undefined {
   if ('at' in when) return when.at > after ? when.at : undefined;
-  return cronFor(when.cron, when.tz).nextRun(new Date(after))?.getTime();
+  const crons = cronsFor(when.cron, when.tz);
+  const afterDate = new Date(after);
+  let earliest: number | undefined;
+  for (const c of crons) {
+    const next = c.nextRun(afterDate)?.getTime();
+    if (next !== undefined && (earliest === undefined || next < earliest)) {
+      earliest = next;
+    }
+  }
+  return earliest;
 }
 
 /** When an active task next runs, or undefined when it never will again. For display and for timers. */
@@ -412,7 +430,7 @@ function parseWhen(input: NewTaskInput, ctx: NewTaskContext): ScheduleWhen | { e
   }
   if (input.cron !== undefined) {
     try {
-      cronFor(input.cron, tz);
+      cronsFor(input.cron, tz);
     } catch (e) {
       return { error: `--cron: ${e instanceof Error ? e.message : String(e)}` };
     }
