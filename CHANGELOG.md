@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.38.1] - 2026-11-06
+
 ### Fixed
 
 - **The web UI's model switch is there as soon as a new topic has an agent.** It waited for the
