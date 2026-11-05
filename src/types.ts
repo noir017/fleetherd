@@ -85,6 +85,11 @@ export interface ButtonInteraction {
   messageId: string;
   /** Button custom_id (the button id given at send time; no prefix added at this layer). */
   buttonId: string;
+  /**
+   * Text that came with the click. Only the web UI sends one, and only for a control that asks for
+   * a typed value (`SettingsScreenTyped`); a chat app's button carries nothing but its id.
+   */
+  value?: string;
 }
 
 /**
@@ -517,16 +522,92 @@ export type TopicStage = 'answer' | 'failed' | 'review' | 'retrying' | 'working'
 export interface SettingsScreenRow {
   /** The button id that opens this row — a setting's values, or another menu. */
   buttonId: string;
-  /** What the setting decides, e.g. `Default model`. */
+  /**
+   * What the row is called. A setting's name (`Idle reclaim`); for a per-agent row the agent's id,
+   * since the group heading already says which setting the rows under it are.
+   */
   label: string;
   /** The agent a per-agent setting applies to (`cc`, `cbc@uniagent`); absent for global ones. */
   target?: string;
+  /** What that agent is — its harness as its project names it, a custom harness's command. */
+  targetKind?: string;
+  /** The target is the agent answering the conversation this screen was opened in. */
+  here?: boolean;
   /** The current value, already formatted for display. Absent on a row that opens another menu. */
   value?: string;
-  /** When a change lands, when that is worth saying up front (`next session`, `after restart`). */
+  /** Nothing is set, and `value` says what that means (`harness default`): drawn as a placeholder. */
+  unset?: boolean;
+  /** Where the value comes from, when that is not simply config.yaml (`from pod.yaml`, `set here`). */
+  valueNote?: string;
+  /** One line on what the setting decides. Absent where the group's note says it for every row. */
+  hint?: string;
+  /**
+   * When a change lands, where that is not "at once" and the group does not already say it
+   * (`after restart`). Live settings carry none: a badge on every row would stop meaning anything.
+   */
   effectLabel?: string;
+  /** The whole sentence behind `effectLabel`. */
+  effectDetail?: string;
   /** The section this row belongs to; consecutive rows with the same group share a heading. */
   group: string;
+  /** How the value is changed from the screen. */
+  control: SettingsScreenControl;
+}
+
+/**
+ * How a settings row is changed, decided by the settings table (core/settings.ts settingControl)
+ * rather than by the page — the page draws the kind it is given.
+ *
+ * - `switch`: two states. `set` is the button id that writes the OTHER one, so a tap names the
+ *   value it wants rather than asking for a flip — a retried request cannot undo itself.
+ * - `choice`: a short closed list, every option writable from the row itself.
+ * - `list`: the row opens the setting's own value screen (`buttonId`) — a list that is long, has
+ *   to be fetched, or accepts a typed value (a model).
+ * - `link`: the row leads to another menu, not to a value (the scheduled tasks).
+ */
+export type SettingsScreenControl =
+  | { kind: 'switch'; on: boolean; set: string }
+  | { kind: 'choice'; options: SettingsScreenOption[] }
+  | { kind: 'list' }
+  | { kind: 'link' };
+
+/** A section of the list: its heading, and a sentence that applies to every row in it. */
+export interface SettingsScreenGroup {
+  name: string;
+  note?: string;
+}
+
+/** What the last action on this screen did — the ack a chat app gets above the menu, as a banner. */
+export interface SettingsScreenNotice {
+  tone: 'ok' | 'info' | 'error';
+  /** Plain text; `code` spans in backticks and line breaks are kept. */
+  text: string;
+}
+
+/** The setting a value screen is about, drawn above its values. */
+export interface SettingsScreenHead {
+  label: string;
+  target?: string;
+  targetKind?: string;
+  value: string;
+  unset?: boolean;
+  /** What the setting decides (core/settings.ts settingDescription). */
+  description: string;
+  /** Why the list is not the whole answer, and what to type instead (settingTypedOnlyHint). */
+  hint?: string;
+  /** When a change lands, as a sentence. */
+  effect: string;
+  /** Where the current value comes from, as a sentence — for an agent a pod declares. */
+  source?: string;
+}
+
+/**
+ * A value typed rather than picked, for a setting whose list is not the whole answer (a model: a
+ * harness takes names it never lists). A tap on `buttonId` carries the text as the click's `value`.
+ */
+export interface SettingsScreenTyped {
+  buttonId: string;
+  placeholder: string;
 }
 
 /** One value of an open setting, as the web UI's value list draws it. */
@@ -558,5 +639,21 @@ export interface SettingsScreenNav {
  * output is exactly what it was: the same `text` and the same `buttons`.
  */
 export type SettingsScreen =
-  | { level: 'list'; rows: SettingsScreenRow[] }
-  | { level: 'values'; options: SettingsScreenOption[]; nav: SettingsScreenNav };
+  | {
+      level: 'list';
+      /** Where these settings are kept and when a change lands, said once for the whole screen. */
+      about?: string;
+      groups: SettingsScreenGroup[];
+      rows: SettingsScreenRow[];
+      notice?: SettingsScreenNotice;
+    }
+  | {
+      level: 'values';
+      head?: SettingsScreenHead;
+      /** The list is being fetched; it will arrive as an edit of this screen. */
+      loading?: boolean;
+      typed?: SettingsScreenTyped;
+      options: SettingsScreenOption[];
+      nav: SettingsScreenNav;
+      notice?: SettingsScreenNotice;
+    };

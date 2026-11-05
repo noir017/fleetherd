@@ -125,6 +125,12 @@ switches by substring on every platform, listing the candidates when the query i
 ambiguous rather than guessing. Both work on `opencode` and `claude`; neither
 advertises a `/model` command, and both expose the selector over ACP.
 
+A `custom` agent — your own ACP program — gets the same menu when its session
+declares a `model` option (CodeBuddy does), and otherwise `/model` is passed to it
+as typed, as every command to a custom agent is. The first `/model` in a
+conversation whose agent has not started yet starts it to find out, which is the
+same start the forwarded message would have caused.
+
 ### `/effort`
 
 `/effort` works the same way on `claude`, `codex` and `opencode`: alone it opens a

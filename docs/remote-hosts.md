@@ -107,8 +107,18 @@ agents:
   Change the file, then reload. What was read is kept in `pods.json` in the config directory, so
   a host that is down keeps its agents; so does a host whose file is wrong, and the reload's answer
   says what is wrong with it.
-- `/setting model` cannot change such an agent: its definition is on the host. Edit the file, or
-  use `/model` for one conversation.
+- **Its model can be set from the gateway.** `/setting model.oc@devbox <name>` (or its row on the
+  web UI's settings page) writes `podModels` in the gateway's config.yaml, which wins over the
+  `model:` the pod gives; clearing it there goes back to the pod's. In full, from highest:
+  a conversation's `/model` → the gateway's `podModels` → `model:` in pod.yaml → the harness's
+  default. The settings page says which one an agent's value comes from. Nothing else about a pod's
+  agent can be set from the gateway, and a pod cannot set `podModels`: pod.yaml has no such field.
+
+  ```yaml
+  # config.yaml, on the gateway — written by /setting, or by hand
+  podModels:
+    oc@devbox: opencode/glm-5
+  ```
 
 ### Pod-to-pod ssh: `peer:`
 

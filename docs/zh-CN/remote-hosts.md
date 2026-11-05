@@ -95,7 +95,16 @@ agents:
 - **什么时候读：** 网关启动时，以及每次 `/reload`（或 `talkcode reload`）时。改完文件再 reload 即可。读到的内容
   会存在配置目录的 `pods.json` 里，所以连不上的主机会保留它原有的智能体；文件写错的主机也一样保留，
   reload 的回复里会说明哪里写错了。
-- `/setting model` 改不了这类智能体：它的定义在主机上。去改那个文件，或者用 `/model` 只改当前会话。
+- **它的模型可以在网关这边设。** `/setting model.oc@devbox <名字>`（或者 Web UI 设置页里它那一行）会写进
+  网关 config.yaml 的 `podModels`，优先于 pod.yaml 里的 `model:`；在那里清掉就回到 pod 自己的值。完整的优先级
+  从高到低：会话里的 `/model` → 网关的 `podModels` → pod.yaml 的 `model:` → harness 默认。设置页会写明某个
+  智能体当前的值来自哪里。pod 智能体的其他字段都不能从网关改，pod 也写不了 `podModels`：pod.yaml 里没有这个字段。
+
+  ```yaml
+  # config.yaml，在网关上 —— 由 /setting 写入，也可以手改
+  podModels:
+    oc@devbox: opencode/glm-5
+  ```
 
 ### 主机之间互相 ssh：`peer:`
 

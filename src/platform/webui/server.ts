@@ -60,6 +60,7 @@ import {
   PushSubscribeSchema,
   PushUnsubscribeSchema,
   ScheduleOpRequestSchema,
+  ModelChooseRequestSchema,
   SeenRequestSchema,
   SkillOpRequestSchema,
   StarTopicRequestSchema,
@@ -327,6 +328,10 @@ const GUARDED: Route[] = [
   // The skills page: the gateway's managed skills, and one operation on one of them. Behind the
   // same session as everything else, and the operation is a closed union in protocol.ts — there
   // is no hard delete among the verbs, because the store has none.
+  // The status line's model switch: the list for a topic (starting its agent if that is what it
+  // takes — the same warm-up /model does), and the switch, which is /model's.
+  { method: 'GET', path: '/api/models', run: modelList },
+  { method: 'POST', path: '/api/models', run: modelChoose },
   { method: 'GET', path: '/api/skills', run: skillsList },
   { method: 'POST', path: '/api/skills/op', run: skillsOp },
   { method: 'DELETE', path: '/api/topics', run: deleteTopic },
@@ -727,6 +732,25 @@ async function scheduleOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   if (!parsed) return;
   const result = ctx.room.scheduleOp(parsed.id, parsed.action);
   send(req, res, result.ok ? 200 : 400, result);
+}
+
+/**
+ * What the topic named by `?t=` can switch its model to. Slow the first time (a cold agent is
+ * started, as `/model` would start it), so the page shows that it is asking. 200 either way: "no
+ * list" is an answer with a sentence, not a failure of the request.
+ */
+async function modelList({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!/^[0-9a-f]{8}$/.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  send(req, res, 200, await ctx.room.models(topic));
+}
+
+/** Switch a topic's model. A refusal is `/model`'s own sentence, handed back to be shown. */
+async function modelChoose({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, ModelChooseRequestSchema);
+  if (!parsed) return;
+  const result = await ctx.room.chooseModel(parsed.topic, parsed.value);
+  send(req, res, result.ok ? 200 : 409, result);
 }
 
 /**

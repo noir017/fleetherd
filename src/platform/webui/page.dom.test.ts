@@ -2104,8 +2104,9 @@ describe('webui page: menus', () => {
 describe('webui page: the settings page', () => {
   /**
    * A `/setting` list as the daemon sends it with `capabilities.settingsScreen`: the buttons it
-   * would send a chat app, plus the same rows as data. The model row's value is deliberately
-   * longer than the 40-character label budget — the thing this screen exists to stop cutting.
+   * would send a chat app, plus the same rows as data — groups, a control per row, and the ids each
+   * control posts. The model row's value is deliberately longer than the 40-character label
+   * budget, the thing this screen exists to stop cutting.
    */
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
@@ -2116,39 +2117,96 @@ describe('webui page: the settings page', () => {
       { id: 'stg:r:0', label: 'Default agent · cc · claude' },
       { id: 'stg:r:1', label: 'Default model · cc · (harness default)' },
       { id: 'stg:r:2', label: 'Default model · oc · openrouter/anthropic/claude-opus…' },
-      { id: 'stg:r:3', label: 'Idle reclaim · 15m' },
-      { id: 'stg:r:4', label: 'Conversation scope · per_thread' },
+      { id: 'stg:r:3', label: 'Confirm sub-agent starts · on' },
+      { id: 'stg:r:4', label: 'Idle reclaim · 15m' },
+      { id: 'stg:r:5', label: 'Conversation scope · per_thread' },
       { id: 'sco:r:0', label: '⏰ Scheduled tasks · 1 active' },
     ],
     settings: {
       level: 'list',
+      about: 'These apply to every conversation. `/model` changes one topic only.',
+      groups: [
+        { name: 'Agents' },
+        { name: 'Default model', note: 'What each agent starts a new session with.' },
+        { name: 'Sub-agents' },
+        { name: 'Conversations' },
+        { name: 'More' },
+      ],
       rows: [
-        { buttonId: 'stg:r:0', label: 'Default agent', value: 'cc · claude', group: 'Agent defaults' },
+        {
+          buttonId: 'stg:r:0',
+          label: 'Default agent',
+          value: 'cc · claude',
+          hint: 'Answers a new conversation that no routing rule claims.',
+          group: 'Agents',
+          control: {
+            kind: 'choice',
+            options: [
+              { buttonId: 'sts:r:0', label: 'cc · claude', current: true },
+              { buttonId: 'sts:r:1', label: 'oc · opencode', current: false },
+            ],
+          },
+        },
         {
           buttonId: 'stg:r:1',
-          label: 'Default model',
+          label: 'cc',
           target: 'cc',
-          value: '(harness default)',
-          effectLabel: 'next session',
-          group: 'Agent defaults',
+          targetKind: 'Claude Code',
+          value: 'harness default',
+          unset: true,
+          group: 'Default model',
+          control: { kind: 'list' },
         },
         {
           buttonId: 'stg:r:2',
-          label: 'Default model',
+          label: 'oc',
           target: 'oc',
+          targetKind: 'OpenCode',
+          here: true,
           value: LONG_MODEL,
-          effectLabel: 'next session',
-          group: 'Agent defaults',
+          group: 'Default model',
+          control: { kind: 'list' },
         },
-        { buttonId: 'stg:r:3', label: 'Idle reclaim', value: '15m', group: 'Conversation' },
+        {
+          buttonId: 'stg:r:3',
+          label: 'Confirm sub-agent starts',
+          value: 'on',
+          hint: 'Wait for your Start before an agent’s sub-tasks run.',
+          group: 'Sub-agents',
+          control: { kind: 'switch', on: true, set: 'sts:r:2' },
+        },
         {
           buttonId: 'stg:r:4',
+          label: 'Idle reclaim',
+          value: '15m',
+          group: 'Conversations',
+          control: {
+            kind: 'choice',
+            options: [
+              { buttonId: 'sts:r:3', label: 'off', detail: 'never reclaim', current: false },
+              { buttonId: 'sts:r:4', label: '15m', current: true },
+              { buttonId: 'sts:r:5', label: '1h', current: false },
+            ],
+          },
+        },
+        {
+          buttonId: 'stg:r:5',
           label: 'Conversation scope',
           value: 'per_thread',
           effectLabel: 'after restart',
-          group: 'Conversation',
+          effectDetail: 'takes effect when the daemon restarts',
+          group: 'Conversations',
+          control: {
+            kind: 'choice',
+            options: [
+              { buttonId: 'sts:r:6', label: 'per_thread', detail: 'a topic is its own conversation', current: true },
+              { buttonId: 'sts:r:7', label: 'per_channel', current: false },
+              { buttonId: 'sts:r:8', label: 'per_user', current: false },
+              { buttonId: 'sts:r:9', label: 'shared', current: false },
+            ],
+          },
         },
-        { buttonId: 'sco:r:0', label: '⏰ Scheduled tasks · 1 active', group: 'More' },
+        { buttonId: 'sco:r:0', label: '⏰ Scheduled tasks · 1 active', group: 'More', control: { kind: 'link' } },
       ],
     },
   });
@@ -2164,6 +2222,12 @@ describe('webui page: the settings page', () => {
     ],
     settings: {
       level: 'values',
+      head: {
+        label: 'Idle reclaim',
+        value: '15m',
+        description: 'How long a conversation may sit quiet before its agent child is stopped.',
+        effect: 'Changes in effect now.',
+      },
       options: [
         { buttonId: 'stv:r:0', label: 'off', detail: 'never reclaim', current: false },
         { buttonId: 'stv:r:1', label: '15m', current: true },
@@ -2173,12 +2237,20 @@ describe('webui page: the settings page', () => {
     },
   });
 
+  /** A list screen whose `settings` the test can change before sending. */
+  const withScreen = (edit: (s: { rows: Array<Record<string, any>>; notice?: unknown }) => void, id = 'm1') => {
+    const m = list(id);
+    edit(m.settings as { rows: Array<Record<string, any>> });
+    return m;
+  };
+
   const text = (h: Harness, sel: string): string[] =>
     Array.from(h.doc.querySelectorAll(sel)).map((e) => e.textContent ?? '');
+  const clicks = (h: Harness) => h.calls.filter((c) => c.path === 'api/click').map((c) => c.body);
 
   /** A page with a topic on screen and one live settings screen delivered into it. */
-  async function opened(msg: Record<string, unknown> = list()): Promise<Harness> {
-    const h = await open();
+  async function opened(msg: Record<string, unknown> = list(), o: Parameters<typeof open>[0] = {}): Promise<Harness> {
+    const h = await open(o);
     await h.emit(sync(A, [], [A, B]));
     await h.emit({ t: 'msg', msg });
     return h;
@@ -2188,33 +2260,197 @@ describe('webui page: the settings page', () => {
     const h = await opened();
 
     expect(h.el('settings-page').hidden).toBe(false);
-    expect(text(h, '#settings-body .set-group')).toEqual(['Agent defaults', 'Conversation', 'More']);
+    expect(text(h, '#settings-body .set-group')).toEqual(['Agents', 'Default model', 'Sub-agents', 'Conversations', 'More']);
     // The old grid is not drawn either: the page replaces it, it does not sit under it.
     expect(h.doc.querySelector('#log .btns')).toBeNull();
     // And the screen is not a message: nothing was added to the transcript for it.
     expect(h.painted()).toBe(0);
-    expect(h.doc.querySelector('#log .set')).toBeNull();
-
-    expect(Array.from(h.doc.querySelectorAll('#settings-body .set-row')).map((b) => b.getAttribute('data-btn'))).toEqual([
-      'stg:r:0',
-      'stg:r:1',
-      'stg:r:2',
-      'stg:r:3',
-      'stg:r:4',
-      'sco:r:0',
-    ]);
-
-    const model = h.doc.querySelector('#settings-body button[data-btn="stg:r:2"]');
-    expect(model?.querySelector('.set-label')?.textContent).toBe('Default model');
-    expect(model?.querySelector('.set-meta')?.textContent).toBe('oc · next session');
-    // The whole value, not the button's 40-character label: this is the bug the screen fixes.
-    expect(model?.querySelector('.set-value')?.textContent).toBe(LONG_MODEL);
-    expect(model?.textContent).not.toContain('…');
-    // Which topic the per-topic rows are about is on the page, not left to be guessed.
-    expect(h.el('settings-topic').textContent).toBe('Topic · Topic ' + A);
+    expect(h.doc.querySelector('#log .set-card')).toBeNull();
+    // The bar says where the settings live, not which topic they belong to: they belong to none.
+    expect(h.el('settings-topic').textContent).toBe('Saved to config.yaml · every topic');
+    expect(h.el('settings-topic').title).toBe('Opened from the topic “Topic ' + A + '”');
+    expect(h.doc.querySelector('#settings-body .set-about')?.innerHTML).toContain('<code>/model</code>');
   });
 
-  it('marks the current value in the value list, and says what each value means', async () => {
+  it('draws each kind of setting with its own control, from the kind the daemon names', async () => {
+    const h = await opened();
+    const body = h.el('settings-body');
+
+    // On/off is a switch, in its state.
+    const sw = body.querySelector('.set-switch');
+    expect(sw?.getAttribute('role')).toBe('switch');
+    expect(sw?.getAttribute('aria-checked')).toBe('true');
+    expect(sw?.getAttribute('data-btn')).toBe('sts:r:2');
+    expect(sw?.closest('.set-item')?.querySelector('.set-label')?.textContent).toBe('Confirm sub-agent starts');
+
+    // Five or fewer short values: a segmented control, the current one checked.
+    const seg = Array.from(body.querySelectorAll('.set-seg button'));
+    expect(seg.map((b) => [b.textContent, b.getAttribute('aria-checked')])).toEqual([
+      ['off', 'false'],
+      ['15m', 'true'],
+      ['1h', 'false'],
+    ]);
+    expect(seg[0]?.getAttribute('title')).toBe('never reclaim');
+
+    // Longer values: a select, its options writing directly, the explanation beside the value.
+    const selects = Array.from(body.querySelectorAll('select.set-select')) as HTMLSelectElement[];
+    expect(selects.map((s) => s.getAttribute('aria-label'))).toEqual(['Default agent', 'Conversation scope']);
+    expect(selects[1]!.value).toBe('sts:r:6');
+    // The value alone, so a closed select is not a sentence cut in half; the meaning is its title.
+    expect(Array.from(selects[1]!.options).map((o) => o.textContent)).toEqual(['per_thread', 'per_channel', 'per_user', 'shared']);
+    expect(selects[1]!.options[0]!.title).toBe('a topic is its own conversation');
+
+  });
+
+  it('draws a model as a row that opens its own screen, and says when a change lands', async () => {
+    const h = await opened();
+    const body = h.el('settings-body');
+    // Named by its agent, its value in full.
+    const oc = body.querySelector('button.set-open[data-btn="stg:r:2"]');
+    expect(oc?.querySelector('.set-label span')?.textContent).toBe('oc');
+    expect(oc?.querySelector('.set-kind')?.textContent).toBe('OpenCode');
+    expect(oc?.querySelector('.set-badge.here')?.textContent).toBe('this topic');
+    expect(oc?.querySelector('.set-v')?.textContent).toBe(LONG_MODEL);
+    expect(oc?.textContent).not.toContain('…');
+    // Unset reads as a placeholder, not as a model called "(harness default)".
+    const cc = body.querySelector('button.set-open[data-btn="stg:r:1"] .set-v');
+    expect(cc?.textContent).toBe('harness default');
+    expect(cc?.classList.contains('unset')).toBe(true);
+
+    // When a change lands is a badge only where it is not "now", with the sentence behind it.
+    const badges = Array.from(body.querySelectorAll('.set-badge.restart'));
+    expect(badges.map((b) => [b.textContent, b.getAttribute('title')])).toEqual([
+      ['after restart', 'takes effect when the daemon restarts'],
+    ]);
+    expect(text(h, '#settings-body .set-gnote')).toEqual(['What each agent starts a new session with.']);
+    // The scheduled tasks are a way elsewhere: a row and a chevron, no value.
+    const link = body.querySelector('button.set-open[data-btn="sco:r:0"]');
+    expect(link?.querySelector('.set-v')).toBeNull();
+    expect(link?.querySelector('.set-chev')).not.toBeNull();
+    // One column of sections: no grid of rows left over from the two-column layout.
+    expect(body.querySelector('.set-rows')).toBeNull();
+  });
+
+  it('flips a switch in one tap, showing the new state before the daemon answers', async () => {
+    const h = await opened();
+    await h.click('#settings-body .set-switch');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'sts:r:2' }]);
+    const sw = h.el('settings-body').querySelector('.set-switch');
+    expect(sw?.getAttribute('aria-checked')).toBe('false');
+    expect(sw?.classList.contains('busy')).toBe(true);
+
+    // The daemon's answer redraws the row from what it wrote, with a banner saying so.
+    const answered = withScreen((s) => {
+      s.rows[3]!.control = { kind: 'switch', on: false, set: 'sts:r:2' };
+      s.notice = { tone: 'ok', text: '✓ Confirm sub-agent starts → off\nSaved to config.yaml · in effect now.' };
+    });
+    await h.emit({ t: 'msg', msg: answered });
+    const after = h.el('settings-body').querySelector('.set-switch');
+    expect(after?.getAttribute('aria-checked')).toBe('false');
+    expect(after?.classList.contains('busy')).toBe(false);
+    const banner = h.el('settings-body').querySelector('.set-notice');
+    expect(banner?.classList.contains('ok')).toBe(true);
+    expect(banner?.getAttribute('role')).toBe('status');
+    expect(banner?.textContent).toContain('Confirm sub-agent starts → off');
+  });
+
+  it('flips a switch from anywhere on its row, the label included', async () => {
+    const h = await opened();
+    await h.click('#settings-body .set-item.sw .set-label');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'sts:r:2' }]);
+  });
+
+  it('writes a segment and a select value straight from the row', async () => {
+    const h = await opened();
+    await h.click('#settings-body .set-seg button[data-btn="sts:r:5"]');
+    expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'sts:r:5' });
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:r:5"]')?.getAttribute('aria-checked')).toBe('true');
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:r:4"]')?.getAttribute('aria-checked')).toBe('false');
+
+    await h.emit({ t: 'msg', msg: list() });
+    const scope = h.doc.querySelectorAll('#settings-body select.set-select')[1] as HTMLSelectElement;
+    scope.value = 'sts:r:8';
+    scope.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+    await tick();
+    expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'sts:r:8' });
+    expect(scope.disabled).toBe(true);
+  });
+
+  it('shows a value no option names in the select, rather than a wrong one', async () => {
+    const h = await opened(
+      withScreen((s) => {
+        s.rows[0]!.value = 'gone · claude';
+        s.rows[0]!.control.options.forEach((o: { current: boolean }) => (o.current = false));
+      })
+    );
+    const agent = h.doc.querySelector('#settings-body select.set-select') as HTMLSelectElement;
+    expect(agent.selectedOptions[0]?.textContent).toBe('gone · claude');
+    expect(agent.selectedOptions[0]?.disabled).toBe(true);
+  });
+
+  it('says why when the daemon refuses a value, in a banner of its own', async () => {
+    const h = await opened(
+      withScreen((s) => {
+        s.notice = { tone: 'error', text: 'Could not save Idle reclaim: `config.yaml` is read-only' };
+      })
+    );
+    const banner = h.el('settings-body').querySelector('.set-notice');
+    expect(banner?.classList.contains('error')).toBe(true);
+    expect(banner?.getAttribute('role')).toBe('alert');
+    expect(banner?.innerHTML).toBe('Could not save Idle reclaim: <code>config.yaml</code> is read-only');
+    // It stays where it can be seen however far down the control was, and does not fade.
+    expect(renderPage('Chat', false)).toMatch(/\.set-notice\{position:sticky;top:-14px/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(banner?.classList.contains('faded')).toBe(false);
+  });
+
+  it('escapes what the daemon says before keeping its code spans', async () => {
+    const h = await opened(
+      withScreen((s) => {
+        s.notice = { tone: 'info', text: '<img src=x onerror=alert(1)> `<b>`' };
+      })
+    );
+    const banner = h.el('settings-body').querySelector('.set-notice');
+    expect(banner?.querySelector('img')).toBeNull();
+    expect(banner?.innerHTML).toBe('&lt;img src=x onerror=alert(1)&gt; <code>&lt;b&gt;</code>');
+  });
+
+  it('puts a switch back and says so when the request cannot reach the daemon', async () => {
+    const h = await opened(list(), { hang: ['api/click'], shortenLong: true });
+    await h.click('#settings-body .set-switch');
+    expect(h.el('settings-body').querySelector('.set-switch')?.getAttribute('aria-checked')).toBe('false');
+    // Three attempts, each cut at the page's own limit rather than waiting for ever.
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(h.longTimers).toContain(15000);
+    const sw = h.el('settings-body').querySelector('.set-switch');
+    expect(sw?.getAttribute('aria-checked')).toBe('true');
+    expect((sw as HTMLButtonElement).disabled).toBe(false);
+    const banner = h.el('settings-body').querySelector('.set-notice.error');
+    expect(banner?.textContent).toContain('Could not reach the daemon, so nothing was changed');
+    // The next screen from the daemon replaces the page's own line.
+    await h.emit({ t: 'msg', msg: list() });
+    expect(h.el('settings-body').querySelector('.set-notice')).toBeNull();
+  });
+
+  it('says the page is out of date when the daemon no longer has its message', async () => {
+    const h = await opened(list(), { status: { 'api/click': 409 } });
+    await h.click('#settings-body .set-seg button[data-btn="sts:r:3"]');
+    const banner = h.el('settings-body').querySelector('.set-notice.error');
+    expect(banner?.textContent).toContain('out of date');
+    // Redrawn from what it had: 15m is still the one checked.
+    expect(h.doc.querySelector('#settings-body .set-seg button[aria-checked="true"]')?.textContent).toBe('15m');
+  });
+
+  it('keeps focus on the control that was used when the answer redraws the page', async () => {
+    const h = await opened();
+    const sw = h.el('settings-body').querySelector('.set-switch') as HTMLButtonElement;
+    sw.focus();
+    await h.click('#settings-body .set-switch');
+    await h.emit({ t: 'msg', msg: list() });
+    expect(h.doc.activeElement?.classList.contains('set-switch')).toBe(true);
+  });
+
+  it('marks the current value in the value list, under a head that says what the setting is', async () => {
     const h = await opened(values());
     expect(h.doc.querySelector('.btns')).toBeNull();
 
@@ -2228,51 +2464,44 @@ describe('webui page: the settings page', () => {
     expect(off?.classList.contains('on')).toBe(false);
     expect(off?.querySelector('.set-check')?.textContent).toBe('');
     expect(off?.querySelector('.set-opt-detail')?.textContent).toBe('never reclaim');
+
+    expect(h.doc.querySelector('#settings-body .set-head h3')?.textContent).toBe('Idle reclaim');
+    expect(h.doc.querySelector('#settings-body .set-now')?.textContent).toBe('Now: 15m');
+    expect(h.doc.querySelector('#settings-body .set-when')?.textContent).toBe('Changes in effect now.');
+    // Back is at the top, where a settings sub-page keeps it.
+    expect(h.el('settings-body').firstElementChild?.getAttribute('data-btn')).toBe('stb:r:0');
   });
 
-  it('opens a setting by posting its row id, and the daemon’s edit turns the list into values', async () => {
+  it('opens a model by posting its row id, and the daemon’s edit turns the list into values', async () => {
     const h = await opened();
 
-    await h.click('#settings-body button[data-btn="stg:r:3"]');
-    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
-      topic: A,
-      messageId: 'm1',
-      buttonId: 'stg:r:3',
-    });
+    await h.click('#settings-body button[data-btn="stg:r:2"]');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'stg:r:2' }]);
 
     await h.emit({ t: 'msg', msg: values() });
-    expect(h.doc.querySelector('#settings-body .set-opts')).not.toBeNull();
-    expect(h.doc.querySelector('#settings-body .set-rows')).toBeNull();
-    expect(h.doc.querySelector('#settings-body .set-row')).toBeNull();
+    expect(h.doc.querySelector('#settings-body .set-opt')).not.toBeNull();
+    expect(h.doc.querySelector('#settings-body .set-sec')).toBeNull();
   });
 
   it('writes the value the row names, and the list comes back with the new value on it', async () => {
     const h = await opened(values());
 
     await h.click('#settings-body button[data-btn="stv:r:2"]');
-    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
-      topic: A,
-      messageId: 'm1',
-      buttonId: 'stv:r:2',
-    });
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'stv:r:2' }]);
 
-    const updated = list();
-    const settings = updated.settings as { rows: Array<Record<string, unknown>> };
-    settings.rows[3]!.value = '1h';
+    const updated = withScreen((s) => {
+      s.rows[2]!.value = 'newapi/glm-5';
+    });
     await h.emit({ t: 'msg', msg: updated });
-    expect(h.doc.querySelector('#settings-body .set-opts')).toBeNull();
-    expect(h.doc.querySelector('#settings-body button[data-btn="stg:r:3"] .set-value')?.textContent).toBe('1h');
+    expect(h.doc.querySelector('#settings-body .set-opt')).toBeNull();
+    expect(h.doc.querySelector('#settings-body button[data-btn="stg:r:2"] .set-v')?.textContent).toBe('newapi/glm-5');
   });
 
   it('posts the Back id, which is how the daemon puts the list back on the same message', async () => {
     const h = await opened(values());
 
     await h.click('#settings-body button[data-btn="stb:r:0"]');
-    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
-      topic: A,
-      messageId: 'm1',
-      buttonId: 'stb:r:0',
-    });
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'stb:r:0' }]);
   });
 
   it('pages with the ids the daemon drew, and shows which page this is', async () => {
@@ -2289,20 +2518,12 @@ describe('webui page: the settings page', () => {
 
     expect(h.doc.querySelector('#settings-body .set-page')?.textContent).toBe('2 / 3');
     await h.click('#settings-body button[data-btn="stp:r:2"]');
-    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
-      topic: A,
-      messageId: 'm1',
-      buttonId: 'stp:r:2',
-    });
+    expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'stp:r:2' });
 
     // A repaint re-enables the button, as every other menu relies on.
     await h.emit({ t: 'msg', msg: paged });
     await h.click('#settings-body button[data-btn="stp:r:0"]');
-    expect(h.calls.filter((c) => c.path === 'api/click').at(-1)?.body).toEqual({
-      topic: A,
-      messageId: 'm1',
-      buttonId: 'stp:r:0',
-    });
+    expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'stp:r:0' });
   });
 
   it('asks the daemon quietly from the Settings menu, and never posts a bubble for it', async () => {
@@ -2315,7 +2536,6 @@ describe('webui page: the settings page', () => {
     // The page is up before the answer, so a slow daemon reads as loading rather than as nothing.
     expect(h.el('settings-page').hidden).toBe(false);
     expect(h.el('settings-body').textContent).toContain('Loading settings');
-    expect(h.el('settings-topic').textContent).toBe('Topic · Topic ' + A);
 
     const sent = h.calls.find((c) => c.path === 'api/send');
     expect(sent?.body.text).toBe('/setting');
@@ -2325,7 +2545,7 @@ describe('webui page: the settings page', () => {
     expect(h.painted()).toBe(0);
 
     await h.emit({ t: 'msg', msg: list() });
-    expect(text(h, '#settings-body .set-group')).toEqual(['Agent defaults', 'Conversation', 'More']);
+    expect(text(h, '#settings-body .set-group')).toContain('Agents');
     expect(h.painted()).toBe(0);
   });
 
@@ -2346,7 +2566,7 @@ describe('webui page: the settings page', () => {
     await h.emit({ t: 'msg', msg: list() });
     expect(h.el('settings-page').hidden).toBe(false);
     expect(h.painted()).toBe(1);
-    expect(h.doc.querySelector('#log .set')).toBeNull();
+    expect(h.doc.querySelector('#log .set-card')).toBeNull();
   });
 
   it('keeps a retired screen out of the transcript, and a new one replaces the page', async () => {
@@ -2362,13 +2582,13 @@ describe('webui page: the settings page', () => {
     expect(h.el('settings-page').hidden).toBe(false);
 
     await h.emit({ t: 'msg', msg: values('m2') });
-    expect(h.doc.querySelector('#settings-body .set-opts')).not.toBeNull();
+    expect(h.doc.querySelector('#settings-body .set-opt')).not.toBeNull();
     expect(h.painted()).toBe(0);
 
     // A message restored from another run is history: it is not a message on screen either.
     await h.emit(sync(A, [{ ...list('m3'), g: 2 }], [A]));
     expect(h.painted()).toBe(0);
-    expect(h.doc.querySelector('#log .set')).toBeNull();
+    expect(h.doc.querySelector('#log .set-card')).toBeNull();
   });
 
   it('closes on the ×, on Escape, on the backdrop, and when the topic changes', async () => {
@@ -2427,7 +2647,7 @@ describe('webui page: the settings page', () => {
     await h.click('#settings-open');
     await h.emit({ t: 'msg', msg: list('m2') });
     expect(h.el('settings-page').hidden).toBe(false);
-    expect(text(h, '#settings-body .set-group')).toContain('Agent defaults');
+    expect(text(h, '#settings-body .set-group')).toContain('Agents');
   });
 
   it('does not let a cancelled request in one topic swallow an answer in another', async () => {
@@ -2447,7 +2667,10 @@ describe('webui page: the settings page', () => {
     await h.emit({ t: 'msg', msg: list('mB') });
 
     expect(h.el('settings-page').hidden).toBe(false);
-    expect(h.el('settings-topic').textContent).toBe('Topic · Topic ' + B);
+    expect(h.el('settings-topic').title).toBe('Opened from the topic “Topic ' + B + '”');
+    // And its controls post into B, where its message is.
+    await h.click('#settings-body .set-switch');
+    expect(clicks(h).at(-1)).toEqual({ topic: B, messageId: 'mB', buttonId: 'sts:r:2' });
   });
 
   it('says the daemon did not answer instead of sitting on Loading for ever', async () => {
@@ -2466,6 +2689,8 @@ describe('webui page: the settings page', () => {
 
   it('puts the page away when the message becomes the scheduled-task menu', async () => {
     const h = await opened();
+    await h.click('#settings-body button[data-btn="sco:r:0"]');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'sco:r:0' }]);
     // The daemon hands the settings message to the task list: buttons, no screen. That is a menu
     // again, so the page goes and the menu is painted in the transcript.
     await h.emit({
@@ -2477,13 +2702,145 @@ describe('webui page: the settings page', () => {
     expect(h.doc.querySelector('#log button[data-btn="sct:r:0"]')).not.toBeNull();
   });
 
-  it('keeps every control a finger target, and only widens the list on a wide screen', () => {
-    const html = renderPage('Chat', false);
-    expect(html).toMatch(/\.set-row\{[^}]*min-height:44px/);
-    expect(html).toMatch(/\.set-opt\{[^}]*min-height:44px/);
-    expect(html).toMatch(/\.set-nav button\{[^}]*min-height:44px/);
-    // The multi-column list is behind a min-width, so a phone is one row at a time.
-    expect(html).toContain('@media(min-width:560px){.set-rows{grid-template-columns:repeat(auto-fit');
+  describe('a model’s own screen', () => {
+    const models = Array.from({ length: 12 }, (_, i) => ({
+      buttonId: 'stv:r:' + i,
+      label: i === 3 ? 'newapi/kimi-k3' : 'opencode/model-' + i,
+      ...(i === 3 ? { detail: 'Kimi K3' } : {}),
+      current: i === 0,
+    }));
+    const modelScreen = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+      ...message('m1', '<p>Default model</p>'),
+      buttons: [],
+      settings: {
+        level: 'values',
+        head: {
+          label: 'Default model',
+          target: 'oc@box',
+          targetKind: 'OpenCode',
+          value: 'opencode/model-0',
+          description: 'The model `oc@box` starts its sessions with.',
+          effect: 'Takes effect from oc@box’s next agent session.',
+          source: "From box's pod.yaml. A model chosen here is kept in the gateway's config.yaml and wins over the pod's.",
+        },
+        typed: { buttonId: 'stt:r:0', placeholder: 'Or type a model name' },
+        options: models,
+        nav: { page: 1, pageCount: 1, back: 'stb:r:0' },
+        ...over,
+      },
+    });
+
+    it('says whose value it is, and filters a long list as it is typed into', async () => {
+      const h = await opened(modelScreen());
+      expect(h.doc.querySelector('#settings-body .set-src')?.textContent).toContain("From box's pod.yaml");
+      const field = h.doc.querySelector('#settings-body .set-type') as HTMLInputElement;
+      expect(field.placeholder).toBe('Filter, or type a model name');
+      field.value = 'kimi';
+      field.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+      const shown = Array.from(h.doc.querySelectorAll('#settings-body .set-opt')).filter((o) => !(o as HTMLElement).hidden);
+      // Matched on the name under the id too.
+      expect(shown.map((o) => o.getAttribute('data-btn'))).toEqual(['stv:r:3']);
+      expect((h.doc.querySelector('#settings-body .set-nomatch') as HTMLElement).hidden).toBe(true);
+      field.value = 'zzz';
+      field.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+      expect((h.doc.querySelector('#settings-body .set-nomatch') as HTMLElement).hidden).toBe(false);
+    });
+
+    it('takes a typed name with Use or Enter, carried as the click’s value', async () => {
+      const h = await opened(modelScreen());
+      const field = h.doc.querySelector('#settings-body .set-type') as HTMLInputElement;
+      field.value = '  opencode/unlisted  ';
+      await h.click('#settings-body .set-use');
+      expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'stt:r:0', value: 'opencode/unlisted' });
+
+      await h.emit({ t: 'msg', msg: modelScreen() });
+      const again = h.doc.querySelector('#settings-body .set-type') as HTMLInputElement;
+      again.value = 'glm';
+      again.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await tick();
+      expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'stt:r:0', value: 'glm' });
+      // Nothing typed: nothing posted.
+      const n = clicks(h).length;
+      await h.emit({ t: 'msg', msg: modelScreen() });
+      (h.doc.querySelector('#settings-body .set-type') as HTMLInputElement).value = ' ';
+      await h.click('#settings-body .set-use');
+      expect(clicks(h)).toHaveLength(n);
+    });
+
+    it('shows the list being asked for, and keeps what was typed when it arrives', async () => {
+      const h = await opened(
+        modelScreen({ loading: true, options: [], head: { label: 'Default model', target: 'oc@box', value: 'harness default', unset: true, description: 'd', effect: 'e', hint: 'Asking oc@box for its models… A name can be typed meanwhile.' } })
+      );
+      const box = h.doc.querySelector('#settings-body .set-hintbox');
+      expect(box?.classList.contains('loading')).toBe(true);
+      expect(box?.querySelector('.set-spin')).not.toBeNull();
+      const field = h.doc.querySelector('#settings-body .set-type') as HTMLInputElement;
+      field.value = 'kimi';
+      field.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+      await h.emit({ t: 'msg', msg: modelScreen() });
+      expect(h.doc.querySelector('#settings-body .set-hintbox')).toBeNull();
+      expect((h.doc.querySelector('#settings-body .set-type') as HTMLInputElement).value).toBe('kimi');
+      const shown = Array.from(h.doc.querySelectorAll('#settings-body .set-opt')).filter((o) => !(o as HTMLElement).hidden);
+      expect(shown).toHaveLength(1);
+    });
+
+    it('marks a pod agent’s value on the list with where it comes from', async () => {
+      const h = await opened(
+        withScreen((s) => {
+          s.rows[2]!.valueNote = 'pod.yaml';
+        })
+      );
+      expect(h.doc.querySelector('#settings-body button[data-btn="stg:r:2"] .set-vnote')?.textContent).toBe('pod.yaml');
+      expect(h.doc.querySelector('#settings-body button[data-btn="stg:r:1"] .set-vnote')).toBeNull();
+    });
+  });
+
+  describe('on a phone', () => {
+    const narrow = (): string => {
+      const html = renderPage('Chat', false);
+      const at = html.indexOf('@media(max-width:640px){');
+      let depth = 0;
+      for (let i = html.indexOf('{', at); i < html.length; i++) {
+        if (html[i] === '{') depth++;
+        else if (html[i] === '}' && --depth === 0) return html.slice(at, i + 1);
+      }
+      throw new Error('unclosed');
+    };
+
+    it('takes the whole screen, and puts a control under its text rather than beside it', () => {
+      const css = narrow();
+      expect(css).toContain('#settings-box{width:100%;height:100%');
+      // One column per row; a switch alone keeps its place on the right, where a thumb looks for it.
+      expect(css).toContain('.set-item{grid-template-columns:minmax(0,1fr);');
+      expect(css).toContain('.set-item.sw{grid-template-columns:minmax(0,1fr) auto}');
+      expect(css).toContain('.set-seg{display:flex;width:100%}');
+      // A model's value goes under its agent instead of fighting it for the width.
+      expect(css).toContain('.set-open>.set-vv{grid-column:1;grid-row:2;');
+      // And none of that leaks onto the desktop.
+      const desktop = renderPage('Chat', false).replace(css, '');
+      expect(desktop).not.toContain('.set-item{grid-template-columns:minmax(0,1fr);');
+    });
+
+    it('keeps every control a finger target, and a select at 16px so Safari does not zoom', () => {
+      const css = narrow();
+      expect(css).toMatch(/\.set-switch\{[^}]*height:44px/);
+      expect(css).toMatch(/\.set-select\{[^}]*min-height:44px[^}]*font-size:16px/);
+      expect(css).toMatch(/\.set-seg button\{[^}]*min-height:40px/);
+      expect(css).toMatch(/#settings-close\{[^}]*min-width:44px;height:44px/);
+      expect(css).toMatch(/\.set-back\{min-height:44px\}/);
+      const html = renderPage('Chat', false);
+      expect(html).toMatch(/\.set-opt\{[^}]*min-height:44px/);
+      expect(html).toMatch(/\.set-nav button\{[^}]*min-height:44px/);
+    });
+
+    it('works the same controls at phone width', async () => {
+      const h = await opened(list(), { width: 390, height: 844 });
+      await h.click('#settings-body .set-item.sw .set-hint');
+      expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'sts:r:2' });
+      await h.click('#settings-body .set-seg button[data-btn="sts:r:5"]');
+      expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'sts:r:5' });
+    });
   });
 });
 
@@ -4257,6 +4614,200 @@ describe('webui page: recording a voice message', () => {
   });
 });
 
+describe('webui page: the model switch in the status line', () => {
+  const T = 'a1b2c3d4';
+  const OTHER = 'b2c3d4e5';
+  const OC = { agent: 'oc@p', model: 'opencode/glm-5', effort: 'high' };
+  const LIST = {
+    ok: true,
+    agent: 'oc@p',
+    current: 'opencode/glm-5',
+    configured: 'opencode/big-pickle',
+    options: [
+      { value: 'opencode/big-pickle', name: 'Big Pickle' },
+      { value: 'opencode/glm-5', name: 'GLM-5' },
+      ...Array.from({ length: 10 }, (_, i) => ({ value: `newapi/model-${i}`, name: `Model ${i}` })),
+      { value: 'newapi/kimi-k3', name: 'Kimi K3' },
+    ],
+  };
+  const URL_T = `api/models?t=${T}`;
+  const chip = (h: Harness) => h.doc.querySelector('#status .st-model') as HTMLButtonElement | null;
+  const pop = (h: Harness) => h.el('model-pop');
+  const rows = (h: Harness) => Array.from(h.doc.querySelectorAll('#mp-list .mp-opt')) as HTMLButtonElement[];
+
+  async function ready(o: Parameters<typeof open>[0] = {}): Promise<Harness> {
+    const h = await open({ ...o, replies: { [URL_T]: LIST, 'api/models': { ok: true, model: 'newapi/kimi-k3', text: 'Model set to `newapi/kimi-k3` for this conversation.' }, ...(o.replies ?? {}) } });
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T, OTHER]));
+    await h.emit({ t: 'status', status: OC });
+    return h;
+  }
+
+  it('makes the model in the status line a button, without changing what the line says', async () => {
+    const h = await ready();
+    expect(chip(h)?.textContent).toBe('opencode/glm-5');
+    expect(h.el('status').textContent).toContain('oc@p · opencode/glm-5 · high');
+    expect(chip(h)?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens the list the agent offers, with the one in use ticked and the default marked', async () => {
+    const h = await ready();
+    await h.click('#status .st-model');
+    expect(pop(h).hidden).toBe(false);
+    // A tap on the switch is not a tap on the line: it does not open the line's details.
+    expect(h.el('status').classList.contains('open')).toBe(false);
+    expect(h.calls.find((c) => c.path === URL_T)).toBeTruthy();
+    await tick();
+    expect(h.el('mp-agent').textContent).toBe('oc@p');
+    expect(rows(h)).toHaveLength(13);
+    const on = rows(h).find((r) => r.classList.contains('on'));
+    expect(on?.getAttribute('data-v')).toBe('opencode/glm-5');
+    expect(on?.getAttribute('aria-selected')).toBe('true');
+    const def = rows(h).find((r) => r.querySelector('.mp-tag'));
+    expect(def?.getAttribute('data-v')).toBe('opencode/big-pickle');
+    expect(def?.querySelector('.mp-n')?.textContent).toBe('Big Pickle');
+    expect(chip(h)?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('says it is asking while a cold agent starts', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await ready({ held: { [URL_T]: held } });
+    await h.click('#status .st-model');
+    expect(h.el('mp-list').textContent).toContain('Asking the agent for its models');
+    expect(h.el('mp-list').querySelector('.set-spin')).not.toBeNull();
+    release();
+    await tick();
+    await tick();
+    expect(rows(h)).toHaveLength(13);
+  });
+
+  it('filters a long list as it is typed into', async () => {
+    const h = await ready();
+    await h.click('#status .st-model');
+    await tick();
+    expect(h.el('mp-filter').hidden).toBe(false);
+    const f = h.el('mp-filter') as HTMLInputElement;
+    f.value = 'kimi';
+    f.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(rows(h).filter((r) => !r.hidden).map((r) => r.getAttribute('data-v'))).toEqual(['newapi/kimi-k3']);
+    // By name too.
+    f.value = 'pickle';
+    f.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(rows(h).filter((r) => !r.hidden).map((r) => r.getAttribute('data-v'))).toEqual(['opencode/big-pickle']);
+  });
+
+  it('switches with a tap, as /model does, and the line says the new model at once', async () => {
+    const h = await ready();
+    await h.click('#status .st-model');
+    await tick();
+    await h.click('#mp-list .mp-opt[data-v="newapi/kimi-k3"]');
+    await tick();
+    expect(h.calls.find((c) => c.path === 'api/models')?.body).toEqual({ topic: T, value: 'newapi/kimi-k3' });
+    expect(pop(h).hidden).toBe(true);
+    expect(chip(h)?.textContent).toBe('newapi/kimi-k3');
+    // /model's own sentence, as plain text.
+    expect(h.el('note').textContent).toBe('Model set to newapi/kimi-k3 for this conversation.');
+  });
+
+  it('keeps the list open with /model’s reason when the switch is refused', async () => {
+    const h = await ready({
+      status: { 'api/models': 409 },
+      replies: { 'api/models': { ok: false, text: '`newapi/kimi-k3` is no longer offered by this agent. Run /model again for the current list.' } },
+    });
+    await h.click('#status .st-model');
+    await tick();
+    await h.click('#mp-list .mp-opt[data-v="newapi/kimi-k3"]');
+    await tick();
+    expect(pop(h).hidden).toBe(false);
+    const err = h.el('mp-list').querySelector('.mp-msg.err');
+    expect(err?.innerHTML).toContain('<code>newapi/kimi-k3</code> is no longer offered');
+    expect(chip(h)?.textContent).toBe('opencode/glm-5');
+  });
+
+  it('says why there is no list for a harness that offers none', async () => {
+    const h = await ready({ replies: { [URL_T]: { ok: false, agent: 'cbc@p', reason: 'none', text: 'This agent offers no model selector.' } } });
+    await h.click('#status .st-model');
+    await tick();
+    expect(rows(h)).toHaveLength(0);
+    expect(h.el('mp-list').textContent).toContain('This agent offers no model selector.');
+    expect(h.el('mp-agent').textContent).toBe('cbc@p');
+  });
+
+  it('says so when the list cannot be fetched, rather than spinning for ever', async () => {
+    const h = await ready({ hang: [URL_T], shortenLong: true });
+    await h.click('#status .st-model');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(h.longTimers).toContain(45000);
+    expect(h.el('mp-list').textContent).toContain('Could not reach the daemon for the list');
+  });
+
+  it('closes on Escape, on the ×, on a click outside, and with the topic', async () => {
+    const h = await ready();
+    const shut = () => pop(h).hidden;
+    await h.click('#status .st-model');
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(shut()).toBe(true);
+    await h.click('#status .st-model');
+    await h.click('#mp-close');
+    expect(shut()).toBe(true);
+    await h.click('#status .st-model');
+    await h.click('#log');
+    expect(shut()).toBe(true);
+    await h.click('#status .st-model');
+    expect(shut()).toBe(false);
+    await h.click('[data-topic="' + OTHER + '"]');
+    expect(shut()).toBe(true);
+  });
+
+  it('drops a list that arrives after the switch was closed', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await ready({ held: { [URL_T]: held } });
+    await h.click('#status .st-model');
+    await h.click('#mp-close');
+    release();
+    await tick();
+    await tick();
+    expect(pop(h).hidden).toBe(true);
+    expect(rows(h)).toHaveLength(0);
+  });
+
+  it('offers the switch in a topic with a conversation but no status yet, and not in a new one', async () => {
+    const h = await open({ replies: { [URL_T]: LIST } });
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T]));
+    expect(h.el('status').hidden).toBe(false);
+    expect(chip(h)?.textContent).toBe('Model');
+    // A new topic offers its agents instead; the switch would commit it to the default one.
+    await h.emit(sync(T, [], [T], { agents: { groups: [{ name: '', agents: [{ id: 'oc@p', kind: 'OpenCode' }] }], current: 'oc@p' } }));
+    expect(chip(h)).toBeNull();
+  });
+
+  it('is a finger target on a phone, and does not zoom the page when filtering', () => {
+    const html = renderPage('Chat', false);
+    const at = html.indexOf('@media(max-width:640px){');
+    let depth = 0;
+    let css = '';
+    for (let i = html.indexOf('{', at); i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}' && --depth === 0) {
+        css = html.slice(at, i + 1);
+        break;
+      }
+    }
+    expect(css).toMatch(/\.st-model\{min-height:44px/);
+    expect(css).toMatch(/#mp-filter\{min-height:44px;font-size:16px\}/);
+    expect(css).toMatch(/#mp-close\{min-width:44px;min-height:44px\}/);
+    expect(css).toMatch(/#model-pop\{left:8px;right:8px;width:auto/);
+  });
+
+  it('does not take the keyboard on a phone when it opens', async () => {
+    const h = await ready({ width: 390, height: 844 });
+    await h.click('#status .st-model');
+    await tick();
+    expect(h.doc.activeElement?.id).not.toBe('mp-filter');
+  });
+});
+
 describe('webui page: the agent status strip', () => {
   const T = 'a1b2c3d4';
   const OTHER = 'b2c3d4e5';
@@ -4358,7 +4909,8 @@ describe('webui page: the agent status strip', () => {
     await h.click(`[data-topic="${OTHER}"]`);
     expect(strip(h).hidden).toBe(true);
     await h.emit(sync(OTHER, [], [T, OTHER], { status: { agent: 'agy' } }));
-    expect(strip(h).textContent).toBe('agy');
+    // No model reported yet: the switch is there all the same, under its own name.
+    expect(strip(h).textContent).toBe('agy · Model');
   });
 
   it('runs its countdown timer only while there is a countdown on screen', async () => {

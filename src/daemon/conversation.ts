@@ -4,6 +4,7 @@ import { SessionTokenRegistry } from './conversation-token-registry.js';
 import { beginSkillTurn, recordToolUse } from './skill-usage.js';
 import {
   translateCommand,
+  customOptionFor,
   buildHelpText,
   harnessCommandName,
   harnessHasPicker,
@@ -52,7 +53,7 @@ import type {
   PermissionAnswer,
   InboundMessage,
 } from '../types.js';
-import type { ConversationWorkdir, PlatformAdapter } from '../platform/adapter.js';
+import type { ConversationWorkdir, ModelPickerList, ModelPickerResult, PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentUsage } from './agent.js';
 import type { EffortSelector, ModelSelector, ToolEvent, TopicActivity } from '../types.js';
 import {
@@ -87,12 +88,16 @@ import {
   settingsListText,
   settingsMenuSurface,
   settingsRows,
+  type PodModels,
   type SettingApplyResult,
   type SettingOption,
   type SettingRow,
   type SettingsContext,
 } from '../core/settings.js';
 import { SettingsStore } from './settings-store.js';
+import { ModelCatalog } from './model-catalog.js';
+import { configDir, readRawConfigIfExists } from '../config/load.js';
+import { podAgentModels, readPods } from '../config/pods.js';
 import {
   matchWorkdirs,
   workdirAmbiguousText,
@@ -490,6 +495,8 @@ export class ConversationRegistry {
    * status-board.ts for why it is its own object.
    */
   private readonly status: StatusBoard;
+  /** Every agent's model list, as far as can be told without a turn (model-catalog.ts). */
+  private readonly modelCatalog: ModelCatalog;
   /**
    * What each conversation's turn is doing right now — the tool it is running, how many steps in.
    * `outcomes` below only knows a turn once it has ended; a sub-agent 150 tool calls deep is
@@ -615,6 +622,8 @@ export class ConversationRegistry {
         menu: {
           rows: SettingRow[];
           open?: { row: SettingRow; options: SettingOption[]; hint?: string };
+          /** The open model row's list is being asked for; redraw the level when this settles. */
+          asking?: Promise<unknown>;
         }
       ): void;
       /**
@@ -733,6 +742,7 @@ export class ConversationRegistry {
     // Inject only the capabilities TurnRunner needs (read-only views + activeAddress write entry),
     // rather than passing the whole registry and creating a circular dependency.
     this.progress = new TurnProgressBoard(this.clock);
+    this.modelCatalog = this.makeModelCatalog();
     this.status = new StatusBoard({
       laneOf: (id) => this.laneOf(id),
       platforms: this.platforms,
@@ -1256,13 +1266,17 @@ export class ConversationRegistry {
     // Generic-command translation. Must sit here: it is the first point that knows WHICH agent
     // will answer, and the last point at which the message can still be refused. Returns the
     // message to forward, or undefined when the command was rejected (already answered).
-    const forwarded = this.applyCommandTranslation(key, state, msg);
+    const forward = (m: InboundMessage): void => this.forwardToAgent(key, state, m, opts);
+    const forwarded = this.applyCommandTranslation(key, state, msg, forward);
     if (!forwarded) return;
-    msg = forwarded;
+    forward(forwarded);
+  }
 
+  /** The end of route(): the message goes to the agent. Also where a deferred passthrough lands. */
+  private forwardToAgent(key: ConversationId, state: ConversationState, msg: InboundMessage, opts?: { transcript?: boolean }): void {
     // Announce which agent is about to answer, before the turn starts (see sendHeader). Placed after
-    // every gate above so it can't become a probe: a message that isn't going to be answered gets no
-    // acknowledgement of any kind.
+    // every gate in route() so it can't become a probe: a message that isn't going to be answered
+    // gets no acknowledgement of any kind.
     this.sendHeader(state, msg);
     // Typing is how a transcript is corrected (its card says so): a typed message reaching the agent
     // drops whatever transcript is still waiting here, rather than leaving it to be sent as well.
@@ -2089,7 +2103,7 @@ export class ConversationRegistry {
     const [rawKey = '', ...valueParts] = rest.trim().split(/\s+/);
     if (!rawKey) {
       console.log(`[setting] listing settings for ${key}`);
-      if (canMenu) this.hooks!.onSettingMenuRequest!(key, msg, { rows: settingsRows(this.config) });
+      if (canMenu) this.hooks!.onSettingMenuRequest!(key, msg, { rows: this.settingRows() });
       else reply([settingsListText(this.config), this.hooks?.scheduleSummary?.()].filter(Boolean).join('\n'));
       return;
     }
@@ -2116,18 +2130,37 @@ export class ConversationRegistry {
     const row = resolved.row;
     const value = valueParts.join(' ').trim();
     if (!value) {
-      if (canMenu) {
-        const { options, hint } = this.settingOptionsFor(key, row);
-        this.hooks!.onSettingMenuRequest!(key, msg, {
-          rows: settingsRows(this.config),
-          open: { row, options, ...(hint ? { hint } : {}) },
-        });
-      } else {
-        reply(settingDetailText(row, this.config, ctx));
-      }
+      this.answerSettingKey(key, row, msg, canMenu, fallbackAgent, reply);
       return;
     }
     reply(settingAckText(this.applySetting(key, row, value)));
+  }
+
+  /** `/setting <key>` alone: that setting's value menu, or its detail text where there is no menu. */
+  private answerSettingKey(
+    key: ConversationId,
+    row: SettingRow,
+    msg: InboundMessage,
+    canMenu: boolean,
+    fallbackAgent: string,
+    reply: (text: string) => void
+  ): void {
+    if (canMenu) {
+      const { options, hint, asking } = this.settingOptionsFor(key, row);
+      this.hooks!.onSettingMenuRequest!(key, msg, {
+        rows: this.settingRows(),
+        open: { row, options, ...(hint ? { hint } : {}) },
+        ...(asking ? { asking } : {}),
+      });
+      return;
+    }
+    const detail = (): void => reply(settingDetailText(row, this.config, this.settingsContext(key, fallbackAgent)));
+    // The text answer waits for the list, since it cannot be redrawn once sent.
+    if (row.id === 'model' && row.target && this.modelCatalog.shouldAsk(row.target)) {
+      void this.modelCatalog.ask(row.target).then(detail);
+      return;
+    }
+    detail();
   }
 
   /**
@@ -2144,22 +2177,85 @@ export class ConversationRegistry {
     return {
       boundAgent,
       models: this.agents.peek(key)?.modelSelector?.()?.options ?? [],
+      lists: (agentId) => this.modelCatalog.get(agentId),
+      pods: this.podModels(),
     };
+  }
+
+  /** The catalog of every agent's model list (model-catalog.ts), over this registry's sessions. */
+  private makeModelCatalog(): ModelCatalog {
+    return new ModelCatalog({
+      agents: this.agents,
+      defOf: (agentId) => findAgent(this.config, agentId),
+      liveSelector: (agentId) => {
+        for (const [id, state] of this.conversations) {
+          if (state.agentId !== agentId) continue;
+          const selector = this.agents.peek(id)?.modelSelector?.();
+          if (selector && selector.options.length > 0) return selector;
+        }
+        return undefined;
+      },
+      tokenFor: (sid) => this.tokens.tokenFor(sid as ConversationId),
+      forget: (sid) => {
+        this.store?.clear(sid);
+        this.tokens.release(sid as ConversationId);
+      },
+    });
+  }
+
+  /**
+   * The pods' agents and what each pod.yaml says of its model (config/pods.ts podAgentModels): what
+   * a model row needs to write to `podModels` and to say whose value it shows. Read from the files
+   * each time a menu is drawn — the merged Config holds only the answer.
+   */
+  private podModels(): PodModels {
+    try {
+      return podAgentModels(readRawConfigIfExists() ?? {}, readPods(configDir()));
+    } catch (e) {
+      console.warn('[setting] could not read the pods\' agents:', e instanceof Error ? e.message : e);
+      return new Map();
+    }
   }
 
   /** Every row of the settings screen, read fresh from the live Config (the daemon rebuilds menus with this). */
   settingRows(): SettingRow[] {
-    return settingsRows(this.config);
+    return settingsRows(this.config, this.podModels());
   }
 
-  /** The values one row can offer right now, or the sentence explaining why it offers none. */
+  /** The agent answering a conversation, as the settings screen names it ("this topic"). */
+  settingsBoundAgent(id: ConversationId): string {
+    return this.settingsContext(id, this.config.routing.default).boundAgent;
+  }
+
+  /**
+   * The values one row can offer right now, or the sentence explaining why it offers none.
+   *
+   * A model row whose list is not known yet starts asking for it (ModelCatalog) and says so —
+   * `asking` settles when there is an answer, and the caller redraws with it. Any agent, cold or
+   * not: the answer comes from a session brought up just to ask, never from this conversation's
+   * own, which would close a new topic's choice of agent (agentCatalogForRef) as a side effect.
+   */
   settingOptionsFor(
     id: ConversationId,
-    row: SettingRow
-  ): { options: SettingOption[]; hint?: string } {
-    const ctx = this.settingsContext(id, this.config.routing.default);
+    row: SettingRow,
+    /** False for the redraw that an answer triggers: a failed ask is shown, not asked again. */
+    ask = true
+  ): { options: SettingOption[]; hint?: string; asking?: Promise<unknown> } {
+    let ctx = this.settingsContext(id, this.config.routing.default);
+    let asking: Promise<unknown> | undefined;
+    if (ask && row.id === 'model' && row.target && !(row.target === ctx.boundAgent && ctx.models.length > 0)) {
+      if (this.modelCatalog.shouldAsk(row.target)) {
+        asking = this.modelCatalog.ask(row.target);
+        ctx = this.settingsContext(id, this.config.routing.default);
+      }
+    }
     const hint = settingTypedOnlyHint(row, this.config, ctx);
-    return { options: settingOptions(row, this.config, ctx), ...(hint ? { hint } : {}) };
+    return { options: settingOptions(row, this.config, ctx), ...(hint ? { hint } : {}), ...(asking ? { asking } : {}) };
+  }
+
+  /** Whether an agent's model list is being asked for right now (the settings screen's spinner). */
+  modelListLoading(agentId: string): boolean {
+    return this.modelCatalog.get(agentId)?.kind === 'loading';
   }
 
   /**
@@ -2266,7 +2362,9 @@ export class ConversationRegistry {
   private applyCommandTranslation(
     key: ConversationId,
     state: ConversationState,
-    msg: InboundMessage
+    msg: InboundMessage,
+    /** Where a message goes when the decision to forward it is made later (deferCustomCommand). */
+    forward: (m: InboundMessage) => void
   ): InboundMessage | undefined {
     const parsed = parseTextCommand(msg.content);
     if (!parsed) return msg;
@@ -2274,7 +2372,8 @@ export class ConversationRegistry {
     const name = agentDisplayName(def, state.agentId);
     if (this.refusedForNesting(parsed.name, msg)) return undefined;
 
-    const result = translateCommand(parsed.name, def?.harness);
+    if (this.deferredForCustom(key, state, def, parsed, msg, forward)) return undefined;
+    const result = translateCommand(parsed.name, def?.harness, (opt) => this.declaresOption(key, state.agentId, opt) === true);
     if (this.answersWhileBusy(state, parsed.name, result)) {
       this.answerBusyQuery(key, state, parsed.name, msg);
       return undefined;
@@ -2318,6 +2417,68 @@ export class ConversationRegistry {
     const content = parsed.rest ? `/${result.native} ${parsed.rest}` : `/${result.native}`;
     console.log(`[command] /${parsed.name} → /${result.native} for ${state.agentId} (${name})`);
     return { ...msg, content };
+  }
+
+  /**
+   * A custom harness that may have declared the option this command is answered from, when nothing
+   * here knows yet whether it has: find out first (deferCustomCommand), and say the message is taken.
+   */
+  private deferredForCustom(
+    key: ConversationId,
+    state: ConversationState,
+    def: AgentDef | undefined,
+    parsed: { name: string; rest?: string },
+    msg: InboundMessage,
+    forward: (m: InboundMessage) => void
+  ): boolean {
+    const option = def?.harness === 'custom' ? customOptionFor(parsed.name) : undefined;
+    if (!option || this.declaresOption(key, state.agentId, option) !== undefined) return false;
+    void this.deferCustomCommand(key, state, parsed, msg, forward);
+    return true;
+  }
+
+  /**
+   * Whether an agent has declared an ACP config option (only `model` is asked about): yes when this
+   * conversation's session reports its selector, or what the gateway learned of the agent says it has
+   * a list; no when that says it offers none; undefined when nothing has been seen — a cold session
+   * of an agent nobody has asked yet.
+   */
+  private declaresOption(key: ConversationId, agentId: string, option: string): boolean | undefined {
+    if (option !== 'model') return undefined;
+    if (this.agents.peek(key)?.modelSelector?.()) return true;
+    const known = this.modelCatalog.get(agentId);
+    if (known?.kind === 'list') return true;
+    if (known?.kind === 'none') return false;
+    return undefined;
+  }
+
+  /**
+   * A command a custom harness may or may not let the gateway answer, before anything has said which.
+   *
+   * The session is brought up — the same child the forwarded message would start, so nothing is
+   * spent that passing it through would not have spent — and its own report decides: the option is
+   * there, and the gateway answers as it does for a preset (a `/model` menu); it is not, and the
+   * message goes on to the agent exactly as it always did. The answer is kept (ModelCatalog.note),
+   * so the next time is decided at once. A session that will not start is forwarded too: the turn
+   * reports the same failure it always would have.
+   */
+  private async deferCustomCommand(
+    key: ConversationId,
+    state: ConversationState,
+    parsed: { name: string; rest?: string },
+    msg: InboundMessage,
+    forward: (m: InboundMessage) => void
+  ): Promise<void> {
+    const warm = await this.warmModelSelector(key, state.agentId);
+    if (warm.selector) {
+      await this.answerLocalCommand(key, state, parsed.name, parsed.rest, msg);
+      return;
+    }
+    if (!warm.error) this.modelCatalog.note(state.agentId, { kind: 'none' });
+    console.log(
+      `[command] /${parsed.name}: ${state.agentId} ${warm.error ? 'did not start' : 'declares no model option'}; forwarded as before`
+    );
+    forward(msg);
   }
 
   /**
@@ -3008,6 +3169,53 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const state = this.conversations.get(id);
     if (!state || !state.merger.isIdle()) return false;
     return this.reclaimSession(id, 'closed as idle from the web UI');
+  }
+
+  /**
+   * What the conversation at an ADDRESS can switch its model to — the list handed to a platform
+   * that draws a switch (`PlatformAdapter.useModelPicker`, the web UI's status line).
+   *
+   * The same warm-up `/model` does (warmModelSelector, refreshModels first for agy): the child the
+   * next message would start is started now, because a model list exists only on a live session.
+   * A conversation this daemon has not seen yet is bound to the agent its first message would
+   * reach — the binding, else the route's default — as that message would have bound it.
+   */
+  async modelPickerForRef(ref: ConversationRef): Promise<ModelPickerList> {
+    const id = this.idForRef(ref);
+    const agentId =
+      this.conversations.get(id)?.agentId ?? this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const state = this.ensureState(id, ref.platform, agentId, { opener: 'the model switch' });
+    await this.agents.getOrCreate(id, state.agentId).refreshModels?.();
+    const warm = await this.warmModelSelector(id, state.agentId);
+    if (warm.error) return { ok: false, agent: state.agentId, reason: 'error', text: modelStartFailedText(warm.error) };
+    if (!warm.selector || warm.selector.options.length === 0) {
+      return { ok: false, agent: state.agentId, reason: 'none', text: modelNoSelectorText() };
+    }
+    const configured = findAgent(this.config, state.agentId)?.model;
+    return {
+      ok: true,
+      agent: state.agentId,
+      ...(warm.selector.current ? { current: warm.selector.current } : {}),
+      ...(configured ? { configured } : {}),
+      ...(state.modelOverride ? { override: state.modelOverride } : {}),
+      options: warm.selector.options.map((o) => ({ value: o.value, name: o.name })),
+    };
+  }
+
+  /**
+   * Switch the model of the conversation at an ADDRESS, as `/model <id>` does — applyModelChoice,
+   * so the value is checked against the list the agent offers now and the override is the one
+   * `/model` reads. The status line hears the new model at once rather than at the next turn.
+   */
+  async chooseModelForRef(ref: ConversationRef, value: string): Promise<ModelPickerResult> {
+    const id = this.idForRef(ref);
+    const state = this.conversations.get(id);
+    const result = state ? await this.applyModelChoice(id, state.agentId, value) : ({ kind: 'gone' } as const);
+    const text = modelChoiceText(result);
+    if (result.kind !== 'applied') return { ok: false, text };
+    this.status.model(id, result.model);
+    console.log(`[model] ${id}: switched to ${result.model} from the model switch`);
+    return { ok: true, model: result.model, text };
   }
 
   /**
@@ -3956,7 +4164,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     key: ConversationId,
     platform: string,
     agentId: string,
-    opts: { fresh?: boolean } = {}
+    opts: { fresh?: boolean; opener?: string } = {}
   ): ConversationState {
     let state = this.conversations.get(key);
     if (!state) {
@@ -3964,7 +4172,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
       state = { merger: this.buildMerger(key), agentId: bound, platform, lastActivityAt: this.clock.now() };
       this.conversations.set(key, state);
       this.store?.bind(key, bound);
-      console.log(`[conversation] ${key} bound to agent "${bound}" (scheduled run)`);
+      console.log(`[conversation] ${key} bound to agent "${bound}" (${opts.opener ?? 'scheduled run'})`);
     }
     return state;
   }

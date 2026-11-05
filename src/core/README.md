@@ -652,6 +652,14 @@ harness. `daemon/conversation.ts` answers it instead of forwarding — a decline
 its `/agy` prefix, so the bound agent would run it as one of its own slash commands, find
 nothing, and produce no output at all.
 
+A `custom` harness passes every command through — nothing is known about a person's own ACP
+program — with one exception, and it is evidence rather than a guess: a command whose answer comes
+from an ACP config option (`GenericCommand.customOption`, today only `/model` → `model`) is
+answered by the gateway when the agent has declared that option. `translateCommand` takes a
+`declares` callback for it; the daemon answers from the live session or what ModelCatalog learned,
+and when neither has seen the agent it brings the conversation's session up first
+(`ConversationRegistry.deferCustomCommand`) — the start the forwarded message would have caused.
+
 `buildHelpText` renders `/help` from these same tables, so a command cannot reach the
 platform menu without reaching the help text. It filters the generic section to what the
 *currently bound* harness actually supports, because listing `/compact` to an opencode
@@ -698,6 +706,14 @@ exist. `access.allowFrom` is out because one wrong value locks the operator out 
 surface they would use to fix it; credentials because a chat log is the wrong place for
 them; `routing.pipeline` because a rule is a structure, not a value a picker can offer; and
 the `EXPERIENCE` knobs because they are not in the file at all.
+
+A platform that draws its own screen (the web UI, `capabilities.settingsScreen`) gets the same
+table as data as well (`SettingsScreen`): the group each row sits under, a one-line hint, when a
+change lands where that is not "now", and the control it is changed with (`settingControl` —
+switch, choice, or a screen of its own). Those are presentation, but they are decided here with the
+rest of the table so a new setting cannot compile without them. A switch or a choice posts
+`sts:<reqId>:<n>`, an index into the `choices` the list was drawn with, which the daemon freezes
+with the menu exactly as it freezes `stv:` options. A chat platform never builds any of it.
 
 The write half lives in [`daemon/settings-store.ts`](../daemon/README.md) — this module
 decides, that one touches the file.

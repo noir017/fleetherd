@@ -59,13 +59,49 @@ export function writePods(dir: string, state: PodsState): void {
  * config.yaml already defines under the same id wins, and a host no longer under `hosts:` brings
  * nothing. An entry that does not validate is left out and named in `skipped`, rather than failing
  * the whole config: a pod's typo must not stop the gateway.
+ *
+ * `podModels` in config.yaml is folded in here: a pod agent with an entry there takes that as its
+ * `model`, over the one its pod.yaml gives. Here rather than at each place a model is read, because
+ * every one of them (the spawn, `/model`, the footer, a scheduled task) already reads `model`, and a
+ * second field beside it would be a second answer to "what model does this agent start with". What
+ * the pod itself said is kept by podAgentModels, for the settings screen to show and to fall back to.
+ * A key naming an agent config.yaml defines is ignored and reported: that agent's model is
+ * `agents[].model`, and two places to set one would disagree.
  */
 export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): { raw: Record<string, unknown>; skipped: string[] } {
+  const own = Array.isArray(raw.agents) ? (raw.agents as unknown[]) : [];
+  const models = podModelsOf(raw);
+  const skipped: string[] = [];
+  const added = podAgents(raw, pods, skipped).map(({ agent }) => {
+    const model = models[agent.id];
+    return model !== undefined ? { ...agent, model } : agent;
+  });
+  const ownIds = new Set(own.map(idOf));
+  for (const key of Object.keys(models)) {
+    if (ownIds.has(key)) skipped.push(`podModels.${key}: ${key} is defined in config.yaml, so its model is agents[].model there`);
+  }
+  if (added.length === 0) return { raw, skipped };
+  return { raw: { ...raw, agents: [...own, ...added] }, skipped };
+}
+
+/**
+ * Every agent the pods declare, as mergePodAgents adds it, mapped to the model its pod.yaml gives
+ * (undefined: none). What `/setting` needs to say where a pod agent's model comes from — the gateway
+ * (`podModels`), the pod, or the harness — and what it falls back to when the gateway's is cleared.
+ * Read from pods.json, never from the merged config, where `model` is already the gateway's answer.
+ */
+export function podAgentModels(raw: Record<string, unknown>, pods: PodsState): Map<string, string | undefined> {
+  return new Map(podAgents(raw, pods, []).map(({ agent, model }) => [agent.id, model]));
+}
+
+type DeclaredAgent = { agent: Record<string, unknown> & { id: string }; model: string | undefined };
+
+/** The pods' agents in merge order, validated and renamed, each with the model the pod gave it. */
+function podAgents(raw: Record<string, unknown>, pods: PodsState, skipped: string[]): DeclaredAgent[] {
   const hosts = raw.hosts && typeof raw.hosts === 'object' ? Object.keys(raw.hosts) : [];
   const own = Array.isArray(raw.agents) ? (raw.agents as unknown[]) : [];
-  const taken = new Set(own.map((a) => (a && typeof a === 'object' ? (a as { id?: unknown }).id : undefined)));
-  const added: unknown[] = [];
-  const skipped: string[] = [];
+  const taken = new Set(own.map(idOf));
+  const out: DeclaredAgent[] = [];
   for (const host of hosts) {
     for (const [i, entry] of (pods[host]?.agents ?? []).entries()) {
       const parsed = PodAgentSchema.safeParse(entry);
@@ -77,9 +113,19 @@ export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): {
       const id = podAgentId(parsed.data.id, host);
       if (taken.has(id)) continue;
       taken.add(id);
-      added.push({ ...parsed.data, id, host });
+      out.push({ agent: { ...parsed.data, id, host }, model: parsed.data.model });
     }
   }
-  if (added.length === 0) return { raw, skipped };
-  return { raw: { ...raw, agents: [...own, ...added] }, skipped };
+  return out;
+}
+
+/** `podModels` from a raw config, keeping only non-empty strings (the schema reports the rest). */
+function podModelsOf(raw: Record<string, unknown>): Record<string, string> {
+  const m = raw.podModels;
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
+  return Object.fromEntries(Object.entries(m).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== ''));
+}
+
+function idOf(a: unknown): unknown {
+  return a && typeof a === 'object' ? (a as { id?: unknown }).id : undefined;
 }

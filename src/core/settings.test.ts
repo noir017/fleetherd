@@ -15,6 +15,8 @@ import {
   settingDescription,
   settingKeyOf,
   settingLocation,
+  modelSource,
+  settingNotice,
   settingOptions,
   settingPageButtonId,
   settingRowButtonId,
@@ -130,30 +132,141 @@ describe('the settings screen', () => {
       reqId: 'r1',
       rows,
       extra: { id: 'sco:r1:0', label: '⏰ Scheduled tasks · 2 active' },
-      screen: true,
+      screen: { cfg, options: (r) => settingOptions(r, cfg, ctx), here: 'oc' },
     });
     const screen = view.screen;
     expect(screen?.level).toBe('list');
     if (screen?.level !== 'list') throw new Error('no list screen');
 
+    // The model rows are named by their agent under one heading, not ten rows all titled
+    // "Default model"; sub-agent confirmation is not filed among them.
     expect(screen.rows.map((r) => [r.label, r.target, r.value, r.group])).toEqual([
-      ['Default agent', undefined, 'cc · claude', 'Agent defaults'],
-      ['Default model', 'cc', '(harness default)', 'Agent defaults'],
-      ['Default model', 'oc', 'opencode/big-pickle', 'Agent defaults'],
-      ['Default model', 'own', '(harness default)', 'Agent defaults'],
-      ['Confirm sub-agent starts', undefined, 'on', 'Agent defaults'],
-      ['Idle reclaim', undefined, '1h', 'Conversation'],
-      ['Conversation scope', undefined, 'per_thread', 'Conversation'],
+      ['Default agent', undefined, 'cc · claude', 'Agents'],
+      ['cc', 'cc', 'harness default', 'Default model'],
+      ['oc', 'oc', 'opencode/big-pickle', 'Default model'],
+      ['own', 'own', 'harness default', 'Default model'],
+      ['Confirm sub-agent starts', undefined, 'on', 'Sub-agents'],
+      ['Idle reclaim', undefined, '1h', 'Conversations'],
+      ['Conversation scope', undefined, 'per_thread', 'Conversations'],
       ['Live streaming', undefined, 'off', 'Replies'],
       ['⏰ Scheduled tasks · 2 active', undefined, undefined, 'More'],
     ]);
+    expect(screen.groups.map((g) => g.name)).toEqual([
+      'Agents',
+      'Default model',
+      'Sub-agents',
+      'Conversations',
+      'Replies',
+      'More',
+    ]);
+    // "Next session" is said once, for the group, rather than on every model row.
+    expect(screen.groups[1]!.note).toContain('next session');
+    expect(screen.rows[1]!.effectLabel).toBeUndefined();
+    expect(screen.rows[6]!.effectLabel).toBe('after restart');
+    expect(screen.rows[6]!.effectDetail).toContain('daemon restarts');
     // The screen and the buttons are two views of one list: a tap must post the id the button
     // would have posted.
     expect(screen.rows.map((r) => r.buttonId)).toEqual(view.buttons.map((b) => b.id));
-    expect(screen.rows[1]!.effectLabel).toBe('next session');
-    expect(screen.rows[6]!.effectLabel).toBe('after restart');
     // The whole value, which the chat label truncates at 40 characters.
     expect(screen.rows[2]!.value).toBe('opencode/big-pickle');
+    // Unset is a placeholder, and says which agent answers here.
+    expect(screen.rows[1]).toMatchObject({ unset: true, targetKind: 'Claude Code' });
+    expect(screen.rows[1]!.here).toBeUndefined();
+    expect(screen.rows[2]).toMatchObject({ here: true, targetKind: 'OpenCode' });
+    expect(screen.rows[3]!.targetKind).toBe('agent'); // a custom harness: its command's name
+  });
+
+  it('gives every row a control, and the ids a switch or a choice posts name the value they write', () => {
+    const rows = settingsRows(cfg);
+    const view = buildSettingsMenu({
+      reqId: 'r1',
+      rows,
+      extra: { id: 'sco:r1:0', label: '⏰ Scheduled tasks' },
+      screen: { cfg, options: (r) => settingOptions(r, cfg, ctx) },
+    });
+    if (view.screen?.level !== 'list') throw new Error('no list screen');
+    const byLabel = new Map(view.screen.rows.map((r) => [r.label, r]));
+    const choices = view.choices ?? [];
+    const writes = (id: string): { row: string; raw: string } => {
+      const n = Number(id.split(':').at(-1));
+      const c = choices[n]!;
+      return { row: settingKeyOf(rows[c.row]!), raw: c.raw };
+    };
+
+    // On/off is a switch whose one id writes the other side.
+    const delegation = byLabel.get('Confirm sub-agent starts')!.control;
+    expect(delegation).toMatchObject({ kind: 'switch', on: true });
+    if (delegation.kind !== 'switch') throw new Error('not a switch');
+    expect(writes(delegation.set)).toEqual({ row: 'delegation', raw: 'off' });
+    const stream = byLabel.get('Live streaming')!.control;
+    if (stream.kind !== 'switch') throw new Error('not a switch');
+    expect(stream.on).toBe(false);
+    expect(writes(stream.set)).toEqual({ row: 'stream', raw: 'on' });
+
+    // A closed list is a choice, every option writable from the row, the current one marked.
+    const idle = byLabel.get('Idle reclaim')!.control;
+    if (idle.kind !== 'choice') throw new Error('not a choice');
+    expect(idle.options.map((o) => [o.label, o.current])).toEqual([
+      ['off', false],
+      ['15m', false],
+      ['1h', true],
+      ['4h', false],
+      ['12h', false],
+    ]);
+    expect(idle.options.map((o) => writes(o.buttonId))).toEqual(
+      ['off', '15m', '1h', '4h', '12h'].map((raw) => ({ row: 'idle', raw }))
+    );
+    const agent = byLabel.get('Default agent')!.control;
+    if (agent.kind !== 'choice') throw new Error('not a choice');
+    expect(agent.options.find((o) => o.current)?.label).toBe('cc · claude');
+
+    // A model keeps its own screen; the scheduled tasks are a way somewhere else.
+    expect(byLabel.get('oc')!.control).toEqual({ kind: 'list' });
+    expect(byLabel.get('⏰ Scheduled tasks')!.control).toEqual({ kind: 'link' });
+    // Every set id is distinct and resolves.
+    const ids = view.screen.rows.flatMap((r) =>
+      r.control.kind === 'switch' ? [r.control.set] : r.control.kind === 'choice' ? r.control.options.map((o) => o.buttonId) : []
+    );
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(parseSettingButtonId(id)).toMatchObject({ kind: 'set', reqId: 'r1' });
+  });
+
+  it('lists every row on a screen, past the chat menu’s button cap', () => {
+    const many = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: Array.from({ length: 24 }, (_, i) => ({ id: `a${i}`, harness: 'claude' })),
+      routing: { default: 'a0' },
+    });
+    const view = buildSettingsMenu({
+      reqId: 'r9',
+      rows: settingsRows(many),
+      screen: { cfg: many, options: (r) => settingOptions(r, many, bare) },
+    });
+    if (view.screen?.level !== 'list') throw new Error('no list screen');
+    expect(view.buttons.filter((b) => b.id.startsWith('stg:'))).toHaveLength(20);
+    expect(view.screen.rows).toHaveLength(settingsRows(many).length);
+    expect(view.screen.rows.at(-1)?.buttonId).toBe(`stg:r9:${settingsRows(many).length - 1}`);
+  });
+
+  it('carries the outcome of the last tap as a banner with its tone', () => {
+    const r = row('idle');
+    const view = buildSettingsMenu({
+      reqId: 'r1',
+      rows: settingsRows(cfg),
+      screen: {
+        cfg,
+        options: (x) => settingOptions(x, cfg, ctx),
+        notice: settingNotice({ kind: 'saved', row: r, display: '4h' }),
+      },
+    });
+    if (view.screen?.level !== 'list') throw new Error('no list screen');
+    expect(view.screen.notice).toEqual({ tone: 'ok', text: expect.stringContaining('Idle reclaim → 4h') });
+    expect(settingNotice({ kind: 'unchanged', row: r }).tone).toBe('info');
+    expect(settingNotice({ kind: 'invalid', row: r, reason: 'no' }).tone).toBe('error');
+    expect(settingNotice({ kind: 'failed', row: r, reason: 'disk' })).toEqual({
+      tone: 'error',
+      text: 'Could not save Idle reclaim: disk',
+    });
   });
 
   it('builds no screen unless the platform asks for one', () => {
@@ -173,7 +286,7 @@ describe('the settings screen', () => {
       options: settingOptions(r, cfg, ctx),
       page: 1,
       pageSize: 2,
-      screen: true,
+      screen: { cfg },
     });
     const screen = view.screen;
     expect(screen?.level).toBe('values');
@@ -190,6 +303,9 @@ describe('the settings screen', () => {
       next: 'stp:r2:2',
       back: 'stb:r2:0',
     });
+    // The head says which setting this is and what it holds, so the screen need not parse the text.
+    expect(screen.head).toMatchObject({ label: 'Idle reclaim', value: '1h', effect: 'Takes effect at once.' });
+    expect(screen.head?.description).toContain('quiet');
     // The screen's nav row carries the page number; the text would otherwise say it twice.
     expect(view.text).not.toContain('page 2/3');
     expect(
@@ -207,7 +323,7 @@ describe('the settings screen', () => {
     const r = row('scope');
     const options = settingOptions(r, cfg, ctx);
     expect(options[0]!.label).toBe('per_thread — a topic / thread is its own conversation');
-    const view = buildSettingValueMenu({ reqId: 'r3', row: r, options, page: 0, screen: true });
+    const view = buildSettingValueMenu({ reqId: 'r3', row: r, options, page: 0, screen: { cfg } });
     const screen = view.screen;
     if (screen?.level !== 'values') throw new Error('no value screen');
     expect(screen.options[0]).toEqual({
@@ -216,6 +332,93 @@ describe('the settings screen', () => {
       detail: 'a topic / thread is its own conversation',
       current: true,
     });
+  });
+});
+
+describe("a pod agent's model row", () => {
+  const podCfg: Config = {
+    ...parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      hosts: { box: { ssh: 'u@box' } },
+      agents: [
+        { id: 'cc', harness: 'claude', model: 'opus' },
+        { id: 'oc@box', harness: 'opencode', host: 'box', model: 'opencode/glm-5' },
+        { id: 'ag@box', harness: 'agy', host: 'box' },
+      ],
+      routing: { default: 'cc' },
+      podModels: { 'oc@box': 'opencode/glm-5' },
+    }),
+  };
+  const pods = new Map<string, string | undefined>([
+    ['oc@box', 'opencode/big-pickle'],
+    ['ag@box', undefined],
+  ]);
+  const podRow = (id: string) => settingsRows(podCfg, pods).find((r) => r.target === id)!;
+
+  it('knows which agents are a pod’s, and what each pod said', () => {
+    expect(podRow('oc@box').pod).toEqual({ model: 'opencode/big-pickle' });
+    expect(podRow('ag@box').pod).toEqual({});
+    expect(podRow('cc').pod).toBeUndefined();
+  });
+
+  it('writes a pod agent to podModels and config.yaml’s own to agents[].model — never both', () => {
+    expect(settingLocation(podRow('oc@box'))).toEqual({ kind: 'path', path: ['podModels', 'oc@box'] });
+    expect(settingLocation(podRow('cc'))).toEqual({ kind: 'agent', agentId: 'cc', key: 'model' });
+    // What is "already set" for a pod's agent is the gateway's entry, not the merged model.
+    expect(readSettingValue(podRow('oc@box'), podCfg)).toBe('opencode/glm-5');
+    expect(readSettingValue(podRow('ag@box'), podCfg)).toBeUndefined();
+  });
+
+  it('says where each value comes from', () => {
+    expect(modelSource(podRow('oc@box'), podCfg)).toBe('gateway');
+    expect(modelSource(podRow('ag@box'), podCfg)).toBe('unset');
+    expect(modelSource(podRow('cc'), podCfg)).toBe('config');
+    const noOverride = { ...podCfg, podModels: undefined } as Config;
+    expect(modelSource(podRow('oc@box'), noOverride)).toBe('pod');
+  });
+
+  it('offers clearing back to the pod’s value, named as the pod’s', () => {
+    const c: SettingsContext = { boundAgent: 'cc', models: [], pods };
+    const options = settingOptions(podRow('oc@box'), podCfg, c);
+    expect(options.at(-1)).toEqual({ raw: '-', label: 'opencode/big-pickle (pod.yaml)' });
+    expect(parseSettingValue(podRow('oc@box'), '-', podCfg, c)).toEqual({
+      kind: 'value',
+      value: undefined,
+      display: 'opencode/big-pickle (pod.yaml)',
+    });
+    // Nothing set here: nothing to clear.
+    expect(settingOptions(podRow('ag@box'), podCfg, c)).toEqual([]);
+  });
+
+  it('resolves a typed key to the row that knows it is a pod’s', () => {
+    const c: SettingsContext = { boundAgent: 'cc', models: [], pods };
+    const r = resolveSettingKey('model.oc@box', podCfg, c);
+    expect(r.kind === 'row' && r.row.pod).toEqual({ model: 'opencode/big-pickle' });
+  });
+});
+
+describe('a model row’s list, for any agent', () => {
+  const lists = (answer: SettingsContext['lists']): SettingsContext => ({ boundAgent: 'cc', models: [], lists: answer });
+
+  it('offers what the gateway learned of an agent that is not answering here', () => {
+    const c = lists(() => ({ kind: 'list', options: MODELS }));
+    const options = settingOptions(row('model.oc', c), cfg, c);
+    expect(options[0]).toEqual({ raw: 'opencode/big-pickle', label: 'Big Pickle', title: 'opencode/big-pickle', detail: 'Big Pickle' });
+    expect(settingTypedOnlyHint(row('model.oc', c), cfg, c)).toBeUndefined();
+    // And a typed fragment resolves against it, as it does for the agent answering here.
+    expect(parseSettingValue(row('model.oc', c), 'kimi', cfg, c)).toMatchObject({ value: 'newapi/kimi-k3' });
+  });
+
+  it('says what it is waiting for, what the harness lacks, and what failed — each in its own words', () => {
+    expect(settingTypedOnlyHint(row('model.oc', lists(() => ({ kind: 'loading' }))), cfg, lists(() => ({ kind: 'loading' })))).toContain(
+      'Asking oc for its models'
+    );
+    const none = lists(() => ({ kind: 'none' }));
+    expect(settingTypedOnlyHint(row('model.oc', none), cfg, none)).toContain('oc does not offer a model list');
+    const err = lists(() => ({ kind: 'error', reason: 'ssh: no route' }));
+    expect(settingTypedOnlyHint(row('model.oc', err), cfg, err)).toContain('did not start, so it could not be asked for its models (ssh: no route)');
+    // Every one of them says what to type instead.
+    expect(settingTypedOnlyHint(row('model.oc', err), cfg, err)).toContain('`/setting model.oc <name>`');
   });
 });
 

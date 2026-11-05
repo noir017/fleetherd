@@ -1,6 +1,14 @@
 import type { Config, SessionScope } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
-import type { SettingsScreen, SettingsScreenOption, SettingsScreenRow } from '../types.js';
+import type {
+  SettingsScreen,
+  SettingsScreenControl,
+  SettingsScreenGroup,
+  SettingsScreenNotice,
+  SettingsScreenOption,
+  SettingsScreenRow,
+} from '../types.js';
+import { agentKindOf } from './agent-menu.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { matchModels, type ModelOption } from './model-menu.js';
 import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
@@ -79,6 +87,12 @@ export interface SettingRow {
   id: SettingId;
   /** The agent a per-agent setting applies to; absent for global ones. */
   target?: string;
+  /**
+   * On a model row: the agent is one a host's pod declares (config/pods.ts), so its default is
+   * written to config.yaml's `podModels` over the pod's own, and `model` is what the pod says
+   * (absent: nothing). Absent for an agent config.yaml defines.
+   */
+  pod?: { model?: string };
   /** Menu label, e.g. `Default model · cc`. */
   label: string;
   /** Current value, already formatted for display. */
@@ -96,13 +110,37 @@ export interface SettingsContext {
   /**
    * Models that agent offers right now, as its live ACP session reports them; empty when there is
    * no live session or the harness reports no selector.
-   *
-   * Empty for every OTHER agent too, by construction: a model list only exists on a live session,
-   * and this conversation has at most one. That is why a value MENU for `model` is offered only for
-   * `boundAgent`, and any other agent's model is set by typing the name.
    */
   models: readonly ModelOption[];
+  /**
+   * What the gateway knows of ANY agent's model list (daemon/model-catalog.ts) — the answer for
+   * every agent that is not answering here. A model list only exists on a live session, and this
+   * conversation has at most one, so for the others the daemon asks: from another conversation's
+   * live session, from what it learned before, or by bringing a session up just to ask. Absent:
+   * nothing can ask (a test, a caller without a catalog), and the hint says to type a name.
+   */
+  lists?: (agentId: string) => AgentModelList | undefined;
+  /** The pods' agents and the model each pod gives, so a key resolves to a row that knows it. */
+  pods?: PodModels;
 }
+
+/** What is known of one agent's model list. */
+export type AgentModelList =
+  /** Asked, and this is the answer. */
+  | { kind: 'list'; options: readonly ModelOption[] }
+  /** Being asked now. */
+  | { kind: 'loading' }
+  /** Asked, and the harness offers no model choice (no `model` select option). */
+  | { kind: 'none' }
+  /** Could not ask: the agent did not start. */
+  | { kind: 'error'; reason: string };
+
+/**
+ * The agents the hosts' pods declare, each with the model its pod.yaml gives (config/pods.ts
+ * podAgentModels). Read from pods.json by the daemon: the merged Config only has the answer, not
+ * where it came from.
+ */
+export type PodModels = ReadonlyMap<string, string | undefined>;
 
 /** Where a setting lives in the config tree. */
 export type SettingLocation =
@@ -277,7 +315,7 @@ const MODEL_UNSET = '(harness default)';
  * shows. Order is config order, so the rows (and therefore the button indices) are stable across
  * restarts.
  */
-export function settingsRows(cfg: Config): SettingRow[] {
+export function settingsRows(cfg: Config, pods?: PodModels): SettingRow[] {
   const rows: SettingRow[] = [
     {
       id: 'agent',
@@ -287,12 +325,14 @@ export function settingsRows(cfg: Config): SettingRow[] {
     },
   ];
   for (const agent of cfg.agents) {
+    const podModel = pods?.get(agent.id);
     rows.push({
       id: 'model',
       target: agent.id,
       label: `Default model · ${agent.id}`,
       value: agent.model ?? MODEL_UNSET,
       effect: 'next-session',
+      ...(pods?.has(agent.id) ? { pod: podModel !== undefined ? { model: podModel } : {} } : {}),
     });
   }
   rows.push(
@@ -400,6 +440,22 @@ function effectText(row: SettingRow): string {
   }
 }
 
+/** effectText as a sentence of its own, for a screen's head. */
+function effectSentence(row: SettingRow): string {
+  switch (row.effect) {
+    case 'live':
+      return 'Takes effect at once.';
+    case 'next-session':
+      return `Takes effect from ${row.target ?? 'that agent'}'s next agent session — \`/new\` starts one now.`;
+    case 'restart':
+      return 'Takes effect when the daemon restarts; conversations keep their current identity until then.';
+    default: {
+      const _exhaustive: never = row.effect;
+      return String(_exhaustive);
+    }
+  }
+}
+
 /**
  * The same fact as effectText, in the two or three words a settings row can carry. Live changes say
  * nothing: a badge on every row would stop meaning anything.
@@ -423,16 +479,22 @@ function effectLabel(row: SettingRow): string | undefined {
  * The heading a row sits under on a screen. It is presentation, but it belongs here with the rest
  * of the table: a new setting that falls through to the default is a compile error, not a row
  * stranded under the wrong heading.
+ *
+ * The model rows are a group of their own, one row per agent under one heading, rather than a row
+ * per agent each titled "Default model": with ten agents that was ten identical titles in a column,
+ * and the switch for sub-agent confirmation lost among them (reported 2026-11-05).
  */
 function settingGroup(row: SettingRow): string {
   switch (row.id) {
     case 'agent':
+      return 'Agents';
     case 'model':
+      return 'Default model';
     case 'delegation':
-      return 'Agent defaults';
+      return 'Sub-agents';
     case 'idle':
     case 'scope':
-      return 'Conversation';
+      return 'Conversations';
     case 'stream':
       return 'Replies';
     case 'voice':
@@ -441,6 +503,71 @@ function settingGroup(row: SettingRow): string {
     default: {
       const _exhaustive: never = row.id;
       return String(_exhaustive);
+    }
+  }
+}
+
+/** A sentence under a group heading, for what every row in it shares. */
+function settingGroupNote(row: SettingRow): string | undefined {
+  return row.id === 'model'
+    ? 'What each agent starts a new session with. A change applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only.'
+    : undefined;
+}
+
+/**
+ * One line on what a row decides, for a screen that lists every setting at once — settingDescription
+ * is the paragraph a single setting's own screen has room for. A model row has none: its group says it.
+ */
+function settingHint(row: SettingRow): string | undefined {
+  switch (row.id) {
+    case 'agent':
+      return 'Answers a new conversation that no routing rule claims.';
+    case 'model':
+      return undefined;
+    case 'delegation':
+      return 'Wait for your Start before an agent’s sub-tasks run. Off starts them at once; a sub-agent’s own topic still asks.';
+    case 'idle':
+      return 'Stop an agent that has been quiet this long. Its conversation resumes on the next message.';
+    case 'scope':
+      return 'What counts as one conversation: a topic, a channel, a person, or the whole gateway.';
+    case 'stream':
+      return 'Type each reply out as it arrives, instead of sending each part once it is finished.';
+    case 'voice':
+      return 'Hold a voice message’s transcript until you tap ✅ Send.';
+    case 'cleanup':
+      return 'Also write a voice message up as the message you meant, and send that version.';
+    default: {
+      const _exhaustive: never = row.id;
+      return String(_exhaustive);
+    }
+  }
+}
+
+/**
+ * How a screen lets a row be changed (`SettingsScreenControl`). The table's call rather than the
+ * page's, for the reason settingGroup is here: a new setting must be given a control to compile.
+ *
+ * On/off settings are switches and the short closed lists are choices, both written from the row
+ * itself — one tap, where the button menu needs two and a Back. The model is the one that keeps its
+ * own screen: its list can run to a hundred names, has to be asked of the agent, and takes a name
+ * the list does not have.
+ */
+export function settingControl(row: SettingRow): 'switch' | 'choice' | 'list' {
+  switch (row.id) {
+    case 'delegation':
+    case 'stream':
+    case 'voice':
+    case 'cleanup':
+      return 'switch';
+    case 'agent':
+    case 'idle':
+    case 'scope':
+      return 'choice';
+    case 'model':
+      return 'list';
+    default: {
+      const _exhaustive: never = row.id;
+      return _exhaustive;
     }
   }
 }
@@ -469,7 +596,7 @@ export function resolveSettingKey(key: string, cfg: Config, ctx: SettingsContext
   const norm = key.trim().replace(/^\//, '').toLowerCase();
   if (!norm) return { kind: 'unknown', key };
 
-  const rows = settingsRows(cfg);
+  const rows = settingsRows(cfg, ctx.pods);
   const target = perAgentTarget(norm, cfg);
   if (target !== undefined) {
     if (target === null) {
@@ -531,10 +658,13 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
       // Only the bound agent has a live list to offer (see SettingsContext.models). The clear
       // option is offered whenever a value is set, list or no list.
       return [
-        ...(row.target === ctx.boundAgent
-          ? ctx.models.map((m) => ({ raw: m.value, label: m.name.trim() || m.value }))
-          : []),
-        ...(cfgModel(cfg, row.target) ? [{ raw: '-', label: MODEL_UNSET }] : []),
+        // A chat button shows the name; a screen shows the id, which is what the status line and
+        // `/model` print, with the name under it when they differ.
+        ...modelList(row, ctx).map((m) => {
+          const name = m.name.trim();
+          return { raw: m.value, label: name || m.value, ...(name && name !== m.value ? { title: m.value, detail: name } : {}) };
+        }),
+        ...(readSettingValue(row, cfg) !== undefined ? [{ raw: '-', label: clearedModelLabel(row) }] : []),
       ];
     case 'idle':
       return IDLE_PRESETS.map((p) => ({
@@ -618,6 +748,34 @@ function cfgModel(cfg: Config, agentId: string | undefined): string | undefined 
 }
 
 /**
+ * What a model row offers to choose from: the bound agent's live list when there is one, else what
+ * the daemon has learned of this agent's (SettingsContext.lists). Empty when neither is known.
+ */
+function modelList(row: SettingRow, ctx: SettingsContext): readonly ModelOption[] {
+  if (row.target === ctx.boundAgent && ctx.models.length > 0) return ctx.models;
+  const known = row.target ? ctx.lists?.(row.target) : undefined;
+  return known?.kind === 'list' ? known.options : [];
+}
+
+/** What a model row falls back to when the value set here is cleared. */
+function clearedModelLabel(row: SettingRow): string {
+  if (row.pod?.model) return `${row.pod.model} (pod.yaml)`;
+  return MODEL_UNSET;
+}
+
+/**
+ * Where a model row's value comes from, for a screen to say: set from the gateway over a pod's,
+ * the pod's own, config.yaml's, or nothing (the harness picks).
+ */
+export function modelSource(row: SettingRow, cfg: Config): 'gateway' | 'pod' | 'config' | 'unset' {
+  if (row.pod) {
+    if (row.target && cfg.podModels?.[row.target] !== undefined) return 'gateway';
+    return row.pod.model !== undefined ? 'pod' : 'unset';
+  }
+  return cfgModel(cfg, row.target) !== undefined ? 'config' : 'unset';
+}
+
+/**
  * Read a user-supplied value for a setting: the one place both surfaces go through, so a typed
  * `/setting idle 15m` and a tapped `15m` cannot disagree about what they did.
  */
@@ -684,9 +842,9 @@ export function parseSettingValue(
  */
 function parseModelValue(input: string, row: SettingRow, ctx: SettingsContext): ParsedSettingValue {
   if (CLEAR_TOKENS.has(input.toLowerCase())) {
-    return { kind: 'value', value: undefined, display: MODEL_UNSET };
+    return { kind: 'value', value: undefined, display: clearedModelLabel(row) };
   }
-  const listed = row.target === ctx.boundAgent ? ctx.models : [];
+  const listed = modelList(row, ctx);
   if (listed.length === 0) return { kind: 'value', value: input, display: input };
 
   const match = matchModels([...listed], input);
@@ -735,6 +893,8 @@ export function settingLocation(row: SettingRow): SettingLocation {
     case 'agent':
       return { kind: 'path', path: ['routing', 'default'] };
     case 'model':
+      // A pod's agent is not in config.yaml's `agents:`; the gateway's say over its model is.
+      if (row.pod) return { kind: 'path', path: ['podModels', row.target!] };
       return { kind: 'agent', agentId: row.target!, key: 'model' };
     case 'delegation':
       return { kind: 'path', path: ['delegation', 'confirm'] };
@@ -782,6 +942,9 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
     case 'agent':
       return cfg.routing.default;
     case 'model':
+      // For a pod's agent, what is written here is the gateway's own entry — not the merged model,
+      // which may be the pod's: clearing one that is not set must be "already", not a write.
+      if (row.pod) return row.target ? cfg.podModels?.[row.target] : undefined;
       return cfgModel(cfg, row.target);
     case 'delegation':
       return cfg.delegation.confirm;
@@ -821,6 +984,26 @@ export type SettingApplyResult =
   | { kind: 'invalid'; row: SettingRow; reason: string }
   /** The write itself failed (permissions, a file that changed shape under us). */
   | { kind: 'failed'; row: SettingRow; reason: string };
+
+/**
+ * An outcome as the banner a screen shows (`SettingsScreenNotice`): the same words as the ack, and
+ * whether they are good news. Exhaustive like settingAckText.
+ */
+export function settingNotice(result: SettingApplyResult): SettingsScreenNotice {
+  switch (result.kind) {
+    case 'saved':
+      return { tone: 'ok', text: settingAckText(result) };
+    case 'unchanged':
+      return { tone: 'info', text: settingAckText(result) };
+    case 'invalid':
+    case 'failed':
+      return { tone: 'error', text: settingAckText(result) };
+    default: {
+      const _exhaustive: never = result;
+      return { tone: 'error', text: String(_exhaustive) };
+    }
+  }
+}
 
 /** Render an outcome. Exhaustive: a new arm must be given words here. */
 export function settingAckText(result: SettingApplyResult): string {
@@ -891,14 +1074,36 @@ export function settingTypedOnlyHint(
   cfg: Config,
   ctx: SettingsContext
 ): string | undefined {
-  if (row.id === 'model') {
-    if (row.target === ctx.boundAgent && ctx.models.length > 0) return undefined;
-    const key = settingKeyOf(row);
-    return row.target === ctx.boundAgent
-      ? `No model list from ${row.target} yet — it arrives with the agent's first reply. Any name still works: \`/setting ${key} <name>\`.`
-      : `${row.target} is not answering this conversation, so its model list is not available here. Type a name: \`/setting ${key} <name>\`.`;
-  }
+  if (row.id === 'model') return modelListHint(row, ctx);
   return settingOptions(row, cfg, ctx).length > 0 ? undefined : 'Type a value instead.';
+}
+
+/**
+ * The model row's sentence: nothing when there is a list, else why there is none and what to type.
+ * Each reason is its own sentence because each is a different problem: one is a moment's wait, one
+ * is the harness, one is an agent that would not start.
+ */
+function modelListHint(row: SettingRow, ctx: SettingsContext): string | undefined {
+  if (modelList(row, ctx).length > 0) return undefined;
+  const typed = `\`/setting ${settingKeyOf(row)} <name>\``;
+  const known = row.target ? ctx.lists?.(row.target) : undefined;
+  switch (known?.kind) {
+    case 'loading':
+      return `Asking ${row.target} for its models… A name can be typed meanwhile: ${typed}.`;
+    case 'none':
+      return `${row.target} does not offer a model list: its harness reports no model choice. Type a name it accepts: ${typed}.`;
+    case 'error':
+      return `${row.target} did not start, so it could not be asked for its models (${known.reason}). Type a name: ${typed}.`;
+    case 'list':
+    case undefined:
+      return row.target === ctx.boundAgent
+        ? `No model list from ${row.target} yet — it arrives with the agent's first reply. Any name still works: ${typed}.`
+        : `${row.target} is not answering this conversation, so its model list is not available here. Type a name: ${typed}.`;
+    default: {
+      const _exhaustive: never = known;
+      return String(_exhaustive);
+    }
+  }
 }
 
 /**
@@ -954,11 +1159,25 @@ export const SETTING_VALUE_PREFIX = 'stv:';
 export const SETTING_PAGE_PREFIX = 'stp:';
 /** Back-to-the-list button: `stb:<reqId>:0`. */
 export const SETTING_BACK_PREFIX = 'stb:';
+/**
+ * Set-from-the-list control: `sts:<reqId>:<index into the list's frozen choices>`. Only a screen
+ * carries one (a switch, or a choice in a row): a chat app's list is buttons that open a setting,
+ * and never sees this prefix.
+ */
+export const SETTING_SET_PREFIX = 'sts:';
+/**
+ * Typed-value control on a value screen: `stt:<reqId>:0`, its text in the click's `value`
+ * (ButtonInteraction.value). Only a screen carries one, for a setting whose list is not the whole
+ * answer — a model, which a harness takes by names it never lists.
+ */
+export const SETTING_TYPE_PREFIX = 'stt:';
 
 /** A click on a settings menu, once its id has been decoded. */
 export type SettingButtonClick =
   | { kind: 'open'; reqId: string; index: number }
   | { kind: 'choose'; reqId: string; index: number }
+  | { kind: 'set'; reqId: string; index: number }
+  | { kind: 'type'; reqId: string }
   | { kind: 'page'; reqId: string; page: number }
   | { kind: 'back'; reqId: string };
 
@@ -981,6 +1200,31 @@ export interface SettingsMenuView {
    * always was.
    */
   screen?: SettingsScreen;
+  /**
+   * What each `sts:` id on the list screen writes, by its index — the list the daemon keeps and a
+   * click is resolved against. Present only with a list screen.
+   */
+  choices?: SettingChoice[];
+}
+
+/** One value a list screen can write without opening the setting: which row, and what to write. */
+export interface SettingChoice {
+  /** Index into the menu's frozen row list (the one `stg:` indices point into). */
+  row: number;
+  /** What parseSettingValue is handed, as if the value had been tapped on the setting's own screen. */
+  raw: string;
+}
+
+/** What a list screen needs that the rows do not carry. */
+export interface SettingsScreenInput {
+  /** The live config: what each agent is (agentKindOf), and where each model comes from. */
+  cfg: Config;
+  /** What a switch or choice row can be set to — settingOptions for that row, as the daemon reads it. */
+  options(row: SettingRow): SettingOption[];
+  /** The agent answering the conversation the screen opens in. */
+  here?: string;
+  /** The outcome of the action that led here, shown above the list. */
+  notice?: SettingsScreenNotice;
 }
 
 export function settingRowButtonId(reqId: string, index: number): string {
@@ -995,6 +1239,12 @@ export function settingPageButtonId(reqId: string, page: number): string {
 export function settingBackButtonId(reqId: string): string {
   return formatButtonId(SETTING_BACK_PREFIX, reqId, 0);
 }
+export function settingSetButtonId(reqId: string, index: number): string {
+  return formatButtonId(SETTING_SET_PREFIX, reqId, index);
+}
+export function settingTypeButtonId(reqId: string): string {
+  return formatButtonId(SETTING_TYPE_PREFIX, reqId, 0);
+}
 
 /** Decode a settings-menu button id, or null when it is some other menu's (or malformed). */
 export function parseSettingButtonId(buttonId: string): SettingButtonClick | null {
@@ -1002,6 +1252,10 @@ export function parseSettingButtonId(buttonId: string): SettingButtonClick | nul
   if (open) return { kind: 'open', reqId: open.reqId, index: open.n };
   const choose = parseButtonId(buttonId, SETTING_VALUE_PREFIX);
   if (choose) return { kind: 'choose', reqId: choose.reqId, index: choose.n };
+  const set = parseButtonId(buttonId, SETTING_SET_PREFIX);
+  if (set) return { kind: 'set', reqId: set.reqId, index: set.n };
+  const type = parseButtonId(buttonId, SETTING_TYPE_PREFIX);
+  if (type) return { kind: 'type', reqId: type.reqId };
   const page = parseButtonId(buttonId, SETTING_PAGE_PREFIX);
   if (page) return { kind: 'page', reqId: page.reqId, page: page.n };
   const back = parseButtonId(buttonId, SETTING_BACK_PREFIX);
@@ -1022,7 +1276,7 @@ export function buildSettingsMenu(menu: {
   reqId: string;
   rows: SettingRow[];
   extra?: { id: string; label: string };
-  screen?: boolean;
+  screen?: SettingsScreenInput;
 }): SettingsMenuView {
   const shown = menu.rows.slice(0, SETTING_ROW_MAX);
   const overflow = menu.rows.slice(SETTING_ROW_MAX);
@@ -1035,34 +1289,154 @@ export function buildSettingsMenu(menu: {
   if (overflow.length > 0) {
     text += `\n\n${overflow.length} more (type them): ${overflow.map((r) => `\`/setting ${settingKeyOf(r)}\``).join(', ')}`;
   }
-  const screen = menu.screen ? settingsListScreen(menu.reqId, shown, menu.extra) : undefined;
-  return { text, buttons, page: 0, pageCount: 1, ...(screen ? { screen } : {}) };
+  if (!menu.screen) return { text, buttons, page: 0, pageCount: 1 };
+  // Every row, not the first SETTING_ROW_MAX: that cap is Discord's 25 components per message, and
+  // a screen is not a message's buttons. The `stg:` index of a row past it still resolves, since
+  // the daemon freezes the whole list.
+  const { screen, choices } = settingsListScreen(menu.reqId, menu.rows, menu.screen, menu.extra);
+  return { text, buttons, page: 0, pageCount: 1, screen, choices };
 }
 
 /**
- * The list level as rows for a screen: the same rows and the same button ids as the buttons above,
- * with the value split out of the label.
+ * The list level as rows for a screen: the same rows and the same `stg:` ids as the buttons above,
+ * with the value split out of the label, and a control per row (settingControl). The `sts:` ids a
+ * switch or a choice carries index `choices`, which the daemon keeps with the menu — the same
+ * freeze-the-list rule `stv:` follows, so an id means the value it meant when it was drawn.
  */
 function settingsListScreen(
   reqId: string,
   rows: SettingRow[],
+  input: SettingsScreenInput,
   extra?: { id: string; label: string }
-): SettingsScreen {
+): { screen: SettingsScreen; choices: SettingChoice[] } {
+  const choices: SettingChoice[] = [];
+  const choose = (row: number, raw: string): string => {
+    choices.push({ row, raw });
+    return settingSetButtonId(reqId, choices.length - 1);
+  };
+  const groups: SettingsScreenGroup[] = [];
   const screenRows: SettingsScreenRow[] = rows.map((row, i) => {
-    const effect = effectLabel(row);
-    return {
-      buttonId: settingRowButtonId(reqId, i),
-      // `Default model · cc` is two facts in one chat label. On a screen the target is its own
-      // line under the label, which is the whole reason this field exists.
-      label: row.id === 'model' ? 'Default model' : row.label,
-      ...(row.target ? { target: row.target } : {}),
-      value: row.value,
-      ...(effect ? { effectLabel: effect } : {}),
-      group: settingGroup(row),
-    };
+    const group = settingGroup(row);
+    if (groups.at(-1)?.name !== group) {
+      const note = settingGroupNote(row);
+      groups.push({ name: group, ...(note ? { note } : {}) });
+    }
+    return settingsScreenRow(reqId, row, i, group, input, choose);
   });
-  if (extra) screenRows.push({ buttonId: extra.id, label: extra.label, group: 'More' });
-  return { level: 'list', rows: screenRows };
+  if (extra) {
+    groups.push({ name: 'More' });
+    screenRows.push({ buttonId: extra.id, label: extra.label, group: 'More', control: { kind: 'link' } });
+  }
+  return {
+    screen: {
+      level: 'list',
+      about:
+        'These apply to every conversation. A change applies at once unless its row says when; `/model` and `/agent` change one topic only.',
+      groups,
+      rows: screenRows,
+      ...(input.notice ? { notice: input.notice } : {}),
+    },
+    choices,
+  };
+}
+
+/** One row of the list screen. */
+function settingsScreenRow(
+  reqId: string,
+  row: SettingRow,
+  index: number,
+  group: string,
+  input: SettingsScreenInput,
+  choose: (row: number, raw: string) => string
+): SettingsScreenRow {
+  const hint = settingHint(row);
+  // A model row's "next session" is said once, in its group's note, rather than on every row.
+  const effect = row.id === 'model' ? undefined : effectLabel(row);
+  const def = row.target ? findAgent(input.cfg, row.target) : undefined;
+  const unset = row.id === 'model' && row.value === MODEL_UNSET;
+  const note = row.id === 'model' ? modelValueNote(row, input.cfg) : undefined;
+  return {
+    buttonId: settingRowButtonId(reqId, index),
+    // `Default model · cc` is two facts in one chat label. On a screen the group heading is the
+    // first, so the row is named by the second.
+    label: row.target ?? row.label,
+    ...(row.target ? { target: row.target } : {}),
+    ...(def ? { targetKind: agentKindOf(def) } : {}),
+    ...(row.target && row.target === input.here ? { here: true } : {}),
+    // `harness default`, not `(harness default)`: the parentheses were a chat label's way of saying
+    // "not a model name", which a screen says by drawing it as a placeholder.
+    value: unset ? 'harness default' : row.value,
+    ...(unset ? { unset: true } : {}),
+    ...(note ? { valueNote: note } : {}),
+    ...(hint ? { hint } : {}),
+    ...(effect ? { effectLabel: effect, effectDetail: effectText(row) } : {}),
+    group,
+    control: rowControl(row, index, input, choose),
+  };
+}
+
+/**
+ * The few words beside a pod agent's model saying whose it is. Only for a pod's agent: an agent
+ * config.yaml defines has one source, and the page already says config.yaml.
+ */
+function modelValueNote(row: SettingRow, cfg: Config): string | undefined {
+  switch (modelSource(row, cfg)) {
+    case 'gateway':
+      return 'set here';
+    case 'pod':
+      return 'pod.yaml';
+    case 'config':
+    case 'unset':
+      return undefined;
+  }
+}
+
+/** Where a model row's value comes from, as the sentence its own screen carries. */
+function modelSourceSentence(row: SettingRow, cfg: Config): string | undefined {
+  if (!row.pod) return undefined;
+  const host = row.target ? findAgent(cfg, row.target)?.host : undefined;
+  const pod = host ? `${host}'s pod.yaml` : 'its pod.yaml';
+  switch (modelSource(row, cfg)) {
+    case 'gateway':
+      return row.pod.model
+        ? `Set here, over ${pod} (\`${row.pod.model}\`). Clear it to go back to that.`
+        : `Set here; ${pod} names none. Clear it to let the harness pick.`;
+    case 'pod':
+      return `From ${pod}. A model chosen here is kept in the gateway's config.yaml and wins over the pod's.`;
+    case 'unset':
+      return `Neither the gateway nor ${pod} names one, so the harness picks. A model chosen here is kept in the gateway's config.yaml.`;
+    case 'config':
+      return undefined;
+  }
+}
+
+/** The control a row is drawn with, falling back to its own screen when the options do not fit. */
+function rowControl(
+  row: SettingRow,
+  index: number,
+  input: SettingsScreenInput,
+  choose: (row: number, raw: string) => string
+): SettingsScreenControl {
+  const kind = settingControl(row);
+  if (kind === 'list') return { kind: 'list' };
+  const options = input.options(row);
+  if (kind === 'switch') {
+    const on = row.value === 'on';
+    const other = options.find((o) => o.raw === (on ? 'off' : 'on'));
+    // A switch whose other side is not on offer would be a control that cannot move.
+    return other ? { kind: 'switch', on, set: choose(index, other.raw) } : { kind: 'list' };
+  }
+  if (options.length === 0) return { kind: 'list' };
+  const current = settingCurrentRaw(row);
+  return {
+    kind: 'choice',
+    options: options.map((o) => ({
+      buttonId: choose(index, o.raw),
+      label: o.title ?? o.label,
+      ...(o.detail ? { detail: o.detail } : {}),
+      current: o.raw === current,
+    })),
+  };
 }
 
 /**
@@ -1081,8 +1455,11 @@ export function buildSettingValueMenu(menu: {
   pageSize?: number;
   /** Typed-only hint shown when the setting offers no options (a model with no live list). */
   hint?: string;
-  /** Build the structured form too — see buildSettingsMenu. */
-  screen?: boolean;
+  /**
+   * Build the structured form too — see buildSettingsMenu. `loading`: the list is being asked for
+   * and will arrive as an edit.
+   */
+  screen?: { cfg: Config; notice?: SettingsScreenNotice; loading?: boolean };
 }): SettingsMenuView {
   const { reqId, row, options } = menu;
   const total = pageCount(options.length, menu.pageSize);
@@ -1110,7 +1487,7 @@ export function buildSettingValueMenu(menu: {
     total > 1 && !menu.screen ? `page ${page + 1}/${total}` : undefined,
   ].filter((p): p is string => p !== undefined);
   const screen = menu.screen
-    ? settingsValueScreen(reqId, row, items, start, page, total)
+    ? settingsValueScreen(reqId, row, items, { start, page, total }, { ...menu.screen, hint: menu.hint })
     : undefined;
   return {
     text: parts.length > 0 ? `${head}\n\n${parts.join('\n')}` : head,
@@ -1124,16 +1501,17 @@ export function buildSettingValueMenu(menu: {
 /**
  * The value level as rows for a screen. `start` is the absolute index of the first item, so a
  * pick's button id means the same value it meant when the page was drawn — the same rule the
- * buttons follow.
+ * buttons follow. The head says which setting this is and what it holds now, as data, so the
+ * screen draws it as a header rather than as the chat text's bold line.
  */
 function settingsValueScreen(
   reqId: string,
   row: SettingRow,
   items: SettingOption[],
-  start: number,
-  page: number,
-  total: number
+  at: { start: number; page: number; total: number },
+  extra: { cfg: Config; notice?: SettingsScreenNotice; loading?: boolean; hint?: string }
 ): SettingsScreen {
+  const { start, page, total } = at;
   const current = settingCurrentRaw(row);
   const options: SettingsScreenOption[] = items.map((o, i) => ({
     buttonId: settingValueButtonId(reqId, start + i),
@@ -1141,8 +1519,27 @@ function settingsValueScreen(
     ...(o.detail ? { detail: o.detail } : {}),
     current: o.raw === current,
   }));
+  const def = row.target ? findAgent(extra.cfg, row.target) : undefined;
+  const unset = row.id === 'model' && row.value === MODEL_UNSET;
+  const source = row.id === 'model' ? modelSourceSentence(row, extra.cfg) : undefined;
   return {
     level: 'values',
+    ...(extra.loading ? { loading: true } : {}),
+    // A model is taken by any name the harness accepts, listed or not (parseModelValue).
+    ...(row.id === 'model'
+      ? { typed: { buttonId: settingTypeButtonId(reqId), placeholder: 'Or type a model name' } }
+      : {}),
+    head: {
+      label: row.id === 'model' ? 'Default model' : row.label,
+      ...(row.target ? { target: row.target } : {}),
+      ...(def ? { targetKind: agentKindOf(def) } : {}),
+      value: unset ? 'harness default' : row.value,
+      ...(unset ? { unset: true } : {}),
+      description: settingDescription(row),
+      ...(extra.hint ? { hint: extra.hint } : {}),
+      effect: effectSentence(row),
+      ...(source ? { source } : {}),
+    },
     options,
     nav: {
       page: page + 1,
@@ -1155,6 +1552,7 @@ function settingsValueScreen(
         : {}),
       back: settingBackButtonId(reqId),
     },
+    ...(extra.notice ? { notice: extra.notice } : {}),
   };
 }
 

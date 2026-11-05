@@ -56,6 +56,9 @@ import type {
   ButtonSpec,
   ConversationWorkdir,
   SchedulePanel,
+  ModelPicker,
+  ModelPickerList,
+  ModelPickerResult,
   SchedulePanelAction,
   SchedulePanelResult,
   SchedulePanelTask,
@@ -318,6 +321,8 @@ export class WebRoom {
   private scheduled: ((ref: ConversationRef) => boolean) | null = null;
   /** The daemon's task list and its four operations — see `useSchedulePanel`. */
   private schedulePanel: SchedulePanel | null = null;
+  /** The model switch for a topic's conversation — see `useModelPicker`. */
+  private modelPicker: ModelPicker | null = null;
   /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
   private skillsPanel: SkillsPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
@@ -621,6 +626,28 @@ export class WebRoom {
    */
   useSchedulePanel(panel: SchedulePanel): void {
     this.schedulePanel = panel;
+  }
+
+  /**
+   * Accept the daemon's model switch: what a topic's conversation can switch to, and the switch,
+   * which is `/model`'s (ConversationRegistry.modelPickerForRef / chooseModelForRef).
+   */
+  useModelPicker(picker: ModelPicker): void {
+    this.modelPicker = picker;
+  }
+
+  /** What a topic can switch its model to, or why not. */
+  async models(topic: string): Promise<ModelPickerList | { ok: false; reason: 'off'; text: string }> {
+    if (!this.modelPicker) return { ok: false, reason: 'off', text: 'This daemon offers no model switch.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'off', text: 'No such topic.' };
+    return this.modelPicker.list(this.conversation(topic));
+  }
+
+  /** Switch a topic's model, as `/model <id>` would. */
+  async chooseModel(topic: string, value: string): Promise<ModelPickerResult> {
+    if (!this.modelPicker) return { ok: false, text: 'This daemon offers no model switch.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.modelPicker.choose(this.conversation(topic), value);
   }
 
   /** Every task, for the panel. `enabled: false` when the daemon offered none (a test daemon). */
@@ -1469,6 +1496,7 @@ export class WebRoom {
       conversation: this.conversation(req.topic),
       messageId: req.messageId,
       buttonId: req.buttonId,
+      ...(req.value !== undefined ? { value: req.value } : {}),
     });
     // A tap moves a topic as typing does (a `/cd` or `/agent` menu pick), so the same as `submit`.
     this.dirCache.delete(req.topic);

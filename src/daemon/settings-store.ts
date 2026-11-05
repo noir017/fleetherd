@@ -70,16 +70,8 @@ export class SettingsStore {
 
     if (parsed.value === readSettingValue(row, this.config)) return { kind: 'unchanged', row };
 
-    // Validate a candidate config before writing anything (see the header). The clone is shallow
-    // but covers every branch applyToConfig can touch, so the live config is untouched if this
-    // fails — and `platforms` is shared by reference deliberately: nothing here writes to it.
-    const candidate: Config = {
-      ...this.config,
-      routing: { ...this.config.routing },
-      session: { ...this.config.session },
-      delegation: { ...this.config.delegation },
-      agents: this.config.agents.map((a) => ({ ...a })),
-    };
+    // Validate a candidate config before writing anything (see the header).
+    const candidate = candidateOf(this.config);
     applyToConfig(candidate, row, parsed.value);
     const check = ConfigSchema.safeParse(candidate);
     if (!check.success) {
@@ -94,7 +86,8 @@ export class SettingsStore {
 
     const path = this.diskPath(row);
     if (!path) {
-      // An agent a pod declared lives in that pod's file, which this cannot write (daemon/pods.ts).
+      // A pod's agent is written to `podModels` (settingLocation) — reaching here means its row was
+      // built without knowing it is a pod's (pods.json unreadable), so say where it lives instead.
       const pod = podOf(row.target);
       return {
         kind: 'failed',
@@ -106,7 +99,7 @@ export class SettingsStore {
     }
 
     try {
-      saveConfigPatch([{ path, value: parsed.value }]);
+      saveConfigPatch([emptied(path, parsed.value, this.config) ?? { path, value: parsed.value }]);
     } catch (e) {
       return { kind: 'failed', row, reason: e instanceof Error ? e.message : String(e) };
     }
@@ -166,15 +159,9 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
     case 'agent':
       cfg.routing.default = String(value);
       return;
-    case 'model': {
-      // The agent DEF is mutated in place, not replaced: findAgent returns the live array element,
-      // which is the very object each AgentSession captured at construction — so the next spawn of
-      // an already-running conversation reads the new model (agent-acp applyModelPreference /
-      // agent-agy's --model=) without anything having to re-resolve it.
-      const def = findAgent(cfg, row.target ?? '');
-      if (def) def.model = value === undefined ? undefined : String(value);
+    case 'model':
+      applyModel(cfg, row, value);
       return;
-    }
     case 'delegation':
       // Live: Delegation.propose reads this per `task-new`, so the very next proposal follows it —
       // including one an agent is about to make in the turn that asked for the change.
@@ -208,6 +195,58 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
       throw new Error(`no config location for setting ${String(_exhaustive)}`);
     }
   }
+}
+
+/**
+ * A copy of the config to validate a change against. Shallow, but covering every branch
+ * applyToConfig can touch, so the live config is untouched if validation fails — and `platforms`
+ * is shared by reference deliberately: nothing here writes to it.
+ */
+function candidateOf(config: Config): Config {
+  return {
+    ...config,
+    routing: { ...config.routing },
+    session: { ...config.session },
+    delegation: { ...config.delegation },
+    agents: config.agents.map((a) => ({ ...a })),
+    ...(config.podModels ? { podModels: { ...config.podModels } } : {}),
+  };
+}
+
+/**
+ * A model row's write. The agent DEF is mutated in place, not replaced: findAgent returns the live
+ * array element, which is the very object each AgentSession captured at construction — so the next
+ * spawn of an already-running conversation reads the new model (agent-acp applyModelPreference /
+ * agent-agy's --model=) without anything having to re-resolve it.
+ */
+function applyModel(cfg: Config, row: SettingRow, value: string | number | boolean | undefined): void {
+  const def = findAgent(cfg, row.target ?? '');
+  if (row.pod && row.target) {
+    // A pod's agent: the gateway's own entry, and the merged model readConfig would compute from it
+    // (config/pods.ts mergePodAgents) — cleared, that is the pod's again.
+    const next = { ...(cfg.podModels ?? {}) };
+    if (value === undefined) delete next[row.target];
+    else next[row.target] = String(value);
+    if (Object.keys(next).length > 0) cfg.podModels = next;
+    else delete cfg.podModels;
+    if (def) def.model = value === undefined ? row.pod.model : String(value);
+    return;
+  }
+  if (def) def.model = value === undefined ? undefined : String(value);
+}
+
+/**
+ * The patch that clears the last `podModels` entry: the whole map rather than its one key, so a
+ * file is not left holding `podModels: {}`. Undefined for every other write.
+ */
+function emptied(
+  path: Array<string | number>,
+  value: unknown,
+  cfg: Config
+): { path: Array<string | number>; value: undefined } | undefined {
+  if (value !== undefined || path[0] !== 'podModels' || path.length !== 2) return undefined;
+  const left = Object.keys(cfg.podModels ?? {}).filter((k) => k !== path[1]);
+  return left.length === 0 ? { path: ['podModels'], value: undefined } : undefined;
 }
 
 /** The host whose pod declared `agentId` (`<id>@<host>`, and in pods.json), or undefined. */

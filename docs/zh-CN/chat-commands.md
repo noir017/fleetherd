@@ -108,6 +108,11 @@ routing:
 替你猜一个。opencode 和 claude 都走这条路——两者都不把 `/model` 登记成命令，
 却都在 ACP 会话里暴露了模型选择器。
 
+`custom` 智能体（你自己的 ACP 程序）只要会话里声明了 `model` 这个配置项（CodeBuddy 就是），
+也会出同样的菜单；没声明的，`/model` 照原样转给它，和发给 custom 智能体的其他命令一样。
+会话里第一次 `/model` 时如果智能体还没启动，会先把它启动起来看一眼 —— 转发这条消息本来也会
+启动它，不多花什么。
+
 ### `/effort`
 
 `/effort` 在 `claude`、`codex`、`opencode` 上用法相同：单独发会弹出档位按钮，

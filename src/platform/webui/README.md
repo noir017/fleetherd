@@ -295,6 +295,32 @@ Closed, the strip is one line, shows only the quota pools the serving model spen
 narrow screen drops the token counts beside the meter (the percentage says the same). A tap opens
 it: it wraps, and the other pools appear, dimmed.
 
+**The model in the strip is a switch** (since 2026-11-05): `/model` as a control. It opens a list
+above the composer (`#model-pop`) of what the topic's agent offers, the one in use ticked and the
+agent's configured default marked, filtered as it is typed into. Decisions in it:
+
+- **It is `/model`, not a second way to set a model.** `GET api/models?t=` is
+  `ConversationRegistry.modelPickerForRef`, which does `/model`'s warm-up (refreshModels, then
+  warmModelSelector) — a cold agent is started, which is why the list says it is asking — and
+  `POST api/models` is `chooseModelForRef`, which is `applyModelChoice`: checked against the list
+  the agent offers now, written as the conversation's `modelOverride`. So a typed `/model` afterwards
+  names the same model, and config.yaml is untouched; the defaults are the settings page's.
+- **A conversation the daemon has not seen is bound as its first message would bind it** — the
+  binding, else the route's default — because a model list belongs to an agent. For the same reason
+  the switch is not offered in a new, empty topic: the agent launcher is the choice made there first,
+  and opening the switch would quietly make it.
+- **No transcript line.** The strip and the next reply's footer name the model; a line per switch
+  would be noise in exactly the conversation being worked in. The daemon's own sentence goes to
+  `#note`, and a refusal stays in the open list.
+- **Present without a status.** A topic that has a conversation but no status yet (after a restart)
+  shows the switch alone, named "Model", rather than no way to switch at all.
+- **The caret is CSS** (`.st-model::after`), so the strip's text is still the model's name.
+- **A finger target on a phone**: 44px, which makes the strip that tall there; the list spans the
+  composer, and the filter is not focused on open, for the reason the composer is not.
+
+Its own Escape and outside click close it, rather than joining the page-wide overlay handling — it
+is a menu in the composer, not a window over the page.
+
 **`access.allowFrom` identity is `<instance id>:owner`**, the same for every topic. An existing
 config that already lists other identities will silently ignore every message typed into this
 page until that entry is added — `doctor` checks for exactly this.
@@ -545,7 +571,7 @@ never a permission prompt nobody asked for.
 | `reply` | ✓ | Rendered as a quote above the body |
 | `thread` / `renameThread` | ✓ | Topics, and topics that name themselves. The second is only possible because the first is a lane |
 | `buttons` / `editButtons` | ✓ | Both, or `/model`, `/cd` and `/setting` silently degrade to plain text |
-| `settingsScreen` | ✓ | The only platform that declares it: `/setting` is drawn as grouped rows from the structured screen the daemon sends, not as the button grid. Every chat platform keeps the grid (see [Menus](#menus)) |
+| `settingsScreen` | ✓ | The only platform that declares it: `/setting` is drawn as a settings page from the structured screen the daemon sends, not as the button grid. Every chat platform keeps the grid (see [Menus](#menus)) |
 | `menuPageSize` | 24 | Core's ceiling, twice the chat platforms' 12. The page draws a menu as a grid (`menu()` in `page.ts`), so 24 is fewer rows here than 12 is on Telegram, and a page of long model ids is still one phone screen |
 | `paceByLane` | ✓ | The only platform that declares it: each topic gets its own outbound budget instead of queueing behind every other topic's streaming |
 | `slashCommands` | ✓ | *Received*, as ordinary text, exactly like Telegram — `registerCommands` only feeds the page's autocomplete |
@@ -597,23 +623,55 @@ are never fewer than two: a label longer than half the row wraps inside its cell
 settings rows squeeze the label and the value into one 40-character string; a page does not have
 to. The daemon declares `settingsScreen` for this platform, builds the same menu as a
 `SettingsScreen` (`WebMessage.settings`), and the page draws it in a window of its own
-(`#settings-page`) instead of in the transcript: a section per group, a row per setting with the
-label and its whole current value on separate lines, and a value list whose current option is lit
-and ticked. Nothing on the page parses a label for it — the groups, values, current marks and
-button ids all arrive as data, which is what makes a long model id readable instead of
-`(harness …`.
+(`#settings-page`) instead of in the transcript. Nothing on the page parses a label for it — the
+groups, values, current marks, button ids and the control each row is changed with all arrive as
+data, which is what makes a long model id readable instead of `(harness …`.
+
+**The list is a settings page, not a grid of rows** (since 2026-11-05). Reported on 2026-11-05 as "不明所以，
+重点奇怪": ten rows all titled "Default model" in a two-column zig-zag, sub-agent confirmation filed
+among them, the topic named in the bar as though these were its settings, and every value the same
+blue text and ›. Now:
+
+- **One column of sections**, each a card of rows: the group names come from `core/settings.ts`
+  `settingGroup`, and a group may carry one note (`SettingsScreenGroup.note`) — the model group's
+  says "next session" once instead of on every row. A model row is named by its agent, with what the
+  agent is (`targetKind`) and a *this topic* badge on the one answering the topic the page opened in.
+- **A control per kind** (`SettingsScreenRow.control`, decided by `settingControl` in core, so a new
+  setting cannot compile without one): `switch` for on/off, `choice` for a short closed list — the
+  page draws up to five short values as a segmented control and anything longer as a `<select>` —
+  and `list` for a row that opens its own value screen (a model). `link` is the scheduled tasks.
+- **A switch and a choice write from the row.** Their ids are `sts:<reqId>:<n>`, an index into the
+  `choices` the daemon froze when it drew the list (`PendingSettingsMenu.choices`), the same rule
+  `stv:` follows. A switch carries one id, the one that writes the *other* side, so a retried request
+  sets a value rather than flipping one back. Only a screen carries `sts:`; a chat app's list is
+  unchanged, and `settings-command.test.ts` pins that.
+- **What a tap did is a banner** (`notice`, from `settingNotice`: the ack's words and a tone). The
+  page shows the new state of a switch or segment at once and redraws from the daemon's answer; a
+  request that fails or is refused (409: the message is gone) redraws from what the page last had,
+  which puts the control back, with a line saying why. The request has the settings wait as its
+  limit, so a link that goes quiet cannot leave a switch half-moved.
+- **The bar says where these live** — `Saved to config.yaml · every topic` — and the topic it was
+  opened from is only its tooltip. The page is still bound to that topic, but for a mechanical
+  reason (the buttons carry its message id), not because the settings are its own.
+- **Every row**, not the chat menu's first 20: that cap is Discord's 25 components per message.
+
+Focus is put back on the control that was used when the answer redraws the page (`data-fk`), and a
+move between the list and a value screen starts at the top. On a phone each row's control goes
+under its text at full width — except a switch, which stays on the right — and a model's value goes
+under its agent; touch targets are 44px, and a select is 16px so Safari does not zoom.
 
 The page opens from **All settings** in the ⚙ menu, or when the daemon answers a typed
 `/setting`. The menu's request is sent with `quiet: true` (`SendRequestSchema`, `WebRoom.record`),
 so the daemon gets the command but the transcript gets no row and the topic is not named
 `/setting`; a typed command is the operator's own message and stays. The page is bound to the
-topic it opened in and closes when that changes — the agent and model rows are that
-conversation's — and its bar names that topic. A settings message is never painted: `upsert`,
+topic it opened in and closes when that changes. A settings message is never painted: `upsert`,
 `reconcile`, `adopt` and `paint` all skip one. A retired screen is marked `wasSettings` by
 `room.revise` (only when it keeps no buttons — a message handed to the scheduled-task list is a
 menu again and must show), so a reload cannot turn its farewell line into a chat message. Closing
 the page records the message id, so a late edit does not reopen it; a new `/setting` is a new
-message and does. `page.dom.test.ts` pins the list, the current mark, a row tap, Back and paging.
+message and does. `page.dom.test.ts` pins the groups and controls drawn from the screen, each
+control's request, the banners, the failed-request rollback, the current mark, Back, paging and the
+narrow-screen rules.
 
 **For every other menu, the page reads two conventions off the labels, because a label is all the
 daemon sends.** If you change the labels in `core/`, this is what moves:

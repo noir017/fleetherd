@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Switch a topic's model from the web UI's status line.** The model named above the composer is a
+  button: it lists what the topic's agent offers — the one in use ticked, the agent's default
+  marked, a filter for a long list (opencode offers ~90) — and a tap switches the model for this
+  topic, exactly as `/model <id>` does: a runtime choice, config.yaml untouched, and a typed `/model`
+  afterwards says the same. A cold agent is started to ask, and the list says so meanwhile; a harness
+  with no model choice says that instead. A 44px target on a phone. [→](docs/web-ui.md)
+
+- **The default model of an agent a host's pod declares can be set from the gateway.** Since pods
+  declare their own agents (`~/.talkcode/pod.yaml`, 2026-11-03), `/setting model.<id>@<host>` and its
+  row on the web UI's settings page were refused — the agent is not in config.yaml — so the page
+  listed rows that could not be saved. The value now goes to a new `podModels` map in config.yaml,
+  which outranks the `model:` the pod gives and is outranked by a conversation's `/model`; clearing
+  it goes back to the pod's. The settings page says whose value an agent has (*pod.yaml* or *set
+  here*). It is a map of model names and nothing else: everything else about a pod's agent stays the
+  pod's, and pod.yaml cannot set it. `/reload` applies a hand edit like any other model change.
+  [→](docs/remote-hosts.md)
+
 ### Changed
 
 - **The web UI's two side panels are one component.** The topic list and the scheduled-task panel
@@ -22,6 +41,20 @@ All notable changes to this project are documented here. The format is based on
   topics, and shows the idle count on its own face so the number is still visible at a glance. The
   two menus open the same way, one at a time, and close on an outside click or Escape.
 
+- **The web UI's settings page is a settings page.** It was the chat menu redrawn: ten rows all
+  titled "Default model" in a two-column zig-zag, sub-agent confirmation filed among them, the topic
+  named in the bar as though these were its settings, and every value the same blue text with a ›.
+  Now it is one column of sections — Agents, Default model, Sub-agents, Conversations, Replies,
+  Voice — and each setting is changed in place with the control that fits it: a switch for on/off, a
+  segmented control or a dropdown for a short list (one tap, where the menu needed two and a Back),
+  and a row per agent for the default models, named by the agent, showing its whole model id or
+  *harness default* in grey, with the agent answering the current topic marked. The bar says these
+  are saved to config.yaml for every topic; "next session" is said once for the model rows rather
+  than on each, and *after restart* only where it applies. What each change did — saved, already set,
+  refused and why — is a banner, and a request that never reached the gateway puts the control back
+  and says so. Every row is listed, not the chat menu's first 20. Chat platforms' `/setting` menus
+  are unchanged. [→](docs/settings.md)
+
 ### Fixed
 
 - **`talkcode` works in an agent's login shell on a remote host.** codex runs the shell commands it
@@ -36,6 +69,25 @@ All notable changes to this project are documented here. The format is based on
   are answered on the host, and `start`, `setup` and `doctor` are refused there, before anything
   leaves the machine. Nothing changes where there is no host: without `TALKCODE_REMOTE_SOCK` the
   CLI is the CLI it was. [→](docs/remote-hosts.md)
+
+- **`/model` on a custom harness that offers a model list opens the menu.** Every command to a
+  `custom` agent was passed through, so on CodeBuddy `/model` became a prompt it answered with
+  nothing, and the chat said "Ran /model, but there was no output to display". CodeBuddy declares a
+  `model` option in its ACP session (22 models in 2.179.3), which is all the gateway's menu needs, so
+  a custom agent that declares one now gets the menu, switching with `session/set_config_option`; the
+  status-line switch and the settings page list its models too. One that declares none has `/model`
+  passed through exactly as before. A first `/model` before the agent has started starts it to find
+  out — the start forwarding it would have caused — and the answer is remembered.
+  [→](docs/chat-commands.md)
+
+- **The settings page lists any agent's models, not only the one answering here.** A model list
+  comes with a running session, so only the agent answering the topic `/setting` was opened in, and
+  only after it had replied, had one; every other model row was a page saying "type a name". The
+  gateway now asks: from a session of that agent running anywhere, from what it learned earlier, or
+  by starting one just to read the list and stopping it again (once per agent, while the page says
+  *Asking … for its models*). A harness that offers no model choice, and an agent that does not
+  start, are each named, and on the web UI a name can be typed into the screen itself, which also
+  filters a long list as it is typed into. [→](docs/settings.md)
 
 ## [2.34.0] - 2026-11-05
 

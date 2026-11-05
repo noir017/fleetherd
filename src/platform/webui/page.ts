@@ -465,24 +465,18 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* /setting as a page of its own, opened from the Menu or by typing the command, rather
    than a screen inserted into the transcript. A window over the conversation like the reader and
    the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
-   rows, the values, the validation and the write all stay on the daemon's side. The bar carries
-   the one thing the old in-transcript screen could not say — which topic the per-topic rows
-   (agent, model) are about. */
+   rows, the values, the validation and the write all stay on the daemon's side. The bar says where
+   these settings live — config.yaml, so every topic — because the old one named the topic it was
+   opened in, which read as though they were that topic's (2026-11-05). */
 #settings-page{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
 #settings-page[hidden]{display:none}
-#settings-box{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#settings-box{display:flex;flex-direction:column;width:min(720px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
 #settings-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh)}
 .set-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
 #settings-title{font-size:13px;font-weight:600}
 #settings-topic{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #settings-close{font-size:18px;padding:6px 10px}
-#settings-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
-/* The screen's own top margin was for a bubble in the transcript; as the page's whole content it
-   only pushes the first group down. */
-#settings-body .set{margin-top:0}
-#settings-body .set-text{margin-bottom:10px;font-size:13px;color:var(--dim)}
-#settings-body .set-text p{margin:0 0 .5em}
-#settings-body .set-text p:last-child{margin-bottom:0}
+#settings-body{flex:1;min-height:0;overflow-y:auto;padding:14px 18px calc(18px + env(safe-area-inset-bottom,0px))}
 #settings-body .set-loading{padding:8px 2px;font-size:12.5px;color:var(--dim)}
 .skills-empty{padding:10px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
 .skill-item{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
@@ -700,51 +694,111 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* A finger, not a pointer: the cells keep roughly the height they had as loose buttons, and the
    gap between two choices is what a near miss lands in. */
 @media(hover:none){.btns{--gap:6px}.btns button{padding:8px 10px}.btns .nav button{padding:7px 14px}}
-/* The settings screen, drawn in the settings page (see settingsScreen()). A chat app can only
-   offer buttons, so /setting arrives there as a grid of labels with the value squeezed into the
-   same string and cut at 40 characters. The page has the width, so it draws the
-   screen instead: a section per group, a row per setting with the label on top and the whole value
-   underneath it, wrapping rather than ellipsised, and the whole row as the target. Rows rather
-   than cells because a setting is read, not scanned as a keyboard; a wide screen may put two or
-   three rows side by side inside a section, which is the one place the grid survives. Every
-   control is at least 44px tall: this page is used on a phone more than on a desktop. */
-.set{margin-top:10px;border:1px solid var(--line);border-radius:8px;background:#181818;overflow:hidden}
-.set-group{padding:10px 12px 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
-.set-rows{display:grid;grid-template-columns:1fr;background:#181818}
-@media(min-width:560px){.set-rows{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}}
-/* Separated by each row's own edge rather than by a 1px gap over a line-coloured container: a
-   group with an odd number of rows leaves a cell empty in the last column, and a gap-coloured
-   grid paints that cell as a block of --line down the side of the section (seen in Chromium at
-   760px). The border keeps the separation and leaves the empty cell the section's own colour. */
-.set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"main chev" "value chev";gap:1px 10px;align-items:center;width:100%;min-height:44px;padding:9px 12px;background:#181818;border:0;border-bottom:1px solid var(--line);border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
-.set-row:hover{background:#202020}
-.set-row:focus-visible,.set-opt:focus-visible,.set-nav button:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
-.set-main{grid-area:main;min-width:0;display:flex;flex-direction:column;gap:1px}
-.set-label{font-size:13.5px;line-height:1.35}
-.set-meta{font-size:11.5px;line-height:1.35;color:var(--dim)}
-.set-value{grid-area:value;min-width:0;font-size:13px;line-height:1.4;color:#9fb6c9;overflow-wrap:anywhere;white-space:normal}
-.set-chev{grid-area:chev;color:#555;font-size:17px;line-height:1}
-.set-opts{display:flex;flex-direction:column;gap:1px;background:var(--line)}
-.set-opt{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:44px;padding:10px 12px;background:#181818;border:0;border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
-.set-opt:hover{background:#202020}
+/* The settings screen, drawn in the settings page (see settingsScreen()). A chat app can only offer
+   buttons, so /setting arrives there as a grid of labels with the value squeezed into the same
+   string. The page draws the same data the way a settings page is read: one column of sections,
+   each a card of rows; a row is its name and one line on what it decides on the left, and the
+   control on the right — a switch for on/off, a segmented control or a select for a short list,
+   a value and a chevron for one with a screen of its own. The control kind comes from the daemon
+   (SettingsScreenControl), so on/off, a short list and a model id no longer all look like the same
+   blue text with a ›. One column at every width: the two-column grid this replaces read in a zig-
+   zag, and nobody could tell which row came next (2026-11-05). Every control is at least 44px
+   tall on a touch screen. */
+.set-about{margin:0 0 14px;font-size:12.5px;line-height:1.5;color:var(--dim)}
+.set-about code,.set-notice code,.set-gnote code,.set-desc code,.set-hintbox code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em;background:var(--field);padding:0 4px;border-radius:3px}
+/* Sticky, because the control that caused it may be a screen further down: an answer at the top
+   of a page scrolled past it was an answer nobody saw (Chromium, 2026-11-05). A good one fades
+   after a few seconds — the control already shows the new state — and an error stays. */
+.set-notice{position:sticky;top:-14px;z-index:1;margin:0 0 14px;padding:9px 12px;border-radius:6px;border:1px solid var(--line);border-left-width:3px;font-size:12.5px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 4px 14px rgba(0,0,0,.45);transition:opacity .4s}
+.set-notice.faded{opacity:0;pointer-events:none}
+.set-notice.ok{border-color:rgba(74,222,128,.35);border-left-color:#4ade80;background:#15201a}
+.set-notice.info{border-left-color:#7d7d7d;background:#1b1b1b}
+.set-notice.error{border-color:rgba(248,113,113,.35);border-left-color:#f87171;background:#261616;color:#fecaca}
+.set-sec{margin:0 0 18px}
+.set-sec:last-child{margin-bottom:0}
+.set-group{margin:0 2px 6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#9a9a9a}
+.set-gnote{margin:-2px 2px 8px;font-size:12px;line-height:1.5;color:var(--dim)}
+.set-card{border:1px solid var(--line);border-radius:8px;background:#181818;overflow:hidden}
+.set-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px;min-height:48px;padding:9px 14px;border-bottom:1px solid var(--line)}
+.set-item:last-child{border-bottom:0}
+.set-item.sw{cursor:pointer}
+.set-tx{min-width:0;display:flex;flex-direction:column;gap:2px}
+.set-label{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13.5px;line-height:1.35;color:var(--fg)}
+.set-hint{font-size:12px;line-height:1.45;color:var(--dim)}
+.set-kind{font-size:11.5px;color:var(--dim)}
+.set-badge{display:inline-block;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:600;line-height:18px;letter-spacing:.02em}
+.set-badge.restart{color:#fbbf24;background:rgba(251,191,36,.12)}
+.set-badge.here{color:#7dd3fc;background:rgba(56,189,248,.12)}
+.set-ctl{justify-self:end;display:flex;align-items:center;min-width:0}
+/* The switch: a 36×20 track in a 44px-tall hit area. aria-checked is the state, so the page's
+   optimistic flip and the daemon's answer are drawn by the same rule. */
+.set-switch{position:relative;flex:none;width:44px;height:32px;padding:0;margin:-6px -4px;background:none;border:0;cursor:pointer}
+.set-switch::before{content:"";position:absolute;left:4px;top:6px;width:36px;height:20px;border-radius:10px;background:#3a3a3a;transition:background .15s}
+.set-switch::after{content:"";position:absolute;left:7px;top:9px;width:14px;height:14px;border-radius:50%;background:#bdbdbd;transition:transform .15s,background .15s}
+.set-switch[aria-checked="true"]::before{background:#3a6ea5}
+.set-switch[aria-checked="true"]::after{transform:translateX(16px);background:#fff}
+.set-switch:focus-visible{outline:2px solid var(--own-edge);outline-offset:0;border-radius:12px}
+.set-seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;background:var(--field);padding:2px;gap:2px}
+.set-seg button{min-width:44px;min-height:30px;padding:3px 10px;border:0;border-radius:4px;background:none;color:var(--dim);font:inherit;font-size:12.5px;cursor:pointer;font-variant-numeric:tabular-nums}
+.set-seg button:hover{color:var(--fg)}
+.set-seg button[aria-checked="true"]{background:#2b3a4c;color:#fff;font-weight:600}
+.set-select{max-width:260px;min-height:32px;padding:4px 28px 4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9a9a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--fg);font:inherit;font-size:13px;text-overflow:ellipsis;-webkit-appearance:none;appearance:none;cursor:pointer}
+.set-select:focus-visible,.set-seg button:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
+/* A row with a screen of its own (a model) or a way to another menu: the whole row is the target. */
+.set-open{width:100%;border:0;border-radius:0;background:none;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:background .12s}
+.set-open:hover{background:#1f1f1f}
+.set-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.set-open{grid-template-columns:minmax(0,1fr) minmax(0,max-content) auto;gap:4px 12px}
+.set-vv{display:flex;align-items:baseline;justify-content:flex-end;gap:6px;min-width:0;max-width:340px}
+.set-vnote{flex:none;font-size:10.5px;color:var(--dim);border:1px solid #333;border-radius:999px;padding:0 6px;line-height:16px}
+.set-v{min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#c9d6e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-v.unset{font-family:inherit;font-style:italic;color:var(--dim)}
+.set-chev{flex:none;color:#666;font-size:17px;line-height:1}
+/* The value level: which setting, what it holds, then its values. */
+.set-back{display:inline-flex;align-items:center;gap:4px;margin:0 0 12px -6px;min-height:32px;padding:4px 8px;border:0;background:none;color:#8fb3d6;font:inherit;font-size:13px;cursor:pointer}
+.set-back:hover{color:#b9d3ec}
+.set-head{margin:0 0 14px}
+.set-head h3{margin:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;font-size:15px;font-weight:600}
+.set-head .set-tgt{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:500;color:#c9d6e2}
+.set-now{margin:6px 0 0;font-size:12.5px;color:var(--dim)}
+.set-now .set-v{display:inline;white-space:normal;overflow-wrap:anywhere}
+.set-src{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:#a8a8a8}
+.set-desc{margin:8px 0 0;font-size:12.5px;line-height:1.55;color:#a8a8a8}
+.set-typed{display:flex;gap:6px;margin:0 0 10px}
+.set-type{flex:1;min-width:0;min-height:36px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--fg);font:inherit;font-size:13px}
+.set-type:focus{outline:none;border-color:var(--own-edge)}
+.set-use{flex:none;min-height:36px;padding:0 14px;border-radius:6px}
+.set-nomatch{margin:8px 2px 0;font-size:12px;color:var(--dim)}
+.set-hintbox.loading{display:flex;align-items:center;gap:8px;border-style:solid}
+.set-spin{flex:none;width:12px;height:12px;border:2px solid #444;border-top-color:#8fb3d6;border-radius:50%;animation:set-spin .8s linear infinite}
+@keyframes set-spin{to{transform:rotate(360deg)}}
+.set-when{margin:4px 0 0;font-size:12px;color:var(--dim)}
+.set-hintbox{margin:0 0 10px;padding:9px 12px;border:1px dashed #333;border-radius:6px;font-size:12.5px;line-height:1.5;color:#a8a8a8}
+.set-opt{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:44px;padding:10px 14px;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.set-opt:last-child{border-bottom:0}
+.set-opt[hidden]{display:none}
+.set-opt:hover{background:#1f1f1f}
 .set-opt.on{background:#1b2430}
 .set-check{flex:none;width:16px;color:#38bdf8;font-size:14px;line-height:1.5;text-align:center}
 .set-opt-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .set-opt-label{font-size:13.5px;line-height:1.35;overflow-wrap:anywhere}
 .set-opt-detail{font-size:12px;line-height:1.4;color:var(--dim)}
 .set-opt.on .set-opt-label{color:#fff;font-weight:600}
-.set-nav{display:flex;align-items:center;gap:6px;padding:8px;border-top:1px solid var(--line);background:#181818}
-.set-nav button{min-height:44px;padding:6px 12px;background:var(--field);color:var(--dim);border:1px solid var(--line);border-radius:5px;font:inherit;font-size:12.5px;cursor:pointer}
+.set-opt:focus-visible,.set-nav button:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.set-nav{display:flex;align-items:center;gap:6px;margin-top:10px}
+.set-nav button{min-height:44px;padding:6px 14px;background:var(--field);color:var(--dim);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:12.5px;cursor:pointer}
 .set-nav button:hover{color:var(--fg);border-color:#3a3a3a}
 .set-page{flex:1;min-width:0;text-align:center;font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums}
-/* Tapped and waiting on the daemon, lit like a menu cell: the row just pressed is the brightest
-   thing in the screen rather than the faintest. */
-.set-row.busy,.set-opt.busy{opacity:1;background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
+/* Tapped and waiting on the daemon. A switch has already moved; the rest are lit, so the control
+   just pressed is the brightest thing on the screen rather than the faintest. */
+.set-open.busy,.set-opt.busy{opacity:1;background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
+.set-seg button.busy{opacity:1;background:var(--own);color:#fff}
+.set-switch.busy,.set-select.busy{opacity:.7}
 button{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
 button:hover{border-color:#3a3a3a}
 button:disabled{opacity:.5;cursor:default}
 #typing{color:var(--dim);font-size:13px;padding:0 16px 6px;max-width:860px;width:100%;margin:0 auto}
-#bar{border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
+#bar{position:relative;border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
 #hints{margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px}
 #hints button{font-size:12px}
 #hints .arg-hint{font-size:12px;color:var(--dim)}
@@ -819,6 +873,40 @@ button:disabled{opacity:.5;cursor:default}
    lead it with a stray dot (seen in Chromium at 390px). Spacing does the separating instead. */
 #status.open .st+.st::before{content:none}
 .st-who{color:#a8a8a8}
+/* The model in the status line is a switch: /model without typing it (openModelPop). Drawn as the
+   text it was with a caret and a background on hover, so the line still reads as a status line;
+   the caret is what says it opens. A pseudo-element, so the line's text is still the model's. */
+.st-model{display:inline-flex;align-items:center;gap:3px;min-width:0;max-width:44ch;padding:0 4px;margin:0 -4px;border:0;border-radius:4px;background:none;color:#cfd8e2;font:inherit;cursor:pointer}
+.st-model:hover,.st-model[aria-expanded="true"]{background:var(--field);color:#fff}
+.st-model:focus-visible{outline:2px solid var(--own-edge);outline-offset:0}
+.st-model .st-mtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-model::after{content:'\\25be';flex:none;font-size:9px;opacity:.8}
+/* The list it opens: above the composer, inside #bar so it moves with it, and closed by Escape, a
+   click outside, a pick, or a topic switch. A filter field first — opencode offers ~90 models. */
+#model-pop{position:absolute;left:16px;bottom:calc(100% - 6px);z-index:15;display:flex;flex-direction:column;width:min(440px,calc(100% - 32px));max-height:min(60vh,480px);background:#181818;border:1px solid #333;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.55);overflow:hidden}
+.mp-head{display:flex;align-items:center;gap:8px;padding:8px 6px 6px 12px;border-bottom:1px solid var(--line)}
+.mp-title{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.mp-title b{font-size:13px;font-weight:600}
+#mp-agent{font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mp-close{font-size:17px;padding:4px 10px}
+#mp-filter{margin:8px 10px 4px;min-height:32px;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--fg);font:inherit;font-size:13px}
+#mp-filter:focus{outline:none;border-color:var(--own-edge)}
+#mp-list{flex:1;min-height:0;overflow-y:auto;padding:4px 0}
+.mp-opt{display:flex;align-items:center;gap:8px;width:100%;min-height:36px;padding:6px 12px;border:0;border-radius:0;background:none;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.mp-opt:hover,.mp-opt:focus-visible{background:#222;outline:none}
+.mp-opt[hidden]{display:none}
+.mp-opt.on{background:#1b2430}
+.mp-check{flex:none;width:14px;color:#38bdf8;text-align:center}
+.mp-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.mp-v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;overflow-wrap:anywhere}
+.mp-n{font-size:11.5px;color:var(--dim)}
+.mp-tag{flex:none;font-size:10.5px;color:var(--dim);border:1px solid #333;border-radius:999px;padding:0 6px;line-height:16px}
+.mp-opt.busy{background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
+.mp-msg{padding:12px;font-size:12.5px;line-height:1.5;color:#a8a8a8;white-space:pre-line}
+.mp-msg.err{color:#fecaca}
+.mp-msg code,.mp-foot code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em;background:var(--field);padding:0 4px;border-radius:3px}
+.mp-wait{display:flex;align-items:center;gap:8px}
+.mp-foot{margin:0;padding:7px 12px 9px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim)}
 .st-meter{display:inline-block;width:32px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
 .st-meter i{display:block;height:100%;background:var(--dim)}
 .st.warn{color:#fbbf24}
@@ -906,6 +994,27 @@ button:disabled{opacity:.5;cursor:default}
   #settings-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
   #settings-bar{padding:0 4px 0 12px;min-height:49px}
   #settings-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  #settings-body{padding:12px 12px calc(16px + env(safe-area-inset-bottom,0px))}
+  /* A row's control goes under its text, full width, where it has room — except a switch, which is
+     narrow and is where a thumb expects it. A model's value goes under its agent for the same
+     reason: a 50-character model id beside an agent id is two truncated halves at 390px. */
+  .set-item{grid-template-columns:minmax(0,1fr);gap:8px;padding:12px}
+  .set-item.sw{grid-template-columns:minmax(0,1fr) auto}
+  .set-item>.set-ctl{justify-self:stretch}
+  .set-item.sw>.set-ctl{justify-self:end}
+  .set-seg{display:flex;width:100%}
+  .set-seg button{flex:1;min-height:40px;padding:0 4px}
+  .set-select{max-width:none;width:100%;min-height:44px;font-size:16px}
+  .set-open{grid-template-columns:minmax(0,1fr) auto;gap:3px 12px}
+  .set-open>.set-tx{grid-column:1;grid-row:1}
+  .set-open>.set-vv{grid-column:1;grid-row:2;max-width:none;justify-content:flex-start}
+  .set-open>.set-chev{grid-column:2;grid-row:1/span 2}
+  .set-type{min-height:44px;font-size:16px}
+  .set-use{min-height:44px}
+  .set-switch{width:52px;height:44px;margin:-12px -6px}
+  .set-switch::before{left:8px;top:12px}
+  .set-switch::after{left:11px;top:15px}
+  .set-back{min-height:44px}
   /* A hover-revealed × does not exist on a finger, and the row is the only way to delete a
      scheduled run now that the switcher no longer lists it. */
   .sess-del{opacity:1;min-width:44px;height:44px}
@@ -946,6 +1055,13 @@ button:disabled{opacity:.5;cursor:default}
      meter says the same thing in four characters, and a tap brings the counts back. Without this
      the line clipped before the cache and quota — the parts that change. */
   #status:not(.open) .st-x{display:none}
+  /* The model switch is a finger target here: 44px tall, which makes the status line that tall —
+     the price of a control that can be hit first time. The list is the composer's width. */
+  .st-model{min-height:44px;padding:0 8px;margin:-8px -8px -8px -4px}
+  #model-pop{left:8px;right:8px;width:auto;max-height:min(62dvh,520px)}
+  #mp-filter{min-height:44px;font-size:16px}
+  #mp-close{min-width:44px;min-height:44px}
+  .mp-opt{min-height:48px}
   /* The same 44px for taking an attachment back off. A miss lands on the thumbnail, which only
      opens it — but a 15px glyph with no padding is a target a finger finds on the third try. */
   .chip-x{min-width:44px;min-height:44px}
@@ -979,7 +1095,8 @@ const SCRIPT = `
       skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
       settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
-      killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status');
+      killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'),
+      modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent');
   var data={}, els={}, files=[], commands=[], stream=null, done=false;
   // Last markup written per message, so a sync that re-sends an unchanged message touches no DOM.
   var sig={};
@@ -1044,7 +1161,10 @@ const SCRIPT = `
   // a later request has a later token and still opens. A token is also tagged with the topic it
   // was asked in: an answer arriving after a topic switch belongs to that topic's queue, not the
   // one on screen.
-  var settingsMsg=null, settingsTopic=null, settingsClosed={};
+  // settingsNote: the page's own line when a control's request failed (cleared by the next screen);
+  // settingsLevel: which level is drawn, so a move between them starts at the top.
+  var settingsMsg=null, settingsTopic=null, settingsClosed={}, settingsNote=null, settingsLevel='', settingsFade=0, settingsQuery='';
+  var SETTINGS_FADE_MS=5000;
   var settingsReq=0, settingsPending=[], settingsClosedUpTo=0, settingsTimer=0;
   // How long the page waits for the screen before saying the daemon did not answer. The send
   // itself gives up after fifteen seconds on one attempt, so this is the same patience.
@@ -2120,68 +2240,155 @@ const SCRIPT = `
   /**
    * A /setting screen as markup, for the settings page rather than for the transcript.
    *
-   * The daemon sends the screen as data (WebMessage.settings): labels, values, groups, and the
-   * button id each row posts. Nothing here parses a label — the grid did, because a label was all
-   * it had, and a value cut at 40 characters is what that produced on a phone. The two levels
-   * share the row shape: a list row carries a label, a value and a chevron; a value row carries a
-   * tick, the value and what it means. The current value is lit and ticked, and the nav row keeps
-   * paging and Back where a thumb can reach them.
+   * The daemon sends the screen as data (WebMessage.settings): groups, rows, values, what control
+   * each row is changed with, and the button id every control posts. Nothing here parses a label
+   * or decides a value — the grid did, because a label was all it had. What IS decided here is
+   * presentation: a choice of up to five short values is drawn as a segmented control (one tap,
+   * every option visible), a longer one as a select.
+   *
+   * Every interactive element carries data-fk, a key that survives a redraw (the row's index and
+   * the part of it), so focus can be put back after the daemon's answer replaces the markup.
    */
   function settingsScreen(m){
-    var s = m.settings, msg = text(m.id), h = '';
+    var s = m.settings;
     if(!s) return '';
-    if(s.level === 'values'){
-      var opts = s.options || [];
-      h += '<div class="set-opts">';
-      for(var i=0;i<opts.length;i++) h += settingsOption(opts[i], msg);
-      h += '</div>';
-      if(s.nav) h += settingsNav(s.nav, msg);
-      return '<div class="set">'+h+'</div>';
-    }
+    return s.level === 'values' ? settingsValues(s) : settingsList(s);
+  }
+
+  // Escaped text with code spans kept: what the daemon writes in its sentences. Escaping comes
+  // first, so the only markup that can come out is the <code> put in here.
+  function inl(s){
+    return text(s == null ? '' : s).replace(/\\x60([^\\x60]+)\\x60/g, '<code>$1</code>');
+  }
+
+  function settingsNotice(n){
+    if(!n) return '';
+    var tone = n.tone === 'ok' || n.tone === 'error' ? n.tone : 'info';
+    return '<div class="set-notice '+tone+'" role="'+(tone === 'error' ? 'alert' : 'status')+'">'+inl(n.text)+'</div>';
+  }
+
+  function settingsList(s){
+    var h = '';
+    if(s.about) h += '<p class="set-about">'+inl(s.about)+'</p>';
+    if(settingsNote) h += settingsNotice({ tone: 'error', text: settingsNote });
+    h += settingsNotice(s.notice);
+    var notes = {}, groups = s.groups || [];
+    for(var g=0;g<groups.length;g++) notes[groups[g].name] = groups[g].note;
     var rows = s.rows || [], group = null, open = false;
-    for(var j=0;j<rows.length;j++){
-      var r = rows[j], g = String(r.group == null ? '' : r.group);
-      if(g !== group){
-        if(open) h += '</div>';
-        group = g;
-        if(g) h += '<div class="set-group">'+text(g)+'</div>';
-        h += '<div class="set-rows">';
+    for(var i=0;i<rows.length;i++){
+      var r = rows[i], name = String(r.group == null ? '' : r.group);
+      if(name !== group){
+        if(open) h += '</div></section>';
+        group = name;
+        h += '<section class="set-sec">'+(name ? '<h3 class="set-group">'+text(name)+'</h3>' : '')
+          + (notes[name] ? '<p class="set-gnote">'+inl(notes[name])+'</p>' : '')
+          + '<div class="set-card">';
         open = true;
       }
-      h += settingsRow(r, msg);
+      h += settingsItem(r, i);
     }
-    if(open) h += '</div>';
-    return '<div class="set">'+h+'</div>';
+    if(open) h += '</div></section>';
+    return h;
   }
 
-  function settingsRow(r, msg){
-    var meta = [];
-    if(r.target) meta.push(text(r.target));
-    if(r.effectLabel) meta.push(text(r.effectLabel));
-    return '<button type="button" class="set-row" data-msg="'+msg+'" data-btn="'+text(r.buttonId)+'">'
-      + '<span class="set-main"><span class="set-label">'+text(r.label)+'</span>'
-      + (meta.length ? '<span class="set-meta">'+meta.join(' · ')+'</span>' : '')
-      + '</span>'
-      + (r.value != null ? '<span class="set-value">'+text(r.value)+'</span>' : '')
-      + '<span class="set-chev" aria-hidden="true">›</span></button>';
+  /** A row's name, its badges and its one line: the left half of every kind of row. */
+  function settingsText(r){
+    var badges = '';
+    if(r.here) badges += '<span class="set-badge here" title="Answers the topic \\u201c'+text(settingsTopicName(settingsTopic))+'\\u201d">this topic</span>';
+    if(r.effectLabel) badges += '<span class="set-badge restart"'+(r.effectDetail ? ' title="'+text(r.effectDetail)+'"' : '')+'>'+text(r.effectLabel)+'</span>';
+    return '<div class="set-tx"><div class="set-label"><span>'+text(r.label)+'</span>'
+      + (r.targetKind ? '<span class="set-kind">'+text(r.targetKind)+'</span>' : '') + badges + '</div>'
+      + (r.hint ? '<div class="set-hint">'+inl(r.hint)+'</div>' : '') + '</div>';
   }
 
-  function settingsOption(o, msg){
-    return '<button type="button" class="set-opt'+(o.current ? ' on' : '')+'" data-msg="'+msg+'" data-btn="'+text(o.buttonId)+'"'
-      + (o.current ? ' aria-current="true"' : '')+'>'
-      + '<span class="set-check" aria-hidden="true">'+(o.current ? '✓' : '')+'</span>'
+  function settingsItem(r, i){
+    var c = r.control || { kind: 'list' };
+    if(c.kind === 'switch'){
+      return '<div class="set-item sw">' + settingsText(r)
+        + '<div class="set-ctl"><button type="button" class="set-switch" role="switch" aria-checked="'+(c.on ? 'true' : 'false')+'"'
+        + ' aria-label="'+text(r.label)+'" data-fk="r'+i+'" data-btn="'+text(c.set)+'"></button></div></div>';
+    }
+    if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r, c.options || [], i)+'</div></div>';
+    // A row with a screen of its own, or a way to another menu: the whole row is the button.
+    var value = '';
+    if(c.kind !== 'link' && r.value != null){
+      value = '<span class="set-vv"><span class="set-v'+(r.unset ? ' unset' : '')+'" title="'+text(r.value)+'">'+text(r.value)+'</span>'
+        + (r.valueNote ? '<span class="set-vnote">'+text(r.valueNote)+'</span>' : '') + '</span>';
+    }
+    return '<button type="button" class="set-item set-open" data-fk="r'+i+'" data-btn="'+text(r.buttonId)+'">'
+      + settingsText(r) + value + '<span class="set-chev" aria-hidden="true">\\u203a</span></button>';
+  }
+
+  function settingsChoice(r, opts, i){
+    var short = opts.length > 0 && opts.length <= 5;
+    for(var k=0;k<opts.length;k++) if(String(opts[k].label).length > 6) short = false;
+    var h = '', any = false;
+    if(short){
+      for(var j=0;j<opts.length;j++){
+        var o = opts[j];
+        h += '<button type="button" role="radio" aria-checked="'+(o.current ? 'true' : 'false')+'" data-fk="r'+i+'o'+j+'" data-btn="'+text(o.buttonId)+'"'
+          + (o.detail ? ' title="'+text(o.detail)+'"' : '')+'>'+text(o.label)+'</button>';
+      }
+      return '<div class="set-seg" role="radiogroup" aria-label="'+text(r.label)+'">'+h+'</div>';
+    }
+    for(var n=0;n<opts.length;n++){
+      var p = opts[n];
+      if(p.current) any = true;
+      // The value alone: a closed select shows its option's whole text, and a value with its
+      // explanation was cut mid-sentence at 390px. The row's hint says what the values mean.
+      h += '<option value="'+text(p.buttonId)+'"'+(p.current ? ' selected' : '')+(p.detail ? ' title="'+text(p.detail)+'"' : '')+'>'+text(p.label)+'</option>';
+    }
+    // A value none of the options names (a window typed by hand, 90m) is still shown as what it is.
+    if(!any) h = '<option value="" selected disabled>'+text(r.value == null ? '' : r.value)+'</option>' + h;
+    return '<select class="set-select" data-fk="r'+i+'" aria-label="'+text(r.label)+'">'+h+'</select>';
+  }
+
+  function settingsValues(s){
+    var h = '', hd = s.head, n = s.nav || {};
+    if(n.back) h += '<button type="button" class="set-back" data-fk="back" data-btn="'+text(n.back)+'">\\u2039 All settings</button>';
+    if(hd){
+      h += '<div class="set-head"><h3><span>'+text(hd.label)+'</span>'
+        + (hd.target ? '<span class="set-tgt">'+text(hd.target)+'</span>' : '')
+        + (hd.targetKind ? '<span class="set-kind">'+text(hd.targetKind)+'</span>' : '') + '</h3>'
+        + '<p class="set-now">Now: <span class="set-v'+(hd.unset ? ' unset' : '')+'">'+text(hd.value)+'</span></p>'
+        + (hd.source ? '<p class="set-src">'+inl(hd.source)+'</p>' : '')
+        + '<p class="set-desc">'+inl(hd.description)+'</p>'
+        + (hd.effect ? '<p class="set-when">'+inl(hd.effect)+'</p>' : '') + '</div>';
+    }
+    if(settingsNote) h += settingsNotice({ tone: 'error', text: settingsNote });
+    h += settingsNotice(s.notice);
+    var opts = s.options || [];
+    // One field for both: it filters a long list as it is typed into, and Use (or Enter) takes
+    // what is typed as the value — a harness takes model names its list never offers.
+    if(s.typed){
+      h += '<div class="set-typed"><input type="text" class="set-type" data-fk="typed" data-btn="'+text(s.typed.buttonId)+'"'
+        + ' placeholder="'+text(opts.length > 8 ? 'Filter, or type a model name' : s.typed.placeholder)+'" aria-label="'+text(s.typed.placeholder)+'"'
+        + ' autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">'
+        + '<button type="button" class="set-use" data-fk="use">Use</button></div>';
+    }
+    if(s.loading || (hd && hd.hint)) h += '<div class="set-hintbox'+(s.loading ? ' loading' : '')+'">'+(s.loading ? '<span class="set-spin" aria-hidden="true"></span>' : '')+inl(hd && hd.hint ? hd.hint : 'Loading\u2026')+'</div>';
+    if(opts.length){
+      h += '<div class="set-card set-list">';
+      for(var i=0;i<opts.length;i++) h += settingsOption(opts[i], i);
+      h += '</div><p class="set-nomatch" hidden>No model in the list matches. Use takes the name as typed.</p>';
+    }
+    if(n.pageCount > 1){
+      h += '<div class="set-nav">'
+        + (n.prev ? '<button type="button" data-fk="prev" data-btn="'+text(n.prev)+'">\\u2039 Prev</button>' : '')
+        + '<span class="set-page">'+text(n.page)+' / '+text(n.pageCount)+'</span>'
+        + (n.next ? '<button type="button" data-fk="next" data-btn="'+text(n.next)+'">Next \\u203a</button>' : '')
+        + '</div>';
+    }
+    return h;
+  }
+
+  function settingsOption(o, i){
+    return '<button type="button" class="set-opt'+(o.current ? ' on' : '')+'" data-fk="o'+i+'" data-btn="'+text(o.buttonId)+'"'
+      + (o.current ? ' aria-current="true"' : '')+' data-q="'+text(String(o.label+' '+(o.detail || '')).toLowerCase())+'">'
+      + '<span class="set-check" aria-hidden="true">'+(o.current ? '\\u2713' : '')+'</span>'
       + '<span class="set-opt-main"><span class="set-opt-label">'+text(o.label)+'</span>'
       + (o.detail ? '<span class="set-opt-detail">'+text(o.detail)+'</span>' : '')
       + '</span></button>';
-  }
-
-  function settingsNav(n, msg){
-    var h = '<div class="set-nav">';
-    if(n.back) h += '<button type="button" data-msg="'+msg+'" data-btn="'+text(n.back)+'">◀ Back</button>';
-    h += '<span class="set-page">'+(n.pageCount > 1 ? text(n.page)+' / '+text(n.pageCount) : '')+'</span>';
-    if(n.prev) h += '<button type="button" data-msg="'+msg+'" data-btn="'+text(n.prev)+'">◀ Prev</button>';
-    if(n.next) h += '<button type="button" data-msg="'+msg+'" data-btn="'+text(n.next)+'">Next ▶</button>';
-    return h + '</div>';
   }
 
   // ── The settings page ────────────────────────────────────────────────────────
@@ -2196,9 +2403,10 @@ const SCRIPT = `
    * tapped) are painted into this page instead. Closing the page is remembered per message id, so
    * a late edit does not reopen what the operator put away.
    *
-   * It is bound to the topic it was opened in. The per-topic rows (agent, model) mean
-   * different things in each conversation, and the buttons carry that conversation's message id,
-   * so switching topics closes the page rather than leaving it pointing at the old one.
+   * It is bound to the topic it was opened in, though what it sets is not that topic's: every row
+   * is config.yaml, for every conversation. The binding is mechanical — the buttons carry that
+   * conversation's message id, and "this topic" marks the agent answering it — so switching topics
+   * closes the page rather than leaving it pointing at the old one.
    */
   function settingsKey(m){ return (m._g || m.g || epoch) + ':' + m.id; }
 
@@ -2207,15 +2415,40 @@ const SCRIPT = `
     return 'Untitled';
   }
 
+  // Where these settings live, which is the same for every topic. The bar used to name the topic
+  // the page was opened in, and that read as "these are this topic's settings" — they never were.
   function paintSettingsTopic(){
-    settingsTopicEl.textContent = 'Topic · ' + settingsTopicName(settingsTopic);
-    settingsTopicEl.title = 'These settings apply to the topic “' + settingsTopicName(settingsTopic) + '”';
+    settingsTopicEl.textContent = 'Saved to config.yaml \u00b7 every topic';
+    settingsTopicEl.title = 'Opened from the topic \u201c' + settingsTopicName(settingsTopic) + '\u201d';
   }
 
+  /**
+   * Draw the page from the message it holds. Focus goes back to the control that had it — the
+   * daemon's answer to a switch replaces the markup, and a keyboard user would otherwise be sent
+   * back to the top of the page after every toggle. A move between the list and a value screen
+   * starts at the top instead.
+   */
   function renderSettings(){
     if(!settingsMsg) return;
-    settingsBody.innerHTML = '<div class="set-text">'+(settingsMsg.html||'')+'</div>'
-      + (settingsScreen(settingsMsg) || '');
+    var a = document.activeElement, fk = a && settingsBody.contains(a) ? a.getAttribute('data-fk') : null;
+    var level = settingsMsg.settings ? settingsMsg.settings.level : '';
+    var typed = settingsBody.querySelector('.set-type');
+    if(typed) settingsQuery = typed.value;
+    settingsBody.innerHTML = settingsScreen(settingsMsg);
+    if(level !== settingsLevel){ settingsBody.scrollTop = 0; fk = null; settingsQuery = ''; }
+    settingsLevel = level;
+    // What was typed survives the redraw — the list arriving after "asking" is one — and so does
+    // the filter it applies.
+    var field = settingsBody.querySelector('.set-type');
+    if(field && settingsQuery){ field.value = settingsQuery; filterSettings(); }
+    // A notice that is good news fades once it has been seen; an error stays until the next screen.
+    clearTimeout(settingsFade);
+    var note = settingsBody.querySelector('.set-notice.ok, .set-notice.info');
+    if(note) settingsFade = setTimeout(function(){ note.classList.add('faded'); }, SETTINGS_FADE_MS);
+    if(fk){
+      var back = settingsBody.querySelector('[data-fk="'+fk+'"]');
+      if(back && back.focus) back.focus();
+    }
   }
 
   /**
@@ -2233,6 +2466,7 @@ const SCRIPT = `
     // pending request — this answer belongs to the message, not to a new question.
     if(!settingsPage.hidden && settingsMsg && settingsMsg.id === m.id){
       settingsMsg = m;
+      settingsNote = null;
       renderSettings();
       return;
     }
@@ -2248,6 +2482,8 @@ const SCRIPT = `
     }
     if(wasHidden && token && token <= settingsClosedUpTo) return;
     settingsMsg = m;
+    settingsNote = null;
+    settingsLevel = '';
     settingsTopic = topic;
     paintSettingsTopic();
     renderSettings();
@@ -2312,8 +2548,68 @@ const SCRIPT = `
     disarmSettingsWait();
     settingsPage.hidden = true;
     settingsMsg = null;
+    settingsNote = null;
     settingsTopic = null;
     settingsBody.textContent = '';
+  }
+
+  /**
+   * A control on the settings page was used. Posted like any menu button, with the page's own
+   * message and topic. A switch or a segment shows its new state at once — the round trip is the
+   * daemon writing config.yaml, and a control that sits unmoved for it reads as broken — and the
+   * daemon's answer redraws the page from what was actually written. When the answer cannot come
+   * (the request failed, or the message is gone), the page is redrawn from what it last had, which
+   * puts the control back, with a line saying why.
+   */
+  /** Show only the values whose name or meaning holds what is typed, and say so when none does. */
+  function filterSettings(){
+    var field = settingsBody.querySelector('.set-type');
+    var q = field ? field.value.trim().toLowerCase() : '';
+    var opts = settingsBody.querySelectorAll('.set-list .set-opt'), shown = 0;
+    for(var i=0;i<opts.length;i++){
+      var hit = !q || (opts[i].getAttribute('data-q') || '').indexOf(q) >= 0;
+      opts[i].hidden = !hit;
+      if(hit) shown++;
+    }
+    var none = settingsBody.querySelector('.set-nomatch');
+    if(none) none.hidden = !(q && opts.length && !shown);
+  }
+
+  /** Use what is typed: the click carries it as its value (ButtonInteraction.value). */
+  function useTyped(){
+    var field = settingsBody.querySelector('.set-type');
+    if(!field) return;
+    var v = field.value.trim();
+    if(!v){ field.focus(); return; }
+    postSetting(field, field.getAttribute('data-btn'), v);
+  }
+
+  function postSetting(el, id, value){
+    if(!settingsMsg || !settingsTopic || !id) return;
+    var msgId = settingsMsg.id;
+    if(el.getAttribute('role') === 'switch') el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+    if(el.getAttribute('role') === 'radio'){
+      var peers = el.parentNode ? el.parentNode.children : [];
+      for(var i=0;i<peers.length;i++) peers[i].setAttribute('aria-checked', peers[i] === el ? 'true' : 'false');
+    }
+    el.disabled = true;
+    el.classList.add('busy');
+    var fail = function(why){
+      if(!settingsMsg || settingsMsg.id !== msgId) return;
+      settingsNote = why;
+      renderSettings();
+    };
+    // A limit, unlike a transcript menu's tap: a request that goes quiet would leave the control
+    // half-moved for ever, with nothing on the page to say the change never happened.
+    var body = {topic:settingsTopic,messageId:msgId,buttonId:id};
+    if(value) body.value = value;
+    post('api/click',body,2,SETTINGS_WAIT_MS)
+      .then(function(r){
+        if(r.ok) return;
+        fail(r.status === 409 || r.status === 404
+          ? 'This settings page is out of date, so nothing was changed. Close it and open Settings again.'
+          : 'The daemon did not take that (HTTP '+r.status+'), so nothing was changed. Try again.');
+      }, function(){ fail('Could not reach the daemon, so nothing was changed. Check the connection and try again.'); });
   }
 
   /**
@@ -3330,6 +3626,7 @@ const SCRIPT = `
     dividerEl=null;
     syncingEl=null;
     // The strip describes the topic being left; the incoming sync says what the new one's is.
+    closeModelPop();
     setStatus(null);
     entering=true;
     synced=false;
@@ -3446,7 +3743,7 @@ const SCRIPT = `
 
   function statusSegments(s, now, open){
     var out = [];
-    out.push(seg('st-who', '', text(s.agent)+(s.model ? ' \\u00b7 '+text(s.model) : '')+(s.effort ? ' \\u00b7 '+text(s.effort) : '')));
+    out.push(seg('st-who', '', text(s.agent)+' \\u00b7 '+modelChip(s.model || 'Model')+(s.effort ? ' \\u00b7 '+text(s.effort) : '')));
     if(s.context && s.context.size > 0){
       var pct = Math.min(100, Math.max(0, Math.round(s.context.used / s.context.size * 100)));
       out.push(seg(pct >= 80 ? 'bad' : (pct >= 50 ? 'warn' : ''),
@@ -3483,7 +3780,11 @@ const SCRIPT = `
 
   function paintStatus(){
     var s = agentStatus;
-    var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open')) : '';
+    // With no status yet (a restart, a conversation that has not reported), the line still offers
+    // the switch once the topic has a conversation in it — not in a new one, where the agent
+    // launcher is the choice to make first.
+    var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open'))
+      : (topic && synced && !launch && log.querySelector('.m') ? seg('st-who', '', modelChip('Model')) : '');
     // Compared before writing: the tick redraws twice a minute, and most of those change nothing.
     if(html === statusHtml) return;
     statusHtml = html;
@@ -3491,9 +3792,137 @@ const SCRIPT = `
     statusEl.hidden = !html;
   }
 
-  statusEl.addEventListener('click', function(){
+  statusEl.addEventListener('click', function(e){
+    if(e.target.closest && e.target.closest('.st-model')){
+      if(modelPop.hidden) openModelPop(); else closeModelPop();
+      return;
+    }
     statusEl.classList.toggle('open');
     paintStatus();
+  });
+
+  // ── The model switch ─────────────────────────────────────────────────────────
+  // /model as a control: the list the topic's agent offers (GET api/models, which starts a cold
+  // agent the way /model does — hence "Asking…"), and the switch (POST api/models), which is
+  // /model's own: a runtime override for this topic, config untouched. mp.seq drops an answer that
+  // belongs to a list closed or reopened since.
+  var mp = { topic: null, data: null, err: '', loading: false, busy: false, seq: 0 };
+  var MODEL_WAIT_MS = 45000;
+
+  function modelChip(label){
+    return '<button type="button" class="st-model" aria-haspopup="dialog" aria-expanded="'+(modelPop.hidden ? 'false' : 'true')+'"'
+      + ' title="Switch the model for this topic (/model)"><span class="st-mtext">'+text(label)+'</span></button>';
+  }
+
+  function openModelPop(){
+    if(!topic) return;
+    var n = ++mp.seq, t = topic;
+    mp.topic = t; mp.data = null; mp.err = ''; mp.loading = true; mp.busy = false;
+    mpFilter.value = '';
+    modelPop.hidden = false;
+    paintStatus();
+    renderModelPop();
+    // Not on a phone: the keyboard would take half the screen before the list was read.
+    if(!narrow()) mpFilter.focus();
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function(){ if(ctl) ctl.abort(); }, MODEL_WAIT_MS);
+    fetch('api/models?t='+encodeURIComponent(t), ctl ? {credentials:'same-origin', signal: ctl.signal} : {credentials:'same-origin'})
+      .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
+      .then(function(x){
+        clearTimeout(timer);
+        if(n !== mp.seq) return;
+        mp.loading = false;
+        if(!x.r.ok) mp.err = 'The daemon did not give a list (HTTP '+x.r.status+').';
+        else mp.data = x.j;
+        renderModelPop();
+      }, function(){
+        clearTimeout(timer);
+        if(n !== mp.seq) return;
+        mp.loading = false;
+        mp.err = 'Could not reach the daemon for the list. Check the connection and try again.';
+        renderModelPop();
+      });
+  }
+
+  function closeModelPop(){
+    if(modelPop.hidden) return;
+    mp.seq++;
+    modelPop.hidden = true;
+    mpList.innerHTML = '';
+    paintStatus();
+  }
+
+  /** The list, or what stands in for it: asking, why there is none, or what went wrong. */
+  function renderModelPop(){
+    var d = mp.data;
+    mpAgent.textContent = d && d.agent ? d.agent : '';
+    mpFilter.hidden = !(d && d.ok && d.options.length > 8);
+    if(mp.loading){ mpList.innerHTML = '<div class="mp-msg mp-wait"><span class="set-spin" aria-hidden="true"></span>Asking the agent for its models\u2026 a cold one takes a second or two to start.</div>'; return; }
+    if(mp.err){ mpList.innerHTML = '<div class="mp-msg err">'+inl(mp.err)+'</div>'; return; }
+    if(!d || !d.ok){ mpList.innerHTML = '<div class="mp-msg">'+inl(d ? d.text : '')+'</div>'; return; }
+    var h = '';
+    for(var i=0;i<d.options.length;i++){
+      var o = d.options[i], on = o.value === d.current, def = d.configured && o.value === d.configured;
+      var name = o.name && o.name !== o.value ? o.name : '';
+      h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(o.value)+'"'
+        + ' data-q="'+text((o.value+' '+name).toLowerCase())+'">'
+        + '<span class="mp-check" aria-hidden="true">'+(on ? '\u2713' : '')+'</span>'
+        + '<span class="mp-main"><span class="mp-v">'+text(o.value)+'</span>'+(name ? '<span class="mp-n">'+text(name)+'</span>' : '')+'</span>'
+        + (def ? '<span class="mp-tag" title="What this agent starts a new session with (Settings)">default</span>' : '')
+        + '</button>';
+    }
+    mpList.innerHTML = h;
+    filterModels();
+  }
+
+  function filterModels(){
+    var q = mpFilter.value.trim().toLowerCase();
+    var opts = mpList.querySelectorAll('.mp-opt');
+    for(var i=0;i<opts.length;i++) opts[i].hidden = !!q && (opts[i].getAttribute('data-q') || '').indexOf(q) < 0;
+  }
+
+  /** Switch to one, as /model would. A refusal is /model's own sentence, shown in the list. */
+  function chooseModel(b){
+    if(mp.busy || !mp.topic) return;
+    var n = mp.seq, t = mp.topic, v = b.getAttribute('data-v');
+    mp.busy = true;
+    b.classList.add('busy');
+    post('api/models', {topic: t, value: v}, 1, MODEL_WAIT_MS)
+      .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
+      .then(function(x){
+        mp.busy = false;
+        if(n !== mp.seq) return;
+        if(x.r.ok && x.j.ok){
+          if(t === topic && agentStatus) agentStatus = Object.assign({}, agentStatus, { model: x.j.model });
+          closeModelPop();
+          note.textContent = String(x.j.text || '').replace(/\\x60/g, '');
+          return;
+        }
+        mp.err = x.j && x.j.text ? x.j.text : 'The daemon refused that (HTTP '+x.r.status+').';
+        renderModelPop();
+      }, function(){
+        mp.busy = false;
+        if(n !== mp.seq) return;
+        mp.err = 'Could not reach the daemon, so the model was not changed. Try again.';
+        renderModelPop();
+      });
+  }
+
+  mpList.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.mp-opt') : null;
+    if(b) chooseModel(b);
+  });
+  mpFilter.addEventListener('input', filterModels);
+  $('mp-close').addEventListener('click', closeModelPop);
+  // Its own Escape and outside click, ahead of nothing else: the list is not a window over the
+  // page, so it does not join the overlays the page-wide Escape closes.
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && !modelPop.hidden){ closeModelPop(); e.stopPropagation(); }
+  }, true);
+  document.addEventListener('click', function(e){
+    if(modelPop.hidden || !e.target.closest) return;
+    if(e.target.closest('#model-pop') || e.target.closest('.st-model')) return;
+    closeModelPop();
   });
   // A countdown is redrawn the moment the page is looked at again, rather than up to a tick late.
   document.addEventListener('visibilitychange', function(){
@@ -3575,6 +4004,7 @@ const SCRIPT = `
       claim(ev.msg);
       upsert(ev.msg);
       cacheSave();
+      if(!agentStatus) paintStatus();
       readCounts[topic] = (readCounts[topic] || 0) + 1;
       saveReads();
       for(var i=0;i<topics.length;i++){
@@ -3997,9 +4427,30 @@ const SCRIPT = `
   // they post through the same function — with the topic the page was opened in, not whichever
   // one is on screen (the page is closed when that changes, but the two are not the same fact).
   settingsBody.addEventListener('click', function(e){
-    var b = e.target.closest ? e.target.closest('button[data-btn]') : null;
-    if(!b || !settingsMsg || !settingsTopic) return;
-    postButton(b, settingsTopic);
+    if(!e.target.closest || !settingsMsg || !settingsTopic) return;
+    if(e.target.closest('.set-use')){ useTyped(); return; }
+    var b = e.target.closest('button[data-btn]');
+    // A switch row is a target as a whole, as a settings row is anywhere: the label is the bigger
+    // half of it, and on a phone the one a thumb lands on.
+    if(!b){
+      var row = e.target.closest('.set-item.sw');
+      b = row ? row.querySelector('.set-switch') : null;
+    }
+    if(!b || b.disabled) return;
+    postSetting(b, b.getAttribute('data-btn'));
+  });
+  settingsBody.addEventListener('input', function(e){
+    if(e.target && e.target.classList && e.target.classList.contains('set-type')) filterSettings();
+  });
+  settingsBody.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' || !e.target || !e.target.classList || !e.target.classList.contains('set-type')) return;
+    e.preventDefault();
+    useTyped();
+  });
+  settingsBody.addEventListener('change', function(e){
+    var sel = e.target;
+    if(!sel || !sel.classList || !sel.classList.contains('set-select')) return;
+    postSetting(sel, sel.value);
   });
 
   /**
@@ -5300,9 +5751,8 @@ __GATE__
   </div>
   <!-- /setting as a page rather than a message in the transcript. It is filled from the same
        structured screen the daemon already sends (settingsScreen), so the rows, the values and
-       the write all stay on the daemon's side; this element only draws them. The bar names the
-       topic the per-topic rows apply to, because "default model" is a different setting in each
-       conversation. -->
+       the write all stay on the daemon's side; this element only draws them. The bar says where
+       they are kept: config.yaml, the same for every topic. -->
   <div id="settings-page" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <div id="settings-box">
       <div id="settings-bar">
@@ -5369,6 +5819,16 @@ __GATE__
       <!-- The agent's live status. Inside #bar rather than above it so it goes away with the
            composer in terminal mode, and so it reads as part of the place you type. -->
       <div id="status" hidden title="Tap for details"></div>
+      <!-- The model switch's list, opened from the model in the status line (openModelPop). -->
+      <div id="model-pop" hidden role="dialog" aria-labelledby="mp-heading">
+        <div class="mp-head">
+          <div class="mp-title"><b id="mp-heading">Model for this topic</b><span id="mp-agent"></span></div>
+          <button type="button" class="btn-icon" id="mp-close" title="Close (Esc)" aria-label="Close">&times;</button>
+        </div>
+        <input id="mp-filter" type="text" placeholder="Filter models" aria-label="Filter models" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <div id="mp-list" role="listbox" aria-labelledby="mp-heading"></div>
+        <p class="mp-foot">This topic only, like <code>/model</code>. Each agent's default is in Settings.</p>
+      </div>
       <div id="hints" hidden></div>
       <div id="chips"></div>
       <form id="composer">

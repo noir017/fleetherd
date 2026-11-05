@@ -1599,7 +1599,7 @@ describe('WebRoom: the agent status strip', () => {
 });
 
 describe('WebRoom: a settings screen retired in place', () => {
-  const screen = { level: 'list' as const, rows: [] };
+  const screen = { level: 'list' as const, groups: [], rows: [] };
 
   it('marks a retired screen so the page can keep it out of the transcript', () => {
     // The page draws settings screens in a page of their own. A message that stops being one must
