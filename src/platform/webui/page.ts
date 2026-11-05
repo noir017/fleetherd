@@ -99,25 +99,43 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 
 #app{display:flex;flex-direction:row;height:100%;width:100%;margin:0;overflow:hidden}
 
-#sidebar{width:var(--sbw,240px);flex:0 0 var(--sbw,240px);background:#171717;border-right:1px solid var(--line);display:flex;flex-direction:column;height:100%;transition:margin-left .18s ease;z-index:10;position:relative}
-#sidebar.collapsed{margin-left:calc(-1 * var(--sbw,240px))}
-/* The drag handle on the sidebar's right edge (--sbw, set from it and kept in localStorage):
-   topic titles are long — "[ag2] 状态：…" — and 240px cuts most of them. Straddles the border so
-   it is easy to hit without covering the scrollbar. Not under the narrow rules: there the sidebar
-   is a drawer whose width the screen decides. */
-#sidebar-resize{position:absolute;top:0;bottom:0;right:-4px;width:8px;cursor:col-resize;z-index:11;touch-action:none}
-#sidebar-resize:hover,#sidebar-resize.dragging{background:linear-gradient(90deg,transparent 3px,#3d3d3d 3px,#3d3d3d 5px,transparent 5px)}
-#sidebar.collapsed #sidebar-resize{display:none}
-/* Only ever on screen under the narrow-screen rules below, where the sidebar is an overlay
-   rather than a column and there is otherwise nothing to tap to dismiss it. */
-#backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:5}
-/* 9px, not 10px: the + is a 15px glyph in 4px of padding, so 23px of content — 20px of padding
-   plus the border made the bar 44px, two past --headh, and it was the tallest of the three. */
-#sidebar-header{display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid var(--line);min-height:var(--headh)}
-.sidebar-title{flex:1;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+/* ── The two side panels ─────────────────────────────────────────────────────
+   The topic list on the left and the scheduled work on the right are one component,
+   not two. A panel is a header row, a scrolling body, a footer row and a drag handle
+   on its inner edge; the edge decides only the border, which way it slides out, and
+   which way the handle measures. Everything else — the width and its persistence, the
+   open/close animation, the drawer it becomes when a column no longer fits, the
+   backdrop, the inert state, the safe-area padding, the finger-sized targets — is
+   written once, below, for both.
+
+   Closed, a panel is moved off-screen with a negative margin rather than display:none:
+   a hidden element has nothing to animate, and a column that vanished would re-wrap the
+   transcript in one frame. The negative margin also hands its width back to the chat,
+   so closing reads as the column folding away rather than sliding under it. */
+.panel{position:relative;display:flex;flex-direction:column;height:100%;min-width:0;background:#171717;z-index:10;transition:margin .18s ease,transform .18s ease}
+.panel-left{width:var(--pw,var(--pw-default));flex:0 0 var(--pw,var(--pw-default));border-right:1px solid var(--line)}
+.panel-right{width:var(--pw,var(--pw-default));flex:0 0 var(--pw,var(--pw-default));border-left:1px solid var(--line)}
+.panel-left.collapsed{margin-left:calc(-1 * var(--pw,var(--pw-default)))}
+.panel-right.collapsed{margin-right:calc(-1 * var(--pw,var(--pw-default)))}
+#sidebar{--pw-default:240px}
+/* Straddles the inner border so it is easy to hit without covering the scrollbar.
+   Not offered in the drawer rules below: there the screen decides the width. */
+.panel-resize{position:absolute;top:0;bottom:0;width:8px;cursor:col-resize;z-index:11;touch-action:none}
+.panel-left>.panel-resize{right:-4px}
+.panel-right>.panel-resize{left:-4px}
+.panel-resize:hover,.panel-resize.dragging{background:linear-gradient(90deg,transparent 3px,#3d3d3d 3px,#3d3d3d 5px,transparent 5px)}
+.panel.collapsed>.panel-resize{display:none}
+/* One backdrop for both drawers. It is displayed only where an edge really is a drawer
+   (the media rules below), and only while that drawer is out (#app.sb-open /
+   #app.sched-open). Tapping it puts away whichever drawer is open. */
+#backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:19}
+/* One bar, one height, one way out on both sides. The × is the panel's close button:
+   the topic list and the task panel are both things a person opens and closes. */
+.panel-head{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;border-bottom:1px solid var(--line);min-height:var(--headh);flex:0 0 auto}
+.panel-title{flex:1;min-width:0;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .btn-icon{background:none;border:0;padding:4px 7px;color:var(--dim);font:inherit;font-size:13px;cursor:pointer;border-radius:4px;line-height:1}
 .btn-icon:hover{color:var(--fg);background:var(--field)}
-#sidebar-header .add{font-size:15px;font-weight:600}
+.panel-head .add{font-size:15px;font-weight:600}
 
 #topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding:8px}
 /* The row's colour is a variable because the hover buttons' fade (.topic-acts) has to end in exactly
@@ -235,7 +253,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    one: its finished turn is the news of the agent that opened it (see the dot class in
    paintTopics), so the row stays the ordinary idle/online grey. */
 .topic-dot.review{background:#4ade80}
-/* Low attention (the Settings menu, per device: calmBtn). With several agents working at once the
+/* Low attention (the Menu, per device: calmBtn). With several agents working at once the
    list never stops moving — a pulsing dot per running topic, and an unread count in a bright pill
    that climbs with every message a running turn posts — and none of that is anything to act on.
    Here work is shown and not announced: the running dot keeps its colour and halo and stops
@@ -246,36 +264,40 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}
 #topics .topic-item.after-needs{margin-top:5px}
 #topics .topic-item.after-needs::before{content:'';position:absolute;left:9px;right:9px;top:-5px;border-top:1px solid var(--line)}
-/* One row: Settings, and Close idle when there is anything to close. It was a column of full-width
-   buttons, one per control, and reached three rows with a fourth on the way (2026-11-03) — a strip
-   of the list given up for things that are set once per device (Notifications, Low attention) or
-   used rarely (Clear). Those went into the Settings menu; Close idle stays out here because its
-   count is worth seeing without opening anything.
-   A size container so the word "Settings" can give way to the gear alone when the sidebar is
-   dragged narrow (SB_MIN is 180px), rather than the row overflowing or the count being cut. */
-#sidebar-footer{border-top:1px solid var(--line);padding:8px;display:flex;align-items:center;gap:4px;position:relative;container-type:inline-size}
-#sidebar-footer>button{background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
-#sidebar-footer>button:hover,#opts-toggle[aria-expanded="true"]{color:var(--fg);background:var(--field)}
-#opts-toggle .opts-gear{font-size:13px}
-@container (max-width:200px){#opts-toggle .opts-word,#skills-toggle .opts-word{display:none}}
-/* Ends processes, not topics, so it does not turn red: it costs a respawn on each topic's next
-   message and nothing more. Hidden while no agent is idle. */
-#close-idle{margin-left:auto}
-/* Opens upward from the footer, over the bottom of the list, and is dismissed by a click anywhere
-   else or Escape (setOpts). A disclosure rather than an ARIA menu: role=menu promises arrow-key
-   navigation, and three buttons are reached with Tab like any others. */
-#opts-menu{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:4px;z-index:12;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
-#opts-menu button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;transition:color .15s,background .15s}
-#opts-menu button:hover{background:var(--field)}
-#opts-menu button:disabled:hover{background:none}
+/* The last row of a panel: the topic sidebar's two menus, the scheduled panel's two tabs.
+   Same border, padding, type size and height on both sides, so the two columns end on the
+   same line. A size container so the words can give way to their glyphs when the sidebar
+   is dragged to its 180px minimum, rather than the row overflowing.
+   It was a column of full-width buttons, one per control, and reached three rows with a
+   fourth on the way (2026-11-03); it is two menus now. Menu holds what is set once per
+   device (Notifications, Low attention) or visited rarely (All settings, Skills). Manage
+   holds the two housekeeping actions (Close idle, Clear all topics) and keeps the idle
+   count on its own face, so the count is still seen without opening anything. */
+.panel-foot{border-top:1px solid var(--line);padding:8px;display:flex;align-items:center;gap:4px;position:relative;flex:0 0 auto;container-type:inline-size}
+.panel-foot>button{background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
+.panel-foot>button:hover,.panel-foot>button[aria-expanded="true"],.panel-foot>button.on{color:var(--fg);background:var(--field)}
+/* line-height:1 keeps the 13px glyph from setting a taller line box than the 12px text
+   beside it — without it the sidebar footer was 52px against the task panel's 50px. */
+.opts-gear{font-size:13px;line-height:1}
+@container (max-width:200px){.opts-word{display:none}}
+/* The idle count stays on Manage's face when its word drops: it is the one number on
+   this row worth seeing without opening anything. */
+.foot-count{margin-left:4px;color:#a8a8a8}
+/* Both footer menus: one box, one place, one way to dismiss it. Opened upward from the
+   footer over the bottom of the list, dismissed by a click anywhere else or Escape
+   (setMenu). A disclosure rather than an ARIA menu: role=menu promises arrow-key
+   navigation, and these are reached with Tab like any other buttons. */
+.panel-menu{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:4px;z-index:12;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
+.panel-menu button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
+.panel-menu button:hover{background:var(--field)}
+.panel-menu button:disabled:hover{background:none}
 .opt-state{color:var(--dim);font-size:12px}
 [aria-pressed="true"]>.opt-state{color:#4ade80}
 .opts-sep{border-top:1px solid var(--line);margin:4px 2px}
-/* Last in the menu, under a rule, because it throws away every room at once. It was given the
-   footer rather than a place beside the + in the header for the same reason: a one-character icon
-   next to "new topic" is a misclick away from it. Dim until the pointer is on it, then red. */
-#opts-menu #clear-topics{color:var(--dim)}
-#opts-menu #clear-topics:hover{color:#f87171;background:rgba(248,113,113,.12)}
+/* Clear all topics is last and quiet until the pointer is on it: it throws away every
+   room at once and should not compete with the row above it. Dim, then red. */
+.panel-menu .danger{color:var(--dim)}
+.panel-menu .danger:hover{color:#f87171;background:rgba(248,113,113,.12)}
 /* The confirmation for it: names every topic whose agent is about to go, because "close 7 agents"
    does not say whether the one you were about to come back to is among them. A dialog of the page's
    own rather than confirm(), which cannot hold a list a phone can scroll. The list scrolls inside
@@ -333,38 +355,33 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-alert{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:#fbbf24;box-shadow:0 0 5px rgba(251,191,36,.8)}
 
 /* ── The scheduled-task panel ────────────────────────────────────────────────
-   A column of its own on the right, not a section of the topic list: a task is not a
-   conversation, and the sidebar is where conversations live. Closed on a first visit, then open
-   until the operator closes it: the choice is kept in localStorage (aa_sched_open, like the
-   sidebar's width), so opening a session from the panel leaves the panel where it was. Under
-   1024px there is no room to dock a 240–320px column beside a 240px sidebar, so it slides over
-   the chat; under 640px it is the whole screen, like the reader.
+   A panel of its own on the right, not a section of the topic list: a task is not a
+   conversation, and the sidebar is where conversations live. It is the same component as
+   the sidebar (.panel above), on the other edge; what it does not share is the width it
+   starts at — deliberately narrower, because this is a glance at background work rather
+   than a place to read a transcript — and the screen width below which it stops being a
+   column (1023px, where a 240px list plus a 240–320px panel leave too little chat; the
+   topic list itself is still usable as a column down to 640px).
 
-   The width is deliberately narrower than the sidebar's topic column was before this: the panel
-   is a glance at background work, not a place to read a transcript. --schedw is set inline by
-   the drag handle; the clamp is both the default and the fallback when the operator has never
-   dragged it. Keep the 20vw arithmetic in schedWidth() in step with this line. */
-#schedules{position:relative;display:none;flex-direction:column;width:var(--schedw,clamp(240px,20vw,320px));flex:0 0 var(--schedw,clamp(240px,20vw,320px));height:100%;min-width:0;background:#171717;border-left:1px solid var(--line)}
-#app.sched #schedules{display:flex}
-#sched-resize{position:absolute;top:0;bottom:0;left:-4px;width:8px;cursor:col-resize;z-index:12;touch-action:none}
-#sched-resize:hover,#sched-resize.dragging{background:linear-gradient(90deg,transparent 3px,#3d3d3d 3px,#3d3d3d 5px,transparent 5px)}
-/* The heading is two lines in the same bar the other columns give one: the title and the summary
-   are what the panel says at a glance, and neither can go. So the leading is tightened to 1.25
-   and the padding to 5px — 15 + 14.4 + 1 + 10 + 1 = 41.4, inside --headh — rather than the bar
-   growing past the other two. */
-#schedules-head{display:flex;align-items:center;gap:6px;padding:5px 8px 5px 12px;border-bottom:1px solid var(--line);min-height:var(--headh)}
+   Closed on a first visit, then open until the operator closes it: the choice is kept in
+   localStorage (aa_sched_open, like the sidebar's), so opening a session from the panel
+   leaves the panel where it was. --pw is set inline by the drag handle; the clamp is both
+   the default and the fallback when the operator has never dragged it. Keep the 20vw
+   arithmetic in the panel's width() in step with this line. */
+#schedules{--pw-default:clamp(240px,20vw,320px)}
+/* The heading is two lines in the same bar the sidebar gives one: the title and the summary
+   are what the panel says at a glance, and neither can go. The leading is tightened to 1.25
+   so the pair still fits inside --headh. */
 .sched-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
-.sched-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The shared title takes the row's free space on the left; here the heading around it does,
+   and a flex:1 title inside a column would grow down over the summary instead. */
+.sched-heading .panel-title{flex:none}
 .sched-summary{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Two lists, one panel: a task is a definition and a session is one run of it, so they are
-   tabs rather than one merged column that would make every run look like a task. The tabs sit at
-   the foot of the panel, not under its heading: they are a choice between two views of the same
-   column, and the bottom is where the topic sidebar keeps its own row — same padding, same type
-   size, so the two columns end on one line. */
-#sched-tabs{display:flex;align-items:center;gap:4px;padding:8px;border-top:1px solid var(--line);flex:0 0 auto}
-.sched-tab{flex:1;min-width:0;background:none;border:0;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;padding:7px 9px;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
-.sched-tab:hover{color:var(--fg);background:var(--field)}
-.sched-tab.on{color:var(--fg);background:var(--field)}
+   tabs rather than one merged column that would make every run look like a task. The tabs sit
+   at the foot of the panel, in the same .panel-foot row the sidebar keeps its menus in, so
+   the two columns end on one line. */
+.panel-foot>.sched-tab{flex:1;min-width:0;text-align:center}
 .sched-count{font-weight:500;color:#6b7683;margin-left:2px}
 .sched-tab.on .sched-count{color:#8a8a8a}
 #schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
@@ -430,7 +447,6 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-acts button.confirm{background:rgba(248,113,113,.16);border-color:#7f1d1d;color:#fca5a5}
 #schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
-#sched-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:19}
 /* ── The skills page ─────────────────────────────────────────────────────────
    A window over the transcript rather than a column: an editor needs width, and a history row
    needs more than a sidebar's 240px. The backdrop dims the chat for the same reason the reader's
@@ -446,7 +462,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #skills-close{font-size:18px;padding:6px 10px}
 #skills-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 #skills-note{margin:0 0 10px;font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
-/* /setting as a page of its own, opened from the Settings menu or by typing the command, rather
+/* /setting as a page of its own, opened from the Menu or by typing the command, rather
    than a screen inserted into the transcript. A window over the conversation like the reader and
    the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
    rows, the values, the validation and the write all stay on the daemon's side. The bar carries
@@ -815,17 +831,21 @@ button:disabled{opacity:.5;cursor:default}
    layout has no concept of: a URL bar that eats viewport height, a home indicator under the
    composer, Safari's zoom-on-focus, and a finger instead of a pointer. */
 /* A 240px sidebar and a 240–320px panel leave too little chat on a laptop screen, so below
-   1024px the panel slides over the chat instead of taking a column — the same drawer the topic
-   sidebar becomes at 640px, on the other edge. It stays laid out and is moved off-screen rather
-   than hidden, because display:none has nothing to animate; the transition is the sidebar's
-   .18s ease. The backdrop is what dismisses it, as the sidebar drawer's is. */
+   1024px the right panel slides over the chat instead of taking a column — the same drawer the
+   topic sidebar becomes at 640px, on the other edge. It stays laid out and is moved off-screen
+   with a transform, because display:none has nothing to animate; the margin it used as a column
+   is given up so the fixed position can take over. The backdrop is what dismisses it, as the
+   sidebar drawer's is. */
 @media(max-width:1023px){
-  #schedules{display:flex;position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px rgba(0,0,0,.6);transform:translateX(100%);transition:transform .18s ease}
-  #app.sched #schedules{transform:none}
-  #app.sched #sched-backdrop{display:block}
+  #schedules{position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px rgba(0,0,0,.6)}
+  #schedules.collapsed{margin:0;transform:translateX(100%)}
+  #app.sched-open #backdrop{display:block}
   /* Nothing to dock it to here, so the resize handle is not offered: an overlay's width is the
      screen's, not the operator's. */
-  #sched-resize{display:none}
+  #schedules>.panel-resize{display:none}
+  /* Whichever panel is a drawer here runs to the bottom edge, so its last row needs the same
+     home-indicator clearance the composer gets. */
+  .panel-foot{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
 }
 @media(max-width:640px){
   /* height:100% resolves against a viewport that still counts the collapsing browser chrome,
@@ -834,21 +854,21 @@ button:disabled{opacity:.5;cursor:default}
   html,body{height:100vh;height:100dvh}
   /* A column 240px wide leaves nothing of the chat on a 360px screen, so it becomes a drawer
      over it, dismissed by tapping the backdrop. Fixed rather than absolute so it tracks the
-     visible viewport as the URL bar collapses instead of the taller page box behind it, and
-     the collapsed offset moves with the width — -240px would leave a strip of a 300px drawer
-     still on screen. */
-  #sidebar{position:fixed;top:0;bottom:0;left:0;height:auto;width:min(82vw,300px);flex-basis:min(82vw,300px);box-shadow:3px 0 12px rgba(0,0,0,.6)}
-  #sidebar.collapsed{margin-left:-100%}
-  #sidebar-resize{display:none}
-  #backdrop{display:block}
+     visible viewport as the URL bar collapses instead of the taller page box behind it. The
+     closed position is a transform rather than a negative margin, so it moves the full width
+     of whatever the screen allowed — the same drawer the task panel is from 1023px down, at
+     the same 88vw/380px, so the two edges feel like one component. */
+  #sidebar{position:fixed;top:0;bottom:0;left:0;height:auto;z-index:20;width:min(88vw,380px);flex-basis:min(88vw,380px);box-shadow:3px 0 12px rgba(0,0,0,.6)}
+  #sidebar.collapsed{margin:0;transform:translateX(-100%)}
+  #app.sb-open #backdrop{display:block}
+  #sidebar>.panel-resize{display:none}
   #topics .topic-item{padding:10px 9px}
-  /* The drawer runs to the bottom edge, so its last row needs the same home-indicator clearance
-     the composer gets — without it the Settings row sits under the indicator, hard to hit, and
-     Clear all topics is one tap inside it. */
-  #sidebar-footer{padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px))}
-  /* The footer row and the Settings menu are finger targets here, and 12px text in 7px of padding
-     is a 30px one. */
-  #sidebar-footer>button,#opts-menu button{min-height:44px}
+  /* The header and the footer row are finger targets here: 12px text in 7px of padding is a
+     30px target, and the × is the only way out of a panel that covers the chat. 49px rather
+     than 42 so a 44px box fits without the bar growing twice. */
+  .panel-head{min-height:49px;padding:0 4px 0 12px}
+  .panel-head .btn-icon{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  .panel-foot>button,.panel-menu button{min-height:44px}
   /* The drawer toggle is the only way back to the topic list on a phone, but it inherits
      .btn-icon's 13px glyph and 4px padding — a 26x21 target, well under the 44px every mobile
      HIG asks for. Pad it out to 44px square and grow the glyph to match; the header's own
@@ -867,16 +887,9 @@ button:disabled{opacity:.5;cursor:default}
   /* The panel keeps the drawer's width here rather than taking the whole screen: it is the same
      overlay the 1023px rule makes, sliding in from the right, and a strip of the conversation
      stays visible behind it. Only the header and the targets grow for a finger. */
-  #schedules-head{padding:0 4px 0 12px;min-height:49px}
-  #schedules-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   #schedules-toggle{min-width:44px;height:44px}
   #schedules-toggle svg{width:18px;height:18px}
-  #schedules-body{padding-bottom:8px}
-  /* The tab row is the panel's last line, so it — not the list above it — is what needs the
-     home-indicator clearance, exactly as the sidebar footer does. */
-  #sched-tabs{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
   .sched-acts button{min-height:44px;padding:0 14px}
-  .sched-tab{min-height:44px}
   /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
      phone is an editor with a sliver of transcript behind it, and the transcript is not what the
      operator opened. */
@@ -946,13 +959,15 @@ const SCRIPT = `
       chips=$('chips'), hints=$('hints'), typing=$('typing'), note=$('note'), picker=$('picker'),
       bar=$('topics'), sidebar=$('sidebar'), collapseBtn=$('collapse-sidebar'),
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
-      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
-      optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), calmBtn=$('calm-toggle'), calmState=$('calm-state'),
+      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), idleCount=$('idle-count'), idleSep=$('idle-sep'),
+      notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
+      optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
+      calmBtn=$('calm-toggle'), calmState=$('calm-state'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
       schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
-      schedClose=$('schedules-close'), schedNote=$('schedules-note'), schedBackdrop=$('sched-backdrop'),
+      schedClose=$('schedules-close'), schedNote=$('schedules-note'),
       schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
       schedTabTasks=$('sched-tab-tasks'), schedTabSessions=$('sched-tab-sessions'),
       schedTabTasksN=$('sched-tab-tasks-n'), schedTabSessionsN=$('sched-tab-sessions-n'),
@@ -1008,7 +1023,7 @@ const SCRIPT = `
   try { readCounts = JSON.parse(localStorage.getItem('aa_reads') || '{}'); } catch(x){}
   // The scheduled-task panel: whether it is showing, the last list drawn, and its refresh timer.
   // See "The scheduled-task panel" below.
-  var schedOpen=false, schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
+  var schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
   // Which of the panel's two lists is on screen. Persisted, because it is a preference about the
   // workspace rather than about one visit.
   var schedTab='tasks';
@@ -1236,51 +1251,211 @@ const SCRIPT = `
   var NARROW = 640;
   function narrow(){ return window.innerWidth <= NARROW; }
 
-  var sidebarOpen = localStorage.getItem('aa_sb_open');
-  if(sidebarOpen === null){ sidebarOpen = narrow() ? '0' : '1'; }
-  function applySidebar(){
-    var open = sidebarOpen !== '0';
-    sidebar.className = open ? '' : 'collapsed';
-    // A drawer moved off-screen is still in the tab order: without this, Tab walks into a column
-    // nobody can see. Removed as soon as it is open, and harmless on a docked column.
-    if(open) sidebar.removeAttribute('inert'); else sidebar.setAttribute('inert', '');
-    expandBtn.hidden = open;
-    // Hidden wins over the media query's display:block, so on a wide screen this stays off
-    // regardless of the drawer's state.
-    backdrop.hidden = !open;
-  }
-  function setSidebar(open){
-    sidebarOpen = open ? '1' : '0';
-    try { localStorage.setItem('aa_sb_open', sidebarOpen); } catch(x){}
-    applySidebar();
-  }
-  collapseBtn.addEventListener('click', function(){ setSidebar(false); });
-  expandBtn.addEventListener('click', function(){ setSidebar(true); });
-  backdrop.addEventListener('click', function(){ setSidebar(false); });
-  applySidebar();
-
   /**
-   * The Settings menu at the foot of the sidebar: Notifications, Low attention, and Clear. Toggles
-   * leave it open, so the state they flip is seen flipping; Clear closes it before its confirm().
-   * Any click outside it closes it — including the backdrop's, which is what dismisses the drawer.
+   * One side panel, used on both edges of the page: the topic list on the left and the
+   * scheduled work on the right. Everything about the way a panel behaves is here once — the
+   * width and its drag handle, the open/close animation, the drawer it becomes under its
+   * breakpoint, the inert state that keeps Tab out of a panel nobody can see, and the storage
+   * that remembers both choices. What the two sides do not share is passed in: which edge it
+   * is on, how wide it starts and may get, and how narrow the screen has to be before a column
+   * has no room and it slides over the chat instead.
+   *
+   * Closed, a panel keeps its width and is moved off-screen with a negative margin (a column)
+   * or a transform (a drawer) — never display:none, because a hidden element has nothing to
+   * animate. --pw is the dragged width, inline and kept per browser; the stylesheet's
+   * --pw-default is the fallback, and the two must agree with width() below.
    */
-  function setOpts(open){
-    optsMenu.hidden = !open;
-    optsBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  function makePanel(cfg){
+    var el=cfg.el, handle=cfg.handle, open=false, drag=null;
+    function docked(){ return window.innerWidth >= cfg.dockAt; }
+    function width(){
+      var w=parseFloat(el.style.getPropertyValue('--pw'));
+      if(w > 0) return w;
+      return typeof cfg.width === 'function' ? cfg.width() : cfg.width;
+    }
+    function maxWidth(){
+      return Math.max(cfg.min, Math.min(cfg.max, cfg.maxWidth ? cfg.maxWidth() : cfg.max));
+    }
+    function setWidth(w, keep){
+      if(w == null){
+        el.style.removeProperty('--pw');
+        try { localStorage.removeItem(cfg.widthKey); } catch(x){}
+        return;
+      }
+      w = Math.round(Math.max(cfg.min, Math.min(maxWidth(), w)));
+      el.style.setProperty('--pw', w+'px');
+      if(keep) try { localStorage.setItem(cfg.widthKey, String(w)); } catch(x){}
+    }
+    function paint(){
+      el.classList.toggle('collapsed', !open);
+      // A panel moved off-screen is still in the tab order: without this, Tab walks into a
+      // column nobody can see. Removed as soon as it is open, and harmless on a docked column.
+      if(open) el.removeAttribute('inert'); else el.setAttribute('inert', '');
+      if(cfg.onPaint) cfg.onPaint(open);
+    }
+    function setOpen(next, opts){
+      opts = opts || {};
+      if(next === open){ if(opts.force) paint(); return; }
+      open = next;
+      // A close nobody asked for — following a session on an overlay, where the panel would
+      // cover the chat it just opened — is not a preference, so it leaves storage alone.
+      if(!opts.transient && cfg.storeKey){
+        try { if(open) localStorage.setItem(cfg.storeKey,'1'); else localStorage.removeItem(cfg.storeKey); } catch(x){}
+      }
+      paint();
+      if(cfg.onChange) cfg.onChange(open);
+    }
+    // The drag listens on the document rather than the 8px handle, because the pointer leaves
+    // the handle on the first fast move. The edge it measures from is the one the panel is
+    // anchored to: the left panel grows to the right, the right panel to the left.
+    handle.addEventListener('pointerdown', function(e){
+      if(!docked()) return;
+      e.preventDefault();
+      drag = {edge: cfg.side === 'left' ? el.getBoundingClientRect().left : el.getBoundingClientRect().right};
+      handle.className = 'panel-resize dragging';
+      document.body.style.userSelect = 'none';
+    });
+    document.addEventListener('pointermove', function(e){
+      if(drag) setWidth(cfg.side === 'left' ? e.clientX - drag.edge : drag.edge - e.clientX, false);
+    });
+    document.addEventListener('pointerup', function(){
+      if(!drag) return;
+      drag = null;
+      handle.className = 'panel-resize';
+      document.body.style.userSelect = '';
+      var w = parseFloat(el.style.getPropertyValue('--pw'));
+      if(w > 0) setWidth(w, true);
+    });
+    handle.addEventListener('dblclick', function(){ setWidth(null); });
+    // The saved width is applied before the first paint, so a reload does not flash the default
+    // column and then jump to the operator's.
+    var saved = 0;
+    try { saved = Number(localStorage.getItem(cfg.widthKey)); } catch(x){}
+    if(saved > 0) setWidth(saved, false);
+    paint();
+    return {el:el, isOpen:function(){ return open; }, setOpen:setOpen, toggle:function(){ setOpen(!open); },
+            width:width, setWidth:setWidth, docked:docked};
   }
-  optsBtn.addEventListener('click', function(){ setOpts(optsMenu.hidden); });
-  document.addEventListener('click', function(e){
-    if(optsMenu.hidden || optsMenu.contains(e.target) || optsBtn.contains(e.target)) return;
-    setOpts(false);
+
+  // The two panels. The left starts open on a wide screen and closed on a phone; the right is
+  // closed until asked for, and only restored where it can be docked (below 1024px it would come
+  // back as a drawer over the chat nobody asked it to cover).
+  var sbPane = makePanel({
+    el: sidebar, handle: $('sidebar-resize'), side:'left',
+    min:180, max:640, width:240, storeKey:'aa_sb_open', widthKey:'aa_sb_w',
+    dockAt: NARROW + 1,
+    // The cap leaves the chat 360px with the right panel docked: that panel's width comes off
+    // the top, and the sidebar may take the rest up to 640.
+    maxWidth: function(){
+      return window.innerWidth - 360 - (schedPane && schedPane.isOpen() && schedPane.docked() ? schedPane.width() : 0);
+    },
+    onPaint: function(open){
+      app.classList.toggle('sb-open', open);
+      expandBtn.hidden = open;
+    }
+  });
+  var schedPane = makePanel({
+    el: schedPanel, handle: schedResize, side:'right',
+    min:220, max:640,
+    // The stylesheet's clamp(240px,20vw,320px), as the number the caps and the drag need.
+    width: function(){ return Math.min(320, Math.max(240, Math.round(window.innerWidth * 0.20))); },
+    storeKey:'aa_sched_open', widthKey:'aa_sched_w',
+    dockAt: 1024,
+    // The sidebar's stored width, not its current on-screen one: that is the width the chat
+    // loses whenever the sidebar is open, which is what this cap has to keep room for.
+    maxWidth: function(){ return window.innerWidth - sbPane.width() - 360; },
+    onPaint: function(open){
+      app.classList.toggle('sched-open', open);
+      schedToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      schedToggle.classList.toggle('on', open);
+      paintSchedTab();
+    },
+    onChange: function(open){
+      if(open){
+        if(schedTasks === null) schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
+        loadSchedules();
+        armSched();
+      } else {
+        disarmSched();
+      }
+      clampPanels();
+    }
   });
 
   /**
-   * The gateway's settings page, from the Settings menu. The command is sent quietly — the daemon
+   * Both widths are capped against the other column, so opening or closing one can leave the
+   * other past its maximum. The clamp rewrites --pw, not storage: the narrower width stays until
+   * the page is reloaded, when the stored one is applied again.
+   */
+  function clampPanels(){
+    // Only a column has a width of its own; in drawer mode the screen decides it, and a clamp
+    // here would shrink the saved width of a window that is merely narrow at the moment.
+    if(!sbPane.docked()) return;
+    var w = parseFloat(sidebar.style.getPropertyValue('--pw'));
+    if(w > 0) sbPane.setWidth(w, false);
+    if(schedPane.docked()){
+      var sw = parseFloat(schedPanel.style.getPropertyValue('--pw'));
+      if(sw > 0) schedPane.setWidth(sw, false);
+    }
+  }
+
+  function setSidebar(open){ sbPane.setOpen(open); }
+  collapseBtn.addEventListener('click', function(){ setSidebar(false); });
+  expandBtn.addEventListener('click', function(){ setSidebar(true); });
+
+  // Restored on the next visit. A first visit on a phone starts with the topic list out of the
+  // way; a wide one starts with it open. Neither writes the default back to storage.
+  var savedSbOpen = null;
+  try { savedSbOpen = localStorage.getItem('aa_sb_open'); } catch(x){}
+  if(savedSbOpen === null) savedSbOpen = narrow() ? '0' : '1';
+  if(savedSbOpen !== '0') sbPane.setOpen(true, {transient:true});
+
+  /**
+   * The two menus at the foot of the sidebar — Menu (all settings, notifications, low attention,
+   * skills) and Manage (close idle, clear all topics). One open at a time, one box in one place;
+   * a click anywhere else puts it away, and Escape puts it away and gives the focus back to the
+   * button that opened it. A disclosure rather than an ARIA menu: role=menu promises arrow-key
+   * navigation, and these are reached with Tab like any other buttons.
+   */
+  var menus = [];
+  function setMenu(entry, open){
+    for(var i=0;i<menus.length;i++){
+      var e=menus[i], on = open && e === entry;
+      e.menu.hidden = !on;
+      e.btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
+  }
+  function openMenu(){
+    for(var i=0;i<menus.length;i++) if(!menus[i].menu.hidden) return menus[i];
+    return null;
+  }
+  function addMenu(btn, menu){
+    var entry={btn:btn, menu:menu};
+    menus.push(entry);
+    btn.addEventListener('click', function(){ setMenu(entry, menu.hidden); });
+  }
+  addMenu(optsBtn, optsMenu);
+  addMenu(manageBtn, manageMenu);
+  document.addEventListener('click', function(e){
+    var m=openMenu();
+    if(!m || m.menu.contains(e.target) || m.btn.contains(e.target)) return;
+    setMenu(null, false);
+  });
+
+  // One sheet dismisses whichever drawer is over the chat. Both are put away if a narrow screen
+  // has somehow got both open — a tap outside means "show me the chat".
+  backdrop.addEventListener('click', function(){
+    if(schedPane.isOpen()) setSchedules(false);
+    if(sbPane.isOpen()) setSidebar(false);
+  });
+
+  /**
+   * The gateway's settings page, from the Menu. The command is sent quietly — the daemon
    * has to build the screen from the live config, and it answers with a message of its own, but a
    * page opening must not leave a /setting bubble in the transcript.
    */
   settingsOpenBtn.addEventListener('click', function(){
-    setOpts(false);
+    setMenu(null, false);
     var token = openSettingsLoading();
     var t = settingsTopic;
     if(!token || !t) return;
@@ -1312,100 +1487,6 @@ const SCRIPT = `
   });
   paintCalm();
 
-  /**
-   * The sidebar's width, dragged from its right edge and kept per browser. Clamped so the chat
-   * keeps room; double-click puts the default back. A drag listens on the document rather than
-   * the handle, because the pointer leaves an 8px handle on the first fast move.
-   */
-  var SB_MIN = 180;
-  // The panel's default width is the stylesheet's clamp(240px,20vw,320px); this is the same
-  // arithmetic, used only to keep the sidebar's own maximum from leaving the chat a sliver when
-  // both are open. A width the operator dragged is in --schedw and wins.
-  var SCHED_MIN = 220;
-  function schedWidth(){
-    var w = parseFloat(schedPanel.style.getPropertyValue('--schedw'));
-    if(w > 0) return w;
-    return Math.min(320, Math.max(240, Math.round(window.innerWidth * 0.20)));
-  }
-  function docked(){ return window.innerWidth >= 1024; }
-  // How wide the panel may get: never so wide that the chat loses its 360px, whatever the sidebar
-  // is doing, and never wider than 640 — a side panel, not a second chat.
-  function schedMax(){
-    // The sidebar's width even while it is collapsed: collapsing slides it out of view with a
-    // negative margin, it does not give the column back, and expanding it later must not leave the
-    // chat narrower than the 360px this cap exists to protect.
-    var sbw = sidebar.getBoundingClientRect().width || 240;
-    return Math.max(SCHED_MIN, Math.min(640, window.innerWidth - sbw - 360));
-  }
-  function setSchedWidth(w, keep){
-    if(w == null){
-      schedPanel.style.removeProperty('--schedw');
-      try { localStorage.removeItem('aa_sched_w'); } catch(x){}
-      return;
-    }
-    w = Math.round(Math.max(SCHED_MIN, Math.min(schedMax(), w)));
-    schedPanel.style.setProperty('--schedw', w+'px');
-    if(keep) try { localStorage.setItem('aa_sched_w', String(w)); } catch(x){}
-  }
-  function sbMax(){ return Math.max(SB_MIN, Math.min(640, window.innerWidth - 360 - (schedOpen && docked() ? schedWidth() : 0))); }
-  function setSbWidth(w, keep){
-    if(w == null){
-      sidebar.style.removeProperty('--sbw');
-      try { localStorage.removeItem('aa_sb_w'); } catch(x){}
-      return;
-    }
-    w = Math.round(Math.max(SB_MIN, Math.min(sbMax(), w)));
-    sidebar.style.setProperty('--sbw', w+'px');
-    if(keep) try { localStorage.setItem('aa_sb_w', String(w)); } catch(x){}
-  }
-  var savedSbw = Number(localStorage.getItem('aa_sb_w'));
-  if(savedSbw > 0) setSbWidth(savedSbw, false);
-  var sbHandle = $('sidebar-resize'), sbDrag = null;
-  sbHandle.addEventListener('pointerdown', function(e){
-    if(narrow()) return;
-    e.preventDefault();
-    sbDrag = {left: sidebar.getBoundingClientRect().left};
-    sbHandle.className = 'dragging';
-    document.body.style.userSelect = 'none';
-  });
-  document.addEventListener('pointermove', function(e){
-    if(sbDrag) setSbWidth(e.clientX - sbDrag.left, false);
-  });
-  document.addEventListener('pointerup', function(){
-    if(!sbDrag) return;
-    sbDrag = null;
-    sbHandle.className = '';
-    document.body.style.userSelect = '';
-    var w = parseFloat(sidebar.style.getPropertyValue('--sbw'));
-    if(w > 0) setSbWidth(w, true);
-  });
-  sbHandle.addEventListener('dblclick', function(){ setSbWidth(null); });
-
-  // The panel's own width, dragged from its left edge. The saved value is applied before the
-  // first paint so a reload does not flash the default column and then jump to the operator's.
-  var savedSchedW = Number(localStorage.getItem('aa_sched_w'));
-  if(savedSchedW > 0) setSchedWidth(savedSchedW, false);
-  var schedDrag = null;
-  schedResize.addEventListener('pointerdown', function(e){
-    if(!docked() || !schedOpen) return;
-    e.preventDefault();
-    schedDrag = {right: schedPanel.getBoundingClientRect().right};
-    schedResize.className = 'dragging';
-    document.body.style.userSelect = 'none';
-  });
-  document.addEventListener('pointermove', function(e){
-    if(schedDrag) setSchedWidth(schedDrag.right - e.clientX, false);
-  });
-  document.addEventListener('pointerup', function(){
-    if(!schedDrag) return;
-    schedDrag = null;
-    schedResize.className = '';
-    document.body.style.userSelect = '';
-    var w = parseFloat(schedPanel.style.getPropertyValue('--schedw'));
-    if(w > 0) setSchedWidth(w, true);
-  });
-  schedResize.addEventListener('dblclick', function(){ setSchedWidth(null); });
-
   // ── The scheduled-task panel ────────────────────────────────────────────────
   /**
    * The gateway's scheduled work, in a column of its own rather than in the topic list.
@@ -1416,16 +1497,18 @@ const SCRIPT = `
    *
    * Closed on a first visit, then open until the operator closes it: the choice is kept in
    * localStorage (aa_sched_open), so opening a session from the panel leaves the panel where it
-   * was. Only a docked panel is restored on load — below 1024px the panel is an overlay over the
+   * was. Only a docked panel is restored on load — below 1024px the panel is a drawer over the
    * chat, and coming back to a page with the whole screen covered is not "remembered", it is in
-   * the way. Closing is the close button, Escape, or the clock, and each of them is remembered too.
+   * the way. Closing is the close button, Escape, the backdrop or the clock, and each of them is
+   * remembered too.
    *
    * The task list is pulled when the panel opens, after every action, and on a timer while it is
    * visible (5s while a task is running, 30s otherwise). The sessions list needs no request: the
    * topics event that keeps the switcher current carries their flags, state and unread counts too.
    */
-  try { schedOpen = localStorage.getItem('aa_sched_open') === '1' && docked(); } catch(x){}
-  try { if(localStorage.getItem('aa_sched_tab') === 'sessions') schedTab = 'sessions'; } catch(x){}
+  try {
+    if(localStorage.getItem('aa_sched_tab') === 'sessions'){ schedTab = 'sessions'; paintSchedTab(); }
+  } catch(x){}
 
   /** The topics a scheduled run opened, most recently active first (the order topics is in). */
   function schedSessions(){
@@ -1543,16 +1626,6 @@ const SCRIPT = `
     paintSchedTab();
   }
 
-  function paintSchedules(){
-    app.classList.toggle('sched', schedOpen);
-    // The overlay is laid out and translated off-screen rather than hidden, so its buttons would
-    // still take Tab. inert keeps the keyboard in the chat until the panel is opened.
-    if(schedOpen) schedPanel.removeAttribute('inert'); else schedPanel.setAttribute('inert', '');
-    schedToggle.setAttribute('aria-expanded', schedOpen ? 'true' : 'false');
-    schedToggle.classList.toggle('on', schedOpen);
-    paintSchedTab();
-  }
-
   function disarmSched(){
     if(schedTimer) clearTimeout(schedTimer);
     schedTimer = 0;
@@ -1560,43 +1633,22 @@ const SCRIPT = `
 
   function armSched(){
     disarmSched();
-    if(!schedOpen) return;
+    if(!schedPane.isOpen()) return;
     var wait = schedTasks && schedTasks.some(function(t){ return t.running; }) ? 5000 : 30000;
     schedTimer = setTimeout(function(){
       schedTimer = 0;
-      if(!schedOpen) return;
+      if(!schedPane.isOpen()) return;
       if(document.visibilityState === 'hidden'){ armSched(); return; }
       loadSchedules();
     }, wait);
   }
 
   function setSchedules(open, transient){
-    if(open === schedOpen) return;
+    if(open === schedPane.isOpen()) return;
     // Docking the panel narrows the chat, which re-wraps the transcript. A reader at the bottom
     // should stay at the bottom; one reading history keeps the pixel position they chose.
     var wasBottom = atBottom();
-    schedOpen = open;
-    // A close nobody asked for — following a session on an overlay, where the panel would cover
-    // the chat it just opened — is not a preference, so it leaves aa_sched_open alone.
-    if(!transient) try { if(open) localStorage.setItem('aa_sched_open', '1'); else localStorage.removeItem('aa_sched_open'); } catch(x){}
-    paintSchedules();
-    if(open){
-      if(schedTasks === null) schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
-      loadSchedules();
-      armSched();
-    } else {
-      disarmSched();
-    }
-    // The sidebar's maximum depends on whether the panel is taking a column; re-clamp it so
-    // opening the panel cannot leave the chat a sliver. Not persisted: the width the operator
-    // chose is still what they get back when the panel closes. The panel's own saved width is
-    // re-clamped for the same reason — the window may be narrower than when it was dragged.
-    var w = parseFloat(sidebar.style.getPropertyValue('--sbw'));
-    if(w > 0) setSbWidth(w, false);
-    if(open && docked()){
-      var sw = parseFloat(schedPanel.style.getPropertyValue('--schedw'));
-      if(sw > 0) setSchedWidth(sw, false);
-    }
+    schedPane.setOpen(open, {transient:transient});
     if(wasBottom) toBottom();
   }
 
@@ -1745,9 +1797,8 @@ const SCRIPT = `
     });
   }
 
-  schedToggle.addEventListener('click', function(){ setSchedules(!schedOpen); });
+  schedToggle.addEventListener('click', function(){ setSchedules(!schedPane.isOpen()); });
   schedClose.addEventListener('click', function(){ setSchedules(false); });
-  schedBackdrop.addEventListener('click', function(){ setSchedules(false); });
   schedTabTasks.addEventListener('click', function(){ setSchedTab('tasks'); });
   schedTabSessions.addEventListener('click', function(){ setSchedTab('sessions'); });
 
@@ -1815,18 +1866,16 @@ const SCRIPT = `
 
   // A timer is not worth running behind a hidden tab; ask once on the way back instead.
   document.addEventListener('visibilitychange', function(){
-    if(!schedOpen) return;
+    if(!schedPane.isOpen()) return;
     if(document.visibilityState === 'hidden') disarmSched();
     else loadSchedules();
   });
 
-  paintSchedules();
-  if(schedOpen){
-    loadSchedules();
-    armSched();
-    var schedSbw = parseFloat(sidebar.style.getPropertyValue('--sbw'));
-    if(schedSbw > 0) setSbWidth(schedSbw, false);
-  }
+  // The panel's own choice, restored only where there is a column to dock it to. Its width was
+  // applied by makePanel before the first paint.
+  var restoreSched = false;
+  try { restoreSched = localStorage.getItem('aa_sched_open') === '1'; } catch(x){}
+  if(restoreSched && schedPane.docked()) setSchedules(true, true);
 
   // Escapes for BOTH uses this page makes of it: element content, and the inside of a
   // double-quoted attribute. textContent alone covers the first and leaves the quote, which is
@@ -2268,7 +2317,7 @@ const SCRIPT = `
   }
 
   /**
-   * Send a command the operator did not type — the Settings menu asking the daemon for its own
+   * Send a command the operator did not type — the Menu asking the daemon for its own
    * settings screen. quiet tells the room not to write it into the conversation: a page opening
    * must not leave a /setting bubble in the transcript, and nothing on the daemon's side needs
    * the echo (the answer is a new message of its own).
@@ -2979,9 +3028,13 @@ const SCRIPT = `
     // Says what it will do: with stars in the list it no longer clears all of them.
     clearBtn.textContent = stars ? 'Clear unstarred topics' : 'Clear all topics';
     clearBtn.title = stars ? 'Forget every topic except the starred ones and start a new one' : 'Forget every topic and start a new one';
+    // The count sits on Manage's face, so it is read without opening the menu; the item inside
+    // says what closing would do, and is absent when there is nothing to close.
     var idle=idleTopics().length;
     idleBtn.hidden = !idle;
+    idleSep.hidden = !idle;
     idleBtn.textContent = 'Close idle ('+idle+')';
+    idleCount.textContent = idle ? '('+idle+')' : '';
     var below = cur ? busyBelow(cur.id) : false;
     if(cur){
       chatTitle.textContent=cur.title || 'Untitled';
@@ -3016,7 +3069,7 @@ const SCRIPT = `
     paintSchedCounts();
     paintSummary();
     paintSchedAlert();
-    if(schedOpen && schedTab==='sessions') paintSessions();
+    if(schedPane.isOpen() && schedTab==='sessions') paintSessions();
   }
 
   /**
@@ -3239,7 +3292,7 @@ const SCRIPT = `
     // The panel stays where it is: it is part of the workspace, and following a run out of it
     // should leave the list of runs beside the transcript. The one exception is the overlay under
     // 1024px, which covers the chat it just opened — there is nothing to keep it beside there.
-    if(schedOpen && !docked()) setSchedules(false, true);
+    if(schedPane.isOpen() && !schedPane.docked()) setSchedules(false, true);
     // The topic being left, written now rather than at the end of its window — in a moment
     // nothing on screen belongs to it any more and there is nothing left to write.
     cacheFlush();
@@ -3591,7 +3644,7 @@ const SCRIPT = `
       // A panel opened (or restored from aa_sched_open) before the gate came down asked too
       // early (loadSchedules refuses while #app is hidden); this is the first moment the answer
       // can be had.
-      if(schedOpen){ loadSchedules(); armSched(); }
+      if(schedPane.isOpen()){ loadSchedules(); armSched(); }
     };
     stream.onerror = function(){
       if(done) return;
@@ -3718,7 +3771,7 @@ const SCRIPT = `
   }
 
   clearBtn.addEventListener('click', function(){
-    setOpts(false);
+    setMenu(null, false);
     var stars = topics.filter(function(t){ return t.starred; }).length;
     var gone = topics.length - stars;
     if(stars && !gone){ alert('Every topic is starred, so there is nothing to clear. Unstar one first.'); return; }
@@ -3841,7 +3894,7 @@ const SCRIPT = `
     idleTitle.textContent=why;
     idleGo.disabled=false;
   }
-  idleBtn.addEventListener('click', openIdle);
+  idleBtn.addEventListener('click', function(){ setMenu(null, false); openIdle(); });
   idleGo.addEventListener('click', goIdle);
   idleCancel.addEventListener('click', closeIdle);
   idleDialog.addEventListener('click', function(e){ if(e.target===idleDialog) closeIdle(); });
@@ -3978,12 +4031,27 @@ const SCRIPT = `
   lightbox.addEventListener('click', closeShot);
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
-    // Close the topmost thing first: Escape over a picture or the reader must not also put away
-    // an open task panel behind it.
-    var overlay = !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !optsMenu.hidden || !skillsWin.hidden || !settingsPage.hidden;
+    // An IME uses Escape to cancel its candidate list. That keystroke belongs to the composition,
+    // not to the page: dismissing a panel (and remembering the dismissal) mid-word is not
+    // something the person asked for.
+    if(e.isComposing) return;
+    // A recording is cancelled by Escape too, and the recorder's own listener below does that.
+    // The same keystroke must not also put away what is behind the composer.
+    if(rec) return;
+    // Close the topmost thing first: Escape over a picture, the reader or a menu must not also
+    // put away a panel behind it. The command suggestions are the composer's own overlay.
+    var hintsOpen = !hints.hidden;
+    var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
     closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
-    if(!optsMenu.hidden){ setOpts(false); optsBtn.focus(); }
-    if(!overlay && schedOpen) setSchedules(false);
+    if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
+    var m = openMenu();
+    if(m){ setMenu(null, false); m.btn.focus(); }
+    // The two panels answer Escape alike: the right one first, then the left. Each is a choice
+    // the page remembers, and each has a control on screen that brings it back.
+    if(!overlay){
+      if(schedPane.isOpen()) setSchedules(false);
+      else if(sbPane.isOpen()) setSidebar(false);
+    }
   });
 
   /**
@@ -4304,7 +4372,7 @@ const SCRIPT = `
     skillsWin.hidden = true;
   }
 
-  skillsToggle.addEventListener('click', openSkills);
+  skillsToggle.addEventListener('click', function(){ setMenu(null, false); openSkills(); });
   skillsClose.addEventListener('click', closeSkills);
   skillsWin.addEventListener('click', function(e){ if(e.target === skillsWin) closeSkills(); });
   skillsBack.addEventListener('click', function(){ skillClearNote(); renderSkillsList(); });
@@ -4724,7 +4792,12 @@ const SCRIPT = `
     if(rec) stopRec(true);
     else if(!recStarting && topic) startRec();
   });
-  document.addEventListener('keydown', function(e){ if(e.key === 'Escape' && rec) stopRec(false); });
+  // Escape throws a recording away — unless it is an IME cancelling its candidate list, which is
+  // a different Escape and must not also cost the recording.
+  document.addEventListener('keydown', function(e){
+    if(e.isComposing) return;
+    if(e.key === 'Escape' && rec) stopRec(false);
+  });
 
   function suggest(){
     var v=input.value;
@@ -5154,33 +5227,40 @@ const PAGE = `<!doctype html>
 <body>
 __GATE__
 <main id="app" hidden>
-  <aside id="sidebar">
-    <div id="sidebar-header">
-      <span class="sidebar-title">Topics</span>
+  <aside id="sidebar" class="panel panel-left">
+    <div id="sidebar-header" class="panel-head">
+      <span class="panel-title">Topics</span>
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
-      <button type="button" class="btn-icon" id="collapse-sidebar" title="Collapse sidebar">◀</button>
+      <button type="button" class="btn-icon panel-close" id="collapse-sidebar" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
     <div id="topics"></div>
-    <div id="sidebar-footer">
-      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Settings"><span class="opts-gear">⚙</span><span class="opts-word"> Settings</span></button>
-      <!-- The gateway's managed skills: a surface of its own, not a setting. The glyph is text
-           because the page already carries its controls that way; the word drops at the
-           narrowest sidebar exactly as Settings' does. -->
-      <button type="button" id="skills-toggle" title="Skills the gateway gives every agent"><span class="opts-gear">✦</span><span class="opts-word"> Skills</span></button>
-      <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle</button>
-      <div id="opts-menu" hidden>
+    <!-- Two menus, one row. Menu holds what is set once per device or visited rarely; Manage
+         holds the two housekeeping actions, with the idle count on its face so the number is
+         still seen without opening anything. Both open upward with the same box and the same
+         dismissal (setMenu). -->
+    <div id="sidebar-footer" class="panel-foot">
+      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙</span><span class="opts-word"> Menu</span></button>
+      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear">⋯</span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
+      <div id="opts-menu" class="panel-menu" hidden>
         <!-- The gateway's own settings: agents, models, idle reclaim, scope. A page rather than a
              chat command, because the rows need the width a message never had. -->
         <button type="button" id="settings-open" title="Agents, models and conversation settings for this topic"><span>All settings</span></button>
         <button type="button" id="notify-toggle" hidden aria-pressed="false" title="Notify this device when something needs you"><span>Notifications</span><span class="opt-state" id="notify-state">off</span></button>
         <button type="button" id="calm-toggle" aria-pressed="false" title="Running topics stop pulsing and unread counts go grey; a question, a failure or an unread reply still stands out. This device only."><span>Low attention</span><span class="opt-state" id="calm-state">off</span></button>
         <div class="opts-sep"></div>
-        <button type="button" id="clear-topics" title="Forget every topic and start a new one">Clear all topics</button>
+        <!-- The gateway's managed skills: a surface of its own, not a setting, which is why it
+             was a footer button of its own until the row ran out of width. -->
+        <button type="button" id="skills-toggle" title="Skills the gateway gives every agent"><span>Skills</span></button>
+      </div>
+      <div id="manage-menu" class="panel-menu" hidden>
+        <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle</button>
+        <div class="opts-sep" id="idle-sep" hidden></div>
+        <button type="button" id="clear-topics" class="danger" title="Forget every topic and start a new one">Clear all topics</button>
       </div>
     </div>
-    <div id="sidebar-resize" title="Drag to resize · double-click for the default width"></div>
+    <div id="sidebar-resize" class="panel-resize" title="Drag to resize · double-click for the default width"></div>
   </aside>
-  <div id="backdrop" hidden></div>
+  <div id="backdrop"></div>
   <!-- Filled in and revealed when a picture in the log is tapped. One node reused for every
        image, rather than one per message: the transcript holds hundreds. -->
   <div id="lightbox" hidden><img id="lightbox-img" alt=""></div>
@@ -5313,19 +5393,20 @@ __GATE__
       </form>
     </div>
   </section>
-  <!-- The scheduled-task panel. A column of its own on a wide screen and an overlay below
-       1024px; the page toggles #app.sched and the stylesheet decides which of the two it is.
-       Outside #chat because it is about the gateway, not about the topic being read. -->
-  <aside id="schedules" aria-label="Scheduled tasks">
-    <!-- The docked panel's width, dragged like the sidebar's. Hidden below 1024px, where the
-         panel is an overlay and the screen decides its width. -->
-    <div id="sched-resize" role="separator" aria-orientation="vertical" aria-label="Resize the scheduled panel" title="Drag to resize · double-click for the default width"></div>
-    <div id="schedules-head">
+  <!-- The scheduled-task panel: the same .panel as the sidebar, on the right. A column of its
+       own on a wide screen and a drawer below 1024px; the stylesheet decides which of the two it
+       is from the width, and .collapsed is what moves it off-screen either way. Outside #chat
+       because it is about the gateway, not about the topic being read. -->
+  <aside id="schedules" class="panel panel-right" aria-label="Scheduled tasks">
+    <!-- The docked panel's width, dragged like the sidebar's. Not offered below 1024px, where
+         the panel is a drawer and the screen decides its width. -->
+    <div id="sched-resize" class="panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize the scheduled panel" title="Drag to resize · double-click for the default width"></div>
+    <div id="schedules-head" class="panel-head">
       <div class="sched-heading">
-        <span class="sched-title">Scheduled tasks</span>
+        <span class="panel-title">Scheduled tasks</span>
         <span id="schedules-summary" class="sched-summary"></span>
       </div>
-      <button type="button" class="btn-icon" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
+      <button type="button" class="btn-icon panel-close" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
     <div id="schedules-body">
       <div id="schedules-note" hidden></div>
@@ -5334,14 +5415,13 @@ __GATE__
     </div>
     <!-- A task is a definition, a session is one run that opened a topic of its own. Two lists,
          because a run is not a task and merging them would make every run look like one. The tabs
-         sit at the foot, sharing the sidebar footer's row height, because they choose between two
-         views of this column rather than heading its content. -->
-    <div id="sched-tabs" role="tablist" aria-label="Scheduled sessions and tasks">
+         sit at the foot, in the same row the sidebar keeps its menus in, because they choose
+         between two views of this column rather than heading its content. -->
+    <div id="sched-tabs" class="panel-foot" role="tablist" aria-label="Scheduled sessions and tasks">
       <button type="button" class="sched-tab" id="sched-tab-sessions" role="tab" aria-selected="false" aria-controls="sched-sessions">Sessions <span class="sched-count" id="sched-tab-sessions-n"></span></button>
       <button type="button" class="sched-tab on" id="sched-tab-tasks" role="tab" aria-selected="true" aria-controls="schedules-list">Tasks <span class="sched-count" id="sched-tab-tasks-n"></span></button>
     </div>
   </aside>
-  <div id="sched-backdrop"></div>
 </main>
 <script>${SCRIPT}</script>
 </body>

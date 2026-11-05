@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's two side panels are one component.** The topic list and the scheduled-task panel
+  had drifted into two sets of rules: the left slid with a margin transition and the right switched
+  `display`, the left became a drawer at 640px and the right at 1023px, the drawers were 82vw/300px
+  and 88vw/380px, each had its own backdrop at its own depth, and their headers ended in a
+  different glyph. They now share one `makePanel`, one set of `.panel` rules and one backdrop:
+  same header and footer rows, same ×, same 0.18s slide on both, `inert` while shut, Escape and the
+  backdrop on both, and the same `min(88vw, 380px)` drawer. The breakpoints stay apart — a 240px
+  list plus a 240–320px panel leave too little chat on a laptop, while the list itself is usable
+  down to 640px — and so do the default widths.
+- **The sidebar footer is Menu and Manage.** Three buttons in a 240px row overflowed, and "Close
+  idle (N)" was the one that got cut. Settings became **Menu** and keeps All settings,
+  Notifications, Low attention and Skills; the new **Manage** holds Close idle and Clear all
+  topics, and shows the idle count on its own face so the number is still visible at a glance. The
+  two menus open the same way, one at a time, and close on an outside click or Escape.
+
 ## [2.34.0] - 2026-11-05
 
 ### Added

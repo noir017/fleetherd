@@ -108,9 +108,12 @@ describe('webui page', () => {
     expect(html).toContain('aa_sched_open');
     expect(html).not.toContain('aa_sched_pin');
     expect(html).not.toContain('schedules-pin');
-    expect(html).toContain('#app.sched #schedules{display:flex}');
+    // The same panel component as the sidebar, on the right: one set of rules, not two.
+    expect(html).toContain('class="panel panel-right"');
+    expect(html).toContain('.panel-left.collapsed{margin-left:calc(-1 * var(--pw,var(--pw-default)))}');
+    expect(html).toContain('.panel-right.collapsed{margin-right:calc(-1 * var(--pw,var(--pw-default)))}');
     // The heading is words, not a clock glyph.
-    expect(html).toContain('<span class="sched-title">Scheduled tasks</span>');
+    expect(html).toContain('<span class="panel-title">Scheduled tasks</span>');
     // The definitions and the topics their runs opened are two lists, not one, and the tab row
     // is the last thing in the column rather than a heading over it.
     expect(html).toContain('id="sched-tabs"');

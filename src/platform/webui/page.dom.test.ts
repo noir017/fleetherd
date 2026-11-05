@@ -899,6 +899,11 @@ describe('webui page: closing the idle agents', () => {
     { id: 'd4e5f6a7', title: 'cold', lastAt: 997, live: false, msgCount: 0 },
     { id: 'e5f6a7b8', title: 'kept warm', lastAt: 996, live: true, starred: true, msgCount: 0 },
   ];
+  /** The item lives in the Manage menu now; open it the way a person would. */
+  const closeIdle = async (h: Harness): Promise<void> => {
+    await h.click('#manage-toggle');
+    await h.click('#close-idle');
+  };
   const rows = (h: Harness) =>
     Array.from(h.doc.querySelectorAll('#idle-list li')).map((li) => ({
       id: li.getAttribute('data-idle'),
@@ -923,7 +928,7 @@ describe('webui page: closing the idle agents', () => {
   it('lists each topic it would close, starred first, before closing anything', async () => {
     const h = await open();
     await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await h.click('#close-idle');
+    await closeIdle(h);
 
     expect(h.el('idle-dialog').hidden).toBe(false);
     expect(h.el('idle-title').textContent).toBe('Close 2 idle agents?');
@@ -943,7 +948,7 @@ describe('webui page: closing the idle agents', () => {
   it('closes exactly the listed topics and says what became of each', async () => {
     const h = await open({ replies: { 'api/topics/close-idle': { closed: ['e5f6a7b8'], kept: ['c3d4e5f6'] } } });
     await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await h.click('#close-idle');
+    await closeIdle(h);
     // A topic that goes idle while the dialog is open was not shown, so it is not closed either.
     await h.emit({ t: 'topics', topics: fleet().map((t) => (t.id === 'b2c3d4e5' ? { ...t, running: false } : t)) });
     await h.click('#idle-go');
@@ -963,7 +968,7 @@ describe('webui page: closing the idle agents', () => {
   it('keeps the question open, and says why, when the request fails', async () => {
     const h = await open({ status: { 'api/topics/close-idle': 500 } });
     await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await h.click('#close-idle');
+    await closeIdle(h);
     await h.click('#idle-go');
     await until('the failure', () => h.el('idle-title').textContent !== 'Close 2 idle agents?');
 
@@ -976,14 +981,14 @@ describe('webui page: closing the idle agents', () => {
   it('goes away on Escape and on a click outside the box', async () => {
     const h = await open();
     await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await h.click('#close-idle');
+    await closeIdle(h);
     h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
     expect(h.el('idle-dialog').hidden).toBe(true);
 
-    await h.click('#close-idle');
+    await closeIdle(h);
     await h.click('#idle-dialog');
     expect(h.el('idle-dialog').hidden).toBe(true);
-    await h.click('#close-idle');
+    await closeIdle(h);
     await h.click('#idle-box');
     expect(h.el('idle-dialog').hidden).toBe(false);
   });
@@ -2553,20 +2558,20 @@ describe('webui page: the sidebar width', () => {
     };
 
     await drag(400);
-    expect(sidebar.style.getPropertyValue('--sbw')).toBe('400px');
+    expect(sidebar.style.getPropertyValue('--pw')).toBe('400px');
     expect(h.window.localStorage.getItem('aa_sb_w')).toBe('400');
 
     await drag(40);
-    expect(sidebar.style.getPropertyValue('--sbw')).toBe('180px');
+    expect(sidebar.style.getPropertyValue('--pw')).toBe('180px');
 
     handle.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
-    expect(sidebar.style.getPropertyValue('--sbw')).toBe('');
+    expect(sidebar.style.getPropertyValue('--pw')).toBe('');
     expect(h.window.localStorage.getItem('aa_sb_w')).toBeNull();
   });
 
   it('comes back at the width it was left at', async () => {
     const h = await open({ storage: { aa_sb_w: '320' } });
-    expect(h.el('sidebar').style.getPropertyValue('--sbw')).toBe('320px');
+    expect(h.el('sidebar').style.getPropertyValue('--pw')).toBe('320px');
   });
 });
 
@@ -3718,10 +3723,11 @@ describe('webui page: a screen held upright', () => {
     const h = await open({ width: 390, height: 844 });
     await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4', 'b2c3d4e5']));
 
-    expect(h.el('sidebar').className).toBe('collapsed');
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(true);
     // Off-screen but still laid out: without inert, Tab walks into buttons nobody can see.
     expect(h.el('sidebar').hasAttribute('inert')).toBe(true);
-    expect(h.el('backdrop').hidden).toBe(true);
+    // The one class the stylesheet shows the backdrop for while the left drawer is out.
+    expect(h.el('app').classList.contains('sb-open')).toBe(false);
     expect(h.el('expand-sidebar').hidden).toBe(false);
     // Focusing on open would put the keyboard over half a portrait viewport before a word of
     // the conversation had been read.
@@ -3735,15 +3741,15 @@ describe('webui page: a screen held upright', () => {
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
 
     await h.click('#expand-sidebar');
-    expect(h.el('sidebar').className).toBe('');
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(false);
     expect(h.el('sidebar').hasAttribute('inert')).toBe(false);
-    expect(h.el('backdrop').hidden).toBe(false);
+    expect(h.el('app').classList.contains('sb-open')).toBe(true);
 
     // The only other way out is the collapse button, which the open drawer covers the chat to show.
     await h.click('#backdrop');
-    expect(h.el('sidebar').className).toBe('collapsed');
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(true);
     expect(h.el('sidebar').hasAttribute('inert')).toBe(true);
-    expect(h.el('backdrop').hidden).toBe(true);
+    expect(h.el('app').classList.contains('sb-open')).toBe(false);
   });
 
   it('gets out of the way once a topic has been picked', async () => {
@@ -3753,20 +3759,20 @@ describe('webui page: a screen held upright', () => {
 
     await h.click('[data-topic="b2c3d4e5"]');
 
-    expect(h.el('sidebar').className).toBe('collapsed');
-    expect(h.el('backdrop').hidden).toBe(true);
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(true);
+    expect(h.el('app').classList.contains('sb-open')).toBe(false);
   });
 
   it('leaves a wide screen alone', async () => {
     const h = await open({ width: 1440, height: 900 });
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5']));
 
-    expect(h.el('sidebar').className).toBe('');
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(false);
     expect(h.doc.activeElement).toBe(h.el('input'));
 
     await h.click('[data-topic="b2c3d4e5"]');
     // A column, not a drawer: picking a topic has no reason to collapse it.
-    expect(h.el('sidebar').className).toBe('');
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(false);
   });
 
   it('keeps the backdrop out of the way of a wide screen', async () => {
@@ -3805,9 +3811,12 @@ describe('webui page: the narrow-screen stylesheet', () => {
   it('turns the sidebar into a drawer that clears the screen when shut', () => {
     const css = narrowBlock();
     expect(css).toContain('#sidebar{position:fixed');
-    // -240px would leave a strip of the wider drawer still on screen.
-    expect(css).toContain('#sidebar.collapsed{margin-left:-100%}');
-    expect(css).toContain('#backdrop{display:block}');
+    // A transform, not a fixed -240px offset: the drawer is 88vw wide here and would still
+    // leave a strip on screen.
+    expect(css).toContain('#sidebar.collapsed{margin:0;transform:translateX(-100%)}');
+    expect(css).toContain('#app.sb-open #backdrop{display:block}');
+    // The same drawer width the scheduled panel has, so the two edges are one component.
+    expect(css).toContain('width:min(88vw,380px)');
   });
 
   it('slides the scheduled panel in from the right instead of covering the screen', () => {
@@ -3816,12 +3825,10 @@ describe('webui page: the narrow-screen stylesheet', () => {
     // it off-screen, because display:none has nothing to animate.
     expect(narrowBlock()).not.toContain('#app.sched #schedules{width:100%');
     const overlay = blockAt('@media(max-width:1023px){');
-    expect(overlay).toContain('#schedules{display:flex;position:fixed');
+    expect(overlay).toContain('#schedules{position:fixed');
     expect(overlay).toContain('width:min(88vw,380px)');
-    expect(overlay).toContain('transform:translateX(100%)');
-    expect(overlay).toContain('transition:transform .18s ease');
-    expect(overlay).toContain('#app.sched #schedules{transform:none}');
-    expect(overlay).toContain('#app.sched #sched-backdrop{display:block}');
+    expect(overlay).toContain('#schedules.collapsed{margin:0;transform:translateX(100%)}');
+    expect(overlay).toContain('#app.sched-open #backdrop{display:block}');
   });
 
   it('measures height in dvh, which is the viewport the URL bar has left', () => {
@@ -4832,18 +4839,65 @@ describe('webui page: the sidebar footer, and low attention', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
   const C = 'c3d4e5f6';
-  const menuOpen = (h: Harness): boolean => !h.el('opts-menu').hidden;
+  const menuOpen = (h: Harness): boolean => !h.el('opts-menu').hidden || !h.el('manage-menu').hidden;
   const calm = (h: Harness): boolean => h.el('app').classList.contains('calm');
 
-  it('keeps Notifications, Low attention and Clear in the Settings menu, and Close idle on the footer', async () => {
+  it('puts settings and skills in Menu, and housekeeping in Manage, leaving two buttons on the row', async () => {
     const h = await open();
     await h.emit(sync(A, [], [A]));
     const menu = h.el('opts-menu');
-    for (const id of ['notify-toggle', 'calm-toggle', 'clear-topics']) expect(menu.contains(h.el(id))).toBe(true);
-    // Its count is the point of it, and a count inside a closed menu is not seen.
-    expect(h.el('close-idle').parentElement).toBe(h.el('sidebar-footer'));
+    for (const id of ['settings-open', 'notify-toggle', 'calm-toggle', 'skills-toggle']) {
+      expect(menu.contains(h.el(id))).toBe(true);
+    }
+    const manage = h.el('manage-menu');
+    for (const id of ['close-idle', 'clear-topics']) expect(manage.contains(h.el(id))).toBe(true);
+    // The footer itself holds two buttons and nothing else — the two menus are its children.
+    const buttons = Array.from(h.el('sidebar-footer').children).filter((e) => e.tagName === 'BUTTON');
+    expect(buttons.map((b) => b.id)).toEqual(['opts-toggle', 'manage-toggle']);
     expect(menuOpen(h)).toBe(false);
     expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
+    expect(h.el('manage-toggle').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('shows the idle count on Manage without opening anything', async () => {
+    const h = await open();
+    // Two topics with a resident agent and nothing running: the two Close idle would end.
+    await h.emit(sync(A, [], [A, B]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true },
+        { id: B, title: 'also here', lastAt: 999, msgCount: 0, stage: 'idle', live: true },
+      ],
+    });
+    expect(h.el('idle-count').textContent).toBe('(2)');
+    expect(h.el('close-idle').textContent).toBe('Close idle (2)');
+
+    // Nothing to close: the count goes, and so does the item inside the menu.
+    await h.emit({
+      t: 'topics',
+      topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true, running: true }],
+    });
+    expect(h.el('idle-count').textContent).toBe('');
+    expect(h.el('close-idle').hidden).toBe(true);
+    expect(h.el('idle-sep').hidden).toBe(true);
+  });
+
+  it('opens one menu at a time: opening the other puts the first away', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+
+    await h.click('#opts-toggle');
+    expect(menuOpen(h)).toBe(true);
+    await h.click('#manage-toggle');
+    expect(h.el('opts-menu').hidden).toBe(true);
+    expect(h.el('manage-menu').hidden).toBe(false);
+    expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
+    expect(h.el('manage-toggle').getAttribute('aria-expanded')).toBe('true');
+
+    // A click on a Manage item closes it before the action it names.
+    await h.click('#clear-topics');
+    expect(h.el('manage-menu').hidden).toBe(true);
   });
 
   it('opens on a click, stays open while a toggle flips, and closes on a click elsewhere or on Escape', async () => {
@@ -4880,7 +4934,7 @@ describe('webui page: the sidebar footer, and low attention', () => {
       openWhenAsked = menuOpen(h);
       return false;
     };
-    await h.click('#opts-toggle');
+    await h.click('#manage-toggle');
     await h.click('#clear-topics');
     expect(openWhenAsked).toBe(false);
     expect(menuOpen(h)).toBe(false);
@@ -4944,6 +4998,245 @@ describe('webui page: the sidebar footer, and low attention', () => {
   });
 });
 
+describe('webui page: one panel component on both edges', () => {
+  const A = 'a1b2c3d4';
+
+  const openWide = async (): Promise<Harness> => {
+    const h = await open({ width: 1440, height: 900 });
+    await h.emit(sync(A, [], [A]));
+    return h;
+  };
+  const shut = (h: Harness, id: string): boolean => h.el(id).classList.contains('collapsed');
+  const appHas = (h: Harness, cls: string): boolean => h.el('app').classList.contains(cls);
+
+  it('marks both columns as the same panel, closed by the same × and inert while shut', async () => {
+    const h = await openWide();
+    // Which edge it is on is the only class that differs; the base rules are `.panel`'s.
+    expect(h.el('sidebar').classList.contains('panel')).toBe(true);
+    expect(h.el('sidebar').classList.contains('panel-left')).toBe(true);
+    expect(h.el('schedules').classList.contains('panel')).toBe(true);
+    expect(h.el('schedules').classList.contains('panel-right')).toBe(true);
+    // Both close buttons are the one control: same class, same glyph.
+    for (const id of ['collapse-sidebar', 'schedules-close']) {
+      expect(h.el(id).classList.contains('panel-close')).toBe(true);
+      expect(h.el(id).textContent).toBe('×');
+    }
+
+    // The left starts open on a wide screen, the right closed.
+    expect(shut(h, 'sidebar')).toBe(false);
+    expect(shut(h, 'schedules')).toBe(true);
+    expect(h.el('schedules').hasAttribute('inert')).toBe(true);
+
+    await h.click('#collapse-sidebar');
+    expect(shut(h, 'sidebar')).toBe(true);
+    expect(h.el('sidebar').hasAttribute('inert')).toBe(true);
+    expect(appHas(h, 'sb-open')).toBe(false);
+    // The ☰ is the way back, at every width, because a closed column must not strand itself.
+    await h.click('#expand-sidebar');
+    expect(shut(h, 'sidebar')).toBe(false);
+    expect(h.el('sidebar').hasAttribute('inert')).toBe(false);
+
+    await h.click('#schedules-toggle');
+    expect(shut(h, 'schedules')).toBe(false);
+    expect(h.el('schedules').hasAttribute('inert')).toBe(false);
+    expect(appHas(h, 'sched-open')).toBe(true);
+    await h.click('#schedules-close');
+    expect(shut(h, 'schedules')).toBe(true);
+    expect(h.el('schedules').hasAttribute('inert')).toBe(true);
+    expect(appHas(h, 'sched-open')).toBe(false);
+  });
+
+  it('answers Escape on both: the right panel first, then the left', async () => {
+    const h = await openWide();
+    await h.click('#schedules-toggle');
+    expect(shut(h, 'sidebar')).toBe(false);
+    expect(shut(h, 'schedules')).toBe(false);
+
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(shut(h, 'schedules')).toBe(true);
+    // The left is a column the person has not asked to close; the second Escape does that.
+    expect(shut(h, 'sidebar')).toBe(false);
+
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(shut(h, 'sidebar')).toBe(true);
+  });
+
+  it('keeps each width under its own key, in the one --pw property both edges read', async () => {
+    const h = await open({ width: 1440, height: 900, storage: { aa_sb_w: '300', aa_sched_w: '260' } });
+    expect(h.el('sidebar').style.getPropertyValue('--pw')).toBe('300px');
+    expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('260px');
+    expect(h.window.localStorage.getItem('aa_sb_w')).toBe('300');
+    expect(h.window.localStorage.getItem('aa_sched_w')).toBe('260');
+
+    // Double-click on either handle is the default width again, and storage forgets it.
+    for (const [handle, panel, key] of [
+      ['sidebar-resize', 'sidebar', 'aa_sb_w'],
+      ['sched-resize', 'schedules', 'aa_sched_w'],
+    ] as const) {
+      h.doc.getElementById(handle)!.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
+      expect(h.el(panel).style.getPropertyValue('--pw')).toBe('');
+      expect(h.window.localStorage.getItem(key)).toBeNull();
+    }
+  });
+
+  it('keeps the two menus apart and each item wired to its own action', async () => {
+    const h = await open({ replies: { 'api/skills': { skills: [] }, 'api/schedules': { enabled: true, tasks: [] } } });
+    await h.emit(sync(A, [], [A]));
+
+    // Menu → All settings: a page, opened with a quiet command.
+    await h.click('#opts-toggle');
+    await h.click('#settings-open');
+    expect(h.el('opts-menu').hidden).toBe(true);
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(h.calls.find((c) => c.path === 'api/send')?.body).toMatchObject({ text: '/setting', quiet: true });
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+
+    // Menu → Skills: the managed-skills window, and the menu is gone.
+    await h.click('#opts-toggle');
+    await h.click('#skills-toggle');
+    expect(h.el('opts-menu').hidden).toBe(true);
+    expect(h.el('skills').hidden).toBe(false);
+    await until('the skills request', () => h.calls.some((c) => c.path === 'api/skills'));
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+
+    // Menu → Low attention stays open, so the state it flipped is seen flipping.
+    await h.click('#opts-toggle');
+    await h.click('#calm-toggle');
+    expect(h.el('opts-menu').hidden).toBe(false);
+    expect(appHas(h, 'calm')).toBe(true);
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+
+    // Manage → Close idle: the confirmation, not the action. One resident agent is enough.
+    await h.emit({
+      t: 'topics',
+      topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true }],
+    });
+    await h.click('#manage-toggle');
+    expect(h.el('manage-menu').hidden).toBe(false);
+    expect(h.el('close-idle').hidden).toBe(false);
+    await h.click('#close-idle');
+    expect(h.el('manage-menu').hidden).toBe(true);
+    expect(h.el('idle-dialog').hidden).toBe(false);
+    expect(h.el('idle-title').textContent).toBe('Close 1 idle agent?');
+    expect(h.calls.some((c) => c.path === 'api/topics/close-idle')).toBe(false);
+  });
+
+  it('asks before Clear, and posts only on a yes, from a closed menu', async () => {
+    const h = await open({ confirm: true });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#manage-toggle');
+    await h.click('#clear-topics');
+
+    expect(h.el('manage-menu').hidden).toBe(true);
+    expect(h.confirms).toHaveLength(1);
+    await until('the clear request', () => h.calls.some((c) => c.path === 'api/topics/clear'));
+  });
+});
+
+describe('webui page: Escape belongs to what is in front of it', () => {
+  const A = 'a1b2c3d4';
+
+  /** Both panels out, so a stray Escape has something visible to put away. */
+  const openBoth = async (opts: NonNullable<Parameters<typeof open>[0]> = {}): Promise<Harness> => {
+    const h = await open({ width: 1440, height: 900, ...opts });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    expect(h.el('schedules').classList.contains('collapsed')).toBe(false);
+    return h;
+  };
+  const bothOpen = (h: Harness): boolean =>
+    !h.el('sidebar').classList.contains('collapsed') && !h.el('schedules').classList.contains('collapsed');
+  const esc = async (h: Harness, init: KeyboardEventInit = {}): Promise<void> => {
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', ...init }));
+    await tick();
+  };
+
+  it('leaves both panels alone when Escape cancels an IME composition', async () => {
+    const h = await openBoth();
+    // A stored choice first, so a stray close would also be visible in storage.
+    await h.click('#collapse-sidebar');
+    await h.click('#expand-sidebar');
+    expect(h.window.localStorage.getItem('aa_sb_open')).toBe('1');
+
+    const input = h.el('input') as HTMLTextAreaElement;
+    input.focus();
+    await esc(h, { isComposing: true });
+
+    expect(bothOpen(h)).toBe(true);
+    expect(h.window.localStorage.getItem('aa_sb_open')).toBe('1');
+    expect(h.window.localStorage.getItem('aa_sched_open')).toBe('1');
+  });
+
+  it('stops a recording without putting either panel away', async () => {
+    const h = await openBoth({ mic: { types: ['audio/webm;codecs=opus'] } });
+    await h.click('#mic');
+    await tick();
+    expect(h.el('mic').classList.contains('rec')).toBe(true);
+
+    await esc(h);
+
+    expect(h.el('mic').classList.contains('rec')).toBe(false);
+    expect(h.recorders[0]!.tracksStopped()).toBe(true);
+    // Thrown away, not sent: Escape means cancel.
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+    expect(bothOpen(h)).toBe(true);
+  });
+
+  it('closes only the idle dialog when it is the thing in front', async () => {
+    const h = await openBoth();
+    await h.emit({
+      t: 'topics',
+      topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true }],
+    });
+    await h.click('#manage-toggle');
+    await h.click('#close-idle');
+    expect(h.el('idle-dialog').hidden).toBe(false);
+
+    await esc(h);
+
+    expect(h.el('idle-dialog').hidden).toBe(true);
+    expect(bothOpen(h)).toBe(true);
+  });
+
+  it('closes only the picture when it is the thing in front', async () => {
+    const h = await openBoth();
+    await h.emit(sync(A, [{ ...message('m1', '<p>here</p>'), file: { name: 'shot.png', url: 'f/abc123', image: true } }], [A]));
+    await h.click('#log img.shot');
+    expect(h.el('lightbox').hidden).toBe(false);
+
+    await esc(h);
+
+    expect(h.el('lightbox').hidden).toBe(true);
+    expect(bothOpen(h)).toBe(true);
+  });
+
+  it('closes only the menu when it is the thing in front', async () => {
+    const h = await openBoth();
+    await h.click('#opts-toggle');
+    expect(h.el('opts-menu').hidden).toBe(false);
+
+    await esc(h);
+
+    expect(h.el('opts-menu').hidden).toBe(true);
+    expect(bothOpen(h)).toBe(true);
+  });
+
+  it('dismisses the command suggestions without touching the panels', async () => {
+    const h = await openBoth();
+    const input = h.el('input') as HTMLTextAreaElement;
+    input.value = '/';
+    input.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(h.el('hints').hidden).toBe(false);
+
+    await esc(h);
+
+    expect(h.el('hints').hidden).toBe(true);
+    expect(bothOpen(h)).toBe(true);
+  });
+});
+
 describe('webui page: the scheduled-task panel', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
@@ -4969,12 +5262,12 @@ describe('webui page: the scheduled-task panel', () => {
     const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
     await h.emit(sync(A, [], [A]));
 
-    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.el('app').classList.contains('sched-open')).toBe(false);
     expect(h.el('schedules-toggle').getAttribute('aria-expanded')).toBe('false');
 
     await h.click('#schedules-toggle');
 
-    expect(h.el('app').classList.contains('sched')).toBe(true);
+    expect(h.el('app').classList.contains('sched-open')).toBe(true);
     expect(h.el('schedules-toggle').getAttribute('aria-expanded')).toBe('true');
     expect(h.el('schedules-summary').textContent).toBe('1 active');
     expect(h.el('schedules-list').textContent).toContain('Morning CI');
@@ -4990,7 +5283,7 @@ describe('webui page: the scheduled-task panel', () => {
     await h.emit(sync(A, [], [A, B]));
 
     // First visit: no stored choice, so the panel is not in the way.
-    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.el('app').classList.contains('sched-open')).toBe(false);
     expect(h.window.localStorage.getItem('aa_sched_open')).toBeNull();
 
     await h.click('#schedules-toggle');
@@ -4998,21 +5291,21 @@ describe('webui page: the scheduled-task panel', () => {
 
     // Following a topic no longer puts it away.
     await h.click('[data-topic="' + B + '"]');
-    expect(h.el('app').classList.contains('sched')).toBe(true);
+    expect(h.el('app').classList.contains('sched-open')).toBe(true);
 
     // What the next page finds: the open choice, not the closed state of some earlier visit.
     const again = await open({ replies, storage: { aa_sched_open: '1' } });
     await again.emit(sync(A, [], [A, B]));
-    expect(again.el('app').classList.contains('sched')).toBe(true);
+    expect(again.el('app').classList.contains('sched-open')).toBe(true);
 
     await again.click('#schedules-close');
-    expect(again.el('app').classList.contains('sched')).toBe(false);
+    expect(again.el('app').classList.contains('sched-open')).toBe(false);
     expect(again.window.localStorage.getItem('aa_sched_open')).toBeNull();
   });
 
   it('does not restore an open panel where there is nowhere to dock it', async () => {
     const h = await open({ width: 500, storage: { aa_sched_open: '1' } });
-    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.el('app').classList.contains('sched-open')).toBe(false);
   });
 
   it('puts the overlay away after a run, without forgetting it was opened', async () => {
@@ -5034,7 +5327,7 @@ describe('webui page: the scheduled-task panel', () => {
 
     // The overlay has to get out of the way of the chat it opened, but that is not the operator
     // closing the panel: the next wide window still opens it.
-    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.el('app').classList.contains('sched-open')).toBe(false);
     expect(h.window.localStorage.getItem('aa_sched_open')).toBe('1');
   });
 
@@ -5094,12 +5387,12 @@ describe('webui page: the scheduled-task panel', () => {
   it('closes on Escape', async () => {
     const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
     await h.click('#schedules-toggle');
-    expect(h.el('app').classList.contains('sched')).toBe(true);
+    expect(h.el('app').classList.contains('sched-open')).toBe(true);
 
     h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
     await tick();
 
-    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.el('app').classList.contains('sched-open')).toBe(false);
     expect(h.window.localStorage.getItem('aa_sched_open')).toBeNull();
   });
 
@@ -5110,13 +5403,13 @@ describe('webui page: the scheduled-task panel', () => {
     // Closed, the drawer is off-screen but laid out: inert is what keeps Tab out of it.
     expect(h.el('schedules').hasAttribute('inert')).toBe(true);
     await h.click('#schedules-toggle');
-    expect(h.el('app').classList.contains('sched')).toBe(true);
+    expect(h.el('app').classList.contains('sched-open')).toBe(true);
     expect(h.el('schedules').hasAttribute('inert')).toBe(false);
-    // The panel is an overlay here, so the dimmed chat behind it is the way out — the same
-    // backdrop the topic drawer uses, not a second one.
-    await h.click('#sched-backdrop');
+    // The panel is a drawer here, so the dimmed chat behind it is the way out — the one backdrop
+    // both edges share, not a second one.
+    await h.click('#backdrop');
 
-    expect(h.el('app').classList.contains('sched')).toBe(false);
+    expect(h.el('app').classList.contains('sched-open')).toBe(false);
     expect(h.el('schedules').hasAttribute('inert')).toBe(true);
     expect(h.window.localStorage.getItem('aa_sched_open')).toBeNull();
   });
@@ -5189,7 +5482,7 @@ describe('webui page: the scheduled-task panel', () => {
     await until('the switch', () => h.window.location.search.includes(C));
     // Following the run leaves the panel beside the transcript: it is part of the workspace now,
     // not a side glance that gets out of the way.
-    expect(h.el('app').classList.contains('sched')).toBe(true);
+    expect(h.el('app').classList.contains('sched-open')).toBe(true);
 
     const again = await open({ storage: { aa_sched_tab: 'sessions' } });
     expect(again.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('true');
@@ -5220,11 +5513,30 @@ describe('webui page: the scheduled-task panel', () => {
 
   it('restores a dragged width, and double-clicking the handle returns to the default', async () => {
     const h = await open({ storage: { aa_sched_w: '300' } });
-    expect(h.el('schedules').style.getPropertyValue('--schedw')).toBe('300px');
+    expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('300px');
 
     h.doc.getElementById('sched-resize')!.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
-    expect(h.el('schedules').style.getPropertyValue('--schedw')).toBe('');
+    expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('');
     expect(h.window.localStorage.getItem('aa_sched_w')).toBeNull();
+  });
+
+  it('drags from its left edge: moving the pointer left widens it', async () => {
+    // jsdom has no layout, so pin the right edge where a docked panel's is. The drag measures
+    // from that edge; the reversed arithmetic would clamp to the 220px minimum instead of 280.
+    const h = await open({ width: 1440, height: 900 });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    h.el('schedules').getBoundingClientRect = () =>
+      ({ left: 1024, right: 1280, width: 256, top: 0, bottom: 800, height: 800, x: 1024, y: 0, toJSON: () => ({}) }) as DOMRect;
+
+    const handle = h.el('sched-resize');
+    handle.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientX: 1024 }));
+    h.doc.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientX: 1000 }));
+    h.doc.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientX: 1000 }));
+    await tick();
+
+    expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('280px');
+    expect(h.window.localStorage.getItem('aa_sched_w')).toBe('280');
   });
 });
 

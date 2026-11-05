@@ -55,7 +55,7 @@ The dot entries are the gateway's bookkeeping, not skills.
 
 ## From the web UI
 
-The web UI's sidebar footer has a **✦ Skills** button. It lists every managed skill with its
+**Skills** in the web UI's **⚙ Menu** at the foot of the topic list. It lists every managed skill with its
 status, whether it is pinned, and when it was last used, and opens one for editing:
 
 - **New** creates a skill from a name, a one-line description and an optional body.

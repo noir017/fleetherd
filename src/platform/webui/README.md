@@ -248,7 +248,8 @@ daemon ends the child synchronously before it sends the ack (`answerDaemonComman
 is a posted message, which announces the list.
 
 **"Close idle" ends every dim-blue topic's process at once** (since 2.16.0), from the
-sidebar footer beside Settings; it shows the count and is hidden at zero. Unlike the power button it is
+sidebar footer's Manage menu; the count is on the Manage button itself, and the item inside is
+hidden at zero. Unlike the power button it is
 not a typed command, and that is deliberate: a `/kill` per topic would leave an echo and an ack in
 every room it touched, twenty messages for ten topics. Instead `POST api/topics/close-idle` carries
 the ids, `WebRoom.closeIdle` hands each to the daemon (`PlatformAdapter.useIdleReclaim`), and the
@@ -404,25 +405,47 @@ amber dot still pulses, and the green rows above are unchanged. It is CSS over t
 purpose: `page.dom.test.ts` checks that the rows are identical either way and that the stylesheet's
 `#app.calm` rules are exactly those two, so a rule that quiets a question or a failure fails there.
 
-**The sidebar footer is one row** (2.20.0): ⚙ Settings, and Close idle while there is anything to
-close. Notifications, Low attention and Clear are in the Settings menu, which opens upward over the
-list and closes on any click outside it (the drawer's backdrop included) or Escape. They are things
-set once per device or used rarely; Close idle stayed outside because its count is worth seeing. The
-footer is a size container so the word "Settings" drops at the narrowest sidebar (`SB_MIN`).
+**The sidebar footer is one row, two menus**: ⚙ Menu and ⋯ Manage (one row since 2.20.0, split
+in two when the three buttons stopped fitting).
+Menu holds All settings, Notifications, Low attention and Skills — things set once per device or
+visited rarely. Manage holds Close idle and Clear all topics, and carries the idle count on its own
+face so the number is still seen without opening anything. The two menus are the same box, opened
+upward over the list, one at a time, and dismissed by a click outside either (the drawer's backdrop
+included) or Escape, which also gives the focus back to the button that opened it (`setMenu`). The
+footer is a size container: at the narrowest sidebar (180px) both words drop and the row
+is ⚙ and ⋯(N) — the count is the one thing that stays.
+
+## The two side panels
+
+The topic list on the left and the scheduled work on the right are one component (`makePanel` in
+the script, `.panel` in the stylesheet), not two. A panel is a header row, a scrolling body, a
+footer row and a drag handle on its inner edge; the edge decides only the border, the direction it
+slides and the direction its handle measures. The rest is written once for both: the width and its
+storage, the open/close animation, the drawer it becomes below its breakpoint, `inert` while it is
+off-screen, the safe-area padding, the 44px targets on a phone, Escape, and the one backdrop both
+drawers share.
+
+Closed, a panel keeps its width and is moved off-screen with a negative margin (`margin-left` on
+the left, `margin-right` on the right) rather than `display:none`, which is what lets the 0.18s
+margin transition animate and hands the column's width back to the chat. Below its breakpoint it
+is `position:fixed` and the same class moves it with a `translateX` of its full width. The two
+breakpoints and the drawer width are the parameters: the right panel becomes a drawer at 1023px
+(a 240px list plus a 240–320px panel leave too little chat on a laptop), the left at 640px, and
+both are `min(88vw, 380px)` wide so a phone keeps a strip of the chat visible. A panel's width is
+`--pw`, set inline by the handle and kept per browser (`aa_sb_w` / `aa_sched_w`); the stylesheet's
+`--pw-default` is the fallback, and double-click clears both.
 
 ## The scheduled-task panel
 
 The clock at the right of the chat header toggles a panel of the gateway's scheduled work. It is
-a column of its own on a screen at least 1024px wide and a drawer from the right below that —
-`transform: translateX(100%)` while closed, the sidebar's `.18s ease` while it slides, and the
-backdrop that dismisses it. It stays laid out while closed rather than `display:none`, because a
-hidden element has nothing to animate; the drawer is `min(88vw, 380px)`, so a phone keeps a strip
-of the chat visible. Closed on a first visit, then open until the operator closes it
-(`aa_sched_open`), so opening a session from it leaves it beside the transcript. Only a docked
+the right-hand `.panel` described above: a column on a screen at least 1024px wide, a drawer from
+the right below that, animated by the same margin/transform transition and dismissed by the same
+backdrop and Escape as the topic list. Closed on a first visit, then open until the operator closes
+it (`aa_sched_open`), so opening a session from it leaves it beside the transcript. Only a docked
 panel is restored on load: a drawer that came back would cover the chat it is supposed to sit
-beside. The docked width defaults to `clamp(240px, 20vw, 320px)` — narrower than the topic
-sidebar, because this is a glance at background work — and the left edge is a drag handle
-(`aa_sched_w`, double-click to reset).
+beside. The docked width defaults to `clamp(240px, 20vw, 320px)` — narrower than the topic sidebar,
+because this is a glance at background work — and the left edge is a drag handle (`aa_sched_w`,
+double-click to reset).
 
 It is deliberately not a section of the topic list. A task is not a conversation — a bash task has
 none, and a new-session task makes one per run — and the sidebar is the conversation switcher. The
@@ -432,7 +455,7 @@ the header, unlike the terminal's.
 **Two tabs, at the foot of the panel.** **Sessions** is the topics a new-session run opened
 (`Topic.scheduled`): the switcher leaves those out (`topicRows` filters them), so the tab is their
 only listing and its × is the only delete. **Tasks** is the definitions and their controls. The tab
-row is the panel's last line, at the same padding and type size as the topic sidebar's footer, so
+row is the panel's last line — literally the same `.panel-foot` the sidebar keeps its menus in — so
 the two columns end together. Sessions needs no request of its own — the `topics` event that keeps
 the switcher current carries their titles, state, message counts and unread marks, so a run that
 starts or finishes moves the tab as it happens. Tapping a row opens the topic and leaves the panel
@@ -460,7 +483,7 @@ sentence rather than a generic failure.
 
 ## The skills page
 
-The **✦ Skills** button at the foot of the topic list opens the gateway's managed skills — the
+**Skills** in the ⚙ Menu at the foot of the topic list opens the gateway's managed skills — the
 records `daemon/skills-store.ts` keeps and `talkcode skills` writes. It is a window over the
 transcript, like the reader, rather than a third column: an editor and a history row need more
 width than a sidebar, and the conversation stays visible around it. On a phone it takes the whole
@@ -489,7 +512,7 @@ would sit over a conversation nobody asked it to cover.
 
 A phone freezes the page the moment it is put down, so nothing the event stream carries reaches it
 (see [Every topic keeps its transcript](#every-topic-keeps-its-transcript)). Only a push service does,
-so the page offers Web Push (`webpush.ts`, `sw.ts`) behind a per-device toggle in the sidebar's Settings menu —
+so the page offers Web Push (`webpush.ts`, `sw.ts`) behind a per-device toggle in the sidebar's Menu —
 never a permission prompt nobody asked for.
 
 - **What notifies** is decided in `room.ts` `watchStages`: a topic entering a needs-you stage, and
@@ -1380,7 +1403,10 @@ page is driven there too: the list, an editor save carrying the version the deta
 form, a revert, and the two-tap archive. So is the settings page — the menu's quiet request, a
 typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
 drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
-it.
+it. The two side panels are driven as one component there (`one panel component on both edges`):
+both close with the same ×, both go inert while shut, Escape puts away the right and then the
+left, each keeps its own width and clears it on a double-click, and the footer's two menus are
+checked by the items they hold and what each item does — All settings, Skills, Close idle, Clear.
 
 Four things about it that are not obvious:
 
