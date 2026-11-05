@@ -118,7 +118,9 @@ daemon/delegation.ts) are reverse commands on the `tasks` help page, found throu
 2.18.0 served them as native tools to one dispatcher session (`mcp --dispatch`); with any agent able
 to start sub-agents, the same reasoning as above applies — six schemas on every request of every
 agent, for the few turns that split a job. They take no `--channel`: each acts from the asking
-conversation, on a topic it opened, named as `topic`.
+conversation, on a topic it opened, named as `topic`. `task-read` reads that topic from the
+conversation library (`history/`), so its `--role`/`--turn`/`--turns`/`--since`/`--grep` are
+`READ_FILTER_OPTIONS`, the same definitions `sessions read` uses.
 
 ### How it got here
 

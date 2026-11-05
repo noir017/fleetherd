@@ -216,7 +216,17 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       topic: z.string().min(1).max(200),
       limit: z.number().int().positive().max(100).optional(),
       full: z.boolean().optional(),
+      // task-read's own `--tail`: the last n lines of each message. Not sessions read's, which
+      // counts tool rows and is refused without --role tool (ipc/commands.ts).
       tail: z.number().int().positive().max(500).optional(),
+      // The library's read filters, shared with `sessions read` (READ_FILTER_OPTIONS).
+      role: z.enum(['user', 'agent', 'tool']).optional(),
+      turn: z.string().min(1).max(20).optional(),
+      turns: z.number().int().positive().optional(),
+      since: z.number().int().positive().optional(),
+      grep: z.string().min(1).max(200).optional(),
+      /** The last normally-ended turn's reply, whole — stands alone, selecting the turn itself. */
+      reply: z.boolean().optional(),
     })
     .strict(),
   z.object({ kind: z.literal('task-status'), topic: z.string().min(1).max(200) }).strict(),
@@ -343,7 +353,7 @@ export type IpcAction =
   | { kind: 'task-list'; limit?: number }
   | { kind: 'task-new'; agent: string; text: string; cwd?: string; title?: string }
   | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean }
-  | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number }
+  | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number; role?: 'user' | 'agent' | 'tool'; turn?: string; turns?: number; since?: number; grep?: string; reply?: boolean }
   | { kind: 'task-status'; topic: string }
   | { kind: 'task-stop'; topic: string }
   | { kind: 'sessions-search'; query: string; agent?: string; days?: number; limit?: number }
@@ -528,11 +538,29 @@ export interface TaskAgentsResult {
   agents: TaskAgentRow[];
 }
 
-/** Response body for task-read: one conversation's recent messages, oldest first. */
+/**
+ * Response body for task-read: one conversation's messages, oldest first, read from the library
+ * (`history.db`) rather than the platform's own history — so `--role`/`--turn`/`--turns`/`--since`/
+ * `--grep` select exactly what they select for `sessions read`.
+ */
 export interface TaskReadResult {
   topic: string;
-  messages: Array<{ from: 'person' | 'agent'; at: string; text: string }>;
-  /** What was left out, when a budget cut it (`full` or `--tail`): said so nobody reads it as whole. */
+  messages: Array<{
+    /** The library's message id, which `--since` resumes from. */
+    id: number;
+    /** The library's role: a prompt, a reply, or a tool line. */
+    role: 'user' | 'agent' | 'tool';
+    at: string;
+    text: string;
+    /** The turn it belongs to (1 = the first) and how that turn ended; absent for a pre-turns row. */
+    turn?: number | null;
+    outcome?: string | null;
+  }>;
+  /** With `--reply`: the last turn that ended normally, and its reply whole. */
+  reply?: { turn: number; at: string; text: string };
+  /** With `--turn`: that turn's record, with a failure's whole error in `detail`. */
+  turn?: { turn: number; at: string; outcome: string; agent: string; detail?: string };
+  /** What was left out, when a budget cut it (`full`, `--tail`, `--limit`): said so nobody reads it as whole. */
   note?: string;
 }
 

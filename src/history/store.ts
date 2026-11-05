@@ -85,7 +85,7 @@ export interface HistoryTurnRecord extends HistoryTurnStart {
 export interface HistoryTurnEnd {
   outcome: HistoryOutcome;
   at: number;
-  /** Why it failed, capped; empty for every other outcome. */
+  /** Why it failed, whole (bounded at 200k characters); empty for every other outcome. */
   detail?: string;
 }
 
@@ -179,6 +179,34 @@ export interface HistoryReadResult {
 }
 
 /**
+ * A turn just opened: the row id its messages carry, and the number `--turn <n>` takes.
+ *
+ * `seq` is optional because a store that failed between the insert and the lookup still owns the
+ * row; the turn is recorded, only its number is unknown, and a card then falls back to a
+ * positional pointer rather than naming a turn it cannot.
+ */
+export interface HistoryTurnRef {
+  id: number;
+  seq?: number;
+}
+
+/**
+ * One turn as the library recorded it: what `task-read --turn <n>` shows, and the record a cut
+ * update card points at when its quote was not the whole of what the sub-agent said.
+ */
+export interface HistoryTurnRow {
+  /** 1-based within the conversation (turns.seq), the number printed beside every row. */
+  turn: number;
+  /** When it ended; its start while it is still running. */
+  at: string;
+  /** `done` | `stopped` | `failed` | `restart`, or `running` while it has no outcome yet. */
+  outcome: string;
+  agent: string;
+  /** Why it failed, whole; empty for every other outcome. */
+  detail: string;
+}
+
+/**
  * How `read` narrows one conversation. `around` is the old window and is refused beside the
  * filters (it defines a window of its own); the rest combine with AND.
  */
@@ -197,6 +225,12 @@ export interface HistoryReadOptions {
   grep?: string;
   /** With `role: 'tool'`, the newest n tool lines. */
   tail?: number;
+  /**
+   * The newest n rows, oldest first — `task-read`'s `--limit`, about how much of a log to return
+   * rather than which rows match. Not combinable with `since`: that resumes forward from a cursor
+   * while this keeps the newest end (see assertSinceDirection).
+   */
+  limit?: number;
   /**
    * The conversation's live context, keyed by its own key: the agent bound to it now and the
    * generation `/new`/`/cd` last set.
@@ -239,10 +273,11 @@ const READ_ALL_LIMIT = 500;
  * How many characters of text `read` returns in one answer.
  *
  * The reply row is capped at 200k characters, so a 500-message conversation could otherwise be
- * a hundred-megabyte IPC line. This is the same budget `task-read` uses: enough for the whole of
- * an ordinary conversation, with a note pointing at `--around` when it is not.
+ * a hundred-megabyte IPC line. Exported because `task-read --turn <n> --full` answers with one
+ * turn and the update card that points there promises the whole of one reply: this bound is what
+ * that read may return, not the 20k that keeps a `--full` log readable.
  */
-const READ_CHAR_BUDGET = 200_000;
+export const READ_CHAR_BUDGET = 200_000;
 
 /**
  * How many messages `reviewWindow` reads before the character budget is applied. A review runs
@@ -448,6 +483,22 @@ export class HistoryStore {
     });
   }
 
+  /**
+   * The 1-based number `--turn <n>` takes, for the row id `startTurn` returned.
+   *
+   * The id is what every message of the turn carries; the number is what an agent reads and passes
+   * back. A card that quotes a turn has to name the second: "the last one" is a different turn by
+   * the time the parent reads it whenever the topic runs again (a background burst, most often).
+   */
+  turnSeq(turnId: number): number | undefined {
+    return this.guard('turn seq', () => {
+      const row = this.requireDb().prepare('SELECT seq FROM turns WHERE id = ?').get(turnId) as
+        | { seq: number | bigint }
+        | undefined;
+      return row ? Number(row.seq) : undefined;
+    });
+  }
+
   /** Close a turn with how it ended. A missing id (recording failed at the start) is a no-op. */
   endTurn(turnId: number | undefined, end: HistoryTurnEnd): void {
     if (turnId === undefined) return;
@@ -592,6 +643,36 @@ export class HistoryStore {
     return this.readFiltered(session, opts);
   }
 
+  /**
+   * One turn as the library recorded it — the record an update card points at when its quote was
+   * cut. The card carries at most CARD_ITEM_CHARS of an error; the turn keeps the whole message the
+   * failure was thrown with, which is the only copy of it anywhere.
+   *
+   * Undefined when there is no such turn to show: the conversation has no turns at all (nothing has
+   * run there yet), or `done` found none that ended normally. A turn NUMBER that names no turn
+   * still throws, like `read` — that is a wrong request, not an answer with nothing in it.
+   */
+  turnRecord(key: string, which: string, current?: HistoryReadOptions['current']): HistoryTurnRow | undefined {
+    const session = this.findSession(key);
+    if (!session) throw new Error(`no conversation "${key}"; \`talkcode sessions list\` shows the ids`);
+    // `turnScope` throws for a conversation with no turns at all, which for a sub-agent topic just
+    // means nothing has run yet — an empty answer, not a broken request.
+    if (this.turnCount(session) === 0) return undefined;
+    const id = this.turnScope(session, { turn: which, current })?.ids[0];
+    if (id === undefined) return undefined;
+    const row = this.requireDb()
+      .prepare('SELECT seq, agent, started_at, ended_at, outcome, detail FROM turns WHERE id = ?')
+      .get(id) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      turn: Number(row.seq),
+      at: iso(Number(row.ended_at ?? row.started_at)),
+      outcome: row.outcome === null || row.outcome === undefined ? 'running' : String(row.outcome),
+      agent: String(row.agent ?? ''),
+      detail: String(row.detail ?? ''),
+    };
+  }
+
   /** The whole conversation, oldest first, bounded by rows and characters. */
   private readAll(session: HistorySessionRow): HistoryReadResult {
     const db = this.requireDb();
@@ -650,9 +731,9 @@ export class HistoryStore {
    * returns carries its turn's number, outcome and agent, because a filtered answer is about the
    * shape of the work, not just the words.
    *
-   * Direction matters, and it follows what the filter is FOR. A turn/tail/turns read is a TAIL:
-   * when a bound cuts it, the newest rows are the ones worth keeping, so the cut is made from the
-   * oldest end and the note says so. A `--since` read is a HEAD: it resumes from a watermark, so
+   * Direction matters, and it follows what the filter is FOR. A turn/tail/turns/limit read is a
+   * TAIL: when a bound cuts it, the newest rows are the ones worth keeping, so the cut is made from
+   * the oldest end and the note says so. A `--since` read is a HEAD: it resumes from a watermark, so
    * the earliest rows after it are the ones the next read continues from, and the note names the
    * id to pass back. A role/grep read of the whole conversation also keeps the oldest and drops
    * later, like `readAll`.
@@ -673,11 +754,13 @@ export class HistoryStore {
     }
     const { where, params } = this.readWhere(session, opts, scope?.ids);
     const tail = opts.tail !== undefined ? Math.max(1, Math.min(opts.tail, 500)) : undefined;
-    const newestFirst = tail !== undefined || opts.turn !== undefined || opts.turns !== undefined;
+    const limit = opts.limit !== undefined ? Math.max(1, Math.min(opts.limit, READ_ALL_LIMIT)) : undefined;
+    const newestFirst =
+      tail !== undefined || limit !== undefined || opts.turn !== undefined || opts.turns !== undefined;
     // A since read must be in the cursor's own coordinate system (see above); everything else
     // keeps the order it has always had.
     const order = opts.since !== undefined ? 'm.id' : newestFirst ? 'm.ts DESC, m.id DESC' : 'm.ts, m.id';
-    const { messages, more, dropped } = this.selectFiltered(where, params, tail, newestFirst, order);
+    const { messages, more, dropped } = this.selectFiltered(where, params, tail ?? limit, newestFirst, order);
     // Where a since read continues from: the newest row it actually kept, after any cut.
     const resumeFrom = !newestFirst && opts.since !== undefined ? messages[messages.length - 1]?.id : undefined;
     const notes = [scope?.note, readNote(more, dropped, newestFirst, resumeFrom)].filter(
@@ -690,12 +773,12 @@ export class HistoryStore {
   private selectFiltered(
     where: string[],
     params: Array<string | number>,
-    tail: number | undefined,
+    cap: number | undefined,
     newestFirst: boolean,
     order: string
   ): { messages: HistoryReadMessage[]; more: boolean; dropped: number } {
     const db = this.requireDb();
-    const limit = tail ?? READ_ALL_LIMIT + 1;
+    const limit = cap ?? READ_ALL_LIMIT + 1;
     const sql = `
       SELECT m.id AS id, m.ts AS ts, m.role AS role, m.kind AS kind, m.text AS text,
              m.turn AS turn_ref, t.seq AS turn_seq, t.outcome AS turn_outcome, t.agent AS turn_agent
@@ -705,7 +788,9 @@ export class HistoryStore {
       ORDER BY ${order}
       LIMIT ?`;
     const rows = db.prepare(sql).all(...params, limit) as Array<Record<string, unknown>>;
-    const more = tail === undefined && rows.length > READ_ALL_LIMIT;
+    // A cap the caller asked for (`--tail`, `--limit`) is exactly how many rows it wanted, so
+    // reaching it is not a cut worth a note. Only the default 500-row bound is reported.
+    const more = cap === undefined && rows.length > READ_ALL_LIMIT;
     let selected = (more ? rows.slice(0, READ_ALL_LIMIT) : rows).map(readMessageRow);
     if (newestFirst) selected = selected.reverse();
     const { messages, dropped } = newestFirst ? capTail(selected) : capRead(selected);
@@ -1057,18 +1142,22 @@ function hasReadFilter(opts: HistoryReadOptions): boolean {
     opts.turns !== undefined ||
     opts.since !== undefined ||
     opts.grep !== undefined ||
-    opts.tail !== undefined
+    opts.tail !== undefined ||
+    opts.limit !== undefined
   );
 }
 
 /**
- * Refuse `--since` beside the tail filters. They read from the newest end while a since read
+ * Refuse `--since` beside the newest-end filters. They read from the newest end while a since read
  * resumes forward from an id; answering one of the two would silently drop the other.
  */
 function assertSinceDirection(opts: HistoryReadOptions): void {
-  if (opts.since !== undefined && (opts.turn !== undefined || opts.turns !== undefined || opts.tail !== undefined)) {
+  if (
+    opts.since !== undefined &&
+    (opts.turn !== undefined || opts.turns !== undefined || opts.tail !== undefined || opts.limit !== undefined)
+  ) {
     throw new Error(
-      '--since resumes forward from a message id; it cannot be combined with --turn, --turns or --tail, which read from the newest end'
+      '--since resumes forward from a message id; it cannot be combined with --turn, --turns, --tail or --limit, which read from the newest end'
     );
   }
 }

@@ -703,10 +703,17 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   the sub-agent said — reply, question or error, line breaks kept — within `CARD_ITEM_CHARS` for
   one entry and `CARD_TOTAL_CHARS` for a burst, both hard limits; one card lists at most
   `CARD_MAX_ENTRIES` and folds the rest into a line pointing at `talkcode tasks`. A cut states its
-  full length and where the rest is: a reply or question stays in the topic (`task-read <topic>
-  --full`), while a failed turn's ❌ notice holds only the error's opening, which the cut says
-  instead of pointing at text nobody kept. The stage is read without `seenAt`: the person having
-  read a reply does not mean the parent agent has.
+  full length and where the rest is, by the turn's number: the card quotes `turns.seq` (carried from
+  `TurnEnd.turn` into `KeptText.turn`), so `task-read <topic> --turn <n> --full` reads that reply
+  back and `--turn <n>` reads a failed turn's whole error. By number, because a later background
+  burst would otherwise be "the last turn" before the parent reads it; the ❌ notice in the topic
+  carries only the error's opening. A question names no turn and no command: the ask is the
+  gateway's own message, not a row the library keeps. The stage is read
+  without `seenAt`: the person having read a reply does not mean the parent agent has.
+- `task-read` reads the library, not the platform's own history: the same rows and the same
+  `READ_FILTER_OPTIONS` as `sessions read`, plus its own `--tail` (the last lines of each message)
+  and `--reply` (the last normally-ended turn's reply, whole). `--turn` carries that turn's record,
+  including the failure detail, which is why `history` is a Delegation dep.
 
 `/super` is not the daemon's: it is the bundled `super` skill (`skill-super/`), linked beside
 `talkcode` by `skill-link.ts`. The daemon's one concession to it is naming — `jobInCommand` seeds a

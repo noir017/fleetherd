@@ -196,7 +196,8 @@ export const HELP_TOPICS: HelpTopic[] = [
       'The first row of task-agents is the agent answering this conversation; the next ones with here=true are on the same machine. Those are the ones to prefer — they have the same checkouts and tools. Agents on other machines work in their own checkouts.',
       'When a sub-agent finishes, fails or asks something, you are told here in a message beginning `[sub-agent updates]`, which says how many are still working. Its questions are the person\'s to answer in its topic unless they are only about what your task meant.',
       'A topic is the id `tasks` and the updates print. task-send, task-read, task-status and task-stop act only on topics this conversation opened.',
-      '`tasks` shows what a working sub-agent is doing now: the tool it is running, its step count, how long the turn has gone and its context. `task-status` is one topic in detail, with its last three tool calls. A long tool list is cut at 1500 characters per message by default; `task-read --tail 20` shows the newest lines, `--full` the whole list.',
+      '`tasks` shows what a working sub-agent is doing now: the tool it is running, its step count, how long the turn has gone and its context. `task-status` is one topic in detail, with its last three tool calls. `task-read <topic>` reads its messages from the conversation library, cut at 1500 characters each; `--tail 20` shows the newest lines, `--full` raises the cut, `--role`/`--turn`/`--turns`/`--since`/`--grep` select rows as they do for `sessions read`.',
+      '`task-read <topic> --reply` is the last turn that ended normally, its reply whole — what a finished sub-agent concluded. `--turn <n>` is one turn\'s record, including the whole error when it failed. A cut update card names the turn it quoted (`--turn <n>`): read that one, not `--turn last` — the topic may have run again since.',
       'task-send only reaches a turn that is still running when the harness accepts input mid-turn (claude and codex do; agy does not). The answer says which happened: joined, queued behind the turn, or started. To redirect a harness that is not listening, `--interrupt` stops the turn and sends the message as the next one — its context is kept.',
     ],
   },
@@ -299,40 +300,39 @@ const refuseChannel = (command: string, opts: Record<string, unknown>): void => 
 const collect = (value: string, previous: string[] = []): string[] => [...previous, value];
 
 /**
- * The READ FILTERS, defined once for every command that will select rows from the library:
- * `sessions read` uses them now, and `task-read` will use the same `readFilters()` builder when it
- * moves onto the library. A second copy would drift in wording first and in meaning next, and both
- * are consumed by agents that cannot see the source.
+ * The READ FILTERS, defined once for every command that selects rows from the library: `sessions
+ * read` and `task-read` both build their action from `readFilters()`. A second copy would drift in
+ * wording first and in meaning next, and both are consumed by agents that cannot see the source.
  *
  * `--tail` is deliberately NOT in this list. `task-read` already has a `--tail` meaning "the last
  * n lines of each message", which is about a row's text, not about choosing rows — one command
- * cannot carry both under one name. When task-read adopts these filters (phase 2) its existing
- * `--tail` has to be renamed; until then only `sessions read` offers this one.
+ * cannot carry both under one name. `sessions read` adds its own `SESSIONS_READ_TAIL`; `task-read`
+ * keeps its text one.
  */
 export const READ_FILTER_OPTIONS: ReverseOption[] = [
-  { flags: '--role <role>', description: 'read: only user | agent | tool rows' },
+  { flags: '--role <role>', description: 'only user | agent | tool rows' },
   {
     flags: '--turn <which>',
     description:
-      'read: last | done (the newest turn of this agent and generation that ended normally) | a turn number (1 = the first)',
+      'last | done (the newest turn of this agent and generation that ended normally) | a turn number (1 = the first)',
   },
   {
     flags: '--turns <n>',
-    description: 'read: the last n turns (at most 100; the note says when it cut)',
+    description: 'the last n turns (at most 100; the note says when it cut)',
     parse: intArg('--turns'),
   },
   {
     flags: '--since <message>',
-    description: 'read: rows after this message id, oldest first (from an earlier read)',
+    description: 'rows after this message id, oldest first (from an earlier read)',
     parse: idArg('--since'),
   },
-  { flags: '--grep <text>', description: 'read: only rows of this conversation containing this text' },
+  { flags: '--grep <text>', description: 'only rows of this conversation containing this text' },
 ];
 
 /** `sessions read --tail`, which `task-read`'s differently-meant `--tail` keeps out of the list above. */
 const SESSIONS_READ_TAIL: ReverseOption = {
   flags: '--tail <n>',
-  description: 'read: with --role tool, the newest n tool lines (what it is doing, not the whole log)',
+  description: 'with --role tool, the newest n tool lines (what it is doing, not the whole log)',
   parse: intArg('--tail'),
 };
 
@@ -579,6 +579,51 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
     default:
       throw new Error(`unknown sessions action "${action}"; use search <words> | read <session> | list`);
   }
+}
+
+/**
+ * `task-read`: the shared read filters plus the two things only it has — the last finished reply,
+ * and the per-message text cuts (`--full`, its own `--tail`).
+ *
+ * `--reply` selects a turn by itself, so it stands alone: a filter beside it would name a different
+ * selection, and `--full`/`--tail`/`--limit` would cut the one text it promises whole.
+ */
+function buildTaskRead(positionals: string[], opts: Record<string, unknown>): IpcAction {
+  refuseChannel('task-read', opts);
+  const topic = pos(positionals, 0, 'topic');
+  if (opts.reply === true) {
+    const stray = ['limit', 'full', 'tail', 'role', 'turn', 'turns', 'since', 'grep'].find(
+      (key) => opts[key] !== undefined
+    );
+    if (stray) throw new Error(`--reply reads one turn's whole reply; --${stray} does not apply`);
+    return { kind: 'task-read', topic, reply: true };
+  }
+  // The filters are readFilters' own, not a second copy — but task-read's `--tail` is the last
+  // lines of each message, so it is not passed in: readFilters would take it for the row count
+  // that only `sessions read --role tool` uses.
+  const filters = readFilters({
+    role: opts.role,
+    turn: opts.turn,
+    turns: opts.turns,
+    since: opts.since,
+    grep: opts.grep,
+  });
+  const limit = typeof opts.limit === 'number' ? opts.limit : undefined;
+  if (filters.since !== undefined && limit !== undefined) {
+    throw new Error('--since reads forward from a message id; --limit reads the newest messages — use one');
+  }
+  return {
+    kind: 'task-read',
+    topic,
+    limit,
+    full: opts.full === true ? true : undefined,
+    tail: typeof opts.tail === 'number' ? opts.tail : undefined,
+    ...(filters.role !== undefined ? { role: filters.role } : {}),
+    ...(filters.turn !== undefined ? { turn: filters.turn } : {}),
+    ...(filters.turns !== undefined ? { turns: filters.turns } : {}),
+    ...(filters.since !== undefined ? { since: filters.since } : {}),
+    ...(filters.grep !== undefined ? { grep: filters.grep } : {}),
+  };
 }
 
 type SkillsAction = Extract<IpcAction, { kind: 'skills' }>;
@@ -905,22 +950,18 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'task-read <topic>',
     topic: 'tasks',
     description:
-      'A sub-agent topic\'s recent messages, oldest first, cut at 1500 characters each; --full raises the cut, --tail shows the end of each',
+      'A sub-agent topic from the conversation library: its messages, oldest first, cut at 1500 characters each; --full raises the cut, --tail shows the end of each, --reply the last finished reply whole, and the read filters select rows as they do for `sessions read`',
     options: [
       { flags: '-l, --limit <n>', description: 'how many messages (default 10)', parse: intArg('--limit') },
-      { flags: '--full', description: 'up to 20000 characters per message, 80000 in all (the whole command list, not just its start)' },
+      { flags: '--full', description: 'up to 20000 characters per message, 80000 in all (the whole command list, not just its start); with --turn, that turn whole — up to the library\'s 200000' },
       { flags: '--tail <n>', description: 'the last n lines of each message — what it is doing now, without the earlier ones' },
+      {
+        flags: '--reply',
+        description: 'the last turn that ended normally, and its reply whole (stands alone: it selects the turn itself)',
+      },
+      ...READ_FILTER_OPTIONS,
     ],
-    build: (positionals, opts) => {
-      refuseChannel('task-read', opts);
-      return {
-        kind: 'task-read',
-        topic: pos(positionals, 0, 'topic'),
-        limit: typeof opts.limit === 'number' ? opts.limit : undefined,
-        full: opts.full === true ? true : undefined,
-        tail: typeof opts.tail === 'number' ? opts.tail : undefined,
-      };
-    },
+    build: buildTaskRead,
   },
   {
     usage: 'task-status <topic>',

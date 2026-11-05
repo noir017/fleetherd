@@ -528,11 +528,23 @@ function renderTaskProposed(data: unknown): string {
   return toon(result ? { item: result.item, result: result.result } : { ok: true });
 }
 
-/** task-read: the messages, as a table. */
+/** task-read: the reply, or the messages and the turn they were selected from. */
 function renderTaskRead(data: unknown): string {
   const result = data as TaskReadResult | undefined;
-  if (!result || result.messages.length === 0) return toon({ count: 0, note: 'nothing has been said there yet' });
-  return toon({ topic: result.topic, messages: result.messages, ...(result.note ? { note: result.note } : {}) });
+  if (!result) return toon({ ok: true });
+  if (result.reply) {
+    return toon({ topic: result.topic, reply: result.reply, ...(result.note ? { note: result.note } : {}) });
+  }
+  if (result.messages.length === 0 && !result.turn) {
+    return toon({ count: 0, note: result.note ?? 'nothing has been said there yet' });
+  }
+  return toon({
+    topic: result.topic,
+    ...(result.turn ? { turn: result.turn } : {}),
+    count: result.messages.length,
+    messages: result.messages.map((m) => ({ ...m, id: `#${m.id}` })),
+    ...(result.note ? { note: result.note } : {}),
+  });
 }
 
 /** task-status: one topic's live row, its last few tool calls, and the head of its last reply. */

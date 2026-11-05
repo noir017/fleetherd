@@ -65,10 +65,15 @@ export interface TurnOutcomesDeps {
  * the whole was. Keeping the head bounded is what stops one long review from being held in memory
  * forever; the card never shows more than CARD_ITEM_CHARS of one entry, and `total` is what lets a
  * cut say how much it is not showing.
+ *
+ * `turn` is the library's number for the turn it came from. The card quotes it so the rest can be
+ * read from THAT turn: by the time the parent reads, a later turn — a background burst, most
+ * often — may be the newest one.
  */
 export interface KeptText {
   text: string;
   total: number;
+  turn?: number;
 }
 
 /** One conversation's automatic-continue bookkeeping. */
@@ -141,7 +146,7 @@ export class TurnOutcomes {
         this.continuing.delete(id);
         this.failures.delete(id);
         const text = end.text.trim();
-        if (text) this.replies.set(id, kept(text));
+        if (text) this.replies.set(id, kept(text, end.turn));
         else this.replies.delete(id);
         const line = replyLine(end.text);
         this.set(id, { outcome: { kind: 'done', at, ...(line ? { line } : {}) } });
@@ -157,7 +162,7 @@ export class TurnOutcomes {
         return;
       case 'failed': {
         const message = end.error instanceof Error ? end.error.message : String(end.error);
-        this.failed(id, turnFailureReason(end.error), message, at);
+        this.failed(id, turnFailureReason(end.error), message, at, end.turn);
         return;
       }
       default: {
@@ -236,9 +241,15 @@ export class TurnOutcomes {
   // ── internals ─────────────────────────────────────────────────────────────────
 
   /** A failed turn: record it, run the operator's command, and continue if the policy says to. */
-  private failed(id: ConversationId, reason: TurnFailureReason, message: string, at: number): void {
+  private failed(
+    id: ConversationId,
+    reason: TurnFailureReason,
+    message: string,
+    at: number,
+    turn?: number
+  ): void {
     const outcome: TurnOutcome = { kind: 'failed', at, line: failureLine(message), reason };
-    this.failures.set(id, kept(message));
+    this.failures.set(id, kept(message, turn));
     const scheduled = this.scheduleContinue(id, reason);
     this.set(id, { outcome, ...(scheduled ? { retry: scheduled } : {}) });
     this.reportToCommand(id, reason, message, at, scheduled);
@@ -361,8 +372,12 @@ function seconds(ms: number): string {
  * The card never shows more, so holding more would only keep a long review's bytes for every
  * conversation until its next turn; `total` still says how long the whole was, so a cut is honest.
  */
-function kept(text: string): KeptText {
-  return { text: text.length > CARD_ITEM_CHARS ? text.slice(0, CARD_ITEM_CHARS) : text, total: text.length };
+function kept(text: string, turn?: number): KeptText {
+  return {
+    text: text.length > CARD_ITEM_CHARS ? text.slice(0, CARD_ITEM_CHARS) : text,
+    total: text.length,
+    ...(turn !== undefined ? { turn } : {}),
+  };
 }
 
 function preview(text: string): string {

@@ -26,7 +26,7 @@ import { createAttachmentIngestDeps, remoteAttachmentSave } from './attachment-i
 import { remoteHosts } from './remote-hosts.js';
 import type { HistoryEvent } from '../history/record.js';
 import { kindForTrigger, toolLine } from '../history/record.js';
-import type { HistoryKind, HistoryTurnEnd, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
+import type { HistoryKind, HistoryTurnEnd, HistoryTurnRef, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
 
 /**
  * The sender a scheduled run's message carries (ConversationRegistry.runScheduledPrompt). Exported
@@ -61,9 +61,9 @@ export const UPDATE_SENDER = 'sub-agent-updates';
 /**
  * How much of a failed turn's reason the ❌ notice in its topic carries.
  *
- * Shared with delegation.ts: an update card that cuts an error says what the topic actually holds,
- * and the number it quotes has to be the one this notice was cut with. Too long for a chat line,
- * too short to be the whole error — the card is where the fuller copy reaches the parent agent.
+ * The notice is a chat line, so it keeps the opening only. The whole error is in the turn's record
+ * (`turns.detail`), which the update card points at when it cuts its own quote — the card itself
+ * carries at most CARD_ITEM_CHARS.
  */
 export const FAILURE_NOTICE_CHARS = 300;
 
@@ -291,7 +291,8 @@ export interface TurnRunnerDeps {
    */
   recordTurnEnd?(id: ConversationId, end: TurnEnd): void;
   /**
-   * Open the library's row for a turn, returning its id, and close it when the turn ends.
+   * Open the library's row for a turn, returning its id and number, and close it when the turn
+   * ends.
    *
    * Separate from recordTurnStart/recordTurnEnd on purpose: those two are about the live
    * conversation (activity, `hooks.turnFailed`, the in-flight marker), while these are the
@@ -301,7 +302,7 @@ export interface TurnRunnerDeps {
    * `endHistoryTurn` is called exactly once for every id returned, on every way out — this is
    * what keeps the turns table from filling with rows that never end.
    */
-  beginHistoryTurn?(id: ConversationId, start: HistoryTurnStart): number | undefined;
+  beginHistoryTurn?(id: ConversationId, start: HistoryTurnStart): HistoryTurnRef | undefined;
   endHistoryTurn?(turnId: number | undefined, end: HistoryTurnEnd): void;
   /**
    * File one fact of this turn in the conversation library (`src/history/`): the prompt, a tool
@@ -321,16 +322,36 @@ export interface TurnRunnerDeps {
  * answer's conclusion is — so the registry can show its first line without asking the platform.
  * `failed` carries what was thrown, unclassified: the registry reads the reason off it
  * (turnFailureReason) and the message is what the chat was already told.
+ *
+ * `turn` is the library's number for this turn (`turns.seq`), when it was recorded. It rides along
+ * for the update card: a card says where the rest of a quoted reply or error is read, and "the last
+ * turn" is a different turn by the time the parent reads it whenever the topic runs again — a
+ * background burst is the usual case.
  */
 export type TurnEnd =
-  | { kind: 'done'; text: string }
-  | { kind: 'failed'; error: unknown }
-  | { kind: 'stopped' };
+  | { kind: 'done'; text: string; turn?: number }
+  | { kind: 'failed'; error: unknown; turn?: number }
+  | { kind: 'stopped'; turn?: number };
+
+/**
+ * The turn's end as the live bookkeeping sees it, carrying the library's number for the turn when
+ * one was opened. The number rides along only for the update card (see TurnEnd.turn); every other
+ * reader of TurnEnd ignores it.
+ */
+function withTurn(end: TurnEnd, turn: HistoryTurnRef | undefined): TurnEnd {
+  return turn?.seq !== undefined ? { ...end, turn: turn.seq } : end;
+}
+
+/** The row id of the turn just opened, or undefined when the library did not take it. */
+function turnIdOf(turn: HistoryTurnRef | undefined): number | undefined {
+  return turn?.id;
+}
 
 /**
  * How a finished turn is filed. A stopped turn is still a turn that ran — its partial reply is
- * in the library — so it gets `stopped`, not a silent absence. The failure detail is the message
- * the chat was told, capped: the database keeps a reason, not a stack trace.
+ * in the library — so it gets `stopped`, not a silent absence. A failure keeps the message the
+ * turn was thrown with, whole: the ❌ notice in the topic carries only its opening, and the
+ * update card points at this record when it cuts its own quote.
  */
 function historyEndOf(end: TurnEnd, at: number): HistoryTurnEnd {
   switch (end.kind) {
@@ -340,7 +361,11 @@ function historyEndOf(end: TurnEnd, at: number): HistoryTurnEnd {
       return { outcome: 'stopped', at };
     case 'failed': {
       const reason = end.error instanceof Error ? end.error.message : String(end.error);
-      return { outcome: 'failed', at, detail: reason.length > 500 ? `${reason.slice(0, 499)}…` : reason };
+      return {
+        outcome: 'failed',
+        at,
+        detail: reason.length > HISTORY_FAILURE_KEEP ? `${reason.slice(0, HISTORY_FAILURE_KEEP - 1)}…` : reason,
+      };
     }
     default: {
       const _exhaustive: never = end;
@@ -411,6 +436,16 @@ interface TurnRef {
 
 /** How much of one render's text the library keeps (see TurnRef.replyText). */
 const HISTORY_REPLY_KEEP = 200_000;
+
+/**
+ * How much of a failed turn's error the library keeps in `turns.detail`.
+ *
+ * The update card carries CARD_ITEM_CHARS (4,000) of it and points at the record for the rest, so
+ * the record has to hold more than the card — a long ACP error was unreadable past 4,000 characters
+ * before this. Bounded at the same size a reply row is, which is what one row can be read back in;
+ * an error longer than that is not a message a model wrote.
+ */
+const HISTORY_FAILURE_KEEP = 200_000;
 
 /** How much of a segment's text a TurnRef keeps for TurnEnd (see TurnRef.segmentText). */
 const REPLY_TEXT_KEEP = 4_000;
@@ -600,11 +635,12 @@ export class TurnRunner {
     // can throw (spawning an agent, building a prompt), and a turn opened before it would be left
     // running until the next start. A failure HERE leaves turnId undefined, and every later row
     // is written exactly as it was before turns existed.
-    const turnId = this.beginHistoryTurn(conversationId, {
+    const historyTurn = this.beginHistoryTurn(conversationId, {
       agent: agentId,
       trigger,
       at: this.clock.now(),
     });
+    const turnId = turnIdOf(historyTurn);
     // Everything that turns agent events into messages in this lane. Shared with the follow-up
     // path (see followUpSink) so out-of-turn output renders exactly like in-turn output.
     const render = this.beginRender(conversationId, platform, address, historyKind, turnId);
@@ -698,7 +734,7 @@ export class TurnRunner {
       await releaseTyping();
       // After typing is released, so a platform listing what needs a person sees the turn's end and
       // its outcome together rather than "failed" over a dot that still says running.
-      this.reportEnd(conversationId, end);
+      this.reportEnd(conversationId, withTurn(end, historyTurn));
       // The permanent record, in every way out — including the failure path that rethrows above,
       // which is why this is in the finally rather than after the try.
       this.endHistoryTurn(turnId, historyEndOf(end, this.clock.now()));
@@ -706,7 +742,7 @@ export class TurnRunner {
   }
 
   /** beginHistoryTurn, never allowed to break the turn it describes. */
-  private beginHistoryTurn(conversationId: ConversationId, start: HistoryTurnStart): number | undefined {
+  private beginHistoryTurn(conversationId: ConversationId, start: HistoryTurnStart): HistoryTurnRef | undefined {
     try {
       return this.deps.beginHistoryTurn?.(conversationId, start);
     } catch (e) {
@@ -1114,7 +1150,7 @@ export class TurnRunner {
      * carry `kind: background` and this id, which is what makes "what did it say after the
      * answer" answerable without mixing it into the turn that asked.
      */
-    let burstTurn: number | undefined;
+    let burstTurn: HistoryTurnRef | undefined;
 
     const open = (): Render | undefined => {
       if (tried) return render;
@@ -1136,7 +1172,7 @@ export class TurnRunner {
         trigger: 'background',
         at: this.clock.now(),
       });
-      render = this.beginRender(conversationId, platform, target.address, 'background', burstTurn);
+      render = this.beginRender(conversationId, platform, target.address, 'background', burstTurn?.id);
       // The runtime reports the model and effort when the burst begins, which is before its first
       // text — so before this message existed to record them on.
       if (facts.model) render.ref.model = facts.model;
@@ -1171,7 +1207,7 @@ export class TurnRunner {
         releaseTyping = undefined;
         render = undefined;
         if (burstTurn !== undefined) {
-          this.endHistoryTurn(burstTurn, { outcome: 'stopped', at: this.clock.now() });
+          this.endHistoryTurn(burstTurn.id, { outcome: 'stopped', at: this.clock.now() });
           burstTurn = undefined;
         }
         tried = false;
@@ -1187,7 +1223,7 @@ export class TurnRunner {
         burstTurn = undefined;
         tried = false;
         if (!done) {
-          if (turn !== undefined) this.endHistoryTurn(turn, { outcome: 'stopped', at: this.clock.now() });
+          if (turn !== undefined) this.endHistoryTurn(turn.id, { outcome: 'stopped', at: this.clock.now() });
           return;
         }
         // Returned rather than voided: the runtime awaits it before letting a new turn write into
@@ -1201,7 +1237,7 @@ export class TurnRunner {
             // After the flush: the reply row is written by finalize, and a turn must not be
             // closed before the last row that names it exists. `reason` is the caller's fact —
             // `/stop`, a new turn, or the child going away — never inferred here.
-            this.endHistoryTurn(turn, { outcome: reason, at: this.clock.now() });
+            this.endHistoryTurn(turn?.id, { outcome: reason, at: this.clock.now() });
             return letGo(release);
           });
       },

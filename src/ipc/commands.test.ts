@@ -76,6 +76,33 @@ describe('task commands', () => {
     expect(spec('task-status').build(['web:main/t1'], {})).toEqual({ kind: 'task-status', topic: 'web:main/t1' });
   });
 
+  it('task-read reuses the sessions-read filters, and its own --tail stays out of them', () => {
+    const action = spec('task-read').build(['t'], {
+      role: 'tool',
+      turn: 'done',
+      grep: 'test',
+      tail: 5,
+    }) as Extract<IpcAction, { kind: 'task-read' }>;
+    expect(action).toMatchObject({ role: 'tool', turn: 'done', grep: 'test', tail: 5 });
+    expect(spec('task-read').build(['t'], { since: 12 })).toMatchObject({ since: 12 });
+    // One `--tail`, two meanings: task-read's is lines of each message, so it must not be taken
+    // for the tool-row count sessions read refuses without --role tool.
+    expect(() => spec('task-read').build(['t'], { turns: 2, tail: 5 })).not.toThrow();
+    expect(spec('task-read').build(['t'], { turns: 2, tail: 5 })).toMatchObject({ turns: 2, tail: 5 });
+    // The same validation as sessions read, from the same builder.
+    expect(() => spec('task-read').build(['t'], { role: 'bot' })).toThrow(/--role must be user, agent or tool/);
+    expect(() => spec('task-read').build(['t'], { turn: 'soon' })).toThrow(/--turn takes last, done/);
+    expect(() => spec('task-read').build(['t'], { turn: 'last', turns: 2 })).toThrow(/use one/);
+    expect(() => spec('task-read').build(['t'], { since: 3, limit: 5 })).toThrow(/--since reads forward/);
+  });
+
+  it('task-read --reply stands alone: it selects the turn itself', () => {
+    expect(spec('task-read').build(['t'], { reply: true })).toEqual({ kind: 'task-read', topic: 't', reply: true });
+    for (const extra of [{ limit: 5 }, { full: true }, { tail: 3 }, { role: 'agent' }, { turn: 'last' }, { grep: 'x' }]) {
+      expect(() => spec('task-read').build(['t'], { reply: true, ...extra })).toThrow(/--reply reads one turn's whole reply/);
+    }
+  });
+
   it('refuses --channel: each names its conversation itself', () => {
     for (const usage of ['task-send', 'task-read', 'task-status', 'task-stop']) {
       expect(() => spec(usage).build(['t'], { channel: 'c1' })).toThrow(/names its conversation itself/);

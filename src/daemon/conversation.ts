@@ -22,6 +22,7 @@ import type {
   HistorySessionMeta,
   HistoryStore,
   HistoryTurnEnd,
+  HistoryTurnRef,
   HistoryTurnStart,
 } from '../history/store.js';
 import {
@@ -2876,23 +2877,27 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
-   * Open the library's row for a turn, returning the id its messages carry.
+   * Open the library's row for a turn, returning the id its messages carry and the number the
+   * parent's card will quote it by.
    *
    * The session row is written first, because a turn belongs to one and the first turn of a
    * conversation is what creates it. The generation read here is the one in force when the turn
    * STARTS — a `/new` during the turn cannot retroactively change what this turn belonged to,
    * and the next turn reads the new number.
    */
-  private beginHistoryTurn(id: ConversationId, start: HistoryTurnStart): number | undefined {
+  private beginHistoryTurn(id: ConversationId, start: HistoryTurnStart): HistoryTurnRef | undefined {
     const history = this.history;
     if (!history) return undefined;
     try {
       const session = history.session(this.historyMeta(id, kindForTrigger(start.trigger), start.at));
       if (session === undefined) return undefined;
-      return history.startTurn(session, {
+      const turnId = history.startTurn(session, {
         ...start,
         generation: this.store?.conversationGeneration?.(id) ?? 0,
       });
+      if (turnId === undefined) return undefined;
+      const seq = history.turnSeq(turnId);
+      return { id: turnId, ...(seq !== undefined ? { seq } : {}) };
     } catch (e) {
       console.error('[history] could not open a turn:', e instanceof Error ? e.message : e);
       return undefined;

@@ -2,8 +2,9 @@
 
 Every turn the gateway carries, in `<configDir>/history.db`, so an agent can search what was
 said before — in another topic, on another platform, with another agent. The `talkcode
-sessions` commands read it (`ipc/commands.ts`); `TurnRunner` writes it through one optional
-`recordHistory` dep (`daemon/turn-runner.ts`, enriched in `daemon/conversation.ts`).
+sessions` commands read it (`ipc/commands.ts`), and so does `task-read` for a sub-agent's topic
+(`daemon/delegation.ts`); `TurnRunner` writes it through one optional `recordHistory` dep
+(`daemon/turn-runner.ts`, enriched in `daemon/conversation.ts`).
 
 The module imports nothing from the rest of the project: it is IO plus pure tokenising, and
 its paths are injected. That is what makes it testable without a daemon, and what keeps the
@@ -35,7 +36,7 @@ library from reaching into the conversation registry.
   | `trigger` | `person` \| `schedule` \| `continue` \| `delegate` \| `update` \| `background` — the sender the daemon put on the batch, or a follow-up burst |
   | `started_at`, `ended_at` | epoch ms. `ended_at` on a `restart` turn is a lower bound: the newest message it wrote |
   | `outcome` | `done` \| `stopped` \| `failed` \| `restart`, or NULL while running |
-  | `detail` | why it failed, capped; empty otherwise |
+  | `detail` | why it failed, the whole message the turn was thrown with (bounded at 200k characters); empty otherwise. This is what `task-read --turn <n>` reads when an update card cuts an error — the card names the turn |
 
 - `messages` — one row per prompt (`user`), reply (`agent`) or tool call (`tool`), each with
   the kind of the turn that produced it and `turn` = `turns.id`. A tool row is one line:
@@ -78,10 +79,11 @@ an upgraded file opens without a rewrite and its old rows stay unknown.
 `read(session, opts)` has three shapes: no filter (the whole conversation, unchanged), `around`
 (the old window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n,
 capped at 100 with a note only when the cap really dropped turns), `since` (message id,
-exclusive), `grep` (text, this conversation only) and `tail` (newest n tool lines, only with
-`role: 'tool'`). They combine with AND, except `since` with `turn`/`turns`/`tail`: those read
-from the newest end and `since` resumes forward from an id, so the combination is refused
-rather than given one of the two meanings. `done`
+exclusive), `grep` (text, this conversation only), `tail` (newest n tool lines, only with
+`role: 'tool'`) and `limit` (the newest n rows, any role — `task-read`'s default 10). They combine
+with AND, except `since` with `turn`/`turns`/`tail`/`limit`: those read from the newest end and
+`since` resumes forward from an id, so the combination is refused rather than given one of the two
+meanings. `done`
 means the newest normally-ended turn of the conversation's CURRENT context, which the daemon
 passes as `current(key)` — the live binding and the generation `/new`/`/cd` last set. Inferring
 it from the newest turn row is wrong exactly after `/new`: that row is the generation the person
@@ -91,6 +93,12 @@ read is empty with a note saying so. Explicit `turn` numbers and `turns` are not
 ask for a turn, not for "the last one". A filtered result adds each row's turn number, that
 turn's outcome and agent; the unfiltered result keeps its original five fields because
 `sessions read <id>` must not change under anyone.
+
+`turnRecord(key, which, current)` is one turn's row without its messages: its number, end time,
+outcome, agent and the failure detail. `task-read --turn <n>` shows it — that is where the whole
+error of a failed turn is read, because the update card carries only 4,000 characters of it and the
+chat's ❌ notice only 300. A conversation with no turns answers `undefined` (nothing has run yet);
+a turn number that names no turn still throws.
 
 Direction follows what the filter is for. A turn/tail/turns read is a tail: when the 200k
 character budget cuts it, the newest rows are kept and the note says how many older ones went.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConversationRegistry } from './conversation.js';
+import { FAILURE_NOTICE_CHARS, TurnRunner } from './turn-runner.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
@@ -150,5 +151,65 @@ describe('a failed turn', () => {
     await drain();
 
     expect(h.sent).toEqual([`❌ This turn failed: ${HUNG}`]);
+  });
+});
+
+describe('a failed turn’s record', () => {
+  it('keeps the whole error, not the opening the ❌ notice carries', async () => {
+    // Longer than the 4,000-character update card: before this, the rest of it existed nowhere —
+    // the chat notice has 300 characters and the library kept 500.
+    const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(600)}`;
+    const ended: Array<{ outcome: string; detail?: string }> = [];
+    const live: Array<{ turn?: number }> = [];
+    const platform = {
+      capabilities: { thread: false, editMessage: true, maxMessageLength: 2_000 },
+      measureRendered: (s: string) => s.length,
+      sendMessage: async (address: { channel: string }) => ({ address, messageId: 'm' }),
+      editMessage: async () => {},
+      addReaction: async () => {},
+      startTyping: async () => {},
+      stopTyping: async () => {},
+    } as unknown as PlatformAdapter;
+    const factory: AgentFactory = {
+      getOrCreate: (conversationId): AgentSession => ({
+        conversationId,
+        runTurn: async () => {
+          throw new Error(error);
+        },
+        abort: () => {},
+        dispose: () => {},
+      }),
+      peek: () => undefined,
+      dispose: () => {},
+    };
+    const cfg = parseConfig({
+      platforms: { discord: { type: 'discord', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc', pipeline: [] },
+    });
+    const runner = new TurnRunner(
+      cfg,
+      new Map([['discord', platform]]),
+      factory,
+      { now: () => 1_000, schedule: () => () => {} },
+      {
+        tokenFor: () => 'tok',
+        agentIdOf: () => 'cc',
+        getModelOverride: () => undefined,
+        setLane: () => {},
+        beginHistoryTurn: () => ({ id: 1, seq: 7 }),
+        endHistoryTurn: (_id, end) => ended.push(end),
+        recordTurnEnd: (_id, end) => live.push(end),
+      }
+    );
+
+    await expect(runner.runTurn('discord#c1', [inbound('go')])).rejects.toThrow(/Process exited 1/);
+    expect(ended).toHaveLength(1);
+    expect(ended[0]!.outcome).toBe('failed');
+    expect(ended[0]!.detail).toBe(error);
+    expect(ended[0]!.detail!.length).toBeGreaterThan(FAILURE_NOTICE_CHARS);
+    // The live report carries the library's number for this turn, so the card can quote it by
+    // number instead of by "last" (see TurnEnd.turn).
+    expect(live).toEqual([{ kind: 'failed', error: expect.any(Error), turn: 7 }]);
   });
 });
