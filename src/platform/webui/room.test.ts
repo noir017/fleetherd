@@ -18,6 +18,7 @@ import {
   type WebuiInstance,
 } from './room.js';
 import { MAX_TOPICS, TopicStore } from './topics.js';
+import { hasTopic } from './index.js';
 import type { InboundMessage } from '../../types.js';
 import type { WebEvent, WebMessage } from './protocol.js';
 
@@ -170,6 +171,16 @@ describe('WebRoom: topics are separate conversations', () => {
 
     // Deleting again returns false
     expect(room.deleteTopic(second.id)).toBe(false);
+  });
+
+  it('reports a deleted topic gone, which is what a daily run asks before rejoining it', () => {
+    const { room, topic } = attached();
+    expect(hasTopic(room.topics, { channel: CHANNEL, thread: topic })).toBe(true);
+    room.deleteTopic(topic);
+    expect(hasTopic(room.topics, { channel: CHANNEL, thread: topic })).toBe(false);
+    // The two other shapes the adapter refuses: another channel, and no lane at all.
+    expect(hasTopic(room.topics, { channel: 'elsewhere', thread: topic })).toBe(false);
+    expect(hasTopic(room.topics, { channel: CHANNEL })).toBe(false);
   });
 
   it('clears every topic at once, announcing the replacement rather than each removal', () => {

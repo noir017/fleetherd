@@ -70,6 +70,7 @@ Three rules keep this from rotting:
 | `typing` | ✓ | ✓ | – | – | – | ✓ | – | – | ✓ |
 | `reply` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | ✓ |
 | `thread` | ✓ | ✓ | ✓ | ✓ | – | – | – | – | ✓ |
+| `standaloneThread` | – | ✓ | – | – | – | – | – | – | ✓ |
 | `renameThread` | – | ✓ | – | – | – | – | – | – | ✓ |
 | `buttons` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | ✓ |
 | `editButtons` | ✓ | ✓ | ✓ | ✓ | – | – | – | – | ✓ |
@@ -174,6 +175,15 @@ renaming "the whole channel" is a different and much more dangerous operation th
 a lane, and no caller wants it, so the Telegram profile refuses a thread-less address before
 the API call. Used by the automatic topic rename and `/title`; see
 [daemon/README.md](../daemon/README.md) for where the name comes from.
+
+**`standaloneThread` is not `thread` either.** `thread: true` says the platform has lanes;
+this says a lane can be opened with no message to hang it on, which is what a scheduled run
+has. Telegram's `createForumTopic` and the web UI's topics can; Slack's `thread_ts`, Discord's
+`startThreadFromMessage` and Lark's `reply_in_thread` all need a real message. A scheduled
+run that asks anyway either fails or names the channel instead of a new lane, and a daily
+task would persist that as its day's topic. `schedule add --session daily` refuses a target
+without this; Telegram declares it because a forum supergroup can, even though an ordinary
+group cannot — a run there fails and says so.
 
 Three capability fields are easy to conflate:
 

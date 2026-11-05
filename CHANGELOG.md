@@ -27,8 +27,12 @@ All notable changes to this project are documented here. The format is based on
   The day is counted in the task's own time zone by each run's already-written rules: the day of
   its planned time, so a catch-up after midnight still joins the day it was meant for, and the
   topic is named with that date. The topic is remembered in `schedules.json`, so restarting the
-  gateway mid-day does not open a second one; a deleted topic is reopened next run. It needs a
-  cron and a platform that can open a topic — refused at registration otherwise, and a failed
+  gateway mid-day does not open a second one; a topic deleted during the day is reopened on the
+  next run — a platform that cannot report whether it still exists is caught when a post into it
+  fails, which clears the record. It needs a cron and a platform that can open a topic with no
+  message to reply to (the web UI, a Telegram forum group), refused at registration otherwise;
+  Telegram's ordinary groups are knowable only at run time, so a run there fails and says why,
+  and consecutive runs failing the same way report it once rather than on every run. A failed
   create fails the run and says so, because the alternative (a throwaway conversation) is one the
   person cannot reply into. `fixed` and `new` are unchanged.
 - **A scheduled task can name its model.** `schedule add --model <id>` gives a new- or

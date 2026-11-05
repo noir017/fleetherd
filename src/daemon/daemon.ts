@@ -1217,10 +1217,13 @@ export class Daemon {
   private reverseAdapter(): PlatformAdapter {
     const id = this.lastResolvedConversationId;
     const pid = this.lastResolvedPlatform ?? (id ? this.registry.platformFor(id) : undefined);
-    const adapter = pid ? this.platforms.get(pid) : undefined;
-    if (!adapter) {
-      throw new Error('cannot resolve the platform instance for this reverse command (conversation expired?)');
-    }
+    if (!pid) throw new Error('cannot resolve the platform instance for this reverse command (conversation expired?)');
+    const adapter = this.platforms.get(pid);
+    // A platform named by a qualified `--channel` is in the config (IPC checked) but may not have
+    // started — a bad token, a host that refused it. Saying so is the useful answer; "cannot
+    // resolve" reads as an expired conversation, and "cannot open a topic" would send the agent
+    // looking for a `--session` workaround for what is really an outage.
+    if (!adapter) throw new Error(`platform instance "${pid}" is not running`);
     return adapter;
   }
 

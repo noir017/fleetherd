@@ -577,6 +577,22 @@ export interface PlatformCapabilities {
   /** Thread creation. */
   thread: boolean;
   /**
+   * Whether a topic can be opened with NO message to hang it on.
+   *
+   * Its own flag rather than something read off `thread`, for the reason renameThread is: `thread`
+   * is true on platforms whose topic IS a message. Slack's thread is a `thread_ts`, Discord's
+   * startThreadFromMessage and Lark's reply_in_thread all need a real message; a scheduled run has
+   * none, and asking them anyway either fails or names the channel instead of a new lane. Telegram's
+   * createForumTopic and the web UI's topics need nothing, so they declare this.
+   *
+   * Telegram is the reason this is a capability and not a hard list: createForumTopic works only in
+   * a topic-enabled supergroup, which the registration cannot know. It declares the capability, and
+   * a run in an ordinary group fails and says so.
+   *
+   * Absent/undefined treated as false, so a profile that has not thought about it is never asked.
+   */
+  standaloneThread?: boolean;
+  /**
    * Whether an existing lane can be RENAMED (renameThread).
    *
    * Its own flag rather than something read off `thread`, for the reason editButtons is: `thread`

@@ -20,7 +20,9 @@ import type { InboundMessage } from '../types.js';
  */
 
 const parsed = parseConfig({
-  platforms: { tg: { type: 'telegram', token: 't' }, web: { type: 'webui', token: 'w' } },
+  // `dc` is configured but has no adapter in the rig: what a platform that failed to start
+  // looks like to `schedule add`.
+  platforms: { tg: { type: 'telegram', token: 't' }, web: { type: 'webui', token: 'w' }, dc: { type: 'discord', token: 'd' } },
   agents: [
     { id: 'cc', harness: 'claude' },
     { id: 'oc', harness: 'opencode' },
@@ -40,6 +42,8 @@ type Fake = PlatformAdapter & {
   threads: string[];
   /** Topic ids that still exist; a test removes one to stand in for the user deleting it. */
   alive: Set<string>;
+  /** Topic ids a send to which fails, as a deleted topic does on a platform without hasThread. */
+  dead: Set<string>;
   /** Make the next createThread calls fail, as a platform with every topic starred does. */
   failCreate(msg: string): void;
 };
@@ -48,10 +52,22 @@ function adapter(
   id: string,
   type: string,
   sent: Sent[],
-  opts: { thread: boolean; buttons?: boolean; menus?: Menu[]; alive?: Set<string> }
+  opts: {
+    thread: boolean;
+    buttons?: boolean;
+    menus?: Menu[];
+    alive?: Set<string>;
+    /** Default true; false is a platform whose topic is a message (Slack, Discord, Lark). */
+    standaloneThread?: boolean;
+    /** Default true; false is a platform with no way to say a topic was deleted. */
+    hasThread?: boolean;
+    /** A topic that comes back with an empty lane, as Slack's `thread_ts` does with no message. */
+    emptyThread?: boolean;
+  }
 ): Fake {
   const threads: string[] = [];
   const alive = opts.alive ?? new Set<string>();
+  const dead = new Set<string>();
   const menus = opts.menus ?? [];
   let createError: string | undefined;
   return {
@@ -59,11 +75,13 @@ function adapter(
     platformType: type,
     threads,
     alive,
+    dead,
     failCreate: (msg: string) => {
       createError = msg;
     },
     capabilities: {
       thread: opts.thread,
+      standaloneThread: opts.thread && (opts.standaloneThread ?? true),
       editMessage: true,
       buttons: opts.buttons ?? false,
       editButtons: opts.buttons ?? false,
@@ -78,6 +96,7 @@ function adapter(
     },
     editButtons: async (_ref: unknown, text: string, buttons: Menu['buttons']) => void menus.push({ text, buttons }),
     sendMessage: async (address: Sent['address'], text: string) => {
+      if (address.thread !== undefined && dead.has(address.thread)) throw new Error('no such topic');
       sent.push({ platform: id, address, text });
       return { address, messageId: `${id}-${sent.length}` };
     },
@@ -85,9 +104,12 @@ function adapter(
       sent.push({ platform: id, address, text: `[file ${file.name}]` });
       return { address, messageId: 'f' };
     },
-    hasThread: (address: Sent['address']) => address.thread !== undefined && alive.has(address.thread),
+    ...(opts.hasThread === false
+      ? {}
+      : { hasThread: (address: Sent['address']) => address.thread !== undefined && alive.has(address.thread) }),
     createThread: async (ref: { address: { channel: string } }, name: string) => {
       if (createError) throw new Error(createError);
+      if (opts.emptyThread) return { address: { channel: ref.address.channel, thread: '' } };
       threads.push(name);
       const thread = `new${threads.length}`;
       alive.add(thread);
@@ -111,7 +133,11 @@ afterEach(async () => {
 });
 
 /** A daemon on `dir`; passing the previous rig's dir restarts it against the same state files. */
-async function rig(existing?: string, alive?: Set<string>) {
+async function rig(
+  existing?: string,
+  alive?: Set<string>,
+  over: { standaloneThread?: boolean; hasThread?: boolean; emptyThread?: boolean; perUser?: boolean } = {}
+) {
   const dir = existing ?? fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-'));
   if (!dirs.includes(dir)) dirs.push(dir);
   const socket = path.join(dir, 'd.sock');
@@ -170,9 +196,11 @@ async function rig(existing?: string, alive?: Set<string>) {
   };
   const tg = adapter('tg', 'telegram', sent, { thread: false });
   const menus: Menu[] = [];
-  const web = adapter('web', 'webui', sent, { thread: true, buttons: true, menus, ...(alive ? { alive } : {}) });
+  const web = adapter('web', 'webui', sent, { thread: true, buttons: true, menus, ...(alive ? { alive } : {}), ...over });
   const daemon = new Daemon(
-    cfg,
+    // `per_user` keys every conversation by its sender, so a new topic has no conversation of
+    // its own to map to — the scope a daily run must be refused under before it opens one.
+    over.perUser ? { ...cfg, session: { ...cfg.session, scope: 'per_user' as const } } : cfg,
     new Map<string, PlatformAdapter>([
       ['tg', tg],
       ['web', web],
@@ -315,6 +343,9 @@ describe('schedule over IPC', () => {
     expect(briefs).toHaveLength(2);
     expect(briefs[1]!.conversation).toBe(first.conversation);
     expect(r.disposed).not.toContain(first.conversation);
+    // The day's topic is protected from eviction too: it is not the task's target, and losing it
+    // mid-day would drop the context the day's runs have been building.
+    expect(r.targets({ ...WEB, thread: 'new1' })).toBe(true);
   });
 
   it('daily: a restart mid-day rejoins the same topic', async () => {
@@ -367,11 +398,92 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const noTopic = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', prompt: 'x', session: 'daily', channelId: 'tg:586' });
     expect(noTopic).toMatchObject({ ok: false });
-    expect((noTopic as { error: string }).error).toMatch(/needs a target that can open a topic/);
+    expect((noTopic as { error: string }).error).toMatch(/needs a target that can open a topic with no message/);
     const oneShot = await r.call({ kind: 'schedule-add', at: '+1h', prompt: 'x', session: 'daily' });
     expect((oneShot as { error: string }).error).toMatch(/needs --cron/);
     const bash = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', bash: 'true', session: 'daily' });
     expect((bash as { error: string }).error).toMatch(/--session daily is for --prompt tasks/);
+  });
+
+  it('refuses daily where a topic needs a message, and still lets new fall back to the chat', async () => {
+    // A platform that has threads but cannot open one without a message (Slack, Discord, Lark).
+    const r = await rig(undefined, undefined, { standaloneThread: false });
+    await r.inbound(WEB, 'hello');
+    const daily = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', prompt: 'x', session: 'daily' });
+    expect((daily as { error: string }).error).toMatch(/needs a target that can open a topic with no message/);
+    const fresh = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'x', session: 'new' });
+    expect(fresh.runs).toBe('cc · new session each run');
+  });
+
+  it('names a platform that is not running as such, not as one that cannot open a topic', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    // `dc` is configured but has no adapter here, as after a platform failed to start.
+    const resp = await r.call({ kind: 'schedule-add', cron: '0 8 * * *', prompt: 'x', session: 'new', channelId: 'dc:123' });
+    expect((resp as { error: string }).error).toMatch(/platform instance "dc" is not running/);
+  });
+
+  it('a topic that comes back with no thread fails the daily run instead of storing an empty one', async () => {
+    // Slack answers createThread with the messageId it was given; a scheduled run has none.
+    const r = await rig(undefined, undefined, { emptyThread: true });
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    r.sent.length = 0;
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(0);
+    expect(r.sent[0]!.text).toMatch(/could not open a topic for today's session: .*did not open a topic/);
+    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+      tasks: Array<{ daySession?: unknown }>;
+    };
+    expect(saved.tasks[0]!.daySession).toBeUndefined();
+  });
+
+  it('a per-user deployment refuses a daily run before opening a topic it cannot own', async () => {
+    const r = await rig(undefined, undefined, { perUser: true });
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    r.sent.length = 0;
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    // Nothing was created: the refusal is checked before createThread, or every run would leak
+    // a topic that no conversation maps to.
+    expect(r.web.threads).toHaveLength(0);
+    expect(r.sent[0]!.text).toMatch(/does not map to a conversation of its own/);
+  });
+
+  it('a daily topic that is gone on a platform without hasThread is reopened on the next run', async () => {
+    const r = await rig(undefined, undefined, { hasThread: false });
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    const first = r.turns.at(-1)!.conversation;
+    r.web.dead.add('new1');
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1); // the failed run made no turn
+    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+      tasks: Array<{ daySession?: unknown }>;
+    };
+    expect(saved.tasks[0]!.daySession).toBeUndefined();
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.web.threads).toHaveLength(2);
+    expect(r.turns.at(-1)!.conversation).not.toBe(first);
+  });
+
+  it('reports a daily run that keeps failing for the same reason once, not every run', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '*/5 * * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    r.web.failCreate('every topic is starred');
+    r.sent.length = 0;
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.sent.filter((s) => s.text.includes('could not open a topic')).length).toBe(1);
   });
 
   it('a new-session task names its model on the card and applies it before the turn', async () => {

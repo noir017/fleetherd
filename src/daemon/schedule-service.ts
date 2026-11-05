@@ -25,7 +25,7 @@ import type { ConversationRegistry } from './conversation.js';
 import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './schedule-bash.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { ScheduleStore } from './schedule-store.js';
-import { Scheduler, type ScheduleRunResult } from './scheduler.js';
+import { Scheduler, ERROR_LIMIT, type ScheduleRunResult } from './scheduler.js';
 
 /**
  * Scheduled tasks, wired to the rest of the daemon: how a run is carried out (a bash process, or a
@@ -77,6 +77,11 @@ export class ScheduleService {
 
   /** `schedule add`. Throws a sentence the agent can act on when the task is refused. */
   async add(input: NewTaskInput, caller: ConversationId, target: { platform: string; address: ConversationAddress }): Promise<ScheduleTaskView> {
+    // A configured platform that failed to start is a different failure from one that cannot
+    // open a topic, and saying "cannot open a topic" would send the agent looking for a
+    // `--session` workaround for what is really an outage.
+    const platform = this.platforms.get(target.platform);
+    if (!platform) throw new Error(`platform instance "${target.platform}" is not running`);
     const from = {
       key: caller,
       platform: this.registry.platformFor(caller) ?? target.platform,
@@ -93,7 +98,7 @@ export class ScheduleService {
       agents: this.config.agents.map((a) => a.id),
       from,
       target,
-      canOpenTopic: this.platforms.get(target.platform)?.capabilities.thread === true,
+      canOpenTopic: platform.capabilities.thread === true && platform.capabilities.standaloneThread === true,
       ...(targetConversation ? { targetConversation } : {}),
     });
     if (!built.ok) throw new Error(built.error);
@@ -310,8 +315,10 @@ export class ScheduleService {
     const day = formatDay(planned, task.when.tz);
     const stored = this.store.get(task.id)?.daySession;
     // Ask the platform whether the topic is still there when it can answer; one that cannot is
-    // assumed to have kept it, which is the only honest guess a chat app allows.
+    // assumed to have kept it, which is the only honest guess a chat app allows. A platform that
+    // cannot answer is caught below, when posting into the topic fails.
     const reuse = stored?.day === day && (platform.hasThread?.(stored.address) ?? true) ? stored : undefined;
+    const reused = reuse !== undefined;
 
     let key: string;
     let address: ConversationAddress;
@@ -322,7 +329,7 @@ export class ScheduleService {
       if (bound !== undefined && bound !== run.agent) {
         // The day's topic was given another agent on purpose; a schedule must not undo that.
         const why = `this topic is now answered by ${bound}, not ${run.agent}`;
-        await platform.sendMessage(targetAddress(task), `⏰ \`#${task.id}\` **${task.name}** skipped — ${why}.`).catch((e) => warn('skip notice', e));
+        await this.reportDaily(task, platform, targetAddress(task), 'skipped', why);
         return { status: 'failed', error: why };
       }
     } else {
@@ -338,13 +345,8 @@ export class ScheduleService {
           mustOpen: true,
         });
       } catch (e) {
-        const why = e instanceof Error ? e.message : String(e);
-        await platform
-          .sendMessage(
-            targetAddress(task),
-            `⏰ \`#${task.id}\` **${task.name}** failed — could not open a topic for today's session: ${why}`
-          )
-          .catch((err) => warn('failure notice', err));
+        const why = `could not open a topic for today's session: ${e instanceof Error ? e.message : String(e)}`;
+        await this.reportDaily(task, platform, targetAddress(task), 'failed', why);
         return { status: 'failed', error: why };
       }
       key = opened.key;
@@ -357,16 +359,48 @@ export class ScheduleService {
       // the person's choice and the conversation's override wins (applyScheduledModel).
       const why = await this.registry.applyScheduledModel(key, task.target.platform, run.agent, run.model);
       if (why) {
-        await platform
-          .sendMessage(address, `⏰ \`#${task.id}\` **${task.name}** failed — ${why}.`)
-          .catch((e) => warn('model failure notice', e));
+        await this.reportDaily(task, platform, address, 'failed', why);
         return { status: 'failed', error: why };
       }
     }
-    await platform.sendMessage(address, runNoticeText(task, planned)).catch((e) => warn('run notice', e));
+    try {
+      await platform.sendMessage(address, runNoticeText(task, planned));
+    } catch (e) {
+      // A topic we only reused and cannot write to is gone: forget it so the next run opens a
+      // new one rather than failing here for the rest of the day. A platform without `hasThread`
+      // has no other way to learn this, and one with it can still be wrong (deleted between the
+      // check and the post). A topic opened moments ago is kept — a failed first post is more
+      // likely transient than a create that lied.
+      const why = `could not post into today's topic: ${e instanceof Error ? e.message : String(e)}`;
+      if (reused) this.forgetDay(task.id);
+      await this.reportDaily(task, platform, targetAddress(task), 'failed', why);
+      return { status: 'failed', error: why };
+    }
     return toResult(
       await this.registry.runScheduledPrompt({ key, platform: task.target.platform, address, agentId: run.agent, prompt: run.prompt })
     );
+  }
+
+  /**
+   * Tell the chat a daily run failed or was skipped — unless the previous run ended the same way
+   * with the same reason.
+   *
+   * A five-minute task whose topic cannot be opened would otherwise post hundreds of identical
+   * lines a day. The first one says everything, and the task's record keeps the latest outcome
+   * either way; a successful run in between resets this, so a recurrence is news again.
+   */
+  private async reportDaily(
+    task: ScheduleTask,
+    platform: PlatformAdapter,
+    address: ConversationAddress,
+    verb: 'failed' | 'skipped',
+    why: string
+  ): Promise<void> {
+    const previous = task.lastRun;
+    if (previous?.status === 'failed' && previous.error === capError(why)) return;
+    await platform
+      .sendMessage(address, `⏰ \`#${task.id}\` **${task.name}** ${verb} — ${why}.`)
+      .catch((e) => warn('failure notice', e));
   }
 
   /** Record which topic today's daily runs join — before the turn, so a crash mid-run keeps it. */
@@ -375,6 +409,14 @@ export class ScheduleService {
     // Removed while the topic was being opened: nothing to remember, and putting it back would
     // resurrect a task the user just deleted.
     if (current) this.store.put({ ...current, daySession: day });
+  }
+
+  /** Forget today's topic, so the next run opens a new one: the one it names is gone or unwritable. */
+  private forgetDay(id: string): void {
+    const current = this.store.get(id);
+    if (!current?.daySession) return;
+    const { daySession: _gone, ...rest } = current;
+    this.store.put(rest);
   }
 
   // ─────────────────────────────── helpers ───────────────────────────────
@@ -416,4 +458,9 @@ function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]
 
 function warn(what: string, e: unknown): void {
   console.warn(`[schedule] failed to post the ${what}:`, e instanceof Error ? e.message : e);
+}
+
+/** The same cap the scheduler puts on an error before storing it (scheduler.ts ERROR_LIMIT). */
+function capError(text: string): string {
+  return text.length > ERROR_LIMIT ? `${text.slice(0, ERROR_LIMIT - 1)}…` : text;
 }

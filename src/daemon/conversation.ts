@@ -3858,21 +3858,14 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }): Promise<{ key: ConversationId; address: ConversationAddress; ephemeral: boolean }> {
     const adapter = this.platforms.get(opts.platform);
     if (!adapter) throw new Error(`platform instance "${opts.platform}" is not running`);
-    const title = formatLaneTitle(opts.agentId, opts.title);
-    let opened: ConversationAddress | undefined;
-    if (adapter.capabilities.thread) {
-      try {
-        // `scheduled` is the web UI's: it keeps these lanes out of the topic switcher and lists
-        // them in the panel's Sessions tab. A chat platform has nowhere else to put a
-        // conversation and ignores it.
-        opened = (await adapter.createThread({ address: opts.address, messageId: '' }, title, { scheduled: true })).address;
-      } catch (e) {
-        if (opts.mustOpen) throw e;
-        console.warn(`[schedule] could not open a topic on ${opts.platform}; posting into the chat instead: ${e instanceof Error ? e.message : e}`);
-      }
-    } else if (opts.mustOpen) {
-      throw new Error(`platform instance "${opts.platform}" cannot open a topic`);
+    // Under `per_user` a new topic would map to no conversation of its own, so the run would have
+    // nowhere to post. Asked BEFORE createThread: the check used to sit after it, and a daily run
+    // then left an empty topic behind every time it was refused.
+    if (opts.mustOpen && !this.conversationAt(opts.platform, opts.address)) {
+      throw new Error('the target does not map to a conversation of its own under this deployment\'s scope; a daily-session task needs one');
     }
+    const title = formatLaneTitle(opts.agentId, opts.title);
+    const opened = await this.openScheduledTopic(adapter, opts.address, title, opts.mustOpen === true);
     const conv = opened ? this.conversationAt(opts.platform, opened) : undefined;
     if (opts.mustOpen && !conv) {
       throw new Error('the new topic does not map to a conversation of its own under this deployment\'s scope');
@@ -3883,6 +3876,42 @@ ${formatTokens(left)} left before compaction — ${name}`;
     if (opts.cwd) this.store?.setConversationCwd(key, opts.agentId, opts.cwd);
     if (key !== opts.ephemeralKey) this.store?.setConversationTitle(key, opts.agentId, title);
     return { key, address, ephemeral: key === opts.ephemeralKey };
+  }
+
+  /**
+   * Ask a platform for a topic with no message to hang it on, or undefined when it cannot be had
+   * and the caller may fall back to the chat. `mustOpen` turns both "no thread support" and a
+   * failed create into the throw.
+   *
+   * An empty `thread` in the answer is a failure, not a lane: Slack's `createThread` returns the
+   * `messageId` it was given, and a scheduled run has none. That address names the CHANNEL —
+   * posting there would put the run into the person's conversation, and a daily task would
+   * persist a thread the store's schema rejects on the next start, dropping the whole task.
+   */
+  private async openScheduledTopic(
+    adapter: PlatformAdapter,
+    address: ConversationAddress,
+    title: string,
+    mustOpen: boolean
+  ): Promise<ConversationAddress | undefined> {
+    if (!adapter.capabilities.thread) {
+      if (mustOpen) throw new Error(`platform instance "${adapter.platform}" cannot open a topic`);
+      return undefined;
+    }
+    try {
+      // `scheduled` is the web UI's: it keeps these lanes out of the topic switcher and lists
+      // them in the panel's Sessions tab. A chat platform has nowhere else to put a
+      // conversation and ignores it.
+      const opened = (await adapter.createThread({ address, messageId: '' }, title, { scheduled: true })).address;
+      if (opened.thread !== undefined && opened.thread.length === 0) {
+        throw new Error(`platform instance "${adapter.platform}" did not open a topic (it needs a message to reply to)`);
+      }
+      return opened;
+    } catch (e) {
+      if (mustOpen) throw e;
+      console.warn(`[schedule] could not open a topic on ${adapter.platform}; posting into the chat instead: ${e instanceof Error ? e.message : e}`);
+      return undefined;
+    }
   }
 
   /** Forget a throwaway scheduled conversation entirely: its child, its state, its record. */

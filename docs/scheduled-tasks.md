@@ -10,8 +10,8 @@ which the harnesses' own schedulers do not.
 | kind | what runs | where it answers |
 |---|---|---|
 | prompt, **fixed session** (default) | a turn in this conversation, by its agent — context accumulates, you can follow up in place | here, for **24 h** from registration; then it is marked expired |
-| prompt, **new session** | a fresh session each run, by any agent | a new topic per run where the platform can open one (web UI, Telegram forums, Discord), else this chat; no time limit |
-| prompt, **daily session** | one session per day: the first run opens it, later runs that day join it | its own topic per day, named with the date; needs a platform that can open one (web UI, Telegram forums, Discord); no time limit |
+| prompt, **new session** | a fresh session each run, by any agent | a new topic per run where the platform can open one without a message (the web UI, a Telegram forum group), else this chat; no time limit |
+| prompt, **daily session** | one session per day: the first run opens it, later runs that day join it | its own topic per day, named with the date; needs a platform that can open a topic without a message (the web UI, a Telegram forum group); no time limit |
 | **bash** | a command, run by the gateway itself — no agent | exit code, duration and the end of the output, long output attached |
 
 Output can go to any chat the gateway has answered in, on any platform (`talkcode
@@ -24,9 +24,13 @@ A daily task counts days in **its own time zone**, by each run's planned time: t
 run of the 5th opens a new one. A run caught up after midnight still joins the day it was meant
 for. Yesterday's topic is left as it is. The task remembers today's topic, so restarting the
 gateway mid-day does not start a second conversation; if the topic is deleted, the next run opens
-a new one. It cannot run where no topic can be opened — that is refused when the task is added,
-and a run whose topic cannot be created fails and says so in the chat, rather than posting into a
-conversation nobody can reply into.
+a new one — a platform that cannot say whether it still exists is caught when posting into it
+fails, which clears the record. It cannot run where no topic can be opened: a target whose
+platform cannot open one without a message is refused when the task is added. Telegram is the one
+case that is knowable only at run time — only a forum supergroup has topics — so a run in an
+ordinary group fails and says why, and consecutive runs failing the same way report it once
+instead of on every run. A create that fails — or a topic that comes back empty — fails that run
+and says so in the chat, rather than posting into a conversation nobody can reply into.
 
 A **new-session** or **daily** task can name the model its conversations use with `--model <id>`.
 The id must be one the agent's own `/model` list offers: a name it does not offer is refused when

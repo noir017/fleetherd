@@ -505,7 +505,7 @@ function buildFreshTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext
 function buildDailyTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext, base: TaskBase): Built {
   if (!ctx.canOpenTopic) {
     return fail(
-      '--session daily needs a target that can open a topic (the web UI, a Telegram forum, Discord): ' +
+      '--session daily needs a target that can open a topic with no message to reply to (the web UI, a Telegram forum group): ' +
         'each day gets its own conversation, and without one the runs would have nowhere the user can reply; ' +
         'use --session new to post into the chat instead'
     );

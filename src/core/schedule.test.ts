@@ -78,8 +78,11 @@ describe('time in a zone', () => {
     expect(formatDay(late, 'Asia/Shanghai')).toBe('2026-10-02');
     expect(formatDay(late, 'America/New_York')).toBe('2026-10-01');
     expect(formatDay(late, 'UTC')).toBe('2026-10-01');
-    // A catch-up run belongs to the day of its PLANNED time, even when it is made after midnight.
-    expect(formatDay(Date.UTC(2026, 9, 1, 23, 30), 'Asia/Shanghai')).toBe('2026-10-02');
+    // A catch-up run belongs to the day of its PLANNED time, even when it is made after midnight:
+    // planned 23:50 on the 1st, made 00:20 on the 2nd, is still the 1st's topic.
+    const planned = zonedToEpoch(2026, 10, 1, 23, 50, 0, 'Asia/Shanghai');
+    expect(formatDay(planned, 'Asia/Shanghai')).toBe('2026-10-01');
+    expect(formatDay(planned + 30 * MIN, 'Asia/Shanghai')).toBe('2026-10-02');
   });
 
   it.each([

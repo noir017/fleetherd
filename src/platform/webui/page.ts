@@ -1392,7 +1392,7 @@ const SCRIPT = `
   function paintSessions(){
     var list=schedSessions();
     if(!list.length){
-      schedSessionList.innerHTML='<div class="sched-empty">No scheduled sessions yet. A task that runs in a new session opens one here.</div>';
+      schedSessionList.innerHTML='<div class="sched-empty">No scheduled sessions yet. A task that runs in a new or daily session opens one here.</div>';
       return;
     }
     var h='';
