@@ -733,7 +733,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .set-open:hover{background:#1f1f1f}
 .set-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
 .set-open{grid-template-columns:minmax(0,1fr) minmax(0,max-content) auto;gap:4px 12px}
-.set-open>.set-v{max-width:320px;text-align:right}
+.set-vv{display:flex;align-items:baseline;justify-content:flex-end;gap:6px;min-width:0;max-width:340px}
+.set-vnote{flex:none;font-size:10.5px;color:var(--dim);border:1px solid #333;border-radius:999px;padding:0 6px;line-height:16px}
 .set-v{min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#c9d6e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .set-v.unset{font-family:inherit;font-style:italic;color:var(--dim)}
 .set-chev{flex:none;color:#666;font-size:17px;line-height:1}
@@ -745,11 +746,21 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .set-head .set-tgt{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:500;color:#c9d6e2}
 .set-now{margin:6px 0 0;font-size:12.5px;color:var(--dim)}
 .set-now .set-v{display:inline;white-space:normal;overflow-wrap:anywhere}
+.set-src{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:#a8a8a8}
 .set-desc{margin:8px 0 0;font-size:12.5px;line-height:1.55;color:#a8a8a8}
+.set-typed{display:flex;gap:6px;margin:0 0 10px}
+.set-type{flex:1;min-width:0;min-height:36px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--fg);font:inherit;font-size:13px}
+.set-type:focus{outline:none;border-color:var(--own-edge)}
+.set-use{flex:none;min-height:36px;padding:0 14px;border-radius:6px}
+.set-nomatch{margin:8px 2px 0;font-size:12px;color:var(--dim)}
+.set-hintbox.loading{display:flex;align-items:center;gap:8px;border-style:solid}
+.set-spin{flex:none;width:12px;height:12px;border:2px solid #444;border-top-color:#8fb3d6;border-radius:50%;animation:set-spin .8s linear infinite}
+@keyframes set-spin{to{transform:rotate(360deg)}}
 .set-when{margin:4px 0 0;font-size:12px;color:var(--dim)}
-.set-hintbox{margin:12px 0 0;padding:9px 12px;border:1px dashed #333;border-radius:6px;font-size:12.5px;line-height:1.5;color:#a8a8a8}
+.set-hintbox{margin:0 0 10px;padding:9px 12px;border:1px dashed #333;border-radius:6px;font-size:12.5px;line-height:1.5;color:#a8a8a8}
 .set-opt{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:44px;padding:10px 14px;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
 .set-opt:last-child{border-bottom:0}
+.set-opt[hidden]{display:none}
 .set-opt:hover{background:#1f1f1f}
 .set-opt.on{background:#1b2430}
 .set-check{flex:none;width:16px;color:#38bdf8;font-size:14px;line-height:1.5;text-align:center}
@@ -949,8 +960,10 @@ button:disabled{opacity:.5;cursor:default}
   .set-select{max-width:none;width:100%;min-height:44px;font-size:16px}
   .set-open{grid-template-columns:minmax(0,1fr) auto;gap:3px 12px}
   .set-open>.set-tx{grid-column:1;grid-row:1}
-  .set-open>.set-v{grid-column:1;grid-row:2;max-width:none;text-align:left}
+  .set-open>.set-vv{grid-column:1;grid-row:2;max-width:none;justify-content:flex-start}
   .set-open>.set-chev{grid-column:2;grid-row:1/span 2}
+  .set-type{min-height:44px;font-size:16px}
+  .set-use{min-height:44px}
   .set-switch{width:52px;height:44px;margin:-12px -6px}
   .set-switch::before{left:8px;top:12px}
   .set-switch::after{left:11px;top:15px}
@@ -1093,7 +1106,7 @@ const SCRIPT = `
   // one on screen.
   // settingsNote: the page's own line when a control's request failed (cleared by the next screen);
   // settingsLevel: which level is drawn, so a move between them starts at the top.
-  var settingsMsg=null, settingsTopic=null, settingsClosed={}, settingsNote=null, settingsLevel='', settingsFade=0;
+  var settingsMsg=null, settingsTopic=null, settingsClosed={}, settingsNote=null, settingsLevel='', settingsFade=0, settingsQuery='';
   var SETTINGS_FADE_MS=5000;
   var settingsReq=0, settingsPending=[], settingsClosedUpTo=0, settingsTimer=0;
   // How long the page waits for the screen before saying the daemon did not answer. The send
@@ -2207,7 +2220,10 @@ const SCRIPT = `
     if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r, c.options || [], i)+'</div></div>';
     // A row with a screen of its own, or a way to another menu: the whole row is the button.
     var value = '';
-    if(c.kind !== 'link' && r.value != null) value = '<span class="set-v'+(r.unset ? ' unset' : '')+'" title="'+text(r.value)+'">'+text(r.value)+'</span>';
+    if(c.kind !== 'link' && r.value != null){
+      value = '<span class="set-vv"><span class="set-v'+(r.unset ? ' unset' : '')+'" title="'+text(r.value)+'">'+text(r.value)+'</span>'
+        + (r.valueNote ? '<span class="set-vnote">'+text(r.valueNote)+'</span>' : '') + '</span>';
+    }
     return '<button type="button" class="set-item set-open" data-fk="r'+i+'" data-btn="'+text(r.buttonId)+'">'
       + settingsText(r) + value + '<span class="set-chev" aria-hidden="true">\\u203a</span></button>';
   }
@@ -2244,18 +2260,27 @@ const SCRIPT = `
         + (hd.target ? '<span class="set-tgt">'+text(hd.target)+'</span>' : '')
         + (hd.targetKind ? '<span class="set-kind">'+text(hd.targetKind)+'</span>' : '') + '</h3>'
         + '<p class="set-now">Now: <span class="set-v'+(hd.unset ? ' unset' : '')+'">'+text(hd.value)+'</span></p>'
+        + (hd.source ? '<p class="set-src">'+inl(hd.source)+'</p>' : '')
         + '<p class="set-desc">'+inl(hd.description)+'</p>'
         + (hd.effect ? '<p class="set-when">'+inl(hd.effect)+'</p>' : '') + '</div>';
     }
     if(settingsNote) h += settingsNotice({ tone: 'error', text: settingsNote });
     h += settingsNotice(s.notice);
     var opts = s.options || [];
-    if(opts.length){
-      h += '<div class="set-card">';
-      for(var i=0;i<opts.length;i++) h += settingsOption(opts[i], i);
-      h += '</div>';
+    // One field for both: it filters a long list as it is typed into, and Use (or Enter) takes
+    // what is typed as the value — a harness takes model names its list never offers.
+    if(s.typed){
+      h += '<div class="set-typed"><input type="text" class="set-type" data-fk="typed" data-btn="'+text(s.typed.buttonId)+'"'
+        + ' placeholder="'+text(opts.length > 8 ? 'Filter, or type a model name' : s.typed.placeholder)+'" aria-label="'+text(s.typed.placeholder)+'"'
+        + ' autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">'
+        + '<button type="button" class="set-use" data-fk="use">Use</button></div>';
     }
-    if(hd && hd.hint) h += '<div class="set-hintbox">'+inl(hd.hint)+'</div>';
+    if(s.loading || (hd && hd.hint)) h += '<div class="set-hintbox'+(s.loading ? ' loading' : '')+'">'+(s.loading ? '<span class="set-spin" aria-hidden="true"></span>' : '')+inl(hd && hd.hint ? hd.hint : 'Loading\u2026')+'</div>';
+    if(opts.length){
+      h += '<div class="set-card set-list">';
+      for(var i=0;i<opts.length;i++) h += settingsOption(opts[i], i);
+      h += '</div><p class="set-nomatch" hidden>No model in the list matches. Use takes the name as typed.</p>';
+    }
     if(n.pageCount > 1){
       h += '<div class="set-nav">'
         + (n.prev ? '<button type="button" data-fk="prev" data-btn="'+text(n.prev)+'">\\u2039 Prev</button>' : '')
@@ -2268,7 +2293,7 @@ const SCRIPT = `
 
   function settingsOption(o, i){
     return '<button type="button" class="set-opt'+(o.current ? ' on' : '')+'" data-fk="o'+i+'" data-btn="'+text(o.buttonId)+'"'
-      + (o.current ? ' aria-current="true"' : '')+'>'
+      + (o.current ? ' aria-current="true"' : '')+' data-q="'+text(String(o.label+' '+(o.detail || '')).toLowerCase())+'">'
       + '<span class="set-check" aria-hidden="true">'+(o.current ? '\\u2713' : '')+'</span>'
       + '<span class="set-opt-main"><span class="set-opt-label">'+text(o.label)+'</span>'
       + (o.detail ? '<span class="set-opt-detail">'+text(o.detail)+'</span>' : '')
@@ -2316,9 +2341,15 @@ const SCRIPT = `
     if(!settingsMsg) return;
     var a = document.activeElement, fk = a && settingsBody.contains(a) ? a.getAttribute('data-fk') : null;
     var level = settingsMsg.settings ? settingsMsg.settings.level : '';
+    var typed = settingsBody.querySelector('.set-type');
+    if(typed) settingsQuery = typed.value;
     settingsBody.innerHTML = settingsScreen(settingsMsg);
-    if(level !== settingsLevel){ settingsBody.scrollTop = 0; fk = null; }
+    if(level !== settingsLevel){ settingsBody.scrollTop = 0; fk = null; settingsQuery = ''; }
     settingsLevel = level;
+    // What was typed survives the redraw — the list arriving after "asking" is one — and so does
+    // the filter it applies.
+    var field = settingsBody.querySelector('.set-type');
+    if(field && settingsQuery){ field.value = settingsQuery; filterSettings(); }
     // A notice that is good news fades once it has been seen; an error stays until the next screen.
     clearTimeout(settingsFade);
     var note = settingsBody.querySelector('.set-notice.ok, .set-notice.info');
@@ -2439,7 +2470,30 @@ const SCRIPT = `
    * (the request failed, or the message is gone), the page is redrawn from what it last had, which
    * puts the control back, with a line saying why.
    */
-  function postSetting(el, id){
+  /** Show only the values whose name or meaning holds what is typed, and say so when none does. */
+  function filterSettings(){
+    var field = settingsBody.querySelector('.set-type');
+    var q = field ? field.value.trim().toLowerCase() : '';
+    var opts = settingsBody.querySelectorAll('.set-list .set-opt'), shown = 0;
+    for(var i=0;i<opts.length;i++){
+      var hit = !q || (opts[i].getAttribute('data-q') || '').indexOf(q) >= 0;
+      opts[i].hidden = !hit;
+      if(hit) shown++;
+    }
+    var none = settingsBody.querySelector('.set-nomatch');
+    if(none) none.hidden = !(q && opts.length && !shown);
+  }
+
+  /** Use what is typed: the click carries it as its value (ButtonInteraction.value). */
+  function useTyped(){
+    var field = settingsBody.querySelector('.set-type');
+    if(!field) return;
+    var v = field.value.trim();
+    if(!v){ field.focus(); return; }
+    postSetting(field, field.getAttribute('data-btn'), v);
+  }
+
+  function postSetting(el, id, value){
     if(!settingsMsg || !settingsTopic || !id) return;
     var msgId = settingsMsg.id;
     if(el.getAttribute('role') === 'switch') el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
@@ -2456,7 +2510,9 @@ const SCRIPT = `
     };
     // A limit, unlike a transcript menu's tap: a request that goes quiet would leave the control
     // half-moved for ever, with nothing on the page to say the change never happened.
-    post('api/click',{topic:settingsTopic,messageId:msgId,buttonId:id},2,SETTINGS_WAIT_MS)
+    var body = {topic:settingsTopic,messageId:msgId,buttonId:id};
+    if(value) body.value = value;
+    post('api/click',body,2,SETTINGS_WAIT_MS)
       .then(function(r){
         if(r.ok) return;
         fail(r.status === 409 || r.status === 404
@@ -4143,6 +4199,7 @@ const SCRIPT = `
   // one is on screen (the page is closed when that changes, but the two are not the same fact).
   settingsBody.addEventListener('click', function(e){
     if(!e.target.closest || !settingsMsg || !settingsTopic) return;
+    if(e.target.closest('.set-use')){ useTyped(); return; }
     var b = e.target.closest('button[data-btn]');
     // A switch row is a target as a whole, as a settings row is anywhere: the label is the bigger
     // half of it, and on a phone the one a thumb lands on.
@@ -4152,6 +4209,14 @@ const SCRIPT = `
     }
     if(!b || b.disabled) return;
     postSetting(b, b.getAttribute('data-btn'));
+  });
+  settingsBody.addEventListener('input', function(e){
+    if(e.target && e.target.classList && e.target.classList.contains('set-type')) filterSettings();
+  });
+  settingsBody.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' || !e.target || !e.target.classList || !e.target.classList.contains('set-type')) return;
+    e.preventDefault();
+    useTyped();
   });
   settingsBody.addEventListener('change', function(e){
     var sel = e.target;

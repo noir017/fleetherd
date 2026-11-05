@@ -29,7 +29,8 @@ laid out as a grid with the current choice lit, and hold 24 to a page where chat
 **⚙ Settings** menu at the foot of the topic list opens it, and typing `/setting` does the same.
 It is one column of sections, and each setting is changed in place with the control that fits it: a
 switch for on/off, a segmented control or a dropdown for a short list, and a row per agent for the
-default models, each showing its whole model id and opening that agent's list. A banner says what
+default models, each showing its whole model id and opening that agent's list — any agent's, running
+or not — with a field that filters it and takes a name it does not have. A banner says what
 each change did, or why it was refused. The bar says these are saved to config.yaml for every topic
 — none of them is the topic's own — and the agent answering the topic you opened it from is marked
 *this topic*; switching topics puts the page away. What you type stays in the transcript as your

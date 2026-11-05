@@ -13,13 +13,13 @@ nothing else from the project.
 | `load.ts` | Path resolution (`configDir`/`configPath`/`defaultSocketPath`), `loadConfig`, `readConfig` (validate without committing, for a live reload), `saveConfig`, `saveConfigPatch` |
 | `env-expand.ts` | `${VAR}` expansion over the parsed tree + the `.env` sidecar loader |
 | `migrate.ts` | v0 (`platform:` object) → v1 (`platforms:` map). Disposable by design. |
-| `pods.ts` | `pods.json` — the agents each host's pod declared, as the daemon last read them (daemon/pods.ts) — and how they join `agents`: `<id>@<host>`, in the order of `hosts:`, never over an id config.yaml defines, a bad entry left out rather than failing the load |
+| `pods.ts` | `pods.json` — the agents each host's pod declared, as the daemon last read them (daemon/pods.ts) — and how they join `agents`: `<id>@<host>`, in the order of `hosts:`, never over an id config.yaml defines, a bad entry left out rather than failing the load, `podModels` folded into their `model` |
 
 ## The central design decision: a small user surface
 
 The config file has exactly five sections — `platforms`, `agents`, `routing`,
 `session`, `access` — plus the optional `display`, `stream`, `title`, `voice`, `hosts`,
-`review` and `delegation`. Everything else that
+`podModels`, `review` and `delegation`. Everything else that
 *looks* like config (stream throttling, tool-bubble rendering, inbound merge windows,
 attachment limits, reaction emoji, the IPC socket) is **not** user-configurable. It lives
 in the frozen `EXPERIENCE` constant in `schema.ts` and is merged into every loaded
@@ -42,6 +42,14 @@ in `ConfigSchema`. A tuning knob for the streaming experience goes in `EXPERIENC
 `hosts` is on the user side for the same reason `voice` is: an address and a credential (an ssh
 destination, a key, a known_hosts file). The link's tuning — heartbeat, back-off, buffer cap,
 orphan timeout — is constants in `src/remote/` and `remote/`, not config.
+
+`podModels` (`<id>@<host>` → a model name) is the gateway's say over the model of an agent a host's
+pod declares — and only that: everything else about such an agent is the pod's (`pods.ts`), and a
+map that could reach a command or an env would be the gateway reaching into how a host runs its
+programs. It is folded into the merged agent's `model` in `mergePodAgents`, so every reader of
+`model` gets the right answer without knowing it exists; `podAgentModels` keeps what the pod said,
+for `/setting` to show and to fall back to. A key naming an agent config.yaml defines is ignored and
+reported (that one is `agents[].model`), and pod.yaml's strict schema has no such field.
 
 `agents[].hooks.turnFailed` is user-side like `hooks.preLaunch`, and kept out of `/setting` for the same reason: `command` is a shell command.
 

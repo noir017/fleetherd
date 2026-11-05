@@ -85,6 +85,11 @@ export interface ButtonInteraction {
   messageId: string;
   /** Button custom_id (the button id given at send time; no prefix added at this layer). */
   buttonId: string;
+  /**
+   * Text that came with the click. Only the web UI sends one, and only for a control that asks for
+   * a typed value (`SettingsScreenTyped`); a chat app's button carries nothing but its id.
+   */
+  value?: string;
 }
 
 /**
@@ -532,6 +537,8 @@ export interface SettingsScreenRow {
   value?: string;
   /** Nothing is set, and `value` says what that means (`harness default`): drawn as a placeholder. */
   unset?: boolean;
+  /** Where the value comes from, when that is not simply config.yaml (`from pod.yaml`, `set here`). */
+  valueNote?: string;
   /** One line on what the setting decides. Absent where the group's note says it for every row. */
   hint?: string;
   /**
@@ -590,6 +597,17 @@ export interface SettingsScreenHead {
   hint?: string;
   /** When a change lands, as a sentence. */
   effect: string;
+  /** Where the current value comes from, as a sentence — for an agent a pod declares. */
+  source?: string;
+}
+
+/**
+ * A value typed rather than picked, for a setting whose list is not the whole answer (a model: a
+ * harness takes names it never lists). A tap on `buttonId` carries the text as the click's `value`.
+ */
+export interface SettingsScreenTyped {
+  buttonId: string;
+  placeholder: string;
 }
 
 /** One value of an open setting, as the web UI's value list draws it. */
@@ -632,6 +650,9 @@ export type SettingsScreen =
   | {
       level: 'values';
       head?: SettingsScreenHead;
+      /** The list is being fetched; it will arrive as an edit of this screen. */
+      loading?: boolean;
+      typed?: SettingsScreenTyped;
       options: SettingsScreenOption[];
       nav: SettingsScreenNav;
       notice?: SettingsScreenNotice;

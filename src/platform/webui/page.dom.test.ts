@@ -2697,6 +2697,100 @@ describe('webui page: the settings page', () => {
     expect(h.doc.querySelector('#log button[data-btn="sct:r:0"]')).not.toBeNull();
   });
 
+  describe('a model’s own screen', () => {
+    const models = Array.from({ length: 12 }, (_, i) => ({
+      buttonId: 'stv:r:' + i,
+      label: i === 3 ? 'newapi/kimi-k3' : 'opencode/model-' + i,
+      ...(i === 3 ? { detail: 'Kimi K3' } : {}),
+      current: i === 0,
+    }));
+    const modelScreen = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+      ...message('m1', '<p>Default model</p>'),
+      buttons: [],
+      settings: {
+        level: 'values',
+        head: {
+          label: 'Default model',
+          target: 'oc@box',
+          targetKind: 'OpenCode',
+          value: 'opencode/model-0',
+          description: 'The model `oc@box` starts its sessions with.',
+          effect: 'Takes effect from oc@box’s next agent session.',
+          source: "From box's pod.yaml. A model chosen here is kept in the gateway's config.yaml and wins over the pod's.",
+        },
+        typed: { buttonId: 'stt:r:0', placeholder: 'Or type a model name' },
+        options: models,
+        nav: { page: 1, pageCount: 1, back: 'stb:r:0' },
+        ...over,
+      },
+    });
+
+    it('says whose value it is, and filters a long list as it is typed into', async () => {
+      const h = await opened(modelScreen());
+      expect(h.doc.querySelector('#settings-body .set-src')?.textContent).toContain("From box's pod.yaml");
+      const field = h.doc.querySelector('#settings-body .set-type') as HTMLInputElement;
+      expect(field.placeholder).toBe('Filter, or type a model name');
+      field.value = 'kimi';
+      field.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+      const shown = Array.from(h.doc.querySelectorAll('#settings-body .set-opt')).filter((o) => !(o as HTMLElement).hidden);
+      // Matched on the name under the id too.
+      expect(shown.map((o) => o.getAttribute('data-btn'))).toEqual(['stv:r:3']);
+      expect((h.doc.querySelector('#settings-body .set-nomatch') as HTMLElement).hidden).toBe(true);
+      field.value = 'zzz';
+      field.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+      expect((h.doc.querySelector('#settings-body .set-nomatch') as HTMLElement).hidden).toBe(false);
+    });
+
+    it('takes a typed name with Use or Enter, carried as the click’s value', async () => {
+      const h = await opened(modelScreen());
+      const field = h.doc.querySelector('#settings-body .set-type') as HTMLInputElement;
+      field.value = '  opencode/unlisted  ';
+      await h.click('#settings-body .set-use');
+      expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'stt:r:0', value: 'opencode/unlisted' });
+
+      await h.emit({ t: 'msg', msg: modelScreen() });
+      const again = h.doc.querySelector('#settings-body .set-type') as HTMLInputElement;
+      again.value = 'glm';
+      again.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await tick();
+      expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'stt:r:0', value: 'glm' });
+      // Nothing typed: nothing posted.
+      const n = clicks(h).length;
+      await h.emit({ t: 'msg', msg: modelScreen() });
+      (h.doc.querySelector('#settings-body .set-type') as HTMLInputElement).value = ' ';
+      await h.click('#settings-body .set-use');
+      expect(clicks(h)).toHaveLength(n);
+    });
+
+    it('shows the list being asked for, and keeps what was typed when it arrives', async () => {
+      const h = await opened(
+        modelScreen({ loading: true, options: [], head: { label: 'Default model', target: 'oc@box', value: 'harness default', unset: true, description: 'd', effect: 'e', hint: 'Asking oc@box for its models… A name can be typed meanwhile.' } })
+      );
+      const box = h.doc.querySelector('#settings-body .set-hintbox');
+      expect(box?.classList.contains('loading')).toBe(true);
+      expect(box?.querySelector('.set-spin')).not.toBeNull();
+      const field = h.doc.querySelector('#settings-body .set-type') as HTMLInputElement;
+      field.value = 'kimi';
+      field.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+      await h.emit({ t: 'msg', msg: modelScreen() });
+      expect(h.doc.querySelector('#settings-body .set-hintbox')).toBeNull();
+      expect((h.doc.querySelector('#settings-body .set-type') as HTMLInputElement).value).toBe('kimi');
+      const shown = Array.from(h.doc.querySelectorAll('#settings-body .set-opt')).filter((o) => !(o as HTMLElement).hidden);
+      expect(shown).toHaveLength(1);
+    });
+
+    it('marks a pod agent’s value on the list with where it comes from', async () => {
+      const h = await opened(
+        withScreen((s) => {
+          s.rows[2]!.valueNote = 'pod.yaml';
+        })
+      );
+      expect(h.doc.querySelector('#settings-body button[data-btn="stg:r:2"] .set-vnote')?.textContent).toBe('pod.yaml');
+      expect(h.doc.querySelector('#settings-body button[data-btn="stg:r:1"] .set-vnote')).toBeNull();
+    });
+  });
+
   describe('on a phone', () => {
     const narrow = (): string => {
       const html = renderPage('Chat', false);
@@ -2717,7 +2811,7 @@ describe('webui page: the settings page', () => {
       expect(css).toContain('.set-item.sw{grid-template-columns:minmax(0,1fr) auto}');
       expect(css).toContain('.set-seg{display:flex;width:100%}');
       // A model's value goes under its agent instead of fighting it for the width.
-      expect(css).toContain('.set-open>.set-v{grid-column:1;grid-row:2;');
+      expect(css).toContain('.set-open>.set-vv{grid-column:1;grid-row:2;');
       // And none of that leaks onto the desktop.
       const desktop = renderPage('Chat', false).replace(css, '');
       expect(desktop).not.toContain('.set-item{grid-template-columns:minmax(0,1fr);');

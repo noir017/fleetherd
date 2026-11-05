@@ -10,7 +10,7 @@ and restarting, which stops every resident agent.
 | what | in config.yaml | accepts | takes effect |
 |---|---|---|---|
 | default agent | `routing.default` | any configured agent id | immediately |
-| an agent's default model | `agents[].model` | that agent's reported models, any name, or `-` to clear | its next agent session (`/new` starts one) |
+| an agent's default model | `agents[].model`, or `podModels` for an agent a host's pod declares | that agent's reported models, any name, or `-` to clear | its next agent session (`/new` starts one) |
 | confirm sub-agent starts | `delegation.confirm` | `on`, `off` (default `on`) | immediately — the next `task-new` in a topic you talk to directly; a sub-agent's topic still confirms |
 | idle reclaim window | `session.idleTimeoutMs` | `off`, `15m`, `4h`, … | immediately |
 | conversation scope | `session.scope` | `per_thread`, `per_channel`, `per_user`, `shared` | after a restart |
@@ -43,7 +43,8 @@ Voice — and each row is changed in place with the control that fits it:
 - **a model** is a row per agent, named by the agent, with its whole model id — or
   *harness default* in grey when none is set. The agent answering the topic you
   opened the page from is marked *this topic*. Tapping a row opens that agent's
-  models, with the current one ticked.
+  models, with the current one ticked, and a field that filters them as you type
+  and takes a name the list does not have (**Use**).
 
 What each change did is said in a banner at the top — saved, already set, or why
 it was refused — and a request that never reached the gateway puts the control
@@ -53,6 +54,19 @@ differs. A change applies at once unless its row says otherwise: the model rows
 apply from each agent's next session, and conversation scope is marked *after
 restart*. The page is not a message in the transcript: a typed `/setting` stays as
 your message, the page does not.
+
+**Any agent's model list, not only the one answering here.** A list comes from a
+running session of that agent, so where none is running the gateway starts one just
+to ask, then stops it — a second or two, once per agent until it is redefined — and
+the screen says *Asking … for its models* meanwhile. An agent whose harness offers
+no model choice, or that does not start, says which, and a name can still be typed.
+
+**An agent a host's pod declares** (`<id>@<host>`, see [remote hosts](remote-hosts.md))
+is set the same way. Its value is written to `podModels` in the gateway's config.yaml,
+over the `model:` in the host's pod.yaml, and the row says whether the value is the
+pod's or set here; clearing it goes back to the pod's. Which model a conversation
+starts with, from highest: its `/model` → `podModels` → pod.yaml → the harness's
+default.
 
 Each answer says **when** the change lands, because they differ: the scope is
 written but not applied until a restart, since changing what counts as one

@@ -87,12 +87,16 @@ import {
   settingsListText,
   settingsMenuSurface,
   settingsRows,
+  type PodModels,
   type SettingApplyResult,
   type SettingOption,
   type SettingRow,
   type SettingsContext,
 } from '../core/settings.js';
 import { SettingsStore } from './settings-store.js';
+import { ModelCatalog } from './model-catalog.js';
+import { configDir, readRawConfigIfExists } from '../config/load.js';
+import { podAgentModels, readPods } from '../config/pods.js';
 import {
   matchWorkdirs,
   workdirAmbiguousText,
@@ -490,6 +494,8 @@ export class ConversationRegistry {
    * status-board.ts for why it is its own object.
    */
   private readonly status: StatusBoard;
+  /** Every agent's model list, as far as can be told without a turn (model-catalog.ts). */
+  private readonly modelCatalog: ModelCatalog;
   /**
    * What each conversation's turn is doing right now — the tool it is running, how many steps in.
    * `outcomes` below only knows a turn once it has ended; a sub-agent 150 tool calls deep is
@@ -615,6 +621,8 @@ export class ConversationRegistry {
         menu: {
           rows: SettingRow[];
           open?: { row: SettingRow; options: SettingOption[]; hint?: string };
+          /** The open model row's list is being asked for; redraw the level when this settles. */
+          asking?: Promise<unknown>;
         }
       ): void;
       /**
@@ -733,6 +741,7 @@ export class ConversationRegistry {
     // Inject only the capabilities TurnRunner needs (read-only views + activeAddress write entry),
     // rather than passing the whole registry and creating a circular dependency.
     this.progress = new TurnProgressBoard(this.clock);
+    this.modelCatalog = this.makeModelCatalog();
     this.status = new StatusBoard({
       laneOf: (id) => this.laneOf(id),
       platforms: this.platforms,
@@ -2089,7 +2098,7 @@ export class ConversationRegistry {
     const [rawKey = '', ...valueParts] = rest.trim().split(/\s+/);
     if (!rawKey) {
       console.log(`[setting] listing settings for ${key}`);
-      if (canMenu) this.hooks!.onSettingMenuRequest!(key, msg, { rows: settingsRows(this.config) });
+      if (canMenu) this.hooks!.onSettingMenuRequest!(key, msg, { rows: this.settingRows() });
       else reply([settingsListText(this.config), this.hooks?.scheduleSummary?.()].filter(Boolean).join('\n'));
       return;
     }
@@ -2116,18 +2125,37 @@ export class ConversationRegistry {
     const row = resolved.row;
     const value = valueParts.join(' ').trim();
     if (!value) {
-      if (canMenu) {
-        const { options, hint } = this.settingOptionsFor(key, row);
-        this.hooks!.onSettingMenuRequest!(key, msg, {
-          rows: settingsRows(this.config),
-          open: { row, options, ...(hint ? { hint } : {}) },
-        });
-      } else {
-        reply(settingDetailText(row, this.config, ctx));
-      }
+      this.answerSettingKey(key, row, msg, canMenu, fallbackAgent, reply);
       return;
     }
     reply(settingAckText(this.applySetting(key, row, value)));
+  }
+
+  /** `/setting <key>` alone: that setting's value menu, or its detail text where there is no menu. */
+  private answerSettingKey(
+    key: ConversationId,
+    row: SettingRow,
+    msg: InboundMessage,
+    canMenu: boolean,
+    fallbackAgent: string,
+    reply: (text: string) => void
+  ): void {
+    if (canMenu) {
+      const { options, hint, asking } = this.settingOptionsFor(key, row);
+      this.hooks!.onSettingMenuRequest!(key, msg, {
+        rows: this.settingRows(),
+        open: { row, options, ...(hint ? { hint } : {}) },
+        ...(asking ? { asking } : {}),
+      });
+      return;
+    }
+    const detail = (): void => reply(settingDetailText(row, this.config, this.settingsContext(key, fallbackAgent)));
+    // The text answer waits for the list, since it cannot be redrawn once sent.
+    if (row.id === 'model' && row.target && this.modelCatalog.shouldAsk(row.target)) {
+      void this.modelCatalog.ask(row.target).then(detail);
+      return;
+    }
+    detail();
   }
 
   /**
@@ -2144,12 +2172,49 @@ export class ConversationRegistry {
     return {
       boundAgent,
       models: this.agents.peek(key)?.modelSelector?.()?.options ?? [],
+      lists: (agentId) => this.modelCatalog.get(agentId),
+      pods: this.podModels(),
     };
+  }
+
+  /** The catalog of every agent's model list (model-catalog.ts), over this registry's sessions. */
+  private makeModelCatalog(): ModelCatalog {
+    return new ModelCatalog({
+      agents: this.agents,
+      defOf: (agentId) => findAgent(this.config, agentId),
+      liveSelector: (agentId) => {
+        for (const [id, state] of this.conversations) {
+          if (state.agentId !== agentId) continue;
+          const selector = this.agents.peek(id)?.modelSelector?.();
+          if (selector && selector.options.length > 0) return selector;
+        }
+        return undefined;
+      },
+      tokenFor: (sid) => this.tokens.tokenFor(sid as ConversationId),
+      forget: (sid) => {
+        this.store?.clear(sid);
+        this.tokens.release(sid as ConversationId);
+      },
+    });
+  }
+
+  /**
+   * The pods' agents and what each pod.yaml says of its model (config/pods.ts podAgentModels): what
+   * a model row needs to write to `podModels` and to say whose value it shows. Read from the files
+   * each time a menu is drawn — the merged Config holds only the answer.
+   */
+  private podModels(): PodModels {
+    try {
+      return podAgentModels(readRawConfigIfExists() ?? {}, readPods(configDir()));
+    } catch (e) {
+      console.warn('[setting] could not read the pods\' agents:', e instanceof Error ? e.message : e);
+      return new Map();
+    }
   }
 
   /** Every row of the settings screen, read fresh from the live Config (the daemon rebuilds menus with this). */
   settingRows(): SettingRow[] {
-    return settingsRows(this.config);
+    return settingsRows(this.config, this.podModels());
   }
 
   /** The agent answering a conversation, as the settings screen names it ("this topic"). */
@@ -2157,14 +2222,35 @@ export class ConversationRegistry {
     return this.settingsContext(id, this.config.routing.default).boundAgent;
   }
 
-  /** The values one row can offer right now, or the sentence explaining why it offers none. */
+  /**
+   * The values one row can offer right now, or the sentence explaining why it offers none.
+   *
+   * A model row whose list is not known yet starts asking for it (ModelCatalog) and says so —
+   * `asking` settles when there is an answer, and the caller redraws with it. Any agent, cold or
+   * not: the answer comes from a session brought up just to ask, never from this conversation's
+   * own, which would close a new topic's choice of agent (agentCatalogForRef) as a side effect.
+   */
   settingOptionsFor(
     id: ConversationId,
-    row: SettingRow
-  ): { options: SettingOption[]; hint?: string } {
-    const ctx = this.settingsContext(id, this.config.routing.default);
+    row: SettingRow,
+    /** False for the redraw that an answer triggers: a failed ask is shown, not asked again. */
+    ask = true
+  ): { options: SettingOption[]; hint?: string; asking?: Promise<unknown> } {
+    let ctx = this.settingsContext(id, this.config.routing.default);
+    let asking: Promise<unknown> | undefined;
+    if (ask && row.id === 'model' && row.target && !(row.target === ctx.boundAgent && ctx.models.length > 0)) {
+      if (this.modelCatalog.shouldAsk(row.target)) {
+        asking = this.modelCatalog.ask(row.target);
+        ctx = this.settingsContext(id, this.config.routing.default);
+      }
+    }
     const hint = settingTypedOnlyHint(row, this.config, ctx);
-    return { options: settingOptions(row, this.config, ctx), ...(hint ? { hint } : {}) };
+    return { options: settingOptions(row, this.config, ctx), ...(hint ? { hint } : {}), ...(asking ? { asking } : {}) };
+  }
+
+  /** Whether an agent's model list is being asked for right now (the settings screen's spinner). */
+  modelListLoading(agentId: string): boolean {
+    return this.modelCatalog.get(agentId)?.kind === 'loading';
   }
 
   /**

@@ -111,6 +111,31 @@ interface RigOptions {
   idleTimeoutMs?: number;
   /** Configure voice transcription (the file must carry the same block — see VOICE_BLOCK). */
   voice?: boolean;
+  /**
+   * A host whose pod declares `oc` (so the agent is `oc@box`), with this model in its pod.yaml —
+   * written to the file and pods.json and read back the way the daemon reads them.
+   */
+  pod?: { model?: string; gateway?: string };
+  /** Every session's warm-up fails with this (an agent that will not start). */
+  ensureFails?: string;
+}
+
+/** A host entry and a pod declaring `oc`, as config.yaml and pods.json would hold them. */
+function writePod(pod: { model?: string; gateway?: string }): void {
+  fs.appendFileSync(
+    file,
+    `hosts:\n  box:\n    ssh: dev@box.lan\n` + (pod.gateway ? `podModels:\n  oc@box: ${pod.gateway}\n` : '')
+  );
+  fs.writeFileSync(
+    path.join(dir, 'pods.json'),
+    JSON.stringify({
+      box: {
+        source: 'file',
+        agents: [{ id: 'oc', harness: 'opencode', ...(pod.model ? { model: pod.model } : {}) }],
+        at: new Date().toISOString(),
+      },
+    })
+  );
 }
 
 function rig(opts: RigOptions = {}) {
@@ -144,6 +169,9 @@ function rig(opts: RigOptions = {}) {
           dispose: () => {},
           modelSelector: () => selector.value,
           setModel: async (value: string) => value,
+          ...(opts.ensureFails
+            ? { ensureSession: () => Promise.reject(new Error(opts.ensureFails)) }
+            : {}),
         } as AgentSession;
         sessions.set(conversationId, s);
       }
@@ -193,7 +221,8 @@ function rig(opts: RigOptions = {}) {
 
   // The injected config mirrors the file (expanded token, agents in file order), as loadConfig
   // would have produced it at startup.
-  const parsed = parseConfig({
+  if (opts.pod) writePod(opts.pod);
+  const parsed = opts.pod ? loadConfig() : parseConfig({
     version: 1,
     platforms: { tg: { type: 'telegram', token: 'tok-from-env' } },
     agents: [
@@ -227,8 +256,13 @@ function rig(opts: RigOptions = {}) {
     });
     await drain();
   };
-  const click = async (buttonId: string, user = 'u1'): Promise<void> => {
-    d.onButton({ conversation: { ...CONVERSATION, user }, messageId: CALLBACK_QUERY_ID, buttonId });
+  const click = async (buttonId: string, user = 'u1', value?: string): Promise<void> => {
+    d.onButton({
+      conversation: { ...CONVERSATION, user },
+      messageId: CALLBACK_QUERY_ID,
+      buttonId,
+      ...(value !== undefined ? { value } : {}),
+    });
     await drain();
   };
   /** Text the gateway sent that is not the header bubble. */
@@ -650,10 +684,70 @@ describe('the button menu', () => {
     expect(r.menu().buttons.some((b) => b.id.startsWith('stv:'))).toBe(true);
   });
 
-  it('says "type a name" on a value screen whose only button is "clear"', async () => {
-    const r = rig(); // no turn has run, so no model list has been reported
+  it('asks an agent that is not answering here for its models, and redraws the screen with them', async () => {
+    const r = rig(); // no turn has run, so no session anywhere has a list
     await r.send('/setting model.cc');
-    expect(r.menu().text).toContain('not answering this conversation');
+    // Said at once, on the screen that opened — then the same message, redrawn with the list.
+    expect(r.menu().text).toContain('Asking cc for its models');
+    await drain();
+    expect(r.buttonSends).toHaveLength(1);
+    expect(r.screen().text).not.toContain('Asking');
+    expect(r.ids('stv:').length).toBeGreaterThan(1); // the list (its first page), not just "clear"
+    // The session brought up to ask was put away, and no conversation was bound by it.
+    expect([...r.sessions.keys()].some((k) => k.startsWith('models:'))).toBe(false);
+    // Asked once: the next opening is answered from what was learned.
+    await r.send('/setting model.cc');
+    expect(r.menu().text).not.toContain('Asking');
+  });
+
+  it('says why when a harness offers no list, and still takes a typed name', async () => {
+    const r = rig({ caps: { settingsScreen: true } });
+    r.selector.value = undefined;
+    await r.send('/setting model.cc');
+    await drain();
+    const s = r.screen().screen;
+    if (s?.level !== 'values') throw new Error('not a value screen');
+    expect(s.head?.hint).toContain('cc does not offer a model list');
+    expect(s.typed?.buttonId).toMatch(/^stt:/);
+    await r.click(s.typed!.buttonId, 'u1', 'opus-next');
+    expect(diskAgents().find((a) => a.id === 'cc')?.model).toBe('opus-next');
+    const back = r.screen().screen;
+    if (back?.level !== 'list') throw new Error('not back on the list');
+    expect(back.notice).toMatchObject({ tone: 'ok', text: expect.stringContaining('opus-next') });
+  });
+
+  it('says the agent did not start, rather than that it has no list', async () => {
+    const r = rig({ caps: { settingsScreen: true }, ensureFails: 'claude-agent-acp: not found' });
+    r.selector.value = undefined;
+    await r.send('/setting model.cc');
+    await drain();
+    const s = r.screen().screen;
+    if (s?.level !== 'values') throw new Error('not a value screen');
+    expect(s.head?.hint).toContain('did not start');
+    expect(s.head?.hint).toContain('claude-agent-acp: not found');
+  });
+
+  it('refuses an empty typed value without writing', async () => {
+    const r = rig({ caps: { settingsScreen: true } });
+    const before = text();
+    await r.send('/setting model.cc');
+    await drain();
+    const open = r.screen().screen;
+    if (open?.level !== 'values') throw new Error('not a value screen');
+    await r.click(open.typed!.buttonId, 'u1', '   ');
+    const s = r.screen().screen;
+    expect(s?.notice?.tone).toBe('error');
+    expect(text()).toBe(before);
+  });
+
+  it('gives a screen the whole list at once, for the page to filter', async () => {
+    const r = rig({ caps: { settingsScreen: true } });
+    await r.send('hello'); // so oc's list is reported
+    await r.send('/setting model.oc');
+    const s = r.screen().screen;
+    if (s?.level !== 'values') throw new Error('not a value screen');
+    expect(s.options).toHaveLength(MODELS.length);
+    expect(s.nav.pageCount).toBe(1);
   });
 });
 
@@ -711,6 +805,70 @@ describe('setting a value from the list screen', () => {
     await r.send('/setting');
     expect(r.menu().screen).toBeUndefined();
     expect(r.menu().buttons.some((b) => b.id.startsWith('sts:'))).toBe(false);
+  });
+});
+
+describe("a pod agent's default model", () => {
+  it('is written to podModels, over the pod’s own, and the next session reads it', async () => {
+    const r = textRig({ pod: { model: 'opencode/big-pickle' } });
+    expect(r.cfg.agents.find((a) => a.id === 'oc@box')?.model).toBe('opencode/big-pickle');
+    await r.send('/setting model.oc@box opencode/glm-5');
+    expect(r.replies().at(-1)).toContain('Default model · oc@box → opencode/glm-5');
+    expect(onDisk()['podModels']).toEqual({ 'oc@box': 'opencode/glm-5' });
+    // Not as an agents: entry — config.yaml does not define the agent, the pod does.
+    expect(diskAgents().map((a) => a.id)).toEqual(['oc', 'cc']);
+    // The live definition, which is what the next spawn reads.
+    expect(r.cfg.agents.find((a) => a.id === 'oc@box')?.model).toBe('opencode/glm-5');
+    // And what a restart or /reload would compute from the files.
+    expect(loadConfig().agents.find((a) => a.id === 'oc@box')?.model).toBe('opencode/glm-5');
+  });
+
+  it('clears back to the pod’s own value, and leaves no empty map behind', async () => {
+    const r = textRig({ pod: { model: 'opencode/big-pickle', gateway: 'opencode/glm-5' } });
+    expect(r.cfg.agents.find((a) => a.id === 'oc@box')?.model).toBe('opencode/glm-5');
+    await r.send('/setting model.oc@box -');
+    expect(r.replies().at(-1)).toContain('opencode/big-pickle (pod.yaml)');
+    expect(onDisk()['podModels']).toBeUndefined();
+    expect(r.cfg.podModels).toBeUndefined();
+    expect(r.cfg.agents.find((a) => a.id === 'oc@box')?.model).toBe('opencode/big-pickle');
+    expect(loadConfig().agents.find((a) => a.id === 'oc@box')?.model).toBe('opencode/big-pickle');
+  });
+
+  it('answers "already" when there is nothing set here to clear, and writes nothing', async () => {
+    const r = textRig({ pod: { model: 'opencode/big-pickle' } });
+    const before = text();
+    await r.send('/setting model.oc@box -');
+    expect(r.replies().at(-1)).toContain('already');
+    expect(text()).toBe(before);
+  });
+
+  it('says on the screen whose value it is, before and after', async () => {
+    const r = rig({ caps: { settingsScreen: true }, pod: { model: 'opencode/big-pickle' } });
+    await r.send('/setting');
+    const list = r.menu().screen;
+    if (list?.level !== 'list') throw new Error('no list');
+    const row = list.rows.find((x) => x.target === 'oc@box')!;
+    expect(row).toMatchObject({ value: 'opencode/big-pickle', valueNote: 'pod.yaml' });
+    expect(list.rows.find((x) => x.target === 'cc')?.valueNote).toBeUndefined();
+
+    await r.click(row.buttonId);
+    await drain();
+    const level = r.screen().screen;
+    if (level?.level !== 'values') throw new Error('no value screen');
+    expect(level.head?.source).toContain("From box's pod.yaml");
+    // The list the pod's agent offers was asked for, the pod's own value marked current.
+    expect(level.options.find((o) => o.current)?.label).toBe('opencode/big-pickle');
+    await r.click(level.options.find((o) => o.label === 'opencode/glm-5')!.buttonId);
+    const after = r.screen().screen;
+    if (after?.level !== 'list') throw new Error('not back on the list');
+    expect(after.rows.find((x) => x.target === 'oc@box')).toMatchObject({ value: 'opencode/glm-5', valueNote: 'set here' });
+
+    await r.click(after.rows.find((x) => x.target === 'oc@box')!.buttonId);
+    await drain();
+    const again = r.screen().screen;
+    if (again?.level !== 'values') throw new Error('no value screen');
+    expect(again.head?.source).toContain('Set here, over box');
+    expect(again.options.at(-1)?.label).toBe('opencode/big-pickle (pod.yaml)');
   });
 });
 

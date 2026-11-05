@@ -71,6 +71,7 @@ import {
   type SettingChoice,
   type SettingOption,
   type SettingRow,
+  type SettingsScreenInput,
 } from '../core/settings.js';
 import type { ButtonSpec, PlatformAdapter, SchedulePanel, SchedulePanelTask } from '../platform/adapter.js';
 import { OutboundPacer } from '../core/outbound-pacer.js';
@@ -3045,6 +3046,7 @@ export class Daemon {
     menu: {
       rows: SettingRow[];
       open?: { row: SettingRow; options: SettingOption[]; hint?: string };
+      asking?: Promise<unknown>;
     }
   ): void {
     const adapter = this.platforms.get(msg.conversation.platform);
@@ -3073,6 +3075,8 @@ export class Daemon {
         // messageId is not a reliable stand-in on every platform (Telegram reports the
         // callback_query id there).
         pending.ref = ref;
+        // After the ref, since the redraw is an edit of this message.
+        if (menu.asking) this.whenModelsArrive(reqId, pending, menu.asking);
       })
       .catch((e) => {
         this.pendingSettingsMenus.delete(reqId);
@@ -3092,31 +3096,25 @@ export class Daemon {
     const wantsScreen =
       this.platforms.get(menu.conversation.platform)?.capabilities.settingsScreen === true;
     const notice = ack ? { tone: ack.tone, text: ack.text } : undefined;
-    const view = menu.open
+    const open = menu.open;
+    const view = open
       ? buildSettingValueMenu({
           reqId,
-          row: menu.open.row,
-          options: menu.open.options,
-          page,
-          pageSize: menu.pageSize,
-          ...(menu.open.hint ? { hint: menu.open.hint } : {}),
-          ...(wantsScreen ? { screen: { agents: this.config.agents, ...(notice ? { notice } : {}) } } : {}),
+          row: open.row,
+          options: open.options,
+          // A screen is one list the page filters as it is typed into (opencode offers ~90 models),
+          // not pages of 24: paging is a chat app's answer to a message's button cap.
+          page: wantsScreen ? 0 : page,
+          pageSize: wantsScreen ? Math.max(1, open.options.length) : menu.pageSize,
+          ...(open.hint ? { hint: open.hint } : {}),
+          ...(wantsScreen ? { screen: this.valueScreenInput(open.row, notice) } : {}),
         })
       : buildSettingsMenu({
           reqId,
           rows: menu.rows,
           // The way into the scheduled tasks, after the settings themselves (core/schedule-menu.ts).
           ...(this.schedules ? { extra: { id: scheduleOpenButtonId(reqId), label: scheduleEntryLabel(this.schedules.tasks()) } } : {}),
-          ...(wantsScreen
-            ? {
-                screen: {
-                  agents: this.config.agents,
-                  options: (row: SettingRow) => this.registry.settingOptionsFor(menu.conversationId, row).options,
-                  here: this.registry.settingsBoundAgent(menu.conversationId),
-                  ...(notice ? { notice } : {}),
-                },
-              }
-            : {}),
+          ...(wantsScreen ? { screen: this.listScreenInput(menu, notice) } : {}),
         });
     // The list just drawn is the one its `sts:` ids index; a value level draws none.
     if (!menu.open) {
@@ -3128,6 +3126,22 @@ export class Daemon {
       buttons: view.buttons,
       ...(view.screen ? { screen: view.screen } : {}),
     };
+  }
+
+  /** What the list screen needs beyond the rows (core/settings.ts SettingsScreenInput). */
+  private listScreenInput(menu: PendingSettingsMenu, notice?: SettingsAck): SettingsScreenInput {
+    return {
+      cfg: this.config,
+      options: (row: SettingRow) => this.registry.settingOptionsFor(menu.conversationId, row, false).options,
+      here: this.registry.settingsBoundAgent(menu.conversationId),
+      ...(notice ? { notice } : {}),
+    };
+  }
+
+  /** What a value screen needs beyond the options: the config, the ack, and whether it is still asking. */
+  private valueScreenInput(row: SettingRow, notice?: SettingsAck): { cfg: Config; notice?: SettingsAck; loading?: boolean } {
+    const loading = row.id === 'model' && row.target !== undefined && this.registry.modelListLoading(row.target);
+    return { cfg: this.config, ...(notice ? { notice } : {}), ...(loading ? { loading } : {}) };
   }
 
   /** Retire every live settings menu of one conversation, saying so rather than going quiet. */
@@ -3216,6 +3230,9 @@ export class Daemon {
       case 'set':
         this.setSettingFromList(click.reqId, menu, click.index);
         return;
+      case 'type':
+        this.typeSettingValue(click.reqId, menu, ev.value);
+        return;
       case 'page':
         this.editSettingsMenu(menu, ...this.viewParts(click.reqId, menu, click.page));
         return;
@@ -3262,13 +3279,58 @@ export class Daemon {
     }
     const rows = this.registry.settingRows();
     const row = rows.find((r) => r.id === frozen.id && r.target === frozen.target) ?? frozen;
-    const { options, hint } = this.registry.settingOptionsFor(menu.conversationId, row);
+    const { options, hint, asking } = this.registry.settingOptionsFor(menu.conversationId, row);
     menu.rows = rows;
     menu.open = { row, options, ...(hint ? { hint } : {}) };
     this.editSettingsMenu(
       menu,
       ...this.viewParts(reqId, menu, settingValuePage(row, options, menu.pageSize))
     );
+    if (asking) this.whenModelsArrive(reqId, menu, asking);
+  }
+
+  /**
+   * A model level opened before its list was known: redraw it once the list has been asked for —
+   * if the same menu is still on the same row by then. A menu that moved on (Back, another row, a
+   * newer /setting) is left as it is; the answer is kept and the next opening shows it at once.
+   */
+  private whenModelsArrive(reqId: string, menu: PendingSettingsMenu, asking: Promise<unknown>): void {
+    const row = menu.open?.row;
+    void asking.then(() => {
+      const open = menu.open;
+      if (this.pendingSettingsMenus.get(reqId) !== menu || !open || !row) return;
+      if (open.row.id !== row.id || open.row.target !== row.target) return;
+      const { options, hint } = this.registry.settingOptionsFor(menu.conversationId, open.row, false);
+      menu.open = { row: open.row, options, ...(hint ? { hint } : {}) };
+      this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, settingValuePage(open.row, options, menu.pageSize)));
+    });
+  }
+
+  /**
+   * A value typed on a value screen (`stt:`, the click's text): written exactly as a typed
+   * `/setting <key> <value>` would be — the same parser, so a model name the list has resolves to
+   * it and one it has not is taken as typed — and answered on the screen like a tapped value.
+   */
+  private typeSettingValue(reqId: string, menu: PendingSettingsMenu, value: string | undefined): void {
+    const open = menu.open;
+    if (!open) {
+      this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, expiredAck()));
+      return;
+    }
+    const typed = value?.trim();
+    if (!typed) {
+      this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, { tone: 'error', text: 'Type a value first.' }));
+      return;
+    }
+    const result = this.registry.applySetting(menu.conversationId, open.row, typed);
+    console.log(`[setting] ${menu.conversationId}: ${open.row.label} ← typed "${typed}" → ${result.kind}`);
+    if (result.kind !== 'saved') {
+      this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, settingNotice(result)));
+      return;
+    }
+    delete menu.open;
+    menu.rows = this.registry.settingRows();
+    this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, settingNotice(result)));
   }
 
   /**

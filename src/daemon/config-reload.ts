@@ -38,6 +38,11 @@ const RELOAD_KIND = {
   // Live: the daemon rebuilds its host table from it after a reload (remoteHosts.configure), and an
   // agent on a host whose entry changed counts as changed itself (diffConfig), so it is respawned.
   hosts: 'live',
+  // Live, and already applied by the time it is copied: readConfig folds it into each pod agent's
+  // `model` (config/pods.ts mergePodAgents), so a change shows up as that agent changed and its
+  // conversations are respawned like any other model edit. The copy keeps cfg.podModels true to the
+  // file, which is what `/setting` reads to say where a model comes from.
+  podModels: 'live',
   // Live: the review service reads config.review on every sweep, and one already queued is
   // abandoned rather than run against a definition the operator just removed.
   review: 'live',

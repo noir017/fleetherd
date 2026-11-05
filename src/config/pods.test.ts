@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mergePodAgents, readPods, writePods, type PodsState } from './pods.js';
+import { mergePodAgents, podAgentModels, readPods, writePods, type PodsState } from './pods.js';
 import { readConfig } from './load.js';
-import { PodFileSchema } from './schema.js';
+import { ConfigSchema, PodFileSchema } from './schema.js';
 
 /**
  * The agents hosts' pods declared (pods.json) joining config.yaml's: named `<id>@<host>`, in the
@@ -65,6 +65,66 @@ describe('mergePodAgents', () => {
     // …where `host` is dropped: the pod's agents run on the pod.
     const parsed = PodFileSchema.parse({ agents: [{ id: 'oc', harness: 'opencode', host: 'x' }] });
     expect(parsed.agents[0]).not.toHaveProperty('host');
+  });
+});
+
+describe('podModels: the gateway naming a pod agent’s model', () => {
+  const pods: PodsState = {
+    box: record([
+      { id: 'oc', harness: 'opencode', model: 'opencode/big-pickle' },
+      { id: 'ag', harness: 'agy' },
+    ]),
+  };
+  const raw = (podModels?: Record<string, string>) => ({
+    hosts: { box: { ssh: 'u@box' } },
+    agents: [{ id: 'cc', harness: 'claude', model: 'opus' }],
+    ...(podModels ? { podModels } : {}),
+  });
+  const models = (out: Record<string, unknown>) =>
+    Object.fromEntries((out.agents as Array<{ id: string; model?: string }>).map((a) => [a.id, a.model]));
+
+  it('wins over the pod’s own model, and gives one to an agent the pod gave none', () => {
+    const { raw: out, skipped } = mergePodAgents(raw({ 'oc@box': 'opencode/glm-5', 'ag@box': 'gemini-3.8-pro' }), pods);
+    expect(models(out)).toEqual({ cc: 'opus', 'oc@box': 'opencode/glm-5', 'ag@box': 'gemini-3.8-pro' });
+    expect(skipped).toEqual([]);
+  });
+
+  it('leaves the pod’s model where the gateway names none', () => {
+    expect(models(mergePodAgents(raw(), pods).raw)).toEqual({ cc: 'opus', 'oc@box': 'opencode/big-pickle', 'ag@box': undefined });
+  });
+
+  it('keeps what the pod said apart, for the settings screen to show and fall back to', () => {
+    const declared = podAgentModels(raw({ 'oc@box': 'opencode/glm-5' }), pods);
+    expect([...declared]).toEqual([
+      ['oc@box', 'opencode/big-pickle'],
+      ['ag@box', undefined],
+    ]);
+    // config.yaml's own agent is not a pod's, whatever its id looks like.
+    expect(declared.has('cc')).toBe(false);
+  });
+
+  it('ignores, and names, a key for an agent config.yaml defines: that one has agents[].model', () => {
+    const own = { ...raw({ 'cc@here': 'sonnet' }), agents: [{ id: 'cc@here', harness: 'claude', model: 'opus' }] };
+    const { raw: out, skipped } = mergePodAgents(own, pods);
+    expect(models(out)['cc@here']).toBe('opus');
+    expect(skipped).toEqual(['podModels.cc@here: cc@here is defined in config.yaml, so its model is agents[].model there']);
+  });
+
+  it('cannot be written by a pod: pod.yaml has no such field', () => {
+    const r = PodFileSchema.safeParse({ agents: [{ id: 'oc', harness: 'opencode' }], podModels: { 'cc@box': 'x' } });
+    expect(r.success).toBe(false);
+  });
+
+  it('is a map of <id>@<host> to a name, and nothing else', () => {
+    const base = {
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc' },
+    };
+    expect(ConfigSchema.safeParse({ ...base, podModels: { 'oc@box': 'opencode/glm-5' } }).success).toBe(true);
+    expect(ConfigSchema.safeParse({ ...base, podModels: { oc: 'x' } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ ...base, podModels: { 'oc@box': '' } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ ...base, podModels: { 'oc@box': { harness: 'custom' } } }).success).toBe(false);
   });
 });
 

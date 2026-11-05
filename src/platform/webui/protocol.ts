@@ -201,6 +201,12 @@ export const ClickRequestSchema = z
     topic: TopicId,
     messageId: z.string().min(1).max(256),
     buttonId: z.string().min(1).max(512),
+    /**
+     * Text typed into the control that was used (a model name on the settings page's value screen,
+     * ButtonInteraction.value). Bounded like a value, not a message: what it can become is one
+     * scalar in config.yaml, parsed by the same function a typed `/setting` goes through.
+     */
+    value: z.string().min(1).max(200).optional(),
   })
   .strict();
 

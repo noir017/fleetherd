@@ -1469,6 +1469,7 @@ export class WebRoom {
       conversation: this.conversation(req.topic),
       messageId: req.messageId,
       buttonId: req.buttonId,
+      ...(req.value !== undefined ? { value: req.value } : {}),
     });
     // A tap moves a topic as typing does (a `/cd` or `/agent` menu pick), so the same as `submit`.
     this.dirCache.delete(req.topic);

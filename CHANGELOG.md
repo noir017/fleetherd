@@ -5,6 +5,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The default model of an agent a host's pod declares can be set from the gateway.** Since pods
+  declare their own agents (`~/.talkcode/pod.yaml`, 2026-11-03), `/setting model.<id>@<host>` and its
+  row on the web UI's settings page were refused — the agent is not in config.yaml — so the page
+  listed rows that could not be saved. The value now goes to a new `podModels` map in config.yaml,
+  which outranks the `model:` the pod gives and is outranked by a conversation's `/model`; clearing
+  it goes back to the pod's. The settings page says whose value an agent has (*pod.yaml* or *set
+  here*). It is a map of model names and nothing else: everything else about a pod's agent stays the
+  pod's, and pod.yaml cannot set it. `/reload` applies a hand edit like any other model change.
+  [→](docs/remote-hosts.md)
+
+### Fixed
+
+- **The settings page lists any agent's models, not only the one answering here.** A model list
+  comes with a running session, so only the agent answering the topic `/setting` was opened in, and
+  only after it had replied, had one; every other model row was a page saying "type a name". The
+  gateway now asks: from a session of that agent running anywhere, from what it learned earlier, or
+  by starting one just to read the list and stopping it again (once per agent, while the page says
+  *Asking … for its models*). A harness that offers no model choice, and an agent that does not
+  start, are each named, and on the web UI a name can be typed into the screen itself, which also
+  filters a long list as it is typed into. [→](docs/settings.md)
+
 ### Changed
 
 - **The web UI's settings page is a settings page.** It was the chat menu redrawn: ten rows all

@@ -16,6 +16,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `routing.ts` | Pure: inbound → which agent (and whether the user *asked* for it) + which scope |
 | `conversation.ts` | `ConversationRegistry` — per-conversation state, agent binding, access + gating, command translation |
 | `settings-store.ts` | The write half of `/setting`: validate, patch config.yaml, apply to the live `Config` |
+| `model-catalog.ts` | Any agent's model list for the settings screen: from a live session, from what was learned, or from a session brought up just to ask |
 | `config-reload.ts` | `/reload` and `talkcode reload`: diff the re-read config against the live one, copy it in place, and say what changed. Which sections apply live and which need a restart is decided in its `RELOAD_KIND`; what happens to running agent processes is `ConversationRegistry.respawnAgents` |
 | `turn-runner.ts` | One turn end to end: prompt, streaming, tools, footer, errors |
 | `paced-adapter.ts` | Wraps every `PlatformAdapter` in the shared per-chat write budget |
@@ -1442,6 +1443,25 @@ Two details that are easy to get wrong:
   `z.string().optional()`, so a `null` would fail the very next `loadConfig` — a write that
   bricks the file it was clearing. `saveConfigPatch` treats `value: undefined` as a delete
   for exactly this.
+- **A pod's agent is written to `podModels`**, not `agents[]` — config.yaml does not define it
+  (config/pods.ts). The row knows it is a pod's (`SettingRow.pod`, from `podAgentModels` over
+  pods.json), so the location is `['podModels', '<id>@<host>']`, "already set" compares with the
+  gateway's own entry rather than the merged model, and clearing applies the pod's model to the
+  live definition — what the next `readConfig` would compute. Clearing the last entry removes the
+  map rather than leaving `podModels: {}`.
+
+### Any agent's model list (`model-catalog.ts`)
+
+A model row's list used to exist only for the agent answering the conversation `/setting` was typed
+in, and only once it had replied — a list is part of a live ACP session, and a conversation has at
+most one. `ModelCatalog` answers for any agent: a live session of that agent in any conversation,
+else what an earlier answer said (kept against the definition object, so a `/reload` that replaces
+it asks again), else a session brought up under `models:<agent id>` just to read its selector and
+disposed straight after, with its store entry and token. Never the conversation's own session:
+warming that would record a session id there and close a new web UI topic's choice of agent
+(`agentCatalogForRef`). The ask runs while the screen says so; `daemon.ts` `whenModelsArrive`
+redraws the same level when it settles, if the menu is still on that row. A failure is shown and
+asked again on the next opening, not on the redraw.
 
 Only the single scalar the user chose is patched, through the yaml Document API, so comments,
 key order, hand-edited siblings and `${VAR}` templates all survive byte-identical — the

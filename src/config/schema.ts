@@ -511,6 +511,24 @@ export const ConfigSchema = z
       )
       .optional(),
 
+    /**
+     * The default model of an agent a host's pod declares, set from the gateway: `<id>@<host>` → a
+     * model name. Outranks that agent's `model:` in its `~/.talkcode/pod.yaml`, and is outranked by a
+     * conversation's `/model`. `/setting model.<id>@<host>` writes it; clearing it there falls back
+     * to the pod's own value.
+     *
+     * Why a map of one field rather than a way to override a pod's agent: everything else about an
+     * agent — its harness, command, env, hooks — is the pod's to say (daemon/pods.ts), and a field
+     * that could reach those would be the gateway reaching into how a host runs its programs. A
+     * model is a preference about the conversation, which is the gateway's. Only for pod agents: an
+     * agent config.yaml defines keeps its model in `agents[].model`, so there is one place for each
+     * (config/pods.ts mergePodAgents ignores a key naming one, and says so). Never read from a pod:
+     * pod.yaml's schema is strict and has no such field.
+     */
+    podModels: z
+      .record(z.string().regex(/^[^@\s]+@[^@\s]+$/, 'a podModels key is an agent a pod declares, <id>@<host>'), z.string().min(1))
+      .optional(),
+
     routing: z.object({
       /** Agent id used when the pipeline doesn't match (must exist in agents). */
       default: z.string().min(1),

@@ -15,6 +15,7 @@ import {
   settingDescription,
   settingKeyOf,
   settingLocation,
+  modelSource,
   settingNotice,
   settingOptions,
   settingPageButtonId,
@@ -131,7 +132,7 @@ describe('the settings screen', () => {
       reqId: 'r1',
       rows,
       extra: { id: 'sco:r1:0', label: '⏰ Scheduled tasks · 2 active' },
-      screen: { agents: cfg.agents, options: (r) => settingOptions(r, cfg, ctx), here: 'oc' },
+      screen: { cfg, options: (r) => settingOptions(r, cfg, ctx), here: 'oc' },
     });
     const screen = view.screen;
     expect(screen?.level).toBe('list');
@@ -181,7 +182,7 @@ describe('the settings screen', () => {
       reqId: 'r1',
       rows,
       extra: { id: 'sco:r1:0', label: '⏰ Scheduled tasks' },
-      screen: { agents: cfg.agents, options: (r) => settingOptions(r, cfg, ctx) },
+      screen: { cfg, options: (r) => settingOptions(r, cfg, ctx) },
     });
     if (view.screen?.level !== 'list') throw new Error('no list screen');
     const byLabel = new Map(view.screen.rows.map((r) => [r.label, r]));
@@ -239,7 +240,7 @@ describe('the settings screen', () => {
     const view = buildSettingsMenu({
       reqId: 'r9',
       rows: settingsRows(many),
-      screen: { agents: many.agents, options: (r) => settingOptions(r, many, bare) },
+      screen: { cfg: many, options: (r) => settingOptions(r, many, bare) },
     });
     if (view.screen?.level !== 'list') throw new Error('no list screen');
     expect(view.buttons.filter((b) => b.id.startsWith('stg:'))).toHaveLength(20);
@@ -253,7 +254,7 @@ describe('the settings screen', () => {
       reqId: 'r1',
       rows: settingsRows(cfg),
       screen: {
-        agents: cfg.agents,
+        cfg,
         options: (x) => settingOptions(x, cfg, ctx),
         notice: settingNotice({ kind: 'saved', row: r, display: '4h' }),
       },
@@ -285,7 +286,7 @@ describe('the settings screen', () => {
       options: settingOptions(r, cfg, ctx),
       page: 1,
       pageSize: 2,
-      screen: { agents: cfg.agents },
+      screen: { cfg },
     });
     const screen = view.screen;
     expect(screen?.level).toBe('values');
@@ -322,7 +323,7 @@ describe('the settings screen', () => {
     const r = row('scope');
     const options = settingOptions(r, cfg, ctx);
     expect(options[0]!.label).toBe('per_thread — a topic / thread is its own conversation');
-    const view = buildSettingValueMenu({ reqId: 'r3', row: r, options, page: 0, screen: { agents: cfg.agents } });
+    const view = buildSettingValueMenu({ reqId: 'r3', row: r, options, page: 0, screen: { cfg } });
     const screen = view.screen;
     if (screen?.level !== 'values') throw new Error('no value screen');
     expect(screen.options[0]).toEqual({
@@ -331,6 +332,93 @@ describe('the settings screen', () => {
       detail: 'a topic / thread is its own conversation',
       current: true,
     });
+  });
+});
+
+describe("a pod agent's model row", () => {
+  const podCfg: Config = {
+    ...parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      hosts: { box: { ssh: 'u@box' } },
+      agents: [
+        { id: 'cc', harness: 'claude', model: 'opus' },
+        { id: 'oc@box', harness: 'opencode', host: 'box', model: 'opencode/glm-5' },
+        { id: 'ag@box', harness: 'agy', host: 'box' },
+      ],
+      routing: { default: 'cc' },
+      podModels: { 'oc@box': 'opencode/glm-5' },
+    }),
+  };
+  const pods = new Map<string, string | undefined>([
+    ['oc@box', 'opencode/big-pickle'],
+    ['ag@box', undefined],
+  ]);
+  const podRow = (id: string) => settingsRows(podCfg, pods).find((r) => r.target === id)!;
+
+  it('knows which agents are a pod’s, and what each pod said', () => {
+    expect(podRow('oc@box').pod).toEqual({ model: 'opencode/big-pickle' });
+    expect(podRow('ag@box').pod).toEqual({});
+    expect(podRow('cc').pod).toBeUndefined();
+  });
+
+  it('writes a pod agent to podModels and config.yaml’s own to agents[].model — never both', () => {
+    expect(settingLocation(podRow('oc@box'))).toEqual({ kind: 'path', path: ['podModels', 'oc@box'] });
+    expect(settingLocation(podRow('cc'))).toEqual({ kind: 'agent', agentId: 'cc', key: 'model' });
+    // What is "already set" for a pod's agent is the gateway's entry, not the merged model.
+    expect(readSettingValue(podRow('oc@box'), podCfg)).toBe('opencode/glm-5');
+    expect(readSettingValue(podRow('ag@box'), podCfg)).toBeUndefined();
+  });
+
+  it('says where each value comes from', () => {
+    expect(modelSource(podRow('oc@box'), podCfg)).toBe('gateway');
+    expect(modelSource(podRow('ag@box'), podCfg)).toBe('unset');
+    expect(modelSource(podRow('cc'), podCfg)).toBe('config');
+    const noOverride = { ...podCfg, podModels: undefined } as Config;
+    expect(modelSource(podRow('oc@box'), noOverride)).toBe('pod');
+  });
+
+  it('offers clearing back to the pod’s value, named as the pod’s', () => {
+    const c: SettingsContext = { boundAgent: 'cc', models: [], pods };
+    const options = settingOptions(podRow('oc@box'), podCfg, c);
+    expect(options.at(-1)).toEqual({ raw: '-', label: 'opencode/big-pickle (pod.yaml)' });
+    expect(parseSettingValue(podRow('oc@box'), '-', podCfg, c)).toEqual({
+      kind: 'value',
+      value: undefined,
+      display: 'opencode/big-pickle (pod.yaml)',
+    });
+    // Nothing set here: nothing to clear.
+    expect(settingOptions(podRow('ag@box'), podCfg, c)).toEqual([]);
+  });
+
+  it('resolves a typed key to the row that knows it is a pod’s', () => {
+    const c: SettingsContext = { boundAgent: 'cc', models: [], pods };
+    const r = resolveSettingKey('model.oc@box', podCfg, c);
+    expect(r.kind === 'row' && r.row.pod).toEqual({ model: 'opencode/big-pickle' });
+  });
+});
+
+describe('a model row’s list, for any agent', () => {
+  const lists = (answer: SettingsContext['lists']): SettingsContext => ({ boundAgent: 'cc', models: [], lists: answer });
+
+  it('offers what the gateway learned of an agent that is not answering here', () => {
+    const c = lists(() => ({ kind: 'list', options: MODELS }));
+    const options = settingOptions(row('model.oc', c), cfg, c);
+    expect(options[0]).toEqual({ raw: 'opencode/big-pickle', label: 'Big Pickle', title: 'opencode/big-pickle', detail: 'Big Pickle' });
+    expect(settingTypedOnlyHint(row('model.oc', c), cfg, c)).toBeUndefined();
+    // And a typed fragment resolves against it, as it does for the agent answering here.
+    expect(parseSettingValue(row('model.oc', c), 'kimi', cfg, c)).toMatchObject({ value: 'newapi/kimi-k3' });
+  });
+
+  it('says what it is waiting for, what the harness lacks, and what failed — each in its own words', () => {
+    expect(settingTypedOnlyHint(row('model.oc', lists(() => ({ kind: 'loading' }))), cfg, lists(() => ({ kind: 'loading' })))).toContain(
+      'Asking oc for its models'
+    );
+    const none = lists(() => ({ kind: 'none' }));
+    expect(settingTypedOnlyHint(row('model.oc', none), cfg, none)).toContain('oc does not offer a model list');
+    const err = lists(() => ({ kind: 'error', reason: 'ssh: no route' }));
+    expect(settingTypedOnlyHint(row('model.oc', err), cfg, err)).toContain('did not start, so it could not be asked for its models (ssh: no route)');
+    // Every one of them says what to type instead.
+    expect(settingTypedOnlyHint(row('model.oc', err), cfg, err)).toContain('`/setting model.oc <name>`');
   });
 });
 
