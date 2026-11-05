@@ -31,6 +31,7 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'list-channels' },
     { kind: 'list-channels', platform: 'tg', query: '量化', limit: 10 },
     { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', channelId: 'tg:586' },
+    { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'fast-model' },
     { kind: 'schedule-add', at: '+30m', bash: 'du -sh /', timeoutMs: 60_000, cwd: '/tmp' },
     { kind: 'schedule-list' },
     { kind: 'schedule-list', id: 'a1b2c3' },

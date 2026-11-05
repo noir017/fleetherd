@@ -135,8 +135,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       prompt: z.string().min(1).max(20_000).optional(),
       bash: z.string().min(1).max(20_000).optional(),
       agent: z.string().min(1).optional(),
-      session: z.enum(['fixed', 'new']).optional(),
+      session: z.enum(['fixed', 'new', 'daily']).optional(),
       cwd: z.string().min(1).optional(),
+      model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
     })
     .strict(),
@@ -304,8 +305,9 @@ export type IpcAction =
       prompt?: string;
       bash?: string;
       agent?: string;
-      session?: 'fixed' | 'new';
+      session?: 'fixed' | 'new' | 'daily';
       cwd?: string;
+      model?: string;
       timeoutMs?: number;
     }
   | { kind: 'schedule-list'; id?: string }
@@ -451,6 +453,8 @@ export interface ScheduleTaskView {
   expires: string;
   here: boolean;
   prompt?: string;
+  /** A new- or daily-session task's model, on `show` and `add`. */
+  model?: string;
   command?: string;
   timeout?: string;
   cwd?: string;

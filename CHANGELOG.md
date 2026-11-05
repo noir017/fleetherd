@@ -21,6 +21,32 @@ All notable changes to this project are documented here. The format is based on
   filter the output is exactly what it was. An existing file is migrated in place: old rows keep
   a NULL turn and read as unknown rather than being guessed into a neighbour.
   [→](docs/conversation-history.md)
+- **A scheduled task can keep one conversation per day.** `schedule add --session daily` opens a
+  topic on the first run of each local day and sends the rest of that day's runs into it, so a
+  briefing can build on itself without a new topic every hour or a context that grows for a week.
+  The day is counted in the task's own time zone by each run's already-written rules: the day of
+  its planned time, so a catch-up after midnight still joins the day it was meant for, and the
+  topic is named with that date. The topic is remembered in `schedules.json`, so restarting the
+  gateway mid-day does not open a second one; a topic deleted during the day is reopened on the
+  next run — a platform that cannot report whether it still exists is caught when a post into it
+  fails, which clears the record. It needs a cron and a platform that can open a topic with no
+  message to reply to (the web UI, a Telegram forum group), refused at registration otherwise;
+  Telegram's ordinary groups are knowable only at run time, so a run there fails and says why,
+  and consecutive runs failing the same way report it once rather than on every run. A failed
+  create fails the run and says so, because the alternative (a throwaway conversation) is one the
+  person cannot reply into. `fixed` and `new` are unchanged.
+- **A scheduled task can name its model.** `schedule add --model <id>` gives a new- or
+  daily-session task its own model instead of whatever its agent's config happens to carry; the
+  previous way was to duplicate a whole agent entry just to change `model`, and keep every other
+  field in step by hand. The id is checked at registration against the agent's own `/model` list
+  (the caller's session for its own agent, a throwaway one for another), and a name it does not
+  offer is refused with the list, so the agent can fix it in the same turn. Each run applies it
+  through the `/model` path before the first request, with the session started first: a harness
+  that refuses it fails that run and says why, instead of the best-effort fallback an operator's
+  configured model gets. In a daily topic a `/model` typed by a person during the day wins, and
+  keeps winning across a restart: the task records that the topic was set by hand and stops
+  applying its own model. A fixed-session task runs in a person's conversation, whose model is that
+  conversation's own, so `--model` is refused for it. [→](docs/scheduled-tasks.md)
 
 - **Sub-agent starts can be left unconfirmed.** By default `task-new` still only proposes: every
   sub-task waits on a card listing all of them until the person taps Start. `/setting delegation

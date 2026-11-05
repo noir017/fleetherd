@@ -20,6 +20,7 @@ import type { ScheduleTask } from '../core/schedule.js';
  */
 
 const TargetSchema = z.object({ platform: z.string().min(1), channel: z.string().min(1), thread: z.string().min(1).optional() });
+const AddressSchema = z.object({ channel: z.string().min(1), thread: z.string().min(1).optional() }).strict();
 
 const WhenSchema = z.union([
   z.object({ cron: z.string().min(1), tz: z.string().min(1) }).strict(),
@@ -32,8 +33,9 @@ const RunSchema = z.discriminatedUnion('kind', [
       kind: z.literal('agent'),
       agent: z.string().min(1),
       prompt: z.string().min(1),
-      session: z.enum(['fixed', 'new']),
+      session: z.enum(['fixed', 'new', 'daily']),
       cwd: z.string().min(1).optional(),
+      model: z.string().min(1).optional(),
     })
     .strict(),
   z
@@ -55,6 +57,18 @@ const TaskSchema = z
     run: RunSchema,
     target: TargetSchema,
     conversation: z.string().min(1).optional(),
+    // Absent in every file written before daily sessions existed, and absent on a daily task
+    // until its first run of a day — optional is the migration.
+    daySession: z
+      .object({
+        day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        conversation: z.string().min(1),
+        address: AddressSchema,
+        // A person chose the model here during the day; see ScheduleDaySession.
+        personModel: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     state: z.enum(['active', 'paused', 'expired', 'done']),
     createdAt: z.number().finite(),
     createdBy: z.object({ conversation: z.string(), platform: z.string() }),
@@ -75,6 +89,15 @@ const TaskSchema = z
     // The one cross-field rule the scheduler depends on: a fixed-session run has to know where.
     if (t.run.kind === 'agent' && t.run.session === 'fixed' && !t.conversation) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a fixed-session task has no conversation' });
+    }
+    // A daily task's day comes from its cron; a one-shot has no second run to join.
+    if (t.run.kind === 'agent' && t.run.session === 'daily' && 'at' in t.when) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a daily-session task needs a cron, not a one-shot time' });
+    }
+    // buildTask refuses this too; repeated here so a hand-edited file cannot give a task a model
+    // for a person's own topic, where the model belongs to whoever is talking.
+    if (t.run.kind === 'agent' && t.run.session === 'fixed' && t.run.model !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a fixed-session task cannot name a model' });
     }
   });
 

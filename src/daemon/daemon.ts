@@ -919,6 +919,9 @@ export class Daemon {
       // A bare `/effort`, same conditions.
       onEffortMenuRequest: (id, agentId, msg, selector) =>
         this.onEffortMenuRequest(id, agentId, msg, selector),
+      // A person set this topic's model with `/model`. If it is a daily task's topic, the task
+      // records it so a restart does not let the timer put its own model back.
+      onModelSet: (id) => this.schedules?.notePersonModel(id),
       // A `/setting` on a platform that can carry (and later edit) buttons.
       onSettingMenuRequest: (id, msg, menu) => this.onSettingMenuRequest(id, msg, menu),
       // `/reload`: the same entry `talkcode reload` uses, answered with the same sentence.
@@ -1217,10 +1220,13 @@ export class Daemon {
   private reverseAdapter(): PlatformAdapter {
     const id = this.lastResolvedConversationId;
     const pid = this.lastResolvedPlatform ?? (id ? this.registry.platformFor(id) : undefined);
-    const adapter = pid ? this.platforms.get(pid) : undefined;
-    if (!adapter) {
-      throw new Error('cannot resolve the platform instance for this reverse command (conversation expired?)');
-    }
+    if (!pid) throw new Error('cannot resolve the platform instance for this reverse command (conversation expired?)');
+    const adapter = this.platforms.get(pid);
+    // A platform named by a qualified `--channel` is in the config (IPC checked) but may not have
+    // started — a bad token, a host that refused it. Saying so is the useful answer; "cannot
+    // resolve" reads as an expired conversation, and "cannot open a topic" would send the agent
+    // looking for a `--session` workaround for what is really an outage.
+    if (!adapter) throw new Error(`platform instance "${pid}" is not running`);
     return adapter;
   }
 
@@ -1334,16 +1340,17 @@ export class Daemon {
   /**
    * The reverse commands that ask the GATEWAY something rather than act on a chat: they never touch
    * the adapter handleReverse resolved, and read the caller's conversation only to scope or mark
-   * their answer. Split out so the chat-action switch stays about chat actions — and synchronous
-   * here, because every one reads the scratch slots, which are only valid before the first await.
+   * their answer. Split out so the chat-action switch stays about chat actions. Async for
+   * `schedule-add` alone, which waits on the agent's model list — every scratch slot it needs is
+   * read before that await, exactly as the synchronous ones read theirs.
    *
    * `address` is only read by `schedule-add`, where it is the task's target: the `--channel` the
    * agent named, else its own lane (resolveAddress already chose). The platform comes the same way.
    */
-  private handleGatewayQuery(
+  private async handleGatewayQuery(
     action: GatewayQuery,
     address: ConversationAddress
-  ): unknown {
+  ): Promise<unknown> {
     const id = this.lastResolvedConversationId;
     switch (action.kind) {
       case 'voice-log': {
@@ -1367,7 +1374,7 @@ export class Daemon {
         const platform = this.lastResolvedPlatform ?? this.registry.platformFor(id);
         if (!platform) throw new Error('cannot resolve the platform for this conversation');
         const { kind: _kind, channelId: _channel, ...input } = action;
-        return { task: schedules.add(input, id, { platform, address }) };
+        return { task: await schedules.add(input, id, { platform, address }) };
       }
       case 'schedule-list':
         return this.requireSchedules().list(id, action.id);

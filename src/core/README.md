@@ -153,7 +153,15 @@ callback so it arms no timer. `--at` accepts relative (`+30m`), clock (`08:00`, 
 clock reads it), wall-clock (`2026-10-01 08:00`, in `--tz`) and zoned ISO forms; a zoneless ISO
 time is read as wall-clock in `--tz`, never silently as UTC. Displayed times carry seconds when
 they are not on a minute — `11:28` for a run due at 11:28:28 once led the registering agent to
-tell the user the task would fire early.
+tell the user the task would fire early. A daily-session task keys its topic on
+`formatDay(planned, tz)`: the task's own calendar day of the run's PLANNED time, so a catch-up
+after midnight still joins the day it was meant for.
+
+`--model` is accepted only for a new- or daily-session task: the model belongs to the
+conversations the task opens, not to the person's topic a fixed-session task runs in, so
+`buildTask` refuses it there (and on a bash task, which has no model). `describeRun` and
+`taskView` carry it, so the card, the list, the panel and `schedule show` say what the run will
+use.
 
 `schedule-menu.ts` is the `/setting` → ⏰ task menu: list, one task, the delete confirmation,
 and the append-only `sca:` action indices (a posted menu's buttons carry them).

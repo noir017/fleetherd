@@ -37,7 +37,7 @@ export interface ScheduleExecutor {
 const LOOK_AGAIN_MS = 60_000;
 
 /** An error string written into a task's record is capped: it is shown in a one-line list. */
-const ERROR_LIMIT = 200;
+export const ERROR_LIMIT = 200;
 
 export class Scheduler {
   private cancelTimer: (() => void) | null = null;

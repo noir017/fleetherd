@@ -4,6 +4,14 @@ export default defineConfig({
   test: {
     // Run only colocated unit tests under src/.
     include: ['src/**/*.test.ts'],
+    /**
+     * The 5 s default is too tight on a 2-vCPU container running 158 files: a few tests walk a
+     * fake clock a minute at a time (~3000 timer turns) or wait on a spawned child, and finish in
+     * 3–5 s idle — under the suite's parallel load they crossed 5 s and failed for being slow, not
+     * wrong (observed 2026-11-04 on schedules and the /cd→/model menu). Still bounded, so a real
+     * hang fails.
+     */
+    testTimeout: 20_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],

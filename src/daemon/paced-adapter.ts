@@ -80,6 +80,8 @@ const PACING = {
   // Reads of the page's own topic list; nothing is sent anywhere.
   parentOf: 'unpaced',
   childrenOf: 'unpaced',
+  // A read of the page's own topic list; nothing is sent anywhere.
+  hasThread: 'unpaced',
   measureRendered: 'unpaced',
   registerCommands: 'unpaced',
   onMessage: 'unpaced',

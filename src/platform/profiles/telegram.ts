@@ -457,6 +457,10 @@ export function createTelegramProfile(): PlatformProfile<TelegramPlatformConfig>
     maxMessageLength: 4096,
     reply: true,
     thread: true,
+    // createForumTopic names a topic without posting, so a scheduled run with no message can use
+    // one — in a forum supergroup. An ordinary group or a DM refuses at run time, which is the
+    // only place that is knowable; see PlatformCapabilities.standaloneThread.
+    standaloneThread: true,
     // editForumTopic is in the adapter's Internal allow-list, and the bot is already a forum admin
     // wherever it can create topics. Renaming still fails in a non-forum chat — renameThread
     // refuses a thread-less address before the API call, and the caller treats any rejection as

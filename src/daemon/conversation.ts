@@ -472,6 +472,13 @@ export class ConversationRegistry {
    * discarding the agent's context is not.
    */
   private threadAliases = new Map<ConversationId, ConversationId>();
+  /**
+   * Suffix for the throwaway conversation `schedule add --model` uses to read another agent's
+   * model list. Unique per call: two adds for the same agent can overlap (two conversations, or a
+   * retry), and a shared key would let the first call's cleanup dispose the session the second is
+   * still reading.
+   */
+  private modelProbeSeq = 0;
   /** stable token ↔ conversationId registry (reverse-command auth + locate). */
   private tokens = new SessionTokenRegistry();
   /** Single-turn orchestrator; buildMerger's runTurn delegates to it (see class doc). */
@@ -580,6 +587,13 @@ export class ConversationRegistry {
         msg: InboundMessage,
         selector: EffortSelector
       ): void;
+      /**
+       * A person changed this conversation's model with `/model` (typed or clicked) and the harness
+       * accepted it. The daemon uses it for a daily task's topic: that choice must outlive a
+       * restart, when the in-memory override is gone, so the task stops applying its own model for
+       * the rest of the day.
+       */
+      onModelSet?(id: ConversationId): void;
       /**
        * A `/setting` on a platform that can carry a menu. Same division of labour as the model
        * menu: the registry resolves what the rows ARE (it holds the Config and the live sessions),
@@ -2670,6 +2684,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
     try {
       const applied = await session.setModel(value);
       state.modelOverride = applied;
+      // Only the person's paths reach here, never applyScheduledModel (which sets the field
+      // directly): this is what tells a daily task the topic is now set by hand.
+      this.hooks?.onModelSet?.(session.conversationId);
       return { kind: 'applied', model: applied };
     } catch (e) {
       return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) };
@@ -3535,6 +3552,87 @@ ${formatTokens(left)} left before compaction — ${name}`;
     return state.merger.enqueueSolo(msg);
   }
 
+  /**
+   * Whether `agentId` offers `model`, for `schedule add --model` — the same list `/model` shows,
+   * resolved the same way (refresh, then warm the session if that is what it takes to learn it).
+   *
+   * The registering conversation already has a session for its own agent, so that agent's list is
+   * read there. Another agent's is not: a conversation belongs to one agent, and building a
+   * second handle under the caller's key would collide with the topic it is actually answering.
+   * A throwaway key keeps them apart, with a suffix per call so two adds for the same agent cannot
+   * dispose each other's session; it is disposed before returning, and nothing runs in it.
+   *
+   * Returns undefined when the model is offered, else a sentence naming the fix — including the
+   * whole list, because the reader is the agent that just typed the wrong id and can retry in the
+   * same turn.
+   */
+  async scheduledModelProblem(agentId: string, model: string, from: ConversationId): Promise<string | undefined> {
+    const same = this.boundAgentOf(from) === agentId;
+    const key = same ? from : `__schedule-model__#${agentId}#${++this.modelProbeSeq}`;
+    const session = this.agents.getOrCreate(key, agentId);
+    try {
+      await session.refreshModels?.();
+      let selector = session.modelSelector?.();
+      if (!selector && session.ensureSession) {
+        try {
+          await session.ensureSession(this.tokens.tokenFor(key));
+        } catch (e) {
+          return `could not ask agent "${agentId}" for its models: ${e instanceof Error ? e.message : String(e)}`;
+        }
+        selector = session.modelSelector?.();
+      }
+      if (!selector) {
+        return `agent "${agentId}" has no model list (its harness has no model selector), so --model cannot be used with it; drop --model to use the agent's configured model`;
+      }
+      if (!selector.options.some((o) => o.value === model)) {
+        return `unknown model "${model}" for agent "${agentId}"; choose one of: ${selector.options.map((o) => o.value).join(', ')}`;
+      }
+      return undefined;
+    } finally {
+      if (!same) {
+        this.agents.dispose(key);
+        this.tokens.release(key);
+      }
+    }
+  }
+
+  /**
+   * Put a scheduled task's model on the conversation it is about to run in, before the turn —
+   * the same `session.setModel` path `/model` takes, because the ACP runtime does not read a
+   * model off the turn input.
+   *
+   * An override already on the conversation wins: it is either the task's own earlier application
+   * (a daily topic's first run) or a person typing `/model` in the topic, and the person's choice
+   * must not be undone by a timer.
+   *
+   * Strict, unlike `applyModelPreference` at spawn: that one keeps the harness's default rather
+   * than fail a turn, which is right for an operator's config mistake but wrong for an explicit
+   * `--model`. The session is brought up first so `setModel` reaches a live child and the harness
+   * answers now; a refusal is the run's failure, never a silent switch to another model.
+   * Returns a sentence for the chat when it cannot be applied, undefined on success or when the
+   * conversation's existing choice is left alone.
+   */
+  async applyScheduledModel(key: ConversationId, platform: string, agentId: string, model: string): Promise<string | undefined> {
+    const state = this.ensureState(key, platform, agentId);
+    if (state.agentId !== agentId) return `this topic is now answered by ${state.agentId}, not ${agentId}`;
+    if (state.modelOverride !== undefined) return undefined;
+    const session = this.agents.getOrCreate(key, agentId);
+    if (!session.setModel) return `agent "${agentId}" cannot switch models at runtime`;
+    if (session.ensureSession) {
+      try {
+        await session.ensureSession(this.tokens.tokenFor(key));
+      } catch (e) {
+        return `could not start the session to set model "${model}": ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+    try {
+      state.modelOverride = await session.setModel(model);
+      return undefined;
+    } catch (e) {
+      return `could not set model "${model}": ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+
   // ── Sub-agents' topics (daemon/delegation.ts) ──────────────────────────────────────────────
 
   /**
@@ -3754,7 +3852,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
   /**
    * Where a new-session run happens: a new topic in the target when the platform can open one — so
    * the run is a conversation the user can carry on in — else a throwaway conversation that posts
-   * into the target and is forgotten after the run (`ephemeral`, see releaseScheduled).
+   * into the target and is forgotten after the run (`ephemeral`, see releaseScheduled). A daily
+   * session passes `mustOpen` instead: it has no acceptable throwaway, so the failure is raised to
+   * the caller, which fails the run and says why in the chat.
    *
    * The topic is created with its name already in the gateway's `[agent] subject` form and that name
    * is recorded, so the automatic namer leaves it alone instead of renaming it after the prompt.
@@ -3766,28 +3866,74 @@ ${formatTokens(left)} left before compaction — ${name}`;
     title: string;
     cwd?: string;
     ephemeralKey: ConversationId;
+    /**
+     * The caller cannot use a throwaway conversation: a daily session must be a topic the user can
+     * reply into, so a platform without one, or a failed create, is an error rather than a silent
+     * downgrade to a conversation that disappears after the run.
+     */
+    mustOpen?: boolean;
   }): Promise<{ key: ConversationId; address: ConversationAddress; ephemeral: boolean }> {
     const adapter = this.platforms.get(opts.platform);
     if (!adapter) throw new Error(`platform instance "${opts.platform}" is not running`);
-    const title = formatLaneTitle(opts.agentId, opts.title);
-    let opened: ConversationAddress | undefined;
-    if (adapter.capabilities.thread) {
-      try {
-        // `scheduled` is the web UI's: it keeps these lanes out of the topic switcher and lists
-        // them in the panel's Sessions tab. A chat platform has nowhere else to put a
-        // conversation and ignores it.
-        opened = (await adapter.createThread({ address: opts.address, messageId: '' }, title, { scheduled: true })).address;
-      } catch (e) {
-        console.warn(`[schedule] could not open a topic on ${opts.platform}; posting into the chat instead: ${e instanceof Error ? e.message : e}`);
-      }
+    // Under `per_user` a new topic would map to no conversation of its own, so the run would have
+    // nowhere to post. Asked BEFORE createThread: the check used to sit after it, and a daily run
+    // then left an empty topic behind every time it was refused.
+    if (opts.mustOpen && !this.conversationAt(opts.platform, opts.address)) {
+      throw new Error('the target does not map to a conversation of its own under this deployment\'s scope; a daily-session task needs one');
     }
+    const title = formatLaneTitle(opts.agentId, opts.title);
+    const opened = await this.openScheduledTopic(adapter, opts.address, title, opts.mustOpen === true);
     const conv = opened ? this.conversationAt(opts.platform, opened) : undefined;
+    if (opts.mustOpen && !conv) {
+      throw new Error('the new topic does not map to a conversation of its own under this deployment\'s scope');
+    }
     const key = conv?.key ?? opts.ephemeralKey;
     const address = opened && conv ? opened : opts.address;
     this.ensureState(key, opts.platform, opts.agentId, { fresh: true });
     if (opts.cwd) this.store?.setConversationCwd(key, opts.agentId, opts.cwd);
     if (key !== opts.ephemeralKey) this.store?.setConversationTitle(key, opts.agentId, title);
     return { key, address, ephemeral: key === opts.ephemeralKey };
+  }
+
+  /**
+   * Ask a platform for a topic with no message to hang it on, or undefined when it cannot be had
+   * and the caller may fall back to the chat. `mustOpen` turns both "no thread support" and a
+   * failed create into the throw.
+   *
+   * An empty `thread` in the answer is a failure, not a lane: Slack's `createThread` returns the
+   * `messageId` it was given, and a scheduled run has none. That address names the CHANNEL —
+   * posting there would put the run into the person's conversation, and a daily task would
+   * persist a thread the store's schema rejects on the next start, dropping the whole task.
+   */
+  private async openScheduledTopic(
+    adapter: PlatformAdapter,
+    address: ConversationAddress,
+    title: string,
+    mustOpen: boolean
+  ): Promise<ConversationAddress | undefined> {
+    if (!adapter.capabilities.thread) {
+      if (mustOpen) throw new Error(`platform instance "${adapter.platform}" cannot open a topic`);
+      return undefined;
+    }
+    try {
+      // `scheduled` is the web UI's: it keeps these lanes out of the topic switcher and lists
+      // them in the panel's Sessions tab. A chat platform has nowhere else to put a
+      // conversation and ignores it.
+      const opened = (await adapter.createThread({ address, messageId: '' }, title, { scheduled: true })).address;
+      // A topic is a lane of its own; an answer without one names the channel instead. Slack does
+      // this by returning the `messageId` it was given (empty here), and a channel is not a new
+      // conversation: posting there would put the run into the person's own topic, and a daily
+      // task would persist a thread the store's schema rejects on the next start, dropping the
+      // whole task.
+      if (!opened.thread) {
+        throw new Error(`platform instance "${adapter.platform}" did not open a topic of its own (it needs a message to reply to)`);
+      }
+      return opened;
+    } catch (e) {
+      if (mustOpen) throw e;
+      console.warn(`[schedule] could not open a topic on ${adapter.platform}; posting into the chat instead: ${e instanceof Error ? e.message : e}`);
+      return undefined;
+    }
   }
 
   /** Forget a throwaway scheduled conversation entirely: its child, its state, its record. */

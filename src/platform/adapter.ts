@@ -468,6 +468,20 @@ export interface PlatformAdapter {
   /** The conversations the one at `address` opened, most recently active first. See `parentOf`. */
   childrenOf?(address: ConversationAddress): ConversationAddress[];
 
+  /**
+   * Whether the lane an address names still exists.
+   *
+   * A daily-session task keeps its topic for the day, so before a later run joins it the daemon has
+   * to know the topic was not deleted — otherwise every run until midnight fails into nothing. A
+   * platform that can answer says so; one that cannot leaves this absent and the daemon assumes the
+   * lane is there, which is the only honest answer when the platform has no way to ask (a chat app's
+   * topic may also be deleted, but nothing in its API reports it).
+   *
+   * Optional and web-UI-only for the same reason as the lookups above: the page owns its topic list,
+   * so deletion is a fact it knows exactly.
+   */
+  hasThread?(address: ConversationAddress): boolean;
+
   /** Send a message with buttons (used by clarify). */
   sendButtons(
     address: ConversationAddress,
@@ -562,6 +576,22 @@ export interface PlatformCapabilities {
   reply: boolean;
   /** Thread creation. */
   thread: boolean;
+  /**
+   * Whether a topic can be opened with NO message to hang it on.
+   *
+   * Its own flag rather than something read off `thread`, for the reason renameThread is: `thread`
+   * is true on platforms whose topic IS a message. Slack's thread is a `thread_ts`, Discord's
+   * startThreadFromMessage and Lark's reply_in_thread all need a real message; a scheduled run has
+   * none, and asking them anyway either fails or names the channel instead of a new lane. Telegram's
+   * createForumTopic and the web UI's topics need nothing, so they declare this.
+   *
+   * Telegram is the reason this is a capability and not a hard list: createForumTopic works only in
+   * a topic-enabled supergroup, which the registration cannot know. It declares the capability, and
+   * a run in an ordinary group fails and says so.
+   *
+   * Absent/undefined treated as false, so a profile that has not thought about it is never asked.
+   */
+  standaloneThread?: boolean;
   /**
    * Whether an existing lane can be RENAMED (renameThread).
    *

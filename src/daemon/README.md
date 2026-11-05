@@ -468,10 +468,34 @@ What each piece is shaped by, one line each:
 - **A topic keeps its agent** — so a fixed-session task for another agent is refused at registration,
   and a run that finds the topic answered by someone else (after `/new`) is skipped with a line,
   never rebinds.
-- **A new-session run gets a topic where the platform can open one** (web UI, Telegram forums,
-  Discord), created already named `[agent] ⏰ name · time` and recorded so the namer leaves it alone;
-  the user can carry on in it. Elsewhere it runs in a throwaway conversation (`schedule#<id>#<planned>`)
-  that posts into the target and is released afterwards.
+- **A new-session run gets a topic where the platform can open one without a message** (web UI,
+  Telegram forum groups), created already named `[agent] ⏰ name · time` and recorded so the namer
+  leaves it alone; the user can carry on in it. Elsewhere it runs in a throwaway conversation
+  (`schedule#<id>#<planned>`) that posts into the target and is released afterwards. A topic that
+  comes back with an empty lane (Slack's `thread_ts` with no message) is treated as no topic:
+  posting into the channel instead would put the run into the person's own conversation.
+- **A daily-session run keeps one topic per local day.** The first run of the day opens it (same
+  shape as a new-session run), names it `⏰ name · YYYY-MM-DD`, and records that day and topic in
+  the task; later runs that day — including a catch-up whose planned time was before midnight —
+  join it, and the next day opens a fresh one. The day is the task's own `tz`, taken from the
+  run's planned time. A restart reads the topic back from `schedules.json`; a topic deleted
+  meanwhile is reopened on the next run — the web UI answers `hasThread`, and elsewhere a post
+  into the topic that fails clears the record. There is no throwaway fallback: a platform that
+  cannot open a topic with no message is refused at registration (`standaloneThread`), a create
+  that fails or comes back empty fails the run and says so, and consecutive runs failing the same
+  way are reported once rather than on every run.
+- **A new- or daily-session task can name its model** (`--model`). The id is checked at
+  registration against the agent's own `/model` list — the caller's session for its own agent, a
+  throwaway one for another — and a name it does not offer is refused there, with the list. Each
+  run then applies it through `session.setModel` (the `/model` path), with the session brought up
+  first so the harness answers now: `applyModelPreference` at spawn is best-effort and would keep
+  its default, which is right for an operator's config typo but not for an explicit instruction,
+  so a refusal here fails the run and says why. A conversation that already has an override is
+  left alone — that is the task's own earlier application in a daily topic, or a person's
+  `/model`, and the person wins. A daily task also records a person's `/model` in the day's
+  `daySession`, because that override is in memory and a restart would otherwise let the next run
+  put the task's model back. A fixed-session task runs in a person's topic and keeps its model, so
+  `--model` is refused for it.
 - **A bash run is not an agent**: `bash -lc` in its own process group (killed whole on timeout — `a |
   b` forks), the daemon's environment minus the reverse-command token, a 16 KB tail kept for the chat
   and the full output in `<configDir>/schedule-runs/<id>/` (20 per task). Longer than 3000 characters

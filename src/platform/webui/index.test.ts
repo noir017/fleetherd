@@ -38,6 +38,9 @@ describe('webui adapter: what it says it can do', () => {
   it('declares topics, and that they can be named', () => {
     const caps = adapter().capabilities;
     expect(caps.thread).toBe(true);
+    // A topic here is made from nothing, so a scheduled run with no message can open one — what
+    // the daily-session registration gate asks (capabilities.standaloneThread).
+    expect(caps.standaloneThread).toBe(true);
     // Only true because a topic IS a lane: `retitleLane` refuses any address without one, so
     // the channel-per-topic alternative would have left this permanently inert.
     expect(caps.renameThread).toBe(true);

@@ -168,6 +168,7 @@ describe('scheduled --bash from a remote agent', () => {
         agents: ['cc'],
         from: { key: 'k', platform: 'tg', agent: 'cc', cwd: '/home/me/work', host: 'box' },
         target: { platform: 'tg', address: { channel: 'c' } },
+        canOpenTopic: false,
       }
     );
     expect(built.ok && built.task.run).toEqual({ kind: 'bash', command: 'make test', timeoutMs: expect.any(Number), cwd: '/home/me/work', host: 'box' });

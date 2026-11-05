@@ -72,6 +72,8 @@ const CAPABILITIES: PlatformAdapter['capabilities'] = {
    * also means the agent can open one for itself.
    */
   thread: true,
+  /** A topic is made from nothing here, so a scheduled run with no message can open one. */
+  standaloneThread: true,
   /**
    * And they can be named, which is the other half of that shape: the harness summarises what
    * a topic turned out to be about and the switcher shows it. This works only because a topic
@@ -351,11 +353,23 @@ type Outbound = Pick<
   | 'seenAt'
   | 'parentOf'
   | 'childrenOf'
+  | 'hasThread'
   | 'createThread'
   | 'renameThread'
   | 'measureRendered'
   | 'fetchHistory'
 >;
+
+/**
+ * Whether an address names a topic this store still has — the adapter's `hasThread`.
+ *
+ * Its own function because the room behind the adapter is not part of its public shape: this is
+ * the only way to test the question against a real room, and a daily run's decision to reopen a
+ * deleted topic is worth testing (room.test.ts).
+ */
+export function hasTopic(topics: { has(id: string): boolean }, address: ConversationAddress): boolean {
+  return address.channel === CHANNEL && address.thread !== undefined && topics.has(address.thread);
+}
 
 function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
   /**
@@ -480,6 +494,10 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
       return address.channel === CHANNEL && address.thread
         ? room.childrenOf(address.thread).map((thread) => ({ channel: CHANNEL, thread }))
         : [];
+    },
+    /** Asked before a daily-session run rejoins yesterday's topic: a deleted one must be reopened. */
+    hasThread(address) {
+      return hasTopic(room.topics, address);
     },
     /**
      * Open a topic.
