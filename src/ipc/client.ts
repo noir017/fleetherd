@@ -1,6 +1,29 @@
 import net from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
-import type { IpcAction, IpcRequest, IpcResponse } from './protocol.js';
+import { ASK_CLIENT_TIMEOUT_MARGIN_MS, DEFAULT_ASK_TIMEOUT_MS, type IpcAction, type IpcRequest, type IpcResponse } from './protocol.js';
+
+/**
+ * How long the client waits for `schedule add` when the caller does not say.
+ *
+ * Adding a task with `--model` is not a disk write: the daemon asks the agent for its model list,
+ * which may mean starting a session (cold start, and an ssh round trip for a remote agent). The
+ * 10 s default is shorter than that on a busy machine, and the failure is the bad kind — the client
+ * gives up while the daemon finishes and registers the task, so an agent that retries leaves a
+ * duplicate behind. The daemon answers immediately without `--model`; one generous bound for the
+ * command is simpler than making it depend on a field.
+ */
+const SCHEDULE_ADD_TIMEOUT_MS = 60_000;
+
+/**
+ * The wait this action needs, or undefined for the 10 s default (which still honours
+ * `TALKCODE_IPC_TIMEOUT_MS`). Shared by the shell command and the native tool, so both get the
+ * same bound: `ask` blocks until the person answers, `schedule add` until a model list is read.
+ */
+export function clientTimeoutFor(action: IpcAction): number | undefined {
+  if (action.kind === 'ask') return (action.timeoutMs ?? DEFAULT_ASK_TIMEOUT_MS) + ASK_CLIENT_TIMEOUT_MARGIN_MS;
+  if (action.kind === 'schedule-add') return SCHEDULE_ADD_TIMEOUT_MS;
+  return undefined;
+}
 
 /**
  * CLI-side IPC client. Reverse-command processes use it to connect back to the daemon.

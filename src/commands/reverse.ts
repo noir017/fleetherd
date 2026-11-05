@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { encode } from '@toon-format/toon';
 import { loadConfig, resolveSocketPath } from '../config/load.js';
-import { callDaemon } from '../ipc/client.js';
+import { callDaemon, clientTimeoutFor } from '../ipc/client.js';
 import { DEFAULT_FETCH_FIELDS } from '../ipc/commands.js';
 import type {
   IpcAction,
@@ -20,7 +20,7 @@ import type {
   TaskStatusResult,
   VoiceLogResult,
 } from '../ipc/protocol.js';
-import { ASK_CLIENT_TIMEOUT_MARGIN_MS, DEFAULT_ASK_TIMEOUT_MS } from '../ipc/protocol.js';
+import { DEFAULT_ASK_TIMEOUT_MS } from '../ipc/protocol.js';
 import type { InboundMessage } from '../types.js';
 
 /**
@@ -94,15 +94,9 @@ export async function runReverse(rawAction: IpcAction): Promise<void> {
   // that directory as TALKCODE_CWD (daemon/remote-hosts.ts).
   const action = normalizeActionPaths(rawAction, process.env.TALKCODE_REMOTE_HOME ? process.env.TALKCODE_CWD : undefined);
 
-  // Blocking ask hangs on the daemon side until the user selects/times out, so the
-  // client's default 10s isn't enough; use action.timeoutMs (default from the protocol,
-  // shared with the daemon) plus a margin so the client doesn't give up before the daemon.
-  const clientTimeout =
-    action.kind === 'ask'
-      ? (action.timeoutMs ?? DEFAULT_ASK_TIMEOUT_MS) + ASK_CLIENT_TIMEOUT_MARGIN_MS
-      : undefined;
-
-  const resp = await callDaemon(socket, action, undefined, clientTimeout);
+  // A blocking command needs a longer wait than the client's default: `ask` until the person
+  // answers, `schedule add` until a model list is read. See clientTimeoutFor.
+  const resp = await callDaemon(socket, action, undefined, clientTimeoutFor(action));
   if (!resp.ok) {
     // AXI §6: errors go to stdout in the same structured format as data, with an actionable hint.
     console.log(toon(friendlyError(resp.error, socket)));

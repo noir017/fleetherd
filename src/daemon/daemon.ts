@@ -919,6 +919,9 @@ export class Daemon {
       // A bare `/effort`, same conditions.
       onEffortMenuRequest: (id, agentId, msg, selector) =>
         this.onEffortMenuRequest(id, agentId, msg, selector),
+      // A person set this topic's model with `/model`. If it is a daily task's topic, the task
+      // records it so a restart does not let the timer put its own model back.
+      onModelSet: (id) => this.schedules?.notePersonModel(id),
       // A `/setting` on a platform that can carry (and later edit) buttons.
       onSettingMenuRequest: (id, msg, menu) => this.onSettingMenuRequest(id, msg, menu),
       // `/reload`: the same entry `talkcode reload` uses, answered with the same sentence.

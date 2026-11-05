@@ -136,7 +136,7 @@ afterEach(async () => {
 async function rig(
   existing?: string,
   alive?: Set<string>,
-  over: { standaloneThread?: boolean; hasThread?: boolean; emptyThread?: boolean; perUser?: boolean } = {}
+  over: { standaloneThread?: boolean; hasThread?: boolean; emptyThread?: boolean; perUser?: boolean; holdProbe?: boolean } = {}
 ) {
   const dir = existing ?? fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-'));
   if (!dirs.includes(dir)) dirs.push(dir);
@@ -148,6 +148,11 @@ async function rig(
   const ensured: string[] = [];
   const disposed: string[] = [];
   const sessions = new Map<string, AgentSession>();
+  // A gate `lazy`'s ensureSession waits on, so a test can overlap two `schedule add --model`s.
+  let openProbe: () => void = () => {};
+  const probeGate = new Promise<void>((resolve) => {
+    openProbe = resolve;
+  });
   const agents: AgentFactory = {
     getOrCreate(conversationId, agentId) {
       let s = sessions.get(conversationId);
@@ -173,6 +178,7 @@ async function rig(
               }),
           ensureSession: async () => {
             ensured.push(conversationId);
+            if (agentId === 'lazy' && over.holdProbe) await probeGate;
             warm = true;
           },
           refreshModels: async () => {},
@@ -241,7 +247,7 @@ async function rig(
     const i = daemons.indexOf(daemon);
     if (i >= 0) daemons.splice(i, 1);
   };
-  return { dir, sent, turns, models, ensured, disposed, tg, web, menus, inbound, call, tap, targets, stop };
+  return { dir, sent, turns, models, ensured, disposed, tg, web, menus, inbound, call, tap, targets, stop, openProbe };
 }
 
 const settle = (ms = 60): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -493,7 +499,7 @@ describe('schedule over IPC', () => {
     expect(task.runs).toBe('cc · fast-model · new session each run');
     expect(r.sent.at(-1)!.text).toContain('cc · fast-model · new session each run');
     // The caller's own agent is read there; no throwaway session is started for it.
-    expect(r.disposed).not.toContain('__schedule-model__#cc');
+    expect(r.disposed.some((id) => id.startsWith('__schedule-model__#cc#'))).toBe(false);
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     await settle();
     expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
@@ -518,7 +524,7 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'oc', model: 'fast-model' });
     expect(task.runs).toBe('oc · fast-model · new session each run');
-    expect(r.disposed).toContain('__schedule-model__#oc');
+    expect(r.disposed.some((id) => id.startsWith('__schedule-model__#oc#'))).toBe(true);
     expect(r.turns).toHaveLength(1); // only the user's own hello; no work in the throwaway session
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     await settle();
@@ -531,8 +537,23 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'lazy', model: 'fast-model' });
     expect(task.runs).toBe('lazy · fast-model · new session each run');
-    expect(r.ensured).toContain('__schedule-model__#lazy');
-    expect(r.disposed).toContain('__schedule-model__#lazy');
+    expect(r.ensured.some((id) => id.startsWith('__schedule-model__#lazy#'))).toBe(true);
+    expect(r.disposed.some((id) => id.startsWith('__schedule-model__#lazy#'))).toBe(true);
+  });
+
+  it('two adds for the same agent do not share the throwaway session', async () => {
+    const r = await rig(undefined, undefined, { holdProbe: true });
+    await r.inbound(WEB, 'hello');
+    const one = r.call({ kind: 'schedule-add', cron: '0 8 * * *', prompt: 'a', session: 'new', agent: 'lazy', model: 'fast-model' });
+    const two = r.call({ kind: 'schedule-add', cron: '0 9 * * *', prompt: 'b', session: 'new', agent: 'lazy', model: 'fast-model' });
+    await settle(); // both are inside ensureSession, waiting on the gate
+    r.openProbe();
+    expect((await one).ok).toBe(true);
+    expect((await two).ok).toBe(true);
+    // A shared key would make the first call's cleanup dispose the session the second is using.
+    const keys = r.ensured.filter((id) => id.startsWith('__schedule-model__#lazy#'));
+    expect(new Set(keys).size).toBe(2);
+    expect(r.disposed.filter((id) => id.startsWith('__schedule-model__#lazy#'))).toHaveLength(2);
   });
 
   it('refuses --model when the agent has no model selector, and on a fixed-session task', async () => {
@@ -577,6 +598,26 @@ describe('schedule over IPC', () => {
     await settle();
     expect(r.models).toHaveLength(2); // the person's choice stands; the task does not put its own back
     expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
+  });
+
+  it('daily: a person\'s /model still wins after a restart', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'fast-model', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
+    await r.inbound({ ...WEB, thread: 'new1' }, '/model base-model');
+    await r.stop();
+
+    const again = await rig(r.dir, r.web.alive);
+    await again.inbound(WEB, 'hello');
+    await again.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    // The in-memory override is gone, but the task remembered the topic was set by hand and
+    // leaves its model alone instead of putting its own back.
+    expect(again.models).toEqual([]);
+    expect(again.turns.at(-1)).toMatchObject({ conversation: 'web#main#new1', prompt: 'brief' });
   });
 
   it('says which conversations a task can still post into, so the web UI will not evict them', async () => {

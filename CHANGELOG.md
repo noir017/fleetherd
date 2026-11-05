@@ -43,9 +43,10 @@ All notable changes to this project are documented here. The format is based on
   offer is refused with the list, so the agent can fix it in the same turn. Each run applies it
   through the `/model` path before the first request, with the session started first: a harness
   that refuses it fails that run and says why, instead of the best-effort fallback an operator's
-  configured model gets. In a daily topic a `/model` typed by a person during the day wins. A
-  fixed-session task runs in a person's conversation, whose model is that conversation's own, so
-  `--model` is refused for it. [→](docs/scheduled-tasks.md)
+  configured model gets. In a daily topic a `/model` typed by a person during the day wins, and
+  keeps winning across a restart: the task records that the topic was set by hand and stops
+  applying its own model. A fixed-session task runs in a person's conversation, whose model is that
+  conversation's own, so `--model` is refused for it. [→](docs/scheduled-tasks.md)
 
 - **Sub-agent starts can be left unconfirmed.** By default `task-new` still only proposes: every
   sub-task waits on a card listing all of them until the person taps Start. `/setting delegation

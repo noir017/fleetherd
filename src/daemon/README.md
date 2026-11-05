@@ -492,8 +492,10 @@ What each piece is shaped by, one line each:
   its default, which is right for an operator's config typo but not for an explicit instruction,
   so a refusal here fails the run and says why. A conversation that already has an override is
   left alone — that is the task's own earlier application in a daily topic, or a person's
-  `/model`, and the person wins. A fixed-session task runs in a person's topic and keeps its
-  model, so `--model` is refused for it.
+  `/model`, and the person wins. A daily task also records a person's `/model` in the day's
+  `daySession`, because that override is in memory and a restart would otherwise let the next run
+  put the task's model back. A fixed-session task runs in a person's topic and keeps its model, so
+  `--model` is refused for it.
 - **A bash run is not an agent**: `bash -lc` in its own process group (killed whole on timeout — `a |
   b` forks), the daemon's environment minus the reverse-command token, a 16 KB tail kept for the chat
   and the full output in `<configDir>/schedule-runs/<id>/` (20 per task). Longer than 3000 characters

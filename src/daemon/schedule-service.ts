@@ -354,15 +354,8 @@ export class ScheduleService {
       this.rememberDay(task.id, { day, conversation: key, address });
     }
 
-    if (run.model) {
-      // A daily topic applies its model on the day's first run; a `/model` typed there since is
-      // the person's choice and the conversation's override wins (applyScheduledModel).
-      const why = await this.registry.applyScheduledModel(key, task.target.platform, run.agent, run.model);
-      if (why) {
-        await this.reportDaily(task, platform, address, 'failed', why);
-        return { status: 'failed', error: why };
-      }
-    }
+    const modelWhy = await this.applyDailyModel(task, run, platform, key, address, reuse);
+    if (modelWhy) return { status: 'failed', error: modelWhy };
     try {
       await platform.sendMessage(address, runNoticeText(task, planned));
     } catch (e) {
@@ -379,6 +372,27 @@ export class ScheduleService {
     return toResult(
       await this.registry.runScheduledPrompt({ key, platform: task.target.platform, address, agentId: run.agent, prompt: run.prompt })
     );
+  }
+
+  /**
+   * Apply a daily task's model to the topic it is about to run in, unless a person set this
+   * topic's model by hand today.
+   *
+   * The in-memory override alone is not enough: it is gone after a restart, while the day's topic
+   * and the `personModel` marker are on disk. Returns the reason the run must fail, else undefined.
+   */
+  private async applyDailyModel(
+    task: ScheduleTask,
+    run: Extract<ScheduleTask['run'], { kind: 'agent' }>,
+    platform: PlatformAdapter,
+    key: string,
+    address: ConversationAddress,
+    day: ScheduleDaySession | undefined
+  ): Promise<string | undefined> {
+    if (!run.model || day?.personModel) return undefined;
+    const why = await this.registry.applyScheduledModel(key, task.target.platform, run.agent, run.model);
+    if (why) await this.reportDaily(task, platform, address, 'failed', why);
+    return why;
   }
 
   /**
@@ -401,6 +415,22 @@ export class ScheduleService {
     await platform
       .sendMessage(address, `⏰ \`#${task.id}\` **${task.name}** ${verb} — ${why}.`)
       .catch((e) => warn('failure notice', e));
+  }
+
+  /**
+   * A person changed this conversation's model with `/model`. If it is a daily task's topic for
+   * today, remember that in the task: the conversation's override lives in memory, so a restart
+   * would otherwise let the next run apply the task's model over the person's choice. The value
+   * itself is not kept — a `/model` choice does not survive a restart for any conversation — but
+   * the task can leave the topic alone for the rest of the day.
+   */
+  notePersonModel(conversation: ConversationId): void {
+    for (const task of this.scheduler.list()) {
+      const day = task.daySession;
+      if (day?.conversation !== conversation || day.personModel) continue;
+      this.store.put({ ...task, daySession: { ...day, personModel: true } });
+      console.log(`[schedule] #${task.id}: today's topic was set by hand; the task will leave its model alone`);
+    }
   }
 
   /** Record which topic today's daily runs join — before the turn, so a crash mid-run keeps it. */

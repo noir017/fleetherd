@@ -96,8 +96,9 @@ describe('ScheduleStore', () => {
     const store = new ScheduleStore(file);
     store.put({
       ...store.get('a1b2c3')!,
-      daySession: { day: '2026-11-04', conversation: 'web#main#t9', address: { channel: 'main', thread: 't9' } },
+      // The hand-set marker rides with the day's topic, so a restart still leaves the model alone.
+      daySession: { day: '2026-11-04', conversation: 'web#main#t9', address: { channel: 'main', thread: 't9' }, personModel: true },
     });
-    expect(new ScheduleStore(file).get('a1b2c3')!.daySession).toMatchObject({ day: '2026-11-04' });
+    expect(new ScheduleStore(file).get('a1b2c3')!.daySession).toMatchObject({ day: '2026-11-04', personModel: true });
   });
 });

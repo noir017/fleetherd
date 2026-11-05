@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline';
 import { encode } from '@toon-format/toon';
-import { callDaemon } from '../ipc/client.js';
+import { callDaemon, clientTimeoutFor } from '../ipc/client.js';
 import type { IpcAction, IpcResponse } from '../ipc/protocol.js';
 import { findNativeTool, NATIVE_TOOLS, toolAction, toolInputSchema } from '../ipc/tools.js';
 import { friendlyError, normalizeActionPaths, renderResult } from './reverse.js';
@@ -164,7 +164,7 @@ export async function runMcp(version: string): Promise<void> {
     cwd: process.env.TALKCODE_CWD || process.cwd(),
     call: (action) =>
       socket
-        ? callDaemon(socket, action)
+        ? callDaemon(socket, action, undefined, clientTimeoutFor(action))
         : Promise.resolve({
             ok: false,
             error: 'TALKCODE_SOCKET is not set: this server is started by a talkcode session, not by hand',

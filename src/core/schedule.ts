@@ -97,6 +97,15 @@ export interface ScheduleDaySession {
   day: string;
   conversation: string;
   address: ConversationAddress;
+  /**
+   * A person typed `/model` in this topic during the day.
+   *
+   * Persisted with the day's topic because the conversation's override is in memory only: after a
+   * restart it is gone, and a task that re-applied its own model would undo a choice the person
+   * made. The task cannot put the person's model back (that choice is lost with the process, like
+   * any `/model`), but it can leave the topic alone for the rest of the day.
+   */
+  personModel?: boolean;
 }
 
 export interface ScheduleTask {

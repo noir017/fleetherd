@@ -472,6 +472,13 @@ export class ConversationRegistry {
    * discarding the agent's context is not.
    */
   private threadAliases = new Map<ConversationId, ConversationId>();
+  /**
+   * Suffix for the throwaway conversation `schedule add --model` uses to read another agent's
+   * model list. Unique per call: two adds for the same agent can overlap (two conversations, or a
+   * retry), and a shared key would let the first call's cleanup dispose the session the second is
+   * still reading.
+   */
+  private modelProbeSeq = 0;
   /** stable token ↔ conversationId registry (reverse-command auth + locate). */
   private tokens = new SessionTokenRegistry();
   /** Single-turn orchestrator; buildMerger's runTurn delegates to it (see class doc). */
@@ -580,6 +587,13 @@ export class ConversationRegistry {
         msg: InboundMessage,
         selector: EffortSelector
       ): void;
+      /**
+       * A person changed this conversation's model with `/model` (typed or clicked) and the harness
+       * accepted it. The daemon uses it for a daily task's topic: that choice must outlive a
+       * restart, when the in-memory override is gone, so the task stops applying its own model for
+       * the rest of the day.
+       */
+      onModelSet?(id: ConversationId): void;
       /**
        * A `/setting` on a platform that can carry a menu. Same division of labour as the model
        * menu: the registry resolves what the rows ARE (it holds the Config and the live sessions),
@@ -2670,6 +2684,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
     try {
       const applied = await session.setModel(value);
       state.modelOverride = applied;
+      // Only the person's paths reach here, never applyScheduledModel (which sets the field
+      // directly): this is what tells a daily task the topic is now set by hand.
+      this.hooks?.onModelSet?.(session.conversationId);
       return { kind: 'applied', model: applied };
     } catch (e) {
       return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) };
@@ -3542,8 +3559,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * The registering conversation already has a session for its own agent, so that agent's list is
    * read there. Another agent's is not: a conversation belongs to one agent, and building a
    * second handle under the caller's key would collide with the topic it is actually answering.
-   * A throwaway key keeps them apart, and the session is disposed before returning; nothing runs
-   * in it.
+   * A throwaway key keeps them apart, with a suffix per call so two adds for the same agent cannot
+   * dispose each other's session; it is disposed before returning, and nothing runs in it.
    *
    * Returns undefined when the model is offered, else a sentence naming the fix — including the
    * whole list, because the reader is the agent that just typed the wrong id and can retry in the
@@ -3551,7 +3568,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
    */
   async scheduledModelProblem(agentId: string, model: string, from: ConversationId): Promise<string | undefined> {
     const same = this.boundAgentOf(from) === agentId;
-    const key = same ? from : `__schedule-model__#${agentId}`;
+    const key = same ? from : `__schedule-model__#${agentId}#${++this.modelProbeSeq}`;
     const session = this.agents.getOrCreate(key, agentId);
     try {
       await session.refreshModels?.();
@@ -3903,8 +3920,13 @@ ${formatTokens(left)} left before compaction — ${name}`;
       // them in the panel's Sessions tab. A chat platform has nowhere else to put a
       // conversation and ignores it.
       const opened = (await adapter.createThread({ address, messageId: '' }, title, { scheduled: true })).address;
-      if (opened.thread !== undefined && opened.thread.length === 0) {
-        throw new Error(`platform instance "${adapter.platform}" did not open a topic (it needs a message to reply to)`);
+      // A topic is a lane of its own; an answer without one names the channel instead. Slack does
+      // this by returning the `messageId` it was given (empty here), and a channel is not a new
+      // conversation: posting there would put the run into the person's own topic, and a daily
+      // task would persist a thread the store's schema rejects on the next start, dropping the
+      // whole task.
+      if (!opened.thread) {
+        throw new Error(`platform instance "${adapter.platform}" did not open a topic of its own (it needs a message to reply to)`);
       }
       return opened;
     } catch (e) {

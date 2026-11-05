@@ -40,7 +40,8 @@ when the day's session opens — and a model the agent refuses fails that run wi
 a silent fallback to another model. A **fixed-session** task runs in your own conversation and
 keeps that conversation's model (set it with `/model` there), so `--model` is refused for it. In a
 daily topic, a `/model` you type during the day wins over the task's choice for the rest of that
-day.
+day, including after the gateway restarts: the task records that the topic was set by hand and
+stops applying its own model.
 
 On the web UI, the clock at the right of the chat header opens a **⏰ Scheduled tasks** panel of
 its own: the **Tasks** tab is the same list, plus "run now", and a pin that keeps it open beside

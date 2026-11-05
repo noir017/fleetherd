@@ -60,7 +60,13 @@ const TaskSchema = z
     // Absent in every file written before daily sessions existed, and absent on a daily task
     // until its first run of a day — optional is the migration.
     daySession: z
-      .object({ day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), conversation: z.string().min(1), address: AddressSchema })
+      .object({
+        day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        conversation: z.string().min(1),
+        address: AddressSchema,
+        // A person chose the model here during the day; see ScheduleDaySession.
+        personModel: z.boolean().optional(),
+      })
       .strict()
       .optional(),
     state: z.enum(['active', 'paused', 'expired', 'done']),
