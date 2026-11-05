@@ -5692,7 +5692,7 @@ __GATE__
          dismissal (setMenu). -->
     <div id="sidebar-footer" class="panel-foot">
       <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙&#xFE0E;</span><span class="opts-word"> Menu</span></button>
-      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3L21 9"/><path d="M17.5 5.5L11 12"/><path d="M5 21l6.5-2-3-3-5 1.5z"/><path d="M3 21l4-1"/></svg></span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
+      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
       <div id="opts-menu" class="panel-menu" hidden>
         <!-- The gateway's own settings: agents, models, idle reclaim, scope. A page rather than a
              chat command, because the rows need the width a message never had. -->
