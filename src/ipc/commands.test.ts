@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { HELP_TOPICS, REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './commands.js';
+import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './commands.js';
 import type { IpcAction } from './protocol.js';
 
 /**
@@ -219,6 +219,43 @@ describe('sessions <action> [arg]', () => {
     });
   });
 
+  it('builds a read with its filters, and keeps them off every other action', () => {
+    expect(
+      sessions(['read', '#12'], { role: 'tool', turn: 'done', grep: '查询', tail: 20 })
+    ).toMatchObject({
+      kind: 'sessions-read',
+      session: '#12',
+      role: 'tool',
+      turn: 'done',
+      grep: '查询',
+      tail: 20,
+    });
+    // `--since` reads forward from an id, so it goes with the row filters, not the tail ones.
+    expect(sessions(['read', '#12'], { since: 40, grep: '查询' })).toMatchObject({
+      kind: 'sessions-read',
+      session: '#12',
+      since: 40,
+      grep: '查询',
+    });
+    expect(sessions(['read', '12'], { turn: 'last' })).toMatchObject({ kind: 'sessions-read', turn: 'last' });
+    expect(sessions(['read', '12'], { turns: 2 })).toMatchObject({ kind: 'sessions-read', turns: 2 });
+  });
+
+  it('takes a message id exactly as read prints it, with or without #', () => {
+    const parse = (flag: string) => spec('sessions').options.find((o) => o.flags.includes(flag))!.parse!;
+    expect(parse('--since')('#87')).toBe(87);
+    expect(parse('--since')('87')).toBe(87);
+    expect(parse('--around')('#12')).toBe(12);
+    expect(() => parse('--since')('#')).toThrow(/positive message id/);
+  });
+
+  it('keeps --tail out of the shared filter list task-read will reuse', () => {
+    // task-read's own --tail means "the last n lines of each message"; one command cannot carry
+    // two --tail options, so the phase-2 reuse is the builder, not this list.
+    expect(READ_FILTER_OPTIONS.some((o) => o.flags.includes('--tail'))).toBe(false);
+    expect(spec('sessions').options.some((o) => o.flags.includes('--tail'))).toBe(true);
+  });
+
   it('builds a list', () => {
     expect(sessions(['list'], { days: 7, limit: 10 })).toEqual({ kind: 'sessions-list', days: 7, limit: 10 });
     expect(sessions(['ls'])).toEqual({ kind: 'sessions-list', days: undefined, limit: undefined });
@@ -248,6 +285,12 @@ describe('sessions <action> [arg]', () => {
     [['read', '1'], { days: 7 }, /--days does not apply/],
     [['list'], { window: 3 }, /--window does not apply/],
     [['search', 'x'], { channel: 'tg:1' }, /--channel does not apply/],
+    [['list'], { role: 'tool' }, /--role does not apply/],
+    [['read', '1'], { role: 'robot' }, /--role must be user, agent or tool/],
+    [['read', '1'], { turn: 'soon' }, /--turn takes last, done/],
+    [['read', '1'], { turn: 'last', turns: 2 }, /use one/],
+    [['read', '1'], { tail: 5 }, /--tail reads tool lines/],
+    [['read', '1'], { around: 3, role: 'tool' }, /--around reads a window of its own/],
   ])('refuses %j %j', (positionals, opts, why) => {
     expect(() => sessions(positionals, opts)).toThrow(why);
   });

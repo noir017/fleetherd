@@ -238,6 +238,18 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       session: z.string().min(1).max(200),
       around: z.number().int().positive().optional(),
       window: z.number().int().min(0).max(100).optional(),
+      // The read filters. `turn` is a word (`last`/`done`) or a turn number as text, so one field
+      // carries both without a second flag; the store validates which it is and says so.
+      role: z.enum(['user', 'agent', 'tool']).optional(),
+      turn: z.string().min(1).max(20).optional(),
+      // No upper bound here: the store keeps the newest 100 and says so in the answer's note,
+      // which is more useful to an agent than a schema rejection naming a number it cannot see.
+      // The lower bound is stated for the same reason — "too small" alone does not say what to
+      // ask for.
+      turns: z.number().int().positive('must be at least 1 (the store keeps the newest 100)').optional(),
+      since: z.number().int().positive().optional(),
+      grep: z.string().min(1).max(200).optional(),
+      tail: z.number().int().positive().max(500).optional(),
     })
     .strict(),
   z
@@ -333,7 +345,18 @@ export type IpcAction =
   | { kind: 'task-status'; topic: string }
   | { kind: 'task-stop'; topic: string }
   | { kind: 'sessions-search'; query: string; agent?: string; days?: number; limit?: number }
-  | { kind: 'sessions-read'; session: string; around?: number; window?: number }
+  | {
+      kind: 'sessions-read';
+      session: string;
+      around?: number;
+      window?: number;
+      role?: 'user' | 'agent' | 'tool';
+      turn?: string;
+      turns?: number;
+      since?: number;
+      grep?: string;
+      tail?: number;
+    }
   | { kind: 'sessions-list'; days?: number; limit?: number };
 
 // Compile-time alignment: the zod-inferred type must equal the hand-written union;
@@ -579,6 +602,19 @@ export interface SessionListResult {
 /** Response body for sessions-read. */
 export interface SessionReadResult {
   session: SessionRow;
-  messages: Array<{ id: number; at: string; role: string; kind: string; text: string }>;
+  /**
+   * The rows read. `turn`/`outcome`/`agent` are present only on a filtered read: the unfiltered
+   * `sessions read <id>` prints exactly what it always has.
+   */
+  messages: Array<{
+    id: number;
+    at: string;
+    role: string;
+    kind: string;
+    text: string;
+    turn?: number | null;
+    outcome?: string | null;
+    agent?: string;
+  }>;
   note?: string;
 }

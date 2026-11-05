@@ -1429,7 +1429,24 @@ export class Daemon {
           }),
         };
       case 'sessions-read':
-        return this.requireHistory().read(action.session, { around: action.around, window: action.window });
+        return this.requireHistory().read(action.session, {
+          around: action.around,
+          window: action.window,
+          role: action.role,
+          turn: action.turn,
+          turns: action.turns,
+          since: action.since,
+          grep: action.grep,
+          tail: action.tail,
+          // The live context, not the newest turn row: after `/new` the library's newest turn
+          // is still the generation the person discarded, and `--turn done` must not answer
+          // with it. Only conversations.json knows the reset has happened.
+          current: (key) => {
+            const agent = this.store?.boundAgent(key);
+            if (!agent) return undefined;
+            return { agent, generation: this.store?.conversationGeneration(key) ?? 0 };
+          },
+        });
       case 'sessions-list':
         return {
           sessions: this.requireHistory().list({ days: action.days, limit: action.limit }),

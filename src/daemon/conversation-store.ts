@@ -78,6 +78,15 @@ export interface ConversationRecord {
    * harness's own history says the gateway stopped listening. See TurnOutcomes.recoverInterrupted.
    */
   inFlight?: number;
+  /**
+   * How many times this conversation's agent context has been discarded (`/new`, `/cd`). The
+   * history library stamps every turn with it, which is what tells turns on either side of a
+   * reset apart: the harness's own session id does not exist yet when a fresh session's first
+   * turn starts, and a resumed one is only written after the turn is under way.
+   *
+   * Survives a restart (it is in this file), because the turns it labels do.
+   */
+  generation?: number;
 }
 
 export class ConversationStore {
@@ -180,6 +189,32 @@ export class ConversationStore {
   /** The directory this conversation works in, if one was chosen (`/cd`). */
   conversationCwd(key: string): string | undefined {
     return this.map.get(key)?.cwd;
+  }
+
+  /** The generation a turn starting now belongs to (`/new` and `/cd` bump it). */
+  conversationGeneration(key: string): number {
+    return this.map.get(key)?.generation ?? 0;
+  }
+
+  /**
+   * Record the generation of a conversation whose record was just recreated (`/new` clears it).
+   * Takes the agentId for the same reason bind does: without a record there is nowhere to put it.
+   */
+  setGeneration(key: string, agentId: string, generation: number): void {
+    const rec = this.map.get(key) ?? { agent: agentId, agentSessions: {} };
+    if (rec.generation === generation) return;
+    rec.generation = generation;
+    this.map.set(key, rec);
+    this.flush();
+  }
+
+  /** One more agent context discarded here (`/cd`, whose record is kept). Returns the new value. */
+  bumpGeneration(key: string): number {
+    const rec = this.map.get(key);
+    if (!rec) return 0;
+    rec.generation = (rec.generation ?? 0) + 1;
+    this.flush();
+    return rec.generation;
   }
 
   /**
@@ -319,6 +354,7 @@ function toRecord(v: unknown): ConversationRecord | null {
     lane?: unknown;
     lastAt?: unknown;
     inFlight?: unknown;
+    generation?: unknown;
   };
   if (typeof o.agent !== 'string' || !o.agent) return null;
   const sessions: Record<string, string> = {};
@@ -339,6 +375,7 @@ function toRecord(v: unknown): ConversationRecord | null {
     ...(lane ? { lane } : {}),
     ...(typeof o.lastAt === 'number' && Number.isFinite(o.lastAt) ? { lastAt: o.lastAt } : {}),
     ...(typeof o.inFlight === 'number' && Number.isFinite(o.inFlight) ? { inFlight: o.inFlight } : {}),
+    ...generationField(o.generation),
   };
 }
 
@@ -351,6 +388,11 @@ function toRecord(v: unknown): ConversationRecord | null {
 function titleFields(title: unknown, pinned: unknown): Pick<ConversationRecord, 'title' | 'titlePinned'> {
   if (typeof title !== 'string' || !title) return {};
   return pinned === true ? { title, titlePinned: true } : { title };
+}
+
+/** The generation counter, when it is a sane one; anything else is left absent (0 on read). */
+function generationField(v: unknown): Pick<ConversationRecord, 'generation'> {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 ? { generation: v } : {};
 }
 
 function toLane(v: unknown): ConversationRecord['lane'] {

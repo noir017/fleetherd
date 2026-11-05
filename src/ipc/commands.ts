@@ -126,7 +126,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     notes: [
       'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through talkcode, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
       'search "<words>" returns the conversation id, the message id, the title, the agent and a matching excerpt. Quote a multi-word query — it is one argument. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations.',
-      'read <session> prints the whole conversation (up to 500 messages); read <session> --around <message> --window <n> shows n messages on each side of a hit. list [--days <n>] is the recent conversations.',
+      'read <session> prints the whole conversation (up to 500 messages); --around <message> --window <n> shows n messages on each side of a hit. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail), --grep or --tail selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. list [--days <n>] is the recent conversations.',
       'Pass the ids exactly as printed: session and message are numbers, with or without the leading #.',
     ],
   },
@@ -272,6 +272,20 @@ const intArg = (label: string) => (value: string): number => {
 };
 
 /**
+ * A message id, as `sessions read` prints it (`#87`) or bare (`87`). The `#` is display, and the
+ * docs quote ids with it; a parser that only took the bare number made the documented example
+ * fail. Used by `--around` and `--since`, which both take an id a reader copies from output.
+ */
+const idArg = (label: string) => {
+  const parse = intArg(label);
+  return (value: string): number => {
+    const n = parse(value.trim().replace(/^#/, ''));
+    if (n < 1) throw new Error(`${label} must be a positive message id, got ${JSON.stringify(value)}`);
+    return n;
+  };
+};
+
+/**
  * The task commands name the conversation they act on as a positional, and a `--channel` beside it
  * would be a second, contradicting answer to the same question — refused, not ignored.
  */
@@ -281,6 +295,124 @@ const refuseChannel = (command: string, opts: Record<string, unknown>): void => 
 
 /** Commander collect parser: accumulate a repeatable option (e.g. -o) into an array. */
 const collect = (value: string, previous: string[] = []): string[] => [...previous, value];
+
+/**
+ * The READ FILTERS, defined once for every command that will select rows from the library:
+ * `sessions read` uses them now, and `task-read` will use the same `readFilters()` builder when it
+ * moves onto the library. A second copy would drift in wording first and in meaning next, and both
+ * are consumed by agents that cannot see the source.
+ *
+ * `--tail` is deliberately NOT in this list. `task-read` already has a `--tail` meaning "the last
+ * n lines of each message", which is about a row's text, not about choosing rows — one command
+ * cannot carry both under one name. When task-read adopts these filters (phase 2) its existing
+ * `--tail` has to be renamed; until then only `sessions read` offers this one.
+ */
+export const READ_FILTER_OPTIONS: ReverseOption[] = [
+  { flags: '--role <role>', description: 'read: only user | agent | tool rows' },
+  {
+    flags: '--turn <which>',
+    description:
+      'read: last | done (the newest turn of this agent and generation that ended normally) | a turn number (1 = the first)',
+  },
+  {
+    flags: '--turns <n>',
+    description: 'read: the last n turns (at most 100; the note says when it cut)',
+    parse: intArg('--turns'),
+  },
+  {
+    flags: '--since <message>',
+    description: 'read: rows after this message id, oldest first (from an earlier read)',
+    parse: idArg('--since'),
+  },
+  { flags: '--grep <text>', description: 'read: only rows of this conversation containing this text' },
+];
+
+/** `sessions read --tail`, which `task-read`'s differently-meant `--tail` keeps out of the list above. */
+const SESSIONS_READ_TAIL: ReverseOption = {
+  flags: '--tail <n>',
+  description: 'read: with --role tool, the newest n tool lines (what it is doing, not the whole log)',
+  parse: intArg('--tail'),
+};
+
+type ReadFilterFields = Pick<
+  Extract<IpcAction, { kind: 'sessions-read' }>,
+  'role' | 'turn' | 'turns' | 'since' | 'grep' | 'tail'
+>;
+
+/**
+ * Validate the read filters and turn them into the action's fields. Shared by every command that
+ * reads the library, so the rules are one place: a turn is `last`, `done` or a positive number;
+ * `--tail` is meaningless without `--role tool` (the only list it shortens), and it is refused
+ * rather than ignored, because ignoring it would return 500 rows after someone asked for 20.
+ */
+export function readFilters(opts: Record<string, unknown>): ReadFilterFields {
+  const role = readRole(str(opts.role));
+  const turn = readTurn(str(opts.turn));
+  const turns = typeof opts.turns === 'number' ? opts.turns : undefined;
+  if (turns !== undefined) assertTurnCount(turns);
+  if (turn !== undefined && turns !== undefined) {
+    throw new Error('--turn and --turns select turns in different ways; use one');
+  }
+  const tail = typeof opts.tail === 'number' ? opts.tail : undefined;
+  if (tail !== undefined && role !== 'tool') {
+    throw new Error('--tail reads tool lines; use it with --role tool');
+  }
+  const since = typeof opts.since === 'number' ? opts.since : undefined;
+  assertSinceAlone(since, turn, turns, tail);
+  const grep = str(opts.grep);
+  if (grep !== undefined && !grep.trim()) throw new Error('--grep needs a word to look for');
+  return {
+    role,
+    turn,
+    turns,
+    since,
+    grep,
+    tail,
+  };
+}
+
+/** `--role`, as the union the action carries. */
+function readRole(role: string | undefined): ReadFilterFields['role'] {
+  if (role !== undefined && role !== 'user' && role !== 'agent' && role !== 'tool') {
+    throw new Error(`--role must be user, agent or tool, got ${JSON.stringify(role)}`);
+  }
+  return role as ReadFilterFields['role'];
+}
+
+/** `--turn`: a word or a 1-based number, still as text (the store says which it is). */
+function readTurn(turn: string | undefined): string | undefined {
+  if (turn !== undefined && turn !== 'last' && turn !== 'done' && !/^[1-9]\d*$/.test(turn)) {
+    throw new Error(`--turn takes last, done, or a turn number (1 = the first), got ${JSON.stringify(turn)}`);
+  }
+  return turn;
+}
+
+/** The turn count starts at 1; the store's 100-turn cap is a note, not a rejection. */
+function assertTurnCount(turns: number): void {
+  if (turns < 1) throw new Error(`--turns must be at least 1, got ${turns}`);
+}
+
+/**
+ * `--since` resumes forward from a message id; the turn filters and `--tail` keep the newest
+ * rows. Refused rather than silently picking one of the two meanings for the answer.
+ */
+function assertSinceAlone(
+  since: number | undefined,
+  turn: string | undefined,
+  turns: number | undefined,
+  tail: number | undefined
+): void {
+  if (since !== undefined && (turn !== undefined || turns !== undefined || tail !== undefined)) {
+    throw new Error(
+      '--since resumes forward from a message id; it cannot be combined with --turn, --turns or --tail, which read from the newest end'
+    );
+  }
+}
+
+/** Whether any read filter was given, `--around` excluded (it is a window, not a filter). */
+function anyReadFilter(f: ReadFilterFields): boolean {
+  return Object.values(f).some((v) => v !== undefined);
+}
 
 /**
  * fetch-messages column catalog. DEFAULT_FETCH_FIELDS is the minimal schema (AXI §2): just
@@ -400,7 +532,7 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
   }
   const num = (key: string): number | undefined => (typeof opts[key] === 'number' ? (opts[key] as number) : undefined);
   const refuse = (allowed: readonly string[]): void => {
-    const all = ['agent', 'days', 'limit', 'around', 'window'];
+    const all = ['agent', 'days', 'limit', 'around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail'];
     const stray = all.find((k) => !allowed.includes(k) && opts[k] !== undefined);
     if (stray) throw new Error(`--${stray} does not apply to \`sessions ${action}\``);
   };
@@ -420,13 +552,19 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
       };
     }
     case 'read': {
-      refuse(['around', 'window']);
+      refuse(['around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail']);
       if (args.length > 2) throw new Error('sessions read takes one conversation id');
+      const filters = readFilters(opts);
+      const around = num('around');
+      if (around !== undefined && anyReadFilter(filters)) {
+        throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail');
+      }
       return {
         kind: 'sessions-read',
         session: pos(args, 1, 'session'),
-        around: num('around'),
+        around,
         window: num('window'),
+        ...filters,
       };
     }
     case 'list':
@@ -664,13 +802,15 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'sessions <action> [arg]',
     topic: 'sessions',
     description:
-      'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] | read <session> [--around <message>] [--window] | list [--days]',
+      'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] | read <session> [--around <message>] [--window] | read <session> [filters] | list [--days]',
     options: [
       { flags: '-a, --agent <id>', description: 'search: only conversations answered by this agent' },
       { flags: '-d, --days <n>', description: 'search/list: only the last n days', parse: intArg('--days') },
       { flags: '-l, --limit <n>', description: 'search/list: how many rows (search default 10, list 30)', parse: intArg('--limit') },
-      { flags: '--around <message>', description: 'read: a message id from a search hit, to read around', parse: intArg('--around') },
+      { flags: '--around <message>', description: 'read: a message id from a search hit, to read around', parse: idArg('--around') },
       { flags: '--window <n>', description: 'read: messages on each side of --around (default 10)', parse: intArg('--window') },
+      ...READ_FILTER_OPTIONS,
+      SESSIONS_READ_TAIL,
     ],
     build: buildSessions,
   },

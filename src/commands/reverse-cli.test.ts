@@ -64,5 +64,17 @@ describe('sessions on the command line', () => {
     expect(() => parse(['sessions', 'read'])).toThrow(/missing required argument <session>/);
     expect(() => parse(['sessions', 'frobnicate'])).toThrow(/unknown sessions action/);
     expect(() => parse(['sessions', 'list', '--around', '3'])).toThrow(/--around does not apply/);
+    // The range is named, not just "too small".
+    expect(() => parse(['sessions', 'read', '#12', '--turns', '0'])).toThrow(/--turns must be at least 1/);
+    // One cursor cannot serve a forward resume and a tail read.
+    expect(() => parse(['sessions', 'read', '#12', '--since', '5', '--turn', 'done'])).toThrow(
+      /cannot be combined/
+    );
+    expect(() => parse(['sessions', 'read', '#12', '--since', '5', '--turns', '2'])).toThrow(
+      /cannot be combined/
+    );
+    expect(() => parse(['sessions', 'read', '#12', '--since', '5', '--role', 'tool', '--tail', '2'])).toThrow(
+      /cannot be combined/
+    );
   });
 });

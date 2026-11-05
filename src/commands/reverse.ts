@@ -123,7 +123,7 @@ export async function runReverse(rawAction: IpcAction): Promise<void> {
 export function renderResult(action: IpcAction, data: unknown): ReverseOutput {
   // Commands whose answer depends only on the data, not on the options that asked for it.
   const tabular = DATA_PRINTERS[action.kind];
-  if (tabular) return { stdout: tabular(data) };
+  if (tabular) return { stdout: tabular(data, action) };
   switch (action.kind) {
     case 'skills':
       return { stdout: renderSkills(action, data) };
@@ -370,12 +370,34 @@ function renderSessionSearch(data: unknown): string {
   });
 }
 
-/** sessions read: the conversation header, then its messages oldest first. */
-function renderSessionRead(data: unknown): string {
+type SessionsReadAction = Extract<IpcAction, { kind: 'sessions-read' }>;
+
+/**
+ * sessions read: the conversation header, then its messages oldest first.
+ *
+ * An unfiltered read prints exactly the fields it always has. A filtered one adds the turn each
+ * row belongs to, that turn's outcome and the agent — and says "?" / "unknown" for a row written
+ * before turns existed, rather than inventing a number.
+ */
+function renderSessionRead(action: SessionsReadAction, data: unknown): string {
   const result = data as SessionReadResult | undefined;
   if (!result) return toon({ ok: true });
   if (result.messages.length === 0) {
-    return toon({ session: { ...result.session, id: `#${result.session.id}` }, count: 0, note: 'this conversation has no messages' });
+    // The store's note is the answer when it has one — `--turn done` right after `/new` is
+    // empty because nothing has finished yet. Without one, say which kind of empty this is:
+    // a conversation with no messages, or a filter that matched none of them.
+    const filtered =
+      action.role !== undefined ||
+      action.turn !== undefined ||
+      action.turns !== undefined ||
+      action.since !== undefined ||
+      action.grep !== undefined ||
+      action.tail !== undefined;
+    return toon({
+      session: { ...result.session, id: `#${result.session.id}` },
+      count: 0,
+      note: result.note ?? (filtered ? 'no rows match this filter' : 'this conversation has no messages'),
+    });
   }
   return toon({
     session: {
@@ -390,7 +412,20 @@ function renderSessionRead(data: unknown): string {
       lastAt: result.session.lastAt,
     },
     count: result.messages.length,
-    messages: result.messages.map((m) => ({ ...m, id: `#${m.id}` })),
+    messages: result.messages.map((m) =>
+      m.turn === undefined
+        ? { ...m, id: `#${m.id}` }
+        : {
+            id: `#${m.id}`,
+            at: m.at,
+            role: m.role,
+            turn: m.turn ?? '?',
+            outcome: m.outcome ?? 'unknown',
+            agent: m.agent ?? '',
+            kind: m.kind,
+            text: m.text,
+          }
+    ),
     ...(result.note ? { note: result.note } : {}),
   });
 }
@@ -443,7 +478,7 @@ function renderSkillFile(data: unknown): string {
   ].join('\n');
 }
 
-const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown) => string>> = {
+const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown, action: IpcAction) => string>> = {
   'voice-log': renderVoiceLog,
   'list-channels': renderChannels,
   'schedule-add': renderScheduleTask,
@@ -462,7 +497,9 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown) => string
   'task-status': renderTaskStatus,
   'task-stop': renderTaskAction,
   'sessions-search': renderSessionSearch,
-  'sessions-read': renderSessionRead,
+  // Needs the action, not just the data: an empty answer says "no messages" for a whole
+  // conversation and "no rows match" for a filtered read, and only the request knows which.
+  'sessions-read': (data, action) => renderSessionRead(action as SessionsReadAction, data),
   'sessions-list': renderSessionList,
 };
 

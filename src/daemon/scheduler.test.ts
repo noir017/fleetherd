@@ -199,7 +199,9 @@ describe('Scheduler', () => {
     expect(e.exec.notified).toEqual(['b2c3d4:expired']);
     expect(e.runs.filter((r) => r.id === 'b2c3d4')).toHaveLength(24);
     s.stop();
-  });
+    // The fake clock ticks a minute at a time through 25 simulated hours, so this runs ~1500
+    // timers: 5s (the default) is a machine-speed test, not a test of the scheduler.
+  }, 30_000);
 
   it('pausing stops runs; resuming does not replay what was skipped', async () => {
     const clock = makeClock();

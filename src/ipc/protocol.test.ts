@@ -45,6 +45,8 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'sessions-search', query: 'git status', agent: 'cc', days: 30, limit: 20 },
     { kind: 'sessions-read', session: '#12' },
     { kind: 'sessions-read', session: '12', around: 87, window: 10 },
+    { kind: 'sessions-read', session: '12', role: 'tool', turn: 'last', since: 40, grep: '查询', tail: 20 },
+    { kind: 'sessions-read', session: '12', turns: 3 },
     { kind: 'sessions-list' },
     { kind: 'sessions-list', days: 7, limit: 30 },
     { kind: 'skills', action: 'list' },
@@ -100,11 +102,20 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['sessions-search zero limit', { token: TOKEN, action: { kind: 'sessions-search', query: 'x', limit: 0 } }],
     ['sessions-read missing session', { token: TOKEN, action: { kind: 'sessions-read' } }],
     ['sessions-read zero window', { token: TOKEN, action: { kind: 'sessions-read', session: '1', window: -1 } }],
+    ['sessions-read unknown role', { token: TOKEN, action: { kind: 'sessions-read', session: '1', role: 'robot' } }],
+    ['sessions-read zero turns', { token: TOKEN, action: { kind: 'sessions-read', session: '1', turns: 0 } }],
+    ['sessions-read zero tail', { token: TOKEN, action: { kind: 'sessions-read', session: '1', tail: 0 } }],
     ['sessions-list extra field', { token: TOKEN, action: { kind: 'sessions-list', query: 'x' } }],
   ];
   it.each(bad)('rejects %s', (_label, raw) => {
     const r = parseIpcRequest(raw);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(typeof r.error).toBe('string');
+  });
+
+  it('says which range --turns accepts, not just that 0 is wrong', () => {
+    const r = parseIpcRequest({ token: TOKEN, action: { kind: 'sessions-read', session: '1', turns: 0 } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/action\.turns must be at least 1/);
   });
 });

@@ -25,8 +25,8 @@ import { ingestAttachments, type AttachmentInput } from '../core/attachment-inge
 import { createAttachmentIngestDeps, remoteAttachmentSave } from './attachment-io.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { HistoryEvent } from '../history/record.js';
-import { toolLine } from '../history/record.js';
-import type { HistoryKind } from '../history/store.js';
+import { kindForTrigger, toolLine } from '../history/record.js';
+import type { HistoryKind, HistoryTurnEnd, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
 
 /**
  * The sender a scheduled run's message carries (ConversationRegistry.runScheduledPrompt). Exported
@@ -78,19 +78,38 @@ export function jobInCommand(text: string): string | undefined {
 }
 
 /**
- * How a turn is filed in the conversation library. A scheduled run and a sub-agent's work are
- * the same machinery here, and are told apart by the sender the daemon put on their messages.
- * A background burst is a render kind, not a batch — see followUpSink.
+ * What started a turn, from the sender the daemon put on its batch. The senders are the ones
+ * the gateway actually uses (SCHEDULED_SENDER and the two delegation senders above, plus the
+ * automatic continue) — a batch that is not all one of them is a person's, which is also what a
+ * mixed batch has to be: someone typed into a conversation, and whoever else wrote there wrote
+ * into the same turn.
+ *
+ * A background burst is not a batch at all; it is reported as `background` by the follow-up
+ * sink, which opens a turn of its own when it starts rendering.
  */
-function historyKindOf(batch: InboundMessage[]): HistoryKind {
-  if (batch.length > 0 && batch.every((m) => m.conversation.user === SCHEDULED_SENDER)) return 'schedule';
-  if (
-    batch.length > 0 &&
-    batch.every((m) => m.conversation.user === DELEGATE_SENDER || m.conversation.user === UPDATE_SENDER)
-  ) {
-    return 'subagent';
+export function historyTriggerOf(batch: InboundMessage[]): HistoryTrigger {
+  const user = batch[0]?.conversation.user;
+  if (user !== undefined && batch.every((m) => m.conversation.user === user)) {
+    switch (user) {
+      case SCHEDULED_SENDER:
+        return 'schedule';
+      case CONTINUE_SENDER:
+        return 'continue';
+      case DELEGATE_SENDER:
+        return 'delegate';
+      case UPDATE_SENDER:
+        return 'update';
+      default:
+        break;
+    }
   }
-  return 'normal';
+  // The two delegation senders are the one pair the merger can put in the same batch (a task and
+  // the gateway's update card arriving together). Both are subagent work; name the batch after
+  // the task, which is the half that carries what someone asked for.
+  if (batch.length > 0 && batch.every((m) => m.conversation.user === DELEGATE_SENDER || m.conversation.user === UPDATE_SENDER)) {
+    return batch.some((m) => m.conversation.user === DELEGATE_SENDER) ? 'delegate' : 'update';
+  }
+  return 'person';
 }
 
 /**
@@ -272,6 +291,19 @@ export interface TurnRunnerDeps {
    */
   recordTurnEnd?(id: ConversationId, end: TurnEnd): void;
   /**
+   * Open the library's row for a turn, returning its id, and close it when the turn ends.
+   *
+   * Separate from recordTurnStart/recordTurnEnd on purpose: those two are about the live
+   * conversation (activity, `hooks.turnFailed`, the in-flight marker), while these are the
+   * permanent record. A background burst has a turn row of its own but must not be reported as a
+   * conversation turn, and a turn can be recorded even if the live bookkeeping is unavailable.
+   *
+   * `endHistoryTurn` is called exactly once for every id returned, on every way out — this is
+   * what keeps the turns table from filling with rows that never end.
+   */
+  beginHistoryTurn?(id: ConversationId, start: HistoryTurnStart): number | undefined;
+  endHistoryTurn?(turnId: number | undefined, end: HistoryTurnEnd): void;
+  /**
    * File one fact of this turn in the conversation library (`src/history/`): the prompt, a tool
    * line, the reply.
    *
@@ -294,6 +326,28 @@ export type TurnEnd =
   | { kind: 'done'; text: string }
   | { kind: 'failed'; error: unknown }
   | { kind: 'stopped' };
+
+/**
+ * How a finished turn is filed. A stopped turn is still a turn that ran — its partial reply is
+ * in the library — so it gets `stopped`, not a silent absence. The failure detail is the message
+ * the chat was told, capped: the database keeps a reason, not a stack trace.
+ */
+function historyEndOf(end: TurnEnd, at: number): HistoryTurnEnd {
+  switch (end.kind) {
+    case 'done':
+      return { outcome: 'done', at };
+    case 'stopped':
+      return { outcome: 'stopped', at };
+    case 'failed': {
+      const reason = end.error instanceof Error ? end.error.message : String(end.error);
+      return { outcome: 'failed', at, detail: reason.length > 500 ? `${reason.slice(0, 499)}…` : reason };
+    }
+    default: {
+      const _exhaustive: never = end;
+      throw new Error(`unknown turn end: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+}
 
 /**
  * One rendering context: the buffers and handlers that turn a stream of agent events into IM
@@ -385,8 +439,10 @@ type BurstFacts = Pick<TurnRef, 'model' | 'effort'>;
 interface RunningTurn {
   agent: AgentSession;
   platformId: string;
-  /** What the library files this turn's messages under (see historyKindOf). */
+  /** What the library files this turn's messages under (see kindForTrigger). */
   kind: HistoryKind;
+  /** The library's row for this turn; a mid-turn message merged into it belongs to it. */
+  turnId?: number;
   /**
    * Where messages that belong to this turn come from: the lane the batch was sent in, and the lane
    * the reply is going to. The two differ under autoThread, which opens a thread for the reply and
@@ -529,11 +585,10 @@ export class TurnRunner {
     // stopped there, because a burst of background output may be holding it too (see typingHolds).
     const releaseTyping = this.holdTyping(conversationId, platform, address);
 
-    // Everything that turns agent events into messages in this lane. Shared with the follow-up
-    // path (see followUpSink) so out-of-turn output renders exactly like in-turn output.
-    const historyKind = historyKindOf(batch);
-    const render = this.beginRender(conversationId, platform, address, historyKind);
-    const ref = render.ref;
+    // What this batch was: one trigger for the turn, and the message kind the library files its
+    // rows under. The two are the same fact at different resolutions (see kindForTrigger).
+    const trigger = historyTriggerOf(batch);
+    const historyKind = kindForTrigger(trigger);
 
     const agent = this.agents.getOrCreate(conversationId, agentId);
     // Re-installed every turn rather than once per session: the session object outlives its child
@@ -541,6 +596,19 @@ export class TurnRunner {
     // child would leave background output with nowhere to go.
     agent.setFollowUpSink?.(this.followUpSink(conversationId));
     const { prompt, images } = await this.buildPrompt(batch, platform, agentId);
+    // Open the turn only now, immediately before the first row that names it: everything above
+    // can throw (spawning an agent, building a prompt), and a turn opened before it would be left
+    // running until the next start. A failure HERE leaves turnId undefined, and every later row
+    // is written exactly as it was before turns existed.
+    const turnId = this.beginHistoryTurn(conversationId, {
+      agent: agentId,
+      trigger,
+      at: this.clock.now(),
+    });
+    // Everything that turns agent events into messages in this lane. Shared with the follow-up
+    // path (see followUpSink) so out-of-turn output renders exactly like in-turn output.
+    const render = this.beginRender(conversationId, platform, address, historyKind, turnId);
+    const ref = render.ref;
     // The library keeps the prompt WITHOUT the inlined attachment text — the file names, not
     // what was in the files. `mergePrompt` is the same text minus the attachment block.
     this.recordHistory(conversationId, {
@@ -549,11 +617,18 @@ export class TurnRunner {
       attachments: attachmentNames(batch),
       kind: historyKind,
       at: this.clock.now(),
+      turn: turnId,
     });
     console.log(`[turn] ${conversationId} starting turn (${batch.length} message(s))`);
     // Open to messages sent while it runs (see steer) from here until it ends. Keyed by conversation,
     // and removed only if it is still THIS turn, so a turn can never unregister its successor.
-    const turn: RunningTurn = { agent, platformId, kind: historyKind, lanes: [addressOf(last.conversation), address] };
+    const turn: RunningTurn = {
+      agent,
+      platformId,
+      kind: historyKind,
+      turnId,
+      lanes: [addressOf(last.conversation), address],
+    };
     this.running.set(conversationId, turn);
     this.reportStart(conversationId);
     // Exactly one end per start, whichever way out the turn takes (see TurnRunnerDeps.recordTurnEnd).
@@ -624,6 +699,28 @@ export class TurnRunner {
       // After typing is released, so a platform listing what needs a person sees the turn's end and
       // its outcome together rather than "failed" over a dot that still says running.
       this.reportEnd(conversationId, end);
+      // The permanent record, in every way out — including the failure path that rethrows above,
+      // which is why this is in the finally rather than after the try.
+      this.endHistoryTurn(turnId, historyEndOf(end, this.clock.now()));
+    }
+  }
+
+  /** beginHistoryTurn, never allowed to break the turn it describes. */
+  private beginHistoryTurn(conversationId: ConversationId, start: HistoryTurnStart): number | undefined {
+    try {
+      return this.deps.beginHistoryTurn?.(conversationId, start);
+    } catch (e) {
+      console.error('[history] could not open a turn:', e instanceof Error ? e.message : e);
+      return undefined;
+    }
+  }
+
+  /** endHistoryTurn, likewise. */
+  private endHistoryTurn(turnId: number | undefined, end: HistoryTurnEnd): void {
+    try {
+      this.deps.endHistoryTurn?.(turnId, end);
+    } catch (e) {
+      console.error('[history] could not close a turn:', e instanceof Error ? e.message : e);
     }
   }
 
@@ -689,6 +786,12 @@ export class TurnRunner {
     const outcome = await turn.agent.steer({ prompt, ...(images.length > 0 ? { images } : {}) });
     // Recorded only when the harness really took it. A `refused` message stays queued and runs as
     // the next turn, which records it then — writing it here too would put it in the library twice.
+    //
+    // `joined` belongs to the running turn: the agent is still working on the same answer.
+    // `detached` does not: the harness had already finished the turn and started one of its own
+    // (see SteerOutcome), whose output reaches the gateway as a background burst. Filing the
+    // prompt under the old turn would leave that turn holding a question it never answered, and
+    // `--turn done` would then offer it as a finished turn.
     if (outcome !== 'refused') {
       this.recordHistory(conversationId, {
         type: 'prompt',
@@ -696,6 +799,7 @@ export class TurnRunner {
         attachments: attachmentNames(batch),
         kind: turn.kind,
         at: this.clock.now(),
+        turn: outcome === 'joined' ? turn.turnId : undefined,
       });
     }
     console.log(`[turn] ${conversationId} ${batch.length} message(s) sent mid-turn: ${outcome}`);
@@ -734,7 +838,9 @@ export class TurnRunner {
     platform: PlatformAdapter,
     address: ConversationAddress,
     /** How this render is filed in the conversation library. */
-    historyKind: HistoryKind
+    historyKind: HistoryKind,
+    /** The library turn every row of this render belongs to (a background burst has its own). */
+    turnId: number | undefined
   ): AgentStreamHandlers {
     return {
       onText: (delta) => {
@@ -752,6 +858,7 @@ export class TurnRunner {
           title: toolLine(evt.name, evt.inputPreview, evt.agent),
           kind: historyKind,
           at: this.clock.now(),
+          turn: turnId,
         });
         rollSegment(ref);
         // Before a tool: finish the current text as its own bubble (no footer: not the last segment), then
@@ -862,7 +969,9 @@ export class TurnRunner {
     platform: PlatformAdapter,
     address: ConversationAddress,
     /** How this render's text and tool calls are filed in the conversation library. */
-    historyKind: HistoryKind
+    historyKind: HistoryKind,
+    /** The library turn this render's rows belong to; undefined when there is no library turn. */
+    turnId: number | undefined
   ): Render {
     // StreamBuffer factory closure: sink bound to this address, callable repeatedly to rotate a
     // fresh buffer per segment — trailing text below a tool bubble goes to a new message, not editing the prior one.
@@ -942,7 +1051,7 @@ export class TurnRunner {
     return {
       ref,
       enqueue,
-      handlers: this.buildStreamHandlers(conversationId, ref, makeStream, tools, enqueue, platform, address, historyKind),
+      handlers: this.buildStreamHandlers(conversationId, ref, makeStream, tools, enqueue, platform, address, historyKind, turnId),
       abort: () => tools.abort(),
       finalize: async (footer: string) => {
         await effects; // wait for all queued side effects to land
@@ -960,6 +1069,7 @@ export class TurnRunner {
           text: ref.replyText.trim(),
           kind: historyKind,
           at: this.clock.now(),
+          turn: turnId,
         });
         // Then STOP WAITING for the tool bubbles — bounded, because a chat the platform has
         // paused for minutes must not hold the turn (and its ✅) open for the same minutes.
@@ -997,6 +1107,14 @@ export class TurnRunner {
     let releaseTyping: (() => Promise<void>) | undefined;
     /** What this burst was told about the session before it had a message to put it on. */
     let facts: BurstFacts = {};
+    /**
+     * The library's turn for this burst. Background output is not a conversation turn — nothing
+     * asked for it and it may run long after its turn ended — so it gets a turn row of its own,
+     * opened when the burst starts rendering and closed when the runtime seals it. Its rows
+     * carry `kind: background` and this id, which is what makes "what did it say after the
+     * answer" answerable without mixing it into the turn that asked.
+     */
+    let burstTurn: number | undefined;
 
     const open = (): Render | undefined => {
       if (tried) return render;
@@ -1013,7 +1131,12 @@ export class TurnRunner {
         console.warn(`[follow-up] ${conversationId}: no adapter for platform "${target.platformId}"; dropping`);
         return undefined;
       }
-      render = this.beginRender(conversationId, platform, target.address, 'background');
+      burstTurn = this.beginHistoryTurn(conversationId, {
+        agent: this.deps.agentIdOf(conversationId),
+        trigger: 'background',
+        at: this.clock.now(),
+      });
+      render = this.beginRender(conversationId, platform, target.address, 'background', burstTurn);
       // The runtime reports the model and effort when the burst begins, which is before its first
       // text — so before this message existed to record them on.
       if (facts.model) render.ref.model = facts.model;
@@ -1042,21 +1165,31 @@ export class TurnRunner {
       handlers: () => {
         // A backstop, not a path: the runtime closes every burst it opens. But a hold that
         // outlived its burst would mark the conversation running for the life of the process,
-        // so a new burst starting over an unclosed one lets go of it.
+        // so a new burst starting over an unclosed one lets go of it. Its turn is closed here
+        // for the same reason — a row left running would be read as a turn still going.
         void letGo(releaseTyping);
         releaseTyping = undefined;
         render = undefined;
+        if (burstTurn !== undefined) {
+          this.endHistoryTurn(burstTurn, { outcome: 'stopped', at: this.clock.now() });
+          burstTurn = undefined;
+        }
         tried = false;
         facts = {};
         return this.buildFollowUpHandlers(conversationId, open, () => render, facts);
       },
-      close: () => {
+      close: (reason = 'done') => {
         const done = render;
         const release = releaseTyping;
+        const turn = burstTurn;
         render = undefined;
         releaseTyping = undefined;
+        burstTurn = undefined;
         tried = false;
-        if (!done) return;
+        if (!done) {
+          if (turn !== undefined) this.endHistoryTurn(turn, { outcome: 'stopped', at: this.clock.now() });
+          return;
+        }
         // Returned rather than voided: the runtime awaits it before letting a new turn write into
         // the same lane (see FollowUpSink.close). Failures are absorbed — a background report that
         // could not be flushed must not fail the turn that happened to seal it. Typing goes AFTER
@@ -1064,7 +1197,13 @@ export class TurnRunner {
         return done
           .finalize(this.buildFooter(conversationId, done.ref))
           .catch((e) => console.error('[follow-up] failed to finalize:', describeOutboundError(e)))
-          .then(() => letGo(release));
+          .then(() => {
+            // After the flush: the reply row is written by finalize, and a turn must not be
+            // closed before the last row that names it exists. `reason` is the caller's fact —
+            // `/stop`, a new turn, or the child going away — never inferred here.
+            this.endHistoryTurn(turn, { outcome: reason, at: this.clock.now() });
+            return letGo(release);
+          });
       },
     };
   }

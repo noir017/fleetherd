@@ -140,7 +140,10 @@ export interface FollowUpSink {
    * The burst is over — finalize whatever was opened (flush the tail, append the footer).
    *
    * Called when the harness reports a completed result, when a new turn takes over, or when the
-   * burst goes quiet. Idempotent, and a no-op when nothing was ever rendered.
+   * burst goes quiet. `stopped` when it was cut off instead of finishing: `/stop`, a new turn
+   * taking the lane, or the child exiting mid-burst. That is the difference between a turn the
+   * library can call `done` and one it must call `stopped` — the words on screen are the same,
+   * the answer to "did it finish" is not. Idempotent, and a no-op when nothing was ever rendered.
    *
    * Returns a promise so a caller that is about to write into the SAME lane can order itself
    * behind the flush. That is not a nicety: in the default `once` delivery mode the burst's entire
@@ -148,7 +151,7 @@ export interface FollowUpSink {
    * background report printed underneath an answer it has nothing to do with — with its own `⏱`
    * marker orphaned above both.
    */
-  close(): void | Promise<void>;
+  close(reason?: 'done' | 'stopped'): void | Promise<void>;
 }
 
 /** Live context usage from the agent (ACP UsageUpdate: `used` / `size`). */

@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Turns in the conversation library.** `history.db` now keeps one row per turn: the agent that
+  answered it, the conversation's generation (bumped by `/new` and `/cd`, so the two sides of a
+  reset are distinguishable), what started it (`person`, `schedule`, `continue`, `delegate`,
+  `update`, `background`), its span, and how it ended (`done`, `stopped`, `failed`, or `restart`
+  for a turn the gateway never finished). Every prompt, tool line and reply written in a turn
+  carries it — imported transcripts and rows from before turns do not — so "which reply was
+  that, and did it finish" is a fact recorded when it happened rather than reconstructed
+  afterwards. `talkcode sessions read` gains `--role`, `--turn` (last | done | n), `--turns`
+  (at most 100; the note says when it actually cut), `--since` (in write order; its note names
+  the id to continue from; not combinable with `--turn`/`--turns`/`--tail`), `--grep` and
+  `--tail`; a filtered read prints each row's turn, that turn's outcome and its agent. Without a
+  filter the output is exactly what it was. An existing file is migrated in place: old rows keep
+  a NULL turn and read as unknown rather than being guessed into a neighbour.
+  [→](docs/conversation-history.md)
+
 ## [2.33.0] - 2026-11-05
 
 ### Added
