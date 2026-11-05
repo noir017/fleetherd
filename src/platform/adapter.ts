@@ -227,6 +227,79 @@ export interface SkillsPanel {
 }
 
 /**
+ * What one review produced, as the Reviews tab names it.
+ *
+ * `proposed` only ever describes a review recorded before results were kept: its raw answer lists
+ * changes, and whether any landed was never written down. The entry says `inferred` beside it.
+ */
+export type ReviewPanelOutcome = 'changed' | 'preferences' | 'refused' | 'proposed' | 'nothing' | 'failed';
+
+/** One change a review's answer carried, and what became of it. */
+export interface ReviewPanelChange {
+  action: 'create' | 'patch' | 'write-file';
+  name: string;
+  file?: string;
+  /** The reviewer's own sentence about why. */
+  reason?: string;
+  /** Absent on an inferred old review, where the library does not know. */
+  applied?: boolean;
+  /** Why the store refused it. */
+  error?: string;
+  /** The command that undoes it, when it landed and can be undone. */
+  undo?: string;
+}
+
+/** One review, as the tab lists it. */
+export interface ReviewPanelEntry {
+  /** The review session's key — stable across refreshes. */
+  id: string;
+  /** The reviewed conversation's title at review time. */
+  title: string;
+  /** Epoch ms of the review. */
+  at: number;
+  outcome: ReviewPanelOutcome;
+  /** One line for the row: what happened. */
+  summary: string;
+  changes: ReviewPanelChange[];
+  preferences: string[];
+  /** Changes that did not pass the shape check, one line each. */
+  invalid: string[];
+  /** Why the whole review failed. */
+  error?: string;
+  /** The topic to open, when the reviewed conversation is one this instance can show. */
+  topic?: string;
+  /** Read from a raw answer that predates result records — nothing here says what was applied. */
+  inferred?: boolean;
+}
+
+/** Today's reviews, and when the counter starts over (the next UTC midnight). */
+export interface ReviewPanelQuota {
+  used: number;
+  limit: number;
+  /** Epoch ms. The page shows it in the browser's own timezone. */
+  resetsAt: number;
+}
+
+/**
+ * Everything the Reviews tab draws.
+ *
+ * `enabled` is the conversation library being open at all; `running` is `review.agent` naming an
+ * agent that exists. They are separate because old reviews remain worth reading after the reviewer
+ * is turned off, while an empty tab should say which of the two is the reason it is empty.
+ */
+export interface ReviewPanelList {
+  enabled: boolean;
+  running: boolean;
+  reviews: ReviewPanelEntry[];
+  quota?: ReviewPanelQuota;
+}
+
+/** What `useReviewPanel` hands a platform: the list, and nothing to write — a review is not a control. */
+export interface ReviewPanel {
+  list(): ReviewPanelList;
+}
+
+/**
  * Platform capability interface. One layer above Satori so the core classes depend only on
  * capabilities, not concrete platforms; missing capabilities degrade gracefully in the
  * implementation (see capabilities).
@@ -415,6 +488,20 @@ export interface PlatformAdapter {
    * `talkcode skills`, whose output is a message; a page has room for a file list and a history.
    */
   useSkillsPanel?(panel: SkillsPanel): void;
+
+  /**
+   * Hand the platform the gateway's automatic reviews — the sessions `daemon/review.ts` files and
+   * what each one changed, for the web UI's Reviews tab.
+   *
+   * Read-only on purpose. A review is not a control: the writer is the review sweep, held to the
+   * skill store's own validation and history, and nothing a page sends can make one run or undo one.
+   * The page shows what happened and names the `talkcode skills revert` / `archive` command, which
+   * the person runs as they would any other command.
+   *
+   * Optional and web-UI-only for the reason the seams above are: a chat app already gets the one
+   * line a change posts, and has no column to list the quiet reviews that posted nothing.
+   */
+  useReviewPanel?(panel: ReviewPanel): void;
 
   /**
    * Hand the platform a way to end the agent process behind a conversation that is idle — what the

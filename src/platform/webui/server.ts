@@ -334,6 +334,7 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/models', run: modelChoose },
   { method: 'GET', path: '/api/skills', run: skillsList },
   { method: 'POST', path: '/api/skills/op', run: skillsOp },
+  { method: 'GET', path: '/api/reviews', run: reviewsList },
   { method: 'DELETE', path: '/api/topics', run: deleteTopic },
   { method: 'POST', path: '/api/logout', run: logout },
   { method: 'GET', path: '/f/', prefix: true, run: ({ req, res, rest }, ctx) => download(req, res, ctx.room, rest) },
@@ -774,6 +775,17 @@ async function skillsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   if (!parsed) return;
   const result = ctx.room.skillOp(parsed);
   send(req, res, result.ok ? 200 : 400, result);
+}
+
+/**
+ * Every recorded automatic review, plus today's quota, for the panel's Reviews tab.
+ *
+ * A GET and nothing else: a review is written by the sweep through the skill store's own rules,
+ * and the only way to undo one is the `talkcode skills revert` / `archive` command the row names.
+ * There is deliberately no POST beside this route — see `useReviewPanel`.
+ */
+function reviewsList({ req, res }: Req, ctx: Ctx): void {
+  send(req, res, 200, ctx.room.reviews());
 }
 
 async function download(req: IncomingMessage, res: ServerResponse, room: WebRoom, token: string): Promise<void> {

@@ -423,7 +423,17 @@ library as a `review` session, which search and `list` leave out (`history/store
 
 **What the person sees.** One line, and only when something changed: the skills, the `revert`
 command for each (or `archive` for a create), and any preference the reviewer noticed. No change,
-no line — a review that says "nothing to do" every hour is noise, and the log has the preferences.
+no line — a review that says "nothing to do" every hour is noise.
+
+**What the library keeps.** `record()` files the session (prompt + raw answer, or the prompt alone
+when the run failed); `writeResult()` then attaches the result row — each change with `applied`,
+the store's `error` when it refused one, the `revertId` a `revert` names, the preference
+suggestions, the shape-check rejects, and the outcome `classifyReview` derives from them. A failed
+run is filed too, so "why was this conversation never reviewed" is answerable from the web UI
+instead of only from the log. `review-panel.ts` turns those rows into the Reviews tab's entries,
+reads the quota from the same `ReviewStateStore` the sweep writes, and marks an old review (raw
+answer only, no result row) as inferred. `review-result.ts` holds the wording and the
+classification both sides share; the panel is read-only — the undo is the command the row names.
 
 ## Scheduled tasks
 

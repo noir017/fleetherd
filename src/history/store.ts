@@ -153,6 +153,61 @@ export interface HistoryHit {
 }
 
 /**
+ * One skill change an automatic review's answer carried, and what became of it.
+ *
+ * `applied` is deliberately three-state: true (the store took it), false with `error` (the store
+ * refused it, and why), and absent on a review recorded before results were kept — that answer was
+ * never compared with the skill library, and saying either way would be a guess.
+ */
+export interface HistoryReviewChange {
+  action: 'create' | 'patch' | 'write-file';
+  name: string;
+  file?: string;
+  /** The reviewer's own sentence about why. */
+  reason?: string;
+  applied?: boolean;
+  /** Why the store refused it, or why its shape was rejected. */
+  error?: string;
+  /** The `.history/` entry `talkcode skills revert` names, when there is one. */
+  revertId?: string;
+}
+
+/**
+ * What a review produced, as the Reviews tab names it.
+ *
+ * `proposed` exists only for a review recorded before results were kept: the raw answer lists
+ * changes, but whether any was applied was never written down. It is shown as inferred rather than
+ * folded into `changed`, which would claim something the library does not know.
+ */
+export type HistoryReviewOutcome = 'changed' | 'preferences' | 'refused' | 'proposed' | 'nothing' | 'failed';
+
+/** The result row of one review, stored beside its session (table `reviews`). */
+export interface HistoryReviewRecord {
+  /** The conversation that was reviewed — the key `conversations.json` uses. */
+  reviewedKey: string;
+  /** That conversation's title at review time, so a rename does not erase what was reviewed. */
+  reviewedTitle: string;
+  /** Its lane, so the web UI can offer a link back to the topic. */
+  platform: string;
+  channel?: string;
+  thread?: string;
+  outcome: HistoryReviewOutcome;
+  changes: HistoryReviewChange[];
+  preferences: string[];
+  /** Changes the answer carried that did not pass the shape check, one line each. */
+  invalid: string[];
+  /** Why the whole review failed. Empty for every other outcome. */
+  error?: string;
+  at: number;
+}
+
+/** One review session with the result it recorded, when it recorded one. */
+export interface HistoryReviewRow {
+  session: HistorySessionRow;
+  record?: HistoryReviewRecord;
+}
+
+/**
  * One row of a read. The last three fields are present only on a FILTERED read: adding them to
  * the unfiltered one would change what `sessions read` prints for everyone, which this feature
  * deliberately does not do.
@@ -362,6 +417,20 @@ export class HistoryStore {
           at INTEGER NOT NULL,
           session_id INTEGER NOT NULL,
           messages INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS reviews (
+          session_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          reviewed_key TEXT NOT NULL DEFAULT '',
+          reviewed_title TEXT NOT NULL DEFAULT '',
+          platform TEXT NOT NULL DEFAULT '',
+          channel TEXT NOT NULL DEFAULT '',
+          thread TEXT NOT NULL DEFAULT '',
+          outcome TEXT NOT NULL DEFAULT 'nothing',
+          changes TEXT NOT NULL DEFAULT '[]',
+          preferences TEXT NOT NULL DEFAULT '[]',
+          invalid TEXT NOT NULL DEFAULT '[]',
+          error TEXT NOT NULL DEFAULT '',
+          at INTEGER NOT NULL
         );
       `);
       this.migrate();
@@ -1036,8 +1105,92 @@ export class HistoryStore {
     };
   }
 
-  // ── internals ────────────────────────────────────────────────────────────────
+  /**
+   * File one review's result beside its session. A review whose result could not be written is
+   * still a review — the raw answer is already in `messages` — so this is a guarded write like
+   * every other one: a failure is logged and the sweep carries on.
+   */
+  recordReview(sessionId: number | undefined, record: HistoryReviewRecord): void {
+    if (sessionId === undefined) return;
+    this.guard('review result', () => {
+      this.requireDb()
+        .prepare(
+          `INSERT INTO reviews
+             (session_id, reviewed_key, reviewed_title, platform, channel, thread, outcome, changes, preferences, invalid, error, at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(session_id) DO UPDATE SET
+             reviewed_key = excluded.reviewed_key,
+             reviewed_title = excluded.reviewed_title,
+             platform = excluded.platform,
+             channel = excluded.channel,
+             thread = excluded.thread,
+             outcome = excluded.outcome,
+             changes = excluded.changes,
+             preferences = excluded.preferences,
+             invalid = excluded.invalid,
+             error = excluded.error,
+             at = excluded.at`
+        )
+        .run(
+          sessionId,
+          record.reviewedKey,
+          record.reviewedTitle,
+          record.platform,
+          record.channel ?? '',
+          record.thread ?? '',
+          record.outcome,
+          JSON.stringify(record.changes),
+          JSON.stringify(record.preferences),
+          JSON.stringify(record.invalid),
+          record.error ?? '',
+          record.at
+        );
+    });
+  }
 
+  /**
+   * The newest review sessions, each with the result it recorded when it recorded one.
+   *
+   * A review recorded before the `reviews` table existed has no row here: the caller reads its raw
+   * answer (`reviewAnswer`) and says it is inferred. That is why `record` is optional rather than
+   * back-filled — inventing which changes took effect would be a guess wearing a fact's clothes.
+   */
+  reviewSessions(limit = 50): HistoryReviewRow[] {
+    const db = this.requireDb();
+    const rows = db
+      .prepare(
+        `SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS messages,
+                r.session_id AS review_session, r.reviewed_key, r.reviewed_title,
+                r.platform AS review_platform, r.channel AS review_channel, r.thread AS review_thread,
+                r.outcome AS review_outcome, r.changes AS review_changes,
+                r.preferences AS review_preferences, r.invalid AS review_invalid,
+                r.error AS review_error, r.at AS review_at
+         FROM sessions s
+         LEFT JOIN reviews r ON r.session_id = s.id
+         WHERE s.kind = 'review'
+         ORDER BY s.started_at DESC, s.id DESC
+         LIMIT ?`
+      )
+      .all(Math.max(1, Math.min(limit, 200))) as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const session = sessionRow(row);
+      if (row.review_session === null || row.review_session === undefined) return { session };
+      return { session, record: reviewRecordRow(row) };
+    });
+  }
+
+  /**
+   * The last thing the reviewer answered in one review session — the raw output an old review is
+   * inferred from. A failed run has no agent row, so this is `undefined` there.
+   */
+  reviewAnswer(sessionId: number): string | undefined {
+    const row = this.requireDb()
+      .prepare("SELECT text FROM messages WHERE session_id = ? AND role = 'agent' ORDER BY id DESC LIMIT 1")
+      .get(sessionId) as { text: string } | undefined;
+    return row?.text;
+  }
+
+  // ── internals ────────────────────────────────────────────────────────────────
   private requireDb(): Database {
     if (!this.db) {
       throw new Error(`the conversation history database is unavailable${this.failure ? `: ${this.failure}` : ''}`);
@@ -1231,4 +1384,31 @@ function sessionRow(row: Record<string, unknown>): HistorySessionRow {
     lastAt: iso(Number(row.last_at)),
     messages: Number(row.messages ?? 0),
   };
+}
+
+/** One `reviews` row, as the LEFT JOIN above aliases it. Corrupt JSON degrades to an empty list. */
+function reviewRecordRow(row: Record<string, unknown>): HistoryReviewRecord {
+  return {
+    reviewedKey: String(row.reviewed_key ?? ''),
+    reviewedTitle: String(row.reviewed_title ?? ''),
+    platform: String(row.review_platform ?? ''),
+    ...(row.review_channel ? { channel: String(row.review_channel) } : {}),
+    ...(row.review_thread ? { thread: String(row.review_thread) } : {}),
+    outcome: String(row.review_outcome ?? 'nothing') as HistoryReviewOutcome,
+    changes: jsonArray<HistoryReviewChange>(row.review_changes),
+    preferences: jsonArray<string>(row.review_preferences),
+    invalid: jsonArray<string>(row.review_invalid),
+    ...(row.review_error ? { error: String(row.review_error) } : {}),
+    at: Number(row.review_at ?? 0),
+  };
+}
+
+function jsonArray<T>(value: unknown): T[] {
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
 }

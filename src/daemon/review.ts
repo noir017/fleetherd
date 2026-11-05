@@ -5,12 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
-import type { HistoryStore, HistorySessionRow, ReviewWindow } from '../history/store.js';
+import type { HistoryReviewChange, HistoryReviewRecord, HistoryStore, HistorySessionRow, ReviewWindow } from '../history/store.js';
 import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { AGY_COMMAND } from './agent-agy.js';
 import type { ReviewFacts } from './conversation.js';
 import { remoteHosts } from './remote-hosts.js';
 import { buildReviewPrompt, parseReviewOutput, usedSkillNames, type PromptSkill, type PromptSkillText, type ReviewChange } from './review-prompt.js';
+import { classifyReview, recordedChange, undoOf, type AppliedChange } from './review-result.js';
 import type { ReviewStateStore } from './review-state.js';
 import {
   activeSkillNames,
@@ -156,18 +157,15 @@ export interface ReviewDeps {
   log?: (message: string) => void;
 }
 
-/** What one review changed, for the notice line. */
-interface Applied {
-  name: string;
-  action: 'created' | 'patched' | 'file';
-  file?: string;
-  /** The history entry a `revert` names, when there is something to go back to. */
-  revertId?: string;
-}
-
 interface Plan {
   session: HistorySessionRow;
   window: ReviewWindow;
+}
+
+/** What one review's answer produced: what the store took, and what it refused. */
+interface AppliedResult {
+  applied: Array<{ change: ReviewChange; result: AppliedChange }>;
+  refused: Array<{ change: ReviewChange; error: string }>;
 }
 
 export class ReviewService {
@@ -201,6 +199,15 @@ export class ReviewService {
   private reviewer(): AgentDef | undefined {
     const id = this.deps.config.review?.agent;
     return id ? findAgent(this.deps.config, id) : undefined;
+  }
+
+  /**
+   * Whether a reviewer is configured right now. Read live rather than cached, because `/reload`
+   * mutates the config in place and the web UI's Reviews tab must not keep saying "off" after a
+   * reviewer was named (or the reverse).
+   */
+  enabled(): boolean {
+    return this.reviewer() !== undefined;
   }
 
   /**
@@ -266,23 +273,56 @@ export class ReviewService {
     if (!result.ok) {
       this.deps.state.failed(candidate.key, result.error, now);
       this.log(`[review] ${candidate.key}: ${result.error}`);
+      // A failed attempt is a review too. Until this row existed the reason a quiet conversation
+      // was never reviewed lived only in the log, which is not where a person looks; the Reviews
+      // tab is. The session has no answer to file, only the prompt and the failure.
+      const failedId = this.record(plan, prompt, '', reviewer, candidate, now);
+      this.writeResult(failedId, plan, candidate, now, {
+        outcome: 'failed',
+        changes: [],
+        preferences: [],
+        invalid: [],
+        error: result.error,
+      });
       return;
     }
-    this.record(plan, prompt, result.output, reviewer, candidate, now);
+    const id = this.record(plan, prompt, result.output, reviewer, candidate, now);
     const parsed = parseReviewOutput(result.output);
     if (!parsed.ok) {
       // The model answered, just not in the shape this expects. Treat it as a review that found
       // nothing: the conversation is marked seen (retrying it every six hours would spend quota on
       // the same answer), nothing is posted, and the log says what came back. The raw answer is
-      // already in the library, in the review session recorded above.
+      // already in the library, in the review session recorded above — and the result row says the
+      // answer could not be read, so the tab does not present an unreadable answer as "nothing".
       this.deps.state.reviewed(candidate.key, plan.window.lastMessageId, now);
       this.log(`[review] ${candidate.key}: ${parsed.error}; treated as no change; the answer starts: ${result.output.slice(0, 200)}`);
+      this.writeResult(id, plan, candidate, now, {
+        outcome: 'failed',
+        changes: [],
+        preferences: [],
+        invalid: [],
+        error: `the answer could not be read: ${parsed.error}`,
+      });
       return;
     }
     for (const bad of parsed.parsed.invalid) this.log(`[review] ${candidate.key}: dropped ${bad}`);
-    const applied = this.apply(candidate, parsed.parsed.output.changes, reviewer);
+    const outcome = this.apply(candidate, parsed.parsed.output.changes, reviewer);
     this.deps.state.reviewed(candidate.key, plan.window.lastMessageId, now);
-    await this.notify(candidate, applied, parsed.parsed.output.preferences);
+    const changes: HistoryReviewChange[] = [
+      ...outcome.applied.map((a) => recordedChange(a.change, { applied: a.result })),
+      ...outcome.refused.map((r) => recordedChange(r.change, { refused: r.error })),
+    ];
+    this.writeResult(id, plan, candidate, now, {
+      outcome: classifyReview({ changes, preferences: parsed.parsed.output.preferences, invalid: parsed.parsed.invalid }),
+      changes,
+      preferences: parsed.parsed.output.preferences,
+      invalid: parsed.parsed.invalid,
+    });
+    await this.notify(
+      candidate,
+      outcome.applied.map((a) => a.result),
+      parsed.parsed.output.preferences
+    );
   }
 
   /** Build the prompt: rules, catalog, the skills this conversation used, then the conversation. */
@@ -332,8 +372,8 @@ export class ReviewService {
    * version that moved, a file outside the three directories — that change is dropped and logged,
    * and the next one is still tried.
    */
-  private apply(candidate: ReviewCandidate, changes: ReviewChange[], reviewer: AgentDef): Applied[] {
-    const out: Applied[] = [];
+  private apply(candidate: ReviewCandidate, changes: ReviewChange[], reviewer: AgentDef): AppliedResult {
+    const out: AppliedResult = { applied: [], refused: [] };
     const dir = this.deps.skillsDir;
     const source = {
       conversation: candidate.key,
@@ -347,23 +387,42 @@ export class ReviewService {
       try {
         if (change.action === 'create') {
           createSkill({ name: change.name, description: change.description, body: change.body, source, note: change.reason }, dir);
-          out.push({ name: change.name, action: 'created' });
+          out.applied.push({ change, result: { name: change.name, action: 'created' } });
         } else if (change.action === 'patch') {
           patchSkill({ name: change.name, version: change.version, content: change.content, note: change.reason }, dir);
-          out.push({ name: change.name, action: 'patched', revertId: newestHistoryId(change.name, dir) });
+          out.applied.push({
+            change,
+            result: { name: change.name, action: 'patched', revertId: newestHistoryId(change.name, dir) },
+          });
         } else {
           writeSkillFile({ name: change.name, file: change.file, content: change.content, note: change.reason }, dir);
-          out.push({ name: change.name, action: 'file', file: change.file, revertId: newestHistoryId(change.name, dir) });
+          out.applied.push({
+            change,
+            result: { name: change.name, action: 'file', file: change.file, revertId: newestHistoryId(change.name, dir) },
+          });
         }
       } catch (e) {
-        this.log(`[review] dropped ${change.action} "${change.name}": ${e instanceof Error ? e.message : e}`);
+        const error = e instanceof Error ? e.message : String(e);
+        out.refused.push({ change, error });
+        this.log(`[review] dropped ${change.action} "${change.name}": ${error}`);
       }
     }
     return out;
   }
 
-  /** File the review itself in the library, as a `review` session no search returns. */
-  private record(plan: Plan, prompt: string, output: string, reviewer: AgentDef, candidate: ReviewCandidate, now: number): void {
+  /**
+   * File the review itself in the library, as a `review` session no search returns, and answer its
+   * id so the result row can be attached. An empty `output` is a run that never answered: the
+   * session then holds the prompt alone.
+   */
+  private record(
+    plan: Plan,
+    prompt: string,
+    output: string,
+    reviewer: AgentDef,
+    candidate: ReviewCandidate,
+    now: number
+  ): number | undefined {
     try {
       const id = this.deps.history.session({
         key: `review:${candidate.key}:${now}`,
@@ -375,14 +434,36 @@ export class ReviewService {
         at: now,
       });
       this.deps.history.message(id, { ts: now, role: 'user', kind: 'review', text: prompt });
-      this.deps.history.message(id, { ts: now, role: 'agent', kind: 'review', text: output });
+      if (output) this.deps.history.message(id, { ts: now, role: 'agent', kind: 'review', text: output });
+      return id;
     } catch (e) {
       this.log(`[review] could not record the review session: ${e instanceof Error ? e.message : e}`);
+      return undefined;
     }
   }
 
+  /** Attach what the review produced to its session — the Reviews tab reads exactly this. */
+  private writeResult(
+    sessionId: number | undefined,
+    plan: Plan,
+    candidate: ReviewCandidate,
+    now: number,
+    result: Pick<HistoryReviewRecord, 'outcome' | 'changes' | 'preferences' | 'invalid' | 'error'>
+  ): void {
+    if (sessionId === undefined) return;
+    this.deps.history.recordReview(sessionId, {
+      reviewedKey: candidate.key,
+      reviewedTitle: plan.session.title || candidate.key,
+      platform: candidate.lane?.platform ?? '',
+      ...(candidate.lane ? { channel: candidate.lane.channel } : {}),
+      ...(candidate.lane?.thread ? { thread: candidate.lane.thread } : {}),
+      at: now,
+      ...result,
+    });
+  }
+
   /** One line in the conversation, and only when something changed. */
-  private async notify(candidate: ReviewCandidate, applied: Applied[], preferences: string[]): Promise<void> {
+  private async notify(candidate: ReviewCandidate, applied: AppliedChange[], preferences: string[]): Promise<void> {
     if (applied.length === 0) {
       if (preferences.length > 0) {
         this.log(`[review] ${candidate.key}: no skill change; preferences: ${preferences.join('；')}`);
@@ -497,11 +578,12 @@ export function eligible(candidate: ReviewCandidate, reclaimOff: boolean): boole
 }
 
 /** The line posted back: what changed, how to undo it, and any preference the reviewer noticed. */
-export function noticeLine(applied: Applied[], preferences: string[]): string {
+export function noticeLine(applied: AppliedChange[], preferences: string[]): string {
   const parts = applied.map((a) => {
-    if (a.action === 'created') return `新建技能 \`${a.name}\`（撤掉用 \`talkcode skills archive ${a.name}\`）`;
+    const undo = undoOf(a);
+    if (a.action === 'created') return `新建技能 \`${a.name}\`（撤掉用 \`${undo}\`）`;
     const what = a.action === 'patched' ? `更新技能 \`${a.name}\`` : `给 \`${a.name}\` 写了 \`${a.file}\``;
-    return a.revertId ? `${what}（回滚 \`talkcode skills revert ${a.name} ${a.revertId}\`）` : what;
+    return undo ? `${what}（回滚 \`${undo}\`）` : what;
   });
   // One line, as promised: a model's preference is a sentence, and a sentence with a newline in it
   // would turn the notice into a paragraph.

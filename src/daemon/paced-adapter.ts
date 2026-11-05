@@ -65,6 +65,7 @@ const PACING = {
   // which are not chat traffic. Nothing here writes to a platform.
   useSchedulePanel: 'unpaced',
   useSkillsPanel: 'unpaced',
+  useReviewPanel: 'unpaced',
   // Ends an agent process on this machine; nothing is written to the chat.
   useIdleReclaim: 'unpaced',
   // Registers a callback, read while drawing an empty topic; writes nothing to the chat.

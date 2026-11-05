@@ -258,6 +258,105 @@ describe('HistoryStore', () => {
       store.close();
     });
   });
+
+  describe('review results', () => {
+    const at = Date.UTC(2026, 10, 4, 12, 0);
+
+    function review(store: HistoryStore, key = 'review:web#main#abcdef12:1'): number {
+      const id = store.session({ key, platform: 'web', title: '复盘：跨会话查询', kind: 'review', at })!;
+      store.message(id, { ts: at, role: 'user', kind: 'review', text: '读下面的对话记录' });
+      store.message(id, { ts: at, role: 'agent', kind: 'review', text: '{"changes":[]}' });
+      return id;
+    }
+
+    it('keeps what each change became, and reads it back with its lane', () => {
+      const { store } = tempStore();
+      const id = review(store);
+      store.recordReview(id, {
+        reviewedKey: 'web#main#abcdef12',
+        reviewedTitle: '跨会话查询',
+        platform: 'web',
+        channel: 'main',
+        thread: 'abcdef12',
+        outcome: 'changed',
+        changes: [
+          { action: 'patch', name: 'deploy-check', reason: '两次漏了测试', applied: true, revertId: '0001-abc' },
+          { action: 'create', name: 'Bad Name', applied: false, error: 'invalid skill name' },
+        ],
+        preferences: ['回答先给结论'],
+        invalid: ['change #3: name is required'],
+        at,
+      });
+      const [row] = store.reviewSessions();
+      expect(row!.session.kind).toBe('review');
+      expect(row!.record).toMatchObject({
+        reviewedKey: 'web#main#abcdef12',
+        reviewedTitle: '跨会话查询',
+        platform: 'web',
+        channel: 'main',
+        thread: 'abcdef12',
+        outcome: 'changed',
+        preferences: ['回答先给结论'],
+        invalid: ['change #3: name is required'],
+      });
+      expect(row!.record!.changes).toEqual([
+        { action: 'patch', name: 'deploy-check', reason: '两次漏了测试', applied: true, revertId: '0001-abc' },
+        { action: 'create', name: 'Bad Name', applied: false, error: 'invalid skill name' },
+      ]);
+      store.close();
+    });
+
+    it('leaves an old review without a record, and hands back its raw answer', () => {
+      const { store } = tempStore();
+      review(store);
+      const [row] = store.reviewSessions();
+      expect(row!.record).toBeUndefined();
+      expect(store.reviewAnswer(row!.session.id)).toBe('{"changes":[]}');
+      store.close();
+    });
+
+    it('answers no answer for a failed run, which wrote only the prompt', () => {
+      const { store } = tempStore();
+      const id = store.session({ key: 'review:web#main#abcdef12:2', platform: 'web', kind: 'review', at })!;
+      store.message(id, { ts: at, role: 'user', kind: 'review', text: '读下面的对话记录' });
+      expect(store.reviewAnswer(id)).toBeUndefined();
+      store.close();
+    });
+
+    it('lists the newest review first, and leaves ordinary conversations out', () => {
+      const { store } = tempStore();
+      seed(store);
+      review(store, 'review:web#main#abcdef12:1');
+      review(store, 'review:web#main#abcdef12:2');
+      const rows = store.reviewSessions();
+      expect(rows.map((r) => r.session.key)).toEqual([
+        'review:web#main#abcdef12:2',
+        'review:web#main#abcdef12:1',
+      ]);
+      expect(store.list({ days: 30 }).every((r) => r.kind !== 'review')).toBe(true);
+      store.close();
+    });
+
+    it('replaces a result written twice for the same session rather than adding a row', () => {
+      const { store } = tempStore();
+      const id = review(store);
+      const base = {
+        reviewedKey: 'web#main#abcdef12',
+        reviewedTitle: '跨会话查询',
+        platform: 'web',
+        changes: [],
+        preferences: [],
+        invalid: [],
+        at,
+      };
+      store.recordReview(id, { ...base, outcome: 'nothing' });
+      store.recordReview(id, { ...base, outcome: 'preferences', preferences: ['先给结论'] });
+      const rows = store.reviewSessions();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.record?.outcome).toBe('preferences');
+      store.close();
+    });
+  });
 });
 
 /**

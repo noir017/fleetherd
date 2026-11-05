@@ -73,7 +73,7 @@ import {
   type SettingRow,
   type SettingsScreenInput,
 } from '../core/settings.js';
-import type { ButtonSpec, PlatformAdapter, SchedulePanel, SchedulePanelTask } from '../platform/adapter.js';
+import type { ButtonSpec, PlatformAdapter, ReviewPanel, SchedulePanel, SchedulePanelTask } from '../platform/adapter.js';
 import { OutboundPacer } from '../core/outbound-pacer.js';
 import { splitIntoChunks } from '../core/stream-buffer.js';
 import { formatEmptyCatalog, formatSkillCatalog } from '../core/skills-catalog.js';
@@ -122,8 +122,9 @@ import type { WorkdirUsageStore } from './workdir-usage.js';
 import { resolvePageSize } from '../core/paging.js';
 import { IpcServer } from '../ipc/server.js';
 import { startSkillSweep } from './skill-lifecycle.js';
-import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
+import { ReviewService, REVIEW_DAILY_LIMIT, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
 import { ReviewStateStore } from './review-state.js';
+import { buildReviewPanel } from './review-panel.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
   archiveSkill,
@@ -846,6 +847,13 @@ export class Daemon {
    */
   private readonly reviews?: ReviewService;
 
+  /**
+   * The review sweep's own file (`reviews.json`), held beside the service because the web UI's
+   * Reviews tab reads today's counter from it. One instance for both: two readers would be fine,
+   * but a second writer is how a counter and a sweep start disagreeing.
+   */
+  private readonly reviewState?: ReviewStateStore;
+
   /** The IPC socket, which an agent on a remote host reaches through remoteHosts' CLI bridge. */
   private readonly socketPath: string;
   /** The last read of the pods, so the next one waits for it (refreshPods). */
@@ -997,10 +1005,11 @@ export class Daemon {
     if (history) {
       // Constructed even when `review:` is absent: the sweep is what checks that, so a `/reload`
       // that adds or removes the reviewer takes effect without restarting the daemon.
+      this.reviewState = new ReviewStateStore(path.join(configDir(), 'reviews.json'));
       this.reviews = new ReviewService({
         config,
         history,
-        state: new ReviewStateStore(path.join(configDir(), 'reviews.json')),
+        state: this.reviewState,
         clock,
         candidates: () => this.reviewCandidates(),
         notify: (lane, text) => this.notifyReview(lane, text),
@@ -1061,6 +1070,10 @@ export class Daemon {
       // the store allows (the web UI). `talkcode skills` is the same store, so the two cannot
       // disagree; archiving here tells the creating conversation exactly as the CLI path does.
       adapter.useSkillsPanel?.(buildSkillsPanel({ notifyArchived: (skill) => this.notifySkillArchived(skill, 'manual') }));
+      // …and the automatic reviews, read-only: what each quiet conversation taught the skill
+      // library, including the reviews that changed nothing and so posted no line anywhere.
+      const reviewPanel = this.reviewPanel(id);
+      if (reviewPanel) adapter.useReviewPanel?.(reviewPanel);
       // …and one with room to lay out the agents a new conversation could be given to (the web UI's
       // empty topic) gets a way to ask which, and who answers if nobody picks.
       adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
@@ -1762,6 +1775,28 @@ export class Daemon {
         }
       },
     };
+  }
+
+  /**
+   * The web UI's Reviews tab, bound to one platform instance: the review sessions in `history.db`
+   * and today's quota. Read-only by construction — see `useReviewPanel`.
+   *
+   * The instance id is only for the link back to the reviewed topic: a review of a Telegram
+   * conversation has no topic here, and a topic id from another instance would point the page at a
+   * lane it does not have.
+   */
+  private reviewPanel(instance: string): ReviewPanel | undefined {
+    const history = this.history;
+    const state = this.reviewState;
+    const reviews = this.reviews;
+    if (!history || !state || !reviews) return undefined;
+    return buildReviewPanel({
+      history,
+      state,
+      limit: REVIEW_DAILY_LIMIT,
+      instance,
+      enabled: () => reviews.enabled(),
+    });
   }
 
   /**

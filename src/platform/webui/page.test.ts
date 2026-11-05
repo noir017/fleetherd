@@ -113,14 +113,17 @@ describe('webui page', () => {
     expect(html).toContain('.panel-left.collapsed{margin-left:calc(-1 * var(--pw,var(--pw-default)))}');
     expect(html).toContain('.panel-right.collapsed{margin-right:calc(-1 * var(--pw,var(--pw-default)))}');
     // The heading is words, not a clock glyph.
-    expect(html).toContain('<span class="panel-title">Scheduled tasks</span>');
-    // The definitions and the topics their runs opened are two lists, not one, and the tab row
-    // is the last thing in the column rather than a heading over it.
+    expect(html).toContain('<span class="panel-title">Side tasks</span>');
+    // The definitions, the topics their runs opened and the reviews are three lists, not one, and
+    // the tab row is the last thing in the column rather than a heading over it.
     expect(html).toContain('id="sched-tabs"');
     expect(html).toContain('id="sched-tab-sessions"');
     expect(html).toContain('id="sched-sessions"');
+    expect(html).toContain('id="sched-tab-reviews"');
+    expect(html).toContain('id="sched-reviews"');
     expect(html.indexOf('id="schedules-body"')).toBeLessThan(html.indexOf('id="sched-tabs"'));
     expect(html.indexOf('id="sched-tab-sessions"')).toBeLessThan(html.indexOf('id="sched-tab-tasks"'));
+    expect(html.indexOf('id="sched-tab-tasks"')).toBeLessThan(html.indexOf('id="sched-tab-reviews"'));
     // Narrower than the old fixed column, and the operator can drag it.
     expect(html).toContain('clamp(240px,20vw,320px)');
     expect(html).toContain('id="sched-resize"');
