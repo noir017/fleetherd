@@ -169,6 +169,19 @@ interface GenericCommand {
    * capability is the platform's, not the harness's, so translateCommand cannot decide it.
    */
   nested?: true;
+  /**
+   * The ACP config option whose presence lets the gateway answer this for a `custom` harness.
+   *
+   * A custom harness passes everything through, because nothing is known about a user's own ACP
+   * program (translateCommand). An option it declares in `session/new` is something known, though,
+   * and it is the very thing `local` answers from — so where a custom agent has declared it, the
+   * gateway answers as it does for a preset, and where it has not, the command passes through as
+   * before. Evidence, not a guess about the program. Seen on CodeBuddy 2.179.3 (2026-11-05): its
+   * session/new carries `configOptions` with `{id: "model", type: "select"}` and 22 models, and it
+   * advertises no `availableCommands` — so a forwarded `/model` was a prompt it answered with
+   * nothing, and the turn ended in "no output to display".
+   */
+  customOption?: string;
 }
 
 /**
@@ -231,6 +244,7 @@ const GENERIC_COMMANDS: Record<string, GenericCommand> = {
   },
   model: {
     description: 'Show or change the model',
+    customOption: 'model',
     // No native spelling anywhere, on purpose — see the note on `local` above for why claude's own
     // `/model` is not one worth translating to.
     native: {},
@@ -450,17 +464,32 @@ export type CommandTranslation =
 /**
  * Translate a leading command name for the harness that will receive it.
  *
- * `custom` always passes through: nothing is known about a user-supplied ACP
- * executable, so rejecting its commands would break a working setup on a guess.
- * That is also the pre-existing behavior for every harness, preserved here.
+ * `custom` passes through: nothing is known about a user-supplied ACP executable, so rejecting
+ * its commands would break a working setup on a guess. The one exception is a command whose ACP
+ * config option the agent has itself declared (`customOption`, answered by `declares`): that is
+ * not a guess, and the gateway answers it as `local`. `declares` is the caller's knowledge of the
+ * live session; without it, or when it answers no, a custom harness passes through as it always did.
  */
-export function translateCommand(name: string, harness: Harness | undefined): CommandTranslation {
+export function translateCommand(
+  name: string,
+  harness: Harness | undefined,
+  declares?: (optionId: string) => boolean
+): CommandTranslation {
   const entry = GENERIC_COMMANDS[name.toLowerCase()];
   if (!entry) return { kind: 'passthrough' };
+  if (harness === 'custom' && entry.customOption && declares?.(entry.customOption)) return { kind: 'local' };
   if (!harness || harness === 'custom') return { kind: 'passthrough' };
   const native = entry.native[harness];
   if (native) return { kind: 'translated', native };
   return entry.local?.includes(harness) ? { kind: 'local' } : { kind: 'unsupported' };
+}
+
+/**
+ * The config option a custom harness has to declare for the gateway to answer this command, or
+ * undefined when none would (see GenericCommand.customOption).
+ */
+export function customOptionFor(name: string): string | undefined {
+  return GENERIC_COMMANDS[name.toLowerCase()]?.customOption;
 }
 
 /** Whether a name belongs to the generic vocabulary (i.e. is subject to translation). */

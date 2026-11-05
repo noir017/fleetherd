@@ -4,6 +4,7 @@ import { SessionTokenRegistry } from './conversation-token-registry.js';
 import { beginSkillTurn, recordToolUse } from './skill-usage.js';
 import {
   translateCommand,
+  customOptionFor,
   buildHelpText,
   harnessCommandName,
   harnessHasPicker,
@@ -1265,13 +1266,17 @@ export class ConversationRegistry {
     // Generic-command translation. Must sit here: it is the first point that knows WHICH agent
     // will answer, and the last point at which the message can still be refused. Returns the
     // message to forward, or undefined when the command was rejected (already answered).
-    const forwarded = this.applyCommandTranslation(key, state, msg);
+    const forward = (m: InboundMessage): void => this.forwardToAgent(key, state, m, opts);
+    const forwarded = this.applyCommandTranslation(key, state, msg, forward);
     if (!forwarded) return;
-    msg = forwarded;
+    forward(forwarded);
+  }
 
+  /** The end of route(): the message goes to the agent. Also where a deferred passthrough lands. */
+  private forwardToAgent(key: ConversationId, state: ConversationState, msg: InboundMessage, opts?: { transcript?: boolean }): void {
     // Announce which agent is about to answer, before the turn starts (see sendHeader). Placed after
-    // every gate above so it can't become a probe: a message that isn't going to be answered gets no
-    // acknowledgement of any kind.
+    // every gate in route() so it can't become a probe: a message that isn't going to be answered
+    // gets no acknowledgement of any kind.
     this.sendHeader(state, msg);
     // Typing is how a transcript is corrected (its card says so): a typed message reaching the agent
     // drops whatever transcript is still waiting here, rather than leaving it to be sent as well.
@@ -2357,7 +2362,9 @@ export class ConversationRegistry {
   private applyCommandTranslation(
     key: ConversationId,
     state: ConversationState,
-    msg: InboundMessage
+    msg: InboundMessage,
+    /** Where a message goes when the decision to forward it is made later (deferCustomCommand). */
+    forward: (m: InboundMessage) => void
   ): InboundMessage | undefined {
     const parsed = parseTextCommand(msg.content);
     if (!parsed) return msg;
@@ -2365,7 +2372,8 @@ export class ConversationRegistry {
     const name = agentDisplayName(def, state.agentId);
     if (this.refusedForNesting(parsed.name, msg)) return undefined;
 
-    const result = translateCommand(parsed.name, def?.harness);
+    if (this.deferredForCustom(key, state, def, parsed, msg, forward)) return undefined;
+    const result = translateCommand(parsed.name, def?.harness, (opt) => this.declaresOption(key, state.agentId, opt) === true);
     if (this.answersWhileBusy(state, parsed.name, result)) {
       this.answerBusyQuery(key, state, parsed.name, msg);
       return undefined;
@@ -2409,6 +2417,68 @@ export class ConversationRegistry {
     const content = parsed.rest ? `/${result.native} ${parsed.rest}` : `/${result.native}`;
     console.log(`[command] /${parsed.name} → /${result.native} for ${state.agentId} (${name})`);
     return { ...msg, content };
+  }
+
+  /**
+   * A custom harness that may have declared the option this command is answered from, when nothing
+   * here knows yet whether it has: find out first (deferCustomCommand), and say the message is taken.
+   */
+  private deferredForCustom(
+    key: ConversationId,
+    state: ConversationState,
+    def: AgentDef | undefined,
+    parsed: { name: string; rest?: string },
+    msg: InboundMessage,
+    forward: (m: InboundMessage) => void
+  ): boolean {
+    const option = def?.harness === 'custom' ? customOptionFor(parsed.name) : undefined;
+    if (!option || this.declaresOption(key, state.agentId, option) !== undefined) return false;
+    void this.deferCustomCommand(key, state, parsed, msg, forward);
+    return true;
+  }
+
+  /**
+   * Whether an agent has declared an ACP config option (only `model` is asked about): yes when this
+   * conversation's session reports its selector, or what the gateway learned of the agent says it has
+   * a list; no when that says it offers none; undefined when nothing has been seen — a cold session
+   * of an agent nobody has asked yet.
+   */
+  private declaresOption(key: ConversationId, agentId: string, option: string): boolean | undefined {
+    if (option !== 'model') return undefined;
+    if (this.agents.peek(key)?.modelSelector?.()) return true;
+    const known = this.modelCatalog.get(agentId);
+    if (known?.kind === 'list') return true;
+    if (known?.kind === 'none') return false;
+    return undefined;
+  }
+
+  /**
+   * A command a custom harness may or may not let the gateway answer, before anything has said which.
+   *
+   * The session is brought up — the same child the forwarded message would start, so nothing is
+   * spent that passing it through would not have spent — and its own report decides: the option is
+   * there, and the gateway answers as it does for a preset (a `/model` menu); it is not, and the
+   * message goes on to the agent exactly as it always did. The answer is kept (ModelCatalog.note),
+   * so the next time is decided at once. A session that will not start is forwarded too: the turn
+   * reports the same failure it always would have.
+   */
+  private async deferCustomCommand(
+    key: ConversationId,
+    state: ConversationState,
+    parsed: { name: string; rest?: string },
+    msg: InboundMessage,
+    forward: (m: InboundMessage) => void
+  ): Promise<void> {
+    const warm = await this.warmModelSelector(key, state.agentId);
+    if (warm.selector) {
+      await this.answerLocalCommand(key, state, parsed.name, parsed.rest, msg);
+      return;
+    }
+    if (!warm.error) this.modelCatalog.note(state.agentId, { kind: 'none' });
+    console.log(
+      `[command] /${parsed.name}: ${state.agentId} ${warm.error ? 'did not start' : 'declares no model option'}; forwarded as before`
+    );
+    forward(msg);
   }
 
   /**

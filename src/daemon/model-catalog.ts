@@ -64,6 +64,16 @@ export class ModelCatalog {
     return this.known.get(def);
   }
 
+  /**
+   * Record what was learned elsewhere — a conversation's own session brought up for `/model`
+   * (ConversationRegistry.deferCustomCommand) — so the next question about this agent is answered
+   * without asking.
+   */
+  note(agentId: string, answer: AgentModelList): void {
+    const def = this.deps.defOf(agentId);
+    if (def) this.known.set(def, answer);
+  }
+
   /** Whether opening this agent's list should ask: nothing known, or the last ask failed. */
   shouldAsk(agentId: string): boolean {
     const known = this.get(agentId);

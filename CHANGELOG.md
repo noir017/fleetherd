@@ -26,6 +26,16 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **`/model` on a custom harness that offers a model list opens the menu.** Every command to a
+  `custom` agent was passed through, so on CodeBuddy `/model` became a prompt it answered with
+  nothing, and the chat said "Ran /model, but there was no output to display". CodeBuddy declares a
+  `model` option in its ACP session (22 models in 2.179.3), which is all the gateway's menu needs, so
+  a custom agent that declares one now gets the menu, switching with `session/set_config_option`; the
+  status-line switch and the settings page list its models too. One that declares none has `/model`
+  passed through exactly as before. A first `/model` before the agent has started starts it to find
+  out — the start forwarding it would have caused — and the answer is remembered.
+  [→](docs/chat-commands.md)
+
 - **The settings page lists any agent's models, not only the one answering here.** A model list
   comes with a running session, so only the agent answering the topic `/setting` was opened in, and
   only after it had replied, had one; every other model row was a page saying "type a name". The

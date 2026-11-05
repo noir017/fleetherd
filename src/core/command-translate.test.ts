@@ -5,6 +5,7 @@ import {
   agentForCommand,
   unconfiguredHarnessCommand,
   buildHelpText,
+  customOptionFor,
   genericCommandSpecs,
   genericNativeNames,
   harnessCommandName,
@@ -94,6 +95,38 @@ describe('translateCommand', () => {
   it('passes through for a custom harness (nothing is known about its command set)', () => {
     expect(translateCommand('compact', 'custom')).toEqual({ kind: 'passthrough' });
     expect(translateCommand('compact', undefined)).toEqual({ kind: 'passthrough' });
+  });
+
+  describe('a custom harness that declared the option a command is answered from', () => {
+    const declares = (opt: string): boolean => opt === 'model';
+    const declaresNothing = (): boolean => false;
+
+    it('has /model answered by the gateway, as a preset does', () => {
+      expect(translateCommand('model', 'custom', declares)).toEqual({ kind: 'local' });
+      expect(translateCommand('MODEL', 'custom', declares)).toEqual({ kind: 'local' });
+    });
+
+    it('passes /model through when it declared no such option, or nothing is known', () => {
+      expect(translateCommand('model', 'custom', declaresNothing)).toEqual({ kind: 'passthrough' });
+      expect(translateCommand('model', 'custom')).toEqual({ kind: 'passthrough' });
+    });
+
+    it('passes every other command through, whatever it declared', () => {
+      expect(translateCommand('compact', 'custom', () => true)).toEqual({ kind: 'passthrough' });
+      expect(translateCommand('effort', 'custom', () => true)).toEqual({ kind: 'passthrough' });
+      expect(translateCommand('usage', 'custom', () => true)).toEqual({ kind: 'passthrough' });
+    });
+
+    it('leaves the presets as they were: the option is not what decides for them', () => {
+      expect(translateCommand('model', 'opencode', declaresNothing)).toEqual({ kind: 'local' });
+      expect(translateCommand('model', 'gemini', declares)).toEqual({ kind: 'unsupported' });
+    });
+
+    it('names the option only where one decides', () => {
+      expect(customOptionFor('model')).toBe('model');
+      expect(customOptionFor('compact')).toBeUndefined();
+      expect(customOptionFor('dataviz')).toBeUndefined();
+    });
   });
 
   it('is case-insensitive on the generic name', () => {

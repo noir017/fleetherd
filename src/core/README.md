@@ -652,6 +652,14 @@ harness. `daemon/conversation.ts` answers it instead of forwarding — a decline
 its `/agy` prefix, so the bound agent would run it as one of its own slash commands, find
 nothing, and produce no output at all.
 
+A `custom` harness passes every command through — nothing is known about a person's own ACP
+program — with one exception, and it is evidence rather than a guess: a command whose answer comes
+from an ACP config option (`GenericCommand.customOption`, today only `/model` → `model`) is
+answered by the gateway when the agent has declared that option. `translateCommand` takes a
+`declares` callback for it; the daemon answers from the live session or what ModelCatalog learned,
+and when neither has seen the agent it brings the conversation's session up first
+(`ConversationRegistry.deferCustomCommand`) — the start the forwarded message would have caused.
+
 `buildHelpText` renders `/help` from these same tables, so a command cannot reach the
 platform menu without reaching the help text. It filters the generic section to what the
 *currently bound* harness actually supports, because listing `/compact` to an opencode
