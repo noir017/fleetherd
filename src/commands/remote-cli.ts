@@ -45,6 +45,13 @@ export type RemoteCliPlan =
 const SELF_ANSWERED = new Set(['help', '--help', '-h', '--version', '-V']);
 
 /**
+ * The commands the gateway runs for itself (cli.ts registers these three). On a host they are not
+ * merely unknown — they are the gateway's administration, which is why they get their own sentence.
+ * A typo (`task-agent`) is just a command that does not exist here.
+ */
+const MANAGEMENT = new Set(['start', 'setup', 'doctor']);
+
+/**
  * The decision, with everything it reads passed in: the CLI calls it with process.argv and
  * process.env, tests call it with whatever they are pinning.
  */
@@ -52,13 +59,14 @@ export function planRemoteCli(argv: string[], env: NodeJS.ProcessEnv): RemoteCli
   if (!env.TALKCODE_REMOTE_SOCK) return { kind: 'local' };
   const command = argv[0];
   if (!isBridgedCommand(argv)) {
-    return {
-      kind: 'refuse',
-      message:
-        command === undefined
-          ? 'talkcode: an agent on a host can run only the reverse commands, `mcp` and `help`; `talkcode help` lists them'
-          : `talkcode: "${command}" is the gateway's own administration; an agent on a host can run only the reverse commands, \`mcp\` and \`help\` (\`talkcode help\` lists them)`,
-    };
+    const message =
+      command === undefined
+        ? 'talkcode: an agent on a host can run only the reverse commands, `mcp` and `help`; `talkcode help` lists them'
+        : MANAGEMENT.has(command)
+          ? `talkcode: "${command}" is the gateway's own administration; an agent on a host can run only the reverse commands, \`mcp\` and \`help\` (\`talkcode help\` lists them)`
+          : // The gateway's own wording for a command it turns away, so the two sides say the same thing.
+            `talkcode: "${command}" is not a command an agent can run here; \`talkcode help\` lists them`;
+    return { kind: 'refuse', message };
   }
   if (SELF_ANSWERED.has(command!)) return { kind: 'local' };
   const shim = env.TALKCODE_REMOTE_CLI;

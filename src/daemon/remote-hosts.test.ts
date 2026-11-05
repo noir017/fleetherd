@@ -8,7 +8,8 @@ import { normalizeActionPaths } from '../commands/reverse.js';
 import { expandRemoteHome, remoteAgentEnv, remoteAgentHome, remoteAgentRoot } from './agent-common.js';
 import { remoteClaudeProjectsDir } from './claude-transcript.js';
 import { diffConfig } from './config-reload.js';
-import { gatewayNamespace } from './remote-hosts.js';
+import { gatewayNamespace, RemoteHosts } from './remote-hosts.js';
+import type { RemoteHost } from '../remote/host.js';
 import { workdirScanFrom } from './workdir-scan.js';
 
 /**
@@ -59,6 +60,43 @@ describe('/reload and hosts', () => {
     const d = diffConfig(cfg(), cfg({ hosts: { box: { ssh: 'me@10.0.0.6' } } }));
     expect(d.agentsChanged).toEqual(['cc']);
     expect(d.sections).toContain('hosts');
+  });
+});
+
+describe('the shim bridge', () => {
+  /** Drive runCli the way a host's cli-open frame does; nothing on the refusal path reads the host. */
+  const run = (argv: string[]): { out: string; code?: number } => {
+    let out = '';
+    let code: number | undefined;
+    new RemoteHosts().runCli(
+      { argv, cwd: '/', token: 't', env: {}, host: {} as unknown as RemoteHost },
+      {
+        out: (_fd, d) => {
+          out += d.toString();
+        },
+        exit: (c) => {
+          code = c;
+        },
+      }
+    );
+    return { out, code };
+  };
+
+  it('turns away a command an agent may not run here — the boundary itself, not just the list', () => {
+    // If the isBridgedCommand call here is dropped, the run falls through to the CLI and this fails.
+    for (const argv of [['start'], ['setup'], ['doctor'], ['--migrate-config']]) {
+      const r = run(argv);
+      expect(r.code).toBe(2);
+      expect(r.out).toContain(`"${argv[0]}" is not a command an agent can run here`);
+    }
+  });
+
+  it('lets the reverse commands, mcp and help through to the CLI', () => {
+    // Past the gate the next refusal is about this process not being the CLI — under vitest it is
+    // not — which is how we know the command was not turned away here.
+    for (const argv of [['task-agents'], ['send-file', 'x'], ['mcp'], ['help']]) {
+      expect(run(argv).out).toContain('this gateway is not running as the talkcode CLI');
+    }
   });
 });
 

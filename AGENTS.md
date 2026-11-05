@@ -226,7 +226,7 @@ Do not weaken these without saying so explicitly in the PR:
    known_hosts, strict host key checking with host certificates refused — a changed host key fails
    the connection). talkcode-remote
    opens no network port: ssh in, an owner-only unix socket out. An agent on a host can run back
-   here only the reverse commands, `mcp` and `help` (`daemon/remote-hosts.ts` isBridgedCommand),
+   here only the reverse commands, `mcp` and `help` (`ipc/commands.ts` isBridgedCommand),
    never `start`, `setup` or any other part of the gateway's administration — and what it runs
    still passes the IPC token check and `ipc/protocol.ts` validation like a local agent's command.
    The agents a host declares in its `pod.yaml` (`daemon/pods.ts`) are its own, named `<id>@<host>`

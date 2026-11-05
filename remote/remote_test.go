@@ -845,6 +845,8 @@ func TestCaptureLoginEnvReadsTheShell(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("SHELL", "/bin/bash")
+	// Whatever started the daemon must not decide where an agent's talkcode is; agentEnv sets it.
+	t.Setenv("TALKCODE_REMOTE_CLI", "/opt/stale/bin/talkcode")
 	if _, err := os.Stat("/bin/bash"); err != nil {
 		t.Skip("no bash")
 	}
@@ -856,6 +858,9 @@ func TestCaptureLoginEnvReadsTheShell(t *testing.T) {
 	}
 	if envGet(env, "SSH_CONNECTION") != "" || envGet(env, "SHLVL") != "" {
 		t.Fatal("connection and shell bookkeeping must be dropped")
+	}
+	if envGet(env, "TALKCODE_REMOTE_CLI") != "" {
+		t.Fatalf("a talkcode variable inherited from the daemon must be dropped, got %q", envGet(env, "TALKCODE_REMOTE_CLI"))
 	}
 }
 

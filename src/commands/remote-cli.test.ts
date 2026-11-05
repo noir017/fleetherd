@@ -1,6 +1,8 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handOffRemoteCli, planRemoteCli } from './remote-cli.js';
 
@@ -57,9 +59,19 @@ describe('planRemoteCli', () => {
       const plan = planRemoteCli([cmd], env);
       expect(plan.kind).toBe('refuse');
       expect(plan.kind === 'refuse' && plan.message).toContain(`"${cmd}"`);
+      expect(plan.kind === 'refuse' && plan.message).toMatch(/administration/);
     }
     const bare = planRemoteCli([], env);
     expect(bare.kind === 'refuse' && bare.message).toMatch(/only the reverse commands/);
+  });
+
+  it('refuses an unknown command with the gateway\'s own wording, not as administration', () => {
+    const { shim } = fakeShim();
+    // A typo is not administration; saying it were would send the reader looking for a switch.
+    const plan = planRemoteCli(['task-agent'], { TALKCODE_REMOTE_SOCK: '/tmp/s', TALKCODE_REMOTE_CLI: shim });
+    expect(plan.kind).toBe('refuse');
+    expect(plan.kind === 'refuse' && plan.message).toContain('"task-agent" is not a command an agent can run here');
+    expect(plan.kind === 'refuse' && plan.message).not.toMatch(/administration/);
   });
 
   it('refuses before forwarding when the host helper is older than this CLI', () => {
@@ -97,5 +109,29 @@ describe('handOffRemoteCli', () => {
     const code = await handOffRemoteCli(['start'], { TALKCODE_REMOTE_SOCK: '/tmp/s', TALKCODE_REMOTE_CLI: fakeShim().shim });
     expect(code).toBe(2);
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining('"start"'));
+  });
+});
+
+describe('the CLI entry', () => {
+  // Everything above tests the decision; this runs the program. cli.ts is the one line that makes
+  // the decision matter, and deleting it (`const remoteExit = null`) leaves every other test green —
+  // so this one goes through the real entry point, in a child process.
+  it('hands argv to the forwarder before commander sees it', () => {
+    const { shim, args } = fakeShim(3);
+    const cli = fileURLToPath(new URL('../cli.ts', import.meta.url));
+    const r = spawnSync(process.execPath, ['--import', 'tsx', cli, 'task-agents', '--agent', 'oc@a'], {
+      env: {
+        ...process.env,
+        TALKCODE_REMOTE_SOCK: '/tmp/s',
+        TALKCODE_REMOTE_CLI: shim,
+        // The failure mode this guards against is commander running the command instead.
+        TALKCODE_SOCKET: '',
+        TALKCODE_TURN_TOKEN: '',
+      },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    expect(r.status).toBe(3);
+    expect(fs.readFileSync(args, 'utf8')).toBe('task-agents\n--agent\noc@a\n');
   });
 });

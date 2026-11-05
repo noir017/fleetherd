@@ -205,10 +205,11 @@ When an upgraded gateway connects, the previous version's helper is stopped, and
 removed once no gateway uses it. The helper is about 4 MiB; a gateway brings both builds with it
 and downloads nothing.
 
-The `talkcode` on the machine's own `PATH` (in the uniagent image, for one) is a separate install,
-and the login-shell handoff needs it to be at least as new as the gateway: an older one still
-answers "config not found", and one newer than the gateway says the host's helper is older. Upgrade
-both to get it.
+The `talkcode` on the machine's own `PATH` (in the uniagent image, for one) is a separate install
+from the helper the gateway puts on the host. The login-shell handoff needs both halves to come
+from a release that has it: with only the image updated, the old helper cannot say where its shim
+is and the CLI answers that the helper is too old; with only the gateway updated, the old CLI still
+answers "config not found". Upgrade both.
 
 ## Choosing an agent: `/agent`
 

@@ -352,18 +352,23 @@ export class RemoteHosts {
    * local agent's command runs, so parsing, validation and output are the same — with the turn
    * token the agent holds, this daemon's socket, and the agent's directory and home, which is what
    * its relative and `~` paths mean (commands/reverse.ts resolvePathArg).
+   *
+   * Public because it is the security boundary itself: the test drives it directly rather than
+   * asserting on the list it consults, which would stay green with the call removed.
    */
-  private runCli(req: Parameters<CliBridge>[0], io: Parameters<CliBridge>[1]): CliSession {
+  runCli(req: Parameters<CliBridge>[0], io: Parameters<CliBridge>[1]): CliSession {
     const refuse = (message: string): CliSession => {
       io.out(2, Buffer.from(`talkcode: ${message}\n`));
       io.exit(2);
       return { write: () => {}, end: () => {}, kill: () => {} };
     };
-    const self = selfInvocation();
-    if (!self) return refuse('this gateway is not running as the talkcode CLI, so it cannot run reverse commands');
+    // The command is judged before this process's own shape: a forbidden command is forbidden
+    // whatever the gateway runs as, and the message about it is the useful one.
     if (!isBridgedCommand(req.argv)) {
       return refuse(`"${req.argv[0] ?? ''}" is not a command an agent can run here; \`talkcode help\` lists them`);
     }
+    const self = selfInvocation();
+    if (!self) return refuse('this gateway is not running as the talkcode CLI, so it cannot run reverse commands');
     const env: Record<string, string | undefined> = {
       ...process.env,
       TALKCODE_TURN_TOKEN: req.token,
