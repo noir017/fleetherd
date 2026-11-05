@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.38.0] - 2026-11-05
+
 ### Added
 
 - **Auto review can be turned on and tuned from chat and the web UI.** `review.agent` and
