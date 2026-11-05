@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.37.0] - 2026-11-05
+
 ### Added
 
 - **The web UI's side panel has a Reviews tab.** Automatic review used to be visible only when it
