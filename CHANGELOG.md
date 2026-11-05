@@ -5,6 +5,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Raised web UI limits to 200 concurrent topics and 1000 messages per topic.** The previous ceiling
+  of 64 topics was reached in active environments, evicting older conversations while users easily
+  navigate larger lists via pinned, starred, and "needs you" ordering. The message ring per topic is
+  doubled from 500 to 1000 messages (estimated ~460 MB if all 200 topics were completely full at ~2.3 KB
+  per message, with actual production usage well below that). [→](docs/web-ui.md)
+
+### Fixed
+
+- **Operator control menus in the web UI no longer mark the topic as waiting on an answer.**
+  Opening `/setting` (or scheduled task menus, `/model`, `/effort`, `/cd`, `/agent`, and command
+  pickers) leaves messages with live buttons in the conversation. `awaitingQuestion` treated any
+  button message other than the workdir menu as an unanswered question, pinning the topic to the
+  top in green with an amber dot and pushing "Waiting on your answer" even after the settings dialog
+  was closed. All recognized operator control menus are now exempted from question classification
+  while remaining in `awaiting` so `inUse` and `closeIdle` retain their eviction and reclaim
+  protections. Real questions (`ask`, permission requests, elicitation, sub-agent cards) and
+  unrecognized buttons continue to be treated as questions. [→](docs/web-ui.md)
+
+- **The web UI sidebar footer aligns Menu and Manage to opposite ends, with an inline SVG cleanup icon.**
+  In 2.35.0, the sidebar footer moved `Close idle` into a new `Manage` menu but left `#manage-toggle`
+  clustered to the left beside `#opts-toggle` because `#close-idle`'s `margin-left: auto` was not
+  connected to the new button. `#manage-toggle` now connects `margin-left: auto`, cleanly aligning
+  Menu to the left and Manage to the right. The button icon replaces `⋯` with an inline SVG broom icon
+  rendered in `currentColor`, staying strictly monochrome across all operating systems and fonts while
+  clearly representing housekeeping and cleanup. [→](docs/web-ui.md)
+
 ## [2.36.0] - 2026-11-05
 
 ### Added

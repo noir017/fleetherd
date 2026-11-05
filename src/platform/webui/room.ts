@@ -41,6 +41,12 @@ import {
 } from '../../core/conversation.js';
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
 import { needsPerson, replyLine, topicStage } from '../../core/topic-stage.js';
+import { parseAgentButtonId } from '../../core/agent-menu.js';
+import { parsePickButtonId } from '../../core/button-id.js';
+import { parseEffortButtonId } from '../../core/effort-menu.js';
+import { parseModelButtonId } from '../../core/model-menu.js';
+import { parseScheduleButtonId } from '../../core/schedule-menu.js';
+import { parseSettingButtonId } from '../../core/settings.js';
 import { parseWorkdirButtonId } from '../../core/workdir-menu.js';
 import type {
   AgentCatalog,
@@ -101,8 +107,13 @@ export interface TopicNotice {
   body: string;
 }
 
-/** How many messages a topic remembers across a page reload. Memory in a daemon that runs for weeks. */
-const MAX_MESSAGES = 500;
+/**
+ * How many messages a topic remembers across a page reload.
+ *
+ * Memory estimate: each message averages ~2.3 KB, so 200 topics filled to capacity would take
+ * ~460 MB, while actual usage in production is well below that (longest topics ~200 messages).
+ */
+const MAX_MESSAGES = 1000;
 
 /** How many emitted events a topic keeps so a reconnect can be caught up rather than re-synced. */
 const MAX_BACKLOG = 300;
@@ -276,7 +287,7 @@ interface Room {
    * `awaitingQuestion`).
    *
    * A set rather than a scan of `stored` on demand, because the topic list is rebuilt on every
-   * message posted into any topic and scanning 500 messages × 64 topics for one boolean is work
+   * message posted into any topic and scanning 1000 messages × 200 topics for one boolean is work
    * per keystroke of a streamed reply. Maintained wherever buttons appear or are stripped.
    */
   awaiting: Set<string>;
@@ -562,10 +573,12 @@ export class WebRoom {
   /** The first line of the question a topic is waiting on, for the Needs-you list. */
   private questionLine(room: Room | undefined): string | undefined {
     if (!room) return undefined;
-    let last: string | undefined;
-    for (const id of room.awaiting) last = id;
-    const text = last ? room.stored.get(last)?.text : undefined;
-    return text ? replyLine(text) : undefined;
+    let questionText: string | undefined;
+    for (const id of room.awaiting) {
+      const rec = room.stored.get(id);
+      if (rec && !isControlMenu(rec.msg)) questionText = rec.text;
+    }
+    return questionText ? replyLine(questionText) : undefined;
   }
 
   /**
@@ -854,27 +867,24 @@ export class WebRoom {
    * Whether a topic is waiting on the operator — as opposed to holding a menu they opened.
    *
    * `awaiting` means "a message with live buttons", which was the same thing while every such
-   * message was a question. It is not: the directory menu is a control for the operator's own next
-   * step (which project to work in), and since a new topic's choice of agent is a tap that types
-   * `/agent` (2026-11-02), the daemon posts that menu into a conversation that has not started.
-   * Counted as a question, a topic left mid-setup pinned itself to the top of the switcher in green
-   * and pushed "Waiting on your answer" — about a conversation with no agent in it, which the
-   * operator had just been looking at (reported 2026-11-03). It also turned the dot amber, saying
-   * something was blocked when nothing was: no session exists until the menu is answered or a
-   * message is sent, and the message is an answer of its own.
+   * message was a question. It is not: control menus (/cd, /model, /effort, /agent, /setting,
+   * scheduled tasks, or command pickers) are controls for the operator's own next step, not
+   * questions blocking an agent turn. Counted as a question, opening /setting or leaving a setup
+   * menu pinned the topic to the top of the switcher in green and pushed "Waiting on your answer"
+   * (reported 2026-11-03 for workdir, 2026-11-05 for settings).
    *
    * `awaiting` itself is left alone, because the other two readers want the menu counted: `inUse`
    * will not evict a topic holding a clickable menu, and idle reclaim will not close an agent under
    * one. Those ask "would throwing this away lose something", not "is someone blocked".
    *
-   * Fails safe: buttons this file does not recognise are a question, so a new kind of ask is
-   * announced rather than silently missed.
+   * Fails safe: buttons this file does not recognise are treated as a question, so a new kind of ask
+   * is announced rather than silently missed.
    */
   private awaitingQuestion(room: Room | undefined): boolean {
     if (!room) return false;
     for (const id of room.awaiting) {
       const rec = room.stored.get(id);
-      if (rec && isWorkdirMenu(rec.msg.buttons)) continue;
+      if (rec && isControlMenu(rec.msg)) continue;
       return true;
     }
     return false;
@@ -1614,13 +1624,32 @@ function noticeBody(stage: TopicStage, line: string | undefined): string {
 }
 
 /**
- * Whether a message's buttons are a directory menu's rather than a question's.
+ * Whether a button id belongs to an operator control menu rather than a question.
  *
- * `core/workdir-menu.ts` owns the id grammar; this only asks it. A menu whose page turn and pick
- * buttons both parse is one of its own, and no other menu or ask in the gateway uses those ids.
+ * Menus opened by the operator (/cd, /model, /effort, /agent, /setting, scheduled tasks,
+ * and command pickers) are controls for their own next step, not questions blocking the agent.
  */
-function isWorkdirMenu(buttons: ButtonSpec[]): boolean {
-  return buttons.length > 0 && buttons.every((b) => parseWorkdirButtonId(b.id) !== null);
+export function isControlMenuButton(id: string): boolean {
+  return (
+    parseWorkdirButtonId(id) !== null ||
+    parseModelButtonId(id) !== null ||
+    parseEffortButtonId(id) !== null ||
+    parseAgentButtonId(id) !== null ||
+    parseSettingButtonId(id) !== null ||
+    parseScheduleButtonId(id) !== null ||
+    parsePickButtonId(id) !== null
+  );
+}
+
+/**
+ * Whether a message is an operator control menu rather than a question.
+ *
+ * Fails safe: when buttons are present, every button must be a recognized control menu button,
+ * even on a settings screen message. An ask or unrecognized button treats the message as a question.
+ */
+export function isControlMenu(msg: WebMessage): boolean {
+  if (msg.buttons.length === 0) return msg.settings !== undefined;
+  return msg.buttons.every((b) => isControlMenuButton(b.id));
 }
 
 function flagsOf(topics: Topic[]): string {

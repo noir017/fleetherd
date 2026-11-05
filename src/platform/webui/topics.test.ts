@@ -125,7 +125,7 @@ describe('TopicStore', () => {
     const store = new TopicStore(file);
     for (let i = 0; i < MAX_TOPICS; i += 1) store.create();
     expect(store.full()).toBe(true);
-    expect(() => store.create()).toThrow(/already has 64 topics/);
+    expect(() => store.create()).toThrow(/already has 200 topics/);
   });
 
   it('remembers a star across a restart, and writes nothing for a topic without one', () => {

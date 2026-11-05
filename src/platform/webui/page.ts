@@ -278,8 +278,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .panel-foot>button:hover,.panel-foot>button[aria-expanded="true"],.panel-foot>button.on{color:var(--fg);background:var(--field)}
 /* line-height:1 keeps the 13px glyph from setting a taller line box than the 12px text
    beside it — without it the sidebar footer was 52px against the task panel's 50px. */
-.opts-gear{font-size:13px;line-height:1}
+.opts-gear{font-size:13px;line-height:1;display:inline-flex;align-items:center;justify-content:center;vertical-align:-1px}
 @container (max-width:200px){.opts-word{display:none}}
+#manage-toggle{margin-left:auto}
 /* The idle count stays on Manage's face when its word drops: it is the one number on
    this row worth seeing without opening anything. */
 .foot-count{margin-left:4px;color:#a8a8a8}
@@ -2071,7 +2072,7 @@ const SCRIPT = `
    *
    * A message rather than a scrollTop, because the transcript a topic comes back to is not the one
    * it was left with: it is rebuilt from the cache, which keeps the last 200 messages, and then
-   * reconciled against a ring of 500 — so the sync can put a few hundred older messages above the
+   * reconciled against a ring of 1000 — so the sync can put a few hundred older messages above the
    * one being read. A pixel offset would land in the middle of those; a message does not move.
    *
    * In memory only, and with no scroll listener. The whole cost is one measurement on the way out
@@ -2085,7 +2086,7 @@ const SCRIPT = `
 
   /**
    * The first message whose bottom edge is below the top of the viewport. A binary search, since
-   * the children are in vertical order and a topic can hold 500 of them: every rect after the
+   * the children are in vertical order and a topic can hold 1000 of them: every rect after the
    * first is read off a layout that is already up to date, so this forces one layout, not one per
    * message.
    */
@@ -5690,8 +5691,8 @@ __GATE__
          still seen without opening anything. Both open upward with the same box and the same
          dismissal (setMenu). -->
     <div id="sidebar-footer" class="panel-foot">
-      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙</span><span class="opts-word"> Menu</span></button>
-      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear">⋯</span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
+      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙&#xFE0E;</span><span class="opts-word"> Menu</span></button>
+      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
       <div id="opts-menu" class="panel-menu" hidden>
         <!-- The gateway's own settings: agents, models, idle reclaim, scope. A page rather than a
              chat command, because the rows need the width a message never had. -->

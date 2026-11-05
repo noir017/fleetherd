@@ -10,6 +10,8 @@ import {
   CHANNEL,
   DIR_TTL_MS,
   inlineImageType,
+  isControlMenu,
+  isControlMenuButton,
   OWNER,
   WebRoom,
   type Kept,
@@ -21,6 +23,21 @@ import { MAX_TOPICS, TopicStore } from './topics.js';
 import { hasTopic } from './index.js';
 import type { InboundMessage } from '../../types.js';
 import type { WebEvent, WebMessage } from './protocol.js';
+import { WORKDIR_PICK_PREFIX, WORKDIR_PAGE_PREFIX } from '../../core/workdir-menu.js';
+import { MODEL_PICK_PREFIX, MODEL_PAGE_PREFIX } from '../../core/model-menu.js';
+import { EFFORT_PICK_PREFIX } from '../../core/effort-menu.js';
+import { AGENT_GROUP_PREFIX, AGENT_PICK_PREFIX, AGENT_BACK_PREFIX, AGENT_PAGE_PREFIX } from '../../core/agent-menu.js';
+import {
+  SETTING_ROW_PREFIX,
+  SETTING_VALUE_PREFIX,
+  SETTING_PAGE_PREFIX,
+  SETTING_BACK_PREFIX,
+  SETTING_SET_PREFIX,
+  SETTING_TYPE_PREFIX,
+} from '../../core/settings.js';
+import { SCHEDULE_OPEN_PREFIX, SCHEDULE_TASK_PREFIX, SCHEDULE_ACTION_PREFIX } from '../../core/schedule-menu.js';
+import { PICK_PREFIX } from '../../core/button-id.js';
+import { VOICE_BUTTON_PREFIX } from '../../core/voice.js';
 
 let dir = '';
 beforeEach(() => {
@@ -1297,6 +1314,199 @@ describe('WebRoom: what the switcher dot is saying', () => {
     expect(flagsOf(room, topic).asking).toBe(true);
   });
 
+  it('exempts operator control menus from asking while recognizing true questions and unknown buttons', () => {
+    const { room, topic } = attached();
+
+    // 1. Directory / workdir menu (/cd, wdr: / wdp:)
+    const wdrMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'wdr:req:0', label: 'dir' }, { id: 'wdp:req:1', label: 'Next' }] }, 'workdir');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, wdrMsg.id);
+
+    // 2. Model menu (/model, mdl: / mpg:)
+    const mdlMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'mdl:req:0', label: 'm1' }, { id: 'mpg:req:1', label: 'Next' }] }, 'model');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, mdlMsg.id);
+
+    // 3. Effort menu (/effort, eff:)
+    const effMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'eff:req:0', label: 'low' }] }, 'effort');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, effMsg.id);
+
+    // 4. Agent menu (/agent, aga: / agp: / agg: / agb:)
+    const agMsg = room.post(topic, { own: false, html: '', buttons: [
+      { id: 'aga:req:0', label: 'cc' },
+      { id: 'agp:req:1', label: 'Next' },
+      { id: 'agg:req:0', label: 'group' },
+      { id: 'agb:req:0', label: 'Back' },
+    ] }, 'agent');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, agMsg.id);
+
+    // 5. Settings menu (/setting, stg: / stv: / sts: / stt: / stp: / stb: / sco:)
+    const setMsg = room.post(topic, { own: false, html: '', buttons: [
+      { id: 'stg:req:0', label: 'Agent' },
+      { id: 'stv:req:1', label: 'val' },
+      { id: 'sts:req:2', label: 'switch' },
+      { id: 'stt:req:0', label: 'type' },
+      { id: 'stp:req:1', label: 'page' },
+      { id: 'stb:req:0', label: 'back' },
+      { id: 'sco:req:0', label: 'Schedule' },
+    ] }, 'settings');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, setMsg.id);
+
+    // 6. Settings screen message (WebMessage.settings)
+    const scrMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'sts:req:0', label: 'switch' }], settings: { level: 'list', groups: [], rows: [] } }, 'settings screen');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, scrMsg.id);
+
+    // 7. Scheduled task menu (sco: / sct: / sca:)
+    const scMsg = room.post(topic, { own: false, html: '', buttons: [
+      { id: 'sco:req:0', label: 'Open' },
+      { id: 'sct:req:0', label: 'Task' },
+      { id: 'sca:req:0', label: 'Pause' },
+    ] }, 'schedule');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, scMsg.id);
+
+    // 8. Command picker menu (cmd:)
+    const cmdMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'cmd:req:0', label: '/init' }] }, 'picker');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, cmdMsg.id);
+
+    // 9. True question (ask:) -> asking: true
+    const askMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'ask:req:0', label: 'Yes' }] }, 'Are you sure?');
+    expect(flagsOf(room, topic).asking).toBe(true);
+    room.remove(topic, askMsg.id);
+
+    // 10. Unrecognized buttons (fails safe) -> asking: true
+    const unkMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'custom:1', label: 'Custom' }] }, 'Choose:');
+    expect(flagsOf(room, topic).asking).toBe(true);
+    room.remove(topic, unkMsg.id);
+  });
+
+  it('recognizes every control menu prefix and rejects non-control prefixes (single source of truth)', () => {
+    const CONTROL_PREFIXES = [
+      WORKDIR_PICK_PREFIX,
+      WORKDIR_PAGE_PREFIX,
+      MODEL_PICK_PREFIX,
+      MODEL_PAGE_PREFIX,
+      EFFORT_PICK_PREFIX,
+      AGENT_GROUP_PREFIX,
+      AGENT_PICK_PREFIX,
+      AGENT_BACK_PREFIX,
+      AGENT_PAGE_PREFIX,
+      SETTING_ROW_PREFIX,
+      SETTING_VALUE_PREFIX,
+      SETTING_PAGE_PREFIX,
+      SETTING_BACK_PREFIX,
+      SETTING_SET_PREFIX,
+      SETTING_TYPE_PREFIX,
+      SCHEDULE_OPEN_PREFIX,
+      SCHEDULE_TASK_PREFIX,
+      SCHEDULE_ACTION_PREFIX,
+      PICK_PREFIX,
+    ];
+
+    for (const prefix of CONTROL_PREFIXES) {
+      const id = `${prefix}req1:0`;
+      expect(isControlMenuButton(id), `prefix ${prefix} must be recognized as a control menu`).toBe(true);
+      const msg: WebMessage = { id: 'w1', own: false, html: '', at: 1, g: 1, reactions: [], buttons: [{ id, label: 'btn' }] };
+      expect(isControlMenu(msg), `message with ${prefix} button must be exempted`).toBe(true);
+    }
+
+    const NON_CONTROL_PREFIXES = ['ask:', VOICE_BUTTON_PREFIX];
+    for (const prefix of NON_CONTROL_PREFIXES) {
+      const id = `${prefix}req1:0`;
+      expect(isControlMenuButton(id), `prefix ${prefix} must not be a control menu`).toBe(false);
+      const msg: WebMessage = { id: 'w1', own: false, html: '', at: 1, g: 1, reactions: [], buttons: [{ id, label: 'btn' }] };
+      expect(isControlMenu(msg), `message with ${prefix} button must not be exempted`).toBe(false);
+    }
+  });
+
+  it('treats a message with both control buttons and ask buttons as a question (every, not some)', () => {
+    const { room, topic } = attached();
+    const mixedMsg = room.post(
+      topic,
+      {
+        own: false,
+        html: '',
+        buttons: [
+          { id: `${SETTING_ROW_PREFIX}req:0`, label: 'Default model' },
+          { id: 'ask:req:0', label: 'Confirm' },
+        ],
+      },
+      'Mixed buttons'
+    );
+    expect(isControlMenu(mixedMsg)).toBe(false);
+    expect(flagsOf(room, topic).asking).toBe(true);
+  });
+
+  it('does not exempt a settings screen message if it also carries ask or unknown buttons', () => {
+    const mixedSettings: WebMessage = {
+      id: 'w1',
+      own: false,
+      html: '',
+      at: 1,
+      g: 1,
+      reactions: [],
+      settings: { level: 'list', groups: [], rows: [] },
+      buttons: [
+        { id: `${SETTING_SET_PREFIX}req:0`, label: 'Switch' },
+        { id: 'ask:req:0', label: 'Approve' },
+      ],
+    };
+    expect(isControlMenu(mixedSettings)).toBe(false);
+
+    const pureSettings: WebMessage = {
+      id: 'w2',
+      own: false,
+      html: '',
+      at: 1,
+      g: 1,
+      reactions: [],
+      settings: { level: 'list', groups: [], rows: [] },
+      buttons: [{ id: `${SETTING_SET_PREFIX}req:0`, label: 'Switch' }],
+    };
+    expect(isControlMenu(pureSettings)).toBe(true);
+
+    const noButtonSettings: WebMessage = {
+      id: 'w3',
+      own: false,
+      html: '',
+      at: 1,
+      g: 1,
+      reactions: [],
+      settings: { level: 'list', groups: [], rows: [] },
+      buttons: [],
+    };
+    expect(isControlMenu(noButtonSettings)).toBe(true);
+  });
+
+  it('picks the text of the actual question for questionLine when both control menus and asks exist', () => {
+    const { room, topic } = attached();
+    // Post a control menu first (e.g. /setting)
+    room.post(topic, { own: false, html: '', buttons: [{ id: 'stg:req:0', label: 'Agent' }] }, 'Settings menu text');
+    // Post a real ask
+    room.post(topic, { own: false, html: '', buttons: [{ id: 'ask:req:0', label: 'Yes' }] }, 'Do you want to proceed?\nLine 2');
+    // Post another control menu (e.g. /model)
+    room.post(topic, { own: false, html: '', buttons: [{ id: 'mdl:req:0', label: 'model' }] }, 'Model menu text');
+
+    expect(flagsOf(room, topic).asking).toBe(true);
+    const item = room.topicList().find((t) => t.id === topic);
+    expect(item?.stage).toBe('answer');
+    expect(item?.line).toBe('Do you want to proceed?');
+  });
+
+  it('still considers a topic inUse and protects it from idle reclaim when holding a control menu', () => {
+    const { room, topic } = attached();
+    room.useIdleReclaim(() => true);
+    room.post(topic, { own: false, html: '', buttons: [{ id: 'stg:req:0', label: 'Agent' }] }, 'Settings');
+    const res = room.closeIdle([topic]);
+    expect(res.closed).toEqual([]);
+    expect(res.kept).toEqual([topic]);
+  });
+
   it('reports no agent behind any topic when the daemon never offered a lookup', () => {
     const { room, topic } = attached();
     expect(flagsOf(room, topic).live).toBe(false);
@@ -1493,7 +1703,7 @@ describe('WebRoom: a full topic list makes room instead of refusing', () => {
     const { room, store, ids } = full();
     for (const id of ids) room.starTopic(id, true);
 
-    expect(() => room.createTopic()).toThrow(/every one of the 64 topics is starred or in use; unstar or delete one/);
+    expect(() => room.createTopic()).toThrow(new RegExp(`every one of the ${MAX_TOPICS} topics is starred or in use; unstar or delete one`));
     expect(store.list()).toHaveLength(MAX_TOPICS);
   });
 

@@ -108,9 +108,9 @@ far as this module: the room goes, the list entry goes, and the daemon's binding
 The sweep exists because a restart leaves a sidebar full of rows that open onto nothing (see
 `stale` below), and deleting a dozen of those one at a time is not a feature.
 
-**Past 64 topics the oldest one goes, unless something is holding on to it.** `topics.ts` used to
-refuse the 65th outright, on the grounds that evicting a topic orphans its session. In use that
-reached 64 in two weeks (a new-session scheduled task adds a topic per run), after which `+` did
+**Past 200 topics the oldest one goes, unless something is holding on to it.** `topics.ts` used to
+refuse past the ceiling outright, on the grounds that evicting a topic orphans its session. In use that
+reached the cap (a new-session scheduled task adds a topic per run), after which `+` did
 nothing at all — the 409 never reached the screen — and every scheduled run fell back to posting
 into the chat. Orphaning costs exactly what a `×` costs, which people press all the time; so now
 `WebRoom.createTopic` evicts the least recently active topic first (`makeRoom`), logging its id and
@@ -157,7 +157,7 @@ renamed) and `useTranscripts` reads them back before anything can attach. Decisi
 - **Every topic, not only starred ones.** The 2.5.0 argument against this was cost: rewriting every
   topic's ring on every streamed edit. But the write is paid per topic that is *changing*, and the
   topics changing are the ones being read — a topic nobody speaks in is never written. The disk is
-  bounded by the 64 topics times 500 messages. A star now only keeps a topic from eviction and the
+  bounded by the 200 topics times 1000 messages. A star now only keeps a topic from eviction and the
   sweep. Deleting, evicting or sweeping a topic removes its file, and a file whose topic is gone when
   the daemon starts is removed too.
 - **Written within 3 s of a change, not 3 s after the last one.** The first change arms the write
@@ -172,7 +172,7 @@ renamed) and `useTranscripts` reads them back before anything can attach. Decisi
   are stripped on the server too, since the process that would answer them is gone.
 - **The id counter starts past every restored id.** `nextId` restarts at `w1` each run, and the
   ring is a map by id, so a new `w5` would overwrite a kept one.
-- **What is kept is what the ring had**: up to 500 messages. A file the agent sent comes back as
+- **What is kept is what the ring had**: up to 1000 messages. A file the agent sent comes back as
   its name. Its download token died with the old process, so the link answers 404 and a picture
   hides itself, as it does from the browser's cache.
 
@@ -391,15 +391,15 @@ It is compared with a turn's end, which is the daemon's time, and a phone's cloc
 compare a server's with. Posting only on `review` keeps the traffic to one request per reply read.
 
 **A menu is not a question** (`awaitingQuestion`). The room's `awaiting` set is "messages with live
-buttons", which was the same thing while every such message was an ask. Since a new topic's choice of
-agent is a tap that types `/agent` (2026-11-02), the daemon also posts the *directory* menu into a
-conversation that has not started — and that menu, counted as a question, pinned the topic to the top
-in green and pushed "Waiting on your answer" about a topic with no agent in it, which the operator had
-just been looking at. The menu is a control for the operator's own next step, so `topicList` asks
-`awaitingQuestion` instead: a message whose buttons are all a directory menu's (`core/workdir-menu.ts`)
-does not make the topic `answer`. `awaiting` itself still holds it, because `inUse` must not evict a
-topic with a clickable menu and idle reclaim must not close the agent under one. Unrecognised buttons
-count as a question, so a new kind of ask is announced rather than silently missed.
+buttons", which was the same thing while every such message was an ask. Operator control menus —
+settings, scheduled tasks, `/model`, `/effort`, `/cd`, agent selection and command pickers — are
+controls for the operator's own next step, not questions blocking an agent turn. Counted as a
+question, opening `/setting` or leaving a setup menu pinned the topic to the top in green and pushed
+"Waiting on your answer" about a topic with no agent or no turn running. So `topicList` asks
+`awaitingQuestion` instead: a message whose buttons are all control menus does not make the topic
+`answer`. `awaiting` itself still holds it, because `inUse` must not evict a topic with a clickable
+menu and idle reclaim must not close the agent under one. Unrecognised buttons count as a question,
+so a new kind of ask is announced rather than silently missed.
 
 **Sub-agent topics** (daemon/delegation.ts) carry `parent`, the topic whose agent opened them —
 persisted, and the only record of the relation (`parentOf` / `childrenOf` on the adapter read it back).
@@ -431,7 +431,7 @@ amber dot still pulses, and the green rows above are unchanged. It is CSS over t
 purpose: `page.dom.test.ts` checks that the rows are identical either way and that the stylesheet's
 `#app.calm` rules are exactly those two, so a rule that quiets a question or a failure fails there.
 
-**The sidebar footer is one row, two menus**: ⚙ Menu and ⋯ Manage (one row since 2.20.0, split
+**The sidebar footer is one row, two menus**: ⚙ Menu and Manage (one row since 2.20.0, split
 in two when the three buttons stopped fitting).
 Menu holds All settings, Notifications, Low attention and Skills — things set once per device or
 visited rarely. Manage holds Close idle and Clear all topics, and carries the idle count on its own
@@ -439,7 +439,7 @@ face so the number is still seen without opening anything. The two menus are the
 upward over the list, one at a time, and dismissed by a click outside either (the drawer's backdrop
 included) or Escape, which also gives the focus back to the button that opened it (`setMenu`). The
 footer is a size container: at the narrowest sidebar (180px) both words drop and the row
-is ⚙ and ⋯(N) — the count is the one thing that stays.
+shows the icons with (N) on Manage — the count is the one thing that stays.
 
 ## The two side panels
 
@@ -867,7 +867,7 @@ topic, and both only do work at the moment of a switch.
 **Where you were reading is kept as a message, not as a pixel offset.** On the way out,
 `saveView` records the first message on screen and how far its top sits from the top of the
 viewport. A scrollTop would not survive the way back in. The transcript is rebuilt from the cache,
-which keeps the last 200 messages, and then reconciled against a ring of 500. So on a long topic
+which keeps the last 200 messages, and then reconciled against a ring of 1000. So on a long topic
 the sync inserts older messages *above* the one being read, and a restored offset would land that
 many rows off. A binary search over `#log`'s children finds that message with one forced layout,
 not one per message.

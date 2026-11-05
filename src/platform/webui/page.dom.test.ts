@@ -1546,7 +1546,7 @@ describe('webui page: coming back to a topic', () => {
   });
 
   it('finds that message again when the sync puts older ones above it', async () => {
-    // The cache keeps the last 200 messages and the ring holds 500, so a long topic comes back
+    // The cache keeps the last 200 messages and the ring holds 1000, so a long topic comes back
     // short and the sync then adds the head of it — above the message being read. Restoring a
     // scrollTop would land a hundred rows off; this is the reason the view is a message.
     const h = await open();
@@ -5406,9 +5406,17 @@ describe('webui page: the sidebar footer, and low attention', () => {
     // The footer itself holds two buttons and nothing else — the two menus are its children.
     const buttons = Array.from(h.el('sidebar-footer').children).filter((e) => e.tagName === 'BUTTON');
     expect(buttons.map((b) => b.id)).toEqual(['opts-toggle', 'manage-toggle']);
+    expect(h.el('opts-toggle').querySelector('.opts-gear')?.textContent).toContain('⚙');
+    expect(h.el('manage-toggle').querySelector('.opts-gear svg')).not.toBeNull();
+    expect(h.el('manage-toggle').querySelector('.opts-gear svg')?.getAttribute('viewBox')).toBe('0 0 24 24');
     expect(menuOpen(h)).toBe(false);
     expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
     expect(h.el('manage-toggle').getAttribute('aria-expanded')).toBe('false');
+
+    // Manage aligns to the right edge via margin-left: auto (twin of the 2.34.0 close-idle rule).
+    const html = renderPage('Chat', false);
+    const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+    expect(css).toMatch(/#manage-toggle\s*\{[^}]*margin-left:\s*auto[^}]*\}/);
   });
 
   it('shows the idle count on Manage without opening anything', async () => {

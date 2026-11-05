@@ -132,14 +132,14 @@ export interface Topic {
  * driven from `WebRoom.createTopic`). It used to be a refusal and nothing else, on the grounds
  * that dropping the oldest topic orphans its agent session the way losing this file would. That
  * held up in theory and failed in use: two weeks of ordinary work (plus a topic per new-session
- * scheduled run) reached 64, after which the + button did nothing at all — the 409 never reached
+ * scheduled run) reached the limit, after which the + button did nothing at all — the 409 never reached
  * the screen — and every scheduled run fell back to posting into the chat. What orphaning costs
  * is the same as the × costs, which people press all the time; a topic worth keeping is starred.
  *
- * 64 rooms is already far past the point where a one-line switcher is readable, so the number
- * did not move.
+ * The switcher finds topics by pin, star and "needs you" ordering rather than raw glance scan,
+ * so the ceiling only exists to prevent unbounded growth. Raised to 200 (2026-11-05).
  */
-export const MAX_TOPICS = 64;
+export const MAX_TOPICS = 200;
 
 /** How much of a first message becomes the placeholder name before the harness names it. */
 const SEED_CHARS = 32;

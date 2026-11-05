@@ -98,6 +98,40 @@ describe('WebRoom: the stage of a topic', () => {
     expect(sent).toEqual([]);
   });
 
+  it('settings and schedule menus are controls, not questions: they neither ask nor notify', () => {
+    vi.useFakeTimers();
+    const { room, topic, row } = rig();
+    const sent: TopicNotice[] = [];
+    room.useNotifier((n) => sent.push(n));
+
+    room.post(
+      topic,
+      {
+        own: false,
+        html: '',
+        buttons: [{ id: 'stg:ab12cd34:0', label: 'Default model' }],
+      },
+      'Settings'
+    );
+    expect(row(topic)?.asking).toBe(false);
+    expect(row(topic)?.stage).toBe('idle');
+
+    room.post(
+      topic,
+      {
+        own: false,
+        html: '',
+        buttons: [{ id: 'sct:ab12cd34:0', label: 'Morning CI' }],
+      },
+      'Scheduled tasks'
+    );
+    expect(row(topic)?.asking).toBe(false);
+    expect(row(topic)?.stage).toBe('idle');
+
+    vi.advanceTimersByTime(10_000);
+    expect(sent).toEqual([]);
+  });
+
   it('keeps the outcome and when it was seen across a restart, but not a scheduled continue', () => {
     const { room, topic, file } = rig();
     room.setActivity(topic, {
