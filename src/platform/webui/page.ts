@@ -1344,9 +1344,8 @@ const SCRIPT = `
     el: sidebar, handle: $('sidebar-resize'), side:'left',
     min:180, max:640, width:240, storeKey:'aa_sb_open', widthKey:'aa_sb_w',
     dockAt: NARROW + 1,
-    // The cap leaves the chat 360px with the right panel docked. It counts the sidebar's width
-    // even while the sidebar is collapsed: collapsing hands the column's space back to the chat,
-    // but expanding it again takes that space back, and the 360px has to hold in both states.
+    // The cap leaves the chat 360px with the right panel docked: that panel's width comes off
+    // the top, and the sidebar may take the rest up to 640.
     maxWidth: function(){
       return window.innerWidth - 360 - (schedPane && schedPane.isOpen() && schedPane.docked() ? schedPane.width() : 0);
     },
