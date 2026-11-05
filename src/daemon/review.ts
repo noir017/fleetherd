@@ -65,7 +65,8 @@ import {
  * dropped and logged, never retried in a loop. The reviewer itself never has a write path.
  *
  * ── What it costs ───────────────────────────────────────────────────────────────────────────────
- * One review at a time and a six-hour back-off after a failure. There is no daily cap: each
+ * One review at a time, a six-hour back-off after a failure, and at most REVIEW_MAX_ATTEMPTS tries
+ * on the same batch of messages before the sweep gives up on it. There is no daily cap: each
  * conversation's watermark is what stops it being reviewed again, and REVIEW_LAST_MESSAGE_MAX_MS
  * keeps the first start from replaying months of history for conversations it has never seen. A
  * watermark that cannot be written is held in memory (review-state.ts), so a full disk does not
@@ -85,6 +86,13 @@ export const REVIEW_SWEEP_MS = 60_000;
  * failed) is not subject to it — its watermark and retry time do that job.
  */
 export const REVIEW_LAST_MESSAGE_MAX_MS = 24 * 3_600_000;
+
+/**
+ * Failed attempts allowed on one batch of messages. After this the sweep gives up on the batch and
+ * moves the watermark past it: an exhausted reviewer (or a host that is down) must not hold the
+ * single review lane forever, retrying the same messages every six hours.
+ */
+export const REVIEW_MAX_ATTEMPTS = 3;
 
 /** How many of the person's messages make a conversation worth reviewing. */
 export const REVIEW_MIN_USER_MESSAGES = 3;
@@ -280,25 +288,44 @@ export class ReviewService {
     return { session, window };
   }
 
+  /**
+   * Record one failed attempt and return the sentence for the log and the Reviews row. The third
+   * failure gives up on this batch: the watermark moves past it, so only messages that arrive
+   * afterwards can start another review.
+   */
+  private fail(candidate: ReviewCandidate, plan: Plan, error: string, now: number): string {
+    const attempts = this.deps.state.failed(candidate.key, error, now);
+    const message = attempts < REVIEW_MAX_ATTEMPTS ? error : `gave up after ${attempts} attempts: ${error}`;
+    if (attempts >= REVIEW_MAX_ATTEMPTS) {
+      this.deps.state.gaveUp(candidate.key, plan.window.lastMessageId, message, now);
+    }
+    this.log(`[review] ${candidate.key}: ${message}`);
+    return message;
+  }
+
   private async runOne(candidate: ReviewCandidate, plan: Plan, reviewer: AgentDef, now: number): Promise<void> {
     let prompt: string;
     try {
       prompt = this.promptFor(plan);
     } catch (e) {
       // Building the prompt reads the skill library and every skill the conversation used. A
-      // failure there — an unreadable directory, a broken `SKILL.md` — used to escape to the sweep,
-      // which logged it and tried again on the next minute, forever. It is a failed review like any
-      // other: back off six hours for this conversation.
-      const error = e instanceof Error ? e.message : String(e);
-      this.deps.state.failed(candidate.key, error, now);
-      this.log(`[review] ${candidate.key}: could not prepare the review: ${error}`);
+      // failure there — an unreadable directory, a broken `SKILL.md` — is a failed review like any
+      // other: back off, and leave a row so the Reviews tab can say why nothing happened.
+      const error = this.fail(candidate, plan, `could not prepare the review: ${e instanceof Error ? e.message : String(e)}`, now);
+      const failedId = this.record(plan, '', '', reviewer, candidate, now);
+      this.writeResult(failedId, plan, candidate, now, {
+        outcome: 'failed',
+        changes: [],
+        preferences: [],
+        invalid: [],
+        error,
+      });
       return;
     }
     const model = this.deps.config.review?.model ?? reviewer.model;
     const result = await this.run(reviewer, model, prompt);
     if (!result.ok) {
-      this.deps.state.failed(candidate.key, result.error, now);
-      this.log(`[review] ${candidate.key}: ${result.error}`);
+      const error = this.fail(candidate, plan, result.error, now);
       // A failed attempt is a review too. Until this row existed the reason a quiet conversation
       // was never reviewed lived only in the log, which is not where a person looks; the Reviews
       // tab is. The session has no answer to file, only the prompt and the failure.
@@ -308,7 +335,7 @@ export class ReviewService {
         changes: [],
         preferences: [],
         invalid: [],
-        error: result.error,
+        error,
       });
       return;
     }
@@ -439,7 +466,8 @@ export class ReviewService {
   /**
    * File the review itself in the library, as a `review` session no search returns, and answer its
    * id so the result row can be attached. An empty `output` is a run that never answered: the
-   * session then holds the prompt alone.
+   * session then holds the prompt alone. An empty `prompt` is a preparation failure, before
+   * anything was sent: the session holds no messages at all.
    */
   private record(
     plan: Plan,
@@ -459,7 +487,7 @@ export class ReviewService {
         kind: 'review',
         at: now,
       });
-      this.deps.history.message(id, { ts: now, role: 'user', kind: 'review', text: prompt });
+      if (prompt) this.deps.history.message(id, { ts: now, role: 'user', kind: 'review', text: prompt });
       if (output) this.deps.history.message(id, { ts: now, role: 'agent', kind: 'review', text: output });
       return id;
     } catch (e) {

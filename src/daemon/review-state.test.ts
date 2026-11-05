@@ -48,6 +48,26 @@ describe('ReviewStateStore', () => {
     expect(store().ready('a', T0 + 1_000 + REVIEW_RETRY_MS)).toBe(true);
   });
 
+  it('counts consecutive failures on a batch and resets them on a review', () => {
+    const s = store();
+    expect(s.failed('a', 'agy exited 1', T0)).toBe(1);
+    expect(s.failed('a', 'agy exited 1', T0)).toBe(2);
+    s.reviewed('a', 42, T0);
+    expect(s.markOf('a')?.attempts).toBeUndefined();
+    expect(s.failed('a', 'agy exited 1', T0)).toBe(1);
+  });
+
+  it('gives up on a batch by moving the watermark and clearing the retry', () => {
+    const s = store();
+    s.failed('a', 'agy exited 1', T0);
+    s.gaveUp('a', 42, 'gave up after 3 attempts: agy exited 1', T0);
+    const mark = s.markOf('a');
+    expect(mark?.messageId).toBe(42);
+    expect(mark?.retryAt).toBeUndefined();
+    expect(mark?.attempts).toBeUndefined();
+    expect(mark?.error).toContain('gave up after 3 attempts');
+  });
+
   it('writes the file 0600', () => {
     store().reviewed('a', 1, T0);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);

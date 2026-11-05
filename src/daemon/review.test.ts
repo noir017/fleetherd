@@ -312,6 +312,49 @@ describe('ReviewService', () => {
     expect(attempts).toBe(2);
   });
 
+  it('gives up on a batch after three failed attempts and reviews new messages afterwards', async () => {
+    const id = seed('telegram:chat:1', 3);
+    let attempts = 0;
+    const h = harness({
+      run: async () => {
+        attempts += 1;
+        return { ok: false, error: 'agy quota exhausted' };
+      },
+    });
+
+    await h.service.sweep();
+    now += 6 * 3_600_000;
+    await h.service.sweep();
+    now += 6 * 3_600_000;
+    await h.service.sweep();
+    expect(attempts).toBe(3);
+
+    const [row] = history.reviewSessions();
+    expect(row!.record).toMatchObject({ outcome: 'failed' });
+    expect(row!.record!.error).toContain('gave up after 3 attempts');
+
+    // The watermark moved past the batch, so the same messages are not tried again.
+    now += 6 * 3_600_000;
+    await h.service.sweep();
+    expect(attempts).toBe(3);
+
+    // Three new messages start a new batch, which gets three attempts of its own.
+    for (const [i, text] of ['新一', '新二', '新三'].entries()) {
+      history.message(id, { ts: now + i, role: 'user', kind: 'normal', text });
+    }
+    await h.service.sweep();
+    expect(attempts).toBe(4);
+    now += 6 * 3_600_000;
+    await h.service.sweep();
+    expect(attempts).toBe(5);
+    now += 6 * 3_600_000;
+    await h.service.sweep();
+    expect(attempts).toBe(6);
+    now += 6 * 3_600_000;
+    await h.service.sweep();
+    expect(attempts).toBe(6);
+  });
+
   it('backs off for six hours when the prompt cannot be prepared', async () => {
     seed('telegram:chat:1', 3);
     // A file where the skills directory should be: listSkills throws ENOTDIR.
@@ -330,6 +373,12 @@ describe('ReviewService', () => {
     now += 6 * 3_600_000;
     await h.service.sweep();
     expect(prepared()).toBe(2);
+
+    // A preparation failure is still a review attempt, so the Reviews tab can say why it failed.
+    const rows = history.reviewSessions();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.record).toMatchObject({ outcome: 'failed' });
+    expect(rows[0]!.record!.error).toContain('could not prepare the review');
   });
 
   it('does not review the same conversation again when the watermark cannot be written', async () => {

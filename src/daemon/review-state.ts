@@ -10,7 +10,9 @@ import path from 'node:path';
  * watermark is the only thing that stops a conversation from being reviewed twice.
  *
  * A failed run keeps the watermark where it was and records a retry time: the conversation will
- * be reviewed again later, but a broken reviewer is not retried every minute.
+ * be reviewed again later, but a broken reviewer is not retried every minute. A batch that keeps
+ * failing is abandoned after three attempts (`gaveUp` moves the watermark past it), so an
+ * exhausted reviewer cannot retry the same messages forever.
  *
  * A mark that cannot be written to disk is kept in memory for this process. That is the second
  * half of the same guarantee: with no daily cap, a full disk would otherwise leave the watermark
@@ -29,6 +31,8 @@ export interface ReviewMark {
   attemptAt?: string;
   /** Do not try again before this. Set by a failure. */
   retryAt?: string;
+  /** Consecutive failures on the current batch. Reset by a review or a give-up. */
+  attempts?: number;
   /** Why the last attempt failed, for the log line. */
   error?: string;
 }
@@ -49,6 +53,10 @@ function empty(): ReviewFile {
   return { version: 1, conversations: {} };
 }
 
+function clipped(error: string): string {
+  return error.length > 300 ? `${error.slice(0, 299)}…` : error;
+}
+
 export class ReviewStateStore {
   /** Marks whose write failed; `markOf` prefers them over what is still on disk. */
   private readonly unpersisted = new Map<string, ReviewMark>();
@@ -63,20 +71,40 @@ export class ReviewStateStore {
     return this.unpersisted.get(key) ?? this.read().conversations[key];
   }
 
-  /** A successful review: move the watermark and clear any retry. */
+  /** A successful review: move the watermark, clear any retry and the attempt count. */
   reviewed(key: string, messageId: number, now = Date.now()): void {
     this.save(key, { messageId, at: new Date(now).toISOString(), attemptAt: new Date(now).toISOString() });
   }
 
-  /** A failed review: keep the watermark, wait before trying again. */
-  failed(key: string, error: string, now = Date.now()): void {
+  /**
+   * A failed review: keep the watermark, wait before trying again. Returns the number of
+   * consecutive failed attempts on this batch, which the caller uses to decide when to give up.
+   */
+  failed(key: string, error: string, now = Date.now()): number {
     const previous = this.markOf(key);
+    const attempts = (previous?.attempts ?? 0) + 1;
     this.save(key, {
       messageId: previous?.messageId ?? 0,
       at: previous?.at ?? new Date(now).toISOString(),
       attemptAt: new Date(now).toISOString(),
       retryAt: new Date(now + REVIEW_RETRY_MS).toISOString(),
-      error: error.length > 300 ? `${error.slice(0, 299)}…` : error,
+      error: clipped(error),
+      attempts,
+    });
+    return attempts;
+  }
+
+  /**
+   * Give up on the current batch: move the watermark past it so only messages that arrive later
+   * can start another review, and clear the retry. The error is kept for the record's sake;
+   * nothing about scheduling reads it.
+   */
+  gaveUp(key: string, messageId: number, error: string, now = Date.now()): void {
+    this.save(key, {
+      messageId,
+      at: new Date(now).toISOString(),
+      attemptAt: new Date(now).toISOString(),
+      error: clipped(error),
     });
   }
 

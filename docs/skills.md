@@ -159,10 +159,11 @@ When something changed, one line appears in the conversation that was reviewed:
 No change, no line. One review runs at a time. A conversation this feature has never seen is
 reviewed only when its newest message is under 24 hours old — so turning this on for the first
 time reads the recent tail, not months of history; once it has a record (reviewed or failed), its
-watermark and the six-hour retry decide. A failed review waits six hours before it is tried again;
-there is no daily cap, because each conversation's watermark already stops it being reviewed twice.
-Reviews are filed in the conversation library as `review` sessions, which search and `list` leave
-out.
+watermark and the retry schedule decide. A failed review waits six hours before it is tried again,
+and the same batch of messages gets at most three attempts; after the third failure the review
+gives up, moves past that batch, and waits for three new messages. There is no daily cap, because
+each conversation's watermark already stops it being reviewed twice. Reviews are filed in the
+conversation library as `review` sessions, which search and `list` leave out.
 
 **Where the results are.** The web UI's side panel has a **Reviews** tab: every review, including
 the ones that changed nothing and posted no line. A row is the reviewed conversation, when, and

@@ -391,16 +391,18 @@ conversation, the last message id a review saw — the same integer `reviewWindo
 what to quote. "Three" counts `role: user, kind: normal` rows, so a scheduled turn or a sub-agent
 prompt in the same topic does not count as the person speaking.
 
-**One at a time, six-hour back-off, and a 24-hour rule for unseen conversations.** `sweep` is
-guarded by a flag, so a review that outlives the minute simply makes the next tick a no-op; it
-reads the clock per candidate, because without the cap a pass can outlast the hour. There is no
-daily cap: the per-conversation watermark is what stops the same conversation being reviewed
-again, and a conversation this feature has never seen whose newest message is over a day old is
-skipped, so turning it on cannot replay months of history. Once a mark exists — reviewed or
-failed — the watermark and the retry time decide. A failed run records a retry time instead of
-advancing the watermark, so a broken reviewer is not retried every minute. And a mark that cannot
-be written to disk is held in memory (`review-state.ts`): with no cap, a full disk would otherwise
-leave the watermark unchanged and review the same conversation on every sweep.
+**One at a time, six-hour back-off, three tries per batch, and a 24-hour rule for unseen
+conversations.** `sweep` is guarded by a flag, so a review that outlives the minute simply makes
+the next tick a no-op; it reads the clock per candidate, because without the cap a pass can outlast
+the hour. There is no daily cap: the per-conversation watermark is what stops the same conversation
+being reviewed again, and a conversation this feature has never seen whose newest message is over a
+day old is skipped, so turning it on cannot replay months of history. Once a mark exists — reviewed
+or failed — the watermark and the retry time decide. A failed run records a retry time instead of
+advancing the watermark, so a broken reviewer is not retried every minute; the third failure on the
+same batch gives up, advances the watermark past it, and leaves a failed row in the library saying
+so, so an exhausted reviewer cannot hold the single lane forever. And a mark that cannot be written
+to disk is held in memory (`review-state.ts`): with no cap, a full disk would otherwise leave the
+watermark unchanged and review the same conversation on every sweep.
 
 **The reviewer cannot touch anything.** One `agy -p` on the agent's machine, in an empty directory
 that is removed afterwards, with every permission class denied (`AGY_NO_TOOLS`). Measured on agy
