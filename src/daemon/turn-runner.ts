@@ -342,6 +342,11 @@ function withTurn(end: TurnEnd, turn: HistoryTurnRef | undefined): TurnEnd {
   return turn?.seq !== undefined ? { ...end, turn: turn.seq } : end;
 }
 
+/** The row id of the turn just opened, or undefined when the library did not take it. */
+function turnIdOf(turn: HistoryTurnRef | undefined): number | undefined {
+  return turn?.id;
+}
+
 /**
  * How a finished turn is filed. A stopped turn is still a turn that ran — its partial reply is
  * in the library — so it gets `stopped`, not a silent absence. A failure keeps the message the
@@ -635,7 +640,7 @@ export class TurnRunner {
       trigger,
       at: this.clock.now(),
     });
-    const turnId = historyTurn?.id;
+    const turnId = turnIdOf(historyTurn);
     // Everything that turns agent events into messages in this lane. Shared with the follow-up
     // path (see followUpSink) so out-of-turn output renders exactly like in-turn output.
     const render = this.beginRender(conversationId, platform, address, historyKind, turnId);

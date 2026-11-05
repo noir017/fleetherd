@@ -67,8 +67,9 @@ All notable changes to this project are documented here. The format is based on
   it. A failed turn's error is kept whole in that turn's record (`turns.detail`, up to 200,000
   characters) instead of its first 500, and `--turn <n>` reads it, so an error longer than the card
   is no longer unreadable. The card names the turn it quoted — a background burst after it would
-  otherwise be "the last turn" by the time the parent reads. The `super` skill hands review to a
-  sub-agent — the agent that split the
+  otherwise be "the last turn" by the time the parent reads — and `--turn <n> --full` returns that
+  turn whole, past the 20,000-character cut a `--full` log read keeps. The `super` skill hands
+  review to a sub-agent — the agent that split the
   job reads the verdict, not the diff — and asks each sub-agent for a conclusion-first reply under
   2,000 characters. [→](docs/sub-agents.md)
 

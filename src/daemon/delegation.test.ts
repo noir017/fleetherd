@@ -1078,6 +1078,26 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(original.messages.map((m) => m.text)).toContain(reply);
   });
 
+  it('reads a reply past the 20k log cut whole when the card names its turn', async () => {
+    const r = await oneChild();
+    const reply = 'r'.repeat(30_016);
+    seedTurn(r.history, 'web#main#c1000000', [{ role: 'agent', text: reply }], 'done');
+    // The card points here for the rest of a cut reply: a single turn is bounded by the library's
+    // 200k, not by the 20k that keeps a --full log readable.
+    const whole = (await r.d.handle(P, {
+      kind: 'task-read',
+      topic: 'c1000000',
+      turn: '1',
+      full: true,
+    })) as TaskReadResult;
+    expect(whole.messages).toHaveLength(1);
+    expect(whole.messages[0]!.text).toBe(reply);
+    // `--turns` is a log read and keeps the smaller cut.
+    const log = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', turns: 1, full: true })) as TaskReadResult;
+    expect(log.messages[0]!.text).not.toBe(reply);
+    expect(log.messages[0]!.text).toContain('later characters');
+  });
+
   it('points a cut error at the turn it came from, so a later burst cannot hide it', async () => {
     const chain = realChain();
     await openOne(chain);

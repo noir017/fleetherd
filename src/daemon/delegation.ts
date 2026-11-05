@@ -5,7 +5,7 @@ import { parseTarget, type ConversationAddress } from '../core/conversation.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
 import { LINE_MAX, topicStage } from '../core/topic-stage.js';
-import type { HistoryReadOptions, HistoryStore, HistoryTurnRow } from '../history/store.js';
+import { READ_CHAR_BUDGET, type HistoryReadOptions, type HistoryStore, type HistoryTurnRow } from '../history/store.js';
 import type {
   IpcAction,
   TaskActionResult,
@@ -644,7 +644,7 @@ export class Delegation {
     if (a.reply) return this.replyOfTurn(c, a.topic, history);
     const current = this.deps.currentContext;
     const result = history.read(c.key, taskReadOptions(a, current));
-    const cap = a.full || a.tail !== undefined ? READ_FULL_CHARS : READ_CHARS;
+    const { cap, total } = readCuts(a);
     const shaped = result.messages.map((m) => ({
       id: m.id,
       role: roleOf(m.role),
@@ -657,7 +657,7 @@ export class Delegation {
     let from = shaped.length;
     for (let i = shaped.length - 1; i >= 0; i--) {
       const size = shaped[i]!.text.length;
-      if (used + size > READ_TOTAL_CHARS && from !== shaped.length) break;
+      if (used + size > total && from !== shaped.length) break;
       used += size;
       from = i;
     }
@@ -666,7 +666,7 @@ export class Delegation {
       result.note,
       dropped > 0
         ? `the ${dropped} oldest of ${shaped.length} messages were left out to keep this under ` +
-          `${READ_TOTAL_CHARS} characters; ask for fewer messages (--limit) or fewer lines (--tail) to fit the rest`
+          `${total} characters; ask for fewer messages (--limit) or fewer lines (--tail) to fit the rest`
         : undefined,
     ].filter((n): n is string => n !== undefined);
     // Only a read scoped to ONE turn has a record worth carrying: it is where a failed turn's whole
@@ -1186,6 +1186,21 @@ function taskReadOptions(
     ...(a.grep !== undefined ? { grep: a.grep } : {}),
     ...(current ? { current } : {}),
   };
+}
+
+/**
+ * The text cuts one `task-read` answer uses: per message, and in all.
+ *
+ * A card points at one turn's reply with `--turn <n> --full` and promises the rest of that
+ * message, so a single-turn `--full` read is bounded by the library's own answer budget instead of
+ * the 20k/80k that keeps a `--full` log readable — a 30k reply would otherwise be cut twice, once
+ * by each. `--turns` is not this case: it is a log read, and keeps the smaller bound.
+ */
+function readCuts(a: Extract<TaskAction, { kind: 'task-read' }>): { cap: number; total: number } {
+  if (a.turn !== undefined && a.full === true) return { cap: READ_CHAR_BUDGET, total: READ_CHAR_BUDGET };
+  return a.full || a.tail !== undefined
+    ? { cap: READ_FULL_CHARS, total: READ_TOTAL_CHARS }
+    : { cap: READ_CHARS, total: READ_TOTAL_CHARS };
 }
 
 /** A turn's record as `task-read` returns it: the failure detail only when there is one. */

@@ -273,10 +273,11 @@ const READ_ALL_LIMIT = 500;
  * How many characters of text `read` returns in one answer.
  *
  * The reply row is capped at 200k characters, so a 500-message conversation could otherwise be
- * a hundred-megabyte IPC line. This is the same budget `task-read` uses: enough for the whole of
- * an ordinary conversation, with a note pointing at `--around` when it is not.
+ * a hundred-megabyte IPC line. Exported because `task-read --turn <n> --full` answers with one
+ * turn and the update card that points there promises the whole of one reply: this bound is what
+ * that read may return, not the 20k that keeps a `--full` log readable.
  */
-const READ_CHAR_BUDGET = 200_000;
+export const READ_CHAR_BUDGET = 200_000;
 
 /**
  * How many messages `reviewWindow` reads before the character budget is applied. A review runs

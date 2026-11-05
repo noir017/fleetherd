@@ -953,7 +953,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       'A sub-agent topic from the conversation library: its messages, oldest first, cut at 1500 characters each; --full raises the cut, --tail shows the end of each, --reply the last finished reply whole, and the read filters select rows as they do for `sessions read`',
     options: [
       { flags: '-l, --limit <n>', description: 'how many messages (default 10)', parse: intArg('--limit') },
-      { flags: '--full', description: 'up to 20000 characters per message, 80000 in all (the whole command list, not just its start)' },
+      { flags: '--full', description: 'up to 20000 characters per message, 80000 in all (the whole command list, not just its start); with --turn, that turn whole — up to the library\'s 200000' },
       { flags: '--tail <n>', description: 'the last n lines of each message — what it is doing now, without the earlier ones' },
       {
         flags: '--reply',
