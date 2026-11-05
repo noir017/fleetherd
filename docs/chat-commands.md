@@ -131,6 +131,12 @@ as typed, as every command to a custom agent is. The first `/model` in a
 conversation whose agent has not started yet starts it to find out, which is the
 same start the forwarded message would have caused.
 
+The model you pick is remembered for the conversation, not just for the running
+agent: it is still in force after `/new`, after `/cd`, after the agent was stopped
+for idleness and after a daemon restart — the gateway sets it again on the new
+session where the harness would have started on its default. Choosing another agent
+for the conversation forgets it, since the next agent's list is a different one.
+
 ### `/effort`
 
 `/effort` works the same way on `claude`, `codex` and `opencode`: alone it opens a
@@ -141,7 +147,7 @@ levels come from the model, not the harness, so they change with `/model`, and a
 model can have none: opencode offers them only for models with reasoning variants,
 and codex only for models in the installed codex-cli's own catalog (on 0.155.1,
 `gpt-6-luna` is not one; 0.156.1 knows it). The reply says which case you are in.
-The choice survives the agent being stopped for idleness — the gateway re-applies
-it, since claude and codex come back at their default level — and ends with `/new`
-or a daemon restart.
+The choice is remembered like the model's: it survives the agent being stopped for
+idleness — the gateway re-applies it, since claude and codex come back at their
+default level — and `/new`, `/cd` and a daemon restart, until another agent is chosen.
 `agy` has no such setting; its thinking variants are separate models, under `/model`.

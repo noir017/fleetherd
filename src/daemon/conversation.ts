@@ -1234,6 +1234,7 @@ export class ConversationRegistry {
         agentId,
         platform: conv.platform,
         lastActivityAt: this.clock.now(),
+        ...this.restoredModel(key, agentId),
       };
       this.conversations.set(key, state);
       this.store?.bind(key, agentId);
@@ -1713,7 +1714,13 @@ export class ConversationRegistry {
     if (state?.agentId === agentId) return `${name} is already answering this topic.`;
     if (state) return this.rebind(key, state, agentId, conv.platform, addressOf(conv), false);
     // First sight of this conversation: bind it now, so the next message is answered by the choice.
-    this.conversations.set(key, { merger: this.buildMerger(key), agentId, platform: conv.platform, lastActivityAt: this.clock.now() });
+    this.conversations.set(key, {
+      merger: this.buildMerger(key),
+      agentId,
+      platform: conv.platform,
+      lastActivityAt: this.clock.now(),
+      ...this.restoredModel(key, agentId),
+    });
     this.store?.bind(key, agentId);
     console.log(`[conversation] ${key} bound to agent "${agentId}" (chosen with /agent)`);
     return `▸ ${name} is answering this conversation now`;
@@ -2853,6 +2860,10 @@ ${formatTokens(left)} left before compaction — ${name}`;
       // Only the person's paths reach here, never applyScheduledModel (which sets the field
       // directly): this is what tells a daily task the topic is now set by hand.
       this.hooks?.onModelSet?.(session.conversationId);
+      // And what makes the choice outlive the session object holding it — `/new`, `/cd`, a restart
+      // (see ConversationRecord.model). The value as offered, not `applied`: that can be the
+      // harness's display name, which its selector would not take back.
+      this.store?.setConversationChoice?.(session.conversationId, state.agentId, 'model', value);
       return { kind: 'applied', model: applied };
     } catch (e) {
       return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) };
@@ -2930,7 +2941,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const match = matchEfforts(selector.options, query);
     if (match.kind === 'none') return effortNoMatchText(query, selector.options);
     if (match.kind === 'many') return effortAmbiguousText(query, match.matches);
-    return effortChoiceText(await this.setEffortOn(warm.session, match.option.value));
+    return effortChoiceText(await this.setEffortOn(warm.session, state.agentId, match.option.value));
   }
 
   /** A bare `/effort`: the menu where the platform can carry one, the one-line summary elsewhere. */
@@ -2959,12 +2970,16 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * off the session's option list at the start of every turn, and setEffort has already written the
    * harness's answer there.
    */
-  private async setEffortOn(session: AgentSession, value: string): Promise<EffortChoiceResult> {
+  private async setEffortOn(session: AgentSession, agentId: string, value: string): Promise<EffortChoiceResult> {
     if (!session.setEffort) {
       return { kind: 'failed', reason: 'this agent cannot switch effort at runtime' };
     }
     try {
-      return { kind: 'applied', effort: await session.setEffort(value) };
+      const effort = await session.setEffort(value);
+      // Persisted for the reason the model is (setModelOn): the runtime's own copy dies with the
+      // session object on `/new`, `/cd` and a restart.
+      this.store?.setConversationChoice?.(session.conversationId, agentId, 'effort', value);
+      return { kind: 'applied', effort };
     } catch (e) {
       return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) };
     }
@@ -2992,7 +3007,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const selector = warm.selector;
     if (!selector) return { kind: 'unavailable' };
     if (!selector.options.some((o) => o.value === value)) return { kind: 'missing', value };
-    return this.setEffortOn(warm.session, value);
+    return this.setEffortOn(warm.session, state.agentId, value);
   }
 
   // ───────────────────────────── working directory (`/cd`) ─────────────────────────────
@@ -4173,12 +4188,29 @@ ${formatTokens(left)} left before compaction — ${name}`;
     let state = this.conversations.get(key);
     if (!state) {
       const bound = opts.fresh ? agentId : (this.store?.boundAgent(key) ?? agentId);
-      state = { merger: this.buildMerger(key), agentId: bound, platform, lastActivityAt: this.clock.now() };
+      state = {
+        merger: this.buildMerger(key),
+        agentId: bound,
+        platform,
+        lastActivityAt: this.clock.now(),
+        ...this.restoredModel(key, bound),
+      };
       this.conversations.set(key, state);
       this.store?.bind(key, bound);
       console.log(`[conversation] ${key} bound to agent "${bound}" (${opts.opener ?? 'scheduled run'})`);
     }
     return state;
+  }
+
+  /**
+   * The model a previous run recorded as the person's choice here, for a ConversationState being
+   * created — at every one of the three places that create one, so the status line, `/model` and
+   * agy's per-turn model name it after a restart rather than the configured one. (The ACP runtime
+   * reads the same record itself.) Asked by agent, so a binding about to change finds nothing.
+   */
+  private restoredModel(key: ConversationId, agentId: string): Pick<ConversationState, 'modelOverride'> {
+    const model = this.store?.conversationChoice?.(key, agentId, 'model');
+    return model === undefined ? {} : { modelOverride: model };
   }
 
   /**
@@ -4219,18 +4251,14 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * conversation announces itself again.
    */
   resetConversation(id: ConversationId): void {
-    // Both read BEFORE clear(), which drops the whole record. The working directory is a property
-    // of the PLACE this conversation happens, not of the context it just threw away, so `/new`
-    // keeps it: a reset that also moved the topic back to the agent's root would silently undo a
-    // `/cd` nobody asked to undo — and the menu `/new` offers next is how you change it on purpose.
-    const cwd = this.store?.conversationCwd(id);
-    // Read before clear(), which drops the whole record: the counter must survive the reset it is
-    // counting, or every `/new` would label its turns generation 1 and tell them apart from nothing.
-    const generation = (this.store?.conversationGeneration?.(id) ?? 0) + 1;
     // Not read off in-memory state alone: `/cd` and `/new` are both answered before a conversation
     // has any (route intercepts daemon commands first), so a topic driven entirely by commands
     // would otherwise lose its binding and its directory here.
     const agentId = this.conversations.get(id)?.agentId ?? this.store?.boundAgent(id);
+    // Read before clear(), which drops the whole record: the counter must survive the reset it is
+    // counting, or every `/new` would label its turns generation 1 and tell them apart from nothing.
+    const generation = (this.store?.conversationGeneration?.(id) ?? 0) + 1;
+    const putSetupBack = this.keepSetup(id, agentId);
     this.agents.dispose(id);
     this.store?.clear(id);
     // What the last turn left is part of the context just thrown away.
@@ -4247,9 +4275,34 @@ ${formatTokens(left)} left before compaction — ${name}`;
       this.store?.bind(id, agentId);
       // The next turn is on the other side of this reset; the history library says so by number.
       this.store?.setGeneration?.(id, agentId, generation);
-      if (cwd) this.store?.setConversationCwd(id, agentId, cwd);
+      putSetupBack();
     }
   }
+
+  /**
+   * How a conversation is set up, as opposed to what was said in it — read before `/new` clears the
+   * record, and written back by the function returned.
+   *
+   * The working directory is a property of the PLACE this conversation happens, not of the context
+   * just thrown away: a reset that also moved the topic back to the agent's root would silently undo
+   * a `/cd` nobody asked to undo — and the menu `/new` offers next is how you change it on purpose.
+   * The model and effort the person chose are kept for the same reason (and the in-memory
+   * modelOverride is left as it is): the session object holding them is being disposed, so without
+   * the record the next one would start on the configured model while the status line named theirs.
+   */
+  private keepSetup(id: ConversationId, agentId: string | undefined): () => void {
+    const store = this.store;
+    if (!store || !agentId) return () => {};
+    const cwd = store.conversationCwd(id);
+    const model = store.conversationChoice?.(id, agentId, 'model');
+    const effort = store.conversationChoice?.(id, agentId, 'effort');
+    return () => {
+      if (cwd) store.setConversationCwd(id, agentId, cwd);
+      if (model) store.setConversationChoice?.(id, agentId, 'model', model);
+      if (effort) store.setConversationChoice?.(id, agentId, 'effort', effort);
+    };
+  }
+
 
   /**
    * Stop what a conversation is doing (`/stop`), and report what that was.

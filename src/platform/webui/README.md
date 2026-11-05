@@ -308,7 +308,10 @@ agent's configured default marked, filtered as it is typed into. Decisions in it
 - **A conversation the daemon has not seen is bound as its first message would bind it** — the
   binding, else the route's default — because a model list belongs to an agent. For the same reason
   the switch is not offered in a new, empty topic: the agent launcher is the choice made there first,
-  and opening the switch would quietly make it.
+  and opening the switch would quietly make it. It is offered the moment that choice is made, which
+  `paintStatus` reads off the launcher on screen (`launchEl`), not off `launch` — the sync's snapshot
+  of the empty room, which nothing after the tap replaces. Testing that hid the switch until the
+  first reply, which was the reported bug (2026-11-05).
 - **No transcript line.** The strip and the next reply's footer name the model; a line per switch
   would be noise in exactly the conversation being worked in. The daemon's own sentence goes to
   `#note`, and a refusal stays in the open list.

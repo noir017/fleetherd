@@ -41,7 +41,10 @@ is a button: it opens the models the topic's agent offers, the one in use ticked
 default marked, with a filter when the list is long. A tap switches this topic only — the same as
 typing `/model <id>`, so a typed `/model` afterwards says the same — and config.yaml is not
 touched; each agent's default is in **All settings**. An agent with no session yet is started to
-ask (a second or two, said while it happens); a harness that offers no model choice says so.
+ask (a second or two, said while it happens); a harness that offers no model choice says so. The
+switch is there as soon as a topic has an agent — right after you pick one from the new topic's
+list, so the first message can already go to the model you want; until that first reply the line
+reads just *Model*. The choice stays with the topic across `/new`, `/cd` and restarts.
 
 **Topics.** The sidebar on the left lists parallel conversations and switches between them,
 the same way a Telegram forum topic or a Feishu 话题 does: each has its own agent

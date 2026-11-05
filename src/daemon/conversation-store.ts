@@ -4,11 +4,13 @@ import path from 'node:path';
 /**
  * Persistent conversation state (`<configDir>/conversations.json`).
  *
- * Three things are remembered per conversation:
+ * Remembered per conversation:
  *  - `agent`: which agent is currently answering it (the sticky binding).
  *  - `agentSessions`: for EACH agent that has ever answered it, that agent's OWN session id
  *    (an ACP sessionId, or agy's conversation id).
  *  - `cwd`: the directory this conversation works in (`/cd`), overriding `agents[].cwd`.
+ *  - `model` / `effort`: what the person chose for the bound agent (`/model`, `/effort`).
+ * (Plus bookkeeping — title, lane, generation — documented on the record below.)
  *
  * ── Why the cwd is persisted here ─────────────────────────────────────────────
  * It is a property of the CONVERSATION, like the binding — "this topic is about quantlab" outlives
@@ -87,7 +89,25 @@ export interface ConversationRecord {
    * Survives a restart (it is in this file), because the turns it labels do.
    */
   generation?: number;
+  /**
+   * The model and reasoning effort the person chose for this conversation (`/model`, `/effort`, the
+   * menus, the web UI's switch), as the option value the agent offered — never a display name, since
+   * it is handed back to the same agent's selector.
+   *
+   * Persisted because both used to live only in memory, and three ordinary events undid them without
+   * a word while the status line went on naming the choice: a daemon restart, and `/new` and `/cd`,
+   * which replace the session object a runtime keeps them in. Both belong to the BOUND agent's lists,
+   * so a rebind clears them (`bind`); `/new` and `/cd` keep them, as they keep the cwd.
+   *
+   * Only a person's choice is written: a scheduled task's `--model` is applied per run and must not
+   * outlive it.
+   */
+  model?: string;
+  effort?: string;
 }
+
+/** The runtime choices a ConversationRecord carries for its bound agent. */
+export type ConversationChoice = 'model' | 'effort';
 
 export class ConversationStore {
   private map = new Map<string, ConversationRecord>();
@@ -135,12 +155,19 @@ export class ConversationStore {
     return this.map.get(key)?.agent;
   }
 
-  /** Bind (or rebind) a conversation to an agent, preserving every recorded agent session. */
+  /**
+   * Bind (or rebind) a conversation to an agent, preserving every recorded agent session.
+   *
+   * The model and effort chosen here are dropped on a rebind: they are values from the previous
+   * agent's lists, and a different harness may not know them.
+   */
   bind(key: string, agentId: string): void {
     const rec = this.map.get(key);
     if (rec) {
       if (rec.agent === agentId) return;
       rec.agent = agentId;
+      delete rec.model;
+      delete rec.effort;
     } else {
       this.map.set(key, { agent: agentId, agentSessions: {} });
     }
@@ -230,6 +257,27 @@ export class ConversationStore {
     if (cwd === undefined) delete rec.cwd;
     else rec.cwd = cwd;
     this.map.set(key, rec);
+    this.flush();
+  }
+
+  /**
+   * The model or effort the person chose here for `agentId`, if any (see ConversationRecord.model).
+   * Asked for by agent so a runtime can never be handed a value from another agent's list.
+   */
+  conversationChoice(key: string, agentId: string, which: ConversationChoice): string | undefined {
+    const rec = this.map.get(key);
+    return rec?.agent === agentId ? rec[which] : undefined;
+  }
+
+  /**
+   * Record the person's choice of model or effort for the conversation's bound agent; undefined
+   * forgets it. A no-op when `agentId` is not the bound agent — the value would belong to nobody.
+   */
+  setConversationChoice(key: string, agentId: string, which: ConversationChoice, value: string | undefined): void {
+    const rec = this.map.get(key);
+    if (!rec || rec.agent !== agentId || rec[which] === value) return;
+    if (value === undefined) delete rec[which];
+    else rec[which] = value;
     this.flush();
   }
 
@@ -355,6 +403,8 @@ function toRecord(v: unknown): ConversationRecord | null {
     lastAt?: unknown;
     inFlight?: unknown;
     generation?: unknown;
+    model?: unknown;
+    effort?: unknown;
   };
   if (typeof o.agent !== 'string' || !o.agent) return null;
   const sessions: Record<string, string> = {};
@@ -376,6 +426,16 @@ function toRecord(v: unknown): ConversationRecord | null {
     ...(typeof o.lastAt === 'number' && Number.isFinite(o.lastAt) ? { lastAt: o.lastAt } : {}),
     ...(typeof o.inFlight === 'number' && Number.isFinite(o.inFlight) ? { inFlight: o.inFlight } : {}),
     ...generationField(o.generation),
+    ...choiceFields(o.model, o.effort),
+  };
+}
+
+/** The person's model and effort, each kept only when it is a real value. Same tolerance as cwd:
+ *  a bad one costs the agent's default model or level, never the conversation around it. */
+function choiceFields(model: unknown, effort: unknown): Pick<ConversationRecord, 'model' | 'effort'> {
+  return {
+    ...(typeof model === 'string' && model ? { model } : {}),
+    ...(typeof effort === 'string' && effort ? { effort } : {}),
   };
 }
 
