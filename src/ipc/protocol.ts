@@ -244,7 +244,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       turn: z.string().min(1).max(20).optional(),
       // No upper bound here: the store keeps the newest 100 and says so in the answer's note,
       // which is more useful to an agent than a schema rejection naming a number it cannot see.
-      turns: z.number().int().positive().optional(),
+      // The lower bound is stated for the same reason — "too small" alone does not say what to
+      // ask for.
+      turns: z.number().int().positive('must be at least 1 (the store keeps the newest 100)').optional(),
       since: z.number().int().positive().optional(),
       grep: z.string().min(1).max(200).optional(),
       tail: z.number().int().positive().max(500).optional(),

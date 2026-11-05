@@ -51,4 +51,13 @@ describe('sessions read output', () => {
     expect(out).toContain(note);
     expect(out).not.toContain('this conversation has no messages');
   });
+
+  it('says a filtered read matched nothing, not that the conversation is empty', () => {
+    const out = renderResult(
+      { kind: 'sessions-read', session: '#7', grep: '找不到' },
+      { session, messages: [] }
+    ).stdout;
+    expect(out).toContain('no rows match this filter');
+    expect(out).not.toContain('this conversation has no messages');
+  });
 });

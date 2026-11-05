@@ -656,8 +656,15 @@ export class HistoryStore {
    * the earliest rows after it are the ones the next read continues from, and the note names the
    * id to pass back. A role/grep read of the whole conversation also keeps the oldest and drops
    * later, like `readAll`.
+   *
+   * A since read orders by `id`, not by time. The cursor IS an id, and rows are not guaranteed to
+   * arrive in time order: a web UI transcript imported later has high ids and old timestamps, so
+   * ordering by (ts, id) while resuming by id skips rows on one page and repeats them on the
+   * next. `--since` and the tail filters are therefore refused together — they read in opposite
+   * directions, and one cursor cannot serve both.
    */
   private readFiltered(session: HistorySessionRow, opts: HistoryReadOptions): HistoryReadResult {
+    assertSinceDirection(opts);
     const scope = this.turnScope(session, opts);
     // A selection that matches no turn is an answer, not an error: `--turn done` right after
     // `/new` is a legitimate question with nothing to show yet. The note says why.
@@ -667,7 +674,10 @@ export class HistoryStore {
     const { where, params } = this.readWhere(session, opts, scope?.ids);
     const tail = opts.tail !== undefined ? Math.max(1, Math.min(opts.tail, 500)) : undefined;
     const newestFirst = tail !== undefined || opts.turn !== undefined || opts.turns !== undefined;
-    const { messages, more, dropped } = this.selectFiltered(where, params, tail, newestFirst);
+    // A since read must be in the cursor's own coordinate system (see above); everything else
+    // keeps the order it has always had.
+    const order = opts.since !== undefined ? 'm.id' : newestFirst ? 'm.ts DESC, m.id DESC' : 'm.ts, m.id';
+    const { messages, more, dropped } = this.selectFiltered(where, params, tail, newestFirst, order);
     // Where a since read continues from: the newest row it actually kept, after any cut.
     const resumeFrom = !newestFirst && opts.since !== undefined ? messages[messages.length - 1]?.id : undefined;
     const notes = [scope?.note, readNote(more, dropped, newestFirst, resumeFrom)].filter(
@@ -681,11 +691,11 @@ export class HistoryStore {
     where: string[],
     params: Array<string | number>,
     tail: number | undefined,
-    newestFirst: boolean
+    newestFirst: boolean,
+    order: string
   ): { messages: HistoryReadMessage[]; more: boolean; dropped: number } {
     const db = this.requireDb();
     const limit = tail ?? READ_ALL_LIMIT + 1;
-    const order = newestFirst ? 'm.ts DESC, m.id DESC' : 'm.ts, m.id';
     const sql = `
       SELECT m.id AS id, m.ts AS ts, m.role AS role, m.kind AS kind, m.text AS text,
              m.turn AS turn_ref, t.seq AS turn_seq, t.outcome AS turn_outcome, t.agent AS turn_agent
@@ -754,7 +764,7 @@ export class HistoryStore {
         `conversation ${session.id} has no recorded turns — it predates turn tracking; read it without --turn`
       );
     }
-    if (opts.turns !== undefined) return this.lastTurns(session, opts.turns);
+    if (opts.turns !== undefined) return this.lastTurns(session, opts.turns, count);
     const which = opts.turn ?? '';
     if (which === 'last') return this.lastTurn(session);
     if (which === 'done') return this.doneTurn(session, opts.current);
@@ -769,8 +779,8 @@ export class HistoryStore {
     );
   }
 
-  /** The newest `asked` turns, capped at 100 with a note saying it cut. */
-  private lastTurns(session: HistorySessionRow, asked: number): TurnSelection {
+  /** The newest `asked` turns, capped at 100 with a note when the cap actually dropped turns. */
+  private lastTurns(session: HistorySessionRow, asked: number, count: number): TurnSelection {
     const db = this.requireDb();
     const n = Math.max(1, Math.min(asked, 100));
     const max = Number(
@@ -783,8 +793,12 @@ export class HistoryStore {
       }>
     ).map((r) => Number(r.id));
     // Said rather than refused: 150 turns is a reasonable thing to ask for, and the newest 100
-    // are the half an agent reads first anyway. The note is what keeps it from looking whole.
-    return { ids, ...(asked > n ? { note: `--turns takes at most ${n}; the newest ${n} are shown.` } : {}) };
+    // are the half an agent reads first anyway. Only when the cap really dropped turns — a
+    // three-turn conversation asked for 150 shows all three, and a note about 100 would be false.
+    return {
+      ids,
+      ...(count > n ? { note: `--turns takes at most ${n}; the newest ${n} are shown.` } : {}),
+    };
   }
 
   private lastTurn(session: HistorySessionRow): TurnSelection {
@@ -1045,6 +1059,18 @@ function hasReadFilter(opts: HistoryReadOptions): boolean {
     opts.grep !== undefined ||
     opts.tail !== undefined
   );
+}
+
+/**
+ * Refuse `--since` beside the tail filters. They read from the newest end while a since read
+ * resumes forward from an id; answering one of the two would silently drop the other.
+ */
+function assertSinceDirection(opts: HistoryReadOptions): void {
+  if (opts.since !== undefined && (opts.turn !== undefined || opts.turns !== undefined || opts.tail !== undefined)) {
+    throw new Error(
+      '--since resumes forward from a message id; it cannot be combined with --turn, --turns or --tail, which read from the newest end'
+    );
+  }
 }
 
 /**

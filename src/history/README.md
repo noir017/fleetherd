@@ -77,8 +77,11 @@ an upgraded file opens without a rewrite and its old rows stay unknown.
 
 `read(session, opts)` has three shapes: no filter (the whole conversation, unchanged), `around`
 (the old window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n,
-capped at 100 with a note), `since` (message id, exclusive), `grep` (text, this conversation
-only) and `tail` (newest n tool lines, only with `role: 'tool'`). They combine with AND. `done`
+capped at 100 with a note only when the cap really dropped turns), `since` (message id,
+exclusive), `grep` (text, this conversation only) and `tail` (newest n tool lines, only with
+`role: 'tool'`). They combine with AND, except `since` with `turn`/`turns`/`tail`: those read
+from the newest end and `since` resumes forward from an id, so the combination is refused
+rather than given one of the two meanings. `done`
 means the newest normally-ended turn of the conversation's CURRENT context, which the daemon
 passes as `current(key)` — the live binding and the generation `/new`/`/cd` last set. Inferring
 it from the newest turn row is wrong exactly after `/new`: that row is the generation the person
@@ -92,9 +95,11 @@ turn's outcome and agent; the unfiltered result keeps its original five fields b
 Direction follows what the filter is for. A turn/tail/turns read is a tail: when the 200k
 character budget cuts it, the newest rows are kept and the note says how many older ones went.
 A `--since` read is a head — it resumes from a watermark, so the earliest rows after it are kept
-and the note names the last id returned, which is the next call's `--since`. A role/grep read
-drops later rows like the unfiltered read. Both bounds (500 rows, 200k characters) are reported,
-never silent.
+and the note names the last id returned, which is the next call's `--since`. It orders by `id`,
+not by time, because the cursor is an id and the two are not the same order: a web UI transcript
+imported later has new ids and old timestamps, so ordering by (ts, id) while resuming by id
+repeats rows on one page and skips them on the next. A role/grep read drops later rows like the
+unfiltered read. Both bounds (500 rows, 200k characters) are reported, never silent.
 
 WAL, `synchronous = NORMAL`. The file, and its `-wal`/`-shm` companions, are chmod'd `0600`:
 this is the same kind of text the harnesses' own session files hold.

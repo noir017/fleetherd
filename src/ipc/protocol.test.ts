@@ -112,4 +112,10 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(typeof r.error).toBe('string');
   });
+
+  it('says which range --turns accepts, not just that 0 is wrong', () => {
+    const r = parseIpcRequest({ token: TOKEN, action: { kind: 'sessions-read', session: '1', turns: 0 } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/action\.turns must be at least 1/);
+  });
 });

@@ -126,7 +126,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     notes: [
       'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through talkcode, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
       'search "<words>" returns the conversation id, the message id, the title, the agent and a matching excerpt. Quote a multi-word query — it is one argument. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations.',
-      'read <session> prints the whole conversation (up to 500 messages); --around <message> --window <n> shows n messages on each side of a hit. Adding --role, --turn (last | done | n), --turns (at most 100), --since (oldest first; its note names the id to continue from), --grep or --tail selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. list [--days <n>] is the recent conversations.',
+      'read <session> prints the whole conversation (up to 500 messages); --around <message> --window <n> shows n messages on each side of a hit. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail), --grep or --tail selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. list [--days <n>] is the recent conversations.',
       'Pass the ids exactly as printed: session and message are numbers, with or without the leading #.',
     ],
   },
@@ -346,15 +346,10 @@ type ReadFilterFields = Pick<
  * rather than ignored, because ignoring it would return 500 rows after someone asked for 20.
  */
 export function readFilters(opts: Record<string, unknown>): ReadFilterFields {
-  const role = str(opts.role);
-  if (role !== undefined && role !== 'user' && role !== 'agent' && role !== 'tool') {
-    throw new Error(`--role must be user, agent or tool, got ${JSON.stringify(role)}`);
-  }
-  const turn = str(opts.turn);
-  if (turn !== undefined && turn !== 'last' && turn !== 'done' && !/^[1-9]\d*$/.test(turn)) {
-    throw new Error(`--turn takes last, done, or a turn number (1 = the first), got ${JSON.stringify(turn)}`);
-  }
+  const role = readRole(str(opts.role));
+  const turn = readTurn(str(opts.turn));
   const turns = typeof opts.turns === 'number' ? opts.turns : undefined;
+  if (turns !== undefined) assertTurnCount(turns);
   if (turn !== undefined && turns !== undefined) {
     throw new Error('--turn and --turns select turns in different ways; use one');
   }
@@ -362,16 +357,56 @@ export function readFilters(opts: Record<string, unknown>): ReadFilterFields {
   if (tail !== undefined && role !== 'tool') {
     throw new Error('--tail reads tool lines; use it with --role tool');
   }
+  const since = typeof opts.since === 'number' ? opts.since : undefined;
+  assertSinceAlone(since, turn, turns, tail);
   const grep = str(opts.grep);
   if (grep !== undefined && !grep.trim()) throw new Error('--grep needs a word to look for');
   return {
     role,
     turn,
     turns,
-    since: typeof opts.since === 'number' ? opts.since : undefined,
+    since,
     grep,
     tail,
   };
+}
+
+/** `--role`, as the union the action carries. */
+function readRole(role: string | undefined): ReadFilterFields['role'] {
+  if (role !== undefined && role !== 'user' && role !== 'agent' && role !== 'tool') {
+    throw new Error(`--role must be user, agent or tool, got ${JSON.stringify(role)}`);
+  }
+  return role as ReadFilterFields['role'];
+}
+
+/** `--turn`: a word or a 1-based number, still as text (the store says which it is). */
+function readTurn(turn: string | undefined): string | undefined {
+  if (turn !== undefined && turn !== 'last' && turn !== 'done' && !/^[1-9]\d*$/.test(turn)) {
+    throw new Error(`--turn takes last, done, or a turn number (1 = the first), got ${JSON.stringify(turn)}`);
+  }
+  return turn;
+}
+
+/** The turn count starts at 1; the store's 100-turn cap is a note, not a rejection. */
+function assertTurnCount(turns: number): void {
+  if (turns < 1) throw new Error(`--turns must be at least 1, got ${turns}`);
+}
+
+/**
+ * `--since` resumes forward from a message id; the turn filters and `--tail` keep the newest
+ * rows. Refused rather than silently picking one of the two meanings for the answer.
+ */
+function assertSinceAlone(
+  since: number | undefined,
+  turn: string | undefined,
+  turns: number | undefined,
+  tail: number | undefined
+): void {
+  if (since !== undefined && (turn !== undefined || turns !== undefined || tail !== undefined)) {
+    throw new Error(
+      '--since resumes forward from a message id; it cannot be combined with --turn, --turns or --tail, which read from the newest end'
+    );
+  }
 }
 
 /** Whether any read filter was given, `--around` excluded (it is a window, not a filter). */

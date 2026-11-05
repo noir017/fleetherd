@@ -366,6 +366,8 @@ describe('HistoryStore turns', () => {
     ]);
     const lastTwo = store.read(String(session), { turns: 2 });
     expect(lastTwo.messages.map((m) => m.turn)).toEqual([2, 2, 2, 3, 3]);
+    // Asking for more turns than exist is not a cut, so it carries no note.
+    expect(store.read(String(session), { turns: 150 }).note).toBeUndefined();
     // A running turn reads as running, not as an outcome that never happened.
     const running = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: 99_000 })!;
     store.message(session, { ts: 99_000, role: 'user', kind: 'normal', text: '还在跑', turn: running });
@@ -449,6 +451,10 @@ describe('HistoryStore turns', () => {
     expect(() => store.read(String(session), { turn: 'soon' })).toThrow(/--turn takes last, done/);
     expect(() => store.read(String(session), { turn: 'last', turns: 2 })).toThrow(/use one/);
     expect(() => store.read(String(session), { tail: 5 })).toThrow(/--tail reads tool lines/);
+    // Two directions cannot share one cursor.
+    expect(() => store.read(String(session), { since: 1, turn: 'last' })).toThrow(/cannot be combined/);
+    expect(() => store.read(String(session), { since: 1, turns: 2 })).toThrow(/cannot be combined/);
+    expect(() => store.read(String(session), { since: 1, role: 'tool', tail: 2 })).toThrow(/cannot be combined/);
     const old = store.session({ key: 'tg#pre#', platform: 'tg', at: 5 })!;
     expect(() => store.read(String(old), { turn: 'last' })).toThrow(/no recorded turns/);
     store.close();
@@ -532,6 +538,33 @@ describe('HistoryStore turns', () => {
     // The id in the note is exactly where the next read starts: no row is lost or repeated.
     const next = store.read(String(session), { since: first.messages[499]!.id });
     expect(next.messages.map((m) => m.text)).toEqual(Array.from({ length: 100 }, (_, i) => `m${501 + i}`));
+    store.close();
+  });
+
+  it('pages --since by id, so a late import with old timestamps cannot repeat rows', () => {
+    const { store } = tempStore();
+    const at = Date.UTC(2026, 10, 5, 11, 30);
+    const session = store.session({ key: 'tg#import-order#', platform: 'tg', agent: 'cc', at })!;
+    const turn = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
+    store.message(session, { ts: at, role: 'user', kind: 'normal', text: '水位', turn });
+    const anchor = store.read(String(session)).messages[0]!.id;
+    for (let i = 1; i <= 600; i += 1) {
+      store.message(session, { ts: at + i, role: 'agent', kind: 'normal', text: `live${i}`, turn });
+    }
+    // A web UI transcript folded in later: newest ids, timestamps older than everything above.
+    // Ordering the read by (ts, id) while resuming by id would put these on both pages.
+    for (let i = 1; i <= 5; i += 1) {
+      store.message(session, { ts: at - 1_000 + i, role: 'user', kind: 'normal', text: `imported${i}` });
+    }
+
+    const first = store.read(String(session), { since: anchor });
+    const second = store.read(String(session), { since: first.messages[499]!.id });
+    const all = [...first.messages, ...second.messages];
+    expect(first.messages).toHaveLength(500);
+    expect(second.messages).toHaveLength(105);
+    expect(new Set(all.map((m) => m.id)).size).toBe(605);
+    // The imported rows are at the end, in write order — exactly where the id cursor reaches them.
+    expect(all.slice(-5).map((m) => m.text)).toEqual(['imported1', 'imported2', 'imported3', 'imported4', 'imported5']);
     store.close();
   });
 

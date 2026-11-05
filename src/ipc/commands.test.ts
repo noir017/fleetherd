@@ -221,15 +221,21 @@ describe('sessions <action> [arg]', () => {
 
   it('builds a read with its filters, and keeps them off every other action', () => {
     expect(
-      sessions(['read', '#12'], { role: 'tool', turn: 'done', since: 40, grep: '查询', tail: 20 })
+      sessions(['read', '#12'], { role: 'tool', turn: 'done', grep: '查询', tail: 20 })
     ).toMatchObject({
       kind: 'sessions-read',
       session: '#12',
       role: 'tool',
       turn: 'done',
-      since: 40,
       grep: '查询',
       tail: 20,
+    });
+    // `--since` reads forward from an id, so it goes with the row filters, not the tail ones.
+    expect(sessions(['read', '#12'], { since: 40, grep: '查询' })).toMatchObject({
+      kind: 'sessions-read',
+      session: '#12',
+      since: 40,
+      grep: '查询',
     });
     expect(sessions(['read', '12'], { turn: 'last' })).toMatchObject({ kind: 'sessions-read', turn: 'last' });
     expect(sessions(['read', '12'], { turns: 2 })).toMatchObject({ kind: 'sessions-read', turns: 2 });

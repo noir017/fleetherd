@@ -81,12 +81,16 @@ talkcode sessions read '#12' --role tool --tail 20
   `--turns <n>` takes the last `n` (at most 100; the note says when it cut). Right after `/new`
   there is no finished turn in the new generation yet, so `--turn done` answers empty with a
   note saying so.
-- `--since <message>` — rows after that message id (exclusive), from an earlier read, oldest
-  first. When a bound cuts the answer, its note names the id to pass back as the next `--since`.
+- `--since <message>` — rows after that message id (exclusive), from an earlier read. They come
+  in the order they were written (by id, the same thing you resume with), so a transcript
+  imported later can appear out of time order. When a bound cuts the answer, its note names the
+  id to pass back as the next `--since`. It cannot be combined with `--turn`, `--turns` or
+  `--tail`: those read from the newest end, and one cursor cannot serve both directions.
 - `--grep <text>` — rows containing this text, in this conversation only.
 - `--tail <n>` — with `--role tool`, the newest `n` tool lines.
 
-The filters combine (AND). A filtered read prints each row's turn number, that turn's outcome and
+The filters combine (AND), except `--since` with the turn filters or `--tail`, which is refused
+rather than guessed at. A filtered read prints each row's turn number, that turn's outcome and
 the agent that ran it. `--around` cannot be combined with them: it selects a window of its own.
 Without any filter the output is exactly what it was before turns existed.
 
