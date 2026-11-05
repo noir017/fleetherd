@@ -160,6 +160,7 @@ describe('a failed turn’s record', () => {
     // the chat notice has 300 characters and the library kept 500.
     const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(600)}`;
     const ended: Array<{ outcome: string; detail?: string }> = [];
+    const live: Array<{ turn?: number }> = [];
     const platform = {
       capabilities: { thread: false, editMessage: true, maxMessageLength: 2_000 },
       measureRendered: (s: string) => s.length,
@@ -196,8 +197,9 @@ describe('a failed turn’s record', () => {
         agentIdOf: () => 'cc',
         getModelOverride: () => undefined,
         setLane: () => {},
-        beginHistoryTurn: () => 1,
+        beginHistoryTurn: () => ({ id: 1, seq: 7 }),
         endHistoryTurn: (_id, end) => ended.push(end),
+        recordTurnEnd: (_id, end) => live.push(end),
       }
     );
 
@@ -206,5 +208,8 @@ describe('a failed turn’s record', () => {
     expect(ended[0]!.outcome).toBe('failed');
     expect(ended[0]!.detail).toBe(error);
     expect(ended[0]!.detail!.length).toBeGreaterThan(FAILURE_NOTICE_CHARS);
+    // The live report carries the library's number for this turn, so the card can quote it by
+    // number instead of by "last" (see TurnEnd.turn).
+    expect(live).toEqual([{ kind: 'failed', error: expect.any(Error), turn: 7 }]);
   });
 });

@@ -65,8 +65,10 @@ All notable changes to this project are documented here. The format is based on
   `--tail` still means the last lines of each message. `--reply` gives the last turn that ended
   normally, its reply whole: the card that sends the parent there carried only 4,000 characters of
   it. A failed turn's error is kept whole in that turn's record (`turns.detail`, up to 200,000
-  characters) instead of its first 500, and `--turn last` reads it, so an error longer than the card
-  is no longer unreadable. The `super` skill hands review to a sub-agent — the agent that split the
+  characters) instead of its first 500, and `--turn <n>` reads it, so an error longer than the card
+  is no longer unreadable. The card names the turn it quoted — a background burst after it would
+  otherwise be "the last turn" by the time the parent reads. The `super` skill hands review to a
+  sub-agent — the agent that split the
   job reads the verdict, not the diff — and asks each sub-agent for a conclusion-first reply under
   2,000 characters. [→](docs/sub-agents.md)
 

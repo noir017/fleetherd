@@ -179,7 +179,19 @@ export interface HistoryReadResult {
 }
 
 /**
- * One turn as the library recorded it: what `task-read --turn last` shows, and the record a cut
+ * A turn just opened: the row id its messages carry, and the number `--turn <n>` takes.
+ *
+ * `seq` is optional because a store that failed between the insert and the lookup still owns the
+ * row; the turn is recorded, only its number is unknown, and a card then falls back to a
+ * positional pointer rather than naming a turn it cannot.
+ */
+export interface HistoryTurnRef {
+  id: number;
+  seq?: number;
+}
+
+/**
+ * One turn as the library recorded it: what `task-read --turn <n>` shows, and the record a cut
  * update card points at when its quote was not the whole of what the sub-agent said.
  */
 export interface HistoryTurnRow {
@@ -467,6 +479,22 @@ export class HistoryStore {
         )
         .run(sessionId, Number(row.seq), start.agent, start.generation, start.trigger, start.at);
       return Number(res.lastInsertRowid);
+    });
+  }
+
+  /**
+   * The 1-based number `--turn <n>` takes, for the row id `startTurn` returned.
+   *
+   * The id is what every message of the turn carries; the number is what an agent reads and passes
+   * back. A card that quotes a turn has to name the second: "the last one" is a different turn by
+   * the time the parent reads it whenever the topic runs again (a background burst, most often).
+   */
+  turnSeq(turnId: number): number | undefined {
+    return this.guard('turn seq', () => {
+      const row = this.requireDb().prepare('SELECT seq FROM turns WHERE id = ?').get(turnId) as
+        | { seq: number | bigint }
+        | undefined;
+      return row ? Number(row.seq) : undefined;
     });
   }
 

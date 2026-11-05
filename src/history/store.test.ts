@@ -419,6 +419,18 @@ describe('HistoryStore turns', () => {
     store.close();
   });
 
+  it('names a turn by its number for a card that quotes it', () => {
+    const { store } = tempStore();
+    const { session } = seedThreeTurns(store);
+    // The id is what the rows carry; the number is what `--turn <n>` takes. A card that quotes a
+    // turn needs the second, because "last" can be a later turn by the time it is read.
+    expect(store.turnSeq(1)).toBe(1);
+    expect(store.turnSeq(3)).toBe(3);
+    expect(store.turnSeq(999)).toBeUndefined();
+    expect(store.turnRecord(String(session), '2')?.turn).toBe(store.turnSeq(2));
+    store.close();
+  });
+
   it('combines role, grep, since and tail', () => {
     const { store } = tempStore();
     const { session } = seedThreeTurns(store);

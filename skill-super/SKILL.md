@@ -67,8 +67,8 @@ Updates arrive as messages beginning `[sub-agent updates]`, with how many are st
 - **Anything the person has to decide** — scope, merging, releasing, deleting, spending — say it
   in one line here and stop. Do not decide it for them.
 - **Failed**: if it looks transient (a dropped connection, an upstream error), `task-send` it
-  `continue` once; otherwise report it. Its whole error is in `task-read <topic> --turn last`, even
-  when the card that told you about it was cut.
+  `continue` once; otherwise report it. Its whole error is in the turn the card names —
+  `task-read <topic> --turn <n>` — even when the card's quote was cut.
 - While others are still working, say nothing, or one line.
 
 ## 4. Report

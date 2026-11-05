@@ -217,6 +217,8 @@ interface CardQuote {
   text: string;
   /** The length of the whole text, before the head was cut. */
   total: number;
+  /** The library's number for the turn it came from, so a cut can name that turn. */
+  turn?: number;
 }
 
 /** One sub-agent's entry on an update card, before the card's budgets are applied. */
@@ -696,7 +698,9 @@ export class Delegation {
       return {
         topic,
         messages: [],
-        note: 'no turn in this topic has ended normally yet — nothing to reply with; --turn last shows how the newest one ended',
+        note:
+          'no turn in this topic has ended normally in the current generation yet — nothing to reply with; ' +
+          '--turn last is not scoped to the generation, so after /new it may show the turn before the reset',
       };
     }
     const read = history.read(c.key, { turn: String(record.turn), role: 'agent' });
@@ -935,7 +939,9 @@ export class Delegation {
     if (stage !== 'review' && stage !== 'failed') return undefined;
     const label = stage === 'review' ? 'reply' : 'failure';
     const kept = stage === 'review' ? this.deps.registry.replyOf(c.key) : this.deps.registry.failureOf(c.key);
-    if (kept) return { label, text: kept.text, total: kept.total };
+    if (kept) {
+      return { label, text: kept.text, total: kept.total, ...(kept.turn !== undefined ? { turn: kept.turn } : {}) };
+    }
     // A reply's first line is not a stand-in for the reply. The text is absent either because the
     // turn ended without one (turn-outcomes deletes an empty reply) or because a released
     // scheduled conversation dropped it; "no reply" is true of both and claims less than either.
@@ -1134,18 +1140,26 @@ function quoteBody(q: CardQuote, topic: string, cut: number): string {
 /**
  * What a cut leaves out, and where the rest is.
  *
- * A reply is in the turn it ended, whole, and a failure's error is in that turn's record — the
- * topic's ❌ notice carries only its opening, and the record keeps the whole message the turn was
- * thrown with. A question is neither: it is the ask waiting on the person, not a row any turn
- * ended with, so it keeps the pointer it always had.
+ * A reply and a failure name the turn they were quoted from, by number. "The last turn" is a
+ * different turn by the time the parent reads it whenever the topic runs again — a background
+ * burst is the usual case — and `--reply` would then answer with the burst instead of the reply the
+ * card quoted. A turn number is the same turn however much ran after it.
+ *
+ * A question names no turn and no command: it is the ask waiting on the person, which the gateway
+ * sends itself, so it is not a row the library keeps and `task-read` cannot show it. The topic is
+ * where it waits.
  */
 function cutNote(q: CardQuote, topic: string, cut: number): string {
   const rest =
-    q.label === 'failure'
-      ? `the whole error is in this topic's record — task-read ${topic} --turn last`
-      : q.label === 'reply'
-        ? `the whole reply is in this topic — task-read ${topic} --reply`
-        : `the rest is in this topic — task-read ${topic} --full`;
+    q.label === 'question'
+      ? 'the question is waiting in this topic for the person to answer it'
+      : q.turn !== undefined
+        ? q.label === 'reply'
+          ? `the rest is in this topic's turn ${q.turn} — task-read ${topic} --turn ${q.turn} --full`
+          : `the whole error is in this topic's turn ${q.turn} — task-read ${topic} --turn ${q.turn}`
+        : q.label === 'reply'
+          ? `the whole reply is in this topic — task-read ${topic} --reply`
+          : `the whole error is in this topic's record — task-read ${topic} --turn last`;
   return `\n…[${q.total} chars total, cut at ${cut}; ${rest}]`;
 }
 

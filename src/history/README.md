@@ -36,7 +36,7 @@ library from reaching into the conversation registry.
   | `trigger` | `person` \| `schedule` \| `continue` \| `delegate` \| `update` \| `background` — the sender the daemon put on the batch, or a follow-up burst |
   | `started_at`, `ended_at` | epoch ms. `ended_at` on a `restart` turn is a lower bound: the newest message it wrote |
   | `outcome` | `done` \| `stopped` \| `failed` \| `restart`, or NULL while running |
-  | `detail` | why it failed, the whole message the turn was thrown with (bounded at 200k characters); empty otherwise. This is what `task-read --turn last` reads when an update card cuts an error |
+  | `detail` | why it failed, the whole message the turn was thrown with (bounded at 200k characters); empty otherwise. This is what `task-read --turn <n>` reads when an update card cuts an error — the card names the turn |
 
 - `messages` — one row per prompt (`user`), reply (`agent`) or tool call (`tool`), each with
   the kind of the turn that produced it and `turn` = `turns.id`. A tool row is one line:
@@ -95,7 +95,7 @@ turn's outcome and agent; the unfiltered result keeps its original five fields b
 `sessions read <id>` must not change under anyone.
 
 `turnRecord(key, which, current)` is one turn's row without its messages: its number, end time,
-outcome, agent and the failure detail. `task-read --turn last` shows it — that is where the whole
+outcome, agent and the failure detail. `task-read --turn <n>` shows it — that is where the whole
 error of a failed turn is read, because the update card carries only 4,000 characters of it and the
 chat's ❌ notice only 300. A conversation with no turns answers `undefined` (nothing has run yet);
 a turn number that names no turn still throws.

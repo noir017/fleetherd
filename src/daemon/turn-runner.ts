@@ -26,7 +26,7 @@ import { createAttachmentIngestDeps, remoteAttachmentSave } from './attachment-i
 import { remoteHosts } from './remote-hosts.js';
 import type { HistoryEvent } from '../history/record.js';
 import { kindForTrigger, toolLine } from '../history/record.js';
-import type { HistoryKind, HistoryTurnEnd, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
+import type { HistoryKind, HistoryTurnEnd, HistoryTurnRef, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
 
 /**
  * The sender a scheduled run's message carries (ConversationRegistry.runScheduledPrompt). Exported
@@ -291,7 +291,8 @@ export interface TurnRunnerDeps {
    */
   recordTurnEnd?(id: ConversationId, end: TurnEnd): void;
   /**
-   * Open the library's row for a turn, returning its id, and close it when the turn ends.
+   * Open the library's row for a turn, returning its id and number, and close it when the turn
+   * ends.
    *
    * Separate from recordTurnStart/recordTurnEnd on purpose: those two are about the live
    * conversation (activity, `hooks.turnFailed`, the in-flight marker), while these are the
@@ -301,7 +302,7 @@ export interface TurnRunnerDeps {
    * `endHistoryTurn` is called exactly once for every id returned, on every way out — this is
    * what keeps the turns table from filling with rows that never end.
    */
-  beginHistoryTurn?(id: ConversationId, start: HistoryTurnStart): number | undefined;
+  beginHistoryTurn?(id: ConversationId, start: HistoryTurnStart): HistoryTurnRef | undefined;
   endHistoryTurn?(turnId: number | undefined, end: HistoryTurnEnd): void;
   /**
    * File one fact of this turn in the conversation library (`src/history/`): the prompt, a tool
@@ -321,11 +322,25 @@ export interface TurnRunnerDeps {
  * answer's conclusion is — so the registry can show its first line without asking the platform.
  * `failed` carries what was thrown, unclassified: the registry reads the reason off it
  * (turnFailureReason) and the message is what the chat was already told.
+ *
+ * `turn` is the library's number for this turn (`turns.seq`), when it was recorded. It rides along
+ * for the update card: a card says where the rest of a quoted reply or error is read, and "the last
+ * turn" is a different turn by the time the parent reads it whenever the topic runs again — a
+ * background burst is the usual case.
  */
 export type TurnEnd =
-  | { kind: 'done'; text: string }
-  | { kind: 'failed'; error: unknown }
-  | { kind: 'stopped' };
+  | { kind: 'done'; text: string; turn?: number }
+  | { kind: 'failed'; error: unknown; turn?: number }
+  | { kind: 'stopped'; turn?: number };
+
+/**
+ * The turn's end as the live bookkeeping sees it, carrying the library's number for the turn when
+ * one was opened. The number rides along only for the update card (see TurnEnd.turn); every other
+ * reader of TurnEnd ignores it.
+ */
+function withTurn(end: TurnEnd, turn: HistoryTurnRef | undefined): TurnEnd {
+  return turn?.seq !== undefined ? { ...end, turn: turn.seq } : end;
+}
 
 /**
  * How a finished turn is filed. A stopped turn is still a turn that ran — its partial reply is
@@ -615,11 +630,12 @@ export class TurnRunner {
     // can throw (spawning an agent, building a prompt), and a turn opened before it would be left
     // running until the next start. A failure HERE leaves turnId undefined, and every later row
     // is written exactly as it was before turns existed.
-    const turnId = this.beginHistoryTurn(conversationId, {
+    const historyTurn = this.beginHistoryTurn(conversationId, {
       agent: agentId,
       trigger,
       at: this.clock.now(),
     });
+    const turnId = historyTurn?.id;
     // Everything that turns agent events into messages in this lane. Shared with the follow-up
     // path (see followUpSink) so out-of-turn output renders exactly like in-turn output.
     const render = this.beginRender(conversationId, platform, address, historyKind, turnId);
@@ -713,7 +729,7 @@ export class TurnRunner {
       await releaseTyping();
       // After typing is released, so a platform listing what needs a person sees the turn's end and
       // its outcome together rather than "failed" over a dot that still says running.
-      this.reportEnd(conversationId, end);
+      this.reportEnd(conversationId, withTurn(end, historyTurn));
       // The permanent record, in every way out — including the failure path that rethrows above,
       // which is why this is in the finally rather than after the try.
       this.endHistoryTurn(turnId, historyEndOf(end, this.clock.now()));
@@ -721,7 +737,7 @@ export class TurnRunner {
   }
 
   /** beginHistoryTurn, never allowed to break the turn it describes. */
-  private beginHistoryTurn(conversationId: ConversationId, start: HistoryTurnStart): number | undefined {
+  private beginHistoryTurn(conversationId: ConversationId, start: HistoryTurnStart): HistoryTurnRef | undefined {
     try {
       return this.deps.beginHistoryTurn?.(conversationId, start);
     } catch (e) {
@@ -1129,7 +1145,7 @@ export class TurnRunner {
      * carry `kind: background` and this id, which is what makes "what did it say after the
      * answer" answerable without mixing it into the turn that asked.
      */
-    let burstTurn: number | undefined;
+    let burstTurn: HistoryTurnRef | undefined;
 
     const open = (): Render | undefined => {
       if (tried) return render;
@@ -1151,7 +1167,7 @@ export class TurnRunner {
         trigger: 'background',
         at: this.clock.now(),
       });
-      render = this.beginRender(conversationId, platform, target.address, 'background', burstTurn);
+      render = this.beginRender(conversationId, platform, target.address, 'background', burstTurn?.id);
       // The runtime reports the model and effort when the burst begins, which is before its first
       // text — so before this message existed to record them on.
       if (facts.model) render.ref.model = facts.model;
@@ -1186,7 +1202,7 @@ export class TurnRunner {
         releaseTyping = undefined;
         render = undefined;
         if (burstTurn !== undefined) {
-          this.endHistoryTurn(burstTurn, { outcome: 'stopped', at: this.clock.now() });
+          this.endHistoryTurn(burstTurn.id, { outcome: 'stopped', at: this.clock.now() });
           burstTurn = undefined;
         }
         tried = false;
@@ -1202,7 +1218,7 @@ export class TurnRunner {
         burstTurn = undefined;
         tried = false;
         if (!done) {
-          if (turn !== undefined) this.endHistoryTurn(turn, { outcome: 'stopped', at: this.clock.now() });
+          if (turn !== undefined) this.endHistoryTurn(turn.id, { outcome: 'stopped', at: this.clock.now() });
           return;
         }
         // Returned rather than voided: the runtime awaits it before letting a new turn write into
@@ -1216,7 +1232,7 @@ export class TurnRunner {
             // After the flush: the reply row is written by finalize, and a turn must not be
             // closed before the last row that names it exists. `reason` is the caller's fact —
             // `/stop`, a new turn, or the child going away — never inferred here.
-            this.endHistoryTurn(turn, { outcome: reason, at: this.clock.now() });
+            this.endHistoryTurn(turn?.id, { outcome: reason, at: this.clock.now() });
             return letGo(release);
           });
       },

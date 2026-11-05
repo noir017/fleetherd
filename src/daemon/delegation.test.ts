@@ -708,7 +708,10 @@ describe('Delegation: seeing what a sub-agent is doing', () => {
     seedTurn(r.history, 'web#main#c1000000', [{ role: 'user', text: 'go' }], 'running');
     const reply = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', reply: true })) as TaskReadResult;
     expect(reply.reply).toBeUndefined();
-    expect(reply.note).toMatch(/no turn in this topic has ended normally yet/);
+    expect(reply.note).toMatch(/no turn in this topic has ended normally in the current generation yet/);
+    // `--turn last` is not generation-scoped, so the note must not offer it as the answer.
+    expect(reply.note).toMatch(/--turn last is not scoped to the generation/);
+    expect(reply.note).toMatch(/after \/new/);
   });
 
   it('--turn last carries a failed turn’s whole error, which the card could not', async () => {
@@ -984,7 +987,7 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(list.tasks[0]!.line).toBe('This needs a decision. Which database should I use? - postgres - sqlite');
   });
 
-  it('cuts a long question at CARD_ITEM_CHARS, saying how long it was', async () => {
+  it('cuts a long question at CARD_ITEM_CHARS, and says where it waits rather than pointing at the log', async () => {
     const r = await oneChild();
     const key = 'web#main#c1000000';
     r.questions.set(key, 'q'.repeat(5_000));
@@ -994,7 +997,9 @@ describe('Delegation: [sub-agent updates]', () => {
     const [body] = bodies(cardOf(r), 'question');
     expect(body!.length).toBe(CARD_ITEM_CHARS);
     expect(body).toContain('5000 chars total, cut at');
-    expect(body).toContain('task-read web:main/c1000000 --full');
+    // The ask is the gateway's own message; `task-read` reads the library, which has no row for it.
+    expect(body).toContain('the question is waiting in this topic for the person to answer it');
+    expect(body).not.toContain('task-read');
   });
 
   it('carries a failed turn\'s whole error, not its first line', async () => {
@@ -1028,7 +1033,7 @@ describe('Delegation: [sub-agent updates]', () => {
     const chain = realChain();
     await openOne(chain);
     const reply = '## Review\n\nVerdict: merge.\n\n- one\n- two';
-    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'done', text: reply });
+    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'done', text: reply, turn: 1 });
     chain.r.clock.advance(CARD_DELAY_MS);
     expect(cardOf(chain.r)).toContain(`  reply: ${reply.replace(/\n/g, '\n  ')}`);
   });
@@ -1037,12 +1042,61 @@ describe('Delegation: [sub-agent updates]', () => {
     const chain = realChain();
     await openOne(chain);
     const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(400)}`;
-    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'failed', error: new Error(error) });
+    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'failed', error: new Error(error), turn: 1 });
     chain.r.clock.advance(CARD_DELAY_MS);
     const prompt = cardOf(chain.r);
     expect(prompt).toContain('  failure: Process exited 1:');
     expect(prompt).toContain(`${error.length} chars total, cut at`);
-    expect(prompt).toContain("the whole error is in this topic's record — task-read web:main/c1000000 --turn last");
+    expect(prompt).toContain("the whole error is in this topic's turn 1 — task-read web:main/c1000000 --turn 1");
+    expect(prompt).not.toContain('--turn last');
+  });
+
+  it('points a cut reply at the turn it quoted, not at whatever is newest after a burst', async () => {
+    const chain = realChain();
+    await openOne(chain);
+    const key = 'web#main#c1000000';
+    const reply = `Verdict: merge after one fix.\n${'x'.repeat(5_000)}`;
+    seedTurn(chain.r.history, key, [{ role: 'agent', text: reply }], 'done'); // turn 1
+    chain.outcomes.turnEnded(key, { kind: 'done', text: reply, turn: 1 });
+    chain.r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(chain.r);
+    expect(prompt).toContain('task-read web:main/c1000000 --turn 1 --full');
+    expect(prompt).not.toContain('--reply');
+
+    // A background burst afterwards is turn 2, and `--reply` would now answer with it.
+    seedTurn(chain.r.history, key, [{ role: 'agent', text: 'burst: the deploy finished' }], 'done');
+    const burst = (await chain.d.handle(P, { kind: 'task-read', topic: 'c1000000', reply: true })) as TaskReadResult;
+    expect(burst.reply!.text).toBe('burst: the deploy finished');
+
+    // The turn the card named still reads as the reply it quoted.
+    const original = (await chain.d.handle(P, {
+      kind: 'task-read',
+      topic: 'c1000000',
+      turn: '1',
+      full: true,
+    })) as TaskReadResult;
+    expect(original.messages.map((m) => m.text)).toContain(reply);
+  });
+
+  it('points a cut error at the turn it came from, so a later burst cannot hide it', async () => {
+    const chain = realChain();
+    await openOne(chain);
+    const key = 'web#main#c1000000';
+    const error = `Process exited 1:\n${'  at step (file.ts:1:1)\n'.repeat(300)}`;
+    seedTurn(chain.r.history, key, [{ role: 'user', text: 'go' }], 'failed', error); // turn 1
+    chain.outcomes.turnEnded(key, { kind: 'failed', error: new Error(error), turn: 1 });
+    chain.r.clock.advance(CARD_DELAY_MS);
+    const prompt = cardOf(chain.r);
+    expect(prompt).toContain("the whole error is in this topic's turn 1 — task-read web:main/c1000000 --turn 1");
+    expect(prompt).not.toContain('--turn last');
+
+    // A burst after the failure makes turn 2 "last"; the card named turn 1.
+    seedTurn(chain.r.history, key, [{ role: 'agent', text: 'burst' }], 'done');
+    const original = (await chain.d.handle(P, { kind: 'task-read', topic: 'c1000000', turn: '1' })) as TaskReadResult;
+    expect(original.turn!.outcome).toBe('failed');
+    expect(original.turn!.detail).toBe(error);
+    const positional = (await chain.d.handle(P, { kind: 'task-read', topic: 'c1000000', turn: 'last' })) as TaskReadResult;
+    expect(positional.turn!.outcome).toBe('done');
   });
 
   it('does not tell the parent about a turn the person started in the sub-agent’s topic', async () => {

@@ -30,13 +30,14 @@ in parallel, and come back with one report — so you follow one topic instead o
    🔔 line in its topic shows exactly what it was told. The notice quotes what the sub-agent said
    in full when it fits the card's budget — the reply, the question or the error, line breaks kept —
    so the agent can act on the conclusion without opening the topic. A cut adds one line with the
-   text's full length and where the rest is: a reply is read whole with `task-read <topic>
-   --reply`, and a failed turn's whole error is in that turn's record (`task-read <topic> --turn
-   last`), because the ❌ notice in the topic carries only its opening. A burst longer than 20
-   sub-agents is one card with the rest folded into a line pointing at `talkcode tasks`. The agent
-   reads each reply's conclusion and the review part's verdict, and sends fixes where needed; it
-   does not read the diff itself. When every part is done, it writes one summary with a link to each
-   topic.
+   text's full length and where the rest is: the card names the turn it quoted, and `task-read
+   <topic> --turn <n>` reads that turn back — its reply with `--full`, a failed turn's whole error
+   as the turn's record — because the ❌ notice in the topic carries only its opening. Reading by
+   turn number, not "the last one", is what keeps a later background burst from taking its place. A
+   burst longer than 20 sub-agents is one card with the rest folded into a line pointing at
+   `talkcode tasks`. The agent reads each reply's conclusion and the review part's verdict, and
+   sends fixes where needed; it does not read the diff itself. When every part is done, it writes
+   one summary with a link to each topic.
 
 ## Talking to a sub-agent
 
