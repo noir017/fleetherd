@@ -242,7 +242,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       // carries both without a second flag; the store validates which it is and says so.
       role: z.enum(['user', 'agent', 'tool']).optional(),
       turn: z.string().min(1).max(20).optional(),
-      turns: z.number().int().positive().max(100).optional(),
+      // No upper bound here: the store keeps the newest 100 and says so in the answer's note,
+      // which is more useful to an agent than a schema rejection naming a number it cannot see.
+      turns: z.number().int().positive().optional(),
       since: z.number().int().positive().optional(),
       grep: z.string().min(1).max(200).optional(),
       tail: z.number().int().positive().max(500).optional(),

@@ -465,11 +465,14 @@ describe('HistoryStore turns', () => {
     store.endTurn(t1, { outcome: 'done', at: at + 1 });
 
     // /new, then another agent: its only turn fails. The previous context's finished answer is
-    // not this context's "last completed turn".
+    // not this context's "last completed turn" — and a context with nothing finished answers
+    // empty with a note, rather than throwing at a legitimate question.
     const t2 = store.startTurn(session, { agent: 'oc', generation: 1, trigger: 'person', at: at + 10 })!;
     add(t2, at + 10, 'oc 失败');
     store.endTurn(t2, { outcome: 'failed', at: at + 11 });
-    expect(() => store.read(String(session), { turn: 'done' })).toThrow(/for agent oc in generation 1/);
+    const none = store.read(String(session), { turn: 'done' });
+    expect(none.messages).toEqual([]);
+    expect(none.note).toMatch(/for agent oc in generation 1 yet/);
 
     const t3 = store.startTurn(session, { agent: 'oc', generation: 1, trigger: 'person', at: at + 20 })!;
     add(t3, at + 20, 'oc 答完');
@@ -477,6 +480,94 @@ describe('HistoryStore turns', () => {
     expect(store.read(String(session), { turn: 'done' }).messages.map((m) => m.text)).toEqual(['oc 答完']);
     // An explicit number still reaches the older context: it asks for a turn, not "the last one".
     expect(store.read(String(session), { turn: '1' }).messages.map((m) => m.text)).toEqual(['cc 答完的']);
+    store.close();
+  });
+
+  it('reads --turn done from the live context, not the newest turn row', () => {
+    const { store } = tempStore();
+    const at = Date.UTC(2026, 10, 5, 10, 0);
+    const session = store.session({ key: 'tg#reset#', platform: 'tg', agent: 'cc', at })!;
+    const t1 = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
+    store.message(session, { ts: at, role: 'user', kind: 'normal', text: '重置前', turn: t1 });
+    store.endTurn(t1, { outcome: 'done', at: at + 1 });
+
+    // `/new` bumps the generation in conversations.json; the library has no turn in it yet, so
+    // its newest row is still turn 1. Without the live context, `done` answers with that — the
+    // answer the person asked to discard.
+    const afterNew = store.read(String(session), { turn: 'done', current: () => ({ agent: 'cc', generation: 1 }) });
+    expect(afterNew.messages).toEqual([]);
+    expect(afterNew.note).toMatch(/for agent cc in generation 1 yet/);
+    expect(afterNew.note).toMatch(/newest recorded turn is from generation 0/);
+
+    // A store used without the callback falls back to the newest turn's context (unchanged).
+    expect(store.read(String(session), { turn: 'done' }).messages.map((m) => m.text)).toEqual(['重置前']);
+
+    // Once the new generation has a finished turn, that is what `done` answers.
+    const t2 = store.startTurn(session, { agent: 'cc', generation: 1, trigger: 'person', at: at + 10 })!;
+    store.message(session, { ts: at + 10, role: 'user', kind: 'normal', text: '重置后', turn: t2 });
+    store.endTurn(t2, { outcome: 'done', at: at + 11 });
+    const live = { current: () => ({ agent: 'cc', generation: 1 }) };
+    expect(store.read(String(session), { turn: 'done', ...live }).messages.map((m) => m.text)).toEqual(['重置后']);
+    store.close();
+  });
+
+  it('reads --since forward, keeping the oldest rows and naming where to resume', () => {
+    const { store } = tempStore();
+    const at = Date.UTC(2026, 10, 5, 11, 0);
+    const session = store.session({ key: 'tg#since#', platform: 'tg', agent: 'cc', at })!;
+    const turn = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
+    store.message(session, { ts: at, role: 'user', kind: 'normal', text: '水位', turn });
+    const anchor = store.read(String(session)).messages[0]!.id;
+    for (let i = 1; i <= 600; i += 1) {
+      store.message(session, { ts: at + i, role: 'agent', kind: 'normal', text: `m${i}`, turn });
+    }
+
+    const first = store.read(String(session), { since: anchor });
+    // The earliest 500 after the watermark — not the newest, which would leave a permanent gap.
+    expect(first.messages).toHaveLength(500);
+    expect(first.messages[0]!.text).toBe('m1');
+    expect(first.messages[499]!.text).toBe('m500');
+    expect(first.note).toMatch(new RegExp(`Continue with --since ${first.messages[499]!.id}\\.`));
+
+    // The id in the note is exactly where the next read starts: no row is lost or repeated.
+    const next = store.read(String(session), { since: first.messages[499]!.id });
+    expect(next.messages.map((m) => m.text)).toEqual(Array.from({ length: 100 }, (_, i) => `m${501 + i}`));
+    store.close();
+  });
+
+  it('cuts a --since read at the character budget from the same end and says where to resume', () => {
+    const { store } = tempStore();
+    const at = Date.UTC(2026, 10, 5, 12, 0);
+    const session = store.session({ key: 'tg#since-long#', platform: 'tg', agent: 'cc', at })!;
+    const turn = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
+    store.message(session, { ts: at, role: 'user', kind: 'normal', text: '水位', turn });
+    const anchor = store.read(String(session)).messages[0]!.id;
+    const text = 'x'.repeat(90_000);
+    for (let i = 0; i < 3; i += 1) {
+      store.message(session, { ts: at + i + 1, role: 'agent', kind: 'normal', text: `${i}:${text}`, turn });
+    }
+
+    const cut = store.read(String(session), { since: anchor });
+    expect(cut.messages.map((m) => m.text.slice(0, 2))).toEqual(['0:', '1:']);
+    expect(cut.note).toMatch(/1 later message\(s\) were left out/);
+    expect(cut.note).toMatch(new RegExp(`Continue with --since ${cut.messages[1]!.id}\\.`));
+    store.close();
+  });
+
+  it('keeps the newest 100 turns when --turns asks for more, and says so', () => {
+    const { store } = tempStore();
+    const at = Date.UTC(2026, 10, 5, 13, 0);
+    const session = store.session({ key: 'tg#many-turns#', platform: 'tg', agent: 'cc', at })!;
+    for (let i = 1; i <= 101; i += 1) {
+      const turn = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: at + i })!;
+      store.message(session, { ts: at + i, role: 'user', kind: 'normal', text: `t${i}`, turn });
+      store.endTurn(turn, { outcome: 'done', at: at + i });
+    }
+    const read = store.read(String(session), { turns: 150 });
+    // 101 turns exist; the newest 100 start at turn 2.
+    expect(read.messages).toHaveLength(100);
+    expect(read.messages[0]!.turn).toBe(2);
+    expect(read.note).toMatch(/--turns takes at most 100; the newest 100 are shown/);
     store.close();
   });
 

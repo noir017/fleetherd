@@ -126,7 +126,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     notes: [
       'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through talkcode, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
       'search "<words>" returns the conversation id, the message id, the title, the agent and a matching excerpt. Quote a multi-word query — it is one argument. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations.',
-      'read <session> prints the whole conversation (up to 500 messages); --around <message> --window <n> shows n messages on each side of a hit. Adding --role, --turn (last | done | n), --turns, --since, --grep or --tail selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. list [--days <n>] is the recent conversations.',
+      'read <session> prints the whole conversation (up to 500 messages); --around <message> --window <n> shows n messages on each side of a hit. Adding --role, --turn (last | done | n), --turns (at most 100), --since (oldest first; its note names the id to continue from), --grep or --tail selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. list [--days <n>] is the recent conversations.',
       'Pass the ids exactly as printed: session and message are numbers, with or without the leading #.',
     ],
   },
@@ -314,8 +314,16 @@ export const READ_FILTER_OPTIONS: ReverseOption[] = [
     description:
       'read: last | done (the newest turn of this agent and generation that ended normally) | a turn number (1 = the first)',
   },
-  { flags: '--turns <n>', description: 'read: only the last n turns', parse: intArg('--turns') },
-  { flags: '--since <message>', description: 'read: rows after this message id (from an earlier read)', parse: idArg('--since') },
+  {
+    flags: '--turns <n>',
+    description: 'read: the last n turns (at most 100; the note says when it cut)',
+    parse: intArg('--turns'),
+  },
+  {
+    flags: '--since <message>',
+    description: 'read: rows after this message id, oldest first (from an earlier read)',
+    parse: idArg('--since'),
+  },
   { flags: '--grep <text>', description: 'read: only rows of this conversation containing this text' },
 ];
 

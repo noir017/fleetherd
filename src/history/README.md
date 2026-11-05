@@ -76,19 +76,25 @@ an upgraded file opens without a rewrite and its old rows stay unknown.
 ## Reading part of a conversation
 
 `read(session, opts)` has three shapes: no filter (the whole conversation, unchanged), `around`
-(the old window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n),
-`since` (message id, exclusive), `grep` (text, this conversation only) and `tail` (newest n tool
-lines, only with `role: 'tool'`). They combine with AND. `done` means the newest normally-ended
-turn of the conversation's CURRENT context: the agent and generation of its newest turn. A `/new`
-followed by an agent switch starts a new context, and its "last completed turn" must not be the
-previous agent's answer. Explicit `turn` numbers and `turns` are not scoped — they ask for a turn,
-not for "the last one". A filtered result adds each row's turn number, that turn's outcome and
-agent; the unfiltered result keeps its original five fields because `sessions read <id>` must not
-change under anyone.
+(the old window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n,
+capped at 100 with a note), `since` (message id, exclusive), `grep` (text, this conversation
+only) and `tail` (newest n tool lines, only with `role: 'tool'`). They combine with AND. `done`
+means the newest normally-ended turn of the conversation's CURRENT context, which the daemon
+passes as `current(key)` — the live binding and the generation `/new`/`/cd` last set. Inferring
+it from the newest turn row is wrong exactly after `/new`: that row is the generation the person
+just discarded. A `/new` followed by an agent switch starts a new context, and its "last
+completed turn" must not be the previous agent's answer; when nothing has finished there yet the
+read is empty with a note saying so. Explicit `turn` numbers and `turns` are not scoped — they
+ask for a turn, not for "the last one". A filtered result adds each row's turn number, that
+turn's outcome and agent; the unfiltered result keeps its original five fields because
+`sessions read <id>` must not change under anyone.
 
-A turn/tail/since read is a tail: when the 200k character budget cuts it, the newest rows are
-kept and the note says how many older ones went. A role/grep read is not, and drops later rows
-like the unfiltered read. Both bounds (500 rows, 200k characters) are reported, never silent.
+Direction follows what the filter is for. A turn/tail/turns read is a tail: when the 200k
+character budget cuts it, the newest rows are kept and the note says how many older ones went.
+A `--since` read is a head — it resumes from a watermark, so the earliest rows after it are kept
+and the note names the last id returned, which is the next call's `--since`. A role/grep read
+drops later rows like the unfiltered read. Both bounds (500 rows, 200k characters) are reported,
+never silent.
 
 WAL, `synchronous = NORMAL`. The file, and its `-wal`/`-shm` companions, are chmod'd `0600`:
 this is the same kind of text the harnesses' own session files hold.

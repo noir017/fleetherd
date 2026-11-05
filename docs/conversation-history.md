@@ -31,7 +31,7 @@ not.
 
 ## Turns
 
-Every row the gateway writes from now on belongs to a turn. A turn is one piece of work the gateway gave an agent: the
+Every row the gateway writes during a turn belongs to it. A turn is one piece of work the gateway gave an agent: the
 prompt that opened it (or a mid-turn message merged into it), the tool calls it made, and the
 reply it ended with. Each turn also has one row of its own, carrying:
 
@@ -60,7 +60,8 @@ Who owns which row:
 - a stopped turn keeps what it had written. The turn ran, and its partial reply is real.
 
 An existing `history.db` is migrated in place: the `turn` column is added and left empty on old
-rows, which read as turn `?`, outcome `unknown`. No turn is invented for them.
+rows, which read as turn `?`, outcome `unknown`. No turn is invented for them. Rows folded in
+from web UI transcripts have no turn either — the web UI wrote them, not a turn.
 
 ## Reading part of a conversation
 
@@ -77,8 +78,11 @@ talkcode sessions read '#12' --role tool --tail 20
 - `--role user|agent|tool` — only rows of that role.
 - `--turn last|done|<n>` — the newest turn, the newest turn **of the current agent and
   generation** that ended normally, or turn number `n` counted from 1 in that conversation.
-  `--turns <n>` takes the last `n`.
-- `--since <message>` — rows after that message id (exclusive), from an earlier read.
+  `--turns <n>` takes the last `n` (at most 100; the note says when it cut). Right after `/new`
+  there is no finished turn in the new generation yet, so `--turn done` answers empty with a
+  note saying so.
+- `--since <message>` — rows after that message id (exclusive), from an earlier read, oldest
+  first. When a bound cuts the answer, its note names the id to pass back as the next `--since`.
 - `--grep <text>` — rows containing this text, in this conversation only.
 - `--tail <n>` — with `--role tool`, the newest `n` tool lines.
 
@@ -87,8 +91,8 @@ the agent that ran it. `--around` cannot be combined with them: it selects a win
 Without any filter the output is exactly what it was before turns existed.
 
 Every read is bounded: 500 rows and 200,000 characters. A read that hits a bound says how many
-rows it left out and which end it cut — a tail read keeps the newest rows, an ordinary one keeps
-the oldest.
+rows it left out and which end it cut — a tail read (`--turn`, `--turns`, `--tail`) keeps the
+newest rows, an ordinary or `--since` read keeps the oldest.
 
 ## Searching it
 

@@ -89,13 +89,14 @@ export interface HistoryTurnEnd {
   detail?: string;
 }
 
-/** The turn fields a filtered read adds to a message row. */
-export interface HistoryTurnRef {
-  /** The turn's number in this conversation, 1-based; null for a row written before turns. */
-  seq: number | null;
-  /** done | stopped | failed | restart | running; null when the row has no turn. */
-  outcome: string | null;
-  agent: string;
+/**
+ * What a turn filter selected: the turn ids, and — when the selection is empty or was cut — the
+ * sentence that says why. An empty selection is a legitimate answer (`--turn done` after `/new`),
+ * so it is returned rather than thrown.
+ */
+interface TurnSelection {
+  ids: number[];
+  note?: string;
 }
 
 export interface HistorySessionMeta {
@@ -196,6 +197,17 @@ export interface HistoryReadOptions {
   grep?: string;
   /** With `role: 'tool'`, the newest n tool lines. */
   tail?: number;
+  /**
+   * The conversation's live context, keyed by its own key: the agent bound to it now and the
+   * generation `/new`/`/cd` last set.
+   *
+   * `--turn done` is defined against this, and only the daemon knows it. The library cannot infer
+   * it from its own rows: after `/new` the newest turn row still belongs to the previous
+   * generation, because the new context has not run a turn yet — inferring from it answers with
+   * the answer `/new` was asked to discard. A store used without this (tests, a direct caller)
+   * falls back to the newest turn's agent and generation.
+   */
+  current?: (key: string) => { agent: string; generation: number } | undefined;
 }
 
 export interface HistorySearchOptions {
@@ -638,16 +650,40 @@ export class HistoryStore {
    * returns carries its turn's number, outcome and agent, because a filtered answer is about the
    * shape of the work, not just the words.
    *
-   * Direction matters. A turn/tail/since read is a TAIL: when a bound cuts it, the newest rows
-   * are the ones worth keeping, so the cut is made from the oldest end and the note says so.
-   * A role/grep read of the whole conversation keeps the oldest and drops later, like `readAll`.
+   * Direction matters, and it follows what the filter is FOR. A turn/tail/turns read is a TAIL:
+   * when a bound cuts it, the newest rows are the ones worth keeping, so the cut is made from the
+   * oldest end and the note says so. A `--since` read is a HEAD: it resumes from a watermark, so
+   * the earliest rows after it are the ones the next read continues from, and the note names the
+   * id to pass back. A role/grep read of the whole conversation also keeps the oldest and drops
+   * later, like `readAll`.
    */
   private readFiltered(session: HistorySessionRow, opts: HistoryReadOptions): HistoryReadResult {
-    const db = this.requireDb();
-    const { where, params } = this.readWhere(session, opts);
+    const scope = this.turnScope(session, opts);
+    // A selection that matches no turn is an answer, not an error: `--turn done` right after
+    // `/new` is a legitimate question with nothing to show yet. The note says why.
+    if (scope?.ids.length === 0) {
+      return { session, messages: [], ...(scope.note ? { note: scope.note } : {}) };
+    }
+    const { where, params } = this.readWhere(session, opts, scope?.ids);
     const tail = opts.tail !== undefined ? Math.max(1, Math.min(opts.tail, 500)) : undefined;
-    const newestFirst =
-      tail !== undefined || opts.turn !== undefined || opts.turns !== undefined || opts.since !== undefined;
+    const newestFirst = tail !== undefined || opts.turn !== undefined || opts.turns !== undefined;
+    const { messages, more, dropped } = this.selectFiltered(where, params, tail, newestFirst);
+    // Where a since read continues from: the newest row it actually kept, after any cut.
+    const resumeFrom = !newestFirst && opts.since !== undefined ? messages[messages.length - 1]?.id : undefined;
+    const notes = [scope?.note, readNote(more, dropped, newestFirst, resumeFrom)].filter(
+      (n): n is string => n !== undefined
+    );
+    return { session, messages, ...(notes.length > 0 ? { note: notes.join(' ') } : {}) };
+  }
+
+  /** Run the filtered query, and cut it from the end the filter is about (see readFiltered). */
+  private selectFiltered(
+    where: string[],
+    params: Array<string | number>,
+    tail: number | undefined,
+    newestFirst: boolean
+  ): { messages: HistoryReadMessage[]; more: boolean; dropped: number } {
+    const db = this.requireDb();
     const limit = tail ?? READ_ALL_LIMIT + 1;
     const order = newestFirst ? 'm.ts DESC, m.id DESC' : 'm.ts, m.id';
     const sql = `
@@ -659,19 +695,18 @@ export class HistoryStore {
       ORDER BY ${order}
       LIMIT ?`;
     const rows = db.prepare(sql).all(...params, limit) as Array<Record<string, unknown>>;
-
     const more = tail === undefined && rows.length > READ_ALL_LIMIT;
     let selected = (more ? rows.slice(0, READ_ALL_LIMIT) : rows).map(readMessageRow);
     if (newestFirst) selected = selected.reverse();
     const { messages, dropped } = newestFirst ? capTail(selected) : capRead(selected);
-    const note = readNote(more, dropped, newestFirst);
-    return { session, messages, ...(note ? { note } : {}) };
+    return { messages, more, dropped };
   }
 
   /** The WHERE a filtered read selects, and its parameters. Split out to keep readFiltered short. */
   private readWhere(
     session: HistorySessionRow,
-    opts: HistoryReadOptions
+    opts: HistoryReadOptions,
+    turnIds: number[] | undefined
   ): { where: string[]; params: Array<string | number> } {
     const db = this.requireDb();
     // The CLI refuses this too; the store is the second wall for a hand-written IPC request.
@@ -688,7 +723,6 @@ export class HistoryStore {
       where.push("m.text LIKE ? ESCAPE '\\'");
       params.push(likePattern(opts.grep));
     }
-    const turnIds = this.turnScope(session, opts);
     if (turnIds) {
       where.push(`m.turn IN (${turnIds.map(() => '?').join(', ')})`);
       params.push(...turnIds);
@@ -706,74 +740,109 @@ export class HistoryStore {
 
   /**
    * Which turns a read selects, as ids — or undefined when it selects every turn (no turn filter).
-   * Throws a message written for the agent when the conversation has no such turn: silently
-   * returning an empty list would read as "nothing was said", which is a different answer.
+   * A selected set may be empty, with a note saying why; an id or number that names no turn still
+   * throws, because that is a wrong request rather than an answer with nothing in it.
    */
-  private turnScope(session: HistorySessionRow, opts: HistoryReadOptions): number[] | undefined {
-    const db = this.requireDb();
+  private turnScope(session: HistorySessionRow, opts: HistoryReadOptions): TurnSelection | undefined {
     if (opts.turn === undefined && opts.turns === undefined) return undefined;
     if (opts.turn !== undefined && opts.turns !== undefined) {
       throw new Error('--turn and --turns select turns in different ways; use one');
     }
-    const count = Number(
-      (db.prepare('SELECT COUNT(*) AS n FROM turns WHERE session_id = ?').get(session.id) as { n: number | bigint }).n
-    );
+    const count = this.turnCount(session);
     if (count === 0) {
       throw new Error(
         `conversation ${session.id} has no recorded turns — it predates turn tracking; read it without --turn`
       );
     }
-    if (opts.turns !== undefined) {
-      const n = Math.max(1, Math.min(opts.turns, 100));
-      const max = Number(
-        (db.prepare('SELECT MAX(seq) AS seq FROM turns WHERE session_id = ?').get(session.id) as { seq: number | bigint })
-          .seq
-      );
-      return (
-        db
-          .prepare('SELECT id FROM turns WHERE session_id = ? AND seq > ? ORDER BY seq')
-          .all(session.id, max - n) as Array<{ id: number | bigint }>
-      ).map((r) => Number(r.id));
-    }
+    if (opts.turns !== undefined) return this.lastTurns(session, opts.turns);
     const which = opts.turn ?? '';
-    if (which === 'last') {
-      const row = db
-        .prepare('SELECT id FROM turns WHERE session_id = ? ORDER BY seq DESC LIMIT 1')
-        .get(session.id) as { id: number | bigint } | undefined;
-      if (!row) throw new Error(`conversation ${session.id} has no recorded turns`);
-      return [Number(row.id)];
+    if (which === 'last') return this.lastTurn(session);
+    if (which === 'done') return this.doneTurn(session, opts.current);
+    return this.numberedTurn(session, which, count);
+  }
+
+  private turnCount(session: HistorySessionRow): number {
+    return Number(
+      (this.requireDb().prepare('SELECT COUNT(*) AS n FROM turns WHERE session_id = ?').get(session.id) as {
+        n: number | bigint;
+      }).n
+    );
+  }
+
+  /** The newest `asked` turns, capped at 100 with a note saying it cut. */
+  private lastTurns(session: HistorySessionRow, asked: number): TurnSelection {
+    const db = this.requireDb();
+    const n = Math.max(1, Math.min(asked, 100));
+    const max = Number(
+      (db.prepare('SELECT MAX(seq) AS seq FROM turns WHERE session_id = ?').get(session.id) as { seq: number | bigint })
+        .seq
+    );
+    const ids = (
+      db.prepare('SELECT id FROM turns WHERE session_id = ? AND seq > ? ORDER BY seq').all(session.id, max - n) as Array<{
+        id: number | bigint;
+      }>
+    ).map((r) => Number(r.id));
+    // Said rather than refused: 150 turns is a reasonable thing to ask for, and the newest 100
+    // are the half an agent reads first anyway. The note is what keeps it from looking whole.
+    return { ids, ...(asked > n ? { note: `--turns takes at most ${n}; the newest ${n} are shown.` } : {}) };
+  }
+
+  private lastTurn(session: HistorySessionRow): TurnSelection {
+    const row = this.requireDb()
+      .prepare('SELECT id FROM turns WHERE session_id = ? ORDER BY seq DESC LIMIT 1')
+      .get(session.id) as { id: number | bigint } | undefined;
+    if (!row) throw new Error(`conversation ${session.id} has no recorded turns`);
+    return { ids: [Number(row.id)] };
+  }
+
+  private doneTurn(
+    session: HistorySessionRow,
+    current: HistoryReadOptions['current']
+  ): TurnSelection {
+    const db = this.requireDb();
+    // Scoped to the conversation's CURRENT context — the agent bound now and the generation
+    // `/new`/`/cd` last set, which the daemon passes in (see HistoryReadOptions.current).
+    // Inferring it from the newest turn row is wrong exactly after `/new`: that row still
+    // belongs to the generation the person just discarded, so "the last turn that ended
+    // normally" would reach back past the reset. (Explicit turn numbers and --turns still
+    // reach the older ones, because those ask for a turn rather than for "the last one".)
+    const newest = db
+      .prepare('SELECT agent, generation FROM turns WHERE session_id = ? ORDER BY seq DESC LIMIT 1')
+      .get(session.id) as { agent: string; generation: number | bigint } | undefined;
+    if (!newest) throw new Error(`conversation ${session.id} has no recorded turns`);
+    const live = current?.(session.key);
+    const agent = live?.agent ?? newest.agent;
+    const generation = live?.generation ?? Number(newest.generation);
+    const row = db
+      .prepare(
+        "SELECT id FROM turns WHERE session_id = ? AND agent = ? AND generation = ? AND outcome = 'done' ORDER BY seq DESC LIMIT 1"
+      )
+      .get(session.id, agent, generation) as { id: number | bigint } | undefined;
+    if (!row) {
+      // Nothing has finished here yet — a fresh `/new` is the normal case. An empty answer with
+      // this note tells the agent that, where an error would read as a broken request.
+      const behind =
+        Number(newest.generation) !== generation
+          ? `; the newest recorded turn is from generation ${Number(newest.generation)}`
+          : '';
+      return {
+        ids: [],
+        note: `no turn of conversation ${session.id} has ended normally for agent ${agent} in generation ${generation} yet${behind}`,
+      };
     }
-    if (which === 'done') {
-      // Scoped to the conversation's CURRENT context — the agent and generation of its newest
-      // turn. A `/new` followed by an agent switch starts a new context in the same conversation,
-      // and "the last turn that ended normally" must not reach back past it: that answer was
-      // another agent's, about context this one never had. (Explicit turn numbers and --turns
-      // still reach the older ones, because those ask for a turn rather than for "the last one".)
-      const current = db
-        .prepare('SELECT agent, generation FROM turns WHERE session_id = ? ORDER BY seq DESC LIMIT 1')
-        .get(session.id) as { agent: string; generation: number | bigint } | undefined;
-      if (!current) throw new Error(`conversation ${session.id} has no recorded turns`);
-      const row = db
-        .prepare(
-          "SELECT id FROM turns WHERE session_id = ? AND agent = ? AND generation = ? AND outcome = 'done' ORDER BY seq DESC LIMIT 1"
-        )
-        .get(session.id, current.agent, Number(current.generation)) as { id: number | bigint } | undefined;
-      if (!row) {
-        throw new Error(
-          `no turn of conversation ${session.id} ended normally for agent ${current.agent} in generation ${Number(current.generation)}`
-        );
-      }
-      return [Number(row.id)];
-    }
+    return { ids: [Number(row.id)] };
+  }
+
+  private numberedTurn(session: HistorySessionRow, which: string, count: number): TurnSelection {
     const seq = Number(which);
     if (!Number.isInteger(seq) || seq < 1) {
       throw new Error(`--turn takes last, done, or a turn number (1 = the first), got ${JSON.stringify(which)}`);
     }
-    const row = db
+    const row = this.requireDb()
       .prepare('SELECT id FROM turns WHERE session_id = ? AND seq = ?')
       .get(session.id, seq) as { id: number | bigint } | undefined;
     if (!row) throw new Error(`conversation ${session.id} has ${count} turn(s); there is no turn ${seq}`);
-    return [Number(row.id)];
+    return { ids: [Number(row.id)] };
   }
 
   /** The most recently active conversations, newest first. */
@@ -978,8 +1047,12 @@ function hasReadFilter(opts: HistoryReadOptions): boolean {
   );
 }
 
-/** The sentence a filtered read adds when a bound cut it — said, never silent. */
-function readNote(more: boolean, dropped: number, newestFirst: boolean): string | undefined {
+/**
+ * The sentence a filtered read adds when a bound cut it — said, never silent. A since read also
+ * gets the id to pass back: it resumes from a watermark, so its cut is only safe to make if the
+ * next call can pick up exactly where this one stopped.
+ */
+function readNote(more: boolean, dropped: number, newestFirst: boolean, resumeFrom?: number): string | undefined {
   const notes: string[] = [];
   if (more) {
     notes.push(
@@ -991,9 +1064,9 @@ function readNote(more: boolean, dropped: number, newestFirst: boolean): string 
       `${dropped} ${newestFirst ? 'older' : 'later'} message(s) were left out to keep the answer under ${READ_CHAR_BUDGET} characters.`
     );
   }
-  return notes.length > 0
-    ? `${notes.join(' ')} Narrow the read with --turn, --turns, --since, --grep or --tail.`
-    : undefined;
+  if (notes.length === 0) return undefined;
+  if (resumeFrom !== undefined) return `${notes.join(' ')} Continue with --since ${resumeFrom}.`;
+  return `${notes.join(' ')} Narrow the read with --turn, --turns, --since, --grep or --tail.`;
 }
 
 /**

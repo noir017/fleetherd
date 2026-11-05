@@ -255,6 +255,47 @@ describe('a turn in the conversation library', () => {
     store.close();
   });
 
+  it('files a joined interjection under the running turn', async () => {
+    const { store, file } = tempStore();
+    let release: () => void = () => {};
+    const h = rig(async () => {
+      await new Promise<void>((r) => (release = r));
+    }, store, 'joined');
+    h.reg.route(inbound('开始'));
+    await drain();
+    // The harness took the message inside the same turn; its answer is this turn's answer.
+    h.reg.route(inbound('插话'));
+    await drain();
+    release();
+    await drain();
+
+    const session = store.list({ days: 30 })[0]!;
+    const users = store.read(String(session.id), { role: 'user' });
+    expect(users.messages.map((m) => `${m.turn}:${m.text}`)).toEqual(['1:开始', '1:插话']);
+    expect(rawTurns(file).map((t) => `${t.seq}:${t.outcome}`)).toEqual(['1:done']);
+    store.close();
+  });
+
+  it('records a foreground turn stopped by /stop as stopped', async () => {
+    const { store, file } = tempStore();
+    let release: () => void = () => {};
+    const h = rig(async () => {
+      await new Promise<void>((r) => (release = r));
+    }, store);
+    h.reg.route(inbound('长任务'));
+    await drain();
+    h.reg.route(inbound('/stop'));
+    await drain();
+    // The harness settles when its child is aborted; the turn is recorded from the signal.
+    release();
+    await drain();
+
+    expect(rawTurns(file).map((t) => `${t.seq}:${t.trigger}:${t.outcome}`)).toEqual(['1:person:stopped']);
+    const read = store.read(String(store.list({ days: 30 })[0]!.id), { turn: 'last' });
+    expect(read.messages.map((m) => `${m.turn}:${m.outcome}`)).toEqual(['1:stopped']);
+    store.close();
+  });
+
   it('numbers turns across a /new, and records the agent that answered each', async () => {
     const { store, file } = tempStore();
     const h = rig(async (t) => void t.onText('好'), store);

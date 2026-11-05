@@ -381,7 +381,13 @@ function renderSessionRead(data: unknown): string {
   const result = data as SessionReadResult | undefined;
   if (!result) return toon({ ok: true });
   if (result.messages.length === 0) {
-    return toon({ session: { ...result.session, id: `#${result.session.id}` }, count: 0, note: 'this conversation has no messages' });
+    // The store's note is the answer when it has one — `--turn done` right after `/new` is
+    // empty because nothing has finished yet, not because the conversation is empty.
+    return toon({
+      session: { ...result.session, id: `#${result.session.id}` },
+      count: 0,
+      note: result.note ?? 'this conversation has no messages',
+    });
   }
   return toon({
     session: {

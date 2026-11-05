@@ -5,10 +5,12 @@ import type { HistoryKind, HistoryTrigger } from './store.js';
  * enriches each event with what only it knows — the conversation's lane, title, agent, host
  * and directory — and a turn that cannot record (no store, a full disk) must go on.
  *
- * `turn` is the id `startTurn` returned for the turn this row belongs to. Every row a turn
- * writes carries it: the prompt that opened it, a mid-turn message merged into it, each tool
- * line and the reply. A row written outside a turn (an import, a background burst before this
- * field existed) has none, and reads as "unknown" rather than being guessed into a neighbour.
+ * `turn` is the id `startTurn` returned for the turn this row belongs to. Every row written
+ * inside a turn carries it: the prompt that opened it, a mid-turn message merged into it, each
+ * tool line and the reply. Background output opens a turn of its own (see followUpSink), so it
+ * carries one too. A row written outside any turn — an imported transcript, or a row recorded
+ * before turns existed — has none, and reads as "unknown" rather than being guessed into a
+ * neighbour.
  */
 export type HistoryEvent =
   /** The prompt a turn (or a mid-turn message) gave the agent. Attachments are names only. */
