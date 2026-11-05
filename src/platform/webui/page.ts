@@ -2072,7 +2072,7 @@ const SCRIPT = `
    *
    * A message rather than a scrollTop, because the transcript a topic comes back to is not the one
    * it was left with: it is rebuilt from the cache, which keeps the last 200 messages, and then
-   * reconciled against a ring of 500 — so the sync can put a few hundred older messages above the
+   * reconciled against a ring of 1000 — so the sync can put a few hundred older messages above the
    * one being read. A pixel offset would land in the middle of those; a message does not move.
    *
    * In memory only, and with no scroll listener. The whole cost is one measurement on the way out
@@ -2086,7 +2086,7 @@ const SCRIPT = `
 
   /**
    * The first message whose bottom edge is below the top of the viewport. A binary search, since
-   * the children are in vertical order and a topic can hold 500 of them: every rect after the
+   * the children are in vertical order and a topic can hold 1000 of them: every rect after the
    * first is read off a layout that is already up to date, so this forces one layout, not one per
    * message.
    */

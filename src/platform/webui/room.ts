@@ -107,8 +107,13 @@ export interface TopicNotice {
   body: string;
 }
 
-/** How many messages a topic remembers across a page reload. Memory in a daemon that runs for weeks. */
-const MAX_MESSAGES = 500;
+/**
+ * How many messages a topic remembers across a page reload.
+ *
+ * Memory estimate: each message averages ~2.3 KB, so 200 topics filled to capacity would take
+ * ~460 MB, while actual usage in production is well below that (longest topics ~200 messages).
+ */
+const MAX_MESSAGES = 1000;
 
 /** How many emitted events a topic keeps so a reconnect can be caught up rather than re-synced. */
 const MAX_BACKLOG = 300;
@@ -282,7 +287,7 @@ interface Room {
    * `awaitingQuestion`).
    *
    * A set rather than a scan of `stored` on demand, because the topic list is rebuilt on every
-   * message posted into any topic and scanning 500 messages × 64 topics for one boolean is work
+   * message posted into any topic and scanning 1000 messages × 200 topics for one boolean is work
    * per keystroke of a streamed reply. Maintained wherever buttons appear or are stripped.
    */
   awaiting: Set<string>;

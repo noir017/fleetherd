@@ -108,9 +108,9 @@ far as this module: the room goes, the list entry goes, and the daemon's binding
 The sweep exists because a restart leaves a sidebar full of rows that open onto nothing (see
 `stale` below), and deleting a dozen of those one at a time is not a feature.
 
-**Past 64 topics the oldest one goes, unless something is holding on to it.** `topics.ts` used to
-refuse the 65th outright, on the grounds that evicting a topic orphans its session. In use that
-reached 64 in two weeks (a new-session scheduled task adds a topic per run), after which `+` did
+**Past 200 topics the oldest one goes, unless something is holding on to it.** `topics.ts` used to
+refuse past the ceiling outright, on the grounds that evicting a topic orphans its session. In use that
+reached the cap (a new-session scheduled task adds a topic per run), after which `+` did
 nothing at all — the 409 never reached the screen — and every scheduled run fell back to posting
 into the chat. Orphaning costs exactly what a `×` costs, which people press all the time; so now
 `WebRoom.createTopic` evicts the least recently active topic first (`makeRoom`), logging its id and
@@ -157,7 +157,7 @@ renamed) and `useTranscripts` reads them back before anything can attach. Decisi
 - **Every topic, not only starred ones.** The 2.5.0 argument against this was cost: rewriting every
   topic's ring on every streamed edit. But the write is paid per topic that is *changing*, and the
   topics changing are the ones being read — a topic nobody speaks in is never written. The disk is
-  bounded by the 64 topics times 500 messages. A star now only keeps a topic from eviction and the
+  bounded by the 200 topics times 1000 messages. A star now only keeps a topic from eviction and the
   sweep. Deleting, evicting or sweeping a topic removes its file, and a file whose topic is gone when
   the daemon starts is removed too.
 - **Written within 3 s of a change, not 3 s after the last one.** The first change arms the write
@@ -172,7 +172,7 @@ renamed) and `useTranscripts` reads them back before anything can attach. Decisi
   are stripped on the server too, since the process that would answer them is gone.
 - **The id counter starts past every restored id.** `nextId` restarts at `w1` each run, and the
   ring is a map by id, so a new `w5` would overwrite a kept one.
-- **What is kept is what the ring had**: up to 500 messages. A file the agent sent comes back as
+- **What is kept is what the ring had**: up to 1000 messages. A file the agent sent comes back as
   its name. Its download token died with the old process, so the link answers 404 and a picture
   hides itself, as it does from the browser's cache.
 
@@ -867,7 +867,7 @@ topic, and both only do work at the moment of a switch.
 **Where you were reading is kept as a message, not as a pixel offset.** On the way out,
 `saveView` records the first message on screen and how far its top sits from the top of the
 viewport. A scrollTop would not survive the way back in. The transcript is rebuilt from the cache,
-which keeps the last 200 messages, and then reconciled against a ring of 500. So on a long topic
+which keeps the last 200 messages, and then reconciled against a ring of 1000. So on a long topic
 the sync inserts older messages *above* the one being read, and a restored offset would land that
 many rows off. A binary search over `#log`'s children finds that message with one forced layout,
 not one per message.

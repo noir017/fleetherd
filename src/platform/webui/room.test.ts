@@ -1588,7 +1588,7 @@ describe('WebRoom: a full topic list makes room instead of refusing', () => {
     const { room, store, ids } = full();
     for (const id of ids) room.starTopic(id, true);
 
-    expect(() => room.createTopic()).toThrow(/every one of the 64 topics is starred or in use; unstar or delete one/);
+    expect(() => room.createTopic()).toThrow(new RegExp(`every one of the ${MAX_TOPICS} topics is starred or in use; unstar or delete one`));
     expect(store.list()).toHaveLength(MAX_TOPICS);
   });
 

@@ -251,7 +251,7 @@ export function diskUploadStore(dir: string): UploadStore {
  * which hold all of it already, but it is not something to leave world-readable either. Written to a
  * temporary name and renamed, so a daemon killed mid-write leaves the previous copy rather than
  * half of a new one. Synchronous, because `dispose` writes on the way out and a promise there would
- * be abandoned by the exit it is racing; the writes are seconds apart and a topic at most 500
+ * be abandoned by the exit it is racing; the writes are seconds apart and a topic at most 1000
  * messages, so none of them is long.
  */
 export function diskTranscriptStore(dir: string): TranscriptStore {

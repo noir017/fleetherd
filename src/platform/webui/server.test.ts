@@ -642,7 +642,7 @@ describe('webui server: topics', () => {
     for (const t of room.topics.list()) room.starTopic(t.id, true);
     const res = await create();
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toMatch(/^every one of the 64 topics is starred or in use/);
+    expect(((await res.json()) as { error: string }).error).toMatch(/^every one of the 200 topics is starred or in use/);
     // It used to leave no trace outside the browser's network panel.
     expect(warn.mock.calls.flat().join('\n')).toMatch(/\[webui\] refused to open a topic: every one/);
   });

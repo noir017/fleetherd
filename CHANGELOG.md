@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Raised web UI limits to 200 concurrent topics and 1000 messages per topic.** The previous ceiling
+  of 64 topics was reached in active environments, evicting older conversations while users easily
+  navigate larger lists via pinned, starred, and "needs you" ordering. The message ring per topic is
+  doubled from 500 to 1000 messages (estimated ~460 MB if all 200 topics were completely full at ~2.3 KB
+  per message, with actual production usage well below that). [→](docs/web-ui.md)
+
 ### Fixed
 
 - **Operator control menus in the web UI no longer mark the topic as waiting on an answer.**

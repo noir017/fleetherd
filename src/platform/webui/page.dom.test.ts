@@ -1546,7 +1546,7 @@ describe('webui page: coming back to a topic', () => {
   });
 
   it('finds that message again when the sync puts older ones above it', async () => {
-    // The cache keeps the last 200 messages and the ring holds 500, so a long topic comes back
+    // The cache keeps the last 200 messages and the ring holds 1000, so a long topic comes back
     // short and the sync then adds the head of it — above the message being read. Restoring a
     // scrollTop would land a hundred rows off; this is the reason the view is a message.
     const h = await open();
