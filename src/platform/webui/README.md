@@ -500,8 +500,8 @@ the `talkcode skills revert` / `archive` command the detail shows, not a button.
 reviewed topic, how long ago, and what happened (`changed`, `preferences`, `refused`, `proposed`,
 `nothing`, `failed`); opening it lists each change with its reason, whether the store applied it or
 refused it and why, the undo command, the preference suggestions, and — only while the topic is
-still in `topics` — a button that opens the reviewed topic. The quota line (`3/10 today`, and the
-local time reviews resume when it is full) is the daemon's own counter, not one kept here.
+still in `topics` — a button that opens the reviewed topic. There is no quota line: the sweep has
+no daily limit, so the list is the whole story.
 
 A review recorded before results were kept has only its raw answer in the library. `review-panel.ts`
 parses that with `parseReviewOutput`, marks the entry `inferred` and leaves every change's `applied`
@@ -1481,7 +1481,8 @@ page is driven there too: the list, an editor save carrying the version the deta
 form, a revert, and the two-tap archive. So is the settings page — the menu's quiet request, a
 typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
 drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
-it. The Reviews tab is driven there too: the list and its quota, a review opened for its changes
+it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review
+opened for its changes
 and undo command, the link back to a topic that exists and its absence when the topic is gone, the
 inferred old record, and all three empty states. The two side panels are driven as one component
 there (`one panel component on both edges`):

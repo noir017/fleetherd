@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Automatic review no longer has a daily cap.** Ten reviews per UTC day was meant to bound a bug
+  that kept finding candidates, but it spent the whole budget on the backlog the first time the
+  feature was switched on: with sixteen eligible conversations, the first sweep took ten of them
+  and the rest were never looked at that day. The cap is gone; one review still runs at
+  a time, and a failure still backs off six hours. What replaces its other job — not replaying
+  months of history on the first start — is a freshness rule: only a conversation whose newest
+  message is under 24 hours old is reviewed. With no counter, each conversation's watermark is the
+  only guard left, so a mark that cannot be written to `reviews.json` is now kept in memory; a full
+  disk used to leave the watermark unchanged and review the same conversation on every sweep. The
+  web UI's Reviews tab no longer shows `x/10 today` or a "quota used up" line, and the pointless
+  `10 reviews already ran today` log line is gone.
+
 ## [2.37.0] - 2026-11-05
 
 ### Added

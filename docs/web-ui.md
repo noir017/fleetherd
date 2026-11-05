@@ -86,8 +86,7 @@ task the gateway has registered — what it runs, when it runs next, where its o
 last run ended. **Reviews** lists the automatic reviews of quiet conversations (see
 [skills](skills.md#auto-review)): what each one changed, what the store refused and why, the
 preferences it noticed, and the command that undoes each change. A review that changed nothing posts
-no line anywhere else, so this tab is its only home; it also carries today's quota (`3/10 today`),
-and when that is used up it says at what local time reviews resume.
+no line anywhere else, so this tab is its only home.
 A run waiting on an answer puts an amber dot on the clock itself, since it has no row in the topic
 list to show it.
 The panel is a column of its own on a wide screen. It is the same component as the topic sidebar

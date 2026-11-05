@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseConfig, type Config } from '../config/schema.js';
 import { HistoryStore } from '../history/store.js';
 import {
-  REVIEW_DAILY_LIMIT,
   ReviewService,
   agyReviewAnswer,
   eligible,
@@ -58,8 +57,12 @@ function config(overrides: Record<string, unknown> = {}): Config {
 }
 
 /** One conversation with `users` messages from the person and a reply after each. */
-function seed(key: string, users: number, kind: 'normal' | 'schedule' | 'subagent' | 'review' = 'normal'): number {
-  const at = now - 2 * 3_600_000;
+function seed(
+  key: string,
+  users: number,
+  kind: 'normal' | 'schedule' | 'subagent' | 'review' = 'normal',
+  at = now - 2 * 3_600_000
+): number {
   const id = history.session({ key, platform: 'telegram', title: key, kind, at })!;
   for (let i = 0; i < users; i++) {
     history.message(id, { ts: at + i * 1_000, role: 'user', kind, text: `第 ${i + 1} 句` });
@@ -274,13 +277,34 @@ describe('ReviewService', () => {
     expect(started).toBe(1);
   });
 
-  it('stops at the daily limit', async () => {
-    const keys = Array.from({ length: REVIEW_DAILY_LIMIT + 2 }, (_, i) => `telegram:chat:${i}`);
+  it('reviews every fresh conversation in one pass, with no daily cap', async () => {
+    const keys = Array.from({ length: 12 }, (_, i) => `telegram:chat:${i}`);
     for (const key of keys) seed(key, 3);
     const h = harness({ candidates: keys.map((key) => candidate({ key })) });
     await h.service.sweep();
-    expect(h.calls).toHaveLength(REVIEW_DAILY_LIMIT);
-    expect(h.logs.some((l) => l.includes('reviews already ran today'))).toBe(true);
+    expect(h.calls).toHaveLength(keys.length);
+    expect(h.logs.some((l) => l.includes('already ran today'))).toBe(false);
+  });
+
+  it('leaves a conversation whose newest message is older than a day alone', async () => {
+    seed('telegram:chat:1', 3, 'normal', now - 25 * 3_600_000);
+    const h = harness();
+    await h.service.sweep();
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('does not review the same conversation again when the watermark cannot be written', async () => {
+    seed('telegram:chat:1', 3);
+    // A directory where reviews.json should be: every write fails, whatever the process can do.
+    fs.mkdirSync(path.join(dir, 'reviews.json'));
+    const h = harness();
+    await h.service.sweep();
+    expect(h.calls).toHaveLength(1);
+    expect(h.logs.some((l) => l.includes('could not write'))).toBe(true);
+
+    // The watermark lives in memory, so the next tick does not review it again.
+    await h.service.sweep();
+    expect(h.calls).toHaveLength(1);
   });
 
   it('applies a create through the store and posts one line with how to undo it', async () => {

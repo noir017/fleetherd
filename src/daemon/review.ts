@@ -65,8 +65,10 @@ import {
  * dropped and logged, never retried in a loop. The reviewer itself never has a write path.
  *
  * ── What it costs ───────────────────────────────────────────────────────────────────────────────
- * One review at a time and at most REVIEW_DAILY_LIMIT a day, so a bug that keeps finding
- * candidates cannot spend the reviewer's quota. A failed review backs off for six hours.
+ * One review at a time and a six-hour back-off after a failure. There is no daily cap: each
+ * conversation's watermark is what stops it being reviewed again, and REVIEW_LAST_MESSAGE_MAX_MS
+ * keeps the first start from replaying months of history. A watermark that cannot be written is
+ * held in memory (review-state.ts), so a full disk does not become a review loop.
  */
 
 /** A conversation has to be quiet this long before a review — the reclaim deadline's own hour. */
@@ -75,8 +77,12 @@ export const REVIEW_IDLE_MS = 3_600_000;
 /** How often the sweep looks. The same coarse minute as the idle sweeper, for the same reason. */
 export const REVIEW_SWEEP_MS = 60_000;
 
-/** Reviews per UTC day. One review is one `agy` call; ten leaves room for a busy day. */
-export const REVIEW_DAILY_LIMIT = 10;
+/**
+ * How old a conversation's newest message may be. This is what the daily cap used to do on the
+ * first start: review the conversations that just went quiet, not every conversation since the
+ * gateway was installed.
+ */
+export const REVIEW_LAST_MESSAGE_MAX_MS = 24 * 3_600_000;
 
 /** How many of the person's messages make a conversation worth reviewing. */
 export const REVIEW_MIN_USER_MESSAGES = 3;
@@ -225,9 +231,9 @@ export class ReviewService {
       const candidates = this.deps
         .candidates()
         .filter((c) => eligible(c, reclaimOff))
-        // Freshest first. On the first start with this feature every conversation has no
-        // watermark and so looks reviewable; taking the ones that just went quiet is useful, while
-        // replaying months of history is not. The daily cap bounds both.
+        // Freshest first: on the first start with this feature every conversation looks
+        // reviewable, and the ones that just went quiet are the useful ones. The freshness rule
+        // in `plan` is what keeps months of history out; there is no daily cap any more.
         .sort((a, b) => a.idleMs - b.idleMs);
       for (const candidate of candidates) {
         const current = this.reviewer();
@@ -236,10 +242,6 @@ export class ReviewService {
         try {
           const plan = this.plan(candidate, now);
           if (!plan) continue;
-          if (!this.deps.state.takeSlot(REVIEW_DAILY_LIMIT, now)) {
-            this.log(`[review] ${REVIEW_DAILY_LIMIT} reviews already ran today; the rest wait for tomorrow`);
-            break;
-          }
           await this.runOne(candidate, plan, current, now);
         } catch (e) {
           this.log(`[review] ${candidate.key}: ${e instanceof Error ? e.message : e}`);
@@ -253,7 +255,8 @@ export class ReviewService {
   /**
    * Whether this conversation is worth reviewing now: the library has it, it is a person's
    * conversation rather than a scheduled, sub-agent or review one, its last failure has backed
-   * off, and the person has said enough since the last review.
+   * off, its newest message is under a day old, and the person has said enough since the last
+   * review.
    */
   private plan(candidate: ReviewCandidate, now: number): Plan | undefined {
     const session = this.deps.history.sessionOf(candidate.key);
@@ -262,6 +265,11 @@ export class ReviewService {
     const mark = this.deps.state.markOf(candidate.key);
     const window = this.deps.history.reviewWindow(candidate.key, mark?.messageId ?? 0, REVIEW_CONVERSATION_CHARS);
     if (!window || window.messages.length === 0) return undefined;
+    // The newest message is the last one in the window (`reviewWindow` cuts from the oldest end).
+    // A conversation that has been quiet for longer than a day is left alone rather than replayed;
+    // this is the check that replaces the daily cap's protection on the first start.
+    const newest = window.messages[window.messages.length - 1];
+    if (!newest || now - (Date.parse(newest.at) || 0) > REVIEW_LAST_MESSAGE_MAX_MS) return undefined;
     if (window.userMessages < REVIEW_MIN_USER_MESSAGES) return undefined;
     return { session, window };
   }

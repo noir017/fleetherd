@@ -391,10 +391,14 @@ conversation, the last message id a review saw — the same integer `reviewWindo
 what to quote. "Three" counts `role: user, kind: normal` rows, so a scheduled turn or a sub-agent
 prompt in the same topic does not count as the person speaking.
 
-**One at a time, ten a day, six-hour back-off.** `sweep` is guarded by a flag, so a review that
-outlives the minute simply makes the next tick a no-op; the counter is per UTC day, and a failed
-run records a retry time instead of advancing the watermark, so a broken reviewer is not retried
-every minute. The limit exists because one review is one `agy` call on the operator's account.
+**One at a time, six-hour back-off, and a 24-hour freshness rule.** `sweep` is guarded by a flag,
+so a review that outlives the minute simply makes the next tick a no-op. There is no daily cap:
+the per-conversation watermark is what stops the same conversation being reviewed again, and a
+conversation whose newest message is over a day old is skipped, so turning the feature on cannot
+replay months of history. A failed run records a retry time instead of advancing the watermark, so
+a broken reviewer is not retried every minute. And a mark that cannot be written to disk is held
+in memory (`review-state.ts`): with no cap, a full disk would otherwise leave the watermark
+unchanged and review the same conversation on every sweep.
 
 **The reviewer cannot touch anything.** One `agy -p` on the agent's machine, in an empty directory
 that is removed afterwards, with every permission class denied (`AGY_NO_TOOLS`). Measured on agy
