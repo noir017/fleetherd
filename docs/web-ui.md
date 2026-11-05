@@ -72,7 +72,7 @@ conversation is kept, and the next message picks up where it left off. Both simp
 send the command, so a draft in the composer is left where it is.
 
 **Closing idle agents.** An agent process stays up after its turn until the daemon's idle
-timeout reclaims it (the dim blue dot). **Close idle (N)** in the **⋯ Manage** menu at the bottom
+timeout reclaims it (the dim blue dot). **Close idle (N)** in the **⚡ Manage** menu at the bottom
 of the topic list ends all of them at once: it lists the topics it is about to close, asks, and
 then says which were closed. The count is on Manage's own face, so you see it without opening
 anything. Each conversation is kept, and the next message in a topic starts its agent again where
@@ -127,7 +127,7 @@ topic's dot stays bright blue but holds still, and unread counts turn grey. A qu
 you (its amber dot still pulses), a failed turn and a reply you have not read still move to the
 top in green, so they are the only things that stand out. The setting is kept in this browser
 only. **All settings** (the page above), Notifications and **Skills** are in the same menu;
-**Close idle** and **Clear all topics** are in **⋯ Manage** beside it.
+**Close idle** and **Clear all topics** are in **⚡ Manage** beside it.
 
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here
 a row carries the whole command — up to 2000 characters — where a chat app gets the

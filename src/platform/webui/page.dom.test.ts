@@ -5406,9 +5406,16 @@ describe('webui page: the sidebar footer, and low attention', () => {
     // The footer itself holds two buttons and nothing else — the two menus are its children.
     const buttons = Array.from(h.el('sidebar-footer').children).filter((e) => e.tagName === 'BUTTON');
     expect(buttons.map((b) => b.id)).toEqual(['opts-toggle', 'manage-toggle']);
+    expect(h.el('opts-toggle').querySelector('.opts-gear')?.textContent).toBe('⚙');
+    expect(h.el('manage-toggle').querySelector('.opts-gear')?.textContent).toBe('⚡');
     expect(menuOpen(h)).toBe(false);
     expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
     expect(h.el('manage-toggle').getAttribute('aria-expanded')).toBe('false');
+
+    // Manage aligns to the right edge via margin-left: auto (twin of the 2.34.0 close-idle rule).
+    const html = renderPage('Chat', false);
+    const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+    expect(css).toMatch(/#manage-toggle\s*\{[^}]*margin-left:\s*auto[^}]*\}/);
   });
 
   it('shows the idle count on Manage without opening anything', async () => {

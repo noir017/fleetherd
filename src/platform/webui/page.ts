@@ -280,6 +280,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    beside it — without it the sidebar footer was 52px against the task panel's 50px. */
 .opts-gear{font-size:13px;line-height:1}
 @container (max-width:200px){.opts-word{display:none}}
+#manage-toggle{margin-left:auto}
 /* The idle count stays on Manage's face when its word drops: it is the one number on
    this row worth seeing without opening anything. */
 .foot-count{margin-left:4px;color:#a8a8a8}
@@ -5691,7 +5692,7 @@ __GATE__
          dismissal (setMenu). -->
     <div id="sidebar-footer" class="panel-foot">
       <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙</span><span class="opts-word"> Menu</span></button>
-      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear">⋯</span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
+      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear">⚡</span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
       <div id="opts-menu" class="panel-menu" hidden>
         <!-- The gateway's own settings: agents, models, idle reclaim, scope. A page rather than a
              chat command, because the rows need the width a message never had. -->

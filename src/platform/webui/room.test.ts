@@ -1297,6 +1297,101 @@ describe('WebRoom: what the switcher dot is saying', () => {
     expect(flagsOf(room, topic).asking).toBe(true);
   });
 
+  it('exempts operator control menus from asking while recognizing true questions and unknown buttons', () => {
+    const { room, topic } = attached();
+
+    // 1. Directory / workdir menu (/cd, wdr: / wdp:)
+    const wdrMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'wdr:req:0', label: 'dir' }, { id: 'wdp:req:1', label: 'Next' }] }, 'workdir');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, wdrMsg.id);
+
+    // 2. Model menu (/model, mdl: / mpg:)
+    const mdlMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'mdl:req:0', label: 'm1' }, { id: 'mpg:req:1', label: 'Next' }] }, 'model');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, mdlMsg.id);
+
+    // 3. Effort menu (/effort, eff:)
+    const effMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'eff:req:0', label: 'low' }] }, 'effort');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, effMsg.id);
+
+    // 4. Agent menu (/agent, aga: / agp: / agg: / agb:)
+    const agMsg = room.post(topic, { own: false, html: '', buttons: [
+      { id: 'aga:req:0', label: 'cc' },
+      { id: 'agp:req:1', label: 'Next' },
+      { id: 'agg:req:0', label: 'group' },
+      { id: 'agb:req:0', label: 'Back' },
+    ] }, 'agent');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, agMsg.id);
+
+    // 5. Settings menu (/setting, stg: / stv: / sts: / stt: / stp: / stb: / sco:)
+    const setMsg = room.post(topic, { own: false, html: '', buttons: [
+      { id: 'stg:req:0', label: 'Agent' },
+      { id: 'stv:req:1', label: 'val' },
+      { id: 'sts:req:2', label: 'switch' },
+      { id: 'stt:req:0', label: 'type' },
+      { id: 'stp:req:1', label: 'page' },
+      { id: 'stb:req:0', label: 'back' },
+      { id: 'sco:req:0', label: 'Schedule' },
+    ] }, 'settings');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, setMsg.id);
+
+    // 6. Settings screen message (WebMessage.settings)
+    const scrMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'sts:req:0', label: 'switch' }], settings: { level: 'list', groups: [], rows: [] } }, 'settings screen');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, scrMsg.id);
+
+    // 7. Scheduled task menu (sco: / sct: / sca:)
+    const scMsg = room.post(topic, { own: false, html: '', buttons: [
+      { id: 'sco:req:0', label: 'Open' },
+      { id: 'sct:req:0', label: 'Task' },
+      { id: 'sca:req:0', label: 'Pause' },
+    ] }, 'schedule');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, scMsg.id);
+
+    // 8. Command picker menu (cmd:)
+    const cmdMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'cmd:req:0', label: '/init' }] }, 'picker');
+    expect(flagsOf(room, topic).asking).toBe(false);
+    room.remove(topic, cmdMsg.id);
+
+    // 9. True question (ask:) -> asking: true
+    const askMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'ask:req:0', label: 'Yes' }] }, 'Are you sure?');
+    expect(flagsOf(room, topic).asking).toBe(true);
+    room.remove(topic, askMsg.id);
+
+    // 10. Unrecognized buttons (fails safe) -> asking: true
+    const unkMsg = room.post(topic, { own: false, html: '', buttons: [{ id: 'custom:1', label: 'Custom' }] }, 'Choose:');
+    expect(flagsOf(room, topic).asking).toBe(true);
+    room.remove(topic, unkMsg.id);
+  });
+
+  it('picks the text of the actual question for questionLine when both control menus and asks exist', () => {
+    const { room, topic } = attached();
+    // Post a control menu first (e.g. /setting)
+    room.post(topic, { own: false, html: '', buttons: [{ id: 'stg:req:0', label: 'Agent' }] }, 'Settings menu text');
+    // Post a real ask
+    room.post(topic, { own: false, html: '', buttons: [{ id: 'ask:req:0', label: 'Yes' }] }, 'Do you want to proceed?\nLine 2');
+    // Post another control menu (e.g. /model)
+    room.post(topic, { own: false, html: '', buttons: [{ id: 'mdl:req:0', label: 'model' }] }, 'Model menu text');
+
+    expect(flagsOf(room, topic).asking).toBe(true);
+    const item = room.topicList().find((t) => t.id === topic);
+    expect(item?.stage).toBe('answer');
+    expect(item?.line).toBe('Do you want to proceed?');
+  });
+
+  it('still considers a topic inUse and protects it from idle reclaim when holding a control menu', () => {
+    const { room, topic } = attached();
+    room.useIdleReclaim(() => true);
+    room.post(topic, { own: false, html: '', buttons: [{ id: 'stg:req:0', label: 'Agent' }] }, 'Settings');
+    const res = room.closeIdle([topic]);
+    expect(res.closed).toEqual([]);
+    expect(res.kept).toEqual([topic]);
+  });
+
   it('reports no agent behind any topic when the daemon never offered a lookup', () => {
     const { room, topic } = attached();
     expect(flagsOf(room, topic).live).toBe(false);

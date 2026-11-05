@@ -391,15 +391,15 @@ It is compared with a turn's end, which is the daemon's time, and a phone's cloc
 compare a server's with. Posting only on `review` keeps the traffic to one request per reply read.
 
 **A menu is not a question** (`awaitingQuestion`). The room's `awaiting` set is "messages with live
-buttons", which was the same thing while every such message was an ask. Since a new topic's choice of
-agent is a tap that types `/agent` (2026-11-02), the daemon also posts the *directory* menu into a
-conversation that has not started — and that menu, counted as a question, pinned the topic to the top
-in green and pushed "Waiting on your answer" about a topic with no agent in it, which the operator had
-just been looking at. The menu is a control for the operator's own next step, so `topicList` asks
-`awaitingQuestion` instead: a message whose buttons are all a directory menu's (`core/workdir-menu.ts`)
-does not make the topic `answer`. `awaiting` itself still holds it, because `inUse` must not evict a
-topic with a clickable menu and idle reclaim must not close the agent under one. Unrecognised buttons
-count as a question, so a new kind of ask is announced rather than silently missed.
+buttons", which was the same thing while every such message was an ask. Operator control menus —
+settings, scheduled tasks, `/model`, `/effort`, `/cd`, agent selection and command pickers — are
+controls for the operator's own next step, not questions blocking an agent turn. Counted as a
+question, opening `/setting` or leaving a setup menu pinned the topic to the top in green and pushed
+"Waiting on your answer" about a topic with no agent or no turn running. So `topicList` asks
+`awaitingQuestion` instead: a message whose buttons are all control menus does not make the topic
+`answer`. `awaiting` itself still holds it, because `inUse` must not evict a topic with a clickable
+menu and idle reclaim must not close the agent under one. Unrecognised buttons count as a question,
+so a new kind of ask is announced rather than silently missed.
 
 **Sub-agent topics** (daemon/delegation.ts) carry `parent`, the topic whose agent opened them —
 persisted, and the only record of the relation (`parentOf` / `childrenOf` on the adapter read it back).
@@ -431,7 +431,7 @@ amber dot still pulses, and the green rows above are unchanged. It is CSS over t
 purpose: `page.dom.test.ts` checks that the rows are identical either way and that the stylesheet's
 `#app.calm` rules are exactly those two, so a rule that quiets a question or a failure fails there.
 
-**The sidebar footer is one row, two menus**: ⚙ Menu and ⋯ Manage (one row since 2.20.0, split
+**The sidebar footer is one row, two menus**: ⚙ Menu and ⚡ Manage (one row since 2.20.0, split
 in two when the three buttons stopped fitting).
 Menu holds All settings, Notifications, Low attention and Skills — things set once per device or
 visited rarely. Manage holds Close idle and Clear all topics, and carries the idle count on its own
@@ -439,7 +439,7 @@ face so the number is still seen without opening anything. The two menus are the
 upward over the list, one at a time, and dismissed by a click outside either (the drawer's backdrop
 included) or Escape, which also gives the focus back to the button that opened it (`setMenu`). The
 footer is a size container: at the narrowest sidebar (180px) both words drop and the row
-is ⚙ and ⋯(N) — the count is the one thing that stays.
+is ⚙ and ⚡(N) — the count is the one thing that stays.
 
 ## The two side panels
 
