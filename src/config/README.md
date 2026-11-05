@@ -55,8 +55,10 @@ reported (that one is `agents[].model`), and pod.yaml's strict schema has no suc
 
 `review` is on the user side because "should anything review conversations on its own, and with
 which agent" is a per-deployment decision — and one that spends the reviewer's quota. Its tuning
-(the idle hour, the three-message floor, the daily cap, the back-off) is constants in
-[`daemon/review.ts`](../daemon/review.ts), not config.
+(the idle hour, the three-message floor, the 24-hour freshness rule, the back-off and its three
+attempts) is constants in [`daemon/review.ts`](../daemon/review.ts), not config. Which agent and
+which model are also `/setting` rows (`core/settings.ts`), since choosing them is a decision, not
+plumbing.
 
 `voice` is on the user side because it is a credential and an endpoint (the transcriber), plus
 one decision — `confirm`, whether a transcript waits for a tap. Everything that tunes it (the
