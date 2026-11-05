@@ -4576,6 +4576,41 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     expect(h.doc.querySelector(`#topics [data-fold="${A}"]`)?.className).toContain('asking');
   });
 
+  it('keeps a sub-agent’s finished dot grey, and lights only the topic that opened it', async () => {
+    // The current topic is the sub-agent's, so its row is painted even though it is nested: its
+    // parent is an ancestor and is drawn open. B has a parent; C is an ordinary topic.
+    const h = await open({ url: `http://localhost:8787/?t=${B}` });
+    await h.emit(sync(B, [], [B]));
+    const dot = (id: string): string | undefined =>
+      h.doc.querySelector(`#topics [data-topic="${id}"] .topic-dot`)?.className;
+
+    await h.emit({
+      t: 'topics',
+      topics: list({ [B]: { parent: A, stage: 'review', line: 'done' }, [C]: { stage: 'review', line: 'done' } }),
+    });
+    // A finished sub-agent is the news of the agent that opened it, not of the person: no green
+    // "unread reply" dot, just the ordinary idle grey. A root topic keeps the green one.
+    expect(dot(B)).toBe('topic-dot');
+    expect(dot(C)).toBe('topic-dot review');
+    // Resident, the same row is the ordinary online grey — not a green of its own.
+    await h.emit({
+      t: 'topics',
+      topics: list({ [B]: { parent: A, stage: 'review', live: true }, [C]: { stage: 'review', live: true } }),
+    });
+    expect(dot(B)).toBe('topic-dot live');
+    expect(dot(C)).toBe('topic-dot review');
+    // Its own work and its own question are unchanged: blue while it runs, amber while it asks.
+    await h.emit({
+      t: 'topics',
+      topics: list({
+        [B]: { parent: A, stage: 'working', running: true },
+        [C]: { parent: A, stage: 'answer', asking: true, running: true },
+      }),
+    });
+    expect(dot(B)).toBe('topic-dot running');
+    expect(dot(C)).toBe('topic-dot asking');
+  });
+
   it('marks a failed topic’s dot red when nothing else is going on', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));

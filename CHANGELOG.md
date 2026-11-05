@@ -76,6 +76,12 @@ All notable changes to this project are documented here. The format is based on
   and switching topics puts it away. The rows, values, validation and writes are still the
   daemon's (`core/settings.ts` and the existing apply path) — the page only draws the screen the
   daemon already sends. Every other platform keeps its button grid.
+- **A finished sub-agent no longer lights the sidebar green.** A topic a `/super` job opened took
+  the same green "unread reply" dot as a conversation the person is expected to read when its turn
+  ended — but its reply goes to the agent that opened it, which acts on it and reports, so the row
+  was pointing at work nobody had to pick up. It now keeps the ordinary idle/online grey (dim blue
+  while its agent is resident); its blue "working" and amber "question" dots are unchanged, and
+  the topic that opened it still turns green when the agent's answer is waiting to be read.
 
 ## [2.33.0] - 2026-11-05
 

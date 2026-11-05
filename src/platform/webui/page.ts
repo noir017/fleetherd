@@ -231,6 +231,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* :not(.on) for the weight, not the meaning (a topic on screen is never one of these): the idle and
    live greys above are four classes deep, and a lighter rule lost to them on an idle agent. */
 #topics .topic-item.needs:not(.on) .topic-title{color:#4ade80}
+/* An unread reply, on a topic the person is expected to read. A sub-agent's row never takes this
+   one: its finished turn is the news of the agent that opened it (see the dot class in
+   paintTopics), so the row stays the ordinary idle/online grey. */
 .topic-dot.review{background:#4ade80}
 /* Low attention (the Settings menu, per device: calmBtn). With several agents working at once the
    list never stops moving — a pulsing dot per running topic, and an unread count in a bright pill
@@ -2855,7 +2858,12 @@ const SCRIPT = `
         +(row.depth?' sub d'+Math.min(row.depth,3):'')
         +(needsYou(t)?' needs':'');
       var isFailed=t.stage==='failed';
-      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'?' review':(isLive?' live':'')))));
+      // A sub-agent's finished turn is news for the agent that opened it, not for the person
+      // (needsYou says the same): its row keeps the ordinary idle/online grey instead of the
+      // green "unread reply" dot, and the parent turns green when the report is waiting to be
+      // read. Work and a question are still its own — blue and amber — because both are states a
+      // person acts on, or watches, in that topic.
+      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'&&!t.parent?' review':(isLive?' live':'')))));
       // What the Needs-you block used to say on a second line, now on hover: the row keeps its shape.
       var says=needsYou(t)?' title="'+text(NEEDS_WHAT[t.stage]+(t.line?': '+t.line:''))+'"':'';
       var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';

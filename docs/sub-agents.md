@@ -65,7 +65,9 @@ input mid-turn; elsewhere it waits for the turn to end, and the agent is told wh
 - Sub-agent topics are indented under the topic that opened them. **▾ 3** folds them away; folded,
   it takes the colour of the most pressing state among them (a question, a failure, work).
 - A sub-agent's finished replies and failures do not move it to the top or notify you: the agent
-  that started it reads those and reports. Its questions do.
+  that started it reads those and reports. Its questions do. Its row keeps the ordinary idle/online
+  dot when it finishes — only a topic you are meant to read takes the green "finished" dot, and
+  that is the topic that started it, once the agent's answer is waiting for you.
 - Deleting a topic keeps the topics it opened, as ordinary topics.
 
 ## Notes

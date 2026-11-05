@@ -350,8 +350,11 @@ from three things: the room's own `typing` and live buttons, the outcome the dae
 (`setActivity`: how the last turn ended, and any scheduled continue), and `seenAt`, when the
 operator last looked. The page moves those topics to the top of the list and colours them green
 (`needsYou`, `topicRows`): answer, failed, review — and nothing for a healthy topic, which is the
-point. Through 2.19.1 they were a separate "Needs you" block above the list, which showed each of
-them twice — the same title in two places read as two conversations. The outcome and `seenAt` are persisted in the topic file
+point. A sub-agent's topic counts only for `answer`: its replies and failures are the business of
+the agent that opened it, so its row keeps the idle/live dot rather than the green `review` one,
+and the parent turns green when that agent's report is waiting. Through 2.19.1 they were a separate
+"Needs you" block above the list, which showed each of them twice — the same title in two places
+read as two conversations. The outcome and `seenAt` are persisted in the topic file
 ("you have not read this" has to survive the restart that an update is); a scheduled continue is not
 (its timer dies with the daemon).
 
