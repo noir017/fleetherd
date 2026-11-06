@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.43.1] - 2026-11-06
+
 ### Fixed
 
 - **The skills page's buttons are an ordinary height on a phone.** Every button on it — the two
