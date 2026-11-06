@@ -734,6 +734,50 @@ export function activeSkillFiles(dir = configDir()): SkillFileSet[] {
   return out;
 }
 
+/**
+ * A stamp of every active skill's delivered files from `stat` alone — path, size, inode, mtime and
+ * ctime — for a reader that caches what it built from `activeSkillFiles` (the `skills` tool's
+ * search index) to tell whether that is still current without reading and hashing every file:
+ * over this machine's 17 skills (134 files) a search took 8–25 ms that way and 3–4 ms by stamp
+ * (measured 2026-11-07, two loaded cores).
+ *
+ * All three writers move it. The store's own writes replace a file by rename (`writeAtomic`), so
+ * its inode changes; a `skills.repo` pull is git rewriting the worktree; a person's editor writes
+ * the file in place or by rename. Each sets the ctime, which no ordinary tool can set back — `touch
+ * -d` and `cp -p` restore an mtime, not a ctime — and a new, removed or renamed skill or file
+ * changes the list itself. What it cannot see: a file rewritten in place to the same size within
+ * one tick of the filesystem's clock after the previous write (a few ms on Linux, whose file times
+ * come from the coarse clock). The next change after it moves the stamp again; nothing writes a
+ * skill twice in a few milliseconds except a writer that replaces the file, which changes the inode.
+ */
+export function activeSkillStamp(dir = configDir()): string {
+  const parts: string[] = [];
+  const stamp = (name: string, rel: string, file: string): void => {
+    const s = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
+    parts.push(s ? `${name}/${rel}:${s.size}:${s.ino}:${s.mtimeNs}:${s.ctimeNs}` : `${name}/${rel}:-`);
+  };
+  for (const name of activeSkillNames(dir).sort()) {
+    const root = skillDir(name, dir);
+    // One listing of the skill's own directory decides which of the three exist: most skills have
+    // none of them, and probing each with a throwing readdir was most of what this cost.
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      continue;
+    }
+    const present = new Set(entries.filter((e) => e.isDirectory()).map((e) => e.name));
+    stamp(name, SKILL_FILE, path.join(root, SKILL_FILE));
+    for (const sub of EXTRA_DIRS) {
+      if (!present.has(sub)) continue;
+      const base = path.join(root, sub);
+      for (const rel of listFiles(base).sort()) stamp(name, `${sub}/${rel}`, path.join(base, rel));
+    }
+  }
+  return parts.join('\n');
+}
+
 function requireActive(name: string, dir: string): string {
   const root = skillDir(name, dir);
   if (!fs.existsSync(root)) {

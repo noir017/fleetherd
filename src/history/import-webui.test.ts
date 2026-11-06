@@ -194,7 +194,7 @@ describe('importWebuiTranscripts', () => {
     // The prompt is older than the first live row — the web UI stamps it on arrival, the recorder
     // when the turn starts — and is still not taken: the live recorder wrote it too.
     expect(importWebuiTranscripts(dir, store)).toMatchObject({ files: 1, imported: 0, skipped: 1 });
-    expect(store.sessionOf('webui#main#abcdef12')?.messages).toBe(2);
+    expect(store.read('webui#main#abcdef12').session.messages).toBe(2);
     expect(store.imported('webui-transcripts-webui/abcdef12.json')).toBe(true);
     store.close();
   });

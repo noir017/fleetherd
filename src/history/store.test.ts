@@ -208,13 +208,17 @@ describe('HistoryStore', () => {
       return { id: last, last: at + 4 };
     }
 
-    it('finds a session by its key without reading its messages', () => {
+    it('finds a session by its key without reading or counting its messages', () => {
       const { store } = tempStore();
       seeded(store);
       const row = store.sessionOf('telegram#chat#1');
       expect(row?.title).toBe('部署');
       expect(row?.kind).toBe('normal');
-      expect(row?.messages).toBe(5);
+      // The sweep asks this of every conversation once a minute, for lastAt and kind; counting
+      // rows walked each one whole. The reads that print the count still carry it.
+      expect(row?.messages).toBeUndefined();
+      expect(store.read('telegram#chat#1').session.messages).toBe(5);
+      expect(store.list({ days: 3650 })[0]?.messages).toBe(5);
       expect(store.sessionOf('nope')).toBeUndefined();
       store.close();
     });
@@ -633,11 +637,19 @@ describe('HistoryStore turns', () => {
     const session = store.session({ key: 'tg#crash#', platform: 'tg', agent: 'cc', at })!;
     const turn = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at })!;
     store.message(session, { ts: at + 10, role: 'user', kind: 'normal', text: '没跑完', turn });
+    store.message(session, { ts: at + 50, role: 'tool', kind: 'normal', text: 'Bash: sleep 99', turn });
+    // Another conversation's later rows are not this turn's end, and a turn that wrote nothing ends
+    // where it started.
+    const other = store.session({ key: 'tg#other#', platform: 'tg', agent: 'cc', at })!;
+    store.startTurn(other, { agent: 'cc', generation: 0, trigger: 'person', at: at + 5 });
+    store.message(other, { ts: at + 999, role: 'user', kind: 'normal', text: '别的话题' });
     store.close();
 
     const reopened = new HistoryStore(file);
     const read = reopened.read(String(session), { turn: 'last' });
     expect(read.messages[0]).toMatchObject({ turn: 1, outcome: 'restart' });
+    expect(reopened.turnRecord('tg#crash#', 'last')).toMatchObject({ outcome: 'restart', at: new Date(at + 50).toISOString() });
+    expect(reopened.turnRecord('tg#other#', 'last')).toMatchObject({ outcome: 'restart', at: new Date(at + 5).toISOString() });
     reopened.close();
     // A second open must not re-mark it (and must not lose the first end time).
     const again = new HistoryStore(file);
@@ -819,6 +831,43 @@ describe('HistoryStore turns', () => {
     // messages from its start instead.
     expect(plan.some((p) => p.detail.includes('messages_session_turn'))).toBe(true);
   });
+
+  it('plans the session list and the restart sweep on an index, also on a file that predates them', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-noindex-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'history.db');
+    const old = new Sqlite(file);
+    old.exec(`
+      CREATE TABLE sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, platform TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+        cwd TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'normal',
+        started_at INTEGER NOT NULL, last_at INTEGER NOT NULL
+      );
+      INSERT INTO sessions (key, platform, started_at, last_at) VALUES ('tg#old#', 'tg', 1000, 1000);
+    `);
+    old.close();
+    const store = new HistoryStore(file);
+    expect(store.list({ days: 365_000 }).map((s) => s.key)).toEqual(['tg#old#']);
+    store.close();
+    const raw = new Sqlite(file);
+    const plan = (sql: string): string =>
+      (raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...Array<number>(sql.split('?').length - 1).fill(1)) as Array<{ detail: string }>)
+        .map((p) => p.detail)
+        .join(' | ');
+    // `list`'s shape: without the index SQLite sorts every session in range, and computes each
+    // one's row count before the LIMIT applies.
+    expect(plan("SELECT * FROM sessions s WHERE s.last_at >= ? AND s.kind != 'review' ORDER BY s.last_at DESC LIMIT ?")).toMatch(
+      /sessions_last/
+    );
+    // The restart sweep's subquery: no index starts with `turn`, so `turn = ?` alone walked every
+    // message in the file; naming the session narrows it to one conversation (either of its two
+    // indexes will do).
+    const sweep = plan('SELECT MAX(ts) FROM messages WHERE messages.session_id = ? AND messages.turn = ?');
+    expect(sweep).toMatch(/SEARCH messages USING (COVERING )?INDEX messages_session/);
+    expect(sweep).not.toMatch(/SCAN messages/);
+    raw.close();
+  });
 });
 
 /**
@@ -959,6 +1008,103 @@ describe('HistoryStore tool calls', () => {
     expect(plain.note).toBeUndefined();
     store.close();
   });
+
+  /**
+   * Rows straight into `messages` in one transaction, one turn per entry: `[calls]` is a prompt, that
+   * many calls and a reply. A conversation long enough to need several batches would take the API
+   * seconds to write, mostly in the search index, which no read here touches.
+   */
+  function bulk(file: string, session: number, turns: number[], calls: number[]): void {
+    const raw = new Sqlite(file);
+    const insert = raw.prepare('INSERT INTO messages (session_id, ts, role, kind, text, turn) VALUES (?, ?, ?, ?, ?, ?)');
+    let ts = Date.UTC(2026, 10, 7);
+    raw.exec('BEGIN');
+    turns.forEach((turn, i) => {
+      insert.run(session, ts++, 'user', 'normal', `问题 ${i}`, turn);
+      for (let k = 0; k < calls[i]!; k++) insert.run(session, ts++, 'tool', 'normal', `${k % 3 ? 'Bash' : 'Edit'}: ${i}.${k}`, turn);
+      insert.run(session, ts++, 'agent', 'normal', `回答 ${i}`, turn);
+    });
+    raw.exec('COMMIT');
+    raw.close();
+  }
+
+  /** Count the rows a store's statements hand back — what a read actually materialized. */
+  function countRows(store: HistoryStore): { rows: number } {
+    const seen = { rows: 0 };
+    const holder = store as unknown as { db: object };
+    const db = holder.db as { prepare(sql: string): object };
+    const bound = (target: object, key: string | symbol): unknown => {
+      const value = Reflect.get(target, key, target) as unknown;
+      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    };
+    holder.db = new Proxy(db, {
+      get(target, key) {
+        if (key !== 'prepare') return bound(target, key);
+        return (sql: string) =>
+          new Proxy(db.prepare(sql), {
+            get(st, k) {
+              if (k !== 'all') return bound(st, k);
+              return (...a: unknown[]) => {
+                const rows = (bound(st, k) as (...a: unknown[]) => unknown[])(...a);
+                seen.rows += rows.length;
+                return rows;
+              };
+            },
+          });
+      },
+    });
+    return seen;
+  }
+
+  it('reads only as far back as the folded rows it returns, and folds exactly as a whole read would', () => {
+    const { store, file } = tempStore();
+    const at = Date.UTC(2026, 10, 7);
+    const session = store.session({ key: 'web#main#long', platform: 'web', agent: 'cc', at })!;
+    // Runs of 1 to 700 calls, so a batch ends inside a run more than once.
+    const shape = [3, 250, 1, 700, 30, 0, 12];
+    const calls = Array.from({ length: 40 }, (_, i) => shape[i % shape.length]!);
+    const turns = calls.map((_, i) => store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: at + i })!);
+    bulk(file, session, turns, calls);
+    const total = calls.reduce((a, n) => a + n + 2, 0);
+    // A read for 500 rows takes the conversation whole in its first batch: the reference fold.
+    const whole = store.read(String(session), { limit: 500 }).messages;
+    expect(whole.length).toBeLessThan(500);
+    for (const limit of [1, 2, 3, 4, 5, 10, 11, 25, 60]) {
+      expect(store.read(String(session), { limit }).messages, `limit ${limit}`).toEqual(whole.slice(-limit));
+    }
+    // task-read's default, on a conversation of ~5,600 rows: a batch of 200 and one of 800, where
+    // it used to read 20,001 rows whatever the limit.
+    const seen = countRows(store);
+    const ten = store.read(String(session), { limit: 10 });
+    expect(ten.messages.map((m) => m.text)).toContain('[700 tool calls: Bash ×466, Edit ×234]');
+    expect(total).toBeGreaterThan(5_000);
+    expect(seen.rows).toBeLessThanOrEqual(1_000);
+    store.close();
+  });
+
+  it('folds a run longer than a batch whole in every direction, and still stops at the scan cap', () => {
+    const { store, file } = tempStore();
+    const at = Date.UTC(2026, 10, 7);
+    const long = store.session({ key: 'web#main#run', platform: 'web', agent: 'cc', at })!;
+    bulk(file, long, [store.startTurn(long, { agent: 'cc', generation: 0, trigger: 'person', at })!], [9_000]);
+    const run = '[9000 tool calls: Bash ×6000, Edit ×3000]';
+    // Oldest-first (the plain read), newest-first (--limit) and by id (--since) each resume their
+    // batches from the row they stopped at; a run cut at a batch edge would be counted short.
+    expect(store.read(String(long)).messages.map((m) => m.text)).toEqual(['问题 0', run, '回答 0']);
+    expect(store.read(String(long), { limit: 2 }).messages.map((m) => m.text)).toEqual([run, '回答 0']);
+    const prompt = store.read(String(long), { role: 'user' }).messages[0]!.id;
+    const since = store.read(String(long), { since: prompt });
+    expect(since.messages.map((m) => m.text)).toEqual([run, '回答 0']);
+    expect(since.note).not.toMatch(/More than/);
+
+    // Past READ_FOLD_SCAN rows the read stops and says the conversation has more.
+    const huge = store.session({ key: 'web#main#huge', platform: 'web', agent: 'cc', at })!;
+    bulk(file, huge, [store.startTurn(huge, { agent: 'cc', generation: 0, trigger: 'person', at })!], [20_005]);
+    const capped = store.read(String(huge));
+    expect(capped.messages.map((m) => m.text)).toEqual(['问题 0', '[19999 tool calls: Bash ×13332, Edit ×6667]']);
+    expect(capped.note).toMatch(/more than 500 messages/);
+    store.close();
+  });
 });
 
 /** A raw connection, for building an old file and for reading what `read` does not print. */
@@ -966,7 +1112,7 @@ const Sqlite = (
   createRequire(import.meta.url)('node:sqlite') as {
     DatabaseSync: new (file: string) => {
       exec(sql: string): void;
-      prepare(sql: string): { all(...params: unknown[]): unknown[] };
+      prepare(sql: string): { all(...params: unknown[]): unknown[]; run(...params: unknown[]): unknown };
       close(): void;
     };
   }

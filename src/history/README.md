@@ -129,16 +129,24 @@ repeats rows on one page and skips them on the next. A role/grep read drops late
 unfiltered read. Both bounds (500 rows, 200k characters) are reported, never silent.
 
 **Folding.** A read that does not choose rows by `role` or `grep` — the unfiltered one and every
-turn/since/limit read — turns each run of consecutive tool rows into one row (`foldToolRuns`): a
+turn/since/limit read — turns each run of consecutive tool rows into one row (`ToolRunFolder`): a
 single call becomes its first line, a longer run `[37 tool calls: Bash ×20, Edit ×12]`. Tool rows
 were 94% of what was recorded on 11-04..06, so an unfolded read was a page of commands and the
 500-row bound was spent before the conversation got going. A run breaks at any other row and where
 the turn or kind changes. The folded row carries the run's oldest id (`--around` lands on it) and,
 internally, its newest (`last_id`, where a `--since` read resumes, so a page never ends inside a
-run). Folding cannot let SQL apply the row bound, which counts folded rows, so a folding read scans
-up to 20k rows with only the head of each tool row and bounds afterwards. `FOLD_NOTE` is said only
-when a returned row is folded. `role: 'tool'`, `grep` and `around` are not folded: they ask for the
+run). Folding cannot let SQL apply the row bound, which counts folded rows, so a folding read
+(`foldingScan`) fetches in growing batches — the first sized for the bound, each next one starting
+after the last row read (a row-value keyset, not OFFSET) — folds rows as they arrive, and stops once
+it holds one folded row more than the bound: every row before that one is closed, so the answer is
+the one a whole scan gives. It still reads at most 20k rows, with only the head of each tool row.
+Until 2026-11-07 it always read those 20k, and `task-read`'s ten rows of a long topic cost 44 ms
+rather than 2. `FOLD_NOTE` is said only when a returned row is folded. `role: 'tool'`, `grep` and `around` are not folded: they ask for the
 calls, a match inside one, or a window.
+
+A session row's `messages` count is filled in only by `list`, `read` and `reviewSessions`, the
+reads that print it. `sessionOf` leaves it out: the review sweep asks it of every stored
+conversation once a minute, for `lastAt` and `kind`, and the count walked each one whole.
 
 WAL, `synchronous = NORMAL`. The file, and its `-wal`/`-shm` companions, are chmod'd `0600`:
 this is the same kind of text the harnesses' own session files hold.
@@ -191,7 +199,9 @@ person and the agent used under the commands that happened to contain it.
 `tokenize.test.ts` pins the split (two-character words, one-character fallback, English,
 mixed). `record.test.ts` pins a tool row's text. `store.test.ts` pins search in each of those
 (tool rows only with `tools`), the scheduled ordering, read windows, read filters and their
-truncation notes, one row per call and the `call` migration, folding in every read shape, the
+truncation notes, one row per call and the `call` migration, folding in every read shape (and that
+a batched fold reads only as far as it needs, answers exactly as a whole scan, and keeps the 20k
+cap), the plans of `list` and the restart sweep, the
 review window's order and its skill calls, the turns table (old-file migration, every trigger and
 outcome, `restart` on reopen, turn selection), list, `0600`, and a write that fails without
 throwing. `import-webui.test.ts` pins the roles, tool lines, kinds, idempotency, and that a topic
