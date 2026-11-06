@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.46.0] - 2026-11-06
+
 ### Fixed
 
 - **The skills page's switches answer the tap.** With `skills.repo` set, every write pulls from and
