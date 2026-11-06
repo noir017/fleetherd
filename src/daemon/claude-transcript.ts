@@ -297,19 +297,22 @@ export async function readCacheExpiry(projectsDir: string, cwd: string, sessionI
   try {
     const file = await findTranscript(projectsDir, cwd, sessionId);
     if (!file) return undefined;
-    return cacheExpiryFromLines(await readTail(file));
+    return cacheExpiryFromLines(await readTailLines(file, TAIL_BYTES));
   } catch (e) {
     console.debug(`[status] could not read the claude transcript for ${sessionId}:`, e instanceof Error ? e.message : e);
     return undefined;
   }
 }
 
-/** The file's last TAIL_BYTES as lines — minus the first, which the window may have cut in half. */
-async function readTail(file: string): Promise<string[]> {
+/**
+ * A file's last `max` bytes as lines — minus the first, which the window may have cut in half. The
+ * local twin of RemoteHost.readTail; agy-transcript.ts reads agy's transcript with it too.
+ */
+export async function readTailLines(file: string, max: number): Promise<string[]> {
   const handle = await fs.promises.open(file, 'r');
   try {
     const { size } = await handle.stat();
-    const start = Math.max(0, size - TAIL_BYTES);
+    const start = Math.max(0, size - max);
     const buf = Buffer.alloc(size - start);
     await handle.read(buf, 0, buf.length, start);
     const lines = buf.toString('utf8').split('\n');

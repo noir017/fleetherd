@@ -27,6 +27,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, per-turn usage, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
+| `agy-transcript.ts` | agy's context after a turn that ran tools, read off agy's own transcript here or on a host (its prompt usage is a sum over the turn's calls) |
 | `status-board.ts` | Each conversation's live agent status, pushed (deduped, throttled) to a platform that can show one — the web UI's strip |
 | `claude-transcript.ts` | claude's prompt-cache expiry, read off Claude Code's own transcript (headless Claude Code runs no status line) |
 | `agent-common.ts` | Protocol-agnostic helpers shared by the ACP runtime and the one-shot CLI paths |
@@ -853,7 +854,7 @@ Each harness reports a different subset, and an absent field is shown as nothing
 | Field | Source |
 |---|---|
 | model, effort | `onModel` / `onEffort` — ACP config options, `agy acp` included |
-| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage`, only after a turn of one model call (`agy-acp.ts`) |
+| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`) |
 | cost | `onUsage.cost` — claude and opencode; kept across the mid-stream snapshots that carry none |
 | cache expiry | claude only: `claude-transcript.ts`, read once a moment after each model cycle ends |
 | quota | agy only: `agy -p=/usage`, via `onQuota` |
@@ -1165,8 +1166,11 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   becomes a notice at once, a turn whose last output was a warning fails with it (`provider`), any
   other is said as recovered at the end.
 - **Usage comes once per turn**, in the `session/prompt` response, summed over the turn's model
-  calls: input plus cache reads is the context only for a turn that ran no tool, and only that is
-  reported, over `agy-meters.ts`'s window table or `contextWindow`.
+  calls: input plus cache reads is the context only for a turn that ran no tool. A turn that ran
+  tools reads the last call's figure off agy's own transcript instead (`agy-transcript.ts`, a file
+  tail here or a filtered `readTail` on a host): once at the end, which the footer waits for, and
+  at most every 10 s while it runs, on each tool call. Either way it is reported over
+  `agy-meters.ts`'s window table or `contextWindow`.
 - **Quota** has no ACP channel: `createAgyQuotaMeter` runs `agy -p=/usage` (`agy-cli.ts`) beside the
   turn, at most once a minute per account. It is reported whenever it lands, even after the turn,
   and nothing waits for it: quota feeds the conversation's status strip, not the turn's footer. (A

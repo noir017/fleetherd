@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **agy shows its context again after a turn that ran tools, and while one runs.** Since 2.40.0
+  moved agy onto `agy acp`, its context came only from the usage a turn reports at its end, which agy
+  sums over every model call in the turn — the context for a turn of one call, and nothing usable
+  for a turn that ran a tool. So the footer, the status strip and `talkcode tasks` showed no context
+  for agy almost always. agy's hooks carry no tokens either, but the transcript they point to does:
+  one line per model call with its input and cache reads, written as the call ends. The daemon now
+  reads the last of those, on the agent's own machine, when such a turn ends and every ten seconds
+  or so while it runs; if the file cannot be read, a turn that ran tools shows no context as before.
+
 ## [2.46.1] - 2026-11-06
 
 ### Fixed
