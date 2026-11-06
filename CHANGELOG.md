@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.41.0] - 2026-11-06
+
 ### Fixed
 
 - **The automatic review reads the conversation, not its tool calls.** Over the first 42 reviews,
