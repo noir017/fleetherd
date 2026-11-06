@@ -5,6 +5,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A sub-agent card now says who it went to, on the first line and in bold.** The card that records a
+  start — confirmation off, or the parts that started at once under `first` — led each row with the
+  topic, so `cbc@uniagent` sat in the middle of a line of ids. Its name now opens the card (every
+  started agent's name, when a batch went to several) and opens its own row again, with `--model`
+  straight after it; the topic link, the machine and the directory are unchanged. A card can be read
+  on a phone, where a row may be cut before its end, so the row has to carry the name itself. The
+  confirmation card keeps its own shape — numbered items that quote the task and link nothing,
+  because no topic exists yet — and only moves the model next to the name, as the record card does.
+  [→](docs/sub-agents.md)
+
+### Fixed
+
+- **A just-started sub-agent's card shows the task's name, not its conversation id.**
+  `web#main#5e94945d` stood where the `--title` (or the name cut from the task text) belonged. The
+  card looked the title up in `channels`, which lists the newest 200 topics; a topic opened a moment
+  earlier has no last-turn timestamp yet and sorts last, so on a busy deployment it fell out of the
+  list and the lookup answered nothing. The name now comes back from `openTask`, which named the
+  topic in the first place.
+
 ## [2.40.0] - 2026-11-06
 
 ### Changed

@@ -559,7 +559,14 @@ export class Delegation {
     console.log(`[delegation] ${key}: ${g.items.length} sub-agent(s) not started (the person wrote instead)`);
   }
 
-  /** What the person is asked to confirm: every sub-task, whole enough to judge. */
+  /**
+   * What the person is asked to confirm: every sub-task, whole enough to judge.
+   *
+   * Not the record card's layout, deliberately: this one asks, so it is numbered and quotes the task
+   * text, and there is no topic to link yet. Its items already open with the agent's name in bold —
+   * the record card's whole fix — and both cards put the model straight after that name, because it
+   * is the fact that decides what the part costs.
+   */
   private cardText(here: Place, items: Item[]): string {
     const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
     const lines = [`**${asker} wants to start ${items.length === 1 ? 'a sub-agent' : `${items.length} sub-agents`}** — each in a topic of its own under this one:`];
@@ -570,7 +577,7 @@ export class Delegation {
       const dir = item.cwd ? ` · \`${item.cwd}\`` : '';
       const title = item.title ? ` — ${item.title}` : '';
       const text = item.text.length > PROPOSAL_TEXT_CHARS ? `${item.text.slice(0, PROPOSAL_TEXT_CHARS - 1)}…` : item.text;
-      lines.push('', `${i + 1}. **${item.agent}**${where}${model}${dir}${title}`, ...text.split('\n').map((l) => `> ${l}`));
+      lines.push('', `${i + 1}. **${item.agent}**${model}${where}${dir}${title}`, ...text.split('\n').map((l) => `> ${l}`));
     });
     lines.push('', 'To change them, say what to change instead of tapping.');
     return lines.join('\n');
@@ -586,7 +593,7 @@ export class Delegation {
     // same — handTo starts one and returns.
     for (const [i, item] of items.entries()) {
       try {
-        const { key, address } = await this.deps.registry.openTask({
+        const { key, address, title: named } = await this.deps.registry.openTask({
           platform: here.platformId,
           parent: here.address,
           agentId: item.agent,
@@ -597,7 +604,7 @@ export class Delegation {
           ...(item.model ? { model: item.model } : {}),
         });
         this.handedOut.add(key);
-        const title = subjectOf(this.titleOf(key, { platformId: here.platformId, address }));
+        const title = subjectOf(named);
         const host = findAgent(this.deps.config, item.agent)?.host;
         opened.push({
           title,
@@ -663,11 +670,22 @@ export class Delegation {
   /**
    * What the person sees when confirmation is off: the same list a confirmation card carries, with
    * the topics already open and no buttons. The last line says how to put the gate back.
+   *
+   * Who got the work leads the card — every started agent's name on the first line, in bold, and
+   * again where it opens its own row. The name is the one thing a person scans a card for, and a
+   * list whose first column was the topic made them read a row of ids to find it; on a narrow
+   * platform a row can also be cut before it reaches its end, so the row has to carry the name
+   * itself. Several parts can go to one agent, which is why the header's list is deduplicated while
+   * the count is not.
    */
   private startedCardText(here: Place, opened: OpenedTask[], failed: string[]): string {
     const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
+    const names = [...new Set(opened.map((o) => o.agent))].join(', ');
+    const many = opened.length !== 1;
     const head = opened.length
-      ? `**${asker} started ${opened.length === 1 ? 'a sub-agent' : `${opened.length} sub-agents`}** — each in a topic of its own under this one:`
+      ? `**${names}** — ${many ? `${opened.length} sub-agents` : 'a sub-agent'} started by ${asker}, ${
+          many ? 'each in a topic of its own' : 'in a topic of its own'
+        } under this one:`
       : `**${asker} could not start the sub-agent** — no confirmation is asked here, so it was tried at once:`;
     const lines = [head];
     for (const t of opened) {
@@ -675,7 +693,7 @@ export class Delegation {
       const model = t.model ? ` · model \`${t.model}\`` : '';
       const dir = t.cwd ? ` · \`${t.cwd}\`` : '';
       const name = t.link ? `[${t.title}](${t.link})` : t.title;
-      lines.push(`- ${name} — ${t.agent}${where}${model}${dir} · ${t.topic}`);
+      lines.push(`- **${t.agent}**${model}${where} · ${name}${dir} · ${t.topic}`);
     }
     if (failed.length) lines.push('', `Could not start ${failed.length}:`, ...failed);
     lines.push(
