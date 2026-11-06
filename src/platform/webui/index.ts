@@ -250,14 +250,64 @@ export function diskUploadStore(dir: string): UploadStore {
  * carries the bytes of whatever the agent read; that is no wider than the agent's own session files,
  * which hold all of it already, but it is not something to leave world-readable either. Written to a
  * temporary name and renamed, so a daemon killed mid-write leaves the previous copy rather than
- * half of a new one. Synchronous, because `dispose` writes on the way out and a promise there would
- * be abandoned by the exit it is racing; the writes are seconds apart and a topic at most 1000
- * messages, so none of them is long.
+ * half of a new one.
+ *
+ * ── Two ways to write, and why ──────────────────────────────────────────────
+ * The routine write (`save`, every few seconds while a topic changes) must not hold the event loop:
+ * it used to be one `JSON.stringify` and one `writeFileSync` of the whole ring, and a 1000-message
+ * topic (3 MB) held it for 28 ms at the median and 91 ms at worst (measured 2026-11-07) — every
+ * stream, IPC call and pacer timer in the daemon waiting behind it, every three seconds, for as long
+ * as a long topic streamed. So it serialises a message at a time and writes each `BATCH_BYTES` of
+ * them to the file as it goes (`writeOut`), the event loop running between batches. Not one string
+ * written at the end: the 3 MB join and its 3 MB encoding were a stall of their own, with the
+ * collection after them. The rename stays synchronous, for the ordering below.
+ *
+ * The exit write (`saveNow`) stays synchronous, because `dispose` runs on the way out and a promise
+ * there would be abandoned by the exit it is racing.
+ *
+ * Writes to one topic go one at a time, and only the newest waiting one is written: a write queued
+ * behind another that has since been superseded is skipped. A `saveNow` or `drop` moves the topic's
+ * fence, and an async write that finds the fence moved when it is about to rename throws its
+ * temporary file away instead — otherwise a write begun before the exit write, or before a delete,
+ * could land after it and put an older transcript, or a deleted one, back.
  */
 export function diskTranscriptStore(dir: string): TranscriptStore {
   const file = (topicId: string): string => path.join(dir, `${topicId}.json`);
   const failed = (what: string, e: unknown): void =>
     console.error(`[webui] could not ${what}: ${e instanceof Error ? e.message : e}`);
+  // Three per-topic records, each held only while a write of that topic is queued or under way —
+  // topics come and go by the thousand over a daemon's life (a scheduled run opens one each time),
+  // and a number kept for every id ever written would be a leak of its own.
+  /** The end of each topic's queue of writes. */
+  const tails = new Map<string, Promise<void>>();
+  /** The newest `save` asked for, so an older one still queued can step aside. */
+  const latest = new Map<string, number>();
+  /** Moved by a `saveNow` or `drop` that finds a write queued or under way; see above. */
+  const fences = new Map<string, number>();
+  let asked = 0;
+  const fenceOf = (topicId: string): number => fences.get(topicId) ?? 0;
+  const moveFence = (topicId: string): void => {
+    if (tails.has(topicId)) fences.set(topicId, fenceOf(topicId) + 1);
+  };
+
+  const write = async (topicId: string, messages: Kept[], mine: number, fence: number): Promise<void> => {
+    if (latest.get(topicId) !== mine || fenceOf(topicId) !== fence) return;
+    // Its own name, not `saveNow`'s: the exit write can run while this one's bytes are still going
+    // out on the thread pool, and two writers on one file would interleave.
+    const tmp = `${file(topicId)}.tmp`;
+    try {
+      await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+      await writeOut(tmp, messages);
+      if (fenceOf(topicId) !== fence) {
+        await fs.promises.rm(tmp, { force: true });
+        return;
+      }
+      fs.renameSync(tmp, file(topicId));
+    } catch (e) {
+      failed(`keep the transcript of ${topicId}`, e);
+    }
+  };
+
   return {
     load() {
       const out = new Map<string, Kept[]>();
@@ -268,6 +318,16 @@ export function diskTranscriptStore(dir: string): TranscriptStore {
         return out;
       }
       for (const name of names) {
+        // A write the last run was killed in the middle of. Nothing is writing yet — this runs
+        // before anything can attach — so it is nobody's.
+        if (name.endsWith('.tmp')) {
+          try {
+            fs.rmSync(path.join(dir, name), { force: true });
+          } catch {
+            /* left for the next start; it is never read */
+          }
+          continue;
+        }
         const m = /^([0-9a-f]{8})\.json$/.exec(name);
         if (!m?.[1]) continue;
         try {
@@ -281,7 +341,22 @@ export function diskTranscriptStore(dir: string): TranscriptStore {
       return out;
     },
     save(topicId, messages) {
-      const tmp = `${file(topicId)}.tmp`;
+      const mine = ++asked;
+      latest.set(topicId, mine);
+      const fence = fenceOf(topicId);
+      const next = (tails.get(topicId) ?? Promise.resolve()).then(() => write(topicId, messages, mine, fence));
+      tails.set(topicId, next);
+      void next.finally(() => {
+        if (tails.get(topicId) !== next) return;
+        tails.delete(topicId);
+        latest.delete(topicId);
+        fences.delete(topicId);
+      });
+      return next;
+    },
+    saveNow(topicId, messages) {
+      moveFence(topicId);
+      const tmp = `${file(topicId)}.exit.tmp`;
       try {
         fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
         fs.writeFileSync(tmp, JSON.stringify(messages), { mode: 0o600 });
@@ -291,6 +366,7 @@ export function diskTranscriptStore(dir: string): TranscriptStore {
       }
     },
     drop(topicId) {
+      moveFence(topicId);
       try {
         fs.rmSync(file(topicId), { force: true });
       } catch (e) {
@@ -298,6 +374,41 @@ export function diskTranscriptStore(dir: string): TranscriptStore {
       }
     },
   };
+}
+
+/**
+ * How much JSON `writeOut` makes before it hands it to the file and lets the event loop run. At the
+ * ~70 MB/s `JSON.stringify` manages on a transcript, a few milliseconds of work.
+ */
+const BATCH_BYTES = 256 * 1024;
+
+/**
+ * Write `JSON.stringify(messages)`, byte for byte, to `tmp` (created `0600`), without holding the
+ * event loop for all of it: one message at a time, a batch of them per write. Safe across the awaits
+ * because what it is handed is a snapshot (`WebRoom.writeKept`) of message objects the room
+ * replaces rather than edits.
+ */
+async function writeOut(tmp: string, messages: Kept[]): Promise<void> {
+  const out = await fs.promises.open(tmp, 'w', 0o600);
+  try {
+    await out.write('[');
+    let batch: string[] = [];
+    let size = 0;
+    let comma = '';
+    for (const k of messages) {
+      const part = JSON.stringify(k);
+      batch.push(part);
+      size += part.length;
+      if (size < BATCH_BYTES) continue;
+      await out.write(comma + batch.join(','));
+      comma = ',';
+      batch = [];
+      size = 0;
+    }
+    await out.write(`${batch.length ? comma + batch.join(',') : ''}]`);
+  } finally {
+    await out.close();
+  }
 }
 
 /**

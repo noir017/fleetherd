@@ -224,6 +224,57 @@ describe('WebRoom: topics are separate conversations', () => {
   });
 });
 
+describe('WebRoom: the topic list reaching every client', () => {
+  it('does not send a list that has not changed', () => {
+    // Several announcers cannot tell whether they changed anything — an outcome the topic already
+    // had, a star set to what it was — and the list goes to every client, a row per topic.
+    const { room, topic, seen } = attached();
+    room.renameTopic(topic, 'named');
+    room.setActivity(topic, { outcome: { kind: 'done', at: 5, line: 'Done' } });
+    expect(kinds(seen).filter((k) => k === 'topics')).toHaveLength(2);
+    seen.length = 0;
+
+    room.setActivity(topic, { outcome: { kind: 'done', at: 5, line: 'Done' } });
+    room.starTopic(topic, false);
+    room.renameTopic(topic, 'named');
+    expect(kinds(seen)).not.toContain('topics');
+
+    // A real change still goes out.
+    room.starTopic(topic, true);
+    expect((lastOf(seen, 'topics') as { topics: Array<{ starred?: boolean }> }).topics[0]?.starred).toBe(true);
+  });
+
+  it('sends the next list to a client that has just attached, even one the others already have', () => {
+    // A sync is drawn from the list as it is now, which may be newer than the last one sent; the
+    // repeat check must not leave the newcomer holding it.
+    const { room, topic, seen } = attached();
+    room.starTopic(topic, true);
+    const later: Seen[] = [];
+    room.subscribe(topic, (id, ev) => later.push({ id, ev }));
+    seen.length = 0;
+    room.starTopic(topic, true);
+    expect(kinds(later)).toEqual(['sync', 'topics']);
+    expect(kinds(seen)).toEqual(['topics']);
+    room.starTopic(topic, true);
+    expect(kinds(later)).toEqual(['sync', 'topics']);
+  });
+
+  it('serialises a list once for every client, not once per client', () => {
+    const { room, topic } = attached();
+    const bodies: string[] = [];
+    for (let i = 0; i < 4; i++) room.subscribe(topic, (_id, ev, data) => void (ev.t === 'topics' && bodies.push(data)));
+    const stringify = vi.spyOn(JSON, 'stringify');
+    room.starTopic(topic, true);
+    const lists = stringify.mock.calls.filter(([v]) => (v as { t?: string } | undefined)?.t === 'topics');
+    stringify.mockRestore();
+    expect(lists).toHaveLength(1);
+    // And every client is handed that one serialisation, which is what the server writes.
+    expect(bodies).toHaveLength(4);
+    expect(new Set(bodies).size).toBe(1);
+    expect(JSON.parse(bodies[0]!)).toMatchObject({ t: 'topics' });
+  });
+});
+
 describe('WebRoom: held edits', () => {
   it('does not announce an edit immediately', () => {
     vi.useFakeTimers();
@@ -419,6 +470,11 @@ describe('WebRoom: a topic keeps its transcript across a restart', () => {
       save: (topicId, messages) => {
         saves.push(topicId);
         kept.set(topicId, structuredClone(messages));
+        return Promise.resolve();
+      },
+      saveNow: (topicId, messages) => {
+        saves.push(topicId);
+        kept.set(topicId, structuredClone(messages));
       },
       drop: (topicId) => void kept.delete(topicId),
     };
@@ -586,6 +642,25 @@ describe('WebRoom: a topic keeps its transcript across a restart', () => {
     room.clearTopics();
     room.dispose();
     expect([...disk.kept.keys()]).toEqual([starred]);
+  });
+
+  it('writes at exit a topic whose background write had not landed yet', () => {
+    // The background write is handed over and forgotten: the topic is no longer "changed". If the
+    // daemon stops before that write lands, the exit write must still cover it, or the topic is
+    // left at the copy before it.
+    vi.useFakeTimers({ now: 1_000_000 });
+    const disk = memory();
+    const landed: string[] = [];
+    const room = new WebRoom(instance(), new TopicStore(path.join(dir, 'slow.json')));
+    room.useTranscripts({ ...disk, save: (topicId) => ((landed.push(topicId), new Promise<void>(() => {}))) });
+    const topic = room.topics.create('slow disk').id;
+    room.post(topic, { own: false, html: '<p>the reply</p>' }, 'the reply');
+    vi.advanceTimersByTime(3_000);
+    expect(landed).toEqual([topic]);
+    expect(disk.kept.has(topic)).toBe(false);
+
+    room.dispose();
+    expect(disk.kept.get(topic)?.map((k) => k.text)).toEqual(['the reply']);
   });
 
   it('throws away a kept transcript whose topic is gone when it comes back, and restores the rest', () => {
@@ -1673,7 +1748,12 @@ describe('WebRoom: a full topic list makes room instead of refusing', () => {
     const { room, ids } = full();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const dropped: string[] = [];
-    room.useTranscripts({ load: () => new Map(), save: () => {}, drop: (t) => void dropped.push(t) });
+    room.useTranscripts({
+      load: () => new Map(),
+      save: () => Promise.resolve(),
+      saveNow: () => {},
+      drop: (t) => void dropped.push(t),
+    });
     room.createTopic();
     expect(dropped).toEqual([ids[0]]);
   });

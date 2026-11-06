@@ -20,7 +20,8 @@
  * it has to be in it. Do not try to merge them.
  *
  * Shape and failure behaviour copied from `daemon/workdir-usage.ts`: write-through, a missing
- * or corrupt file degrades to empty, and it is never worth a crash.
+ * or corrupt file degrades to empty, and it is never worth a crash. The one exception to
+ * write-through is `touch`, which is gathered for `TOUCH_WRITE_MS` — see there.
  */
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -144,8 +145,23 @@ export const MAX_TOPICS = 200;
 /** How much of a first message becomes the placeholder name before the harness names it. */
 const SEED_CHARS = 32;
 
+/**
+ * How long a `touch` waits before the list is written.
+ *
+ * `touch` runs on every message posted into any topic (`WebRoom.post`), and the write is the whole
+ * file, synchronously: with 200 topics that was most of what a post cost (median 1.6 ms, p95 6 ms,
+ * measured 2026-11-07), several times a second while a reply streams. What it records is only the
+ * switcher's order, so it is gathered instead: the first touch arms the write and later ones ride
+ * along. Everything else still writes at once — a topic created, deleted, swept or starred is a
+ * decision whose loss a restart would show — and any of those writes carries a pending touch with
+ * it. `save()` writes what is pending on the way out; a crash costs at most this much ordering.
+ */
+const TOUCH_WRITE_MS = 1_000;
+
 export class TopicStore {
   private readonly topics = new Map<string, Topic>();
+  /** A touch waiting to be written; see `TOUCH_WRITE_MS`. */
+  private touched: NodeJS.Timeout | null = null;
 
   constructor(private readonly file: string) {
     try {
@@ -362,15 +378,34 @@ export class TopicStore {
     return true;
   }
 
-  /** Record activity, so the switcher's order means something. */
+  /** Record activity, so the switcher's order means something. Written within `TOUCH_WRITE_MS`. */
   touch(id: string, at = Date.now()): void {
     const topic = this.topics.get(id);
     if (!topic || topic.lastAt === at) return;
     topic.lastAt = at;
-    this.flush();
+    if (this.touched) return;
+    this.touched = setTimeout(() => this.flush(false), TOUCH_WRITE_MS);
+    // Never what keeps the process alive: `save()` is on the way out (WebRoom.dispose).
+    this.touched.unref();
   }
 
-  private flush(): void {
+  /** Write now whatever `touch` is still holding. The shutdown path; a no-op when nothing is. */
+  save(): void {
+    if (this.touched) this.flush();
+  }
+
+  /**
+   * Write the whole list. `make` is false only for the write a touch arms, which does not create
+   * the directory: the topic it records was written by `create` or read from this file, so the
+   * directory was there, and one that has gone since was removed by someone — a test cleaning up
+   * its temporary directory, every time, in practice. Recreating it a second later to hold one
+   * file is not this timer's call; the next write of any other kind, or the exit write, puts the
+   * whole list back.
+   */
+  private flush(make = true): void {
+    // Every write is the whole list, so a touch still waiting goes out with this one.
+    if (this.touched) clearTimeout(this.touched);
+    this.touched = null;
     const out: Record<string, Omit<Topic, 'id'>> = {};
     for (const [id, t] of this.topics) {
       out[id] = {
@@ -384,9 +419,10 @@ export class TopicStore {
       };
     }
     try {
-      fs.mkdirSync(dirOf(this.file), { recursive: true });
+      if (make) fs.mkdirSync(dirOf(this.file), { recursive: true });
       fs.writeFileSync(this.file, JSON.stringify(out, null, 2));
     } catch (e) {
+      if (!make && (e as NodeJS.ErrnoException).code === 'ENOENT') return;
       // Losing the write costs the topic list on the next restart, which is bad but survivable;
       // throwing here would take down the message that triggered it, which is worse.
       console.warn('[webui] could not save the topic list:', e instanceof Error ? e.message : e);

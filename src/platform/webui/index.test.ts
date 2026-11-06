@@ -358,10 +358,10 @@ describe('webui adapter: where a topic keeps its transcript', () => {
     msg: { id, own: false, html: `<p>${id}</p>`, at: 1, g: 42, buttons: [], reactions: ['✅'], ...extra },
   });
 
-  it('writes a topic to a file of its own that only the operator can read, and reads it back', () => {
+  it('writes a topic to a file of its own that only the operator can read, and reads it back', async () => {
     const at = path.join(dir, 'transcripts');
     const store = diskTranscriptStore(at);
-    store.save('a1b2c3d4', [
+    await store.save('a1b2c3d4', [
       kept('w1', { nonce: 'n1', kind: 'tools' }),
       kept('w2'),
       kept('w3', { kind: 'dispatch' }),
@@ -382,6 +382,65 @@ describe('webui adapter: where a topic keeps its transcript', () => {
 
     store.drop('a1b2c3d4');
     expect(fs.existsSync(file)).toBe(false);
+  });
+
+  /** A transcript big enough that writing it takes more than one turn of the event loop. */
+  const long = (tag: string): Kept[] =>
+    Array.from({ length: 400 }, (_, i) => ({ ...kept(`w${i + 1}`), text: `${tag} ${'x'.repeat(2_000)}` }));
+  const textOf = (at: string, topic: string): string | undefined =>
+    diskTranscriptStore(at).load().get(topic)?.[0]?.text.split(' ')[0];
+
+  it('writes the same file the exit write does, in the background, and the newest write wins', async () => {
+    const at = path.join(dir, 'transcripts');
+    const store = diskTranscriptStore(at);
+    const messages = long('first');
+    // Byte for byte what one JSON.stringify makes: the background write serialises a message at a
+    // time so it can yield, and a file that differed would be a format nobody else reads.
+    store.saveNow('a1b2c3d4', messages);
+    const once = fs.readFileSync(path.join(at, 'a1b2c3d4.json'), 'utf8');
+    await store.save('a1b2c3d4', messages);
+    expect(fs.readFileSync(path.join(at, 'a1b2c3d4.json'), 'utf8')).toBe(once);
+
+    // Queued one behind another, the one asked for last is what is on disk.
+    const a = store.save('a1b2c3d4', long('older'));
+    const b = store.save('a1b2c3d4', long('newer'));
+    await Promise.all([a, b]);
+    expect(textOf(at, 'a1b2c3d4')).toBe('newer');
+    expect(fs.readdirSync(at)).toEqual(['a1b2c3d4.json']);
+  });
+
+  it('does not let a background write already under way land over the exit write', async () => {
+    // The exit write runs while a background one may be half-way: serialised, or its bytes still on
+    // the thread pool. Renamed after the exit write, it would put the older transcript back.
+    const at = path.join(dir, 'transcripts');
+    const store = diskTranscriptStore(at);
+    const behind = store.save('a1b2c3d4', long('older'));
+    await new Promise((r) => setImmediate(r));
+    store.saveNow('a1b2c3d4', long('final'));
+    await behind;
+    expect(textOf(at, 'a1b2c3d4')).toBe('final');
+    expect(fs.readdirSync(at)).toEqual(['a1b2c3d4.json']);
+  });
+
+  it('does not let a background write bring back a transcript dropped while it was under way', async () => {
+    const at = path.join(dir, 'transcripts');
+    const store = diskTranscriptStore(at);
+    store.saveNow('a1b2c3d4', [kept('w1')]);
+    const behind = store.save('a1b2c3d4', long('late'));
+    await new Promise((r) => setImmediate(r));
+    store.drop('a1b2c3d4');
+    await behind;
+    expect(fs.readdirSync(at)).toEqual([]);
+  });
+
+  it('clears away what a write killed half-way left behind', () => {
+    const at = path.join(dir, 'transcripts');
+    fs.mkdirSync(at);
+    fs.writeFileSync(path.join(at, 'a1b2c3d4.json'), JSON.stringify([kept('w1')]));
+    fs.writeFileSync(path.join(at, 'a1b2c3d4.json.tmp'), '[{"te');
+    fs.writeFileSync(path.join(at, 'b2c3d4e5.json.exit.tmp'), '[');
+    expect([...diskTranscriptStore(at).load().keys()]).toEqual(['a1b2c3d4']);
+    expect(fs.readdirSync(at)).toEqual(['a1b2c3d4.json']);
   });
 
   it('carries across only what a message is, and passes over a file it cannot read', () => {

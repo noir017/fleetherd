@@ -206,8 +206,11 @@ export function webMessageHtml(kind: MessageKind | undefined, text: string): str
   return kind === 'tools' || kind === 'report' ? renderWebToolLines(text) : renderWebMarkdown(text);
 }
 
-/** Where an event goes. `id` is the SSE event id a reconnect may resume from. */
-export type Sink = (id: string, ev: WebEvent) => void;
+/**
+ * Where an event goes. `id` is the SSE event id a reconnect may resume from; `data` is `ev` as
+ * JSON, made once per event however many clients it fans out to (see `deliver`).
+ */
+export type Sink = (id: string, ev: WebEvent, data: string) => void;
 
 /**
  * Where the files this room serves from a copy of its own are kept: the operator's pictures, so the
@@ -252,9 +255,18 @@ export interface UploadStore {
 export interface TranscriptStore {
   /** Every topic an earlier run kept, oldest message first. Malformed entries are dropped, not thrown. */
   load(): Map<string, Kept[]>;
-  /** Replace one topic's kept transcript. Best-effort: a failure is logged by the store. */
-  save(topicId: string, messages: Kept[]): void;
-  /** Forget one topic's kept transcript. Best-effort. */
+  /**
+   * Replace one topic's kept transcript without holding the event loop for the length of it.
+   * Writes to one topic land in the order asked, and one superseded before it starts is skipped.
+   * Best-effort: never rejects, a failure is logged by the store.
+   */
+  save(topicId: string, messages: Kept[]): Promise<void>;
+  /**
+   * The same, finished before it returns: the exit path, where a promise would be abandoned by the
+   * exit it is racing. Supersedes any `save` of that topic still in flight.
+   */
+  saveNow(topicId: string, messages: Kept[]): void;
+  /** Forget one topic's kept transcript, including any `save` of it still in flight. Best-effort. */
   drop(topicId: string): void;
 }
 
@@ -332,9 +344,15 @@ export class WebRoom {
   private uploads: UploadStore | null = null;
   /** See `TranscriptStore`; set once by `useTranscripts`. */
   private transcripts: TranscriptStore | null = null;
-  /** Starred topics changed since they were last written, and the timer that will write them. */
+  /** Topics changed since they were last handed to the store, and the timer that will hand them over. */
   private readonly unsaved = new Set<string>();
   private keepTimer: NodeJS.Timeout | null = null;
+  /**
+   * Topics whose last write has been handed to the store and has not landed yet, by the write.
+   * `dispose` writes these again, synchronously: a write handed over a moment before the exit would
+   * otherwise be abandoned half-way and its topic left at the copy before it.
+   */
+  private readonly writing = new Map<string, Promise<void>>();
   private readonly nonces = new Set<string>();
   private commands: SlashCommandSpec[] = [];
 
@@ -372,6 +390,14 @@ export class WebRoom {
    * title, an order or an unread count changed and the poll is not what noticed.
    */
   private lastFlags = '';
+  /**
+   * The last `topics` event actually sent, as sent, so a list that has not changed is not sent
+   * again. Everything that might change the list announces it — and several of those cannot tell
+   * whether they did (`setActivity` with the outcome it already had, a star set to what it was, a
+   * terminal attaching to a topic that already had one) — so the comparison is made here, once, on
+   * the serialised list. Emptied by a new subscriber, whose sync may hold a list newer than this.
+   */
+  private lastTopics = '';
   private readonly dirCache = new Map<string, { at: number; dir?: Topic['dir'] }>();
   /**
    * Who has a terminal pane attached. Absent when the feature is off, and in every test that
@@ -944,12 +970,26 @@ export class WebRoom {
     this.sendTopics(topics, flagsOf(topics));
   }
 
-  /** The one place a topic list reaches a client, so `lastFlags` cannot drift from what was sent. */
+  /**
+   * The one place a topic list reaches a client, so `lastFlags` cannot drift from what was sent.
+   *
+   * Serialised once for every client rather than once per client, and not sent at all when it is
+   * what every client already has. It is the largest event there is — a row per topic, 200 of them
+   * at the cap, ~70 KB — and the one that goes to every client on every message posted anywhere.
+   */
   private sendTopics(topics: Topic[], flags: string): void {
     this.lastFlags = flags;
+    if (this.clients.size === 0) {
+      this.lastTopics = '';
+      return;
+    }
+    const ev: WebEvent = { t: 'topics', topics };
+    const data = JSON.stringify(ev);
+    if (data === this.lastTopics) return;
+    this.lastTopics = data;
     // The one event that crosses rooms: the switcher has to stay current without every client
     // subscribing to topics nobody is reading.
-    for (const client of this.clients) this.deliver(client, { t: 'topics', topics });
+    for (const client of this.clients) this.deliver(client, ev, undefined, data);
   }
 
   // ── Subscribers ────────────────────────────────────────────────────────────
@@ -969,6 +1009,9 @@ export class WebRoom {
   subscribe(topicId: string, send: Sink, lastEventId?: string): () => void {
     const client: Client = { topic: topicId, send };
     this.clients.add(client);
+    // Its sync is drawn from the list as it is now, which may be newer than the last one sent, so
+    // the next announcement goes out even if it matches that one (see `lastTopics`).
+    this.lastTopics = '';
     const room = this.roomOf(topicId);
     const missed = this.replayFrom(room, topicId, lastEventId);
     const ok = missed
@@ -1056,8 +1099,9 @@ export class WebRoom {
     room.seq += 1;
     room.backlog.push({ seq: room.seq, ev });
     if (room.backlog.length > MAX_BACKLOG) room.backlog.shift();
+    let data: string | undefined;
     for (const client of this.clients) {
-      if (client.topic === topicId) this.deliver(client, ev, room.seq);
+      if (client.topic === topicId) this.deliver(client, ev, room.seq, (data ??= JSON.stringify(ev)));
     }
   }
 
@@ -1066,10 +1110,13 @@ export class WebRoom {
    *
    * The only place an event reaches a client, so one wedged socket can never take a turn down
    * with it — a failure here is a browser that went away, not a problem with the message.
+   *
+   * `data` is the event as JSON, passed in by a caller fanning one event out to several clients so
+   * it is made once (`emit`, `sendTopics`); left out, it is made here.
    */
-  private deliver(client: Client, ev: WebEvent, seq?: number): boolean {
+  private deliver(client: Client, ev: WebEvent, seq?: number, data = JSON.stringify(ev)): boolean {
     try {
-      client.send(seq === undefined ? '' : `${client.topic}.${seq}`, ev);
+      client.send(seq === undefined ? '' : `${client.topic}.${seq}`, ev, data);
       return true;
     } catch (e) {
       console.warn('[webui] dropping a client that failed to receive:', e instanceof Error ? e.message : e);
@@ -1294,15 +1341,18 @@ export class WebRoom {
     room.status = status;
     room.statusKey = key;
     const ev: WebEvent = { t: 'status', ...(status ? { status } : {}) };
+    const data = JSON.stringify(ev);
     for (const client of [...this.clients]) {
-      if (client.topic === topicId) this.deliver(client, ev);
+      if (client.topic === topicId) this.deliver(client, ev, undefined, data);
     }
   }
 
   /** The registered slash vocabulary, for the page's autocomplete. Not per topic. */
   setCommands(commands: SlashCommandSpec[]): void {
     this.commands = commands;
-    for (const client of this.clients) this.deliver(client, { t: 'commands', commands });
+    const ev: WebEvent = { t: 'commands', commands };
+    const data = JSON.stringify(ev);
+    for (const client of this.clients) this.deliver(client, ev, undefined, data);
   }
 
   /** The rendered body of a message, for quoting it. Empty when it is no longer held. */
@@ -1414,32 +1464,49 @@ export class WebRoom {
     this.keepTimer.unref();
   }
 
-  /** Write every topic changed since the last write. */
-  private writeKept(): void {
+  /**
+   * Hand every topic changed since the last write to the store.
+   *
+   * What is handed over is a snapshot — a copy of each message object, whose nested values the room
+   * replaces rather than edits — so the store can serialise it across several turns of the event
+   * loop while the topic goes on changing (see `diskTranscriptStore`). `now` is the exit path:
+   * written before this returns, along with anything still on its way to disk.
+   */
+  private writeKept(now = false): void {
     if (this.keepTimer) clearTimeout(this.keepTimer);
     this.keepTimer = null;
     const store = this.transcripts;
     if (!store) return;
-    for (const topicId of this.unsaved) {
+    const due = now ? new Set([...this.unsaved, ...this.writing.keys()]) : this.unsaved;
+    for (const topicId of due) {
       const room = this.rooms.get(topicId);
       if (!room || !this.topics.has(topicId)) continue;
-      store.save(
-        topicId,
-        [...room.stored.values()].map((s) => ({ text: s.text, msg: { ...s.msg, g: s.msg.g ?? this.startedAt } }))
-      );
+      const kept = [...room.stored.values()].map((s) => ({ text: s.text, msg: { ...s.msg, g: s.msg.g ?? this.startedAt } }));
+      if (now) {
+        store.saveNow(topicId, kept);
+        continue;
+      }
+      const written = store.save(topicId, kept);
+      this.writing.set(topicId, written);
+      void written.then(() => {
+        if (this.writing.get(topicId) === written) this.writing.delete(topicId);
+      });
     }
     this.unsaved.clear();
+    if (now) this.writing.clear();
   }
 
   private forgetKept(topicId: string): void {
     this.unsaved.delete(topicId);
+    this.writing.delete(topicId);
     this.transcripts?.drop(topicId);
   }
 
   /** Send everything being held, write what topics have not, and stop every timer. Called on shutdown. */
   dispose(): void {
     for (const [topicId, room] of this.rooms) this.flush(room, topicId);
-    this.writeKept();
+    this.writeKept(true);
+    this.topics.save();
     if (this.liveTimer) clearInterval(this.liveTimer);
     this.liveTimer = null;
     for (const t of this.notifyTimers.values()) clearTimeout(t);
