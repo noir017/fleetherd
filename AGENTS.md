@@ -174,6 +174,11 @@ npm run lint          # eslint (flat config)
 npm run build         # tsc → dist/, then talkcode-remote for amd64 + arm64 → dist/remote-bin/
 ```
 
+While a branch is being worked on or reviewed, run typecheck, lint and the tests that cover the
+change — `npx vitest run <files>`, or `npx vitest related <changed files> --run` — not `npm test`.
+The whole suite takes minutes on a busy machine and `npm run release` runs it on the merged result
+anyway; run by every sub-agent and every review, it was half of an hour's wait (2026-11-06).
+
 Building, releasing and `src/remote/remote.integration.test.ts` need the Go toolchain (`go.mod`
 names the version; CI installs it with `setup-go`). The integration test skips itself without one;
 the build does not.
