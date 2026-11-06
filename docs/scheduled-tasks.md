@@ -44,11 +44,11 @@ day, including after the gateway restarts: the task records that the topic was s
 stops applying its own model.
 
 On the web UI, the clock at the right of the chat header opens the **⏰ Side tasks** panel of its
-own: the **Tasks** tab is the same list, plus "run now", and on a wide screen a pin that keeps it
-open beside the chat. On a phone the same panel is a drawer from the right, with the chat still
-visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
-session opens topics; the **Sessions** tab lists those topics, and they no longer appear in the
-ordinary topic list. The panel's third tab, **Reviews**, is the automatic review of quiet
+own: the bottom has **Scheduled** and **Reviews** tabs. Under **Scheduled**, the **Tasks** sub-tab
+is the same list, plus "run now". On a phone the same panel is a drawer from the right, with the chat
+still visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
+session opens topics; the **Sessions** sub-tab lists those topics, and they no longer appear in the
+ordinary topic list. The panel's second outer tab, **Reviews**, is the automatic review of quiet
 conversations — see [skills](skills.md#auto-review) — not scheduled work, and shares the panel only
 because both are background jobs with no conversation of their own.
 `/setting` has a **⏰ Scheduled tasks** button everywhere: every task with its

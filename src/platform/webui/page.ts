@@ -378,17 +378,20 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    and a flex:1 title inside a column would grow down over the summary instead. */
 .sched-heading .panel-title{flex:none}
 .sched-summary{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* Three lists, one panel: a task is a definition, a session is one run of it, and a review is
-   what the gateway learned afterwards. They are tabs rather than one merged column that would
-   make every run look like a task and every review like either. The tabs sit at the foot of the
-   panel, in the same .panel-foot row the sidebar keeps its menus in, so the two columns end on
-   one line. */
-/* Three tabs in a 240px panel: the shared 9px padding leaves "Sessions" too little at that width,
-   so these are tighter and a hair smaller. They still take a third each, and the count stays
-   beside its word rather than wrapping. */
-.panel-foot>.sched-tab{flex:1;min-width:0;text-align:center;padding-left:5px;padding-right:5px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
+/* Two top-level tabs, one panel: Scheduled background work and automatic Reviews.
+   Inside Scheduled, Tasks (definitions) and Sessions (run topics) form sub-tabs so that a run
+   is not confused with a task definition, while keeping the footer clean with two tabs that
+   match the sidebar's footer row. */
+.panel-foot>.sched-tab{flex:1;min-width:0;text-align:center;padding-left:6px;padding-right:6px;font-size:12px;overflow:hidden;text-overflow:ellipsis;display:inline-flex;align-items:center;justify-content:center}
 .sched-count{font-weight:500;color:#6b7683;margin-left:2px}
 .sched-tab.on .sched-count{color:#8a8a8a}
+.sched-tab-alert{display:inline-block;width:6px;height:6px;border-radius:50%;background:#fbbf24;box-shadow:0 0 5px rgba(251,191,36,.8);margin-left:5px;flex:none}
+.sched-subnav{padding:6px 8px;display:flex;border-bottom:1px solid var(--line);background:var(--bg);gap:4px;flex:none}
+.sched-subtab{flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:center;padding:5px 8px;border:1px solid var(--line);border-radius:5px;background:var(--field);color:var(--dim);font:inherit;font-size:12px;cursor:pointer;text-align:center;transition:color .15s,background .15s,border-color .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sched-subtab:hover{color:var(--fg);border-color:#3a3a3a}
+.sched-subtab.on{background:#2b3a4c;color:#fff;font-weight:600;border-color:#38bdf8}
+.sched-subtab .sched-count{margin-left:4px;font-weight:500;color:#6b7683}
+.sched-subtab.on .sched-count{color:#94a3b8}
 #schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
 #schedules-list{display:flex;flex-direction:column;gap:6px}
 /* A scheduled run, as the Sessions tab draws it: one line per topic, because there can be many
@@ -1027,6 +1030,7 @@ button:disabled{opacity:.5;cursor:default}
   #schedules-toggle{min-width:44px;height:44px}
   #schedules-toggle svg{width:18px;height:18px}
   .sched-acts button{min-height:44px;padding:0 14px}
+  .sched-subtab{min-height:44px}
   .rev-open{min-height:44px;padding:0 14px}
   /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
      phone is an editor with a sliver of transcript behind it, and the transcript is not what the
@@ -1143,8 +1147,11 @@ const SCRIPT = `
       schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
       schedClose=$('schedules-close'), schedNote=$('schedules-note'),
       schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
-      schedTabTasks=$('sched-tab-tasks'), schedTabSessions=$('sched-tab-sessions'), schedTabReviews=$('sched-tab-reviews'),
-      schedTabTasksN=$('sched-tab-tasks-n'), schedTabSessionsN=$('sched-tab-sessions-n'), schedTabReviewsN=$('sched-tab-reviews-n'),
+      schedSubnav=$('sched-subnav'),
+      schedTabScheduled=$('sched-tab-scheduled'), schedTabScheduledN=$('sched-tab-scheduled-n'), schedTabScheduledAlert=$('sched-tab-alert'),
+      schedTabReviews=$('sched-tab-reviews'), schedTabReviewsN=$('sched-tab-reviews-n'),
+      schedTabTasks=$('sched-tab-tasks'), schedTabTasksN=$('sched-tab-tasks-n'),
+      schedTabSessions=$('sched-tab-sessions'), schedTabSessionsN=$('sched-tab-sessions-n'), schedSessionsAlert=$('sched-sessions-alert'),
       revPane=$('sched-reviews'), revList=$('sched-reviews-list'),
       lightbox=$('lightbox'), lightboxImg=$('lightbox-img'),
       reader=$('reader'), readerName=$('reader-name'), readerGet=$('reader-get'), readerBody=$('reader-body'),
@@ -1200,9 +1207,9 @@ const SCRIPT = `
   // The side panel: whether it is showing, the last task list drawn, and its refresh timer.
   // See "The side panel" below.
   var schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
-  // Which of the panel's three lists is on screen. Persisted, because it is a preference about the
-  // workspace rather than about one visit.
-  var schedTab='tasks';
+  // Which of the panel's lists is on screen: Scheduled vs Reviews, and Tasks vs Sessions inside Scheduled.
+  // Persisted, because it is a preference about the workspace rather than about one visit.
+  var schedTab='scheduled', schedSubtab='tasks';
   // The Reviews tab's last answer, and the rows the reader has opened. null is "not asked yet",
   // which is different from an empty list and is what the tab shows as Loading….
   var reviewData=null, reviewSeq=0, revOpen={};
@@ -1674,12 +1681,12 @@ const SCRIPT = `
   /**
    * The gateway's background work, in a column of its own rather than in the topic list.
    *
-   * Three tabs, because a task, a run of it and a review of a conversation are different things:
-   * Tasks is the definitions with their controls, Sessions is the topics a new-session run opened,
-   * and Reviews is what the automatic review learned from quiet conversations. Those session
-   * topics are left out of the switcher (topicRows), so the Sessions tab is their only home — and
-   * the only place to delete one. Reviews have no home anywhere else: a review that changed
-   * nothing posts no line, and its result used to live only in the log.
+   * Two top-level tabs at the foot: Scheduled work and automatic Reviews.
+   * Scheduled work is subdivided into Tasks (the definitions with their controls) and Sessions
+   * (the topics a new-session run opened), keeping definitions and runs grouped together yet distinct.
+   * Those session topics are left out of the switcher (topicRows), so the Sessions tab is their
+   * only home — and the only place to delete one. Reviews have no home anywhere else: a review that
+   * changed nothing posts no line, and its result used to live only in the log.
    *
    * Closed on a first visit, then open until the operator closes it: the choice is kept in
    * localStorage (aa_sched_open), so opening a session from the panel leaves the panel where it
@@ -1695,10 +1702,19 @@ const SCRIPT = `
    */
   try {
     var savedSchedTab = localStorage.getItem('aa_sched_tab');
-    if(savedSchedTab === 'sessions' || savedSchedTab === 'reviews'){
-      schedTab = savedSchedTab;
-      paintSchedTab();
+    if(savedSchedTab === 'reviews'){
+      schedTab = 'reviews';
+    } else if(savedSchedTab === 'sessions'){
+      schedTab = 'scheduled';
+      schedSubtab = 'sessions';
+    } else if(savedSchedTab === 'tasks' || savedSchedTab === 'scheduled'){
+      schedTab = 'scheduled';
     }
+    var savedSubtab = localStorage.getItem('aa_sched_subtab');
+    if(savedSubtab === 'sessions' || savedSubtab === 'tasks'){
+      schedSubtab = savedSubtab;
+    }
+    paintSchedTab();
   } catch(x){}
 
   /** The topics a scheduled run opened, most recently active first (the order topics is in). */
@@ -1866,15 +1882,19 @@ const SCRIPT = `
   }
 
   function paintSchedCounts(){
-    schedTabTasksN.textContent = schedTasks ? String(schedTasks.length) : '';
-    schedTabSessionsN.textContent = String(schedSessions().length);
+    var tCount = schedTasks ? String(schedTasks.length) : '';
+    var sList = schedSessions();
+    schedTabTasksN.textContent = tCount;
+    schedTabSessionsN.textContent = String(sList.length);
     schedTabReviewsN.textContent = reviewData ? String(reviewData.reviews.length) : '';
+    schedTabScheduledN.textContent = sList.length > 0 ? (tCount ? tCount + ' · ' + sList.length : String(sList.length)) : tCount;
   }
 
   /**
    * The clock's dot: a scheduled run is holding a question and nothing will move until it is
    * answered. Those topics have no row in the switcher, so this is the one signal that reaches the
-   * operator without opening the panel.
+   * operator without opening the panel. The same hint is reflected on the Scheduled outer tab
+   * and the Sessions sub-tab so it is visible even when the panel is open on Reviews.
    */
   function paintSchedAlert(){
     var waiting=false;
@@ -1885,6 +1905,13 @@ const SCRIPT = `
     var label = waiting ? 'Side tasks — a run is waiting on your answer' : 'Side tasks';
     schedToggle.title = label;
     schedToggle.setAttribute('aria-label', label);
+
+    if(schedTabScheduledAlert) schedTabScheduledAlert.hidden = !waiting;
+    if(schedSessionsAlert) schedSessionsAlert.hidden = !waiting;
+    var schedTitle = waiting ? 'Scheduled — a run is waiting on your answer' : 'Scheduled';
+    schedTabScheduled.title = schedTitle;
+    var sessTitle = waiting ? 'Sessions — a run is waiting on your answer' : 'Sessions';
+    schedTabSessions.title = sessTitle;
   }
 
   function paintSummary(){
@@ -1896,7 +1923,7 @@ const SCRIPT = `
         : 'loading…';
       return;
     }
-    if(schedTab==='sessions'){
+    if(schedSubtab==='sessions'){
       var list=schedSessions(), busy=0;
       for(var i=0;i<list.length;i++) if(list[i].running || list[i].asking) busy++;
       schedSummary.textContent = list.length
@@ -1919,26 +1946,52 @@ const SCRIPT = `
   }
 
   function paintSchedTab(){
-    var sessions=schedTab==='sessions', reviews=schedTab==='reviews';
-    schedTabTasks.classList.toggle('on', !sessions && !reviews);
-    schedTabSessions.classList.toggle('on', sessions);
-    schedTabReviews.classList.toggle('on', reviews);
-    schedTabTasks.setAttribute('aria-selected', (!sessions && !reviews) ? 'true' : 'false');
-    schedTabSessions.setAttribute('aria-selected', sessions ? 'true' : 'false');
-    schedTabReviews.setAttribute('aria-selected', reviews ? 'true' : 'false');
-    schedList.hidden = sessions || reviews;
-    schedSessionList.hidden = !sessions;
-    revPane.hidden = !reviews;
-    if(sessions) paintSessions();
-    if(reviews) paintReviews();
+    var isReviews = schedTab === 'reviews';
+    schedTabScheduled.classList.toggle('on', !isReviews);
+    schedTabReviews.classList.toggle('on', isReviews);
+    schedTabScheduled.setAttribute('aria-selected', !isReviews ? 'true' : 'false');
+    schedTabReviews.setAttribute('aria-selected', isReviews ? 'true' : 'false');
+
+    schedSubnav.hidden = isReviews;
+    revPane.hidden = !isReviews;
+
+    if(!isReviews){
+      var isSessions = schedSubtab === 'sessions';
+      schedTabTasks.classList.toggle('on', !isSessions);
+      schedTabSessions.classList.toggle('on', isSessions);
+      schedTabTasks.setAttribute('aria-selected', !isSessions ? 'true' : 'false');
+      schedTabSessions.setAttribute('aria-selected', isSessions ? 'true' : 'false');
+      schedList.hidden = isSessions;
+      schedSessionList.hidden = !isSessions;
+      if(isSessions) paintSessions();
+    } else {
+      schedTabTasks.classList.remove('on');
+      schedTabSessions.classList.remove('on');
+      schedTabTasks.setAttribute('aria-selected', 'false');
+      schedTabSessions.setAttribute('aria-selected', 'false');
+      schedList.hidden = true;
+      schedSessionList.hidden = true;
+      paintReviews();
+    }
     paintSchedCounts();
+    paintSchedAlert();
     paintSummary();
   }
 
   function setSchedTab(tab){
-    schedTab = tab==='sessions' ? 'sessions' : (tab==='reviews' ? 'reviews' : 'tasks');
+    schedTab = tab==='reviews' ? 'reviews' : 'scheduled';
     try { localStorage.setItem('aa_sched_tab', schedTab); } catch(x){}
     if(schedTab==='reviews') loadReviews();
+    paintSchedTab();
+  }
+
+  function setSchedSubtab(sub){
+    schedTab = 'scheduled';
+    schedSubtab = sub==='sessions' ? 'sessions' : 'tasks';
+    try {
+      localStorage.setItem('aa_sched_tab', 'scheduled');
+      localStorage.setItem('aa_sched_subtab', schedSubtab);
+    } catch(x){}
     paintSchedTab();
   }
 
@@ -2117,9 +2170,10 @@ const SCRIPT = `
 
   schedToggle.addEventListener('click', function(){ setSchedules(!schedPane.isOpen()); });
   schedClose.addEventListener('click', function(){ setSchedules(false); });
-  schedTabTasks.addEventListener('click', function(){ setSchedTab('tasks'); });
-  schedTabSessions.addEventListener('click', function(){ setSchedTab('sessions'); });
+  schedTabScheduled.addEventListener('click', function(){ setSchedTab('scheduled'); });
   schedTabReviews.addEventListener('click', function(){ setSchedTab('reviews'); });
+  schedTabTasks.addEventListener('click', function(){ setSchedSubtab('tasks'); });
+  schedTabSessions.addEventListener('click', function(){ setSchedSubtab('sessions'); });
 
   revList.addEventListener('click', function(e){
     var openBtn = e.target.closest ? e.target.closest('[data-rev-topic]') : null;
@@ -3600,13 +3654,13 @@ const SCRIPT = `
     // The window's title bar names the same topic this row does, so a rename lands on both in
     // the same frame rather than leaving the bar holding the old name until the next switch.
     if(TERM_OK) paintFrames();
-    // The panel's Sessions tab is drawn from this same list, and its counts must move when a run
+    // The panel's Sessions sub-tab is drawn from this same list, and its counts must move when a run
     // opens or finishes even while the Tasks tab is the one on screen. The Reviews tab draws the
     // same list for a different reason: a link back to a topic exists only while that topic does.
     paintSchedCounts();
     paintSummary();
     paintSchedAlert();
-    if(schedPane.isOpen() && schedTab==='sessions') paintSessions();
+    if(schedPane.isOpen() && schedTab==='scheduled' && schedSubtab==='sessions') paintSessions();
     else if(schedPane.isOpen() && schedTab==='reviews') paintReviews();
   }
 
@@ -6114,22 +6168,25 @@ __GATE__
       </div>
       <button type="button" class="btn-icon panel-close" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
+    <div id="sched-subnav" class="sched-subnav" role="tablist" aria-label="Tasks and sessions">
+      <button type="button" class="sched-subtab on" id="sched-tab-tasks" role="tab" aria-selected="true" aria-controls="schedules-list">Tasks <span class="sched-count" id="sched-tab-tasks-n"></span></button>
+      <button type="button" class="sched-subtab" id="sched-tab-sessions" role="tab" aria-selected="false" aria-controls="sched-sessions">Sessions <span class="sched-count" id="sched-tab-sessions-n"></span><span class="sched-tab-alert" id="sched-sessions-alert" hidden></span></button>
+    </div>
     <div id="schedules-body">
       <div id="schedules-note" hidden></div>
-      <div id="sched-sessions" role="tabpanel" aria-labelledby="sched-tab-sessions" hidden></div>
       <div id="schedules-list" role="tabpanel" aria-labelledby="sched-tab-tasks"></div>
+      <div id="sched-sessions" role="tabpanel" aria-labelledby="sched-tab-sessions" hidden></div>
       <div id="sched-reviews" role="tabpanel" aria-labelledby="sched-tab-reviews" hidden>
         <div id="sched-reviews-list"></div>
       </div>
     </div>
-    <!-- A task is a definition, a session is one run that opened a topic of its own, and a review
-         is what the gateway learned from a conversation afterwards. Three lists, because a run is
-         not a task and a review is not either; merging them would make every run look like one.
-         The tabs sit at the foot, in the same row the sidebar keeps its menus in, because they
-         choose between views of this column rather than heading its content. -->
-    <div id="sched-tabs" class="panel-foot" role="tablist" aria-label="Side sessions, tasks and reviews">
-      <button type="button" class="sched-tab" id="sched-tab-sessions" role="tab" aria-selected="false" aria-controls="sched-sessions">Sessions <span class="sched-count" id="sched-tab-sessions-n"></span></button>
-      <button type="button" class="sched-tab on" id="sched-tab-tasks" role="tab" aria-selected="true" aria-controls="schedules-list">Tasks <span class="sched-count" id="sched-tab-tasks-n"></span></button>
+    <!-- Two top-level tabs at the foot of the panel: Scheduled background work and automatic Reviews.
+         Scheduled tasks and the topics opened by their runs belong together under one top-level tab,
+         subdivided into Tasks (default) and Sessions so definitions and run instances remain distinct
+         without cluttering the footer. The tabs sit at the foot, matching the sidebar's footer row,
+         so the two columns end together. -->
+    <div id="sched-tabs" class="panel-foot" role="tablist" aria-label="Side tasks and reviews">
+      <button type="button" class="sched-tab on" id="sched-tab-scheduled" role="tab" aria-selected="true" aria-controls="schedules-body">Scheduled <span class="sched-count" id="sched-tab-scheduled-n"></span><span class="sched-tab-alert" id="sched-tab-alert" hidden></span></button>
       <button type="button" class="sched-tab" id="sched-tab-reviews" role="tab" aria-selected="false" aria-controls="sched-reviews">Reviews <span class="sched-count" id="sched-tab-reviews-n"></span></button>
     </div>
   </aside>
