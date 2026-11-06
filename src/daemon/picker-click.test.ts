@@ -38,6 +38,7 @@ function rig() {
   const prompts: string[] = [];
   const sent: string[] = [];
   const edits: Array<{ messageId: string; text: string }> = [];
+  const buttonEdits: Array<{ messageId: string; text: string; buttons: number }> = [];
   const buttonSends: Array<{ text: string; buttons: Array<{ id: string; label: string }> }> = [];
   const sessions = new Map<string, AgentSession>();
 
@@ -76,10 +77,14 @@ function rig() {
       buttons: Array<{ id: string; label: string }>
     ) => {
       buttonSends.push({ text, buttons });
-      return { address, messageId: 'menu-msg-id' };
+      // The first menu keeps the id the older tests pin; later ones get their own.
+      return { address, messageId: buttonSends.length === 1 ? 'menu-msg-id' : `menu-msg-id-${buttonSends.length}` };
     },
     editMessage: async (ref: MessageRef, text: string) => {
       edits.push({ messageId: ref.messageId, text });
+    },
+    editButtons: async (ref: MessageRef, text: string, buttons: unknown[]) => {
+      buttonEdits.push({ messageId: ref.messageId, text, buttons: buttons.length });
     },
     addReaction: async () => {},
     startTyping: async () => {},
@@ -89,6 +94,7 @@ function rig() {
 
   const daemon = new Daemon(cfg, new Map([['tg', platform]]), agents, '/tmp/aa-picker-test.sock');
   const d = daemon as unknown as {
+    pendingPicks: Map<string, unknown>;
     onInbound(m: InboundMessage): void;
     onAgentCommands(agentId: string, cmds: Array<{ name: string; description?: string }>): void;
     onButton(ev: ButtonInteraction): void;
@@ -117,7 +123,7 @@ function rig() {
     await drain();
   };
 
-  return { send, reportCommands, click, prompts, sent, edits, buttonSends };
+  return { send, reportCommands, click, prompts, sent, edits, buttonEdits, buttonSends, pendingPicks: d.pendingPicks };
 }
 
 describe('picker button click', () => {
@@ -158,5 +164,26 @@ describe('picker button click', () => {
 
     expect(prompts).toHaveLength(before); // no second turn
     expect(sent.some((t) => t.includes('expired'))).toBe(true);
+  });
+
+  it('holds one open menu per conversation: a newer one retires the older, which says so', async () => {
+    const { send, reportCommands, click, sent, prompts, buttonEdits, buttonSends, pendingPicks } = rig();
+    reportCommands();
+    // A picker nobody clicks used to stay in memory for the life of the process, one per bare /oc.
+    for (let i = 0; i < 5; i++) await send('/oc');
+    expect(buttonSends).toHaveLength(5);
+    expect(pendingPicks.size).toBe(1);
+    // Each retired menu lost its buttons on the message itself, not just in memory.
+    expect(buttonEdits).toHaveLength(4);
+    expect(buttonEdits[0]).toEqual({ messageId: 'menu-msg-id', text: 'This menu was replaced by a newer one.', buttons: 0 });
+
+    // A tap on an older menu's button (a platform that kept it) is answered, and runs nothing.
+    await click(buttonSends[0]!.buttons[0]!.id);
+    expect(prompts).toHaveLength(0);
+    expect(sent.some((t) => t.includes('replaced by a newer one'))).toBe(true);
+    // The newest still works.
+    await click(buttonSends[4]!.buttons[0]!.id);
+    expect(prompts).toContain('/customize-opencode');
+    expect(pendingPicks.size).toBe(0);
   });
 });

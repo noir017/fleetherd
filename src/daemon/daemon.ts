@@ -770,7 +770,14 @@ export class Daemon {
    * no longer drives registration, which is now fixed at startup (see buildRegisteredSpecs).
    */
   private agentCommands = new Map<string, AgentCommand[]>();
-  /** Pending harness-picker menus: reqId → the session and command names it was built for. */
+  /**
+   * Pending harness-picker menus: reqId → the session and command names it was built for.
+   *
+   * One-shot, and at most one per conversation: opening a picker retires the one the conversation
+   * already had (retirePicksFor) — the bound every other menu here keeps, for the reasons
+   * pendingModelMenus gives against a TTL or an LRU. Without it an entry left only on a click or a
+   * failed send, so every picker nobody clicked was held for the life of the process.
+   */
   private pendingPicks = new Map<string, PendingPick>();
   /**
    * Live model menus: reqId → the conversation and option snapshot it was built for.
@@ -2611,6 +2618,7 @@ export class Daemon {
     // than silently dropped, and stays invokable by typing.
     const shown = offered.slice(0, PICKER_BUTTON_MAX);
     const overflow = offered.slice(PICKER_BUTTON_MAX);
+    this.retirePicksFor(conversationId);
     const reqId = randomUUID().slice(0, 8);
     this.pendingPicks.set(reqId, {
       conversationId,
@@ -2637,6 +2645,20 @@ export class Daemon {
       });
   }
 
+  /** Retire a conversation's open picker, saying so on the message rather than going quiet. */
+  private retirePicksFor(conversationId: ConversationId): void {
+    for (const [reqId, pick] of this.pendingPicks) {
+      if (pick.conversationId !== conversationId) continue;
+      this.pendingPicks.delete(reqId);
+      const adapter = this.platforms.get(pick.conversation.platform);
+      // No ref yet: the send has not resolved. Its buttons then answer as an expired menu does.
+      if (!adapter || !pick.ref) continue;
+      void adapter
+        .editButtons(pick.ref, 'This menu was replaced by a newer one.', [])
+        .catch((e) => console.warn('[picker] menu edit failed:', e instanceof Error ? e.message : e));
+    }
+  }
+
   /**
    * A picker button was clicked: run that command in the session the menu was opened for.
    *
@@ -2648,16 +2670,17 @@ export class Daemon {
   private onPickClick(ev: ButtonInteraction, parsed: { reqId: string; index: number }): void {
     const pick = this.pendingPicks.get(parsed.reqId);
     if (!pick) {
-      // A menu the daemon no longer knows about: it was already used (one-shot), or the daemon
-      // restarted since it was posted (pendingPicks is in-memory). Say so — returning silently is
-      // indistinguishable from a broken button, which is how this surfaced as "I click and nothing
-      // happens". Answered where the click happened, since the recorded conversation is gone too.
+      // A menu the daemon no longer knows about: it was already used (one-shot), replaced by a newer
+      // one in the same conversation, or the daemon restarted since it was posted (pendingPicks is
+      // in-memory). Say so — returning silently is indistinguishable from a broken button, which is
+      // how this surfaced as "I click and nothing happens". Answered where the click happened, since
+      // the recorded conversation is gone too.
       console.log(`[picker] click on an expired menu (${parsed.reqId})`);
       void this.platforms
         .get(ev.conversation.platform)
         ?.sendMessage(
           addressOf(ev.conversation),
-          'That menu has expired (already used, or the gateway restarted). Re-open it with the agent command (`/oc`, `/cc`, …), or /help for the full list.'
+          'That menu has expired (already used, replaced by a newer one, or the gateway restarted). Re-open it with the agent command (`/oc`, `/cc`, …), or /help for the full list.'
         )
         .catch(() => undefined);
       return;
