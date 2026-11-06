@@ -930,6 +930,9 @@ export class Daemon {
       // A message that reaches the agent here replaces a sub-agent card still waiting for a tap: the
       // person writing is how they change the proposal, and the agent proposes again from scratch.
       supersedeProposals: (id) => this.delegation.personSpoke(id),
+      // `/setting delegation` moved to another tier: what the delegation remembered about agents
+      // already confirmed in a conversation no longer counts, even if the tier changes back later.
+      onDelegationSettingChanged: () => this.delegation.forgetConfirmations(),
       // A bare `/model` on a platform that can carry (and later edit) buttons.
       onModelMenuRequest: (id, agentId, msg, selector) =>
         this.onModelMenuRequest(id, agentId, msg, selector),
@@ -1662,6 +1665,9 @@ export class Daemon {
     this.registry.warmRemoteScans();
 
     if (diff.sections.includes('session')) this.registry.idleTimeoutChanged();
+    // A tier change voids what Delegation remembered. This is the `/reload` half: a change away and
+    // back across two reloads, with no `task-new` in between, is invisible to a read at propose time.
+    if (diff.sections.includes('delegation')) this.delegation.forgetConfirmations();
     const respawn = this.registry.respawnAgents(new Set([...diff.agentsChanged, ...diff.agentsRemoved]));
     // Only when the set changed: re-registering is a platform API call per instance, and Telegram
     // and Discord rate-limit it.

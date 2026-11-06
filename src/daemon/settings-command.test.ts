@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { parse } from 'yaml';
 import { Daemon } from './daemon.js';
+import { SettingsStore } from './settings-store.js';
+import { resolveSettingKey } from '../core/settings.js';
 import { loadConfig } from '../config/load.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -366,6 +368,40 @@ describe('writing a setting', () => {
     await r.send('/setting delegation on');
     expect(r.cfg.delegation.confirm).toBe(true);
     expect(onDisk()['delegation']).toEqual({ confirm: true });
+  });
+
+  it('notifies the delegation memory on a tier change, and only on a tier change', () => {
+    const cfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc' },
+    });
+    const ctx = { boundAgent: 'cc', models: [] };
+    let cleared = 0;
+    const store = new SettingsStore(cfg, {
+      onIdleTimeout: () => undefined,
+      onDelegationChanged: () => cleared++,
+    });
+    const delegation = resolveSettingKey('delegation', cfg, ctx);
+    if (delegation.kind !== 'row') throw new Error('expected a row');
+
+    expect(store.apply(delegation.row, 'first', ctx)).toMatchObject({ kind: 'saved', display: 'first' });
+    expect(cfg.delegation.confirm).toBe('first');
+    expect(cleared).toBe(1);
+
+    // The same value is a no-op: nothing written, and the memory is not thrown away for nothing.
+    expect(store.apply(delegation.row, 'first', ctx)).toMatchObject({ kind: 'unchanged' });
+    expect(cleared).toBe(1);
+
+    // Another setting's write does not touch it.
+    const stream = resolveSettingKey('stream', cfg, ctx);
+    if (stream.kind !== 'row') throw new Error('expected a row');
+    expect(store.apply(stream.row, 'on', ctx)).toMatchObject({ kind: 'saved' });
+    expect(cleared).toBe(1);
+
+    // Every tier change notifies, including away from `first`.
+    expect(store.apply(delegation.row, 'off', ctx)).toMatchObject({ kind: 'saved' });
+    expect(cleared).toBe(2);
   });
 
   it('routes the next new conversation to the agent just made default', async () => {
@@ -783,19 +819,28 @@ describe('setting a value from the list screen', () => {
     throw new Error(`${rowLabel} has no inline control`);
   };
 
-  it('flips a switch in one tap: the file, the running daemon, and the list with a banner', async () => {
+  it('sets a choice in one tap: the file, the running daemon, and the list with a banner', async () => {
     const r = rig({ caps: { settingsScreen: true } });
     await r.send('/setting');
-    await r.click(control(r.menu().screen, 'Confirm sub-agent starts'));
+    await r.click(control(r.menu().screen, 'Confirm sub-agent starts', 'off'));
     expect(onDisk()['delegation']).toEqual({ confirm: false });
     expect(r.cfg.delegation.confirm).toBe(false);
     const after = r.screen().screen;
     if (after?.level !== 'list') throw new Error('not the list');
     expect(after.notice).toEqual({ tone: 'ok', text: expect.stringContaining('Confirm sub-agent starts → off') });
-    expect(after.rows.find((x) => x.label === 'Confirm sub-agent starts')?.control).toMatchObject({ kind: 'switch', on: false });
+    expect(after.rows.find((x) => x.label === 'Confirm sub-agent starts')?.control).toMatchObject({ kind: 'choice' });
     // And back, from the redrawn list's own id.
-    await r.click(control(after, 'Confirm sub-agent starts'));
+    await r.click(control(after, 'Confirm sub-agent starts', 'on'));
     expect(r.cfg.delegation.confirm).toBe(true);
+  });
+
+  it('writes the middle tier as its own word, not as a boolean', async () => {
+    const r = rig({ caps: { settingsScreen: true } });
+    await r.send('/setting');
+    await r.click(control(r.menu().screen, 'Confirm sub-agent starts', 'first'));
+    expect(r.cfg.delegation.confirm).toBe('first');
+    expect(onDisk()['delegation']).toEqual({ confirm: 'first' });
+    expect(r.screen().screen).toMatchObject({ notice: { tone: 'ok', text: expect.stringContaining('→ first') } });
   });
 
   it('writes a choice from the row, and says so when it is already the value', async () => {

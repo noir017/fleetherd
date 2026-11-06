@@ -38,7 +38,7 @@ current. `talkcode help` lists the topics.
 | `config` | applying an edited config.yaml without a restart |
 | `pods` | the machines agents run on: adding or removing one, the agents it declares, ssh between them |
 | `skills` | the skills the gateway keeps for every agent: reading one, writing or changing one, archiving |
-| `tasks` | handing parts of a job to other agents (sub-agents) that run in parallel — the person confirms each start unless confirmation is off; web UI only |
+| `tasks` | handing parts of a job to other agents (sub-agents) that run in parallel — the person confirms starts according to `delegation.confirm` (every time, once per agent per conversation, or never); web UI only |
 
 ## Output and errors
 

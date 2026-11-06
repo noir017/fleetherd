@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -260,6 +260,34 @@ describe('/reload in a running daemon', () => {
     expect(r.replies().at(-1)).toContain('applied: routing');
     expect(r.registered).toHaveLength(0);
     expect(r.cfg.routing.default).toBe('oc');
+  });
+
+  it('clears the delegation confirmations whenever a reload changes its tier', async () => {
+    const r = rig();
+    const { delegation } = r.daemon as unknown as { delegation: { forgetConfirmations(): void } };
+    const forget = vi.spyOn(delegation, 'forgetConfirmations');
+
+    edit('routing:', 'delegation:\n  confirm: false\nrouting:');
+    await r.send('/reload');
+    expect(forget).toHaveBeenCalledTimes(1);
+
+    // Same tier again: no diff, nothing to forget.
+    await r.send('/reload');
+    expect(forget).toHaveBeenCalledTimes(1);
+
+    // Away and back across two reloads, with no `task-new` in between — the case a comparison at
+    // proposal time cannot see, because the value it would compare against is the same again.
+    edit('confirm: false', 'confirm: first');
+    await r.send('/reload');
+    expect(forget).toHaveBeenCalledTimes(2);
+    edit('confirm: first', 'confirm: true');
+    await r.send('/reload');
+    expect(forget).toHaveBeenCalledTimes(3);
+
+    // An unrelated section does not touch it.
+    edit('default: cc', 'default: oc');
+    await r.send('/reload');
+    expect(forget).toHaveBeenCalledTimes(3);
   });
 
   it('changes nothing when the file does not load, and says why', async () => {

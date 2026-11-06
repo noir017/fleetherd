@@ -340,6 +340,12 @@ export function formatIdle(ms: number): string {
   return `${Math.round(ms / 60_000)}m`;
 }
 
+/** The three tiers of `delegation.confirm`, in the words both surfaces print. */
+export function delegationValue(confirm: Config['delegation']['confirm']): 'on' | 'first' | 'off' {
+  if (confirm === 'first') return 'first';
+  return confirm ? 'on' : 'off';
+}
+
 /** What an unset `agents[].model` means: the harness picks. */
 const MODEL_UNSET = '(harness default)';
 
@@ -393,7 +399,7 @@ export function settingsRows(cfg: Config, pods?: PodModels): SettingRow[] {
     {
       id: 'delegation',
       label: 'Confirm sub-agent starts',
-      value: cfg.delegation.confirm ? 'on' : 'off',
+      value: delegationValue(cfg.delegation.confirm),
       effect: 'live',
     },
     {
@@ -462,10 +468,12 @@ export function settingDescription(row: SettingRow): string {
       return `The model \`${row.target}\` starts its sessions with. \`/model\` still overrides it for one conversation.`;
     case 'delegation':
       return (
-        'Whether `task-new` waits for you to tap Start on a card listing every sub-task (`on`, the ' +
-        'default), or starts each one at once and posts a card showing what started (`off`). Off ' +
-        'reaches only conversations you talk to directly; a sub-agent\'s own topic still asks. ' +
-        'Only you can change this; no agent command reaches it.'
+        'When `task-new` waits for you to tap Start on a card listing every sub-task: always ' +
+        '(`on`, the default), once per agent in each conversation (`first`), or never (`off`, ' +
+        'which starts each one at once and posts a card showing what started). `first` remembers ' +
+        'only in memory, so a restart or another conversation asks again. `first` and `off` reach ' +
+        'only conversations you talk to directly; a sub-agent\'s own topic still asks. Only you ' +
+        'can change this; no agent command reaches it.'
       );
     case 'idle':
       return 'How long a conversation may sit quiet before its agent child is stopped. It resumes on the next message.';
@@ -614,7 +622,7 @@ function settingHint(row: SettingRow): string | undefined {
     case 'model':
       return undefined;
     case 'delegation':
-      return 'Wait for your Start before an agent’s sub-tasks run. Off starts them at once; a sub-agent’s own topic still asks.';
+      return 'Wait for your Start before an agent’s sub-tasks run. `first` asks once per agent in each conversation; `off` starts them at once. A sub-agent’s own topic still asks.';
     case 'idle':
       return 'Stop an agent that has been quiet this long. Its conversation resumes on the next message.';
     case 'scope':
@@ -647,12 +655,12 @@ function settingHint(row: SettingRow): string | undefined {
  */
 export function settingControl(row: SettingRow): 'switch' | 'choice' | 'list' {
   switch (row.id) {
-    case 'delegation':
     case 'stream':
     case 'voice':
     case 'cleanup':
       return 'switch';
     case 'agent':
+    case 'delegation':
     case 'idle':
     case 'scope':
     case 'review.agent':
@@ -805,6 +813,12 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
           detail: 'wait for Start before any sub-task runs',
         },
         {
+          raw: 'first',
+          label: 'first — wait for Start once per agent in each conversation',
+          title: 'first',
+          detail: 'wait for Start once per agent in each conversation',
+        },
+        {
           raw: 'off',
           label: 'off — start each sub-task at once, and post a card for the record',
           title: 'off',
@@ -949,7 +963,7 @@ export function parseSettingValue(
     case 'review.model':
       return parseReviewModelValue(input, row, cfg, ctx);
     case 'delegation':
-      return parseBooleanValue(input);
+      return parseDelegationValue(input);
     case 'idle':
       return parseIdleValue(input);
     case 'scope': {
@@ -1154,6 +1168,17 @@ export function settingLocation(row: SettingRow): SettingLocation {
       return _exhaustive;
     }
   }
+}
+
+/**
+ * `delegation.confirm`'s three tiers. `first` is its own word because the field is not a switch
+ * any more; the boolean spellings are the toggle's own, so a value read from before this tier
+ * existed still parses when typed back.
+ */
+function parseDelegationValue(input: string): ParsedSettingValue {
+  if (input.toLowerCase() === 'first') return { kind: 'value', value: 'first', display: 'first' };
+  const parsed = parseBooleanValue(input);
+  return parsed.kind === 'invalid' ? { kind: 'invalid', reason: `\`${input}\` is not on, first or off.` } : parsed;
 }
 
 /**

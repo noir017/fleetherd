@@ -238,20 +238,23 @@ Do not weaken these without saying so explicitly in the PR:
    the pod-to-pod ssh mesh (`daemon/pod-peers.ts`) only by its own `peer:`; the gateway then lets
    every member log in to every other, from private addresses only, vouching for each with the host
    key it pins itself. Opening one host to another is never the gateway's own initiative.
-6. **No sub-agent starts without the person — unless the operator turned confirmation off.**
-   `delegation.confirm` is on by default, and then `task-new` only proposes: every sub-task waits
-   on a card that shows it in full until the person taps Start (`Delegation.putUp`, buttons only —
-   a typed reply is the person's next message, never a yes), and nothing an agent says can start
-   one. Turned off, `task-new` opens each sub-task at once and a card listing every one and its
-   topic is still posted afterwards, without buttons — but the agent may now spend the operator's
-   machines and money without being asked. The switch reaches only conversations the person talks
-   to directly: a sub-agent's own topic (one with a parent) still puts up the card, so an agent
-   cannot chain more agents without a tap. Only a person can turn it off: `/setting delegation`
-   or `delegation.confirm: false` in config.yaml; no reverse command reaches it. That is an
-   interface boundary, not code enforcement: an agent on the gateway's own machine as the same
-   user can edit config.yaml, which is invariant 1's existing trust boundary. Either way a
-   conversation acts only on the topics it opened (`Delegation.child`), so one agent cannot steer
-   or stop another's.
+6. **No sub-agent starts without the person — unless the operator lowered the gate.**
+   `delegation.confirm` has three tiers. `true` (the default): `task-new` only proposes, and every
+   sub-task waits on a card that shows it in full until the person taps Start (`Delegation.putUp`,
+   buttons only — a typed reply is the person's next message, never a yes), and nothing an agent
+   says can start one. `'first'`: only an agent's first sub-task in a conversation waits on that
+   card; once the person has tapped Start on a card containing it, later `task-new` calls for that
+   agent in that conversation start at once and post the record card. That memory is in-process and
+   per conversation — a restart or another conversation asks again, and changing the tier clears the
+   record. `false`: every sub-task starts at once, and a card listing every one and its topic is
+   still posted afterwards, without buttons — but the agent may now spend the operator's machines
+   and money without being asked. All three reach only conversations the person talks to directly: a sub-agent's own topic (one with a
+   parent) still puts up the card, so an agent cannot chain more agents without a tap. Only a person
+   can change it: `/setting delegation` or `delegation.confirm: true | 'first' | false` in
+   config.yaml; no reverse command reaches it. That is an interface boundary, not code enforcement:
+   an agent on the gateway's own machine as the same user can edit config.yaml, which is invariant
+   1's existing trust boundary. Either way a conversation acts only on the topics it opened
+   (`Delegation.child`), so one agent cannot steer or stop another's.
 7. **The web UI POSTs only to push services.** A push subscription's endpoint is a URL a browser
    chose, and the server sends to it; `webui/webpush.ts` allowedEndpoint holds it to HTTPS on the
    push services browsers use, at subscribe time and again before every send — the outbound twin

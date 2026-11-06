@@ -709,6 +709,12 @@ export class ConversationRegistry {
       /** One line for the text `/setting` list pointing at the scheduled tasks; absent = no line. */
       scheduleSummary?(): string | undefined;
       /**
+       * `/setting delegation` landed on a different tier: Delegation's memory of which agents this
+       * conversation already confirmed is void (Delegation.forgetConfirmations). Routed through the
+       * daemon because the registry does not own that memory.
+       */
+      onDelegationSettingChanged?(): void;
+      /**
        * A conversation has something for the person now — a finished reply, a failure that will not
        * be continued (TurnOutcomes). Delegation listens: a sub-agent's topic tells the agent that
        * opened it (daemon/delegation.ts).
@@ -821,8 +827,10 @@ export class ConversationRegistry {
     });
 
     // `/setting idle` has to re-arm the sweeper, not just change the number (see setIdleTimeout).
+    // A delegation change takes effect live too, but has to invalidate what Delegation remembered.
     this.settings = new SettingsStore(this.config, {
       onIdleTimeout: () => this.rearmIdleSweeper(),
+      onDelegationChanged: () => this.hooks?.onDelegationSettingChanged?.(),
     });
 
     this.startIdleSweeper();

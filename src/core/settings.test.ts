@@ -11,6 +11,7 @@ import {
   resolveSettingKey,
   settingAckText,
   settingBackButtonId,
+  settingCurrentRaw,
   settingDetailText,
   settingDescription,
   settingKeyOf,
@@ -202,16 +203,22 @@ describe('the settings screen', () => {
     };
 
     // On/off is a switch whose one id writes the other side.
-    const delegation = byLabel.get('Confirm sub-agent starts')!.control;
-    expect(delegation).toMatchObject({ kind: 'switch', on: true });
-    if (delegation.kind !== 'switch') throw new Error('not a switch');
-    expect(writes(delegation.set)).toEqual({ row: 'delegation', raw: 'off' });
     const stream = byLabel.get('Live streaming')!.control;
     if (stream.kind !== 'switch') throw new Error('not a switch');
     expect(stream.on).toBe(false);
     expect(writes(stream.set)).toEqual({ row: 'stream', raw: 'on' });
 
     // A closed list is a choice, every option writable from the row, the current one marked.
+    const delegation = byLabel.get('Confirm sub-agent starts')!.control;
+    if (delegation.kind !== 'choice') throw new Error('not a choice');
+    expect(delegation.options.map((o) => [o.label, o.current])).toEqual([
+      ['on', true],
+      ['first', false],
+      ['off', false],
+    ]);
+    expect(delegation.options.map((o) => writes(o.buttonId))).toEqual(
+      ['on', 'first', 'off'].map((raw) => ({ row: 'delegation', raw }))
+    );
     const idle = byLabel.get('Idle reclaim')!.control;
     if (idle.kind !== 'choice') throw new Error('not a choice');
     expect(idle.options.map((o) => [o.label, o.current])).toEqual([
@@ -817,7 +824,7 @@ describe('opening a value menu', () => {
   });
 });
 
-describe('the sub-agent confirmation switch', () => {
+describe('the sub-agent confirmation setting', () => {
   it('is on by default, live, and resolves from `delegation` and `delegation.confirm`', () => {
     const r = resolveSettingKey('delegation', cfg, ctx);
     expect(r.kind).toBe('row');
@@ -832,18 +839,48 @@ describe('the sub-agent confirmation switch', () => {
     expect(resolveSettingKey('delegation.confirm', cfg, ctx).kind).toBe('row');
   });
 
-  it('takes on/off like every toggle, and reads back the boolean', () => {
+  it('offers on, first and off, and turns each into its config value', () => {
     const r = row('delegation');
+    expect(settingOptions(r, cfg, ctx).map((o) => o.raw)).toEqual(['on', 'first', 'off']);
     expect(parseSettingValue(r, 'off', cfg, ctx)).toMatchObject({ value: false, display: 'off' });
     expect(parseSettingValue(r, 'on', cfg, ctx)).toMatchObject({ value: true, display: 'on' });
-    expect(settingOptions(r, cfg, ctx).map((o) => o.raw)).toEqual(['on', 'off']);
+    expect(parseSettingValue(r, 'first', cfg, ctx)).toMatchObject({ value: 'first', display: 'first' });
     expect(readSettingValue(r, cfg)).toBe(true);
   });
 
-  it('says what off means: each starts at once, and a card still shows what started', () => {
+  it('reads back the middle tier and refuses a word that is none of the three', () => {
+    const middle = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc' },
+      delegation: { confirm: 'first' },
+    });
+    const r = settingsRows(middle).find((x) => x.id === 'delegation')!;
+    expect(r.value).toBe('first');
+    expect(readSettingValue(r, middle)).toBe('first');
+    expect(settingCurrentRaw(r)).toBe('first');
+    const bad = parseSettingValue(row('delegation'), 'sometimes', cfg, ctx);
+    expect(bad).toMatchObject({ kind: 'invalid', reason: '`sometimes` is not on, first or off.' });
+  });
+
+  it('keeps old true/false configs working', () => {
+    const base = {
+      platforms: { tg: { type: 'telegram' as const, token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' as const }],
+      routing: { default: 'cc' },
+    };
+    expect(parseConfig({ ...base, delegation: { confirm: false } }).delegation.confirm).toBe(false);
+    expect(parseConfig({ ...base, delegation: { confirm: true } }).delegation.confirm).toBe(true);
+    expect(parseConfig(base).delegation.confirm).toBe(true);
+  });
+
+  it('says what first and off mean, and that a sub-agent topic still asks', () => {
     const text = settingDescription(row('delegation'));
+    expect(text).toContain('once per agent in each conversation (`first`)');
     expect(text).toContain('starts each one at once');
     expect(text).toContain('posts a card showing what started');
+    expect(text).toContain('a restart or another conversation asks again');
+    expect(text).toContain("a sub-agent's own topic still asks");
     expect(text).toContain('Only you can change this');
   });
 });
