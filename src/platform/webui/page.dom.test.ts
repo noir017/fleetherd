@@ -7192,16 +7192,19 @@ describe('webui page: the skills page', () => {
     await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
     expect(h.doc.querySelector('[data-skill="deploy-check"]')!.closest('[data-group]')!.getAttribute('data-group')).toBe('resident');
 
+    const pressed = (): string | null | undefined =>
+      h.doc.querySelector('[data-skill="deploy-check"] [data-sop="tier"][aria-pressed="true"]')?.textContent;
     (h.doc.querySelector('[data-skill="deploy-check"] [data-sop="tier"][data-resident="0"]') as HTMLElement).click();
+    // Switched on the tap, before any answer: with skills.repo set, the answer takes seconds.
+    expect(pressed()).toBe('Library');
     await until('the tier op', () => h.calls.some((c) => c.body?.action === 'resident'));
 
     expect(h.calls.find((c) => c.body?.action === 'resident')?.body).toEqual({ action: 'resident', name: 'deploy-check', resident: false });
     expect(h.calls.some((c) => c.body?.action === 'show')).toBe(false);
-    // The answer's list is what is drawn — the row is now in the library — and the list stays up
-    // even though this answer happens to carry a detail too.
-    await until('the row in the library', () =>
-      h.doc.querySelector('[data-skill="deploy-check"]')?.closest('[data-group]')?.getAttribute('data-group') === 'library'
-    );
+    await tick();
+    // The row stays in the tab it was drawn in, switched; it moves when the list is next drawn.
+    expect(h.doc.querySelector('[data-skill="deploy-check"]')!.closest('[data-pane]')!.getAttribute('data-pane')).toBe('resident');
+    expect(pressed()).toBe('Library');
     expect(h.el('skills-detail').hidden).toBe(true);
     expect(h.el('skills-list').hidden).toBe(false);
   });
@@ -7219,11 +7222,14 @@ describe('webui page: the skills page', () => {
     await h.click('#skills-toggle');
     await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
 
+    const pressed = (): string | null | undefined => h.doc.querySelector('[data-skill="deploy-check"] [aria-pressed="true"]')?.textContent;
     (h.doc.querySelector('[data-skill="deploy-check"] [data-sop="tier"][data-resident="1"]') as HTMLElement).click();
+    expect(pressed()).toBe('Resident');
     await until('the refusal', () => !h.el('skills-note').hidden);
 
     expect(h.el('skills-note').textContent).toMatch(/this one is 134/);
-    expect(h.doc.querySelector('[data-skill="deploy-check"] [aria-pressed="true"]')!.textContent).toBe('Library');
+    // Put back as the store has it.
+    await until('the switch back on Library', () => pressed() === 'Library');
     // Sticky, so it is seen from wherever in the list the switch was tapped.
     expect(renderPage('Chat', false)).toMatch(/#skills-note\{position:sticky;/);
   });
@@ -7438,22 +7444,24 @@ describe('webui page: the skills page', () => {
     const sw = (): HTMLElement => h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]') as HTMLElement;
 
     sw().click();
+    expect(sw().getAttribute('aria-checked')).toBe('false');
+    expect(sw().textContent).toBe('Off');
     await until('the archive', () => h.calls.some((c) => c.body?.action === 'archive'));
     expect(h.calls.find((c) => c.body?.action === 'archive')?.body).toEqual({ action: 'archive', name: 'deploy-check' });
     expect(h.calls.filter((c) => c.path === 'api/skills/op')).toHaveLength(1);
-    await until('the row under Off', () =>
-      h.doc.querySelector('[data-skill="deploy-check"]')?.closest('[data-group]')?.getAttribute('data-group') === 'off'
-    );
+    await tick();
     expect(sw().getAttribute('aria-checked')).toBe('false');
+    expect(h.doc.querySelector('[data-skill="deploy-check"]')!.classList.contains('skill-off')).toBe(true);
     expect(h.el('skills-detail').hidden).toBe(true);
 
+    // A second tap at once is not swallowed while the first is answered: it queues behind it.
     replies['api/skills/op'] = { ok: true, skills: [entry()] };
     sw().click();
+    expect(sw().getAttribute('aria-checked')).toBe('true');
     await until('the restore', () => h.calls.some((c) => c.body?.action === 'restore'));
     expect(h.calls.find((c) => c.body?.action === 'restore')?.body).toEqual({ action: 'restore', name: 'deploy-check' });
-    await until('the row back in the library', () =>
-      h.doc.querySelector('[data-skill="deploy-check"]')?.closest('[data-group]')?.getAttribute('data-group') === 'library'
-    );
+    await tick();
+    expect(sw().getAttribute('aria-checked')).toBe('true');
   });
 
   it('turns an archived skill on from its page, and stays on the page', async () => {

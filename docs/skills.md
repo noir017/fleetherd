@@ -162,7 +162,9 @@ so neither needs the skill opened:
   is delivered to no agent — and on again, which is `restore`. One tap, because the same tap undoes
   it. Nothing in the gateway hard-deletes a skill, and the page has no such operation.
 
-Agents pick up either change when they next start; a library search sees it at once. The name
+A switch moves the moment it is tapped and the change is saved behind it; a refusal puts it back
+and says why. The row stays in its tab until the page is next opened. Agents pick up either change
+when they next start; a library search sees it at once. The name
 opens the skill for editing, with the same two switches beside **Pin**:
 
 - **New** creates a skill from a name, a one-line description and an optional body.

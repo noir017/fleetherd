@@ -5125,8 +5125,56 @@ const SCRIPT = `
       + tier(false, 'Library', 'Found through a search of the library')
       + '</span>'
       + '<button type="button" class="skill-switch" role="switch" data-sop="enabled" aria-checked="' + (on ? 'true' : 'false') + '" title="'
-      + (on ? 'On: delivered to agents. Turn it off to archive it' : 'Off: archived. Turn it on to deliver it again') + '">'
-      + '<span class="skill-knob"></span>' + (on ? 'On' : 'Off') + '</button>';
+      + (on ? SKILL_ON_TITLE : SKILL_OFF_TITLE) + '">'
+      + '<span class="skill-knob"></span><span class="skill-switch-label">' + (on ? 'On' : 'Off') + '</span></button>';
+  }
+  var SKILL_ON_TITLE = 'On: delivered to agents. Turn it off to archive it';
+  var SKILL_OFF_TITLE = 'Off: archived. Turn it on to deliver it again';
+
+  /** Set drawn switches to what the skill says, in place: the same buttons, so a keyboard keeps its focus
+      and a row keeps the tab it was drawn in — it moves only when the list is drawn again. */
+  function skillPaintCtl(ctl, s){
+    var on = skillOn(s), tiers = ctl.querySelectorAll('[data-sop="tier"]');
+    for(var i=0;i<tiers.length;i++){
+      tiers[i].setAttribute('aria-pressed', (tiers[i].getAttribute('data-resident') === '1') === s.resident ? 'true' : 'false');
+      tiers[i].disabled = !on;
+    }
+    var sw = ctl.querySelector('[data-sop="enabled"]');
+    if(!sw) return;
+    sw.setAttribute('aria-checked', on ? 'true' : 'false');
+    sw.title = on ? SKILL_ON_TITLE : SKILL_OFF_TITLE;
+    var label = sw.querySelector('.skill-switch-label');
+    if(label) label.textContent = on ? 'On' : 'Off';
+  }
+  function skillPaint(name){
+    var s = skillFind(name);
+    if(!s) return;
+    var rows = skillsListEl.querySelectorAll('[data-skill]');
+    for(var i=0;i<rows.length;i++){
+      if(rows[i].getAttribute('data-skill') !== name) continue;
+      rows[i].classList.toggle('skill-off', !skillOn(s));
+      var badge = rows[i].querySelector('.skill-state.expired');
+      if(badge && s.status !== 'expired') badge.parentNode.removeChild(badge);
+      var ctl = rows[i].querySelector('.skill-ctl');
+      if(ctl) skillPaintCtl(ctl, s);
+    }
+    if(skillSel && skillSel.skill.name === name){
+      var dctl = skillsDetailEl.querySelector('.skill-head .skill-ctl');
+      if(dctl) skillPaintCtl(dctl, skillSel.skill);
+      skillsCount.textContent = skillPlace(skillSel.skill);
+    }
+  }
+  function skillFind(name){
+    for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) return skillList[i];
+    return null;
+  }
+  /** Take what the store says about one skill — and only that one, since another skill's taps may
+      still be on their way and its row must keep showing them. */
+  function skillTake(name, entry){
+    if(!entry) return;
+    skillList = skillList.slice();
+    for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) skillList[i] = entry;
+    if(skillSel && skillSel.skill.name === name) skillSel.skill = entry;
   }
 
   function skillCard(s){
@@ -5392,27 +5440,85 @@ const SCRIPT = `
   }
 
   /** A row's switch, or the open skill's. One tap and no confirmation, where Delete used to take
-      two: the same tap undoes either, and off is an archive — every file and the history kept. The
-      skill comes from the row the switch sits in, or from the page; a row answers with the list
-      redrawn, the page with the skill read again. */
+      two: the same tap undoes either, and off is an archive — every file and the history kept.
+
+      Drawn at once and sent behind: with skills.repo set, every write pulls from and pushes to that
+      repository before it answers, which is seconds, and a switch that waited for it read as one
+      that had not taken the tap (2026-11-06). So the tap changes the page's own copy and the
+      switches straight away, and the request queues behind that skill's earlier ones — one chain
+      per skill, so the store sees its taps in the order they were made, and no other skill waits.
+      A refusal says why, drops the taps queued behind it (they were made on top of it), and puts
+      the switches back as the store has them. */
+  var skillQueue = {};
   function skillSwitch(btn, op){
-    var row = btn.closest('[data-skill]'), s = null;
-    if(row){
-      var name = row.getAttribute('data-skill');
-      for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) s = skillList[i];
-    } else if(skillSel) s = skillSel.skill;
-    if(!s) return;
-    var body;
-    if(op === 'enabled') body = {action: skillOn(s) ? 'archive' : 'restore', name:s.name};
-    else {
+    var row = btn.closest('[data-skill]');
+    var name = row ? row.getAttribute('data-skill') : (skillSel ? skillSel.skill.name : null);
+    var cur = (!row && skillSel) ? skillSel.skill : skillFind(name);
+    if(!name || !cur) return;
+    var body, change;
+    if(op === 'enabled'){
+      var off = skillOn(cur);
+      body = {action: off ? 'archive' : 'restore', name:name};
+      change = {status: off ? 'archived' : 'active'};
+    } else {
       var resident = btn.getAttribute('data-resident') === '1';
-      if(!skillOn(s) || resident === s.resident) return;
-      body = {action:'resident', name:s.name, resident:resident};
+      if(!skillOn(cur) || resident === cur.resident) return;
+      body = {action:'resident', name:name, resident:resident};
+      change = {resident: resident};
     }
-    var skillName = s.name;
-    skillOp(body, row
-      ? function(){ skillSel = null; renderSkillsList(); }
-      : function(){ openSkill(skillName); });
+    skillClearNote();
+    // Copies, not edits: the record the list was drawn from stays the store's until it answers.
+    skillList = skillList.slice();
+    for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) skillList[i] = Object.assign({}, skillList[i], change);
+    if(skillSel && skillSel.skill.name === name) skillSel.skill = Object.assign({}, skillSel.skill, change);
+    skillPaint(name);
+    skillSend(name, body);
+  }
+
+  function skillSend(name, body){
+    var q = skillQueue[name] || (skillQueue[name] = {chain: Promise.resolve(), pending: 0, gen: 0});
+    var gen = q.gen;
+    q.pending++;
+    q.chain = q.chain.then(function(){
+      if(q.gen !== gen) return null;
+      return post('api/skills/op', body, 1).then(function(r){
+        return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+      }).catch(function(e){
+        return {ok:false, error:'Could not reach the daemon: ' + ((e && e.message) || 'network error')};
+      });
+    }).then(function(d){
+      q.pending--;
+      if(d === null) return;
+      if(!d || !d.ok){
+        q.gen++;
+        skillNote((d && d.error) || 'That did not work.');
+        return skillResync(name);
+      }
+      if(q.pending) return;
+      var list = d.skills || [];
+      for(var i=0;i<list.length;i++) if(list[i].name === name) skillTake(name, list[i]);
+      skillPaint(name);
+      skillReread(name);
+    });
+  }
+
+  /** After a refusal: the store's own state for this skill, read fresh, drawn in place. */
+  function skillResync(name){
+    return fetch('api/skills', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+      var list = (d && d.skills) || [];
+      for(var i=0;i<list.length;i++) if(list[i].name === name) skillTake(name, list[i]);
+      skillPaint(name);
+    }).catch(function(){});
+  }
+
+  /** On the skill's own page, read it again once its taps are all answered — a tier change rewrote
+      SKILL.md, and an editor left on the old version would have its next save refused — unless the
+      editor holds something unsaved, which a re-read would throw away. */
+  function skillReread(name){
+    if(!skillSel || skillSel.skill.name !== name || !skillSel.file) return;
+    var ta = $('skill-text'), pathEl = $('skill-path');
+    if(!ta || !pathEl || ta.value !== skillSel.file.content || pathEl.value !== skillSel.file.path) return;
+    openSkill(name, skillSel.file.path);
   }
 
   function openSkills(){

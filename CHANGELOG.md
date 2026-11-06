@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The skills page's switches answer the tap.** With `skills.repo` set, every write pulls from and
+  pushes to that repository before it answers, which takes seconds; the switches waited for it, so
+  a tap seemed to do nothing, a tap on another row meanwhile was dropped, and the row then vanished
+  into the other tab. A switch now moves the moment it is tapped and the write follows behind, one
+  queue per skill so the store gets its taps in order and no other skill waits; a refusal puts the
+  switch back and says why. The row stays in its tab until the page is next opened.
+
 ### Changed
 
 - **`/super` asks for the tests that cover a change, not the whole suite.** Every part and every
