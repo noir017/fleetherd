@@ -52,11 +52,26 @@ describe('initialize', () => {
 });
 
 describe('tools/list', () => {
-  it('lists the two native tools with their schemas', async () => {
+  it('lists the three native tools with their schemas', async () => {
     const r = await result(req('tools/list'));
     const tools = r.tools as { name: string; inputSchema: { type: string } }[];
-    expect(tools.map((t) => t.name)).toEqual(['send_file', 'schedule']);
+    expect(tools.map((t) => t.name)).toEqual(['send_file', 'schedule', 'skills']);
     for (const t of tools) expect(t.inputSchema.type).toBe('object');
+  });
+
+  it('ends the skills tool\'s description with what the library holds, asked of the daemon', async () => {
+    const d = deps({ ok: true, data: { total: 9, library: 7, categories: [{ name: '运维', count: 6 }, { name: 'other', count: 3 }] } });
+    const r = await result(req('tools/list'), d);
+    const skills = (r.tools as { name: string; description: string }[]).find((t) => t.name === 'skills')!;
+    expect(skills.description).toMatch(/In the library: 运维 6, other 3\.$/);
+    expect(d.sent).toEqual([{ kind: 'skills', action: 'categories' }]);
+  });
+
+  it('keeps the description as written when the daemon cannot say', async () => {
+    const d = deps({ ok: false, error: 'no daemon' });
+    const r = await result(req('tools/list'), d);
+    const skills = (r.tools as { name: string; description: string }[]).find((t) => t.name === 'skills')!;
+    expect(skills.description).not.toMatch(/In the library/);
   });
 });
 

@@ -15,8 +15,8 @@ description: >-
 The `talkcode` command on your PATH acts on the conversation you are answering in. It is
 already authenticated for it, and every command targets it unless `--channel` names another.
 
-If you have `send_file` and `schedule` tools, they are the `send-file` and `schedule` commands
-below — use the tools.
+If you have `send_file`, `schedule` and `skills` tools, they are the `send-file`, `schedule` and
+`skills search` / `skills show` commands below — use the tools.
 
 ## Commands, by topic
 

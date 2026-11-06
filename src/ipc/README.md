@@ -69,7 +69,7 @@ The gateway puts no text of its own into the agent's prompt — no preamble, no 
 "Nothing of the gateway's in the agent's prompt" in [AGENTS.md](../../AGENTS.md)). What an
 agent can do here reaches it through its harness's own mechanisms, in three layers:
 
-1. **Two native tools**, `send_file` and `schedule` (`tools.ts`). `talkcode mcp`
+1. **Three native tools**, `send_file`, `schedule` and `skills` (`tools.ts`). `talkcode mcp`
    (`commands/mcp.ts`) serves them over MCP on stdio, and the daemon lists that server in every
    ACP session's `session/new` (`daemon/agent-acp.ts` `acpMcpServers`), so the harness starts one
    per session. Same socket, same session token, same TOON answer as the shell command.
@@ -79,10 +79,10 @@ agent can do here reaches it through its harness's own mechanisms, in three laye
 3. **`talkcode help <topic>`**, the reference: each topic's commands rendered from the
    specs, plus its `notes` — the rules, the traps, the defaults.
 
-### Why exactly two tools
+### Why exactly these three tools
 
 A tool's definition is context the agent pays for whether or not it is used. Measured 2026-10-09
-(`project-scripts/aa-native-tools/probe-tokens.mjs`): on Claude Code these two add about 1,030 input
+(`project-scripts/aa-native-tools/probe-tokens.mjs`): on Claude Code the first two add about 1,030 input
 tokens to every request — cached after the first, but every request; the `<system-reminder>` they
 replace was about 80. Codex 0.159.2 lazy-loads MCP tools behind its own `tool_search` and OpenCode
 2.0.26 exposes them inside its code tool, so there they cost less. So a tool has to be something an
@@ -93,8 +93,15 @@ agent can neither do without nor guess exists:
 - `schedule` is the one capability agents reliably get wrong without being told. Asked for "every
   morning at 8", a model reaches for its own harness's scheduler, which lives inside the agent
   process and dies with it — the gateway stops idle sessions after an hour, and on every restart.
+- `skills` (2026-11-06) searches and reads the skill library. A library skill is linked into no
+  harness's skill directory, so nothing tells an agent it exists; linking every skill instead puts
+  every description in every request, which past a few dozen skills costs more than one tool. It
+  offers only `search` and `show` — `NativeTool.options: []` keeps the command's write options out
+  of the schema — and its description ends with what the library holds (`In the library: 运维 6, …`),
+  asked of the daemon at `tools/list`. That line is a fact about the deployment, not instructions:
+  the same rule as every other description here.
 
-The skill documents these two as CLI commands as well, and an agent that does not see the tools up
+The skill documents these as CLI commands as well, and an agent that does not see the tools up
 front takes that route: in the 2026-10-09 end-to-end run, Claude Code called `mcp__chat__send_file`
 and `mcp__chat__schedule`, OpenCode called `tools.chat.send_file`, and Codex — whose tool list
 starts without them — read the skill and ran `talkcode send-file`. Same command, same result.

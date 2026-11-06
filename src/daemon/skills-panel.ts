@@ -3,8 +3,14 @@ import type {
   SkillPanelEntry,
   SkillPanelOp,
   SkillPanelResult,
+  SkillPanelSearch,
+  SkillPanelSearches,
   SkillsPanel,
 } from '../platform/adapter.js';
+import { readQueryEvents, summarizeQueries, type SearchOutcome } from './skill-queries.js';
+
+/** How many of each kind of search the page lists. */
+const SEARCHES_SHOWN = 10;
 import {
   archiveSkill,
   createSkill,
@@ -15,6 +21,7 @@ import {
   removeSkillFile,
   restoreSkill,
   revertSkill,
+  setResident,
   showSkill,
   skillHistory,
   writeSkillFile,
@@ -52,6 +59,9 @@ function entryOf(skill: SkillRecord): SkillPanelEntry {
     uses: skill.uses,
     agents: [...skill.agents],
     ...(skill.problem ? { problem: skill.problem } : {}),
+    ...(skill.warning ? { warning: skill.warning } : {}),
+    resident: skill.resident,
+    ...(skill.category ? { category: skill.category } : {}),
   };
 }
 
@@ -95,6 +105,11 @@ export function buildSkillsPanel(options: SkillsPanelOptions = {}): SkillsPanel 
 
   return {
     list,
+    searches(): SkillPanelSearches {
+      const s = summarizeQueries(readQueryEvents(root()), Date.now(), SEARCHES_SHOWN);
+      const view = (o: SearchOutcome): SkillPanelSearch => ({ at: o.at, query: o.query, hits: [...o.hits], ...(o.agent ? { agent: o.agent } : {}) });
+      return { misses: s.misses.map(view), unread: s.unread.map(view) };
+    },
     async op(request: SkillPanelOp): Promise<SkillPanelResult> {
       try {
         switch (request.action) {
@@ -131,6 +146,8 @@ export function buildSkillsPanel(options: SkillsPanelOptions = {}): SkillsPanel 
           case 'pin':
             pinSkill(request.name, request.pinned, root());
             return done();
+          case 'resident':
+            return await write(() => setResident(request.name, request.resident, root(), Date.now(), PERSON));
           case 'revert':
             return await write(() => revertSkill(request.name, request.id, root(), Date.now(), PERSON));
           default: {

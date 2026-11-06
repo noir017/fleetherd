@@ -6828,6 +6828,7 @@ describe('webui page: the skills page', () => {
     version: '0123456789ab',
     status: 'active',
     pinned: false,
+    resident: false,
     createdAt: '2026-10-01T00:00:00.000Z',
     lastUsedAt: '2026-11-02T00:00:00.000Z',
     uses: 3,
@@ -6868,6 +6869,54 @@ describe('webui page: the skills page', () => {
     expect(h.el('skills-list').textContent).toContain('pinned');
     expect(h.el('skills-list').textContent).toContain('last used');
     expect(h.el('skills-list').textContent).toContain('3 uses');
+  });
+
+  it('marks a resident skill and its category, and warns about a description too long for it', async () => {
+    const resident = entry({ name: 'server-ops', resident: true, category: '运维', warning: 'the description is 130 characters; a resident skill\'s is in every agent\'s context and should be at most 120' });
+    const h = await open({ replies: { 'api/skills': list([entry(), resident]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('server-ops'));
+
+    const card = (name: string): Element => h.doc.querySelector(`[data-skill="${name}"]`)!;
+    expect(card('server-ops').querySelector('.skill-tier')!.textContent).toBe('resident');
+    expect(card('server-ops').querySelector('.skill-cat')!.textContent).toBe('运维');
+    expect(card('server-ops').querySelector('.skill-warn')!.textContent).toMatch(/130 characters/);
+    expect(card('deploy-check').querySelector('.skill-tier')).toBeNull();
+  });
+
+  it('lists the searches that found nothing, and the hits nobody opened', async () => {
+    const searches = {
+      misses: [{ at: '2026-11-06T00:00:00.000Z', query: 'rotate the vpn certificate', agent: 'cx', hits: [] }],
+      unread: [{ at: '2026-11-06T00:00:00.000Z', query: 'deploy', hits: ['deploy-check'] }],
+    };
+    const h = await open({ replies: { 'api/skills': { ...list(), searches } } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    const text = h.el('skills-list').textContent!;
+    expect(text).toContain('Searches that found nothing');
+    expect(text).toContain('rotate the vpn certificate');
+    expect(text).toContain('Found, but not opened');
+    const rows = [...h.doc.querySelectorAll('.skill-search')].map((r) => r.textContent);
+    expect(rows[1]).toContain('deploy-check');
+  });
+
+  it('makes a skill resident from its page, and back', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    const btn = h.doc.querySelector('[data-sop="resident"]') as HTMLElement;
+    expect(btn.textContent).toBe('Make resident');
+    btn.click();
+    await until('the tier op', () => h.calls.some((c) => c.body?.action === 'resident'));
+    expect(h.calls.find((c) => c.body?.action === 'resident')?.body).toEqual({ action: 'resident', name: 'deploy-check', resident: true });
   });
 
   it('says on the card why a hand-committed skill is not delivered', async () => {

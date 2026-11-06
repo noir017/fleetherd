@@ -16,6 +16,9 @@ import {
   removeSkillFile,
   repoRoot,
   restoreSkill,
+  setResident,
+  frontmatterMetadata,
+  skillMetaOf,
   revertSkill,
   showSkill,
   skillDir,
@@ -273,5 +276,75 @@ describe('a skill changed by hand in the repository', () => {
     create();
     byHand('skills/hand-made/SKILL.md', '---\nname: hand-made\ndescription: Use when by hand\n---\n', 'feat: hand-made');
     expect(pinSkill('hand-made', true, dir)).toMatchObject({ name: 'hand-made', pinned: true, status: 'active' });
+  });
+});
+
+describe('resident and library', () => {
+  const md = (meta: string, description = 'Use when checking a deployment'): string =>
+    `---\nname: deploy-check\ndescription: "${description}"\n${meta}---\n\nbody\n`;
+
+  it('reads the tier, category and conditions from the metadata block, skipping deeper maps', () => {
+    const text = md('metadata:\n  talkcode-resident: "true"\n  talkcode-category: "运维"\n  hermes:\n    tags: [a, b]\n  talkcode-hosts: "uniagent, awsfree2"\nversion: 1.0\n');
+    expect(frontmatterMetadata(text)).toEqual(
+      new Map([
+        ['talkcode-resident', 'true'],
+        ['talkcode-category', '运维'],
+        ['talkcode-hosts', 'uniagent, awsfree2'],
+      ])
+    );
+    expect(skillMetaOf(new Map([['SKILL.md', Buffer.from(text)]]))).toEqual({ resident: true, category: '运维', hosts: ['uniagent', 'awsfree2'] });
+    expect(skillMetaOf(new Map([['SKILL.md', Buffer.from(md(''))]]))).toEqual({ resident: false });
+  });
+
+  it('is library when created, and a person makes it resident and back', () => {
+    const skill = create();
+    expect(skill.resident).toBe(false);
+    const resident = setResident(skill.name, true, dir, T0 + 1);
+    expect(resident.resident).toBe(true);
+    expect(showSkill(skill.name, undefined, dir).content).toMatch(/metadata:\n {2}talkcode-resident: "true"\n---/);
+    expect(skillHistory(skill.name, dir)[0]).toMatchObject({ action: 'resident', author: 'talkcode-web' });
+    const back = setResident(skill.name, false, dir, T0 + 2);
+    expect(back.resident).toBe(false);
+    // Absence is the library tier: the line goes, and an emptied block goes with it.
+    expect(showSkill(skill.name, undefined, dir).content).not.toContain('metadata:');
+    expect(back.version).toBe(skill.version);
+  });
+
+  it('keeps the rest of a metadata block when the tier changes', () => {
+    const skill = create();
+    patchSkill({ name: skill.name, version: skill.version, content: md('metadata:\n  talkcode-category: "运维"\n'), now: T0 + 1 }, dir);
+    setResident(skill.name, true, dir, T0 + 2);
+    expect(listSkills(dir)[0]).toMatchObject({ resident: true, category: '运维' });
+    setResident(skill.name, false, dir, T0 + 3);
+    expect(listSkills(dir)[0]).toMatchObject({ resident: false, category: '运维' });
+  });
+
+  it('refuses an agent\'s or the review\'s patch that changes the tier, and takes a person\'s', () => {
+    const skill = create();
+    const promote = md('metadata:\n  talkcode-resident: "true"\n');
+    expect(() => patchSkill({ name: skill.name, version: skill.version, content: promote, now: T0 + 1 }, dir)).toThrow(/only a person/);
+    expect(() =>
+      patchSkill({ name: skill.name, version: skill.version, content: promote, by: { kind: 'review', agent: 'ag' }, now: T0 + 1 }, dir)
+    ).toThrow(/only a person/);
+    expect(patchSkill({ name: skill.name, version: skill.version, content: promote, by: { kind: 'person' }, now: T0 + 1 }, dir).resident).toBe(true);
+    // And an agent cannot demote what a person chose, either.
+    const v = showSkill(skill.name, undefined, dir).version;
+    expect(() => patchSkill({ name: skill.name, version: v, content: md(''), now: T0 + 2 }, dir)).toThrow(/only a person/);
+  });
+
+  it('holds a resident description to one short line, and says so about a hand-made one', () => {
+    const skill = create('deploy-check', { description: 'x'.repeat(121) });
+    expect(() => setResident(skill.name, true, dir, T0 + 1)).toThrow(/at most 120 characters, this one is 121/);
+    // Characters, not bytes: 120 Chinese characters fit.
+    const ok = create('cn-skill', { description: '运'.repeat(120) });
+    expect(setResident(ok.name, true, dir, T0 + 1).resident).toBe(true);
+    // A person's commit can still push a long one; it is delivered, with a warning to see.
+    const file = path.join(skillDir('deploy-check', dir), 'SKILL.md');
+    fs.writeFileSync(file, md('metadata:\n  talkcode-resident: "true"\n', 'y'.repeat(130)));
+    gitSync(repoRoot(dir), ['add', '-A']);
+    gitSync(repoRoot(dir), ['commit', '-q', '-m', 'by hand'], { GIT_AUTHOR_NAME: 'p', GIT_AUTHOR_EMAIL: 'p@x', GIT_COMMITTER_NAME: 'p', GIT_COMMITTER_EMAIL: 'p@x' });
+    const listed = listSkills(dir).find((s) => s.name === 'deploy-check')!;
+    expect(listed.problem).toBeUndefined();
+    expect(listed.warning).toMatch(/130 characters/);
   });
 });

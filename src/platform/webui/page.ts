@@ -538,6 +538,12 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .skill-state.expired{color:#fbbf24;background:rgba(251,191,36,.12)}
 .skill-state.archived{color:#9ca3af;background:#262626}
 .skill-pin{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#fbbf24}
+.skill-tier{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#60a5fa}
+.skill-cat{flex:none;font-size:11px;color:var(--dim)}
+.skill-warn{font-size:11.5px;color:#fbbf24;overflow-wrap:anywhere;margin-top:2px}
+.skill-searches{margin-top:14px}
+.skill-search{font-size:12px;padding:3px 0;overflow-wrap:anywhere}
+.skill-search small{color:var(--dim);margin-left:6px}
 .skill-desc{font-size:12.5px;color:#d0d0d0;line-height:1.45;overflow-wrap:anywhere}
 .skill-meta{font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
 .skill-problem{font-size:11.5px;color:#f87171;overflow-wrap:anywhere;margin-top:2px}
@@ -1246,7 +1252,7 @@ const SCRIPT = `
   // The skills window: its list, the skill open in it, and whether the New form is showing. Not
   // persisted — a management surface is opened on purpose, and a window that came back on load
   // would sit over a conversation nobody asked it to cover.
-  var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false;
+  var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false, skillSearches=null;
   // The /setting page: the live settings message it draws, the topic it was opened in, and the
   // one message whose page the operator closed. A settings message is never a row in the
   // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
@@ -4960,9 +4966,13 @@ const SCRIPT = `
     h += '<div class="skill-row"><span class="skill-name">' + text(s.name) + '</span>';
     h += '<span class="skill-state ' + text(s.status) + '">' + text(skillState(s.status)) + '</span>';
     if(s.pinned) h += '<span class="skill-pin">pinned</span>';
+    // Resident: in every agent's skill list. The rest is the library, found through the skills tool.
+    if(s.resident) h += '<span class="skill-tier">resident</span>';
+    if(s.category) h += '<span class="skill-cat">' + text(s.category) + '</span>';
     h += '</div>';
     h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
     h += '<div class="skill-meta">' + text(meta.join(' \\u00b7 ') + ' \\u00b7 v' + s.version) + '</div>';
+    if(s.warning) h += '<div class="skill-warn">' + text(s.warning) + '</div>';
     // A skill someone committed by hand that breaks the store's rules is listed but not delivered;
     // the store's own sentence says why, so the person who pushed it can fix it here.
     if(s.problem) h += '<div class="skill-problem">Not delivered: ' + text(s.problem) + '</div>';
@@ -4992,9 +5002,30 @@ const SCRIPT = `
     if(!skillsEnabled) h = '<div class="skills-empty">Skills are not enabled in this daemon.</div>';
     else if(!skillList.length) h = '<div class="skills-empty">No managed skills yet. An agent can create one when you ask it to remember a procedure, or press New.</div>';
     else for(var i=0;i<skillList.length;i++) h += skillCard(skillList[i]);
+    h += skillSearchesHtml();
     if(skillNewMode) h = skillNewForm() + h;
     skillsListEl.innerHTML = h;
     if(skillNewMode){ var n = $('skill-new-name'); if(n) n.focus(); }
+  }
+
+  /** What agents searched the library for and did not get: no skill, or hits nobody opened. A
+      miss is a skill worth writing; an unopened hit is a description worth rewording. */
+  function skillSearchesHtml(){
+    if(!skillSearches) return '';
+    var rows = function(title, list, withHits){
+      if(!list || !list.length) return '';
+      var out = '<div class="skill-section">' + text(title) + '</div>';
+      for(var i=0;i<list.length;i++){
+        var q = list[i], meta = skillAgo(q.at);
+        if(q.agent) meta += ' \\u00b7 ' + q.agent;
+        if(withHits && q.hits.length) meta += ' \\u00b7 ' + q.hits.join(', ');
+        out += '<div class="skill-search">' + text(q.query) + '<small>' + text(meta) + '</small></div>';
+      }
+      return out;
+    };
+    var h = rows('Searches that found nothing', skillSearches.misses, false)
+      + rows('Found, but not opened', skillSearches.unread, true);
+    return h ? '<div class="skill-searches">' + h + '</div>' : '';
   }
 
   /** One history row. A gateway change offers a restore only when it had something before it — the
@@ -5026,6 +5057,8 @@ const SCRIPT = `
     var h = '<div class="skill-head"><span class="skill-name">' + text(s.name) + '</span>';
     h += '<div class="skill-acts">';
     h += '<button type="button" data-sop="pin">' + (s.pinned ? 'Unpin' : 'Pin') + '</button>';
+    // Whether every agent sees this skill in its list. Only here: an agent cannot make that call.
+    if(s.status !== 'archived') h += '<button type="button" data-sop="resident">' + (s.resident ? 'Move to library' : 'Make resident') + '</button>';
     h += s.status === 'archived'
       ? '<button type="button" data-sop="restore">Restore</button>'
       : '<button type="button" class="danger" data-sop="archive">Delete</button>';
@@ -5070,6 +5103,7 @@ const SCRIPT = `
     }).then(function(d){
       skillsEnabled = d.enabled !== false;
       skillList = d.skills || [];
+      skillSearches = d.searches || null;
       renderSkillsList();
     }).catch(function(e){
       skillNote('Could not load skills: ' + ((e && e.message) || 'network error'));
@@ -5269,6 +5303,11 @@ const SCRIPT = `
       if(op === 'pin' && skillSel){
         var pinName = skillSel.skill.name, pinned = !skillSel.skill.pinned;
         skillOp({action:'pin', name:pinName, pinned:pinned}, function(){ openSkill(pinName); });
+        return;
+      }
+      if(op === 'resident' && skillSel){
+        var tierName = skillSel.skill.name, resident = !skillSel.skill.resident;
+        skillOp({action:'resident', name:tierName, resident:resident}, function(){ openSkill(tierName); });
         return;
       }
       return;

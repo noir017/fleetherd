@@ -21,7 +21,7 @@ import {
 } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes } from './skill-link.js';
-import { managedSkillsHome } from './managed-skills.js';
+import { deliveredTo, managedSkillsHome } from './managed-skills.js';
 import { activeSkillFiles, archivedSkillNames } from './skills-store.js';
 
 /**
@@ -260,19 +260,19 @@ export class RemoteHosts {
   async placeManagedSkills(host: RemoteHost, def: AgentDef, home: string, w: Welcome, dir?: string): Promise<void> {
     if (process.env.TALKCODE_NO_SKILL_LINK) return;
     const owned = managedSkillsHome(home);
-    await this.placeActiveManagedSkills(host, skillHomes(def.harness, home, def.command), owned, w, dir);
+    await this.placeActiveManagedSkills(host, def, home, owned, w, dir);
     await this.retireManagedSkills(host, home, owned, w, dir);
   }
 
-  /** The active skills: files once per version, links once per harness directory. */
-  private async placeActiveManagedSkills(
-    host: RemoteHost,
-    homes: Array<{ dir: string; requires: string }>,
-    owned: string,
-    w: Welcome,
-    dir?: string
-  ): Promise<void> {
+  /**
+   * The active skills that reach this agent: files once per version, links once per harness
+   * directory — for a resident skill. A library skill gets its files and no link, and a link it
+   * had while resident is taken back (managed-skills.ts applyManagedSkills says why).
+   */
+  private async placeActiveManagedSkills(host: RemoteHost, def: AgentDef, home: string, owned: string, w: Welcome, dir?: string): Promise<void> {
+    const homes = skillHomes(def.harness, home, def.command);
     for (const skill of activeSkillFiles(dir)) {
+      if (!deliveredTo(skill, def)) continue;
       const key = `${host.id}@${w.instance}@${skill.name}`;
       this.managedArchived.delete(key);
       const copy = `${owned}/${skill.name}`;
@@ -288,6 +288,10 @@ export class RemoteHosts {
         console.warn(`[skills] ${host.id}: could not place "${skill.name}":`, e instanceof Error ? e.message : e);
         continue;
       }
+      if (!skill.meta.resident) {
+        await this.unlinkLibrarySkill(host, home, key, skill.name, owned);
+        continue;
+      }
       for (const h of homes) {
         const linkKey = `${key}@${h.dir}`;
         if (this.managedLinks.get(linkKey) === 'linked' || this.managedLinks.get(linkKey) === 'occupied') continue;
@@ -298,6 +302,20 @@ export class RemoteHosts {
         } catch (e) {
           console.warn(`[skills] ${host.id}: could not link "${skill.name}" for ${h.dir}:`, e instanceof Error ? e.message : e);
         }
+      }
+    }
+  }
+
+  /** A library skill's links, taken back from every directory once; remembered so a spawn costs nothing. */
+  private async unlinkLibrarySkill(host: RemoteHost, home: string, key: string, name: string, owned: string): Promise<void> {
+    for (const d of allSkillDirs(home)) {
+      const linkKey = `${key}@${d}`;
+      if (this.managedLinks.get(linkKey) === 'absent') continue;
+      try {
+        await this.unlinkManaged(host, d, name, owned);
+        this.managedLinks.set(linkKey, 'absent');
+      } catch (e) {
+        console.warn(`[skills] ${host.id}: could not take back "${name}" from ${d}:`, e instanceof Error ? e.message : e);
       }
     }
   }

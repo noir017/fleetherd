@@ -26,10 +26,9 @@ afterEach(() => {
 });
 
 /**
- * History lists newest first by an id that starts with the millisecond, and two writes in the same
- * millisecond tie on it; the random suffix then decides. On a fast CI runner a write and the removal
- * right after it landed in one millisecond and came back in either order, so the tests that read
- * the order put a second between their writes. Only `Date` is faked: the store's fs calls are real.
+ * Moves the clock a second between writes, so each commit's date is distinct and the history reads
+ * the way it happened. (The order itself is git's, newest commit first.) Only `Date` is faked: the
+ * store's fs and git calls are real.
  */
 const clock = (): (() => void) => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -153,5 +152,30 @@ describe('skills panel', () => {
       skills: [expect.objectContaining({ pinned: false })],
     });
     expect(await panel.op({ action: 'show', name: 'nope' })).toMatchObject({ ok: false, error: expect.stringMatching(/no skill named/) });
+  });
+
+  it('makes a skill resident and back as the person, and refuses an unknown one with the store\'s words', async () => {
+    const panel = build();
+    await panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
+    const made = await panel.op({ action: 'resident', name: 'deploy-check', resident: true });
+    expect(made).toMatchObject({ ok: true, skills: [expect.objectContaining({ name: 'deploy-check', resident: true })] });
+    const history = detail(await panel.op({ action: 'show', name: 'deploy-check' })).history;
+    expect(history[0]).toMatchObject({ action: 'resident', author: 'talkcode-web' });
+    expect(await panel.op({ action: 'resident', name: 'deploy-check', resident: false })).toMatchObject({
+      ok: true,
+      skills: [expect.objectContaining({ resident: false })],
+    });
+    expect(await panel.op({ action: 'resident', name: 'nope', resident: true })).toMatchObject({ ok: false, error: expect.stringMatching(/no skill named/) });
+  });
+
+  it('lists the searches worth a look, from the query log', () => {
+    fs.writeFileSync(
+      path.join(dir, 'skills-queries.jsonl'),
+      `${JSON.stringify({ kind: 'search', at: '2026-11-05T00:00:00.000Z', conversation: 'c1', agent: 'cx', query: 'rotate a certificate', hits: [] })}\n`
+    );
+    expect(build().searches!()).toEqual({
+      misses: [{ at: '2026-11-05T00:00:00.000Z', query: 'rotate a certificate', agent: 'cx', hits: [] }],
+      unread: [],
+    });
   });
 });

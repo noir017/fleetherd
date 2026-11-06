@@ -144,7 +144,6 @@ import {
   removeSkillFile,
   restoreSkill,
   revertSkill,
-  showSkill,
   skillHistory,
   writeSkillFile,
   type SkillChangeBy,
@@ -162,6 +161,8 @@ import { ScheduleService } from './schedule-service.js';
 import { panelTasks } from './schedule-panel.js';
 import { buildSkillsPanel } from './skills-panel.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
+import { SkillLibrary, type LibraryAsker } from './skill-library.js';
+import { skillHarnessOf } from './managed-skills.js';
 import { commandSurface, Delegation } from './delegation.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { DRAIN_LIMIT_MS, describeInProgress, nothingInProgress, whenIdle, type InProgress } from './restart-drain.js';
@@ -732,6 +733,14 @@ interface PendingAgentMenu {
   ref?: MessageRef;
 }
 
+const SKILL_READS = ['list', 'search', 'categories', 'show', 'history'] as const;
+type SkillRead = (typeof SKILL_READS)[number];
+
+/** The `talkcode skills` actions that only read, which need no pull, no commit and no push. */
+function isSkillRead(action: Extract<IpcAction, { kind: 'skills' }>['action']): action is SkillRead {
+  return (SKILL_READS as readonly string[]).includes(action);
+}
+
 /** Main daemon: wires platform, session registry, and IPC server together. `talkcode start` constructs and run()s it. */
 export class Daemon {
   private registry: ConversationRegistry;
@@ -806,6 +815,8 @@ export class Daemon {
    */
   private readonly skillsRepo = new SkillsRepo({ dir: configDir(), remote: () => skillsRemoteOf(this.config) });
   private skillsSyncStop: (() => void) | undefined;
+  /** Search and read for the `skills` tool: the index, the per-conversation "already read" record. */
+  private readonly skillLibrary = new SkillLibrary();
   /** Cancel handle for installed signal handlers (removed on stop to avoid leak + test cross-talk). */
   private signalCleanup: (() => void) | null = null;
   /** Set while a SIGTERM waits for the work in progress (beginDrain); cancels that wait. */
@@ -1029,6 +1040,7 @@ export class Daemon {
         notify: (lane, text) => this.notifyReview(lane, text),
         writeSkills: (fn) => this.skillsRepo.write(fn),
         standing: () => commonInstructions(),
+        searchMisses: (conversation, since) => this.skillLibrary.missesOf(conversation, since),
       });
     }
     // Before anything can start an agent: an agent with `host:` reaches its machine through this.
@@ -1549,6 +1561,21 @@ export class Daemon {
     this.skillsSyncStop = this.skillsRepo.start();
   }
 
+  /**
+   * Who is asking the skill library: the conversation (and its generation, which `/new` moves on),
+   * the agent answering it, and where that agent runs — what decides which skills reach it.
+   */
+  private skillAsker(conversationId: ConversationId | undefined): LibraryAsker {
+    const agent = conversationId ? (this.registry.boundAgentOf(conversationId) ?? this.config.routing.default) : this.config.routing.default;
+    const def = findAgent(this.config, agent);
+    return {
+      agent,
+      host: def?.host ?? 'local',
+      harness: def ? skillHarnessOf(def) : 'claude',
+      ...(conversationId ? { conversation: conversationId, generation: this.store?.conversationGeneration(conversationId) ?? 0 } : {}),
+    };
+  }
+
   /** Who a `talkcode skills` write is from: the agent answering the conversation, for the commit. */
   private skillChangeBy(conversationId: ConversationId | undefined): SkillChangeBy {
     if (!conversationId) return { kind: 'agent' };
@@ -1575,11 +1602,8 @@ export class Daemon {
     const name = (): string => need(action.name, 'a <name>');
     const by = this.skillChangeBy(conversationId);
     const write = <T>(fn: () => T): Promise<T> => this.skillsRepo.write(fn);
+    if (isSkillRead(action.action)) return this.readSkills(action.action, action, conversationId);
     switch (action.action) {
-      case 'list':
-        return { skills: listSkills() };
-      case 'show':
-        return showSkill(name(), action.file);
       case 'create': {
         const source = conversationId
           ? {
@@ -1613,13 +1637,36 @@ export class Daemon {
         return pinSkill(name(), true);
       case 'unpin':
         return pinSkill(name(), false);
-      case 'history':
-        return { history: skillHistory(name()) };
       case 'revert':
         return write(() => revertSkill(name(), need(action.id, 'a history <id>'), undefined, Date.now(), by));
       default: {
         const _exhaustive: never = action.action;
         throw new Error(`unknown skills action: ${_exhaustive}`);
+      }
+    }
+  }
+
+  /** The `talkcode skills` actions that only read: the store's records, and the library's search and show. */
+  private readSkills(read: SkillRead, action: Extract<IpcAction, { kind: 'skills' }>, conversationId: ConversationId | undefined): unknown {
+    const name = (): string => {
+      if (!action.name) throw new Error(`skills ${read} needs a <name>`);
+      return action.name;
+    };
+    switch (read) {
+      case 'list':
+        return { skills: listSkills() };
+      case 'search':
+        if (!action.query) throw new Error('skills search needs what you are looking for');
+        return this.skillLibrary.search(action.query, this.skillAsker(conversationId));
+      case 'categories':
+        return this.skillLibrary.categories();
+      case 'show':
+        return this.skillLibrary.show(name(), action.file, this.skillAsker(conversationId), action.again === true);
+      case 'history':
+        return { history: skillHistory(name()) };
+      default: {
+        const _exhaustive: never = read;
+        throw new Error(`unknown skills read: ${_exhaustive}`);
       }
     }
   }

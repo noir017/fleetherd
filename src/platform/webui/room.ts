@@ -75,6 +75,7 @@ import type {
   SkillPanelOp,
   SkillPanelResult,
   SkillsPanel,
+  SkillPanelSearches,
 } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -704,10 +705,14 @@ export class WebRoom {
     this.skillsPanel = panel;
   }
 
-  /** Every managed skill, for the page. `enabled: false` when the daemon offered none. */
-  skills(): { enabled: boolean; skills: SkillPanelEntry[] } {
+  /**
+   * Every managed skill, for the page, and the searches of the library worth a look. `enabled:
+   * false` when the daemon offered none.
+   */
+  skills(): { enabled: boolean; skills: SkillPanelEntry[]; searches?: SkillPanelSearches } {
     if (!this.skillsPanel) return { enabled: false, skills: [] };
-    return { enabled: true, skills: this.skillsPanel.list() };
+    const searches = this.skillsPanel.searches?.();
+    return { enabled: true, skills: this.skillsPanel.list(), ...(searches ? { searches } : {}) };
   }
 
   /** Carry out one skills operation, with the fresh list (and detail, for `show`). */

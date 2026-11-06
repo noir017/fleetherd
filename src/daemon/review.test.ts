@@ -985,6 +985,8 @@ describe('review prompt', () => {
     // Neither optional section appears when there is nothing to put in it.
     expect(prompt).not.toContain('已经写过的技能文件');
     expect(prompt).not.toContain('用户已有的要求');
+    // Nothing searched for: no section for it.
+    expect(prompt).not.toContain('搜过、没找到');
   });
 
   it('names the skill files the conversation wrote, and the rules the person already has', () => {
@@ -1002,6 +1004,20 @@ describe('review prompt', () => {
     expect(prompt).toContain('「用户已有的要求」里有的不要再写');
     // The conversation stays last.
     expect(prompt.endsWith('用户：整理成 skill')).toBe(true);
+  });
+
+  it('lists what the agents searched the library for and did not find, before the conversation', () => {
+    const prompt = buildReviewPrompt({
+      title: 't',
+      messages: [{ at: '2026-11-04T09:00:00.000Z', role: 'user', text: '续一下证书' }],
+      dropped: 0,
+      catalog: [],
+      used: [],
+      searchedFor: ['rotate the vpn certificate', '续证书'],
+    });
+    expect(prompt).toContain('智能体在技能库里搜过、没找到的\n- rotate the vpn certificate\n- 续证书');
+    expect(prompt.indexOf('搜过、没找到')).toBeLessThan(prompt.indexOf('用户：续一下证书'));
+    expect(prompt).toContain('talkcode-resident 只有人能改');
   });
 });
 

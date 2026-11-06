@@ -5,6 +5,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A skill library agents search, instead of every skill in every agent's context.** A skill is
+  now resident (`talkcode-resident: "true"` in its frontmatter's `metadata`) or in the library.
+  Resident skills are linked as before; library skills are delivered to every host but linked
+  nowhere, and an agent finds them with a new `skills` native tool — `search` for what it needs, in
+  a few words, `show` to read one. Every skill linked meant every description in every request of
+  every agent, which stops scaling at a few dozen; one tool definition does not grow. The search is
+  BM25 over name, description, category and body, with Chinese matched by two-character words, and
+  only over the skills that reach the asking agent (`talkcode-hosts`, `talkcode-harnesses`). The
+  tool's description ends with what the library holds per category, so an agent knows a search is
+  worth making; `show` of a version the conversation already read answers "unchanged" until `/new`
+  or `--again`. Only a person makes a skill resident — the web UI's new **Make resident** / **Move to
+  library**, or a commit — and an agent's or the review's patch that changes that line is refused,
+  so nothing an agent writes reaches every other agent's context by itself. A resident description
+  is held to 120 characters.
+- **Searches that found nothing are kept and shown.** The web UI's skills page lists them, with the
+  searches whose hits nobody opened, and the automatic review is handed the ones from the
+  conversation it reviews — the clearest sign of a skill worth writing is an agent that looked for
+  it.
+
 ### Changed
 
 - **A sub-agent card now says who it went to, on the first line and in bold.** Both messages the

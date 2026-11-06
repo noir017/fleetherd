@@ -248,6 +248,8 @@ export interface ReviewDeps {
   writeSkills?: <T>(fn: () => T) => Promise<T>;
   /** What every agent is told (`instructions/common.md`), read per review; see PromptInput.standing. */
   standing?: () => string | undefined;
+  /** What this conversation's agents searched the library for since a time and found nothing. */
+  searchMisses?: (conversation: string, sinceMs: number) => string[];
   run?: ReviewRunner;
   log?: (message: string) => void;
 }
@@ -412,7 +414,7 @@ export class ReviewService {
   private async runOne(candidate: ReviewCandidate, plan: Plan, reviewer: AgentDef, now: number): Promise<void> {
     let prompt: string;
     try {
-      prompt = this.promptFor(plan);
+      prompt = this.promptFor(plan, candidate.key);
     } catch (e) {
       // Building the prompt reads the skill library and every skill the conversation used. A
       // failure there — an unreadable directory, a broken `SKILL.md` — is a failed review like any
@@ -494,8 +496,12 @@ export class ReviewService {
   }
 
   /** Build the prompt: rules, catalog, the skills this conversation used, then the conversation. */
-  private promptFor(plan: Plan): string {
+  private promptFor(plan: Plan, key: string): string {
     const dir = this.deps.skillsDir;
+    // The misses since the window's first message: searches from before it were about turns this
+    // review is not reading, and an earlier review already saw them.
+    const since = Date.parse(plan.window.messages[0]?.at ?? '') || 0;
+    const searchedFor = this.deps.searchMisses?.(key, since) ?? [];
     const catalog = listSkills(dir)
       .filter((s) => s.status !== 'archived')
       .map((s): PromptSkill => ({ name: s.name, version: s.version, description: s.description }));
@@ -521,6 +527,7 @@ export class ReviewService {
       used,
       written: writtenSkillFiles(calls),
       ...this.standing(),
+      ...(searchedFor.length ? { searchedFor } : {}),
     });
   }
 

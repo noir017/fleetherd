@@ -35,9 +35,10 @@ Plain text streams back automatically. The gateway adds **nothing** to what the 
 preamble, no reminder about where it is running; it gets your words and your attachments. What
 it can do beyond answering reaches it the way any capability does, through its own harness:
 
-- **Two native tools**, `send_file` and `schedule`, on every ACP agent (Claude Code, Codex,
-  OpenCode, Antigravity, …): the daemon hands each session a small MCP server, so they sit in the agent's tool
-  list like any other.
+- **Three native tools**, `send_file`, `schedule` and `skills`, on every ACP agent (Claude Code,
+  Codex, OpenCode, Antigravity, …): the daemon hands each session a small MCP server, so they sit in
+  the agent's tool list like any other. `skills` searches and reads the
+  [skill library](skills.md#resident-and-library) — the skills not in the agent's own list.
 - **A skill** for the rest — posting to other chats, reading history, replies, edits, threads,
   button questions, voice transcripts. The daemon links the bundled [skill](../skill/SKILL.md) where each harness
   reads skills — `~/.claude/skills` for Claude Code, `~/.agents/skills` for Codex and OpenCode,
@@ -48,8 +49,8 @@ it can do beyond answering reaches it the way any capability does, through its o
   skill, `super`, is linked beside it: how to split a job across [sub-agents](sub-agents.md) when
   you write `/super`.
 
-Antigravity (`agy`) has the two tools too, because it runs as `agy acp`. See
-[`src/ipc/README.md`](../src/ipc/README.md) for why exactly two tools, and how the prompt injection
+Antigravity (`agy`) has the tools too, because it runs as `agy acp`. See
+[`src/ipc/README.md`](../src/ipc/README.md) for why exactly these tools, and how the prompt injection
 this replaced was retired.
 
 **Pictures arrive as pictures.** A screenshot or photo you send is put in front of Claude Code,

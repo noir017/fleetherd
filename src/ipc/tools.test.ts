@@ -12,10 +12,27 @@ const tool = (name: string) => findNativeTool(name)!;
 const props = (name: string) => toolInputSchema(tool(name)).properties as Record<string, Record<string, unknown>>;
 
 describe('NATIVE_TOOLS', () => {
-  it('stays at the two commands an agent can neither do without nor guess exist', () => {
+  it('stays at the three commands an agent can neither do without nor guess exist', () => {
     // Every tool here is carried in every request on every harness; widening this list is a
-    // decision, not a refactor (see the header of tools.ts).
-    expect(NATIVE_TOOLS.map((t) => t.name)).toEqual(['send_file', 'schedule']);
+    // decision, not a refactor (see the header of tools.ts). The third, `skills`, was added
+    // 2026-11-06: a library skill is in no list, so an agent cannot guess it is there.
+    expect(NATIVE_TOOLS.map((t) => t.name)).toEqual(['send_file', 'schedule', 'skills']);
+  });
+
+  it('offers only search and show of the skills command, and none of its write options', () => {
+    const skills = NATIVE_TOOLS.find((t) => t.name === 'skills')!;
+    const schema = toolInputSchema(skills) as { properties: Record<string, { enum?: string[] }>; required: string[] };
+    expect(Object.keys(schema.properties).sort()).toEqual(['action', 'file', 'name']);
+    expect(schema.properties.action!.enum).toEqual(['search', 'show']);
+    expect(toolAction(skills, { action: 'search', name: 'deploy a service' })).toEqual({ kind: 'skills', action: 'search', query: 'deploy a service' });
+    expect(toolAction(skills, { action: 'show', name: 'deploy-check', file: 'scripts/check.sh' })).toEqual({
+      kind: 'skills',
+      action: 'show',
+      name: 'deploy-check',
+      file: 'scripts/check.sh',
+    });
+    expect(() => toolAction(skills, { action: 'create', name: 'x' })).toThrow(/must be one of search, show/);
+    expect(() => toolAction(skills, { action: 'show', name: 'x', content: 'y' })).toThrow(/unknown parameter/);
   });
 
   it('names a command that exists, and describes every positional its usage declares', () => {

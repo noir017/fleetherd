@@ -206,6 +206,7 @@ export const SkillOpRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('archive'), name: SkillName }).strict(),
   z.object({ action: z.literal('restore'), name: SkillName }).strict(),
   z.object({ action: z.literal('pin'), name: SkillName, pinned: z.boolean() }).strict(),
+  z.object({ action: z.literal('resident'), name: SkillName, resident: z.boolean() }).strict(),
   z.object({ action: z.literal('revert'), name: SkillName, id: SkillHistoryId }).strict(),
 ]);
 
