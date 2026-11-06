@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Sub-agent confirmation can ask each agent only once per conversation.** `delegation.confirm` —
+  and `/setting delegation` — gained a middle tier, `first`. The first sub-task an agent is handed
+  in a conversation still waits for Start on the card; once that card has been confirmed, later
+  sub-tasks for that agent there start at once and post the record card, and a batch that mixes
+  confirmed and new agents starts the former while putting only the latter on the card. The memory
+  is the daemon's process, per conversation: a restart or another conversation asks again, and a
+  sub-agent's own topic still asks every time whatever the tier. `on` and `off` keep their meaning,
+  including in existing config files. [→](docs/sub-agents.md)
+
 ## [2.38.1] - 2026-11-06
 
 ### Fixed

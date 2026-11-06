@@ -493,6 +493,132 @@ describe('Delegation: with confirmation off', () => {
   });
 });
 
+describe('Delegation: confirming each agent only the first time', () => {
+  it('asks once in a conversation, then starts that agent at once and posts the record card', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cc', 'first'));
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.cards).toHaveLength(1);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+
+    // The same agent, now confirmed here: no second card, it starts before task-new returns.
+    const res = (await r.d.handle(P, task('cc', 'second'))) as TaskNewResult;
+    expect(r.cards).toHaveLength(1);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+    expect(r.calls.filter(([c]) => c === 'openTask').at(-1)![1]).toMatchObject({ text: 'second' });
+    expect(res.result).toContain('running now');
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const card = r.posted.find((p) => p.text.includes('started a sub-agent'))!;
+    expect(card.text).toContain('once per agent in each conversation');
+    expect(card.text).toContain('/setting delegation on');
+  });
+
+  it('still asks for a different agent, and asks the same agent again in another conversation', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    await r.d.handle(P, task('cx', 'other agent'));
+    // A different agent is not confirmed here: it goes on a card rather than starting.
+    expect(r.calls.filter(([c]) => c === 'openTask').map(([, o]) => (o as { agentId: string }).agentId)).toEqual(['cc']);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(2);
+    expect(r.cards[1]!.text).toContain('cx');
+
+    // Another conversation has its own memory: cc is new there, so it asks.
+    const other = 'web#main#b0000000';
+    r.bound.set(other, 'cc');
+    await r.d.handle(other, task('cc', 'somewhere else'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(3);
+    expect(r.cards[2]!.text).toContain('somewhere else');
+  });
+
+  it('starts the confirmed agents of a mixed batch and puts only the new ones on the card', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    const started = (await r.d.handle(P, task('cc', 'again'))) as TaskNewResult;
+    await r.d.handle(P, task('cx', 'new one'));
+    expect(started.result).toContain('running now');
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(2);
+    expect(r.cards[1]!.text).toContain('cx');
+    expect(r.cards[1]!.text).not.toContain('again');
+  });
+
+  it('remembers nothing when the card is cancelled', async () => {
+    const r = rig({ answer: 'Cancel' });
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(1);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+
+    // Still unconfirmed: the next proposal is asked again, not started at once.
+    await r.d.handle(P, task('cc', 'second'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(2);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+  });
+
+  it("asks every time in a sub-agent's own topic, even for an agent confirmed in its parent", async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+
+    const child = 'web#main#d0000000';
+    r.parents.set(child, P);
+    r.bound.set(child, 'cc');
+    const res = (await r.d.handle(child, task('cc', 'dig deeper'))) as TaskNewResult;
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+    expect(res.result).toContain('Nothing starts until they confirm');
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(2);
+    expect(r.cards[1]!.text).toContain('dig deeper');
+  });
+
+  it('forgets what was confirmed when the gateway restarts', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    // A restart builds a new Delegation over the same config; a surviving map would be the bug.
+    const restarted = new Delegation({ ...(r.d as unknown as { deps: DelegationDeps }).deps });
+    await restarted.handle(P, task('cc', 'after restart'));
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(2);
+  });
+});
+
 describe('Delegation: acting on the topics it opened, and only those', () => {
   async function withChild() {
     const r = rig();

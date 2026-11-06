@@ -24,9 +24,9 @@ import { UPDATE_SENDER } from './turn-runner.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
- * of its own nested under it, running in parallel — once the person has confirmed them, unless
- * `delegation.confirm` is off, in which case each starts as it is proposed and a card lists what
- * started. `/super` (the bundled skill of that name) is the person asking for exactly that; any
+ * of its own nested under it, running in parallel — once the person has confirmed them. That gate
+ * has three tiers (`delegation.confirm`): wait every time, wait once per agent per conversation,
+ * or never. `/super` (the bundled skill of that name) is the person asking for exactly that; any
  * agent may do it unprompted, because by default nothing starts without the person's say-so.
  *
  * ── Why ─────────────────────────────────────────────────────────────────────────────────────────
@@ -41,8 +41,10 @@ import { UPDATE_SENDER } from './turn-runner.js';
  *
  * ── What is structure and what is instruction ────────────────────────────────────────────────────
  * Structure, enforced here: by default nothing starts until the person taps Start on the card that
- * lists every sub-task in full (the agent cannot start one itself, whatever it is told); with
- * `delegation.confirm` off, `task-new` opens each sub-task at once and a card — the same list,
+ * lists every sub-task in full (the agent cannot start one itself, whatever it is told). With
+ * `delegation.confirm: 'first'`, only an agent's first sub-task in a conversation goes on that
+ * card; once the person has confirmed it there, later ones start at once. With
+ * `delegation.confirm: false`, `task-new` opens each sub-task at once and a card — the same list,
  * without buttons — is posted for the record. A conversation acts only on topics it opened; a
  * sub-agent's topic is an ordinary topic the person can walk into; and the relation is the
  * platform's own record (`PlatformAdapter.parentOf`), so deleting a topic ends it. The switch is a
@@ -244,11 +246,18 @@ export class Delegation {
   /** The card on screen per proposing conversation: a newer one replaces it. */
   private readonly onScreen = new Map<ConversationId, AbortController>();
   /**
-   * Sub-tasks started without a confirmation (`delegation.confirm: false`), per conversation,
-   * gathered for PROPOSAL_GATHER_MS so a burst is one card. Nothing waits on it — the work is
-   * already running — so unlike `gathering` it is never dropped by the person writing.
+   * Sub-tasks started without a confirmation (`delegation.confirm: false`, or `'first'` once this
+   * conversation has confirmed that agent), per conversation, gathered for PROPOSAL_GATHER_MS so a
+   * burst is one card. Nothing waits on it — the work is already running — so unlike `gathering` it
+   * is never dropped by the person writing.
    */
   private readonly started = new Map<ConversationId, { opened: OpenedTask[]; failed: string[]; cancel: () => void }>();
+  /**
+   * Agents this conversation has confirmed at least once, for `delegation.confirm: 'first'`. In
+   * memory only, and per proposing conversation: a restart asks again, and another conversation
+   * asks for itself. A sub-agent's topic never reads or writes it — it asks every time.
+   */
+  private readonly confirmedOnce = new Map<ConversationId, Set<string>>();
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
   private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void }>();
   /**
@@ -270,6 +279,7 @@ export class Delegation {
     for (const c of this.onScreen.values()) c.abort();
     this.gathering.clear();
     this.started.clear();
+    this.confirmedOnce.clear();
     this.updates.clear();
     this.onScreen.clear();
     this.handedOut.clear();
@@ -354,8 +364,8 @@ export class Delegation {
   }
 
   /**
-   * Add one sub-task to the proposal waiting in this conversation — or start it at once when
-   * `delegation.confirm` is off.
+   * Add one sub-task to the proposal waiting in this conversation — or start it at once when this
+   * agent needs no confirmation here.
    *
    * With confirmation on, the proposal lives until the person answers it: while the card is on
    * screen, another `task-new` re-renders that same card with the new item on it. Batching used to be
@@ -363,9 +373,11 @@ export class Delegation {
    * one tool call per step — got three cards, each replacing the one before, and the person's Start
    * covered only the last.
    *
-   * With it off, the sub-task is opened before this returns, so the answer can say it is running.
-   * The card is still posted, without buttons, so the person sees what an agent started on its own;
-   * it gathers a burst the same way, only for the record.
+   * A sub-task starts at once in two cases, and the answer says it is running. `delegation.confirm:
+   * false` starts all of them; `'first'` starts the ones whose agent this conversation has already
+   * confirmed, so a batch of mixed agents both starts some and puts the rest on a card. In either
+   * case the card is still posted, without buttons, so the person sees what an agent started on its
+   * own; it gathers a burst the same way, only for the record.
    */
   private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): Promise<TaskNewResult> {
     const def = findAgent(this.deps.config, a.agent);
@@ -378,7 +390,7 @@ export class Delegation {
       ...(a.cwd ? { cwd: a.cwd } : {}),
       ...(a.title ? { title: a.title } : {}),
     };
-    if (!this.deps.config.delegation.confirm && !this.nested(here)) {
+    if (this.startsAtOnce(here, item.agent)) {
       const { opened, failed } = await this.start(here, [item]);
       this.queueStartedCard(here.key, opened, failed);
       // The card's position, the same fact `item` carries when a confirmation card is gathering.
@@ -413,6 +425,32 @@ export class Delegation {
    */
   private nested(here: Place): boolean {
     return here.adapter.parentOf?.(here.address) !== undefined;
+  }
+
+  /**
+   * Whether this proposal starts without a card: the switch is `false`, or it is `'first'` and this
+   * conversation has already confirmed that agent once.
+   *
+   * A sub-agent's own topic never starts at once, whatever the switch says (AGENTS.md invariant 6):
+   * it asks every time, so a chain of agents cannot spend the operator's machines without a tap.
+   */
+  private startsAtOnce(here: Place, agent: string): boolean {
+    if (this.nested(here)) return false;
+    const confirm = this.deps.config.delegation.confirm;
+    if (confirm === false) return true;
+    return confirm === 'first' && this.confirmedOnce.get(here.key)?.has(agent) === true;
+  }
+
+  /**
+   * The person tapped Start on a card that included these agents: under `'first'`, this conversation
+   * will not ask about them again. Recorded only in this tier — switching back to `on` restores the
+   * tap for everything, and the set is consulted only while the tier is `'first'`.
+   */
+  private rememberConfirmed(key: ConversationId, items: Item[]): void {
+    if (this.deps.config.delegation.confirm !== 'first') return;
+    const known = this.confirmedOnce.get(key) ?? new Set<string>();
+    for (const item of items) known.add(item.agent);
+    this.confirmedOnce.set(key, known);
   }
 
   /**
@@ -459,6 +497,7 @@ export class Delegation {
       return;
     }
     // Confirmed. Anything proposed while this card was up was not on it, so it gets its own card.
+    this.rememberConfirmed(key, items);
     g.items = g.items.filter((item) => !items.includes(item));
     if (g.items.length) void this.putUp(key);
     else this.gathering.delete(key);
@@ -597,7 +636,12 @@ export class Delegation {
       lines.push(`- ${name} — ${t.agent}${where}${dir} · ${t.topic}`);
     }
     if (failed.length) lines.push('', `Could not start ${failed.length}:`, ...failed);
-    lines.push('', '`/setting delegation on` makes new sub-tasks wait for Start again.');
+    lines.push(
+      '',
+      this.deps.config.delegation.confirm === 'first'
+        ? 'Here confirmation is asked once per agent in each conversation; `/setting delegation on` asks every time.'
+        : '`/setting delegation on` makes new sub-tasks wait for Start again.'
+    );
     return lines.join('\n');
   }
 

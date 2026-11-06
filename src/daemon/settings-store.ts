@@ -212,8 +212,9 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
       return;
     case 'delegation':
       // Live: Delegation.propose reads this per `task-new`, so the very next proposal follows it —
-      // including one an agent is about to make in the turn that asked for the change.
-      cfg.delegation.confirm = Boolean(value);
+      // including one an agent is about to make in the turn that asked for the change. `first` is
+      // the middle tier, so it is written as its own word rather than coerced to a boolean.
+      cfg.delegation.confirm = value === 'first' ? 'first' : Boolean(value);
       return;
     case 'idle':
       cfg.session.idleTimeoutMs = Number(value);

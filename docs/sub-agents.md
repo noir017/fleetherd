@@ -18,7 +18,9 @@ in parallel, and come back with one report — so you follow one topic instead o
 2. A card lists every part: the agent, its machine, the directory, and the full text of the task.
    **Nothing starts until you tap Start** — unless confirmation is off (`/setting delegation off`),
    in which case each part starts as it is proposed and the card is posted after it, listing what
-   started and where, with no Start button. That applies only where you talk to the agent directly:
+   started and where, with no Start button. The middle tier (`/setting delegation first`) asks once
+   per agent in a conversation: after you have confirmed that agent once here, its later parts
+   start at once. Both relaxed tiers apply only where you talk to the agent directly:
    in a sub-agent's own topic, `task-new` still puts up the card, so agents cannot open more agents
    without you. With confirmation on, to change something, write what instead of tapping, and it
    proposes again; the new card replaces the old one. A part that changes code is reviewed before
@@ -84,10 +86,14 @@ input mid-turn; elsewhere it waits for the turn to end, and the agent is told wh
   runs.
 - Any agent can propose sub-agents when you ask it to split work, without `/super`, and any
   configured agent can be one. The card waits for your tap by default.
-- `/setting delegation off` (or `delegation.confirm: false`) starts each sub-task as the agent
-  proposes it and posts the card afterwards as a record; `/setting delegation on` restores the tap.
-  It reaches only conversations you talk to directly — a sub-agent's own topic still confirms.
-  Only you can change it — no agent command reaches it.
+- `/setting delegation` has three tiers. `on` (the default) asks before every sub-task. `first`
+  asks once per agent in a conversation: after you tap Start on a card that included that agent,
+  later sub-tasks for it there start at once — a batch mixing confirmed and new agents starts the
+  former and puts only the latter on the card. That memory lives in the gateway's process and per
+  conversation, so a restart or another conversation asks again. `off` (or
+  `delegation.confirm: false`) starts every sub-task as the agent proposes it and posts the card
+  afterwards as a record. All three reach only conversations you talk to directly — a sub-agent's
+  own topic still confirms every time. Only you can change it — no agent command reaches it.
 - With agents on several [machines](remote-hosts.md), the agent prefers those on its own machine,
   which have the same checkouts and tools. A part that runs elsewhere shows `@ <host>` on the card.
 - `/super` is a skill the gateway links into each agent's skill directory, next to the `talkcode`

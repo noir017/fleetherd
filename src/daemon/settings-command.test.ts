@@ -783,19 +783,28 @@ describe('setting a value from the list screen', () => {
     throw new Error(`${rowLabel} has no inline control`);
   };
 
-  it('flips a switch in one tap: the file, the running daemon, and the list with a banner', async () => {
+  it('sets a choice in one tap: the file, the running daemon, and the list with a banner', async () => {
     const r = rig({ caps: { settingsScreen: true } });
     await r.send('/setting');
-    await r.click(control(r.menu().screen, 'Confirm sub-agent starts'));
+    await r.click(control(r.menu().screen, 'Confirm sub-agent starts', 'off'));
     expect(onDisk()['delegation']).toEqual({ confirm: false });
     expect(r.cfg.delegation.confirm).toBe(false);
     const after = r.screen().screen;
     if (after?.level !== 'list') throw new Error('not the list');
     expect(after.notice).toEqual({ tone: 'ok', text: expect.stringContaining('Confirm sub-agent starts → off') });
-    expect(after.rows.find((x) => x.label === 'Confirm sub-agent starts')?.control).toMatchObject({ kind: 'switch', on: false });
+    expect(after.rows.find((x) => x.label === 'Confirm sub-agent starts')?.control).toMatchObject({ kind: 'choice' });
     // And back, from the redrawn list's own id.
-    await r.click(control(after, 'Confirm sub-agent starts'));
+    await r.click(control(after, 'Confirm sub-agent starts', 'on'));
     expect(r.cfg.delegation.confirm).toBe(true);
+  });
+
+  it('writes the middle tier as its own word, not as a boolean', async () => {
+    const r = rig({ caps: { settingsScreen: true } });
+    await r.send('/setting');
+    await r.click(control(r.menu().screen, 'Confirm sub-agent starts', 'first'));
+    expect(r.cfg.delegation.confirm).toBe('first');
+    expect(onDisk()['delegation']).toEqual({ confirm: 'first' });
+    expect(r.screen().screen).toMatchObject({ notice: { tone: 'ok', text: expect.stringContaining('→ first') } });
   });
 
   it('writes a choice from the row, and says so when it is already the value', async () => {

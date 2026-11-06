@@ -629,20 +629,28 @@ export const ConfigSchema = z
     delegation: z
       .object({
         /**
-         * Whether `task-new` waits for the person to tap Start on a card listing every sub-task
-         * before any of them runs (the default), or starts each one as it is proposed and posts a
-         * card listing what started — without buttons — so the chat still shows it. Off applies
-         * only in a conversation the person talks to directly: in a sub-agent's own topic (one
-         * with a parent), `task-new` still puts up the card, so an agent cannot chain more agents
-         * without a tap.
+         * When `task-new` waits for the person to tap Start on a card listing every sub-task:
          *
-         * On by default because spawning an agent spends the operator's machines and quota, and
-         * the person is the only one who knows whether that part of the job is worth starting now.
-         * Turning it off is a decision for a deployment that trusts its agents with that spend.
-         * Only a person can change it: `/setting delegation` or this file. No reverse command
-         * reaches it — an agent can propose sub-tasks, never decide whether they need a tap.
+         * - `true` (the default) — every sub-task waits, every time.
+         * - `'first'` — an agent's first sub-task in a conversation waits; once the person has
+         *   tapped Start on a card that included it, later sub-tasks for that agent in that
+         *   conversation start at once and post the record card. Kept in memory only: a restart,
+         *   or another conversation, asks again.
+         * - `false` — every sub-task starts as it is proposed; the card is posted afterwards as a
+         *   record, without buttons.
+         *
+         * `'first'` and `false` apply only in a conversation the person talks to directly: in a
+         * sub-agent's own topic (one with a parent), `task-new` still puts up the card, so an agent
+         * cannot chain more agents without a tap.
+         *
+         * `true` is the default because spawning an agent spends the operator's machines and
+         * quota, and the person is the only one who knows whether that part of the job is worth
+         * starting now. Turning it off is a decision for a deployment that trusts its agents with
+         * that spend. Only a person can change it: `/setting delegation` or this file. No reverse
+         * command reaches it — an agent can propose sub-tasks, never decide whether they need a
+         * tap.
          */
-        confirm: z.boolean().default(true),
+        confirm: z.union([z.boolean(), z.literal('first')]).default(true),
       })
       .default({}),
 
