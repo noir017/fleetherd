@@ -59,6 +59,12 @@ import { WriteDroppedError } from './outbound-errors.js';
 /** Which lane a write belongs to; decides what may be dropped under congestion. */
 export type OutboundClass = 'reply' | 'progress' | 'typing';
 
+/**
+ * How often, at most, finished lanes are let go (see sweepIdle). A sweep walks every lane, so it is
+ * rationed by time rather than run on every write; until the next one a finished lane just waits.
+ */
+export const IDLE_SWEEP_MS = 60_000;
+
 export interface PacerClock {
   now(): number;
   /** Fire `fn` after `ms`; returns a cancel handle. */
@@ -124,6 +130,8 @@ export class OutboundPacer {
   /** Instance-wide buckets, keyed by PaceJob.instance. Same shape, no queue of their own. */
   private readonly instances = new Map<string, { tokens: number; lastRefill: number }>();
   private draining = false;
+  /** When sweepIdle last walked the lanes. */
+  private lastSweep = 0;
 
   constructor(
     private readonly opts: PacerOptions,
@@ -141,8 +149,9 @@ export class OutboundPacer {
     if (this.draining) {
       return Promise.reject(new WriteDroppedError('shutdown'));
     }
-    const lane = this.laneFor(job.key);
     const now = this.clock.now();
+    this.sweepIdle(now);
+    const lane = this.laneFor(job.key);
 
     // `typing` is the one class with no queue semantics at all: an indicator that arrives late is
     // worse than one that never arrives, and it self-expires anyway. Take a token or give up.
@@ -232,7 +241,34 @@ export class OutboundPacer {
     return { delivered, abandoned };
   }
 
+  /** How many chats hold a lane right now. For tests. */
+  laneCount(): number {
+    return this.lanes.size;
+  }
+
   // --- internal ---
+
+  /**
+   * Let go of every lane a fresh one would equal: nothing queued, nothing running or armed, no
+   * pause left, and a bucket back to full. A lane starts full (laneFor), so dropping one in that
+   * state changes nothing a later write could see — that condition is what makes this safe, not
+   * how long the lane has been quiet. Anything short of it is kept: a lane serving out a
+   * platform's retry-after must still be paused when the next write comes, and a half-spent
+   * bucket must not be handed a fresh burst.
+   *
+   * Without this every chat ever written to kept its lane for the life of the process — on the web
+   * UI, which paces each topic apart (paceByLane), one per topic, every sub-agent's and every
+   * scheduled run's included.
+   */
+  private sweepIdle(now: number): void {
+    if (now - this.lastSweep < IDLE_SWEEP_MS) return;
+    this.lastSweep = now;
+    for (const [key, lane] of this.lanes) {
+      if (lane.queue.length > 0 || lane.pumping || lane.cancelTimer || lane.pausedUntil > now) continue;
+      if (this.laneTokens(lane, now) < this.opts.burst) continue;
+      this.lanes.delete(key);
+    }
+  }
 
   private laneFor(key: string): Lane {
     let lane = this.lanes.get(key);

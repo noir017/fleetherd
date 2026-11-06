@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { WriteDroppedError } from './outbound-errors.js';
-import { OutboundPacer, type PacerClock, type PacerOptions } from './outbound-pacer.js';
+import { IDLE_SWEEP_MS, OutboundPacer, type PacerClock, type PacerOptions } from './outbound-pacer.js';
 
 /** Manual clock: time only moves when a test says so, and timers fire only when it asks. */
 interface FakeClock extends PacerClock {
@@ -393,5 +393,59 @@ describe('OutboundPacer — drain', () => {
 
     const err = (await dropped(pacer.submit(job([], 'late')))) as WriteDroppedError;
     expect(err.reason).toBe('shutdown');
+  });
+});
+
+describe('OutboundPacer — idle lanes', () => {
+  it('lets go of a finished lane once its bucket is full again', async () => {
+    // The web UI paces each topic apart, so every topic ever written to used to keep a lane.
+    const clock = makeClock();
+    const pacer = new OutboundPacer(makeOpts({ burst: 2, ratePerSec: 1 }), clock);
+    const log: string[] = [];
+    for (let i = 0; i < 50; i++) void pacer.submit(job(log, `t${i}`, { key: `web:main/t${i}` }));
+    await clock.settle();
+    expect(log).toHaveLength(50);
+    expect(pacer.laneCount()).toBe(50);
+
+    await clock.advanceTo(IDLE_SWEEP_MS);
+    void pacer.submit(job(log, 'next', { key: 'web:main/new' }));
+    await clock.settle();
+    expect(pacer.laneCount()).toBe(1);
+  });
+
+  it('keeps a lane serving out a pause, and the pause still holds', async () => {
+    const clock = makeClock();
+    const pacer = new OutboundPacer(makeOpts({ burst: 5, ratePerSec: 5 }), clock);
+    const log: string[] = [];
+    pacer.penalize('tg:1', 229_000);
+
+    await clock.advanceTo(IDLE_SWEEP_MS);
+    void pacer.submit(job(log, 'other', { key: 'tg:2' })); // a write elsewhere runs the sweep
+    await clock.settle();
+    expect(pacer.pausedForMs('tg:1')).toBe(229_000 - IDLE_SWEEP_MS);
+
+    void pacer.submit(job(log, 'held', { key: 'tg:1' }));
+    await clock.advanceTo(228_000);
+    expect(log).toEqual(['other']);
+    await clock.advanceTo(230_000);
+    expect(log).toEqual(['other', 'held']);
+  });
+
+  it('keeps a lane whose bucket is still refilling, so it is not handed a fresh burst', async () => {
+    const clock = makeClock();
+    // One token per 20 s: a minute after spending all five, three are back.
+    const pacer = new OutboundPacer(makeOpts({ burst: 5, ratePerSec: 0.05 }), clock);
+    const log: string[] = [];
+    for (let i = 0; i < 5; i++) void pacer.submit(job(log, `a${i}`, { key: 'tg:1' }));
+    await clock.settle();
+    expect(log).toHaveLength(5);
+
+    await clock.advanceTo(IDLE_SWEEP_MS + 1);
+    void pacer.submit(job(log, 'other', { key: 'tg:2' }));
+    await clock.settle();
+    for (let i = 0; i < 5; i++) void pacer.submit(job(log, `b${i}`, { key: 'tg:1' }));
+    await clock.settle();
+    // A lane dropped here would have come back full and sent all five at once.
+    expect(log.filter((n) => n.startsWith('b'))).toEqual(['b0', 'b1', 'b2']);
   });
 });
