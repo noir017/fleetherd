@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gitSync } from './skills-git.js';
 import {
   MAX_SKILL_BYTES,
+  activeSkillFiles,
   archiveSkill,
   archivedSkillNames,
   createSkill,
@@ -12,6 +14,7 @@ import {
   patchSkill,
   pinSkill,
   removeSkillFile,
+  repoRoot,
   restoreSkill,
   revertSkill,
   showSkill,
@@ -62,8 +65,8 @@ describe('rules', () => {
     }
   });
 
-  it('refuses a SKILL.md over 20 KB, or one a harness would not list', () => {
-    expect(() => create('deploy-check', { body: 'x'.repeat(MAX_SKILL_BYTES) })).toThrow(/over the 20480-byte limit/);
+  it('refuses a SKILL.md over 64 KB, or one a harness would not list', () => {
+    expect(() => create('deploy-check', { body: 'x'.repeat(MAX_SKILL_BYTES) })).toThrow(/over the 65536-byte limit/);
     const skill = create();
     const version = showSkill(skill.name, undefined, dir).version;
     expect(() => patchSkill({ name: skill.name, version, content: 'no frontmatter', now: T0 }, dir)).toThrow(/frontmatter/);
@@ -86,7 +89,7 @@ describe('create and show', () => {
     const md = fs.readFileSync(path.join(skillDir('deploy-check', dir), 'SKILL.md'), 'utf8');
     expect(md).toMatch(/^---\nname: deploy-check\ndescription: "Use when checking a deployment"\n---\n\n# Steps\n$/);
     expect(showSkill('deploy-check', undefined, dir)).toMatchObject({ name: 'deploy-check', file: 'SKILL.md', content: md });
-    const usage = JSON.parse(fs.readFileSync(path.join(dir, 'skills', '.usage.json'), 'utf8')) as { skills: Record<string, { source: unknown }> };
+    const usage = JSON.parse(fs.readFileSync(path.join(dir, 'skills-usage.json'), 'utf8')) as { skills: Record<string, { source: unknown }> };
     expect(usage.skills['deploy-check']!.source).toEqual(source);
   });
 
@@ -231,5 +234,44 @@ describe('archive, restore and pin', () => {
     expect(pinSkill(skill.name, true, dir)).toMatchObject({ pinned: true, status: 'active' });
     expect(pinSkill(skill.name, false, dir)).toMatchObject({ pinned: false });
     expect(() => pinSkill('nope', true, dir)).toThrow(/no skill named/);
+  });
+});
+
+describe('a skill changed by hand in the repository', () => {
+  const PERSON = { GIT_AUTHOR_NAME: 'person', GIT_AUTHOR_EMAIL: 'p@x', GIT_COMMITTER_NAME: 'person', GIT_COMMITTER_EMAIL: 'p@x' };
+  const byHand = (rel: string, content: string, message: string): void => {
+    const file = path.join(repoRoot(dir), rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+    gitSync(repoRoot(dir), ['add', '-A']);
+    gitSync(repoRoot(dir), ['commit', '-q', '-m', message], PERSON);
+  };
+
+  it('is listed in history with its author, and can be reverted like the gateway\'s own change', () => {
+    const first = create();
+    byHand('skills/deploy-check/SKILL.md', '---\nname: deploy-check\ndescription: by hand\n---\n', 'docs: rewrite deploy-check');
+    const history = skillHistory('deploy-check', dir);
+    expect(history[0]).toMatchObject({ action: 'commit', author: 'person', note: 'docs: rewrite deploy-check' });
+    expect(history[1]).toMatchObject({ action: 'create', author: 'talkcode' });
+
+    revertSkill('deploy-check', history[0]!.id, dir, T0 + 1);
+    expect(skillVersion('deploy-check', dir)).toBe(first.version);
+  });
+
+  it('is never delivered when it breaks the store\'s rules, and says why', () => {
+    create();
+    byHand('skills/broken-one/SKILL.md', 'no frontmatter at all\n', 'feat: broken');
+    byHand('skills/talkcode/SKILL.md', '---\nname: talkcode\ndescription: shadow\n---\n', 'feat: shadow');
+    expect(activeSkillFiles(dir).map((s) => s.name)).toEqual(['deploy-check']);
+    const listed = listSkills(dir);
+    expect(listed.find((s) => s.name === 'broken-one')!.problem).toMatch(/frontmatter/);
+    expect(listed.find((s) => s.name === 'talkcode')!.problem).toMatch(/bundled/);
+    expect(listed.find((s) => s.name === 'deploy-check')!.problem).toBeUndefined();
+  });
+
+  it('can be pinned although the gateway never recorded it', () => {
+    create();
+    byHand('skills/hand-made/SKILL.md', '---\nname: hand-made\ndescription: Use when by hand\n---\n', 'feat: hand-made');
+    expect(pinSkill('hand-made', true, dir)).toMatchObject({ name: 'hand-made', pinned: true, status: 'active' });
   });
 });

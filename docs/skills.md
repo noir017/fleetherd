@@ -7,18 +7,19 @@ Claude Code, Codex, OpenCode, Antigravity, CodeBuddy and AtomCode, local or remo
 write one when you say "remember this as a skill", and every agent reads it from its next start.
 
 ```text
-<config dir>/skills/                 (~/.config/talkcode/skills/)
-  deploy-check/
-    SKILL.md                         the skill: frontmatter (name, description) + body
-    references/                      optional: what the skill reads
-    templates/
-    scripts/
-  .usage.json                        source, created, last use, uses, agents, status, pin
-  .archive/                          archived skills, whole and unmodified
-  .history/                          the version before every change, one directory per change
+<config dir>/skills/                 (~/.config/talkcode/skills/) — a git repository
+  skills/
+    deploy-check/
+      SKILL.md                       the skill: frontmatter (name, description) + body
+      references/                    optional: what the skill reads
+      templates/
+      scripts/
+  archive/                           archived skills, whole and unmodified
+<config dir>/skills-usage.json       source, created, last use, uses, agents, status, pin
 ```
 
-The dot entries are the gateway's bookkeeping, not skills.
+Every change is a commit, so a skill's history is the repository's log. Anything else in the
+repository — a README, scripts of its own, `skills-alone/` — is left alone and is not delivered.
 
 ## The command
 
@@ -42,7 +43,7 @@ The dot entries are the gateway's bookkeeping, not skills.
 
 - **Names** are lowercase words joined by hyphens (`a-z`, `0-9`), at most 64 characters. `talkcode`
   and `super` are the bundled skills and cannot be reused.
-- **`SKILL.md`** is at most 20 KB and must start with `---` frontmatter naming the skill and giving a
+- **`SKILL.md`** is at most 64 KB and must start with `---` frontmatter naming the skill and giving a
   non-empty one-line description. That is what a harness lists in its skill menu.
 - **Extra files** go only in `references/`, `templates/` or `scripts/`, at most 1 MB each. A script
   is delivered executable; everything else is read-only.
@@ -50,8 +51,43 @@ The dot entries are the gateway's bookkeeping, not skills.
   between, the patch is refused and says the current version — run `show` again, re-apply the edit,
   and patch with the new number. `write-file` and `remove-file` do not need a version; each still
   makes a new one.
-- **Nothing is deleted.** `archive` moves a skill; `revert` replaces files with an older snapshot.
-  Both are recorded in `.history/`, and `revert` can itself be reverted.
+- **Nothing is deleted.** `archive` moves a skill into `archive/`; `revert <name> <id>` puts back the
+  files as they were just before commit `<id>` — the gateway's or a person's. Both are commits, and
+  `revert` can itself be reverted.
+
+## The repository
+
+Without configuration the repository is local, under the config directory. Point it at a shared
+one and the gateway keeps the two in step:
+
+```yaml
+skills:
+  repo: ssh://git@git.example:22/you/agent-skills.git
+  branch: main                     # optional; main by default
+```
+
+- **Fetched** every five minutes and before every write, so a `patch` is checked against the
+  newest version — a person's commit refuses a stale edit exactly as another agent's would.
+- **Pushed** after every write, while the turn that made it is still waiting. The author says who
+  wrote it: `talkcode` for an agent, `talkcode-review` for the [automatic review](#auto-review),
+  `talkcode-web` for the web UI's page. The commit's trailers name the agent and the conversation.
+- **Edited by hand** like any repository: commit and push, and the gateway picks it up within five
+  minutes. A hand-written skill that breaks the rules below is not delivered; `list` says why.
+- **Unreachable**: a write still lands locally and is pushed later; the log says once when the
+  repository stops answering and once when it answers again.
+- **Both sides changed one file**: the repository's version wins. The gateway's commits are kept on
+  a branch named `talkcode-unpushed-<time>` and pushed there, and the log names it. Nothing is
+  force-pushed.
+
+An ssh URL is reached the way a [remote host](remote-hosts.md) is: the gateway's own key
+(`<config dir>/ssh/id_ed25519`) and known_hosts (`<config dir>/ssh/known_hosts`), no ssh config of
+the machine's, and strict host key checking — put the repository host's key in that known_hosts
+first; the gateway never learns one. `identityFile` and `knownHostsFile` under `skills:` point
+elsewhere. `talkcode doctor` checks git and the repository. A `/reload` that changes `skills:`
+takes effect at the next fetch.
+
+The gateway needs `git` (the container image has it). The first start with this version moves an
+old store into a repository as one commit and keeps the old directory as `skills.pre-git`.
 
 ## From the web UI
 
@@ -62,14 +98,15 @@ status, whether it is pinned, and when it was last used, and opens one for editi
 - **Edit** changes `SKILL.md` or any file under `references/`, `templates/` or `scripts/`;
   **New file** adds one. Saving `SKILL.md` carries the version the page read, so the same
   read-before-write rule as `patch` applies, and a refusal says the current version.
-- **History** lists every recorded change; **Restore this version** is `revert`, and is itself
-  recorded as a new change.
-- **Delete** is `archive` — the skill moves into `.archive/` whole and can be restored from the
+- **History** lists every commit that touched the skill; **Restore this version** is `revert`, and
+  is itself recorded as a new change.
+- **Delete** is `archive` — the skill moves into `archive/` whole and can be restored from the
   same page. Nothing in the gateway hard-deletes a skill, and the page has no such operation.
 
 It is the same store and the same rules as `talkcode skills`, because every write goes through
 `skills-store.ts`. Archiving from the page also tells the conversation that created the skill,
-exactly as archiving from a chat does.
+exactly as archiving from a chat does. A commit someone made by hand shows its author, and can be
+restored too.
 
 ## How it reaches an agent
 
@@ -107,20 +144,23 @@ not use, and does not count.
 
 ## Expiry and archive
 
-Once a day the gateway checks every skill: **14 days** without a use marks it expired, **30 days**
-moves it into `.archive/` and takes it off every agent at its next start. A pinned skill is left
-alone. An archived skill is never deleted; `restore` brings it back with its clock reset, and the
+Once a day the gateway checks every skill an agent or the review created: **14 days** without a
+use marks it expired, **30 days** moves it into `archive/` and takes it off every agent at its next
+start. A pinned skill is left alone, and so is every skill a person wrote — committed by hand or
+made on the web UI's page — because the gateway cannot see it read from a terminal. An archived skill is never deleted; `restore` brings it back with its clock reset, and the
 conversation that created it is told when it is archived.
 
-A skill written from a terminal is not counted, because no gateway turn saw it used. That is the
-one blind spot; pin the skill if it matters and the check would otherwise archive it.
+A skill used from a terminal is not counted, because no gateway turn saw it used. That is the one
+blind spot; pin an agent-written skill if it matters and the check would otherwise archive it.
 
 ## Any agent can write one
 
 That is the point — "remember this as a skill" works in the conversation where you said it — and
 also the risk: a managed skill enters **every** agent's context, so an agent that writes one is
 writing instructions the others will follow. The guards are the validation above, the history and
-`revert`, the archive notice, and the 30-day archive. Keep the access list to people you trust.
+`revert`, the archive notice, and the 30-day archive. Keep the access list to people you trust —
+and, with `skills.repo` set, the repository's write access too: whoever can push to it is writing
+into every agent's skills as well.
 
 ## Auto review
 
@@ -159,7 +199,7 @@ given, and a change that fails is dropped and logged. The reviewer itself never 
 When something changed, one line appears in the conversation that was reviewed:
 
 ```text
-📝 复盘：更新技能 `deploy-check`（回滚 `talkcode skills revert deploy-check 0000000000172-abc123`）。偏好建议：回答先给结论
+📝 复盘：更新技能 `deploy-check`（回滚 `talkcode skills revert deploy-check c4f06d73eaad`）。偏好建议：回答先给结论
 ```
 
 No change, no line. One review runs at a time, and one gets up to 30 minutes: a provider that

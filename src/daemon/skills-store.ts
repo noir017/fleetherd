@@ -2,47 +2,66 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { configDir } from '../config/load.js';
+import {
+  commitPaths,
+  filesAt,
+  initRepo,
+  isRepo,
+  logPaths,
+  parentOf,
+  resolveCommit,
+  type SkillChangeBy,
+} from './skills-git.js';
 
 /**
  * The gateway's own skills — the ones every agent is given, written through `talkcode skills`
  * rather than by hand on each machine.
  *
  * ── What is on disk ──────────────────────────────────────────────────────────────────────────────
- *   <configDir>/skills/<name>/SKILL.md        the skill itself
- *   <configDir>/skills/<name>/{references,templates,scripts}/…   what it carries
- *   <configDir>/skills/.usage.json            source, created, last use, uses, agents, status, pin
- *   <configDir>/skills/.archive/<name>/       archived skills, whole and unmodified
- *   <configDir>/skills/.history/<name>/<id>/  the version before each change, plus one line of meta
+ *   <configDir>/skills/                         a git repository (skills-repo.ts keeps it in step
+ *                                               with `skills.repo` when one is configured)
+ *   <configDir>/skills/skills/<name>/SKILL.md   the skill itself
+ *   <configDir>/skills/skills/<name>/{references,templates,scripts}/…   what it carries
+ *   <configDir>/skills/archive/<name>/          archived skills, whole and unmodified
+ *   <configDir>/skills-usage.json               source, created, last use, uses, agents, status, pin
  *
- * The dot directories are not skills: `listSkills` and the delivery code only ever look at names
- * that pass `SKILL_NAME_RE`.
+ * The layout is agent-skills' own (`skills/<name>/SKILL.md`), because that repository is the one
+ * the gateway shares with the people who edit skills by hand; anything else in it (its README,
+ * its scripts, `skills-alone/`) is not read here. The usage file stays outside the repository: it
+ * changes on every use, and a commit per use would bury every real change in the log.
  *
  * ── Why a version, and why `patch` must carry it ─────────────────────────────────────────────────
  * An agent writes a skill it has only half read, or two turns edit the same one, and the later
  * write silently undoes the earlier. `show` prints a hash of every file; `patch` takes that hash
  * and refuses if the skill has moved since — the cheap way to force read-before-write without
- * keeping a lock. The version is content, not time, so a revert restores the old version exactly.
+ * keeping a lock. The version is content, not time, so a revert restores the old version exactly,
+ * and a person's commit pulled from the repository moves it the same way an agent's write does.
  *
- * ── Why history is here, not in git ──────────────────────────────────────────────────────────────
- * The gateway runs in a container that has no git and no operator at its terminal. Every content
- * change therefore copies the old files into `.history` first, so `revert` can put them back; the
- * copy is a whole directory, not a diff, because a skill is small and a broken diff is worse than
- * a few kilobytes. A change that has nothing before it (`create`) is listed but not revertible.
+ * ── History is git ───────────────────────────────────────────────────────────────────────────────
+ * Every content change is one commit (skills-git.ts commitPaths), carrying the action and the
+ * versions in trailers. `history` is `git log` over the skill's two places, so a person's commit is
+ * listed beside the gateway's, and `revert <id>` puts back the files as they were just before that
+ * commit — whoever made it.
  *
- * This module is filesystem work. It never talks to a platform — the daemon decides what to say
- * when a skill is archived, and the delivery code decides where it goes — and the only thing it
- * writes to the log is a usage file it could not read, which would otherwise look like every
- * skill being new.
+ * This module is filesystem and local-git work. It never talks to a platform or a remote — the
+ * daemon decides what to say when a skill is archived, skills-repo.ts decides when to fetch and
+ * push, and the delivery code decides where a skill goes.
  */
 
+/** The repository under the config directory. */
+export const REPO_DIR = 'skills';
+/** Active skills, inside the repository. */
 export const SKILLS_DIR = 'skills';
+export const ARCHIVE_DIR = 'archive';
 export const SKILL_FILE = 'SKILL.md';
-export const USAGE_FILE = '.usage.json';
-export const ARCHIVE_DIR = '.archive';
-export const HISTORY_DIR = '.history';
+export const USAGE_FILE = 'skills-usage.json';
 
-/** `SKILL.md` is read into every agent's context; past this it is a mistake, not a skill. */
-export const MAX_SKILL_BYTES = 20 * 1024;
+/**
+ * `SKILL.md` is read into an agent's context when the skill is used. 64 KB rather than the 20 KB
+ * this started with: agent-skills' own `hindsight-ops` is 44 KB and `server-ops` 26 KB, both
+ * written by hand and in daily use (raised 2026-11-06).
+ */
+export const MAX_SKILL_BYTES = 64 * 1024;
 
 /** A reference or a script is delivered too, but nothing here needs to be megabytes. */
 export const MAX_EXTRA_BYTES = 1024 * 1024;
@@ -53,6 +72,11 @@ export type ExtraDir = (typeof EXTRA_DIRS)[number];
 /** Lowercase words joined by hyphens, as a harness lists a skill by name. */
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** Whether a directory name is one a skill could have — what the delivery code and the migration list. */
+export function isSkillName(name: string): boolean {
+  return SKILL_NAME_RE.test(name) && name.length <= 64;
+}
+
 /** The two skills the package ships; a managed skill may not shadow either. */
 export const RESERVED_NAMES: ReadonlySet<string> = new Set(['talkcode', 'super']);
 
@@ -62,8 +86,17 @@ const DAY_MS = 86_400_000;
 
 export type SkillStatus = 'active' | 'expired' | 'archived';
 export type SkillSignal = 'skill-tool' | 'slash' | 'path';
+export type { SkillChangeBy } from './skills-git.js';
 
-/** Where a skill came from: the conversation that created it, so an archive notice has somewhere to go. */
+/** A change with no `by` was made by an agent through `talkcode skills`. */
+const AGENT: SkillChangeBy = { kind: 'agent' };
+
+/**
+ * Where a skill came from: the conversation that created it, so an archive notice has somewhere to
+ * go. A skill with no source was not created through the gateway — a person committed it to the
+ * repository, or created it on the web UI's page — and the expiry check leaves it alone: nothing
+ * the gateway sees tells it whether a hand-written skill is still read from a terminal.
+ */
 export interface SkillSource {
   conversation?: string;
   platform?: string;
@@ -108,6 +141,8 @@ export interface SkillRecord {
   uses: number;
   agents: string[];
   source?: SkillSource;
+  /** Why this skill is not delivered — a hand-made change the store's rules would have refused. */
+  problem?: string;
 }
 
 export interface SkillFileSet {
@@ -117,16 +152,25 @@ export interface SkillFileSet {
 }
 
 export interface SkillHistoryEntry {
+  /** The commit, 12 hex characters; what `revert` takes. */
   id: string;
   at: string;
+  /** The gateway's action, or `commit` for a change someone made in the repository by hand. */
   action: string;
+  /** The commit's author: `talkcode`, `talkcode-review`, `talkcode-web`, or a person. */
+  author?: string;
   beforeVersion?: string;
   afterVersion?: string;
   note?: string;
 }
 
+/** The repository the skills live in. */
+export function repoRoot(dir = configDir()): string {
+  return path.join(dir, REPO_DIR);
+}
+
 export function skillsRoot(dir = configDir()): string {
-  return path.join(dir, SKILLS_DIR);
+  return path.join(repoRoot(dir), SKILLS_DIR);
 }
 
 export function skillDir(name: string, dir = configDir()): string {
@@ -134,19 +178,54 @@ export function skillDir(name: string, dir = configDir()): string {
 }
 
 function archiveRoot(dir = configDir()): string {
-  return path.join(skillsRoot(dir), ARCHIVE_DIR);
+  return path.join(repoRoot(dir), ARCHIVE_DIR);
 }
 
 function archivedDir(name: string, dir = configDir()): string {
   return path.join(archiveRoot(dir), name);
 }
 
-function historyRoot(dir = configDir()): string {
-  return path.join(skillsRoot(dir), HISTORY_DIR);
+export function usagePath(dir = configDir()): string {
+  return path.join(dir, USAGE_FILE);
 }
 
-function usagePath(dir = configDir()): string {
-  return path.join(skillsRoot(dir), USAGE_FILE);
+/** The repository paths a skill can be at: what a commit about it stages, and what `history` reads. */
+function skillPaths(name: string): string[] {
+  return [`${SKILLS_DIR}/${name}`, `${ARCHIVE_DIR}/${name}`];
+}
+
+/**
+ * Make sure there is a repository to commit to. A store nobody has written to yet gets an empty
+ * one; anything else that is not a repository is an old store skills-repo.ts has not moved yet,
+ * and writing into it would turn the operator's skills directory into a repository of the wrong
+ * shape.
+ */
+function ensureRepo(dir: string): string {
+  const root = repoRoot(dir);
+  if (isRepo(root)) return root;
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(root);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+  }
+  if (entries.length > 0) {
+    throw new Error(`${root} is not a git repository yet; the gateway moves the old skills store into one when it starts`);
+  }
+  initRepo(root);
+  return root;
+}
+
+function commit(dir: string, name: string, info: { action: string; note?: string; before?: string; after?: string; by?: SkillChangeBy; now: number }): void {
+  commitPaths(repoRoot(dir), skillPaths(name), {
+    action: info.action,
+    skill: name,
+    ...(info.note ? { note: info.note } : {}),
+    ...(info.before ? { beforeVersion: info.before } : {}),
+    ...(info.after ? { afterVersion: info.after } : {}),
+    by: info.by ?? AGENT,
+    at: info.now,
+  });
 }
 
 /** A name a skill may have: lowercase words with hyphens, and not one of the bundled two. */
@@ -370,14 +449,44 @@ function lastActivity(usage: SkillUsage): number {
   return Math.max(at(usage.lastUsedAt), at(usage.restoredAt), at(usage.createdAt));
 }
 
-/** What the status is now, even between sweeps: a pin wins, then 14 days of no use. */
+/**
+ * Whether the expiry check applies: only to a skill the gateway created (it has a source) and
+ * nobody pinned. A hand-written skill is read from terminals the gateway never sees, so "unused
+ * for 30 days" would be a guess about it, not a fact.
+ */
+export function canExpire(usage: SkillUsage): boolean {
+  return usage.source !== undefined && !usage.pinned;
+}
+
+/** What the status is now, even between sweeps: a pin (or no source) wins, then 14 days of no use. */
 export function derivedStatus(usage: SkillUsage, archived: boolean, now = Date.now()): SkillStatus {
   if (archived) return 'archived';
-  if (usage.pinned) return 'active';
+  if (!canExpire(usage)) return 'active';
   return now - lastActivity(usage) >= EXPIRY_DAYS * DAY_MS ? 'expired' : 'active';
 }
 
+/**
+ * Why a skill in the repository would not be delivered, or undefined when it would. The store's
+ * own writes cannot produce any of these; a person's commit can, and a skill a harness would not
+ * list, or one over the size cap, must not reach every agent just because it arrived by `git pull`.
+ */
+export function skillProblem(name: string, files: Map<string, Buffer>): string | undefined {
+  if (RESERVED_NAMES.has(name)) return `"${name}" is one of the bundled skills`;
+  const md = files.get(SKILL_FILE);
+  if (!md) return 'no SKILL.md';
+  try {
+    assertSkillMd(md.toString('utf8'), name);
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  for (const [rel, data] of files) {
+    if (rel !== SKILL_FILE && data.length > MAX_EXTRA_BYTES) return `${rel} is ${data.length} bytes, over the ${MAX_EXTRA_BYTES}-byte limit`;
+  }
+  return undefined;
+}
+
 function recordOf(name: string, usage: SkillUsage, files: Map<string, Buffer>, archived: boolean, now: number): SkillRecord {
+  const problem = archived ? undefined : skillProblem(name, files);
   return {
     name,
     description: descriptionOf(files),
@@ -390,6 +499,7 @@ function recordOf(name: string, usage: SkillUsage, files: Map<string, Buffer>, a
     uses: usage.uses,
     agents: [...usage.agents],
     source: usage.source,
+    ...(problem ? { problem } : {}),
   };
 }
 
@@ -408,7 +518,7 @@ export function listSkills(dir = configDir(), now = Date.now()): SkillRecord[] {
     });
 }
 
-/** Skill directory names, active only. Dot entries (`.usage.json`, `.archive`, `.history`) are not skills. */
+/** Skill directory names, active only. Anything that is not a valid name (a dot entry) is not a skill. */
 export function activeSkillNames(dir = configDir()): string[] {
   let entries: fs.Dirent[];
   try {
@@ -435,14 +545,31 @@ export function archivedSkillNames(dir = configDir()): string[] {
     .map((e) => e.name);
 }
 
-/** Every active skill with its files, for delivery. Read once per spawn. */
+/** The skills already logged as not delivered, by name and version, so a spawn does not repeat it. */
+const reportedProblems = new Set<string>();
+
+/**
+ * Every active skill with its files, for delivery. Read once per spawn. A skill that breaks the
+ * store's rules (`skillProblem`) is left out and logged once per version: degrading to "this one
+ * skill is missing" is the explicit failure, a broken one in every agent's skill menu is not.
+ */
 export function activeSkillFiles(dir = configDir()): SkillFileSet[] {
-  return activeSkillNames(dir)
-    .map((name) => {
-      const files = readSkillFiles(name, dir);
-      return { name, version: skillVersionOf(files), files };
-    })
-    .filter((s) => s.files.has(SKILL_FILE));
+  const out: SkillFileSet[] = [];
+  for (const name of activeSkillNames(dir)) {
+    const files = readSkillFiles(name, dir);
+    const version = skillVersionOf(files);
+    const problem = skillProblem(name, files);
+    if (problem) {
+      const key = `${name}@${version}`;
+      if (!reportedProblems.has(key)) {
+        reportedProblems.add(key);
+        console.warn(`[skills] not delivering "${name}": ${problem}`);
+      }
+      continue;
+    }
+    out.push({ name, version, files });
+  }
+  return out;
 }
 
 function requireActive(name: string, dir: string): string {
@@ -454,63 +581,23 @@ function requireActive(name: string, dir: string): string {
   return root;
 }
 
-function historyId(now: number): string {
-  return `${String(now).padStart(15, '0')}-${randomBytes(3).toString('hex')}`;
-}
-
-function saveHistory(
-  name: string,
-  dir: string,
-  action: string,
-  beforeVersion: string | undefined,
-  afterVersion: string | undefined,
-  note: string | undefined,
-  files: Map<string, Buffer> | undefined,
-  now: number
-): SkillHistoryEntry {
-  const id = historyId(now);
-  const base = path.join(historyRoot(dir), name, id);
-  fs.mkdirSync(base, { recursive: true, mode: 0o700 });
-  if (files) {
-    for (const [rel, data] of files) {
-      const dest = path.join(base, 'files', ...rel.split('/'));
-      fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(dest, data, { mode: 0o600 });
-    }
-  }
-  const entry: SkillHistoryEntry = {
-    id,
-    at: iso(now),
-    action,
-    ...(beforeVersion ? { beforeVersion } : {}),
-    ...(afterVersion ? { afterVersion } : {}),
-    ...(note ? { note } : {}),
-  };
-  writeAtomic(path.join(base, 'meta.json'), `${JSON.stringify(entry, null, 2)}\n`, 0o600);
-  return entry;
-}
-
-/** Every recorded change, newest first. `create` entries have nothing to revert to. */
+/**
+ * Every recorded change to a skill, newest first: the gateway's commits and anyone else's, over
+ * both places the skill can be (`skills/`, `archive/`). Each entry's `id` is the commit.
+ */
 export function skillHistory(name: string, dir = configDir()): SkillHistoryEntry[] {
-  const root = path.join(historyRoot(dir), name);
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw e;
-  }
-  return entries
-    .filter((e) => e.isDirectory())
-    .map((e) => {
-      try {
-        return JSON.parse(fs.readFileSync(path.join(root, e.name, 'meta.json'), 'utf8')) as SkillHistoryEntry;
-      } catch {
-        return undefined;
-      }
-    })
-    .filter((e): e is SkillHistoryEntry => e !== undefined)
-    .sort((a, b) => (a.id < b.id ? 1 : -1));
+  const clean = validateSkillName(name);
+  const root = repoRoot(dir);
+  if (!isRepo(root)) return [];
+  return logPaths(root, skillPaths(clean)).map((e) => ({
+    id: e.id,
+    at: e.at,
+    action: e.action ?? 'commit',
+    author: e.author,
+    ...(e.beforeVersion ? { beforeVersion: e.beforeVersion } : {}),
+    ...(e.afterVersion ? { afterVersion: e.afterVersion } : {}),
+    ...(e.note ? { note: e.note } : {}),
+  }));
 }
 
 export interface CreateSkillInput {
@@ -518,8 +605,10 @@ export interface CreateSkillInput {
   description: string;
   body?: string;
   source?: SkillSource;
-  /** A line for the history entry — the phase-3 review's reason, when there is one. */
+  /** A line for the commit — the review's reason, when there is one. */
   note?: string;
+  /** Who is writing; an agent through `talkcode skills` when absent. */
+  by?: SkillChangeBy;
   now?: number;
 }
 
@@ -536,8 +625,8 @@ export function createSkill(input: CreateSkillInput, dir = configDir()): SkillRe
   if (description.length > 2000) throw new Error(`description is too long (${description.length} > 2000)`);
   const content = composeSkillMd(name, description, input.body ?? '');
   assertSkillMd(content, name);
+  ensureRepo(dir);
   const now = input.now ?? Date.now();
-  fs.mkdirSync(skillsRoot(dir), { recursive: true, mode: 0o700 });
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   writeAtomic(path.join(root, SKILL_FILE), content, 0o600);
   const usage = readUsage(dir);
@@ -550,7 +639,7 @@ export function createSkill(input: CreateSkillInput, dir = configDir()): SkillRe
     pinned: false,
   };
   writeUsage(usage, dir);
-  saveHistory(name, dir, 'create', undefined, skillVersion(name, dir), input.note, undefined, now);
+  commit(dir, name, { action: 'create', note: input.note, after: skillVersion(name, dir), by: input.by, now });
   return recordOf(name, usage.skills[name]!, readSkillFiles(name, dir), false, now);
 }
 
@@ -558,8 +647,9 @@ export interface PatchSkillInput {
   name: string;
   version: string;
   content: string;
-  /** A line for the history entry — the phase-3 review's reason, when there is one. */
+  /** A line for the commit — the review's reason, when there is one. */
   note?: string;
+  by?: SkillChangeBy;
   now?: number;
 }
 
@@ -575,26 +665,24 @@ export function patchSkill(input: PatchSkillInput, dir = configDir()): SkillReco
     );
   }
   assertSkillMd(input.content, name);
+  ensureRepo(dir);
   const next = new Map(files);
   next.set(SKILL_FILE, Buffer.from(input.content));
   const after = skillVersionOf(next);
   const now = input.now ?? Date.now();
-  saveHistory(name, dir, 'patch', current, after, input.note, files, now);
   writeAtomic(path.join(skillDir(name, dir), SKILL_FILE), input.content, 0o600);
-  const usage = readUsage(dir);
-  const rec = usage.skills[name] ?? defaultUsage(name, dir);
+  commit(dir, name, { action: 'patch', note: input.note, before: current, after, by: input.by, now });
   // Editing is not use: a skill already expired stays expired, and a patch does not reset its clock.
-  usage.skills[name] = rec;
-  writeUsage(usage, dir);
-  return recordOf(name, usage.skills[name]!, next, false, now);
+  return recordOf(name, readUsage(dir).skills[name] ?? defaultUsage(name, dir), next, false, now);
 }
 
 export interface WriteFileInput {
   name: string;
   file: string;
   content: string;
-  /** A line for the history entry — the phase-3 review's reason, when there is one. */
+  /** A line for the commit — the review's reason, when there is one. */
   note?: string;
+  by?: SkillChangeBy;
   now?: number;
 }
 
@@ -605,32 +693,37 @@ export function writeSkillFile(input: WriteFileInput, dir = configDir()): SkillR
   requireActive(name, dir);
   const bytes = Buffer.byteLength(input.content);
   if (bytes > MAX_EXTRA_BYTES) throw new Error(`${rel} is ${bytes} bytes, over the ${MAX_EXTRA_BYTES}-byte limit`);
+  ensureRepo(dir);
   const files = readSkillFiles(name, dir);
   const before = skillVersionOf(files);
   const next = new Map(files);
   next.set(rel, Buffer.from(input.content));
   const after = skillVersionOf(next);
   const now = input.now ?? Date.now();
-  saveHistory(name, dir, 'write-file', before, after, input.note ? `${rel} — ${input.note}` : rel, files, now);
   writeAtomic(path.join(skillDir(name, dir), ...rel.split('/')), input.content, rel.startsWith('scripts/') ? 0o700 : 0o600);
+  commit(dir, name, { action: 'write-file', note: input.note ? `${rel} — ${input.note}` : rel, before, after, by: input.by, now });
   return recordOf(name, readUsage(dir).skills[name] ?? defaultUsage(name, dir), next, false, now);
 }
 
 /** Remove one extra file. `SKILL.md` is not removable; archive the skill instead. */
-export function removeSkillFile(input: { name: string; file: string; note?: string; now?: number }, dir = configDir()): SkillRecord {
+export function removeSkillFile(
+  input: { name: string; file: string; note?: string; by?: SkillChangeBy; now?: number },
+  dir = configDir()
+): SkillRecord {
   const name = validateSkillName(input.name);
   const rel = validateFilePath(input.file);
   requireActive(name, dir);
   const files = readSkillFiles(name, dir);
   if (!files.has(rel)) throw new Error(`"${name}" has no file ${rel}`);
+  ensureRepo(dir);
   const before = skillVersionOf(files);
   const next = new Map(files);
   next.delete(rel);
   const after = skillVersionOf(next);
   const now = input.now ?? Date.now();
-  saveHistory(name, dir, 'remove-file', before, after, input.note ? `${rel} — ${input.note}` : rel, files, now);
   fs.rmSync(path.join(skillDir(name, dir), ...rel.split('/')), { force: true });
   pruneEmptyDirs(path.dirname(path.join(skillDir(name, dir), ...rel.split('/'))), skillDir(name, dir));
+  commit(dir, name, { action: 'remove-file', note: input.note ? `${rel} — ${input.note}` : rel, before, after, by: input.by, now });
   return recordOf(name, readUsage(dir).skills[name] ?? defaultUsage(name, dir), next, false, now);
 }
 
@@ -647,8 +740,8 @@ function pruneEmptyDirs(from: string, stop: string): void {
   }
 }
 
-/** Move a skill into `.archive` — never delete it. */
-export function archiveSkill(name: string, dir = configDir(), now = Date.now()): SkillRecord {
+/** Move a skill into `archive/` — never delete it. */
+export function archiveSkill(name: string, dir = configDir(), now = Date.now(), by: SkillChangeBy = AGENT): SkillRecord {
   const clean = validateSkillName(name);
   const active = skillDir(clean, dir);
   const archived = archivedDir(clean, dir);
@@ -658,22 +751,26 @@ export function archiveSkill(name: string, dir = configDir(), now = Date.now()):
     }
     throw new Error(`no skill named "${clean}"`);
   }
+  ensureRepo(dir);
+  const version = skillVersion(clean, dir);
   fs.mkdirSync(archiveRoot(dir), { recursive: true, mode: 0o700 });
   fs.renameSync(active, archived);
   const usage = readUsage(dir);
   const rec = usage.skills[clean] ?? defaultUsage(clean, dir);
   usage.skills[clean] = { ...rec, status: 'archived', archivedAt: iso(now) };
   writeUsage(usage, dir);
+  commit(dir, clean, { action: 'archive', before: version, by, now });
   return recordOf(clean, usage.skills[clean]!, readAllFiles(archived), true, now);
 }
 
 /** Bring an archived skill back, with its clock reset so the next sweep leaves it alone. */
-export function restoreSkill(name: string, dir = configDir(), now = Date.now()): SkillRecord {
+export function restoreSkill(name: string, dir = configDir(), now = Date.now(), by: SkillChangeBy = AGENT): SkillRecord {
   const clean = validateSkillName(name);
   const active = skillDir(clean, dir);
   const archived = archivedDir(clean, dir);
   if (fs.existsSync(active)) throw new Error(`"${clean}" is already active`);
   if (!fs.existsSync(archived)) throw new Error(`no archived skill named "${clean}"`);
+  ensureRepo(dir);
   fs.mkdirSync(skillsRoot(dir), { recursive: true, mode: 0o700 });
   fs.renameSync(archived, active);
   const usage = readUsage(dir);
@@ -681,17 +778,18 @@ export function restoreSkill(name: string, dir = configDir(), now = Date.now()):
   const { archivedAt: _archivedAt, ...rest } = rec;
   usage.skills[clean] = { ...rest, status: 'active', restoredAt: iso(now) };
   writeUsage(usage, dir);
+  commit(dir, clean, { action: 'restore', after: skillVersion(clean, dir), by, now });
   return recordOf(clean, usage.skills[clean]!, readSkillFiles(clean, dir), false, now);
 }
 
+/** Pin or unpin. A hand-written skill has no usage record yet; pinning one gives it one. */
 export function pinSkill(name: string, pinned: boolean, dir = configDir()): SkillRecord {
   const clean = validateSkillName(name);
-  const usage = readUsage(dir);
-  const rec = usage.skills[clean];
-  if (!rec) throw new Error(`no skill named "${clean}"`);
   if (!fs.existsSync(skillDir(clean, dir)) && !fs.existsSync(archivedDir(clean, dir))) {
     throw new Error(`no skill named "${clean}"`);
   }
+  const usage = readUsage(dir);
+  const rec = usage.skills[clean] ?? defaultUsage(clean, dir);
   usage.skills[clean] = { ...rec, pinned };
   writeUsage(usage, dir);
   const archived = !fs.existsSync(skillDir(clean, dir));
@@ -703,7 +801,7 @@ export function pinSkill(name: string, pinned: boolean, dir = configDir()): Skil
 export function markExpired(name: string, dir = configDir()): boolean {
   const usage = readUsage(dir);
   const rec = usage.skills[name];
-  if (!rec || rec.pinned || rec.status === 'expired') return false;
+  if (!rec || !canExpire(rec) || rec.status === 'expired') return false;
   usage.skills[name] = { ...rec, status: 'expired' };
   writeUsage(usage, dir);
   return true;
@@ -730,37 +828,59 @@ export interface RevertResult {
   entry: SkillHistoryEntry;
 }
 
-/** Put the files from one history entry back, recording the change as a new entry. */
-export function revertSkill(name: string, id: string, dir = configDir(), now = Date.now()): RevertResult {
+/**
+ * Put back the files as they were just before one change in the skill's history, as a new commit.
+ * The change can be anyone's — the gateway's or a person's — and the skill comes back active even
+ * if it was archived, as it did when history was snapshots.
+ */
+export function revertSkill(name: string, id: string, dir = configDir(), now = Date.now(), by: SkillChangeBy = AGENT): RevertResult {
   const clean = validateSkillName(name);
-  const entry = skillHistory(clean, dir).find((e) => e.id === id);
-  if (!entry) throw new Error(`"${clean}" has no history entry ${id}; \`talkcode skills history ${clean}\` lists them`);
-  const snapshot = path.join(historyRoot(dir), clean, id, 'files');
-  if (!fs.existsSync(snapshot)) throw new Error(`history entry ${id} is the skill's first version; there is nothing before it to restore`);
-  const target = readAllFiles(snapshot);
-  if (!target.has(SKILL_FILE)) throw new Error(`history entry ${id} has no SKILL.md; refusing to restore a broken snapshot`);
+  const root = repoRoot(dir);
+  const history = skillHistory(clean, dir);
+  const full = isRepo(root) ? resolveCommit(root, id.trim()) : undefined;
+  const entry = full ? history.find((e) => full.startsWith(e.id)) : undefined;
+  if (!full || !entry) throw new Error(`"${clean}" has no history entry ${id}; \`talkcode skills history ${clean}\` lists them`);
+  const parent = parentOf(root, full);
+  const target = parent ? beforeFiles(root, parent, clean) : new Map<string, Buffer>();
+  if (!target.has(SKILL_FILE)) {
+    throw new Error(`history entry ${id} is the skill's first version; there is nothing before it to restore`);
+  }
   const active = skillDir(clean, dir);
   const archived = archivedDir(clean, dir);
   const currentDir = fs.existsSync(active) ? active : fs.existsSync(archived) ? archived : undefined;
   if (!currentDir) throw new Error(`no skill named "${clean}"`);
-  const current = readAllFiles(currentDir);
-  const before = skillVersionOf(current);
+  const before = skillVersionOf(readAllFiles(currentDir));
   const after = skillVersionOf(target);
-  const logged = saveHistory(clean, dir, 'revert', before, after, `revert ${id}`, current, now);
-  const tmp = path.join(skillsRoot(dir), `.revert-${clean}-${process.pid}-${randomBytes(3).toString('hex')}`);
+  // Built beside the repository, then swapped in: a crash halfway leaves the old skill whole.
+  const tmp = path.join(dir, `.skill-revert-${clean}-${process.pid}-${randomBytes(3).toString('hex')}`);
   for (const [rel, data] of target) {
     const dest = path.join(tmp, ...rel.split('/'));
     fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
     fs.writeFileSync(dest, data, { mode: rel.startsWith('scripts/') ? 0o700 : 0o600 });
   }
   fs.rmSync(currentDir, { recursive: true, force: true });
-  fs.renameSync(tmp, active);
   if (fs.existsSync(archived)) fs.rmSync(archived, { recursive: true, force: true });
+  fs.mkdirSync(skillsRoot(dir), { recursive: true, mode: 0o700 });
+  fs.renameSync(tmp, active);
   const usage = readUsage(dir);
   const rec = usage.skills[clean] ?? defaultUsage(clean, dir);
-  usage.skills[clean] = { ...rec, status: 'active', restoredAt: iso(now) };
+  const { archivedAt: _archivedAt, ...rest } = rec;
+  usage.skills[clean] = { ...rest, status: 'active', restoredAt: iso(now) };
   writeUsage(usage, dir);
+  commit(dir, clean, { action: 'revert', note: `revert ${entry.id}`, before, after, by, now });
+  const logged = skillHistory(clean, dir)[0] ?? entry;
   return { skill: recordOf(clean, usage.skills[clean]!, readSkillFiles(clean, dir), false, now), entry: logged };
+}
+
+/** The delivered files of a skill as of `rev`, wherever it was then (active or archived). */
+function beforeFiles(root: string, rev: string, name: string): Map<string, Buffer> {
+  for (const place of skillPaths(name)) {
+    const files = filesAt(root, rev, place);
+    if (files.has(SKILL_FILE)) {
+      return new Map([...files].filter(([rel]) => rel === SKILL_FILE || EXTRA_DIRS.some((d) => rel.startsWith(`${d}/`))));
+    }
+  }
+  return new Map();
 }
 
 /** What `show` prints: one file, and the version every later `patch` has to name. */

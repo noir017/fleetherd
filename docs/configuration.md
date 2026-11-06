@@ -56,6 +56,9 @@ access:
 review:                       # optional; off unless an agy agent is named
   agent: ag                   # one agy -p on that agent's machine reviews a quiet conversation
   model: gemini-3.8-flash-high
+
+skills:                       # optional; the managed skills' shared git repository
+  repo: ssh://git@git.example:22/you/agent-skills.git
 ```
 
 `${VAR}` expands from the environment plus a `<configDir>/.env` sidecar, so
@@ -71,7 +74,7 @@ The rest is described where it is used: each harness's options in [Agents](agent
 UI's `terminal:` and `sso:` in [Web UI](web-ui.md), `title:` in [Topic names](topic-names.md),
 `voice:` in [Voice messages](voice.md), `hosts:` with `agents[].host` in
 [Remote hosts](remote-hosts.md), `agents[].hooks` in [Agents](agents.md#pre-launch-hook),
-`review:` in [Skills](skills.md#auto-review), and `delegation:` in
+`review:` and `skills:` in [Skills](skills.md), and `delegation:` in
 [Sub-agents](sub-agents.md). A handful of fields can also be changed from chat, without a
 restart — see [Settings from chat](settings.md).
 

@@ -20,11 +20,13 @@ ARG UID=1001
 ARG GID=1001
 
 # openssh-client: the gateway reaches every host with the system ssh (src/remote/binaries.ts).
+# git: the managed skills are a git repository, kept in step with `skills.repo` over that same ssh
+# (src/daemon/skills-git.ts); without it no managed skill is delivered.
 # tini: PID 1 that reaps. The gateway spawns ssh, and a hook or an endCommand can spawn more; with
 # node as PID 1 their orphans would stay zombies.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends openssh-client tini tzdata ca-certificates; \
+    apt-get install -y --no-install-recommends openssh-client git tini tzdata ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
     groupadd -g "${GID}" talkcode; \
     useradd -m -u "${UID}" -g "${GID}" -s /bin/bash talkcode

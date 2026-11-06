@@ -1922,29 +1922,29 @@ describe('WebRoom: the skills page', () => {
     agents: ['cc'],
   };
 
-  it('says the daemon offered none rather than pretending there are no skills', () => {
+  it('says the daemon offered none rather than pretending there are no skills', async () => {
     const { room } = attached();
 
     expect(room.skills()).toEqual({ enabled: false, skills: [] });
-    expect(room.skillOp({ action: 'show', name: 'deploy-check' })).toEqual({
+    expect(await room.skillOp({ action: 'show', name: 'deploy-check' })).toEqual({
       ok: false,
       error: 'skills are not enabled in this daemon',
     });
   });
 
-  it('reads the list through the daemon and forwards each operation', () => {
+  it('reads the list through the daemon and forwards each operation', async () => {
     const { room } = attached();
     const ops: string[] = [];
     room.useSkillsPanel({
       list: () => [skill],
-      op: (op) => {
+      op: async (op) => {
         ops.push(op.action);
         return { ok: true, skills: [{ ...skill, pinned: true }] };
       },
     });
 
     expect(room.skills()).toEqual({ enabled: true, skills: [skill] });
-    expect(room.skillOp({ action: 'pin', name: 'deploy-check', pinned: true })).toEqual({
+    expect(await room.skillOp({ action: 'pin', name: 'deploy-check', pinned: true })).toEqual({
       ok: true,
       skills: [{ ...skill, pinned: true }],
     });

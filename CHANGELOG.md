@@ -28,6 +28,27 @@ All notable changes to this project are documented here. The format is based on
   is one update when it ends — rounds a few seconds apart share one. A turn you `/stop` sends nothing,
   and only the topic's own parent is told. [→](docs/sub-agents.md#talking-to-a-sub-agent)
 
+- **The managed skills are a git repository now, and can share one with the people who edit skills
+  by hand.** Set `skills.repo` to a repository (an ssh URL is reached with the gateway's own key and
+  known_hosts, pinned like a remote host) and the gateway fetches it every five minutes and before
+  every write, and pushes every change it makes — an agent's `talkcode skills`, the web UI's page,
+  the automatic review — while the turn that made it is still waiting. Until now the gateway's
+  skills and a hand-kept skill repository were two libraries delivered two ways: the review could
+  only see and improve the gateway's own four, and a skill in the hand-kept one reached only the
+  machines that had cloned it. Now one repository feeds every agent on every host, a person's
+  commit refuses a stale `patch` the same way another agent's would, and `history` / `revert` read
+  git, so a hand-made commit is listed beside the gateway's and can be undone the same way. When
+  both sides changed one file, the repository wins and the gateway's commits are kept on a
+  `talkcode-unpushed-*` branch; nothing is force-pushed. A pulled skill that breaks the store's
+  rules is not delivered and `list` says why. Without `skills.repo` the repository is local. The
+  first start moves the old store in as one commit and keeps it as `skills.pre-git`. The gateway
+  needs `git`; the container image now has it, and `talkcode doctor` checks it and the repository.
+- **A skill a person wrote never expires.** The 14/30-day check now applies only to skills an agent
+  or the review created; a hand-written one (committed to the repository, or made on the web UI's
+  page) is read from terminals the gateway cannot see, so "unused" would be a guess about it.
+- **`SKILL.md` may be up to 64 KB** (was 20 KB): hand-kept skills in daily use are already 26 and
+  44 KB.
+
 ### Removed
 
 - **agy's old stream-json runtime is gone.** 2.40.0 moved `harness: agy` onto `agy acp` and kept the

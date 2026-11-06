@@ -532,6 +532,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .skill-pin{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#fbbf24}
 .skill-desc{font-size:12.5px;color:#d0d0d0;line-height:1.45;overflow-wrap:anywhere}
 .skill-meta{font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+.skill-problem{font-size:11.5px;color:#f87171;overflow-wrap:anywhere;margin-top:2px}
 .skill-head{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
 .skill-head .skill-name{flex:1 1 220px;font-size:15px}
 .skill-acts{display:flex;flex-wrap:wrap;gap:6px}
@@ -4880,7 +4881,7 @@ const SCRIPT = `
   // The gateway's managed skills (daemon/skills-store.ts), the same records the "talkcode skills"
   // command reads and writes. This half is presentation only: every verb is posted to api/skills/op and
   // the store answers with its own sentence when it refuses — the version guard on patch, the
-  // 20 KB and path rules, and the archive that is the only "delete" there is.
+  // 64 KB and path rules, and the archive that is the only "delete" there is.
   function skillAgo(iso){
     var at = iso ? Date.parse(iso) : 0;
     return at ? schedAgo(at) : '';
@@ -4910,6 +4911,9 @@ const SCRIPT = `
     h += '</div>';
     h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
     h += '<div class="skill-meta">' + text(meta.join(' \\u00b7 ') + ' \\u00b7 v' + s.version) + '</div>';
+    // A skill someone committed by hand that breaks the store's rules is listed but not delivered;
+    // the store's own sentence says why, so the person who pushed it can fix it here.
+    if(s.problem) h += '<div class="skill-problem">Not delivered: ' + text(s.problem) + '</div>';
     h += '</div>';
     return h;
   }
@@ -4941,16 +4945,19 @@ const SCRIPT = `
     if(skillNewMode){ var n = $('skill-new-name'); if(n) n.focus(); }
   }
 
-  /** One history row. Only a change with something before it can be restored: the first version
-      of a skill has no snapshot, and the store refuses that revert rather than inventing one. */
+  /** One history row. A gateway change offers a restore only when it had something before it — the
+      first version of a skill has nothing to go back to. A commit someone made in the repository by
+      hand (action "commit", its author named) carries no versions, so it always offers one, and
+      the store says so in its own sentence when that commit is the one that created the skill. */
   function skillHistRow(e){
     var meta = skillAgo(e.at);
+    if(e.author && e.author.indexOf('talkcode') !== 0) meta += ' \\u00b7 ' + e.author;
     if(e.note) meta += ' \\u00b7 ' + e.note;
     if(e.beforeVersion) meta += ' \\u00b7 ' + e.beforeVersion + ' \\u2192 ' + (e.afterVersion || '(no version)');
     var h = '<div class="skill-hist"><div class="skill-hist-main">'
       + '<div class="skill-hist-action">' + text(e.action) + '</div>'
       + '<div class="skill-hist-meta">' + text(meta) + '</div></div>';
-    if(e.beforeVersion) h += '<button type="button" class="skill-file" data-revert="' + text(e.id) + '">Restore this version</button>';
+    if(e.beforeVersion || e.action === 'commit') h += '<button type="button" class="skill-file" data-revert="' + text(e.id) + '">Restore this version</button>';
     h += '</div>';
     return h;
   }

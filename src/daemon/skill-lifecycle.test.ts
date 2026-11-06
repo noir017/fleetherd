@@ -15,7 +15,9 @@ beforeEach(() => {
     { name: 'deploy-check', description: 'Use when checking a deployment', source: { conversation: 'c1', platform: 'tg', address: { channel: '1' } }, now: T0 },
     dir
   );
-  createSkill({ name: 'release-notes', description: 'Use when writing release notes', now: T0 }, dir);
+  // An agent's skill whose conversation is not known: it expires like any other, and its archive
+  // notice has nowhere to go.
+  createSkill({ name: 'release-notes', description: 'Use when writing release notes', source: { agent: 'cc' }, now: T0 }, dir);
 });
 
 afterEach(() => {
@@ -48,7 +50,15 @@ describe('14 days expired, 30 archived', () => {
     expect(deploy[1]).toBe('unused');
     expect((deploy[0] as { source?: unknown }).source).toMatchObject({ conversation: 'c1' });
     const notes = notify.mock.calls.find((c) => (c[0] as { name: string }).name === 'release-notes')!;
-    expect((notes[0] as { source?: unknown }).source).toBeUndefined();
+    expect((notes[0] as { source?: { platform?: string } }).source?.platform).toBeUndefined();
+  });
+
+  it('never expires or archives a skill the gateway did not create', () => {
+    // A person's skill: committed to the repository by hand, so the store has no source for it.
+    createSkill({ name: 'hand-written', description: 'Use when reading the manual', now: T0 }, dir);
+    const swept = sweepSkills(T0 + 365 * DAY, dir);
+    expect(swept.archived.map((s) => s.name)).not.toContain('hand-written');
+    expect(status('hand-written', T0 + 365 * DAY)).toMatchObject({ status: 'active', pinned: false });
   });
 
   it('does not archive twice', () => {

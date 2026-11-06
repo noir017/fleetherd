@@ -158,6 +158,8 @@ export interface SkillPanelEntry {
   restoredAt?: string;
   uses: number;
   agents: string[];
+  /** Why the skill is not delivered — a hand-made commit that breaks the store's rules. */
+  problem?: string;
 }
 
 /** One file a skill is made of, as the page's file list shows it. */
@@ -166,11 +168,15 @@ export interface SkillPanelFile {
   size: number;
 }
 
-/** One recorded change in a skill's `.history/`, newest first. */
+/** One commit in a skill's history, newest first — the gateway's or a person's. */
 export interface SkillPanelHistoryEntry {
+  /** The commit, 12 hex characters. */
   id: string;
   at: string;
+  /** The gateway's action, or `commit` for a change made in the repository by hand. */
   action: string;
+  /** The commit's author: `talkcode`, `talkcode-review`, `talkcode-web`, or a person. */
+  author?: string;
   beforeVersion?: string;
   afterVersion?: string;
   note?: string;
@@ -223,7 +229,8 @@ export type SkillPanelResult =
 /** What `useSkillsPanel` hands a platform: the list, and every operation the store allows. */
 export interface SkillsPanel {
   list(): SkillPanelEntry[];
-  op(op: SkillPanelOp): SkillPanelResult;
+  /** Asynchronous: a write waits for the skills repository's pull before it and push after it. */
+  op(op: SkillPanelOp): Promise<SkillPanelResult>;
 }
 
 /**
@@ -472,8 +479,8 @@ export interface PlatformAdapter {
    * web UI's skills page.
    *
    * Every write goes through `daemon/skills-store.ts`, the same functions `talkcode skills` calls:
-   * that module owns name and path validation, the version `patch` must carry, the `.history/`
-   * snapshot taken before each change, and the archive that is the only "delete" there is. The
+   * that module owns name and path validation, the version `patch` must carry, the commit each
+   * change becomes, and the archive that is the only "delete" there is. The
    * daemon wraps it in `daemon/skills-panel.ts` and also tells the conversation that created a
    * skill when it is archived, exactly as the CLI path does.
    *

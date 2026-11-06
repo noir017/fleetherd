@@ -270,8 +270,8 @@ Do not weaken these without saying so explicitly in the PR:
    follow — the first such path in this project, and the reason the write side is not a plain file
    edit. What keeps it answerable: names, paths and `SKILL.md` are validated before anything is
    written; `patch` must carry the version `show` printed, so a stale edit is refused rather than
-   silently undoing a newer one; every change keeps the previous files in `.history/` and `revert`
-   puts them back; an archived skill is taken off every host; and the conversation that created a
+   silently undoing a newer one; every change is a commit in the skills repository and `revert`
+   puts the files before it back; an archived skill is taken off every host; and the conversation that created a
    skill is told when it is archived. `access.allowFrom` remains the only gate on who can talk to
    the bot, so it is also the gate on who can write a skill — keep it to people you trust, and do
    not add another writer without the same validation and history.
@@ -288,6 +288,18 @@ Do not weaken these without saying so explicitly in the PR:
    file writes, and `deny: ["*"]` denies NOTHING — `"*"` names a permission class literally. The
    deny list must name every class; a tool in a class it does not name is not refused. Do not
    relax either half, and keep the list complete when the CLI gains a class.
+
+   **The third writer is whoever can push to `skills.repo`** (`daemon/skills-repo.ts`,
+   `docs/skills.md#the-repository`, since 2.41.0). With a shared repository configured, a person's
+   commit reaches every agent the same way an agent's `patch` does, so write access to that
+   repository is a gate on what every agent reads, beside `access.allowFrom`. It is held to the
+   store's rules where it lands: a pulled skill that breaks them (`skillProblem` — no frontmatter, a
+   name a harness would not list, over the size caps, a bundled skill's name) is not delivered, and
+   `list` says why; and a pulled change can be told apart (its author is not `talkcode*`) and
+   `revert`ed like any other. The gateway reaches the repository the way it reaches a host
+   (invariant 5): its own key and known_hosts, `-F none`, strict host key checking — it never learns
+   the repository's key, and it never force-pushes: when both sides changed one file the
+   repository's version wins and the gateway's commits are kept on a branch.
 
 ## Adding things
 

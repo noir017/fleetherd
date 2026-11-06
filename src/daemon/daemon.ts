@@ -146,6 +146,7 @@ import {
   showSkill,
   skillHistory,
   writeSkillFile,
+  type SkillChangeBy,
   type SkillRecord,
 } from './skills-store.js';
 import type { IpcAction, VoiceLogResult } from '../ipc/protocol.js';
@@ -159,6 +160,7 @@ import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
 import { panelTasks } from './schedule-panel.js';
 import { buildSkillsPanel } from './skills-panel.js';
+import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
 import { commandSurface, Delegation } from './delegation.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { DRAIN_LIMIT_MS, describeInProgress, nothingInProgress, whenIdle, type InProgress } from './restart-drain.js';
@@ -796,6 +798,13 @@ export class Daemon {
   private stopping = false;
   /** The daily managed-skill sweep, cleared on stop. */
   private skillSweepStop: (() => void) | undefined;
+  /**
+   * The managed skills' repository: every write goes through it, so a `patch` is checked against
+   * the shared repository's newest version and its commit is pushed while the turn still waits.
+   * Reads `config.skills` on every use, which is what makes that section live on `/reload`.
+   */
+  private readonly skillsRepo = new SkillsRepo({ dir: configDir(), remote: () => skillsRemoteOf(this.config) });
+  private skillsSyncStop: (() => void) | undefined;
   /** Cancel handle for installed signal handlers (removed on stop to avoid leak + test cross-talk). */
   private signalCleanup: (() => void) | null = null;
   /** Set while a SIGTERM waits for the work in progress (beginDrain); cancels that wait. */
@@ -1017,6 +1026,7 @@ export class Daemon {
         clock,
         candidates: () => this.reviewCandidates(),
         notify: (lane, text) => this.notifyReview(lane, text),
+        writeSkills: (fn) => this.skillsRepo.write(fn),
       });
     }
     // Before anything can start an agent: an agent with `host:` reaches its machine through this.
@@ -1041,6 +1051,7 @@ export class Daemon {
   }
 
   async run(): Promise<void> {
+    this.startSkillsRepo();
     // Wire + start every configured platform instance; they all converge on the same
     // inbound entry (messages carry their instance id, so routing/outbound stay separable).
     for (const [id, adapter] of this.platforms) {
@@ -1073,7 +1084,12 @@ export class Daemon {
       // …and one with room for a skills page gets the gateway's managed skills and every write
       // the store allows (the web UI). `talkcode skills` is the same store, so the two cannot
       // disagree; archiving here tells the creating conversation exactly as the CLI path does.
-      adapter.useSkillsPanel?.(buildSkillsPanel({ notifyArchived: (skill) => this.notifySkillArchived(skill, 'manual') }));
+      adapter.useSkillsPanel?.(
+        buildSkillsPanel({
+          notifyArchived: (skill) => this.notifySkillArchived(skill, 'manual'),
+          write: (fn) => this.skillsRepo.write(fn),
+        })
+      );
       // …and the automatic reviews, read-only: what each quiet conversation taught the skill
       // library, including the reviews that changed nothing and so posted no line anywhere.
       const reviewPanel = this.reviewPanel(id);
@@ -1197,6 +1213,8 @@ export class Daemon {
     this.signalCleanup = null;
     this.skillSweepStop?.();
     this.skillSweepStop = undefined;
+    this.skillsSyncStop?.();
+    this.skillsSyncStop = undefined;
     // Before the platforms: a review that is mid-run when the gateway stops is left to finish its
     // process (it is short and bounded), but no new one starts and no notice is posted to a lane
     // that is about to go down.
@@ -1515,20 +1533,44 @@ export class Daemon {
   }
 
   /**
+   * The skills store has to be a repository before anything reads it: an agent spawned by the first
+   * message gets its skills from there. Moving an old store is local and synchronous; the first
+   * fetch starts right after, then every five minutes, and its pushes also carry the daily sweep's
+   * archive commits, which are made locally. Never from a test worker, which must not touch the
+   * operator's directory.
+   */
+  private startSkillsRepo(): void {
+    if (!selfInvocation()) return;
+    prepareSkillsRepo(configDir());
+    this.skillsSyncStop = this.skillsRepo.start();
+  }
+
+  /** Who a `talkcode skills` write is from: the agent answering the conversation, for the commit. */
+  private skillChangeBy(conversationId: ConversationId | undefined): SkillChangeBy {
+    if (!conversationId) return { kind: 'agent' };
+    const agent = this.registry.boundAgentOf(conversationId) ?? this.config.routing.default;
+    return { kind: 'agent', agent, conversation: conversationId };
+  }
+
+  /**
    * `talkcode skills …` — the gateway's own skills (skills-store.ts). The store owns every rule
    * and throws a message written for the agent; this only supplies what the request cannot: the
-   * conversation that created a skill, so an archive notice has somewhere to go.
+   * conversation that created a skill, so an archive notice has somewhere to go, and who made a
+   * change, for its commit. Every write goes through the skills repository (skills-repo.ts), which
+   * pulls before it and pushes after it.
    */
-  private handleSkills(
+  private async handleSkills(
     action: Extract<IpcAction, { kind: 'skills' }>,
     conversationId: ConversationId | undefined,
     address: ConversationAddress
-  ): unknown {
+  ): Promise<unknown> {
     const need = (value: string | undefined, what: string): string => {
       if (value === undefined || value === '') throw new Error(`skills ${action.action} needs ${what}`);
       return value;
     };
     const name = (): string => need(action.name, 'a <name>');
+    const by = this.skillChangeBy(conversationId);
+    const write = <T>(fn: () => T): Promise<T> => this.skillsRepo.write(fn);
     switch (action.action) {
       case 'list':
         return { skills: listSkills() };
@@ -1540,25 +1582,29 @@ export class Daemon {
               conversation: conversationId,
               platform: this.lastResolvedPlatform ?? this.registry.platformFor(conversationId),
               address,
-              agent: this.registry.boundAgentOf(conversationId) ?? this.config.routing.default,
+              agent: by.agent ?? this.config.routing.default,
             }
           : undefined;
-        return createSkill({ name: name(), description: action.description ?? '', body: action.body, source });
+        return write(() => createSkill({ name: name(), description: action.description ?? '', body: action.body, source, by }));
       }
       case 'patch':
-        return patchSkill({ name: name(), version: need(action.version, '--version'), content: need(action.content, '--content') });
-      case 'write-file':
-        if (action.content === undefined) throw new Error('skills write-file needs --content');
-        return writeSkillFile({ name: name(), file: need(action.file, 'a <file>'), content: action.content });
+        return write(() =>
+          patchSkill({ name: name(), version: need(action.version, '--version'), content: need(action.content, '--content'), by })
+        );
+      case 'write-file': {
+        const content = action.content;
+        if (content === undefined) throw new Error('skills write-file needs --content');
+        return write(() => writeSkillFile({ name: name(), file: need(action.file, 'a <file>'), content, by }));
+      }
       case 'remove-file':
-        return removeSkillFile({ name: name(), file: need(action.file, 'a <file>') });
+        return write(() => removeSkillFile({ name: name(), file: need(action.file, 'a <file>'), by }));
       case 'archive': {
-        const record = archiveSkill(name());
+        const record = await write(() => archiveSkill(name(), undefined, Date.now(), by));
         this.notifySkillArchived(record, 'manual');
         return record;
       }
       case 'restore':
-        return restoreSkill(name());
+        return write(() => restoreSkill(name(), undefined, Date.now(), by));
       case 'pin':
         return pinSkill(name(), true);
       case 'unpin':
@@ -1566,7 +1612,7 @@ export class Daemon {
       case 'history':
         return { history: skillHistory(name()) };
       case 'revert':
-        return revertSkill(name(), need(action.id, 'a history <id>'));
+        return write(() => revertSkill(name(), need(action.id, 'a history <id>'), undefined, Date.now(), by));
       default: {
         const _exhaustive: never = action.action;
         throw new Error(`unknown skills action: ${_exhaustive}`);

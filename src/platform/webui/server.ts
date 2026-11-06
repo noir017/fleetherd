@@ -773,7 +773,7 @@ function skillsList({ req, res }: Req, ctx: Ctx): void {
 async function skillsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, SkillOpRequestSchema);
   if (!parsed) return;
-  const result = ctx.room.skillOp(parsed);
+  const result = await ctx.room.skillOp(parsed);
   send(req, res, result.ok ? 200 : 400, result);
 }
 

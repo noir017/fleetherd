@@ -46,6 +46,9 @@ const RELOAD_KIND = {
   // Live: the review service reads config.review on every sweep, and one already queued is
   // abandoned rather than run against a definition the operator just removed.
   review: 'live',
+  // Live: the skills repository's sync reads config.skills on every cycle, so a reload that adds,
+  // moves or removes the remote takes effect within five minutes, or at the next write.
+  skills: 'live',
   // Live: Delegation.propose reads it per task-new, so a /reload that flips it lands on the next
   // proposal — the same place /setting applies it.
   delegation: 'live',
