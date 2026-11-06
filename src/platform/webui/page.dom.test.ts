@@ -1416,7 +1416,8 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
   it('stars a topic from its row without opening it, and lists it first', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A, B, C]));
-    expect(h.el('clear-topics').textContent).toBe('Clear all topics');
+    expect(h.el('clear-topics').getAttribute('title')).toBe('Clear all topics');
+    expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear all topics');
 
     await h.click(`[data-star="${C}"]`);
 
@@ -1429,7 +1430,8 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     // Starring is not a reason to switch to it.
     expect(h.live().url).toBe(`api/events?t=${A}`);
     // And the sweep now says it spares what was starred.
-    expect(h.el('clear-topics').textContent).toBe('Clear unstarred topics');
+    expect(h.el('clear-topics').getAttribute('title')).toBe('Clear unstarred topics');
+    expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear unstarred topics');
 
     // The daemon's order is still the page's order underneath: when the topic on screen goes, the
     // page lands in the most RECENT one, not in whatever is starred at the top.
@@ -1517,6 +1519,55 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     await h.click(`[data-del="${B}"]`);
 
     expect(h.confirms.at(-1)).toBe('Delete starred topic "b"?');
+  });
+
+  it('places #clear-topics as an icon button inside the header panel-title', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    const headerTitle = h.doc.querySelector('#sidebar-header .panel-title');
+    expect(headerTitle).not.toBeNull();
+    const btn = h.el('clear-topics');
+    expect(headerTitle?.contains(btn)).toBe(true);
+    expect(btn.classList.contains('btn-icon')).toBe(true);
+    expect(btn.querySelector('svg')).not.toBeNull();
+    expect(btn.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 24 24');
+    expect(btn.textContent).toBe('');
+    expect(btn.getAttribute('title')).toBe('Clear all topics');
+    expect(btn.getAttribute('aria-label')).toBe('Clear all topics');
+  });
+
+  it('updates title and aria-label on #clear-topics as stars come and go', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A, B]));
+    expect(h.el('clear-topics').getAttribute('title')).toBe('Clear all topics');
+    expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear all topics');
+
+    // Star a topic: title/aria-label update to unstarred
+    await h.click(`[data-star="${B}"]`);
+    expect(h.el('clear-topics').getAttribute('title')).toBe('Clear unstarred topics');
+    expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear unstarred topics');
+    expect(h.el('clear-topics').textContent).toBe('');
+
+    // Unstar: title/aria-label revert to all topics
+    await h.click(`[data-star="${B}"]`);
+    expect(h.el('clear-topics').getAttribute('title')).toBe('Clear all topics');
+    expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear all topics');
+    expect(h.el('clear-topics').textContent).toBe('');
+  });
+
+  it('still asks for confirmation before clearing topics from the header button', async () => {
+    const h = await open({ confirm: false });
+    await h.emit(sync(A, [], [A, B]));
+
+    await h.click('#clear-topics');
+    expect(h.confirms).toHaveLength(1);
+    expect(h.confirms[0]).toBe('Delete all 2 topics? This cannot be undone.');
+    expect(h.calls.map((c) => c.path)).not.toContain('api/topics/clear');
+
+    // When confirmed
+    (h.window as any).confirm = () => true;
+    await h.click('#clear-topics');
+    await until('clear request is sent', () => h.calls.some((c) => c.path === 'api/topics/clear'));
   });
 });
 
@@ -4206,6 +4257,11 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(narrowBlock()).toContain('.chip-x{min-width:44px;min-height:44px}');
   });
 
+  it('gives panel-head icon buttons a finger-sized target on phones', () => {
+    const css = narrowBlock();
+    expect(css).toContain('.panel-head .btn-icon{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}');
+  });
+
   it('gives the drawer toggle a finger-sized target', () => {
     const css = narrowBlock();
     // At the inherited .btn-icon size this is a 26x21 box, and it is the only way back to the
@@ -5432,7 +5488,9 @@ describe('webui page: the sidebar footer, and low attention', () => {
       expect(menu.contains(h.el(id))).toBe(true);
     }
     const manage = h.el('manage-menu');
-    for (const id of ['close-idle', 'clear-topics']) expect(manage.contains(h.el(id))).toBe(true);
+    for (const id of ['close-idle']) expect(manage.contains(h.el(id))).toBe(true);
+    expect(manage.contains(h.el('clear-topics'))).toBe(false);
+    expect(h.doc.querySelector('#sidebar-header .panel-title')?.contains(h.el('clear-topics'))).toBe(true);
     // The footer itself holds two buttons and nothing else — the two menus are its children.
     const buttons = Array.from(h.el('sidebar-footer').children).filter((e) => e.tagName === 'BUTTON');
     expect(buttons.map((b) => b.id)).toEqual(['opts-toggle', 'manage-toggle']);
@@ -5470,7 +5528,7 @@ describe('webui page: the sidebar footer, and low attention', () => {
     });
     expect(h.el('idle-count').textContent).toBe('');
     expect(h.el('close-idle').hidden).toBe(true);
-    expect(h.el('idle-sep').hidden).toBe(true);
+    expect(h.doc.getElementById('idle-sep')).toBeNull();
   });
 
   it('opens one menu at a time: opening the other puts the first away', async () => {
@@ -5485,8 +5543,8 @@ describe('webui page: the sidebar footer, and low attention', () => {
     expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
     expect(h.el('manage-toggle').getAttribute('aria-expanded')).toBe('true');
 
-    // A click on a Manage item closes it before the action it names.
-    await h.click('#clear-topics');
+    // A click outside closes the menu.
+    await h.click('#log');
     expect(h.el('manage-menu').hidden).toBe(true);
   });
 

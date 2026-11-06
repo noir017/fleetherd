@@ -132,7 +132,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* One bar, one height, one way out on both sides. The × is the panel's close button:
    the topic list and the task panel are both things a person opens and closes. */
 .panel-head{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;border-bottom:1px solid var(--line);min-height:var(--headh);flex:0 0 auto}
-.panel-title{flex:1;min-width:0;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.panel-title{flex:1;min-width:0;display:inline-flex;align-items:center;gap:2px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .btn-icon{background:none;border:0;padding:4px 7px;color:var(--dim);font:inherit;font-size:13px;cursor:pointer;border-radius:4px;line-height:1}
 .btn-icon:hover{color:var(--fg);background:var(--field)}
 .panel-head .add{font-size:15px;font-weight:600}
@@ -271,8 +271,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    It was a column of full-width buttons, one per control, and reached three rows with a
    fourth on the way (2026-11-03); it is two menus now. Menu holds what is set once per
    device (Notifications, Low attention) or visited rarely (All settings, Skills). Manage
-   holds the two housekeeping actions (Close idle, Clear all topics) and keeps the idle
-   count on its own face, so the count is still seen without opening anything. */
+   holds Close idle and keeps the idle count on its own face, so the count is still seen
+   without opening anything. Clear all topics is an icon button beside the Topics title. */
 .panel-foot{border-top:1px solid var(--line);padding:8px;display:flex;align-items:center;gap:4px;position:relative;flex:0 0 auto;container-type:inline-size}
 .panel-foot>button{background:none;border:0;padding:7px 9px;border-radius:5px;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
 .panel-foot>button:hover,.panel-foot>button[aria-expanded="true"],.panel-foot>button.on{color:var(--fg);background:var(--field)}
@@ -295,10 +295,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .opt-state{color:var(--dim);font-size:12px}
 [aria-pressed="true"]>.opt-state{color:#4ade80}
 .opts-sep{border-top:1px solid var(--line);margin:4px 2px}
-/* Clear all topics is last and quiet until the pointer is on it: it throws away every
-   room at once and should not compete with the row above it. Dim, then red. */
-.panel-menu .danger{color:var(--dim)}
-.panel-menu .danger:hover{color:#f87171;background:rgba(248,113,113,.12)}
+/* Clear all topics sits in the panel title: quiet until the pointer is on it. Dim, then red. */
+#clear-topics{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
+#clear-topics:hover{color:#f87171;background:rgba(248,113,113,.15)}
 /* The confirmation for it: names every topic whose agent is about to go, because "close 7 agents"
    does not say whether the one you were about to come back to is among them. A dialog of the page's
    own rather than confirm(), which cannot hold a list a phone can scroll. The list scrolls inside
@@ -1114,7 +1113,7 @@ const SCRIPT = `
       chips=$('chips'), hints=$('hints'), typing=$('typing'), note=$('note'), picker=$('picker'),
       bar=$('topics'), sidebar=$('sidebar'), collapseBtn=$('collapse-sidebar'),
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
-      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), idleCount=$('idle-count'), idleSep=$('idle-sep'),
+      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), idleCount=$('idle-count'),
       notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
@@ -1576,7 +1575,7 @@ const SCRIPT = `
 
   /**
    * The two menus at the foot of the sidebar — Menu (all settings, notifications, low attention,
-   * skills) and Manage (close idle, clear all topics). One open at a time, one box in one place;
+   * skills) and Manage (close idle). One open at a time, one box in one place;
    * a click anywhere else puts it away, and Escape puts it away and gives the focus back to the
    * button that opened it. A disclosure rather than an ARIA menu: role=menu promises arrow-key
    * navigation, and these are reached with Tab like any other buttons.
@@ -3536,13 +3535,13 @@ const SCRIPT = `
     }
     bar.innerHTML=h;
     // Says what it will do: with stars in the list it no longer clears all of them.
-    clearBtn.textContent = stars ? 'Clear unstarred topics' : 'Clear all topics';
-    clearBtn.title = stars ? 'Forget every topic except the starred ones and start a new one' : 'Forget every topic and start a new one';
+    var clearLabel = stars ? 'Clear unstarred topics' : 'Clear all topics';
+    clearBtn.title = clearLabel;
+    clearBtn.setAttribute('aria-label', clearLabel);
     // The count sits on Manage's face, so it is read without opening the menu; the item inside
     // says what closing would do, and is absent when there is nothing to close.
     var idle=idleTopics().length;
     idleBtn.hidden = !idle;
-    idleSep.hidden = !idle;
     idleBtn.textContent = 'Close idle ('+idle+')';
     idleCount.textContent = idle ? '('+idle+')' : '';
     var below = cur ? busyBelow(cur.id) : false;
@@ -5900,18 +5899,17 @@ __GATE__
 <main id="app" hidden>
   <aside id="sidebar" class="panel panel-left">
     <div id="sidebar-header" class="panel-head">
-      <span class="panel-title">Topics</span>
+      <span class="panel-title">Topics<button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button></span>
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
       <button type="button" class="btn-icon panel-close" id="collapse-sidebar" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
     <div id="topics"></div>
     <!-- Two menus, one row. Menu holds what is set once per device or visited rarely; Manage
-         holds the two housekeeping actions, with the idle count on its face so the number is
-         still seen without opening anything. Both open upward with the same box and the same
-         dismissal (setMenu). -->
+         holds Close idle, with the idle count on its face so the number is still seen without
+         opening anything. Both open upward with the same box and the same dismissal (setMenu). -->
     <div id="sidebar-footer" class="panel-foot">
       <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙&#xFE0E;</span><span class="opts-word"> Menu</span></button>
-      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents and clear all topics"><span class="opts-gear"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
+      <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents"><span class="opts-gear"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
       <div id="opts-menu" class="panel-menu" hidden>
         <!-- The gateway's own settings: agents, models, idle reclaim, scope. A page rather than a
              chat command, because the rows need the width a message never had. -->
@@ -5925,8 +5923,6 @@ __GATE__
       </div>
       <div id="manage-menu" class="panel-menu" hidden>
         <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle</button>
-        <div class="opts-sep" id="idle-sep" hidden></div>
-        <button type="button" id="clear-topics" class="danger" title="Forget every topic and start a new one">Clear all topics</button>
       </div>
     </div>
     <div id="sidebar-resize" class="panel-resize" title="Drag to resize · double-click for the default width"></div>

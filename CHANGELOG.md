@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Clear all topics in the web UI moved from the Manage menu to an icon beside Topics.** Placed
+  beside Close idle in the Manage menu at the foot of the sidebar, the two actions were too easy
+  to misclick. Clear is now an icon button in the sidebar header directly following the "Topics"
+  title, using the broom icon, with its title and aria-label reflecting whether unstarred or all
+  topics will be cleared. The confirmation step remains in place, and Manage holds Close idle
+  alone. [→](docs/web-ui.md)
+
 ## [2.38.1] - 2026-11-06
 
 ### Fixed
