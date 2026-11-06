@@ -15,6 +15,7 @@ import {
   taskExpiredText,
   taskView,
   type EditTaskInput,
+  type NewTaskContext,
   type NewTaskInput,
   type ScheduleDaySession,
   type ScheduleTask,
@@ -129,9 +130,36 @@ export class ScheduleService {
     // a run is not.
     if (this.scheduler.isRunning(id)) throw new Error(`#${id} is running right now; edit it once that run finishes`);
 
+    const built = editTask(task, input, this.editContext(task));
+    if (!built.ok) throw new Error(built.error);
+    const cwdProblem = this.cwdHostProblem(built.task, input.cwd, caller);
+    if (cwdProblem) throw new Error(cwdProblem);
+    if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
+      const why = await this.registry.scheduledModelProblem(built.task.run.agent, built.task.run.model, caller);
+      if (why) throw new Error(why);
+    }
+    // Nothing above writes. While the model list was being read (a cold session, an ssh round trip
+    // for a remote agent), a run may have finished — the scheduler writes runs, lastRun and
+    // lastPlannedAt — or the task may have been removed. Writing `built` then would put the old
+    // snapshot back: a planned time already run would run again, or a deleted task would come back
+    // and post a second card. Every write replaces the stored object, so identity is the test.
+    this.assertUnchanged(task);
+    if (!this.scheduler.update(built.task)) {
+      throw new Error(`#${id} was removed while this edit was being checked; nothing was changed`);
+    }
+    this.card(caller, built.task, 'updated');
+    return taskView(built.task, this.clock.now(), { detail: true, here: caller });
+  }
+
+  /**
+   * What `editTask` needs to validate the change: the task's own values as every default, and the
+   * conversation a fixed-session run happens in with the agent it is bound to.
+   */
+  private editContext(task: ScheduleTask): NewTaskContext {
+    const platform = this.platforms.get(task.target.platform);
     const fixed = task.run.kind === 'agent' && task.run.session === 'fixed' ? task.conversation : undefined;
     const bound = fixed !== undefined ? this.registry.boundAgentOf(fixed) : undefined;
-    const built = editTask(task, input, {
+    return {
       now: this.clock.now(),
       id: task.id,
       // The task's own zone is the default an edit means by "8 o'clock", not the gateway's.
@@ -145,19 +173,53 @@ export class ScheduleService {
         ...(task.run.kind === 'bash' && task.run.host !== undefined ? { host: task.run.host } : {}),
       },
       target: { platform: task.target.platform, address: targetAddress(task) },
-      // The target cannot be changed by an edit, so the platform check `add` makes has already
-      // passed for this task: a platform that is down must not make its tasks uneditable.
-      canOpenTopic: true,
+      // The target cannot change, so the check `add` makes was already passed for this task: a
+      // platform that is not running must not make its tasks uneditable. When it is up, ask it the
+      // same question add would.
+      canOpenTopic:
+        platform !== undefined
+          ? platform.capabilities.thread === true && platform.capabilities.standaloneThread === true
+          : true,
       ...(fixed !== undefined ? { targetConversation: { key: fixed, ...(bound !== undefined ? { agent: bound } : {}) } } : {}),
-    });
-    if (!built.ok) throw new Error(built.error);
-    if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
-      const why = await this.registry.scheduledModelProblem(built.task.run.agent, built.task.run.model, caller);
-      if (why) throw new Error(why);
+    };
+  }
+
+  /**
+   * The task must still be the one the edit was built from. A run that started or finished replaces
+   * the stored object (runs, lastRun, lastPlannedAt, daySession), and a removal leaves nothing.
+   */
+  private assertUnchanged(task: ScheduleTask): void {
+    const current = this.scheduler.get(task.id);
+    if (current === undefined) {
+      throw new Error(`#${task.id} was removed while this edit was being checked; nothing was changed`);
     }
-    this.scheduler.update(built.task);
-    this.card(caller, built.task, 'updated');
-    return taskView(built.task, this.clock.now(), { detail: true, here: caller });
+    if (current !== task || this.scheduler.isRunning(task.id)) {
+      throw new Error(`#${task.id} changed while this edit was being checked (a run started or finished); run the edit again`);
+    }
+  }
+
+  /**
+   * A `--cwd` is a directory on the machine the edit was typed on: the CLI resolved a relative
+   * path there, and an absolute one is still that machine's. When the task runs somewhere else the
+   * path names a different place (or nothing), so the edit is refused instead of stored. `add`
+   * takes the directory as the registering machine sees it for the same reason; a path on the
+   * task's machine is set by editing from a conversation there.
+   */
+  private cwdHostProblem(task: ScheduleTask, cwd: string | undefined, caller: ConversationId): string | undefined {
+    if (cwd === undefined) return undefined;
+    const taskHost = this.hostOfTask(task);
+    const callerHost = findAgent(this.config, this.registry.boundAgentOf(caller) ?? this.config.routing.default)?.host;
+    if (taskHost === callerHost) return undefined;
+    return (
+      `--cwd ${cwd} is a path on ${callerHost ?? 'this machine'}, but this task runs on ${taskHost ?? 'this machine'}; ` +
+      'run the edit from a conversation there, or `rm` it and add it again with a path that machine can use'
+    );
+  }
+
+  /** The host a task's runs happen on: a bash task's own host, else its agent's. Undefined = here. */
+  private hostOfTask(task: ScheduleTask): string | undefined {
+    if (task.run.kind === 'bash') return task.run.host;
+    return findAgent(this.config, task.run.agent)?.host;
   }
 
   list(caller: ConversationId | undefined, id?: string): ScheduleListResult {

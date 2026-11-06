@@ -1521,6 +1521,10 @@ export class Daemon {
         return schedules.list(caller, action.id);
       case 'schedule-op':
         return { task: schedules.op(action.id, action.op, caller) };
+      default: {
+        const _exhaustive: never = action;
+        throw new Error(`unknown schedule query: ${JSON.stringify(_exhaustive)}`);
+      }
     }
   }
 

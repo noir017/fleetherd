@@ -282,6 +282,7 @@ describe('editTask', () => {
     const fresh = built({ cron: '0 8 * * *', prompt: 'x', session: 'new' });
     expect(refused(fresh, { agent: 'zz' })).toMatch(/unknown agent "zz"; configured: cc, oc/);
     expect(refused(fresh, { cron: '0 8 * * * *' })).toMatch(/not a 5-field cron/);
+    expect(refused(fresh, { cron: '0 9 * * *', at: '+2h' })).toMatch(/exactly one of --cron/);
     expect(refused(fresh, { at: 'soon' })).toMatch(/not a time I can read/);
     expect(refused(fresh, { at: '2026-09-29 08:00' })).toMatch(/already in the past/);
     expect(refused(fresh, { tz: 'Mars/Base' })).toMatch(/unknown time zone "Mars\/Base"/);
@@ -332,7 +333,9 @@ describe('editTask', () => {
 
   it('keeps a fixed task\'s window, and refuses a schedule with no run left inside it', () => {
     const fixed = built({ cron: '0 8 * * *', prompt: 'x' }); // registered 10:00 on the 30th, ends 10:00 on the 1st
-    expect(edited(fixed, { name: 'renamed' }).expiresAt).toBe(NOW + FIXED_SESSION_WINDOW_MS);
+    const kept = edited(fixed, { name: 'renamed' });
+    expect(kept.expiresAt).toBe(NOW + FIXED_SESSION_WINDOW_MS);
+    expect(kept.conversation).toBe('web#main#t1');
     // Edited at 22:00 that night, "18:00 daily" would first run at 18:00 on the 1st — inside the
     // 24h a NEW task would get, but past this task's own window.
     const later = editCtx({ now: NOW + 12 * HOUR });

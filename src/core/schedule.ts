@@ -642,6 +642,7 @@ function preserveTask(task: ScheduleTask, built: ScheduleTask): ScheduleTask {
     state: task.state,
     runs: task.runs,
     ...(task.lastRun !== undefined ? { lastRun: task.lastRun } : {}),
+    ...(task.conversation !== undefined ? { conversation: task.conversation } : {}),
     ...(task.expiresAt !== undefined ? { expiresAt: task.expiresAt } : {}),
     ...(task.lastPlannedAt !== undefined ? { lastPlannedAt: task.lastPlannedAt } : {}),
     ...(task.daySession !== undefined ? { daySession: task.daySession } : {}),
@@ -686,19 +687,9 @@ function withoutStaleDayTopic(task: ScheduleTask, next: ScheduleTask): ScheduleT
  */
 function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
   const run = task.run;
-  const time: Pick<NewTaskInput, 'cron' | 'at'> =
-    input.cron !== undefined
-      ? { cron: input.cron }
-      : input.at !== undefined
-        ? { at: input.at }
-        : 'cron' in task.when
-          ? { cron: task.when.cron }
-          : // The one form that keeps the exact instant: a wall-clock string would be read in the
-            // task's zone and could land a second off across a DST change.
-            { at: new Date(task.when.at).toISOString() };
   const common: NewTaskInput = {
     name: input.name ?? task.name,
-    ...time,
+    ...mergedTime(task, input),
     tz: input.tz ?? task.when.tz,
     ...(input.cwd !== undefined ? { cwd: input.cwd } : run.cwd !== undefined ? { cwd: run.cwd } : {}),
   };
@@ -726,6 +717,22 @@ function sameWhen(a: ScheduleWhen, b: ScheduleWhen): boolean {
   if (a.tz !== b.tz) return false;
   if ('cron' in a) return 'cron' in b && a.cron === b.cron;
   return 'at' in b && a.at === b.at;
+}
+
+/**
+ * The time rule an edit leaves behind: what was given, else the task's own.
+ *
+ * Both given are passed through together, so buildTask refuses with add's "exactly one of" rather
+ * than this function silently choosing cron.
+ */
+function mergedTime(task: ScheduleTask, input: EditTaskInput): Pick<NewTaskInput, 'cron' | 'at'> {
+  if (input.cron !== undefined && input.at !== undefined) return { cron: input.cron, at: input.at };
+  if (input.cron !== undefined) return { cron: input.cron };
+  if (input.at !== undefined) return { at: input.at };
+  if ('cron' in task.when) return { cron: task.when.cron };
+  // The one form that keeps the exact instant: a wall-clock string would be read in the task's
+  // zone and could land a second off across a DST change.
+  return { at: new Date(task.when.at).toISOString() };
 }
 
 // ─────────────────────────────── saying things ───────────────────────────────

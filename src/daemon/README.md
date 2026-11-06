@@ -566,7 +566,11 @@ What each piece is shaped by, one line each:
   day's topic keeps its agent and its directory, so the next run opens a new topic for the rest of
   the day, and the earlier one is left as it is (like yesterday's). Editing a task whose run is in
   flight is refused — that run is using the old values and, for a daily task, would write the old
-  day's topic back over the edit.
+  day's topic back over the edit. A `--cwd` is refused when the task's host is not the editing
+  conversation's (`hostOfTask`): the path was resolved on the machine the edit was typed on, and on
+  the task's machine it names a different place. Nothing is written until every check passes, and
+  the task is re-read after the one `await` (the model list): a run that finished meanwhile, or a
+  delete, is reported rather than overwritten, and `Scheduler.update` refuses an id that is gone.
 - **A bash run is not an agent**: `bash -lc` in its own process group (killed whole on timeout — `a |
   b` forks), the daemon's environment minus the reverse-command token, a 16 KB tail kept for the chat
   and the full output in `<configDir>/schedule-runs/<id>/` (20 per task). Longer than 3000 characters

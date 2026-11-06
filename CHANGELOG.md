@@ -17,7 +17,10 @@ All notable changes to this project are documented here. The format is based on
   than making a catch-up run that never existed. What a task *is* still cannot change: the type
   (prompt ↔ bash), the session and the output target are refused, naming `rm` + `add`. A daily
   task whose agent or directory changed leaves the topic it opened today as it is and opens a new
-  one for the rest of the day, because a topic keeps its agent and its directory.
+  one for the rest of the day, because a topic keeps its agent and its directory. A `--cwd` is
+  refused when the task runs on another machine: the path means the machine the edit was typed on.
+  Nothing is written until every check passes, and a task is re-read after the one wait (the model
+  list), so a run that finished meanwhile is not undone and a deleted task is not brought back.
   [→](docs/scheduled-tasks.md)
 
 ## [2.43.0] - 2026-11-06
