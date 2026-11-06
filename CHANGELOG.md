@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A suggested preference can be adopted into a topic, not only dismissed.** The web UI's
+  **Suggested preferences** list now puts **Adopt** beside **Dismiss**. Adopt opens a new topic
+  whose composer holds a short draft asking an agent to add the suggestion to the person's
+  instructions — which file, fitting the existing wording, and showing the diff before changing
+  anything — with the suggestion quoted below it. Nothing is sent: the draft can be edited,
+  `/agent` can change who gets it first, and throwing it away costs nothing. The suggestion leaves
+  the list only when a message that still carries it is accepted in that topic, through the same
+  dismissal the button sends; the link is by topic and in memory, so a reload forgets it and the
+  suggestion stays pending, which is the way a lost link has to fail. A topic that cannot be
+  opened — every one starred or in use — says why and keeps the suggestion. Both answers sit under
+  the suggestion so neither squeezes it at the panel's width, and are 44px tall on a phone.
+
 ## [2.44.0] - 2026-11-06
 
 ### Changed

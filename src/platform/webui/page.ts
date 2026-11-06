@@ -490,10 +490,16 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .rev-open{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer;align-self:flex-start}
 .rev-open:hover{border-color:#3a3a3a;background:#2a2a2a}
 .rev-pending{border:1px solid #23404f;border-radius:6px;padding:9px 10px;background:#162028;display:flex;flex-direction:column;gap:7px}
-.rev-pitem{display:flex;align-items:flex-start;gap:8px}
-.rev-pbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+/* The two answers go under the suggestion, not beside it: the panel is never wider than 380px,
+   and at 240px two buttons in the row would leave the text about 90px. */
+.rev-pitem{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px}
+.rev-pbody{flex:1 1 100%;min-width:0;display:flex;flex-direction:column;gap:2px}
 .rev-ptext{font-size:12.5px;color:#e5e5e5;line-height:1.5;overflow-wrap:anywhere}
 .rev-pmeta{font-size:11px;color:var(--dim);overflow-wrap:anywhere}
+.rev-pacts{display:flex;flex:none;gap:6px;margin-left:auto}
+.rev-adopt{flex:none;background:#2a2a2a;border:1px solid #3a3a3a;border-radius:5px;color:var(--fg);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
+.rev-adopt:hover:not(:disabled){background:#333;border-color:#4a4a4a}
+.rev-adopt:disabled{opacity:.5;cursor:default}
 .rev-dismiss{flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
 .rev-dismiss:hover:not(:disabled){color:var(--fg);border-color:#3a3a3a}
 .rev-dismiss:disabled{opacity:.5;cursor:default}
@@ -1097,6 +1103,8 @@ button:disabled{opacity:.5;cursor:default}
   .sched-acts button{min-height:44px;padding:0 14px}
   .sched-subtab{min-height:44px}
   .rev-open{min-height:44px;padding:0 14px}
+  /* Both answers on a suggestion are thumb targets here, like the button that opens a topic. */
+  .rev-adopt,.rev-dismiss{min-height:44px;padding:0 12px}
   /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
      phone is an editor with a sliver of transcript behind it, and the transcript is not what the
      operator opened. */
@@ -1287,6 +1295,10 @@ const SCRIPT = `
   // The Reviews tab's last answer, and the rows the reader has opened. null is "not asked yet",
   // which is different from an empty list and is what the tab shows as Loading….
   var reviewData=null, reviewSeq=0, revOpen={};
+  // The suggestion each topic was opened for by Adopt, by topic id: {text}. This page's memory
+  // only. A message the daemon accepts that still carries the text dismisses the suggestion; a
+  // reload forgets the link and leaves the suggestion pending, which is the safe direction.
+  var revAdopted={};
   // The skills window: its list, the skill open in it, and whether the New form is showing. Not
   // persisted — a management surface is opened on purpose, and a window that came back on load
   // would sit over a conversation nobody asked it to cover.
@@ -1894,19 +1906,46 @@ const SCRIPT = `
    * The preference suggestions nobody has dealt with, merged across reviews. Nothing acts on them:
    * the person has one added to the instructions every agent gets, or dismisses it — so this block
    * says that, rather than looking like settings that are already in force.
+   *
+   * Adopt is the first half of that: it opens a topic whose composer holds a draft asking an agent
+   * to add the suggestion to the person's instructions. The draft is not sent, so the suggestion
+   * stays on the list until a message that carries it actually goes out from that topic
+   * (settleAdopted). A draft thrown away costs nothing.
    */
   function revPending(list){
     if(!list.length) return '';
     var h = '<div class="rev-pending"><div class="rev-label">Suggested preferences · ' + list.length + '</div>';
-    h += '<div class="rev-note">Not in effect anywhere. Ask an agent to add one to your instructions, or dismiss it.</div>';
+    h += '<div class="rev-note">Not in effect anywhere. Adopt opens a new topic with a draft asking an agent to add it to your instructions; Dismiss takes it off this list.</div>';
     for(var i=0;i<list.length;i++){
       var p = list[i], from = [];
       for(var j=0;j<p.from.length;j++) from.push(p.from[j].title);
       h += '<div class="rev-pitem"><div class="rev-pbody"><div class="rev-ptext">' + text(p.text) + '</div>';
       h += '<div class="rev-pmeta">' + (p.count > 1 ? text(p.count + ' reviews · ') : '') + text(from.join(', ')) + '</div></div>';
-      h += '<button type="button" class="rev-dismiss" data-rev-dismiss="' + i + '">Dismiss</button></div>';
+      h += '<div class="rev-pacts"><button type="button" class="rev-adopt" data-rev-adopt="' + i + '">Adopt</button>';
+      h += '<button type="button" class="rev-dismiss" data-rev-dismiss="' + i + '">Dismiss</button></div></div>';
     }
     return h + '</div>';
+  }
+
+  /**
+   * The suggestion as a new topic's first draft: a request to an agent, never a message already
+   * sent. The person can edit it, change agent with /agent first, or throw it away. The suggestion
+   * is quoted at the end, which is also what settleAdopted looks for when the message goes out.
+   */
+  function adoptDraft(text){
+    return 'Add this to my standing instructions: the instructions/ directory on the gateway. '
+      + 'Choose common.md or the file for your own agent, fit it into the wording already there, '
+      + 'and show me the diff before you change anything.\\n\\n"' + text + '"';
+  }
+
+  /** Open a topic for one suggestion, with the draft in its composer. */
+  function adoptPreference(btn){
+    var i = Number(btn.getAttribute('data-rev-adopt'));
+    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
+    if(!p) return;
+    btn.disabled = true;
+    createTopic({text:p.text, draft:adoptDraft(p.text)}).then(function(){ btn.disabled = false; },
+      function(){ btn.disabled = false; });
   }
 
   /** Take one suggestion off the pending list; the daemon answers with the fresh list. */
@@ -1914,18 +1953,56 @@ const SCRIPT = `
     var i = Number(btn.getAttribute('data-rev-dismiss'));
     var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
     if(!p) return;
-    btn.disabled = true;
+    dismissSuggestion(p, btn);
+  }
+
+  /**
+   * The one dismiss request, from the button or from a message that carried the suggestion.
+   * The button is absent for the second: there is no control on screen to disable.
+   */
+  function dismissSuggestion(p, btn){
+    if(btn) btn.disabled = true;
     post('api/reviews/op', {action:'dismiss', text:p.text}, 1).then(function(r){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }).then(function(d){
+      // A list asked for before this answer must not put the suggestion back on screen: the
+      // topic a draft was sent in can open its stream and ask for one at the same moment.
+      reviewSeq++;
       reviewData = d || reviewData;
+      forgetAdopted(p.text);
       paintReviews();
       paintSchedCounts();
     }).catch(function(e){
-      btn.disabled = false;
+      if(btn) btn.disabled = false;
       showSchedNote('Could not dismiss that suggestion: ' + ((e && e.message) || 'network error'));
     });
+  }
+
+  /**
+   * A message the daemon accepted in a topic: when it is the draft an Adopt started there and still
+   * carries the suggestion, the suggestion has been dealt with. The text is compared, not the
+   * topic alone, so a draft cleared and replaced with something else leaves it on the list — a
+   * wrong dismissal cannot be undone from the page.
+   */
+  function settleAdopted(id, typed){
+    var a = revAdopted[id];
+    if(!a || !carries(typed, a.text)) return;
+    dismissSuggestion(a, null);
+  }
+
+  /** Whether a sent message still carries a suggestion, spacing ignored (as the store's key is). */
+  function carries(sent, want){
+    var flat = function(s){ return String(s == null ? '' : s).replace(/\\s+/g, ''); };
+    var w = flat(want);
+    return w.length > 0 && flat(sent).indexOf(w) >= 0;
+  }
+
+  /** Drop every topic's link to a suggestion that has just been dealt with. */
+  function forgetAdopted(text){
+    for(var id in revAdopted){
+      if(Object.prototype.hasOwnProperty.call(revAdopted, id) && revAdopted[id].text === text) delete revAdopted[id];
+    }
   }
 
   /** The panel is a column: a review is one line until it is opened, like a task card. */
@@ -2292,6 +2369,12 @@ const SCRIPT = `
   schedTabSessions.addEventListener('click', function(){ setSchedSubtab('sessions'); });
 
   revList.addEventListener('click', function(e){
+    var adoptBtn = e.target.closest ? e.target.closest('[data-rev-adopt]') : null;
+    if(adoptBtn){
+      e.stopPropagation();
+      adoptPreference(adoptBtn);
+      return;
+    }
     var dismissBtn = e.target.closest ? e.target.closest('[data-rev-dismiss]') : null;
     if(dismissBtn){
       e.stopPropagation();
@@ -4561,8 +4644,17 @@ const SCRIPT = `
     }
   });
 
-  function createTopic(){
-    post('api/topics',{},1).then(function(r){
+  /**
+   * Open a new topic, as the + does.
+   *
+   * seed is what an Adopt starts one with: the suggestion and the draft asking an agent to add
+   * it to the person's instructions. The draft goes into the composer and is never sent, and the
+   * topic is remembered against the suggestion in memory (revAdopted) so a message that really
+   * goes out from it can take the suggestion off the pending list. A refusal says why and leaves
+   * the suggestion alone. Answers whether a topic was opened.
+   */
+  function createTopic(seed){
+    return post('api/topics',{},1).then(function(r){
       if(r.ok) return r.json();
       // Never swallowed again. A refusal used to vanish here, so the + simply did nothing and the
       // only trace was a 409 in the network panel. The daemon now gives up its oldest topic to
@@ -4573,10 +4665,20 @@ const SCRIPT = `
     }, function(){
       return {error:'the daemon could not be reached'};
     }).then(function(d){
-      if(d && d.error){ alert('Could not open a new topic: '+d.error); return; }
-      if(!d || !d.topic) return;
+      if(d && d.error){ alert('Could not open a new topic: '+d.error); return false; }
+      if(!d || !d.topic) return false;
       switchTopic(d.topic.id);
       if(narrow()) setSidebar(false);
+      if(seed){
+        // After the switch, which has just put an empty composer up for this topic. Written down
+        // like any draft, so a reload keeps the text even though it loses what it was for. The
+        // caret goes at the end, where someone about to edit or send it expects it.
+        drafts[d.topic.id] = {text:seed.draft, s:seed.draft.length, e:seed.draft.length, files:[]};
+        writeDraft(d.topic.id);
+        loadDraft(d.topic.id);
+        revAdopted[d.topic.id] = {text:seed.text};
+      }
+      return true;
     });
   }
 
@@ -4606,7 +4708,8 @@ const SCRIPT = `
     return null;
   }
 
-  newTopicBtn.addEventListener('click', createTopic);
+  // Not createTopic itself: a listener is handed the MouseEvent, which would arrive as a seed.
+  newTopicBtn.addEventListener('click', function(){ createTopic(); });
 
   // Revealed only where there is something behind it. When the daemon serves no terminal the
   // button stays hidden and these listeners never have anything to toggle.
@@ -6018,7 +6121,12 @@ const SCRIPT = `
     // change is written — a first attempt is already on disk as 'sending', put there by dispatch.
     var r = unsent[nonce];
     if(r && r.s !== state){
-      if(state === 'sent') delete unsent[nonce]; else r.s = state;
+      if(state === 'sent'){
+        delete unsent[nonce];
+        // The daemon has the message, so a suggestion an Adopt opened this topic for is dealt
+        // with — only if this message still carries it (settleAdopted).
+        settleAdopted(r.t, r.x);
+      } else r.s = state;
       writeUnsent(nonce);
     }
     var key='p:'+nonce, m=data[key];
@@ -6118,7 +6226,12 @@ const SCRIPT = `
     if(!m.nonce) return;
     var pk = 'p:' + m.nonce;
     delete outbox[m.nonce];
+    // The echo can beat the 2xx: the daemon emits it before it answers the POST. The message has
+    // gone out either way, so an Adopt's suggestion is settled here too — by the time setLocal
+    // hears the 2xx there is no unsent record left for it to ask.
+    var r = unsent[m.nonce];
     dropUnsent(m.nonce);
+    if(r) settleAdopted(r.t, r.x);
     if(!els[pk]) return;
     var key = (m.g || epoch) + ':' + m.id;
     if(els[key]){ els[pk].remove(); }

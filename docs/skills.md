@@ -301,9 +301,11 @@ the conversation library as `review` sessions, which search and `list` leave out
 **Where the results are.** The web UI's side panel has a **Reviews** tab: every review, including
 the ones that changed nothing and posted no line. Above them, **Suggested preferences** gathers the
 preference suggestions no one has dealt with: one entry per wording, with how many reviews made it
-and which conversations they came from. None of them is in force anywhere — ask an agent to add the
-ones you want to your instructions, and **Dismiss** the rest (or the ones you added); a dismissed
-suggestion does not come back. A row is the reviewed conversation, when, and
+and which conversations they came from. None of them is in force anywhere — **Adopt** one and a new
+topic opens with a draft asking an agent to add it to your instructions (edit it, switch agent
+first, or throw it away; the suggestion leaves the list only when a message that still carries it
+is sent there), and **Dismiss** the rest (or the ones you added); a dismissed suggestion does not
+come back. A row is the reviewed conversation, when, and
 what happened — a skill created or updated, only preference suggestions, a change the store
 refused, nothing found, or a failed run. Opening it shows each change with the reviewer's reason,
 whether it actually took effect (and the store's sentence when it did not), the preference

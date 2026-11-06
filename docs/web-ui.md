@@ -94,7 +94,10 @@ quiet conversations (see [skills](skills.md#auto-review)): what each one changed
 refused and why, the preferences it noticed, and the command that undoes each change. A review that
 changed nothing posts no line anywhere else, so this tab is its only home. Above the reviews,
 **Suggested preferences** lists the preference suggestions still pending, merged across reviews,
-each with **Dismiss**.
+each with **Adopt** and **Dismiss**. Adopt opens a new topic with a draft that asks an agent to add
+the suggestion to your instructions; nothing is sent, so you can edit it, switch agent with
+`/agent` first, or throw it away. The suggestion leaves the list only once a message that still
+carries it goes out from that topic. Dismiss takes it off the list without doing anything else.
 A run waiting on an answer puts an amber dot on the clock itself, on the Scheduled tab, and on the
 Sessions sub-tab, since it has no row in the topic list to show it.
 The panel is a column of its own on a wide screen. It is the same component as the topic sidebar
