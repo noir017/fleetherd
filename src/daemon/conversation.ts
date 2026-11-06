@@ -117,7 +117,6 @@ import type { WorkdirUsageStore } from './workdir-usage.js';
 import { expandHome, expandRemoteHome, resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
 import { join } from 'node:path';
 import { formatAgyCliOutput, runAgyCliCommand, runAgyCliFor } from './agy-cli.js';
-import { agyRuntime } from './agy-acp.js';
 import { formatRuntimeFooter, formatTokens } from '../core/runtime-footer.js';
 import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
 import { InboundMerger, type SoloOutcome } from '../core/inbound-merger.js';
@@ -2726,11 +2725,9 @@ export class ConversationRegistry {
       const fix =
         def?.harness === 'opencode'
           ? ' On opencode that means a model from a custom provider: give it a `limit` block in opencode.json (e.g. `"limit": { "context": 128000 }`) and the numbers appear.'
-          : def?.harness === 'agy' && agyRuntime(def) === 'acp'
+          : def?.harness === 'agy'
             ? ' agy reports usage once per turn, summed over every model call in it, so the count is known only after a turn that ran no tool; and agy never says how big the window is, so the daemon only knows it for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.'
-            : def?.harness === 'agy'
-              ? ' On agy 1.4.7 and later the count comes from its stream, but agy never says how big the window is, so the daemon only knows it for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers. An older agy reports them through its status line instead: check that `statusLine` in `~/.gemini/antigravity-cli/settings.json` still names `agy-statusline`, and that TALKCODE_NO_AGY_STATUSLINE is not set.'
-              : '';
+            : '';
       return (
         `Context: not reported. ${name} finished a turn without sending any usage numbers, and ` +
         `another message will not change that — a harness reports context only for a model whose ` +

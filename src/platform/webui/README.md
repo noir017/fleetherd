@@ -21,9 +21,8 @@ around state this module holds anyway.
 So it implements [`PlatformAdapter`](../adapter.ts) directly, which is all `daemon/` ever
 sees. `platform-factory.ts` dispatches on `type === 'webui'` before it reaches `PROFILES`,
 and that map is typed `Record<Exclude<PlatformType, 'webui'>, …>` so the next Satori platform
-still fails to compile until it is listed. The shape is the same one
-[`daemon/agent-agy.ts`](../../daemon/README.md) uses: a sibling runtime, not a pretend member
-of a protocol it does not speak.
+still fails to compile until it is listed. The shape is a sibling implementation of the
+interface, not a pretend member of a protocol it does not speak.
 
 ### What bypassing `satori-core` costs
 

@@ -37,7 +37,6 @@ export interface FrameHeader {
   cwd?: string;
   env?: Record<string, string>;
   unset?: string[];
-  fd3?: boolean;
   fd?: number;
   sig?: string;
   code?: number;

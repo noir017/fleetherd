@@ -1,6 +1,6 @@
 import { promisify } from 'node:util';
 import { execFile as execFileCb } from 'node:child_process';
-import type { AgentDef, Config } from '../config/schema.js';
+import type { AgentDef } from '../config/schema.js';
 import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { RemoteHost } from '../remote/host.js';
@@ -8,53 +8,18 @@ import type { RemoteHost } from '../remote/host.js';
 const execFile = promisify(execFileCb);
 
 /**
- * agy as a one-shot CLI, beside whichever runtime holds the conversation: `agy models` for the model
- * list, `agy -p=/<command>` for the commands agy's CLI answers itself (`/usage`, `/credits`, …).
+ * agy as a one-shot CLI, beside the session: `agy -p=/<command>` for the commands agy's CLI answers
+ * itself (`/usage`, `/credits`, …).
  *
- * Shared by both agy runtimes — the ACP one (agent-acp.ts, `agy acp`) and the stream-json fallback
- * (agent-agy.ts) — and by conversation.ts, which answers those commands in chat. Neither protocol
- * carries any of it: `agy acp` 1.5.1 has no quota method and lists no `/usage` among its commands
- * (a `/usage` prompt reaches the model as text, probed 2026-11-06), and stream-json never did. Kept
- * out of agent-agy.ts so that file can be deleted once every host runs the ACP runtime.
+ * Used by the ACP runtime (agent-acp.ts, `agy acp`) and by conversation.ts, which answers those
+ * commands in chat. ACP carries none of it: `agy acp` 1.5.1 has no quota method and lists no
+ * `/usage` among its commands (a `/usage` prompt reaches the model as text, probed 2026-11-06).
+ * Also the one place left that runs agy as a plain process, which is why it shares agent-common's
+ * environment helpers rather than the session's.
  */
 
 /** The executable name; `agy install` puts it on PATH. Exported so doctor reports the same thing. */
 export const AGY_COMMAND = 'agy';
-
-/**
- * Parse `agy models` TSV output into ModelSelector options (`{ value, name }`).
- * Lines are formatted as `<modelId>\t<displayName>` (e.g. `gemini-3.8-flash-high\tGemini 3.8 Flash (High)`).
- * Lines without tabs fall back to using the model ID as the display name.
- */
-export function parseAgyModelsOutput(stdout: string): Array<{ value: string; name: string }> {
-  return stdout
-    .trim()
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const tabIdx = line.indexOf('\t');
-      if (tabIdx >= 0) {
-        const value = line.slice(0, tabIdx).trim();
-        const name = line.slice(tabIdx + 1).trim();
-        return { value, name: name || value };
-      }
-      return { value: line, name: line };
-    })
-    .filter((o) => o.value.length > 0);
-}
-
-export type AgyModelFetcher = () => Promise<Array<{ value: string; name: string }>>;
-
-export async function defaultFetchAgyModels(): Promise<Array<{ value: string; name: string }>> {
-  try {
-    const { stdout } = await execFile(AGY_COMMAND, ['models']);
-    return parseAgyModelsOutput(stdout);
-  } catch (e) {
-    console.debug('[agy] fetch models failed:', e instanceof Error ? e.message : e);
-    return [];
-  }
-}
 
 // ───────────────────────── one-shot CLI commands ─────────────────────────
 
@@ -77,11 +42,9 @@ export type AgyCliRunner = (name: string, cwd: string, env?: NodeJS.ProcessEnv) 
 /**
  * Run one of agy's own slash commands as its own process and return what it printed.
  *
- * This is the path agy itself points at when such a command reaches a stream-json session ("run it
- * as its own --print /model invocation"), and the only one there is under `agy acp`, which treats
- * the same text as a prompt for the model. It is cheap in the way that matters: the CLI answers
- * these from local state, so no model is invoked, no tokens are spent, and the conversation's own
- * agy is never touched.
+ * The only path there is under `agy acp`, which treats the same text as a prompt for the model. It
+ * is cheap in the way that matters: the CLI answers these from local state, so no model is invoked,
+ * no tokens are spent, and the conversation's own agy is never touched.
  *
  * Probed on agy 1.2.0 (2026-09-17) against all eleven commands `agy -p /help` lists: every one
  * exits 0 without a terminal, and none blocks waiting for input — including the four that render as
@@ -113,9 +76,9 @@ export async function runAgyCliCommand(
 }
 
 /**
- * One agy invocation on a remote host — `agy models`, `agy -p=/usage` and the rest of the one-shots
- * — run there through talkcode-remote with the agent's environment, answered in AgyCliResult's
- * terms. The host is the one the agent runs on, because that is where agy is signed in.
+ * One agy invocation on a remote host — `agy -p=/usage` and the rest of the one-shots — run there
+ * through talkcode-remote with the agent's environment, answered in AgyCliResult's terms. The host
+ * is the one the agent runs on, because that is where agy is signed in.
  */
 export async function runAgyOnHost(host: RemoteHost, def: AgentDef, argv: string[], cwd?: string): Promise<AgyCliResult> {
   const what = `agy ${argv.join(' ')}`;
@@ -134,28 +97,6 @@ export async function runAgyOnHost(host: RemoteHost, def: AgentDef, argv: string
 export function runAgyCliFor(def: AgentDef, name: string, cwd: string, local: AgyCliRunner = runAgyCliCommand): Promise<AgyCliResult> {
   const host = remoteHosts.hostFor(def);
   return host ? runAgyOnHost(host, def, [`-p=/${name}`], cwd) : local(name, cwd, buildHarnessEnv(def));
-}
-
-/**
- * `agy models` from where the deployment's agy runs: the first agy agent's host when it has one,
- * so a gateway with no agy of its own still lists models. The list is Google's, the same for every
- * account, so one host answering for all is enough.
- */
-export async function fetchAgyModelsFor(cfg: Pick<Config, 'agents'>): Promise<Array<{ value: string; name: string }>> {
-  const def = cfg.agents.find((a) => a.harness === 'agy');
-  const host = remoteHosts.hostFor(def);
-  // An agy with `host:` whose host is not registered (yet) must not be asked for here: that ran
-  // `agy models` on the gateway's machine, which in a gateway-only container has no agy at all
-  // ("spawn agy ENOENT" at every start, 2026-10-29). Thrown rather than answered with `[]`, so the
-  // factory leaves its cache unfilled and the next read asks again (createAgyAgentFactory).
-  if (def?.host && !host) throw new Error(`host "${def.host}" is not registered yet`);
-  if (!def || !host) return defaultFetchAgyModels();
-  const r = await runAgyOnHost(host, def, ['models']);
-  if (!r.ok) {
-    console.debug('[agy] fetch models failed:', r.error);
-    return [];
-  }
-  return parseAgyModelsOutput(r.output);
 }
 
 /**

@@ -63,9 +63,9 @@ export interface AgentStreamHandlers {
    */
   onEffort?(effort: string | undefined): void;
   /**
-   * The harness's usage-quota pools (agy, through its status line — see agy-statusline.ts). A full
-   * snapshot each time, like onUsage. Optional: no ACP harness reports quota in a form the gateway
-   * reads, so for them the status bar simply has no quota segment.
+   * The harness's usage-quota pools (agy, through its one-shot `agy -p=/usage` — see
+   * daemon/agy-acp.ts). A full snapshot each time, like onUsage. Optional: no ACP harness reports
+   * quota in a form the gateway reads, so for them the status bar simply has no quota segment.
    */
   onQuota?(pools: QuotaPool[]): void;
   /**

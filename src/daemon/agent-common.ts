@@ -13,13 +13,12 @@ import { ensureReverseCliShim } from './reverse-cli-shim.js';
 import { ensureSkillLink } from './skill-link.js';
 
 /**
- * Helpers shared by every agent-runtime implementation (agent-acp.ts, agent-agy.ts).
+ * Helpers shared by the agent runtime and by the harness CLIs it runs beside a session.
  *
- * These were originally private to agent-acp.ts; they moved here when the agy harness arrived,
- * because agy does NOT speak ACP (it has its own bidirectional stream-json protocol) and therefore
- * needs a sibling runtime rather than another `resolveHarness` arm. Everything in this file is
- * protocol-agnostic: process environment, working directory, tool-preview formatting and child
- * termination — i.e. the parts both runtimes must behave identically on.
+ * These were private to agent-acp.ts until agy needed a second runtime; that runtime is gone, but
+ * the split still earns its keep: everything here is protocol-agnostic — process environment,
+ * working directory, tool-preview formatting and child termination — so the ACP runtime and the
+ * one-shot CLI paths (agy-cli.ts) reach the same answer instead of keeping two copies.
  */
 
 /** Grace window after SIGTERM; if still alive, SIGKILL fallback (harness CLIs may ignore SIGTERM mid-turn). */
@@ -68,9 +67,9 @@ export function resolveAgentCwd(def: AgentDef): string {
  * The directory THIS conversation's next session starts in: its `/cd` choice, or the agent's
  * configured cwd when it has made none.
  *
- * Called at spawn time by both runtimes rather than once per session object, because that is the
- * only moment the answer can still change anything — ACP fixes the directory at `session/new` and
- * agy at process spawn, so a session already running is standing where it is until it is replaced.
+ * Called at spawn time rather than once per session object, because that is the only moment the
+ * answer can still change anything — ACP fixes the directory at `session/new`, so a session already
+ * running is standing where it is until it is replaced.
  * Reading it late is what lets `/cd` take effect by disposing the child instead of by mutating a
  * closure nobody re-reads.
  *
@@ -103,7 +102,7 @@ export function resolveConversationCwd(
  * environment, cleaned of the launcher's Claude Code markers, plus the agent's expanded `env` block.
  *
  * Split out from buildAgentEnv because the gateway also runs harness CLIs that are NOT sessions —
- * agy's own slash commands, each answered by a one-shot process (daemon/agent-agy.ts). Those need
+ * agy's own slash commands, each answered by a one-shot process (daemon/agy-cli.ts). Those need
  * the agent's identity (a `HOME` override decides which account's config the CLI reads) and must
  * NOT get the reverse-command wiring: there is no turn to call back into, and a token in the
  * environment of a process that cannot use it is a secret spent for nothing.
@@ -126,9 +125,9 @@ export function buildHarnessEnv(def: AgentDef): Record<string, string | undefine
  * Build the environment for an agent child process: merged process.env + expanded def.env +
  * the per-session reverse-command wiring.
  *
- * Shared verbatim by both runtimes so the reverse CLI (`talkcode …`) behaves the same
- * regardless of which harness is running. Called at every spawn, which also makes it the one place
- * both runtimes provision what that CLI depends on: the shim on PATH, and the skill that names it.
+ * Shared by every spawn so the reverse CLI (`talkcode …`) behaves the same whichever harness is
+ * running. Called at every spawn, which also makes it the one place the runtime provisions what
+ * that CLI depends on: the shim on PATH, and the skill that names it.
  */
 export function buildAgentEnv(
   def: AgentDef,

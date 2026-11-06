@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { agyContextWindow, agyStepContextTokens, parseAgyCurrentModel, parseAgyUsagePools } from './agy-meters.js';
+import { agyContextWindow, markActivePools, parseAgyUsagePools } from './agy-meters.js';
 
 describe('agyContextWindow', () => {
   it('knows the windows measured off agy’s own status line, in either spelling', () => {
@@ -19,47 +19,6 @@ describe('agyContextWindow', () => {
     expect(agyContextWindow('Some Future Model')).toBeUndefined();
     expect(agyContextWindow(undefined)).toBeUndefined();
     expect(agyContextWindow('')).toBeUndefined();
-  });
-});
-
-describe('agyStepContextTokens', () => {
-  // Verbatim shape from agy 1.4.7 (2026-10-27): the DONE frame of the step that chose a tool.
-  const done = {
-    step_index: 1,
-    state: 'DONE',
-    step_type: 'agent_response',
-    duration_seconds: 3.06,
-    usage: { input_tokens: 7454, output_tokens: 129, thinking_tokens: 91, cache_read_tokens: 0, total_tokens: 7583 },
-  };
-
-  it('reads the input tokens of a finished model step', () => {
-    expect(agyStepContextTokens(done)).toBe(7454);
-  });
-
-  it('adds the cached part back — agy leaves it out of input_tokens', () => {
-    // Verbatim, Claude Sonnet 4.6 on agy 1.4.7: a second turn whose prefix hit the cache. Read
-    // alone, its context came out as 776 tokens; the same prompt uncached was 9004.
-    const cached = { ...done, usage: { input_tokens: 776, output_tokens: 15, thinking_tokens: 0, cache_read_tokens: 8231, total_tokens: 791 } };
-    expect(agyStepContextTokens(cached)).toBe(9007);
-  });
-
-  it('reads nothing off any other step, or a step with no usage', () => {
-    expect(agyStepContextTokens({ ...done, step_type: 'tool' })).toBeUndefined();
-    expect(agyStepContextTokens({ step_type: 'agent_response' })).toBeUndefined();
-    expect(agyStepContextTokens({ step_type: 'agent_response', usage: { input_tokens: '7454' } })).toBeUndefined();
-    expect(agyStepContextTokens({ step_type: 'agent_response', usage: { input_tokens: -1 } })).toBeUndefined();
-  });
-});
-
-describe('parseAgyCurrentModel', () => {
-  it('takes the id from the first row of `agy -p=/model`', () => {
-    // Verbatim on agy 1.4.7 (2026-10-27).
-    expect(parseAgyCurrentModel('gemini-3.8-flash-high\tGemini 3.8 Flash (High)\n')).toBe('gemini-3.8-flash-high');
-  });
-
-  it('declines output that is not that table', () => {
-    expect(parseAgyCurrentModel('')).toBeUndefined();
-    expect(parseAgyCurrentModel('You are currently not signed in.')).toBeUndefined();
   });
 });
 
@@ -100,5 +59,23 @@ describe('parseAgyUsagePools', () => {
     expect(parseAgyUsagePools('')).toBeUndefined();
     expect(parseAgyUsagePools('You are currently not signed in.')).toBeUndefined();
     vi.restoreAllMocks();
+  });
+});
+
+describe('markActivePools', () => {
+  const pools = [
+    { id: 'gemini-5h', remaining: 1 },
+    { id: '3p-5h', remaining: 1 },
+    { id: 'tokens', remaining: 1 },
+  ];
+
+  it('marks the third-party pools for a Claude or GPT model, the Gemini ones otherwise', () => {
+    expect(markActivePools(pools, 'Claude Opus 5.5 (Medium)').map((p) => p.active)).toEqual([false, true, undefined]);
+    expect(markActivePools(pools, 'claude-opus-5-5-medium').map((p) => p.active)).toEqual([false, true, undefined]);
+    expect(markActivePools(pools, 'Gemini 3.8 Flash (High)').map((p) => p.active)).toEqual([true, false, undefined]);
+  });
+
+  it('marks nothing when the model is not known — a guess would be highlighted as fact', () => {
+    expect(markActivePools(pools, undefined)).toEqual(pools);
   });
 });

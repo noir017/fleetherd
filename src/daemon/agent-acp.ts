@@ -83,7 +83,7 @@ import {
   type AgyQuotaMeter,
   type AgyTurnWatch,
 } from './agy-acp.js';
-import { markActivePools } from './agy-statusline.js';
+import { markActivePools } from './agy-meters.js';
 
 /**
  * AgentFactory's ACP (Agent Client Protocol) implementation on the official @agentclientprotocol/sdk.
@@ -263,8 +263,8 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
       // refine already guarantees command exists.
       return { command: def.command!, args: [...def.args] };
     case 'agy':
-      // agy's own ACP server, since 1.5 (`agy acp --help`). None of the flags the stream-json launch
-      // needed (agent-agy.ts buildAgyArgs) carries over, each re-measured on 1.5.1 (2026-11-06):
+      // agy's own ACP server, since 1.5 (`agy acp --help`). None of the flags the old print-mode
+      // launch needed carries over, each re-measured on 1.5.1 (2026-11-06):
       // there is no print-mode timeout to lift; permissions arrive as `session/request_permission`
       // and are answered like any harness's (approved under `permissions: auto`, put to the user
       // under `ask` — `--dangerously-skip-permissions` would take that choice away); and a file the
@@ -2580,11 +2580,11 @@ function createAcpSession(
 /**
  * What to add to a startup failure the harness gave no reason for. An agy older than 1.5 has no
  * `acp` subcommand — it takes the word as a stray prompt argument and exits — which reaches here as
- * a closed connection, so the way out is named.
+ * a closed connection, so the version to check is named.
  */
 function startupHint(def: AgentDef): string {
   return def.harness === 'agy'
-    ? ' (`agy acp` needs agy 1.5 or later — check `agy --version` there, or keep this agent on the stream-json runtime with `env: { TALKCODE_AGY_RUNTIME: stream-json }`)'
+    ? ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)'
     : '';
 }
 

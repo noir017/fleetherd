@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { PassThrough, Writable, type Readable } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 import { HostConnection, type RemoteArch, type RemoteBinary, type Transport, type Welcome } from './connection.js';
 import type { FrameHeader } from './frame.js';
 
@@ -25,8 +25,6 @@ export interface SpawnOptions {
   /** Set on top of the host's login environment (NOT the gateway's — see remote/shellenv.go). */
   env?: Record<string, string | undefined>;
   unset?: string[];
-  /** A fourth pipe, as agy's status line uses (agy-statusline.ts). */
-  fd3?: boolean;
 }
 
 export interface RunOptions {
@@ -177,12 +175,12 @@ export class RemoteHost extends EventEmitter {
   spawn(command: string, args: string[], opts: SpawnOptions = {}): RemoteChild {
     this.seq += 1;
     const id = `p${this.seq}`;
-    const child = new RemoteChild(this, id, opts.fd3 === true);
+    const child = new RemoteChild(this, id);
     this.children.set(id, child);
     this.conn.hold();
     const open = (): void =>
       this.whenUp(() =>
-        child.open({ t: 'spawn', id, cmd: command, args, cwd: opts.cwd, env: definedOnly(opts.env), unset: opts.unset, fd3: opts.fd3 })
+        child.open({ t: 'spawn', id, cmd: command, args, cwd: opts.cwd, env: definedOnly(opts.env), unset: opts.unset })
       );
     if (this.conn.welcome) open();
     else this.conn.ready().then(open, (e: Error) => this.finishChild(id, null, null, e.message));
@@ -468,14 +466,13 @@ export class RemoteHost extends EventEmitter {
 }
 
 /**
- * A process on a remote host, shaped like the parts of node's ChildProcess the runtimes use:
- * stdin/stdout/stderr (and stdio[3]), `exit`/`error` events, exitCode/signalCode, kill().
+ * A process on a remote host, shaped like the parts of node's ChildProcess the runtime uses:
+ * stdin/stdout/stderr, `exit`/`error` events, exitCode/signalCode, kill().
  */
 export class RemoteChild extends EventEmitter {
   readonly stdin: Writable;
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
-  readonly stdio: [Writable, Readable, Readable, Readable | null];
   pid: number | undefined;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
@@ -484,7 +481,7 @@ export class RemoteChild extends EventEmitter {
   /** Frames written before the spawn itself was sent (first contact, or a connection, still to come). */
   private early: Array<{ h: FrameHeader; body?: Buffer }> = [];
 
-  constructor(private readonly host: RemoteHost, readonly id: string, fd3: boolean) {
+  constructor(private readonly host: RemoteHost, readonly id: string) {
     super();
     this.stdin = new Writable({
       write: (chunk: Buffer, _enc, cb) => {
@@ -496,7 +493,6 @@ export class RemoteChild extends EventEmitter {
         cb();
       },
     });
-    this.stdio = [this.stdin, this.stdout, this.stderr, fd3 ? new PassThrough() : null];
   }
 
   /** @internal — its `spawn` is on the link, so a daemon that restarted took it down. */
@@ -537,7 +533,7 @@ export class RemoteChild extends EventEmitter {
   /** @internal */
   output(fd: number, body: Buffer): void {
     if (this.done) return;
-    const stream = fd === 2 ? this.stderr : fd === 3 ? this.stdio[3] : this.stdout;
+    const stream = fd === 2 ? this.stderr : this.stdout;
     (stream as PassThrough | null)?.write(body);
   }
 
@@ -554,7 +550,6 @@ export class RemoteChild extends EventEmitter {
     this.signalCode = (signal as NodeJS.Signals | null) ?? null;
     this.stdout.end();
     this.stderr.end();
-    (this.stdio[3] as PassThrough | null)?.end();
     this.emit('exit', this.exitCode, this.signalCode);
     this.emit('close', this.exitCode, this.signalCode);
   }

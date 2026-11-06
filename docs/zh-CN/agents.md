@@ -112,7 +112,7 @@ agents:
 - `/stop` 会连同这一轮一起取消待处理的请求。
 - 定时任务始终自动批准，因为没人在场作答。
 - 没有按钮的平台（钉钉、企业微信）没法问，请求会被拒绝，同样会告诉智能体原因。
-- 只影响会请求权限的智能体。实测 Codex（`agent` 模式）和 OpenCode 执行写文件的命令时都没有问；`agy` 执行命令前会问，在工作目录里写文件不问；它的 [stream-json 回退](#回退到-stream-json)不能设成 `ask`。
+- 只影响会请求权限的智能体。实测 Codex（`agent` 模式）和 OpenCode 执行写文件的命令时都没有问；`agy` 执行命令前会问，在工作目录里写文件不问。
 
 ## Antigravity（`agy`）
 
@@ -137,33 +137,11 @@ agents:
 - **skills** 从 `<cwd>/.agents/skills`、`~/.agents/skills`、
   `~/.gemini/antigravity-cli/skills`、`~/.gemini/skills`、`~/.gemini/config/skills`
   读取，所以 `/skills` 能列出它们，`/<名字> <请求>` 能直接调用。
-- **状态栏。** 守护进程启动时先备份一次 `~/.gemini/antigravity-cli/settings.json`，再把其中的
-  `statusLine` 指向自己的 shim，为你自己交互使用的 agy 画状态栏（在下面的回退方式里，也为低于 1.4.7
-  的 agy 上报用量）。设 `TALKCODE_NO_AGY_STATUSLINE=1` 可以不动这项配置。
 
 `args` 追加在 `agy acp` 之后（见 `agy acp --help`）。
 
-### 回退到 stream-json
-
-在 ACP 运行时于各主机都跑过之前，旧的那套还留着：用 agy 自己的
-[headless stream-json 协议](https://antigravity.google/docs/cli/headless/)驱动。要让某个智能体回到旧方式，
-在它的 `env` 里设置——config.yaml 或主机的 `pod.yaml` 都行——然后 `/reload`：
-
-```yaml
-agents:
-  - id: agy
-    harness: agy
-    env:
-      TALKCODE_AGY_RUNTIME: stream-json
-```
-
-对话两个方向都能续上：两套运行时续接的是同一个 agy 对话。stream-json 下不接受 `permissions: ask`，
-没有 `/effort`，`/stop` 会重启子进程，上下文按每个模型步骤取，图片只以路径交给它。它自己的参数
-（`--model`、`--conversation`、`--dangerously-skip-permissions` 等）在前，`args` 在后；agy 的参数
-解析是后者生效。
-
 > [!NOTE]
 > Google 的 FAQ 声明：用第三方工具访问 Antigravity 违反其服务条款，可能导致
-> 账号封禁。本 harness 只调用 agy 官方自带的接口（`agy acp`，回退时是 headless 模式），且完全不接触你的
+> 账号封禁。本 harness 只调用 agy 官方自带的接口（`agy acp`），且完全不接触你的
 > 凭据（登录全程在 `agy` 内部完成），但守护进程终究是一个非 Google 客户端在
 > 驱动你的账号——请自行判断。

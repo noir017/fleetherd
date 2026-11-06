@@ -128,12 +128,8 @@ func (p *proc) start(h *Header) {
 	inR, inW := pipe()
 	outR, outW := pipe()
 	errR, errW := pipe()
-	var fd3R, fd3W *os.File
-	if h.Fd3 {
-		fd3R, fd3W = pipe()
-	}
-	parent = append(parent, inW, outR, errR, fd3R)
-	child = append(child, inR, outW, errW, fd3W)
+	parent = append(parent, inW, outR, errR)
+	child = append(child, inR, outW, errW)
 	closeAll := func(fs []*os.File) {
 		for _, f := range fs {
 			if f != nil {
@@ -148,9 +144,6 @@ func (p *proc) start(h *Header) {
 		return
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, errW
-	if fd3W != nil {
-		cmd.ExtraFiles = []*os.File{fd3W}
-	}
 	err = startLocked(cmd)
 	closeAll(child)
 	if err != nil {
@@ -171,7 +164,7 @@ func (p *proc) start(h *Header) {
 	}
 
 	var readers sync.WaitGroup
-	readFrom := []*os.File{outR, errR, fd3R}
+	readFrom := []*os.File{outR, errR}
 	for i, f := range readFrom {
 		if f == nil {
 			continue

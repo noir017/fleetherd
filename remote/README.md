@@ -104,7 +104,7 @@ Gateway → daemon:
 
 | frame | fields | |
 |---|---|---|
-| `spawn` | `id cmd args cwd env unset fd3` | start a process; `env` is an overlay on the login environment |
+| `spawn` | `id cmd args cwd env unset` | start a process; `env` is an overlay on the login environment |
 | `stdin` | `id` + body | bytes for its stdin (queued until it exists) |
 | `stdin-end` | `id` | close its stdin |
 | `signal` | `id sig` | `SIGINT`/`SIGTERM`/`SIGKILL`/…; held until the start completes |

@@ -48,10 +48,7 @@ it can do beyond answering reaches it the way any capability does, through its o
   skill, `super`, is linked beside it: how to split a job across [sub-agents](sub-agents.md) when
   you write `/super`.
 
-Antigravity (`agy`) has had the two tools since it runs as `agy acp`; on its
-[stream-json fallback](agents.md#falling-back-to-stream-json) it gets the skill only — that mode has
-no per-session way to add tools, and the gateway will not edit agy's global MCP config — and the
-same two commands are in the skill as CLI commands. See
+Antigravity (`agy`) has the two tools too, because it runs as `agy acp`. See
 [`src/ipc/README.md`](../src/ipc/README.md) for why exactly two tools, and how the prompt injection
 this replaced was retired.
 
@@ -59,8 +56,8 @@ this replaced was retired.
 Codex and OpenCode as an image, so the agent sees it without opening a file — and the message
 still says where it was saved, for an agent that wants the file itself. PNG, JPEG, GIF and WebP,
 up to about 3.75 MB each and 15 MB across the pictures sent together; anything past that, in
-another format (HEIC, say), or sent to Antigravity's stream-json fallback goes by path only, as
-every picture did before 2.4.0. Antigravity is sent the picture too, though a model that cannot see
-(GPT-OSS) answers that it cannot and is left with the path.
+another format (HEIC, say) goes by path only, as every picture did before 2.4.0. Antigravity is
+sent the picture too, though a model that cannot see (GPT-OSS) answers that it cannot and is left
+with the path.
 
 What the `schedule` tool registers is described in [Scheduled tasks](scheduled-tasks.md).

@@ -47,7 +47,7 @@ import { selfInvocation } from './reverse-cli-shim.js';
  * hosts, 2026-11-03). It is mapped here now, which is also what makes the next spawn repoint it.
  *
  * Only for a harness that has been run here: the link is made when the harness's own config
- * directory exists, never by creating one — the same rule agy-statusline.ts follows, for the same
+ * directory exists, never by creating one — the same rule instructions.ts follows, for the same
  * reason (that would be this daemon inventing configuration for a product the operator may not use).
  * Called at every agent spawn, so a harness first logged in after the daemon started is picked up by
  * its next session rather than the next restart.

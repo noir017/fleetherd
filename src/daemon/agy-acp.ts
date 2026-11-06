@@ -17,9 +17,8 @@ import { agentHome } from './skills-scan.js';
  * resume against 1.5.2, which agy updated itself to the same day:
  *
  *   - **Two spellings of a model.** `configOptions.model` offers bare ids (`gemini-3.8-flash`) with
- *     the thinking level as a separate `thought_level` option; `agy models`, the stream-json runtime
- *     and therefore configs and stored `/model` choices use `gemini-3.8-flash-high`. See
- *     agySplitModel.
+ *     the thinking level as a separate `thought_level` option; `agy models`, and therefore configs
+ *     and stored `/model` choices, use `gemini-3.8-flash-high`. See agySplitModel.
  *   - **A model that does not survive a reload.** `session/load` and `session/resume` both answer
  *     with agy's default model, whatever the session was on — so a configured model must be put back
  *     after a load, not only after `session/new` (agent-acp.ts reapplyPreferences).
@@ -37,11 +36,6 @@ import { agentHome } from './skills-scan.js';
  * regression degrades to what any ACP harness gets (a warning rendered as text, no context numbers,
  * a generic tool label) rather than to a broken turn.
  */
-
-// ───────────────────────── which runtime ─────────────────────────
-
-/** `TALKCODE_AGY_RUNTIME: stream-json` in an agy agent's env keeps it on agent-agy.ts (see schema.ts). */
-export { AGY_RUNTIME_ENV, agyRuntime } from '../config/schema.js';
 
 // ───────────────────────── models ─────────────────────────
 
@@ -208,8 +202,7 @@ export function agyTurnWatch(agentId: string, notice: (text: string) => void, in
  * calls. A turn that ran `echo` and then answered reported 5574 + 6016 cached = 11590; the plain turn
  * after it 230 + 5696 = 5926; four tool rounds and an answer, 5601 + 18176 = 23777 ≈ 4 × 5.9k. So it
  * is the context only for a turn of one call — which the caller can tell by the turn having run no
- * tool — and the cached part has to be added back, as it does for the stream-json runtime's per-step
- * figure (agy-meters.ts agyStepContextTokens).
+ * tool — and the cached part has to be added back, because agy leaves it out of `input_tokens`.
  */
 function contextTokensOf(usage: unknown): number | undefined {
   if (!usage || typeof usage !== 'object') return undefined;
@@ -230,8 +223,8 @@ export function agyWindow(def: Pick<AgentDef, 'contextWindow'>, model: string | 
 /**
  * agy tool name → short display name, aligned with the default `tools.emojiMap` keys (see
  * config/schema.ts) so each bubble picks up the same emoji as the equivalent Claude/Codex tool.
- * Both protocols' spellings: stream-json named `view_file` / `write_to_file`, `agy acp` 1.5.1 names
- * `read_file` / `write_file` for the same tools.
+ * Both spellings agy has used for the same tool are listed (`view_file` / `read_file`), because a
+ * subagent or an MCP server can still name one the other way.
  */
 const AGY_TOOL_LABELS: Record<string, string> = {
   run_command: 'Bash',
@@ -301,9 +294,8 @@ export interface AgyQuotaMeter {
  * home and never two at once. `agy acp` 1.5.1 has nothing in its place — no method, no `_meta`, and
  * a `/usage` prompt is answered by the model as a question about usage.
  *
- * The same reading the stream-json runtime takes (agent-agy.ts metersFor), kept separately so that
- * file can go without taking this with it. Keyed like it: the quota belongs to whoever agy is signed
- * in as, so every conversation on a home shares one reading, and the same HOME on two hosts is two.
+ * Keyed by account: the quota belongs to whoever agy is signed in as, so every conversation on a
+ * home shares one reading, and the same HOME on two hosts is two.
  */
 export function createAgyQuotaMeter(cli: AgyCliRunner = runAgyCliCommand): AgyQuotaMeter {
   const byHome = new Map<string, { pools?: QuotaPool[]; at: number; pending?: Promise<void> }>();
