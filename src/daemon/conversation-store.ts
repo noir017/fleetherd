@@ -31,9 +31,49 @@ import path from 'node:path';
  * the actual history on its own disk; this file only remembers which of its sessions belongs
  * where, so a daemon restart can reattach instead of starting blank.
  *
- * Write-through on every change; a missing/corrupt file degrades to empty (bindings lost, not
- * a crash — the agents' own histories are untouched either way).
+ * A missing/corrupt file degrades to empty (bindings lost, not a crash — the agents' own histories
+ * are untouched either way).
+ *
+ * ── When a change reaches the disk ────────────────────────────────────────────
+ * Every write is the whole file: ~175 KB and ~4 ms of blocked event loop for 700 conversations
+ * (measured 2026-11-07 on a copy of a real one), and every turn made three — its lane, then
+ * `inFlight` set and cleared. So a change waits only when losing it to a crash costs nothing:
+ *
+ *  - Written before the call returns: the binding, each agent's session id, the cwd, the generation,
+ *    the model and effort, the title, and `inFlight` in both directions. Losing any of them changes
+ *    what the next start does — resumes nothing, resumes in the wrong project, says nothing about a
+ *    turn it cut off, or reports a finished turn as cut off and (under `hooks.turnFailed`) continues
+ *    it.
+ *  - Held for up to DEFER_MS: the lane and `lastAt` (recordLane). Listing metadata, rewritten by the
+ *    next turn — and almost never alone for long: a turn records its lane a moment before it marks
+ *    itself in flight, and that write carries it. Every immediate write carries whatever is held.
+ *
+ * Written atomically (temp file + rename). The old in-place write truncated first, so a kill during
+ * it left a partial file — which the constructor reads as corrupt and replaces with nothing, every
+ * binding and session id at once. Anything still held is written on the way out (`flush`, and a
+ * process 'exit' hook for a stop that ends in `process.exit`).
  */
+
+/** How long a change that can wait (see above) is held for company before it is written alone. */
+export const DEFER_MS = 1_000;
+
+/**
+ * Stores holding a change not yet on disk, written by one process 'exit' listener. The daemon leaves
+ * through `process.exit` once its stop() resolves (Daemon.exitAfterStop), and process.exit runs no
+ * timers; an 'exit' listener does run, synchronously, which is all a write here needs. One listener
+ * for the module rather than one per store, because tests build hundreds of stores in one process.
+ */
+const unwritten = new Set<ConversationStore>();
+let exitHooked = false;
+
+function writeOnExit(store: ConversationStore): void {
+  unwritten.add(store);
+  if (exitHooked) return;
+  exitHooked = true;
+  process.on('exit', () => {
+    for (const s of unwritten) s.flush();
+  });
+}
 
 /** One conversation's persisted state. */
 export interface ConversationRecord {
@@ -112,6 +152,8 @@ export type ConversationChoice = 'model' | 'effort';
 
 export class ConversationStore {
   private map = new Map<string, ConversationRecord>();
+  /** Armed while a change that can wait is in `map` but not on disk (see "When a change reaches the disk"). */
+  private deferred: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly file: string) {
     try {
@@ -147,7 +189,7 @@ export class ConversationStore {
       }
       if (touched) changed++;
     }
-    if (changed) this.flush();
+    if (changed) this.write();
     return changed;
   }
 
@@ -172,7 +214,7 @@ export class ConversationStore {
     } else {
       this.map.set(key, { agent: agentId, agentSessions: {} });
     }
-    this.flush();
+    this.write();
   }
 
   /**
@@ -191,7 +233,7 @@ export class ConversationStore {
     if (rec.agentSessions[agentId] === sessionId) return;
     rec.agentSessions[agentId] = sessionId;
     this.map.set(key, rec);
-    this.flush();
+    this.write();
   }
 
   /**
@@ -211,7 +253,7 @@ export class ConversationStore {
     const rec = this.map.get(key);
     if (!rec || Object.keys(rec.agentSessions).length === 0) return;
     rec.agentSessions = {};
-    this.flush();
+    this.write();
   }
 
   /** The directory this conversation works in, if one was chosen (`/cd`). */
@@ -233,7 +275,7 @@ export class ConversationStore {
     if (rec.generation === generation) return;
     rec.generation = generation;
     this.map.set(key, rec);
-    this.flush();
+    this.write();
   }
 
   /** One more agent context discarded here (`/cd`, whose record is kept). Returns the new value. */
@@ -241,7 +283,7 @@ export class ConversationStore {
     const rec = this.map.get(key);
     if (!rec) return 0;
     rec.generation = (rec.generation ?? 0) + 1;
-    this.flush();
+    this.write();
     return rec.generation;
   }
 
@@ -258,7 +300,7 @@ export class ConversationStore {
     if (cwd === undefined) delete rec.cwd;
     else rec.cwd = cwd;
     this.map.set(key, rec);
-    this.flush();
+    this.write();
   }
 
   /**
@@ -279,7 +321,7 @@ export class ConversationStore {
     if (!rec || rec.agent !== agentId || rec[which] === value) return;
     if (value === undefined) delete rec[which];
     else rec[which] = value;
-    this.flush();
+    this.write();
   }
 
   /**
@@ -302,7 +344,7 @@ export class ConversationStore {
     if (wantPinned) rec.titlePinned = true;
     else delete rec.titlePinned;
     this.map.set(key, rec);
-    this.flush();
+    this.write();
   }
 
   /**
@@ -327,12 +369,12 @@ export class ConversationStore {
     if (!rec || (rec.title === undefined && rec.titlePinned === undefined)) return;
     delete rec.title;
     delete rec.titlePinned;
-    this.flush();
+    this.write();
   }
 
   /**
-   * Record where and when a turn ran (see ConversationRecord.lane). Called once per turn, so it is
-   * one write per turn — the same order as the session-id writes already made at spawn.
+   * Record where and when a turn ran (see ConversationRecord.lane). Called once per turn, and the one
+   * change here that waits for company: the turn's `setInFlight` a moment later writes it too.
    */
   recordLane(
     key: string,
@@ -349,19 +391,23 @@ export class ConversationStore {
     };
     rec.lastAt = at;
     this.map.set(key, rec);
-    this.flush();
+    this.writeSoon();
   }
 
   /**
    * Mark a turn as running here (`at`) or as over (undefined). See ConversationRecord.inFlight. A
    * no-op for a conversation with no record: a turn never starts before its binding is written.
+   *
+   * Written at once both ways, never held: the mark is read only after a crash, which is exactly
+   * when a held change is gone. A start held back is a cut-off turn nobody hears about; an end held
+   * back is a finished turn reported as cut off, and continued under `hooks.turnFailed`.
    */
   setInFlight(key: string, at: number | undefined): void {
     const rec = this.map.get(key);
     if (!rec || rec.inFlight === at) return;
     if (at === undefined) delete rec.inFlight;
     else rec.inFlight = at;
-    this.flush();
+    this.write();
   }
 
   /** Every record, in insertion order (oldest conversation first). Read-only use: `channels`. */
@@ -378,15 +424,48 @@ export class ConversationStore {
    * be a surprise, not a reset.
    */
   clear(key: string): void {
-    if (this.map.delete(key)) this.flush();
+    if (this.map.delete(key)) this.write();
   }
 
-  private flush(): void {
+  /** Write anything still held back, now. A no-op when nothing is. */
+  flush(): void {
+    if (this.deferred !== undefined) this.write();
+  }
+
+  /** Hold this change for up to DEFER_MS; a write in the meantime carries it. */
+  private writeSoon(): void {
+    if (this.deferred !== undefined) return;
+    this.deferred = setTimeout(() => this.write(), DEFER_MS);
+    // The daemon has plenty keeping it alive; a short-lived caller must not be held open by this.
+    // Its exit is covered by the 'exit' hook instead.
+    this.deferred.unref?.();
+    writeOnExit(this);
+  }
+
+  /**
+   * The whole map to disk, atomically: temp file, then rename over the old one, so a kill at any
+   * point leaves either the previous file or this one — never a truncated one that loads as empty.
+   * 0600, like schedules.json: titles are taken from what people wrote, and nobody else reads it.
+   */
+  private write(): void {
+    if (this.deferred !== undefined) {
+      clearTimeout(this.deferred);
+      this.deferred = undefined;
+    }
+    unwritten.delete(this);
+    const tmp = `${this.file}.${process.pid}.tmp`;
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      fs.writeFileSync(this.file, JSON.stringify(Object.fromEntries(this.map), null, 2) + '\n');
+      fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(this.map), null, 2) + '\n', { mode: 0o600 });
+      fs.renameSync(tmp, this.file);
     } catch (e) {
+      // The map is still whole in memory, and the next change writes all of it again.
       console.warn('[conversations] failed to persist:', e instanceof Error ? e.message : e);
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        /* nothing more to do about a temp file we cannot remove */
+      }
     }
   }
 }
