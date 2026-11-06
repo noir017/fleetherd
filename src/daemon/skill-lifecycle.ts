@@ -9,9 +9,13 @@ import {
 
 /**
  * The daily check that keeps the managed skills from becoming a museum: after 14 days without a
- * use a skill is marked expired, after 30 it is moved into `.archive`. Pinned skills are left
- * alone, and nothing is ever deleted — `talkcode skills restore <name>` brings an archived one
- * back with its clock reset.
+ * use a skill is marked expired, after 30 it is moved into `archive/`. Pinned skills are left
+ * alone, and so is every skill the gateway did not create (one with no source: a person committed
+ * it to the repository or made it on the web UI's page) — nothing the gateway sees says whether a
+ * hand-written skill is still read from a terminal. Nothing is ever deleted — `talkcode skills
+ * restore <name>` brings an archived one back with its clock reset.
+ *
+ * An archive is a local commit; the skills repository's next cycle pushes it.
  *
  * "Used" is what `skill-usage.ts` counts, not a file's access time: every harness reads the start
  * of every SKILL.md when it lists them, so atime would make every skill look used every day.
@@ -37,7 +41,8 @@ export function sweepSkills(
 ): SweepResult {
   const result: SweepResult = { expired: [], archived: [] };
   for (const skill of listSkills(dir, now)) {
-    if (skill.status === 'archived' || skill.pinned) continue;
+    // A hand-written skill (no source) and a pinned one are never expired or archived: see canExpire.
+    if (skill.status === 'archived' || skill.pinned || !skill.source) continue;
     const last = Math.max(
       Date.parse(skill.lastUsedAt ?? '') || 0,
       Date.parse(skill.restoredAt ?? '') || 0,
@@ -45,7 +50,7 @@ export function sweepSkills(
     );
     const idleDays = (now - last) / DAY_MS;
     if (idleDays >= ARCHIVE_DAYS) {
-      const archived = archiveSkill(skill.name, dir, now);
+      const archived = archiveSkill(skill.name, dir, now, { kind: 'gateway' });
       result.archived.push(archived);
       notify?.(archived, 'unused');
     } else if (idleDays >= EXPIRY_DAYS && markExpired(skill.name, dir)) {

@@ -48,7 +48,7 @@ export function knownHostsFileOf(def: HostDef): string {
   return expandLocalHome(def.knownHostsFile ?? defaultKnownHostsFile());
 }
 
-function expandLocalHome(p: string): string {
+export function expandLocalHome(p: string): string {
   if (p === '~') return os.homedir();
   return p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p;
 }

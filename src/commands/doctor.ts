@@ -7,6 +7,8 @@ import { ConfigSchema, accessUnrestricted, platformInstances, type Config, type 
 import { spawnSync } from 'node:child_process';
 import { sshArgs } from '../remote/binaries.js';
 import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/remote-hosts.js';
+import { gitAsync, gitAvailable } from '../daemon/skills-git.js';
+import { gitSshCommand, redactRepoUrl, skillsRemoteOf } from '../daemon/skills-repo.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
 import { resolveClaudeAdapterEntry } from '../daemon/agent-acp.js';
 import { AGY_COMMAND } from '../daemon/agy-cli.js';
@@ -480,6 +482,32 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
           lines.push(`${id} (${def.ssh}): ${r.detail}`);
         }
         return { ok: !failed, detail: lines.join('; ') };
+      },
+    },
+    {
+      /**
+       * The managed skills live in a git repository (daemon/skills-store.ts), so a gateway without
+       * git delivers none of them; and with `skills.repo` set, the repository has to answer with the
+       * key and known_hosts the gateway pins — `git ls-remote` is the daemon's own fetch, minus the
+       * download.
+       */
+      name: 'Skills repository',
+      run: async () => {
+        if (!gitAvailable()) return { ok: false, detail: 'git is not installed — the managed skills are neither delivered nor writable' };
+        const remote = cfg ? skillsRemoteOf(cfg) : undefined;
+        if (!remote) return { ok: true, detail: 'git found; no skills.repo, so the skills stay in a local repository' };
+        if (/^ssh:\/\//i.test(remote.url) || /^[^/]+@[^/]+:/.test(remote.url)) {
+          if (!fs.existsSync(remote.identityFile)) return { ok: false, detail: `no key at ${remote.identityFile}` };
+          if (!fs.existsSync(remote.knownHostsFile)) {
+            return { ok: false, detail: `no known_hosts at ${remote.knownHostsFile} — add the repository host's key (checked by hand) first` };
+          }
+        }
+        try {
+          await gitAsync(os.tmpdir(), ['ls-remote', '--heads', remote.url, remote.branch], { GIT_SSH_COMMAND: gitSshCommand(remote) }, 30_000);
+          return { ok: true, detail: `${redactRepoUrl(remote.url)} answers (branch ${remote.branch})` };
+        } catch (e) {
+          return { ok: false, detail: `${redactRepoUrl(remote.url)}: ${(e instanceof Error ? e.message : String(e)).split('\n')[0]}` };
+        }
       },
     },
     {

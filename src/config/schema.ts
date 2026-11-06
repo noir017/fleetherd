@@ -649,6 +649,31 @@ export const ConfigSchema = z
       .optional(),
 
     /**
+     * The managed skills' shared repository (docs/skills.md#the-repository). Without it the skills
+     * still live in a git repository, a local one under the config directory; with it, that
+     * repository is kept in step with this one — fetched every few minutes and around every write,
+     * and every change the gateway makes pushed to it.
+     *
+     * On the user side of the config line, like `hosts`: it is an address and a credential. An ssh
+     * URL is reached with the gateway's own key and known_hosts, pinned the same way a remote host
+     * is (`-F none`, strict host key checking): the repository's host key has to be in that
+     * known_hosts already, because the gateway never learns a key by itself.
+     */
+    skills: z
+      .object({
+        /** `ssh://git@host:port/owner/repo.git`, or an https URL. */
+        repo: z.string().min(1),
+        /** The branch to follow and push to. */
+        branch: z.string().regex(/^[A-Za-z0-9._/-]+$/, 'a branch name').default('main'),
+        /** Private key for an ssh URL. Default: `<config dir>/ssh/id_ed25519`, the one hosts use. */
+        identityFile: z.string().min(1).optional(),
+        /** known_hosts holding the repository host's key. Default: `<config dir>/ssh/known_hosts`. */
+        knownHostsFile: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+
+    /**
      * Sub-agents (`daemon/delegation.ts`): one agent handing parts of its job to other agents, each
      * in a topic of its own nested under the asking one.
      */

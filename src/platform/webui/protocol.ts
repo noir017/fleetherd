@@ -170,7 +170,7 @@ export const ModelChooseRequestSchema = z
  * A discriminated union, so each verb carries exactly the fields it needs and a body carrying
  * another verb's field is refused rather than ignored. The bounds here are the request's outer
  * envelope, not the rules: `daemon/skills-store.ts` still validates the name, the path, the
- * frontmatter and the 20 KB / 1 MB limits, and `patch` still refuses a version that is not the
+ * frontmatter and the 64 KB / 1 MB limits, and `patch` still refuses a version that is not the
  * one `show` printed. Keeping the numbers in step matters only so a page cannot make the daemon
  * buffer something the store will reject a moment later.
  *
@@ -178,9 +178,10 @@ export const ModelChooseRequestSchema = z
  */
 const SkillName = z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'not a skill name');
 const SkillFilePath = z.string().min(1).max(300);
-const SkillMd = z.string().max(20 * 1024);
+const SkillMd = z.string().max(64 * 1024);
 const SkillExtra = z.string().max(1024 * 1024);
-const SkillHistoryId = z.string().regex(/^\d{15}-[0-9a-f]{6}$/, 'not a history id');
+/** A history entry is a commit in the skills repository: what `skillHistory` prints is 12 hex, git takes 7–40. */
+const SkillHistoryId = z.string().regex(/^[0-9a-f]{7,40}$/, 'not a history id');
 
 export const SkillOpRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('show'), name: SkillName, file: SkillFilePath.optional() }).strict(),

@@ -698,7 +698,7 @@ export class WebRoom {
    *
    * A facade, like the schedule panel above: every write is `daemon/skills-store.ts`'s, so the
    * page gets the same name/path validation, the same version guard on `patch`, the same
-   * `.history/` snapshot, and the same archive-instead-of-delete as `talkcode skills`.
+   * commit per change, and the same archive-instead-of-delete as `talkcode skills`.
    */
   useSkillsPanel(panel: SkillsPanel): void {
     this.skillsPanel = panel;
@@ -711,7 +711,7 @@ export class WebRoom {
   }
 
   /** Carry out one skills operation, with the fresh list (and detail, for `show`). */
-  skillOp(op: SkillPanelOp): SkillPanelResult {
+  async skillOp(op: SkillPanelOp): Promise<SkillPanelResult> {
     if (!this.skillsPanel) return { ok: false, error: 'skills are not enabled in this daemon' };
     return this.skillsPanel.op(op);
   }

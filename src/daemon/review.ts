@@ -232,6 +232,12 @@ export interface ReviewDeps {
   notify(lane: ReviewLane, text: string): Promise<void>;
   /** The managed skills directory; `configDir()` in production, a temp dir in tests. */
   skillsDir?: string;
+  /**
+   * Run the review's writes as one: the daemon's skills repository pulls before them and pushes
+   * after them, so a patch is checked against the newest version and lands in the repository at
+   * once. Absent in a test, where they simply run.
+   */
+  writeSkills?: <T>(fn: () => T) => Promise<T>;
   run?: ReviewRunner;
   log?: (message: string) => void;
 }
@@ -456,7 +462,9 @@ export class ReviewService {
       return;
     }
     for (const bad of parsed.parsed.invalid) this.log(`[review] ${candidate.key}: dropped ${bad}`);
-    const outcome = this.apply(candidate, parsed.parsed.output.changes, reviewer);
+    const changesToApply = parsed.parsed.output.changes;
+    const applyAll = (): AppliedResult => this.apply(candidate, changesToApply, reviewer);
+    const outcome = this.deps.writeSkills ? await this.deps.writeSkills(applyAll) : applyAll();
     this.deps.state.reviewed(candidate.key, plan.window.lastMessageId, now);
     const changes: HistoryReviewChange[] = [
       ...outcome.applied.map((a) => recordedChange(a.change, { applied: a.result })),
@@ -530,22 +538,23 @@ export class ReviewService {
       ...(candidate.lane ? { platform: candidate.lane.platform, address: addressOfLane(candidate.lane) } : {}),
       agent: reviewer.id,
       // "来源记为复盘": the conversation is the one that was reviewed, not one that asked for
-      // this — `origin` is what tells them apart in `.usage.json`.
+      // this — `origin` is what tells them apart in the usage file.
       origin: 'review' as const,
     };
+    const by = { kind: 'review' as const, agent: reviewer.id, conversation: candidate.key };
     for (const change of changes) {
       try {
         if (change.action === 'create') {
-          createSkill({ name: change.name, description: change.description, body: change.body, source, note: change.reason }, dir);
+          createSkill({ name: change.name, description: change.description, body: change.body, source, note: change.reason, by }, dir);
           out.applied.push({ change, result: { name: change.name, action: 'created' } });
         } else if (change.action === 'patch') {
-          patchSkill({ name: change.name, version: change.version, content: change.content, note: change.reason }, dir);
+          patchSkill({ name: change.name, version: change.version, content: change.content, note: change.reason, by }, dir);
           out.applied.push({
             change,
             result: { name: change.name, action: 'patched', revertId: newestHistoryId(change.name, dir) },
           });
         } else {
-          writeSkillFile({ name: change.name, file: change.file, content: change.content, note: change.reason }, dir);
+          writeSkillFile({ name: change.name, file: change.file, content: change.content, note: change.reason, by }, dir);
           out.applied.push({
             change,
             result: { name: change.name, action: 'file', file: change.file, revertId: newestHistoryId(change.name, dir) },

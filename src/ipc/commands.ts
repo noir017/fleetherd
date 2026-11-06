@@ -179,10 +179,10 @@ export const HELP_TOPICS: HelpTopic[] = [
     summary: "The skills the gateway keeps for every agent: read, write, archive, restore, roll back",
     notes: [
       'These are the gateway\'s own skills, not the harness\'s installed ones. Each one is delivered to every agent on every host, so what you write here reaches all of them: keep it about a kind of task, not about one conversation. It acts on the whole gateway, so --channel does not apply.',
-      'Names are lowercase words joined by hyphens (a-z, 0-9). `talkcode` and `super` are the bundled skills and cannot be reused. `SKILL.md` is at most 20 KB and must begin with frontmatter naming the skill and a one-line description of when to use it; files beyond it go only in references/, templates/ or scripts/.',
+      'Names are lowercase words joined by hyphens (a-z, 0-9). `talkcode` and `super` are the bundled skills and cannot be reused. `SKILL.md` is at most 64 KB and must begin with frontmatter naming the skill and a one-line description of when to use it; files beyond it go only in references/, templates/ or scripts/.',
       'Read before you write: `show <name>` prints the content and a version. `patch <name> --version <that version> --content <full SKILL.md>` is refused if the skill has changed since — run show again, re-apply your edit, and patch with the new version.',
-      '`create <name> --description "<when to use it>" [--body <markdown>]` starts a skill; `write-file` and `remove-file` add or remove a reference, template or script. Every content change keeps the previous version in the gateway\'s history, and `revert <name> <id>` puts it back.',
-      '14 days without a use marks a skill expired; 30 days moves it to the archive and takes it off every agent at its next start. `pin` keeps a skill out of that check; `restore` brings an archived one back. Nothing is deleted.',
+      '`create <name> --description "<when to use it>" [--body <markdown>]` starts a skill; `write-file` and `remove-file` add or remove a reference, template or script. Every change is a commit in the skills repository, a person\'s included; `history <name>` lists them and `revert <name> <id>` puts back the files as they were before that one.',
+      '14 days without a use marks a skill an agent created expired; 30 days moves it to the archive and takes it off every agent at its next start. A skill a person wrote is never expired. `pin` keeps a skill out of that check; `restore` brings an archived one back. Nothing is deleted.',
       'A skill counts as used when an agent calls it as a Skill tool, when a message starts with /<name>, or when a tool call touches a file under ~/.talkcode/skills/<name>/. Running `talkcode skills` itself does not count.',
     ],
   },

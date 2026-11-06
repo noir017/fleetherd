@@ -18,6 +18,7 @@ import {
   showSkill,
   skillHistory,
   writeSkillFile,
+  type SkillChangeBy,
   type SkillRecord,
 } from './skills-store.js';
 import { configDir } from '../config/load.js';
@@ -27,7 +28,7 @@ import { configDir } from '../config/load.js';
  * page draws, and every operation forwarded to the store function `talkcode skills` calls.
  *
  * There is deliberately no `delete` here. The store has none — `archive` moves a skill into
- * `.archive/` whole, and `restore` brings it back — so the page's "Delete" is the archive and
+ * `archive/` whole, and `restore` brings it back — so the page's "Delete" is the archive and
  * nothing in this module can reach a hard delete even if a request asked for one.
  *
  * The one thing this adds over the store is the archive notice: `notifyArchived` is the daemon's
@@ -50,6 +51,7 @@ function entryOf(skill: SkillRecord): SkillPanelEntry {
     ...(skill.restoredAt ? { restoredAt: skill.restoredAt } : {}),
     uses: skill.uses,
     agents: [...skill.agents],
+    ...(skill.problem ? { problem: skill.problem } : {}),
   };
 }
 
@@ -58,7 +60,15 @@ export interface SkillsPanelOptions {
   dir?: string;
   /** Tell the conversation that created a skill that it was archived. */
   notifyArchived?: (skill: SkillRecord) => void;
+  /**
+   * Run one store write — the daemon's skills repository, which pulls before it and pushes after
+   * it. Absent in a test, where the write simply runs.
+   */
+  write?: <T>(fn: () => T) => Promise<T>;
 }
+
+/** A change made on the page is a person's: the commit says `talkcode-web`. */
+const PERSON: SkillChangeBy = { kind: 'person' };
 
 /** Build the facade the web UI's `useSkillsPanel` seam expects. */
 export function buildSkillsPanel(options: SkillsPanelOptions = {}): SkillsPanel {
@@ -78,52 +88,51 @@ export function buildSkillsPanel(options: SkillsPanelOptions = {}): SkillsPanel 
   };
 
   const done = (): SkillPanelResult => ({ ok: true, skills: list() });
+  const write = async (fn: () => unknown): Promise<SkillPanelResult> => {
+    await (options.write ? options.write(fn) : fn());
+    return done();
+  };
 
   return {
     list,
-    op(request: SkillPanelOp): SkillPanelResult {
+    async op(request: SkillPanelOp): Promise<SkillPanelResult> {
       try {
         switch (request.action) {
           case 'show':
             return { ok: true, skills: list(), detail: detailOf(request.name, request.file) };
           case 'create':
-            createSkill(
-              {
-                name: request.name,
-                description: request.description,
-                body: request.body,
-              },
-              root()
+            return await write(() =>
+              createSkill({ name: request.name, description: request.description, body: request.body, by: PERSON }, root())
             );
-            return done();
           case 'patch':
-            patchSkill({ name: request.name, version: request.version, content: request.content }, root());
-            return done();
+            return await write(() =>
+              patchSkill({ name: request.name, version: request.version, content: request.content, by: PERSON }, root())
+            );
           case 'write-file':
-            writeSkillFile({ name: request.name, file: request.file, content: request.content }, root());
-            return done();
+            return await write(() =>
+              writeSkillFile({ name: request.name, file: request.file, content: request.content, by: PERSON }, root())
+            );
           case 'remove-file':
-            removeSkillFile({ name: request.name, file: request.file }, root());
-            return done();
+            return await write(() => removeSkillFile({ name: request.name, file: request.file, by: PERSON }, root()));
           case 'archive': {
             // `archiveSkill` is idempotent — asking twice returns the archived record without
             // moving anything — so the notice must be tied to the transition, not the call. A
             // second request from the page (or a hand-written POST) must not tell the creating
-            // conversation about an archive that already happened.
-            const wasActive = listSkills(root()).some((s) => s.name === request.name && s.status !== 'archived');
-            const archived = archiveSkill(request.name, root());
-            if (wasActive) options.notifyArchived?.(archived);
-            return done();
+            // conversation about an archive that already happened. Read inside the write, after
+            // the pull, so a skill a person archived in the repository meanwhile counts as gone.
+            return await write(() => {
+              const wasActive = listSkills(root()).some((s) => s.name === request.name && s.status !== 'archived');
+              const archived = archiveSkill(request.name, root(), Date.now(), PERSON);
+              if (wasActive) options.notifyArchived?.(archived);
+            });
           }
           case 'restore':
-            restoreSkill(request.name, root());
-            return done();
+            return await write(() => restoreSkill(request.name, root(), Date.now(), PERSON));
           case 'pin':
             pinSkill(request.name, request.pinned, root());
             return done();
           case 'revert':
-            revertSkill(request.name, request.id, root());
-            return done();
+            return await write(() => revertSkill(request.name, request.id, root(), Date.now(), PERSON));
           default: {
             const _exhaustive: never = request;
             throw new Error(`unknown skills action: ${JSON.stringify(_exhaustive)}`);

@@ -1133,7 +1133,7 @@ describe('webui server: traffic', () => {
         skills: [],
       });
 
-      room.useSkillsPanel({ list: () => [skill], op: () => ({ ok: true, skills: [skill] }) });
+      room.useSkillsPanel({ list: () => [skill], op: async () => ({ ok: true, skills: [skill] }) });
       const res = await fetch(`${base}/api/skills`, { headers: { cookie } });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ enabled: true, skills: [skill] });
@@ -1145,7 +1145,7 @@ describe('webui server: traffic', () => {
       const calls: string[] = [];
       room.useSkillsPanel({
         list: () => [skill],
-        op: (op) => {
+        op: async (op) => {
           calls.push(op.action);
           return { ok: true, skills: [{ ...skill, pinned: true }] };
         },
@@ -1167,7 +1167,7 @@ describe('webui server: traffic', () => {
       let called = 0;
       room.useSkillsPanel({
         list: () => [skill],
-        op: () => {
+        op: async () => {
           called += 1;
           return { ok: false, error: 'version mismatch: "deploy-check" is at aabbccddeeff, not 0123456789ab.' };
         },
@@ -1197,6 +1197,31 @@ describe('webui server: traffic', () => {
         expect(malformed.status, JSON.stringify(body)).toBe(400);
       }
       expect(called).toBe(1);
+    });
+
+    it('takes a commit id for a revert, and refuses anything else', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const ids: string[] = [];
+      room.useSkillsPanel({
+        list: () => [skill],
+        op: async (op) => {
+          if (op.action === 'revert') ids.push(op.id);
+          return { ok: true, skills: [skill] };
+        },
+      });
+      const post = (id: string): Promise<Response> =>
+        fetch(`${base}/api/skills/op`, {
+          method: 'POST',
+          headers: { ...JSON_HEADERS, cookie },
+          body: JSON.stringify({ action: 'revert', name: 'deploy-check', id }),
+        });
+
+      // A history entry is a commit: 12 hex as `history` prints it, or any length git takes.
+      expect((await post('a5388a00a83d')).status).toBe(200);
+      expect((await post('a5388a00a83d5f1e2c3b4a5968778695a4b3c2d1')).status).toBe(200);
+      for (const bad of ['000000000000172-abc123', 'HEAD~1', 'a538', '--all']) expect((await post(bad)).status, bad).toBe(400);
+      expect(ids).toEqual(['a5388a00a83d', 'a5388a00a83d5f1e2c3b4a5968778695a4b3c2d1']);
     });
 
     it('is behind the session like every other route', async () => {

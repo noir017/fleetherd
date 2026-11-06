@@ -49,10 +49,12 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `reverse-cli-shim.ts` | Guarantees `talkcode` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
 | `skill-link.ts` | Links the bundled skills (`talkcode`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
 | `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
-| `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`): names, paths and size rules, content versions, `.usage.json`, `.archive/`, and `.history/` with `revert` |
+| `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`, a git repository): names, paths and size rules, content versions, the usage file, `archive/`, and history and `revert` read from git |
+| `skills-git.ts` | The git under the store: commits with trailers, the log per skill, files at a commit — run with the machine's git config switched off |
+| `skills-repo.ts` | `skills.repo`: moving an old store into a repository, and fetch → rebase → push around every write and every five minutes |
 | `skills-panel.ts` | The web UI's skills page: store records → the page's shape, every operation forwarded to `skills-store.ts`, and the archive notice the reverse command sends |
 | `skill-usage.ts` | What counts as using a managed skill — a `Skill` tool call, `/<name>`, a file under its directory — once per turn, with `talkcode skills` excluded |
-| `skill-lifecycle.ts` | The daily check (14 days expired, 30 archived, pinned exempt) and its archive notice |
+| `skill-lifecycle.ts` | The daily check (14 days expired, 30 archived; pinned and hand-written skills exempt) and its archive notice |
 | `managed-skills.ts` | Delivering active skills to `~/.talkcode/skills/` on an agent's machine and linking only links that point back there; taking an archived skill's links back |
 | `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
 | `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
@@ -1409,19 +1411,36 @@ degradation that needs no code.
 ## Skills the gateway keeps
 
 `<configDir>/skills/` is a second kind of skill, beside the two the package bundles: one an agent
-writes through `talkcode skills` (`skills-store.ts`), delivered to every agent on every host at
+writes through `talkcode skills` (`skills-store.ts`) or a person commits to the shared repository
+(`skills-repo.ts`), delivered to every agent on every host at
 spawn (`managed-skills.ts`, and `remote-hosts.ts` `placeManagedSkills` for an agent on another
 machine). The copy lives in `~/.talkcode/skills/<name>/` — never under a version directory — and is
 read-only; the link into each harness's skill directory is made only when the harness's own config
 directory exists, and is repointed or removed only when it points back into that copy. A real
 directory, a real file, or the operator's own link at the same name is left alone and logged.
 
-`SKILL.md` is capped at 20 KB and every write is validated (`skills-store.ts`), because the skill
+`SKILL.md` is capped at 64 KB and every write is validated (`skills-store.ts`), because the skill
 enters every agent's context. `show` prints a content hash; `patch` refuses unless it carries that
-hash, so a half-read edit cannot silently undo a newer one. Before each content change the old
-files go into `.history/<name>/<id>/` with one `meta.json`, and `revert` restores a whole snapshot
-and records the revert itself. `archive` moves the directory into `.archive/`; the next spawn takes the
-copy and every link of ours back, and the conversation the skill came from gets one line.
+hash, so a half-read edit cannot silently undo a newer one. Each change is one commit
+(`skills-git.ts`), its action and versions in `Talkcode-*` trailers, its author naming the writer
+(`talkcode`, `talkcode-review`, `talkcode-web`). `history` is `git log` over `skills/<name>` and
+`archive/<name>`, so a person's commit is listed too, and `revert <id>` restores the files as they
+were at that commit's parent — whoever made it. `archive` moves the directory into `archive/`; the
+next spawn takes the copy and every link of ours back, and the conversation the skill came from
+gets one line. A skill that arrived by `git pull` and breaks the rules (`skillProblem`) is not
+delivered, and `list` says why.
+
+**Git, and the network around it.** Local git is synchronous: a commit or a rebase over a few small
+files takes milliseconds, and inside one turn of the event loop a spawn reading the skills can never
+see a tree halfway through one. Fetch and push are asynchronous and time out. Every write goes
+through `SkillsRepo.write` — pull, the synchronous store call, push — serialized with the
+five-minute cycle, so the version a `patch` is checked against is the shared repository's newest.
+When both sides changed one file the repository wins and the gateway's commits go to a
+`talkcode-unpushed-*` branch; nothing is force-pushed. Every git call runs with the machine's
+config switched off (`GIT_CONFIG_GLOBAL=/dev/null`): a global hook, signing requirement or prompting
+credential helper of the operator's must not turn a skill write into a hang. The store directory
+became a repository in 2.41.0; `prepareSkillsRepo` moves an old one in as one commit at start and
+keeps it as `skills.pre-git`.
 
 The same store is behind the web UI's skills page (`skills-panel.ts`): the page lists, creates,
 edits, archives/restores and reverts through these functions, so its rules are these rules, and an

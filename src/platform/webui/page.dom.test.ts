@@ -6795,8 +6795,8 @@ describe('webui page: the skills page', () => {
     ],
     file: { path: 'SKILL.md', content: MD, version: '0123456789ab' },
     history: [
-      { id: '000000000000002-abcdef', at: '2026-11-02T00:00:00.000Z', action: 'patch', beforeVersion: '0123456789ab', afterVersion: 'fedcba987654' },
-      { id: '000000000000001-abcdef', at: '2026-11-01T00:00:00.000Z', action: 'create' },
+      { id: 'c4f06d73eaad', at: '2026-11-02T00:00:00.000Z', action: 'patch', beforeVersion: '0123456789ab', afterVersion: 'fedcba987654' },
+      { id: '9b1e2d3c4f5a', at: '2026-11-01T00:00:00.000Z', action: 'create' },
     ],
     ...over,
   });
@@ -6823,6 +6823,20 @@ describe('webui page: the skills page', () => {
     expect(h.el('skills-list').textContent).toContain('3 uses');
   });
 
+  it('says on the card why a hand-committed skill is not delivered', async () => {
+    const broken = entry({ name: 'broken-one', problem: 'SKILL.md must start with a --- frontmatter block naming the skill and describing it' });
+    const h = await open({ replies: { 'api/skills': list([entry(), broken]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('broken-one'));
+
+    const card = (name: string): Element => h.doc.querySelector(`[data-skill="${name}"]`)!;
+    expect(card('broken-one').querySelector('.skill-problem')!.textContent).toBe(
+      'Not delivered: SKILL.md must start with a --- frontmatter block naming the skill and describing it'
+    );
+    expect(card('deploy-check').querySelector('.skill-problem')).toBeNull();
+  });
+
   it('opens a skill with its files, editor and history', async () => {
     const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
     const h = await open({ replies });
@@ -6840,6 +6854,30 @@ describe('webui page: the skills page', () => {
     expect((h.el('skill-text') as HTMLTextAreaElement).value).toBe(MD);
     expect((h.el('skill-path') as HTMLInputElement).value).toBe('SKILL.md');
     expect((h.el('skill-path') as HTMLInputElement).readOnly).toBe(true);
+  });
+
+  it('offers to undo a commit someone made in the repository by hand, and names who', async () => {
+    const handMade = detail({
+      history: [
+        { id: 'abcdef123456', at: '2026-11-02T00:00:00.000Z', action: 'commit', author: 'noir', note: 'docs: rewrite by hand' },
+        { id: '0123456789ab', at: '2026-11-01T00:00:00.000Z', action: 'create', author: 'talkcode' },
+      ],
+    });
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply([entry()], handMade) };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    const rows = [...h.doc.querySelectorAll('.skill-hist')];
+    expect(rows[0]!.textContent).toContain('noir');
+    expect(rows[0]!.textContent).toContain('docs: rewrite by hand');
+    expect(rows[0]!.querySelector('[data-revert="abcdef123456"]')).not.toBeNull();
+    // The gateway's own name is not repeated on every row, and a first version has nothing to restore.
+    expect(rows[1]!.textContent).not.toContain('talkcode');
+    expect(rows[1]!.querySelector('[data-revert]')).toBeNull();
   });
 
   it('saves SKILL.md with the version the detail carried', async () => {
@@ -6966,7 +7004,7 @@ describe('webui page: the skills page', () => {
     expect(h.calls.find((c) => c.body.action === 'revert')?.body).toEqual({
       action: 'revert',
       name: 'deploy-check',
-      id: '000000000000002-abcdef',
+      id: 'c4f06d73eaad',
     });
   });
 

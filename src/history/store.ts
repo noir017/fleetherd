@@ -168,7 +168,7 @@ export interface HistoryReviewChange {
   applied?: boolean;
   /** Why the store refused it, or why its shape was rejected. */
   error?: string;
-  /** The `.history/` entry `talkcode skills revert` names, when there is one. */
+  /** The history entry (a commit) `talkcode skills revert` names, when there is one. */
   revertId?: string;
 }
 

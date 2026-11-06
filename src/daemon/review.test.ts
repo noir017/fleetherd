@@ -425,7 +425,7 @@ describe('ReviewService', () => {
     expect(h.notifications[0]!.text).toContain('偏好建议：回答先给结论');
     expect(h.notifications[0]!.text).not.toContain('\n');
     // The source says where it came from: the reviewed conversation, marked as a review.
-    const usage = JSON.parse(fs.readFileSync(path.join(dir, 'skills', '.usage.json'), 'utf8'));
+    const usage = JSON.parse(fs.readFileSync(path.join(dir, 'skills-usage.json'), 'utf8'));
     expect(usage.skills['deploy-check'].source).toMatchObject({
       conversation: 'telegram:chat:1',
       origin: 'review',

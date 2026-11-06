@@ -46,17 +46,17 @@ const detail = (result: SkillPanelResult): SkillPanelDetail => {
 };
 
 describe('skills panel', () => {
-  it('creates, lists and opens a skill with its files and first history entry', () => {
+  it('creates, lists and opens a skill with its files and first history entry', async () => {
     const panel = build();
     expect(panel.list()).toEqual([]);
 
-    const created = panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment', body: '# Steps' });
+    const created = await panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment', body: '# Steps' });
     expect(created).toMatchObject({
       ok: true,
       skills: [expect.objectContaining({ name: 'deploy-check', status: 'active', pinned: false, uses: 0 })],
     });
 
-    const shown = detail(panel.op({ action: 'show', name: 'deploy-check' }));
+    const shown = detail(await panel.op({ action: 'show', name: 'deploy-check' }));
     expect(shown.skill).toMatchObject({ name: 'deploy-check', status: 'active', pinned: false });
     expect(shown.files.map((f) => f.path)).toEqual(['SKILL.md']);
     expect(shown.file).toMatchObject({ path: 'SKILL.md' });
@@ -67,91 +67,91 @@ describe('skills panel', () => {
     expect(shown.history[0]!.beforeVersion).toBeUndefined();
   });
 
-  it('hands back the store refusal when patch carries a stale version', () => {
+  it('hands back the store refusal when patch carries a stale version', async () => {
     const panel = build();
-    panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
-    const first = detail(panel.op({ action: 'show', name: 'deploy-check' }));
+    await panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
+    const first = detail(await panel.op({ action: 'show', name: 'deploy-check' }));
     const next = '---\nname: deploy-check\ndescription: "second"\n---\n\nsecond\n';
-    expect(panel.op({ action: 'patch', name: 'deploy-check', version: first.file!.version, content: next }).ok).toBe(true);
+    expect((await panel.op({ action: 'patch', name: 'deploy-check', version: first.file!.version, content: next })).ok).toBe(true);
 
-    const stale = panel.op({ action: 'patch', name: 'deploy-check', version: first.file!.version, content: next });
+    const stale = await panel.op({ action: 'patch', name: 'deploy-check', version: first.file!.version, content: next });
     expect(stale).toMatchObject({ ok: false, error: expect.stringMatching(/version mismatch/) });
   });
 
-  it('edits an extra file, records it, and reverts the whole skill to a snapshot', () => {
+  it('edits an extra file, records it, and reverts the whole skill to a snapshot', async () => {
     const later = clock();
     const panel = build();
-    panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
-    const created = detail(panel.op({ action: 'show', name: 'deploy-check' }));
+    await panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
+    const created = detail(await panel.op({ action: 'show', name: 'deploy-check' }));
     later();
-    expect(panel.op({ action: 'write-file', name: 'deploy-check', file: 'references/api.md', content: 'API' }).ok).toBe(true);
+    expect((await panel.op({ action: 'write-file', name: 'deploy-check', file: 'references/api.md', content: 'API' })).ok).toBe(true);
 
-    const withFile = detail(panel.op({ action: 'show', name: 'deploy-check', file: 'references/api.md' }));
+    const withFile = detail(await panel.op({ action: 'show', name: 'deploy-check', file: 'references/api.md' }));
     expect(withFile.files.map((f) => f.path)).toEqual(['SKILL.md', 'references/api.md']);
     expect(withFile.file).toMatchObject({ path: 'references/api.md', content: 'API' });
 
     const patch = withFile.history.find((h) => h.action === 'write-file')!;
     later();
-    expect(panel.op({ action: 'revert', name: 'deploy-check', id: patch.id }).ok).toBe(true);
-    const back = detail(panel.op({ action: 'show', name: 'deploy-check' }));
+    expect((await panel.op({ action: 'revert', name: 'deploy-check', id: patch.id })).ok).toBe(true);
+    const back = detail(await panel.op({ action: 'show', name: 'deploy-check' }));
     expect(back.files.map((f) => f.path)).toEqual(['SKILL.md']);
     expect(back.skill.version).toBe(created.skill.version);
     expect(back.history[0]).toMatchObject({ action: 'revert', note: `revert ${patch.id}` });
 
-    expect(panel.op({ action: 'remove-file', name: 'deploy-check', file: 'references/api.md' }).ok).toBe(false);
+    expect((await panel.op({ action: 'remove-file', name: 'deploy-check', file: 'references/api.md' })).ok).toBe(false);
   });
 
-  it('removes one extra file and records the removal', () => {
+  it('removes one extra file and records the removal', async () => {
     const later = clock();
     const panel = build();
-    panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
+    await panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
     later();
-    panel.op({ action: 'write-file', name: 'deploy-check', file: 'references/api.md', content: 'API' });
+    await panel.op({ action: 'write-file', name: 'deploy-check', file: 'references/api.md', content: 'API' });
     later();
 
-    const removed = panel.op({ action: 'remove-file', name: 'deploy-check', file: 'references/api.md' });
+    const removed = await panel.op({ action: 'remove-file', name: 'deploy-check', file: 'references/api.md' });
     expect(removed).toMatchObject({ ok: true });
-    const shown = detail(panel.op({ action: 'show', name: 'deploy-check' }));
+    const shown = detail(await panel.op({ action: 'show', name: 'deploy-check' }));
     expect(shown.files.map((f) => f.path)).toEqual(['SKILL.md']);
     expect(shown.history.map((h) => h.action)).toEqual(['remove-file', 'write-file', 'create']);
   });
 
-  it('archives with a notice, lists the archived copy, and restores it', () => {
+  it('archives with a notice, lists the archived copy, and restores it', async () => {
     const told: string[] = [];
     const panel = build((skill) => told.push(`${skill.name}:${skill.status}`));
-    panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
-    panel.op({ action: 'write-file', name: 'deploy-check', file: 'templates/report.md', content: 'report' });
+    await panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
+    await panel.op({ action: 'write-file', name: 'deploy-check', file: 'templates/report.md', content: 'report' });
 
-    const archived = panel.op({ action: 'archive', name: 'deploy-check' });
+    const archived = await panel.op({ action: 'archive', name: 'deploy-check' });
     expect(archived).toMatchObject({ ok: true, skills: [expect.objectContaining({ name: 'deploy-check', status: 'archived' })] });
     expect(told).toEqual(['deploy-check:archived']);
     // A second archive changes nothing and must not tell the conversation again.
-    expect(panel.op({ action: 'archive', name: 'deploy-check' }).ok).toBe(true);
+    expect((await panel.op({ action: 'archive', name: 'deploy-check' })).ok).toBe(true);
     expect(told).toEqual(['deploy-check:archived']);
     expect(fs.existsSync(skillDir('deploy-check', dir))).toBe(false);
 
     // Reading an archived skill lists the files from `.archive/`, not the (now absent) live dir.
-    const shown = detail(panel.op({ action: 'show', name: 'deploy-check', file: 'templates/report.md' }));
+    const shown = detail(await panel.op({ action: 'show', name: 'deploy-check', file: 'templates/report.md' }));
     expect(shown.skill.status).toBe('archived');
     expect(shown.files.map((f) => f.path)).toEqual(['SKILL.md', 'templates/report.md']);
     expect(shown.file!.content).toBe('report');
 
-    expect(panel.op({ action: 'restore', name: 'deploy-check' }).ok).toBe(true);
+    expect((await panel.op({ action: 'restore', name: 'deploy-check' })).ok).toBe(true);
     expect(panel.list()).toEqual([expect.objectContaining({ name: 'deploy-check', status: 'active' })]);
     expect(told).toEqual(['deploy-check:archived']);
   });
 
-  it('pins and unpins, and reports an unknown skill as the store does', () => {
+  it('pins and unpins, and reports an unknown skill as the store does', async () => {
     const panel = build();
-    panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
-    expect(panel.op({ action: 'pin', name: 'deploy-check', pinned: true })).toMatchObject({
+    await panel.op({ action: 'create', name: 'deploy-check', description: 'Use when checking a deployment' });
+    expect(await panel.op({ action: 'pin', name: 'deploy-check', pinned: true })).toMatchObject({
       ok: true,
       skills: [expect.objectContaining({ pinned: true })],
     });
-    expect(panel.op({ action: 'pin', name: 'deploy-check', pinned: false })).toMatchObject({
+    expect(await panel.op({ action: 'pin', name: 'deploy-check', pinned: false })).toMatchObject({
       ok: true,
       skills: [expect.objectContaining({ pinned: false })],
     });
-    expect(panel.op({ action: 'show', name: 'nope' })).toMatchObject({ ok: false, error: expect.stringMatching(/no skill named/) });
+    expect(await panel.op({ action: 'show', name: 'nope' })).toMatchObject({ ok: false, error: expect.stringMatching(/no skill named/) });
   });
 });
