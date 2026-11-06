@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.42.0] - 2026-11-06
+
 ### Added
 
 - **A skill library agents search, instead of every skill in every agent's context.** A skill is
