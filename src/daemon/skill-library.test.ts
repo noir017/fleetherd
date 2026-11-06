@@ -1,10 +1,16 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SkillLibrary, type LibraryAsker } from './skill-library.js';
 import { readQueryEvents } from './skill-queries.js';
-import { createSkill, listSkills, patchSkill, setResident, showSkill, writeSkillFile } from './skills-store.js';
+import { activeSkillFiles, createSkill, listSkills, patchSkill, setResident, showSkill, writeSkillFile } from './skills-store.js';
+
+// Counted, not replaced: what the index tests ask is how often the library read every skill whole.
+vi.mock('./skills-store.js', async (importOriginal) => {
+  const real = await importOriginal<Record<string, unknown> & { activeSkillFiles: (dir?: string) => unknown }>();
+  return { ...real, activeSkillFiles: vi.fn(real.activeSkillFiles) };
+});
 
 let dir: string;
 let library: SkillLibrary;
@@ -97,5 +103,62 @@ describe('show', () => {
     // A new version is new to everyone.
     writeSkillFile({ name: 'deploy-check', file: 'references/more.md', content: 'more', now: T0 + 5 }, dir);
     expect(library.show('deploy-check', undefined, codex, false, T0 + 6)).toHaveProperty('content');
+  });
+});
+
+describe('the index', () => {
+  const reads = (): number => vi.mocked(activeSkillFiles).mock.calls.length;
+  const found = (query: string): string[] => library.search(query, codex, T0).results.map((r) => r.name);
+  const skillMd = path.join('skills', 'skills', 'deploy-check', 'SKILL.md');
+
+  it('reads the skills again only when one changed — by the store, by a pull, or by hand', () => {
+    found('检查部署');
+    const before = reads();
+    found('检查部署');
+    library.categories();
+    // Nothing changed: the stamp is stat alone, and no file was read or hashed again.
+    expect(reads()).toBe(before);
+
+    // The store's own write.
+    const v = showSkill('deploy-check', undefined, dir).version;
+    patchSkill({ name: 'deploy-check', version: v, content: md('deploy-check', '部署完成后巡检服务时使用', '', '依次检查健康接口。'), now: T0 }, dir);
+    expect(found('巡检')).toEqual(['deploy-check']);
+    expect(reads()).toBe(before + 1);
+
+    // A `skills.repo` pull: git writes the file anew. Same length on purpose — the new inode and
+    // ctime are what show it, not the size.
+    const file = path.join(dir, skillMd);
+    const pulled = fs.readFileSync(file, 'utf8').replace('巡检', '盘点');
+    expect(Buffer.byteLength(pulled)).toBe(fs.statSync(file).size);
+    fs.writeFileSync(`${file}.pull`, pulled);
+    fs.renameSync(`${file}.pull`, file);
+    expect(found('盘点')).toEqual(['deploy-check']);
+
+    // A person editing the file in place.
+    fs.writeFileSync(file, pulled.replace('盘点', '盘点和回滚'));
+    expect(found('回滚')).toEqual(['deploy-check']);
+
+    // A skill that appeared, by hand or by a pull, and then went.
+    const added = path.join(dir, 'skills', 'skills', 'log-check');
+    fs.mkdirSync(added);
+    fs.writeFileSync(path.join(added, 'SKILL.md'), '---\nname: log-check\ndescription: "Use when reading service logs"\n---\n\nbody\n');
+    expect(found('service logs')).toContain('log-check');
+    expect(library.categories().total).toBe(4);
+    fs.rmSync(added, { recursive: true });
+    expect(found('service logs')).not.toContain('log-check');
+    expect(library.categories().total).toBe(3);
+  });
+
+  it('sees a file added to or removed from a skill\'s directories', () => {
+    found('检查部署');
+    const before = reads();
+    const reference = path.join(dir, 'skills', 'skills', 'deploy-check', 'references', 'notes.md');
+    fs.mkdirSync(path.dirname(reference), { recursive: true });
+    fs.writeFileSync(reference, 'notes');
+    found('检查部署');
+    expect(reads()).toBe(before + 1);
+    fs.rmSync(reference);
+    found('检查部署');
+    expect(reads()).toBe(before + 2);
   });
 });

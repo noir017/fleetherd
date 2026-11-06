@@ -4,6 +4,7 @@ import { missesOf, readQueryEvents, recordQueryEvent } from './skill-queries.js'
 import {
   SKILL_FILE,
   activeSkillFiles,
+  activeSkillStamp,
   frontmatterFields,
   listSkillFiles,
   recordSkillUse,
@@ -62,22 +63,31 @@ export const SEARCH_LIMIT = 5;
 const SKILLS_HOME = '~/.talkcode/skills';
 
 export class SkillLibrary {
-  private cached: { key: string; index: SkillIndex; skills: Map<string, SkillFileSet> } | undefined;
+  private cached: { stamp: string; index: SkillIndex; skills: Map<string, SkillFileSet> } | undefined;
   /** Per conversation and generation: `name/file` → the version last shown in full. */
   private readonly shown = new Map<string, Map<string, string>>();
 
   constructor(private readonly dir: () => string = configDir) {}
 
-  /** The skills that can be searched, and an index over them, rebuilt only when one changed. */
+  /**
+   * The skills that can be searched, and an index over them, rebuilt only when one changed.
+   *
+   * "Changed" is judged by `activeSkillStamp` (stat only), not by the content versions it used to
+   * compare: those meant reading and hashing every file of every skill on every search, which was
+   * the whole cost of a search. The stamp is taken BEFORE the files are read, so a write landing in
+   * between moves the next stamp — the worst a race costs is one extra rebuild, never an index
+   * older than the stamp it is filed under.
+   */
   private library(): { index: SkillIndex; skills: Map<string, SkillFileSet> } {
-    const sets = activeSkillFiles(this.dir());
-    const key = sets.map((s) => `${s.name}@${s.version}`).join(',');
-    if (this.cached?.key !== key) {
+    const dir = this.dir();
+    const stamp = `${dir}\n${activeSkillStamp(dir)}`;
+    if (this.cached?.stamp !== stamp) {
+      const sets = activeSkillFiles(dir);
       const docs: SearchableSkill[] = sets.map((s) => {
         const md = s.files.get(SKILL_FILE)?.toString('utf8') ?? '';
         return { name: s.name, description: descriptionOf(md), ...(s.meta.category ? { category: s.meta.category } : {}), body: skillBody(md) };
       });
-      this.cached = { key, index: new SkillIndex(docs), skills: new Map(sets.map((s) => [s.name, s])) };
+      this.cached = { stamp, index: new SkillIndex(docs), skills: new Map(sets.map((s) => [s.name, s])) };
     }
     return this.cached;
   }
