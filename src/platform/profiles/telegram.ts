@@ -31,6 +31,7 @@ import type { MessageRef, SlashCommandSpec } from '../../types.js';
 import type { PlatformCapabilities } from '../adapter.js';
 import type { PlatformProfile, ResolvedConversation } from '../profile.js';
 import type { TelegramPlatformConfig } from '../config-schemas.js';
+import { installTelegramStartRetry } from '../telegram-start-retry.js';
 import {
   deferUntilLogin,
   installHttpService,
@@ -493,6 +494,9 @@ export function createTelegramProfile(): PlatformProfile<TelegramPlatformConfig>
       // TelegramBot.inject=['http'] (even for polling): http service must be provided first, or
       // cordis silently stalls the telegram plugin and never instantiates the bot (no bot, no error).
       installHttpService(ctx);
+      // Before the adapter plugin, whose bot it hooks as it is created: without it one failed getMe
+      // at startup leaves this instance offline until the next restart (telegram-start-retry.ts).
+      installTelegramStartRetry(ctx, platform.id);
 
       // protocol 'polling' avoids needing a public selfUrl. slash forwards platform.slash;
       // when false, updateCommands returns immediately.

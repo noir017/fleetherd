@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createSatoriAdapter } from './satori-core.js';
 import type { PlatformProfile } from './profile.js';
 import type { PlatformInstance } from './config-schemas.js';
@@ -41,12 +41,16 @@ async function build(
   seen: Seen;
   /** The adapter's own Context, captured in install(), so a test can emit an inbound session. */
   ctx: Context;
+  bot: Bot;
 }> {
   const seen: Seen = { deleted: [], history: [], sent: [], profileFile: [] };
   let captured: Context | undefined;
 
   const bot = {
     platform: 'stub',
+    selfId: 'self',
+    sid: 'stub:self',
+    status: 2,
     async sendMessage(channelId: string) {
       seen.sent.push({ channelId });
       return ['m1'];
@@ -110,7 +114,7 @@ async function build(
 
   const adapter = await createSatoriAdapter(profile, instance);
   // install() has run by now, so the context is captured.
-  return { adapter, seen, ctx: captured! };
+  return { adapter, seen, ctx: captured!, bot };
 }
 
 describe('generic outbound paths address the channel', () => {
@@ -281,5 +285,72 @@ describe('an attachment-only message', () => {
   it('keeps a caption as the content', async () => {
     const msg = await inbound({ elements: [h.text('trim this'), h('audio', { src: VOICE })], content: 'x' });
     expect(msg.content).toBe('trim this');
+  });
+});
+
+/**
+ * `ctx.start()` resolving is not a bot being online: adapter-telegram returns before getMe has
+ * answered, and a failed login elsewhere is a quiet OFFLINE. The adapter warns once if its instance
+ * has no bot online a minute after start, and logs again when one comes up.
+ */
+describe('startup online watch', () => {
+  /** What satori dispatches on a status change: a Session carrying the login at event.login. */
+  function setStatus(ctx: Context, bot: Bot, status: number): void {
+    bot.status = status;
+    ctx.emit('login-updated', { bot, selfId: bot.selfId, event: { login: { status } } } as unknown as Session);
+  }
+
+  async function started(): Promise<Awaited<ReturnType<typeof build>> & { warn: ReturnType<typeof vi.spyOn>; log: ReturnType<typeof vi.spyOn> }> {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const built = await build();
+    await built.adapter.start();
+    return { ...built, warn, log };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('warns once at 60s without a bot online, and says when it comes online after that', async () => {
+    const { adapter, ctx, bot, warn, log } = await started();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(warn).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      '[stub] platform instance "stub1" is not online 60s after start (bot self connecting); nothing is received or sent through it until it is'
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    setStatus(ctx, bot, 1);
+    expect(log).toHaveBeenCalledWith('[stub] platform instance "stub1" is online now, 90s after start (bot self)');
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // A later drop and recovery is the ordinary status log, not a second "after start" line.
+    setStatus(ctx, bot, 4);
+    setStatus(ctx, bot, 1);
+    expect(log).toHaveBeenLastCalledWith('[stub] bot self is online');
+    await adapter.stop();
+  });
+
+  it('stays quiet when the bot comes online within the minute', async () => {
+    const { adapter, ctx, bot, warn, log } = await started();
+    await vi.advanceTimersByTimeAsync(5_000);
+    setStatus(ctx, bot, 1);
+    expect(log).toHaveBeenCalledWith('[stub] bot self is online');
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(warn).not.toHaveBeenCalled();
+    await adapter.stop();
+  });
+
+  it('does not warn about an instance that was stopped first', async () => {
+    const { adapter, warn } = await started();
+    await adapter.stop();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

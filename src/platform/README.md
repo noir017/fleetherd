@@ -47,6 +47,7 @@ Three rules keep this from rotting:
 | `profile.ts` | `PlatformProfile` — the seam every platform implements |
 | `satori-core.ts` | Generic assembly of an adapter from a profile + one instance |
 | `satori-file-url.ts` | Repairs an upstream `http.file()` collision that broke every Telegram download |
+| `telegram-start-retry.ts` | Retries a Telegram bot's startup requests, which upstream lets fail once and never again |
 | `platform-factory.ts` | `type` → profile factory dispatch |
 | `config-schemas.ts` | Per-platform credential schemas (+ `ChatGateSchema`) |
 | `profile-helpers.ts` | Shared pure utilities for profiles |
@@ -328,6 +329,26 @@ token, and `@satorijs/core`'s own `http/file` listener runs `new URL()` on that 
 before it starts. A listener prepended to the same event resolves relative paths first, so satori's
 only ever sees absolute URLs. It is pinned by a contract test that reproduces the upstream bug, and
 both the fix and this paragraph can go once upstream guards that call.
+
+## Started is not online
+
+`adapter.start()` resolves once satori has asked each adapter to connect, not once it has. Two
+things follow from that.
+
+`satori-core.ts` watches every instance: one with no bot online 60 s after start logs a warning
+naming each bot's status, and logs again when one comes up. It cannot fix anything — LINE and
+WeCom, for one, turn a failed login into a quiet OFFLINE with no retry — but the daemon's
+`started` line is no longer the last word on an instance that never connected. The same listener
+logs every later status change (online, offline, reconnecting); it read the status off the wrong
+object until 2026-11-06, so none of those lines had ever been printed.
+
+`telegram-start-retry.ts` is the one platform where the gap was a bug rather than a blind spot:
+adapter-telegram never awaits its own startup, so a single failed `getMe` became an
+`unhandledRejection` and the bot stayed in CONNECT forever. The profile installs it before the
+adapter plugin; it retries transient failures (5xx, 429, network) at 5 s doubling to 60 s and
+gives up on the rest. Pinned by `telegram-start-retry.contract.test.ts`, which reproduces the
+upstream bug: when that case goes red, upstream has changed, and the wrapper may no longer be
+needed.
 
 ## Inbound content an adapter leaves empty
 
