@@ -451,36 +451,6 @@ const HARNESS_LOG_POLL_MS = 60_000;
 const FOLLOW_UP_SEAL_GRACE_MS = 1_500;
 
 /**
- * How long a finished agy turn waits for the quota refresh started beside it before its footer is
- * built without it. `agy -p=/usage` took ~3.7s on 1.5.1; most turns outlast it, and the bound is for
- * a one-shot stuck on the network. The same figure as the stream-json runtime's SIDE_QUERY_SETTLE_MS.
- */
-const AGY_QUOTA_SETTLE_MS = 5_000;
-
-/** A turn's view of agy's quota refresh (see agyQuotaForTurn). */
-interface AgyTurnQuota {
-  /** Resolves when the refresh lands, or after AGY_QUOTA_SETTLE_MS, whichever is first. */
-  settled(): Promise<void>;
-  /** The turn is over: stop reporting into its handlers. */
-  close(): void;
-}
-
-/** Wait for `p`, but no longer than `ms`. Never rejects. */
-async function settleWithin(p: Promise<unknown>, ms: number): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    p.then(
-      () => undefined,
-      () => undefined
-    ),
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, ms);
-    }),
-  ]);
-  clearTimeout(timer);
-}
-
-/**
  * Whether a `usage_update` is the one the harness emits with a completed result, as opposed to a
  * mid-stream snapshot — i.e. "a piece of work just finished here".
  *
@@ -897,6 +867,12 @@ function createAcpSession(
   let launchHook: AbortController | undefined;
   /** Intentional-abort flag: set by abort(); used to return silently when prompt ends as cancelled. */
   let aborting = false;
+  /**
+   * The registry let go of this session (`/new`, `/cd`, a rebind, a reload): nothing it reports may
+   * reach the conversation any more. Only the session's own dispose() sets it — the internal
+   * teardown also runs for a crashed or hung child, after which the session lives on.
+   */
+  let disposed = false;
   /**
    * How many elicitations are currently in front of the user, waiting to be answered.
    *
@@ -1958,36 +1934,37 @@ function createAcpSession(
 
   /**
    * agy's quota for one turn (agy-acp.ts createAgyQuotaMeter): the last reading reported at once,
-   * and a refresh started beside the turn, reported when it lands — until the turn is closed, after
-   * which its footer has been built and a late reading has nowhere to go. A no-op for any other
-   * harness.
+   * and a refresh started beside the turn, reported whenever it lands — for as long as this session
+   * is the conversation's, not only while the turn runs.
+   *
+   * Not waited for, and not cut off at the turn's end, because `onQuota` writes the conversation's
+   * status strip (TurnRunner → recordQuota), not the turn's footer, which has no quota segment.
+   * The first version held each turn's end up to 5 s for the reading and dropped one that came
+   * later — copied from the stream-json runtime, whose footer once needed it. On a remote host the
+   * one-shot runs over the link beside a reloading `agy acp`: 3.3-4.0 s on its own, but on the first
+   * turn after a gateway restart it landed 2 s, and in another run more than 6 s, after that turn's
+   * reply (measured 2026-11-06 through a test gateway, project-scripts/talkcode-agy-acp-remote).
+   * The run that lost the race showed no quota until the next turn, and every turn whose reading
+   * was slow ended up to 5 s late for nothing.
    */
-  function agyQuotaForTurn(handlers: AgentStreamHandlers): AgyTurnQuota {
+  function agyQuotaForTurn(handlers: AgentStreamHandlers): void {
     const meter = agyQuota;
-    if (!meter) return { settled: () => Promise.resolve(), close: () => {} };
-    let open = true;
+    if (!meter) return;
     const report = (): void => {
       const pools = meter.read(def);
-      if (open && pools) handlers.onQuota?.(markActivePools(pools, liveModel));
+      if (!disposed && pools) handlers.onQuota?.(markActivePools(pools, liveModel));
     };
     report();
-    const pending = meter.refresh(def, cwd).then(report, () => {});
-    return {
-      settled: () => settleWithin(pending, AGY_QUOTA_SETTLE_MS),
-      close: () => {
-        open = false;
-      },
-    };
+    void meter.refresh(def, cwd).then(report, () => {});
   }
 
   /**
    * The end of an agy turn that came back `end_turn`: fail it on agy's own word, or report the
-   * context its usage can vouch for (agy-acp.ts AgyTurnWatch), then give the quota refresh its
-   * bounded chance to make this turn's footer. Nothing for any other harness.
+   * context its usage can vouch for (agy-acp.ts AgyTurnWatch). Nothing for any other harness.
    */
-  async function settleAgyTurn(state: TurnState, response: PromptResponse, quota: AgyTurnQuota): Promise<void> {
+  function settleAgyTurn(state: TurnState, response: PromptResponse): void {
     const watch = state.agy;
-    // A stopped turn has nothing to settle, and must not sit out the quota wait before it stops.
+    // A stopped turn has nothing to settle.
     if (!watch || aborting || response.stopReason === 'cancelled') return;
     const handlers = state.handlers;
     const outcome = watch.settle(response.usage);
@@ -2000,7 +1977,6 @@ function createAcpSession(
     } else if (outcome.noContext === 'tools') {
       logOnce('tools', `[acp] ${conversationId}: agy reports usage once per turn, summed over its model calls, so a turn that ran tools gets no context numbers (see daemon/agy-acp.ts)`);
     }
-    await quota.settled();
   }
 
   /**
@@ -2159,7 +2135,7 @@ function createAcpSession(
       const effort = liveEffortName(liveConfigOptions);
       if (effort) handlers.onEffort?.(effort);
       // agy's quota, which no ACP message carries: the last reading now, a fresh one beside the turn.
-      const quota = agyQuotaForTurn(handlers);
+      agyQuotaForTurn(handlers);
 
       // Silence watchdog: one timer, re-armed by the pump on every update it hands to this turn, so
       // it bounds SILENCE rather than turn length. A hung agent — alive but never sending `stop` nor
@@ -2356,7 +2332,7 @@ function createAcpSession(
         const failure = readSessionFailure(response._meta);
         if (failure?.severity === 'error') throw new TurnFailure(describeSessionFailure(failure), failureReasonOf(failure));
         // agy's equivalent arrives as text, and its usage only here (agy-acp.ts AgyTurnWatch).
-        await settleAgyTurn(state, response, quota);
+        settleAgyTurn(state, response);
         flushPendingTools(state);
       } catch (err) {
         if (aborting) return; // intentional abort is not an error
@@ -2378,7 +2354,6 @@ function createAcpSession(
         logWatch.stop();
         unwatchLink();
         fold.stop();
-        quota.close();
         turnState = undefined;
         onTurnUpdate = undefined;
         endTurnWait = undefined;
@@ -2544,6 +2519,7 @@ function createAcpSession(
     },
 
     dispose(): void {
+      disposed = true;
       dispose();
     },
   };
