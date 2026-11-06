@@ -4247,7 +4247,7 @@ describe('webui page: the narrow-screen stylesheet', () => {
     // would leave the text a sliver even on a desktop. The base rule puts them on their own row.
     expect(css).toContain('.rev-pitem{display:flex;flex-wrap:wrap');
     expect(css).toContain('.rev-pbody{flex:1 1 100%');
-    expect(narrowBlock()).toContain('.rev-adopt,.rev-dismiss{min-height:44px');
+    expect(narrowBlock()).toContain('.rev-adopt,.rev-dismiss{min-height:32px');
   });
 
   it('measures height in dvh, which is the viewport the URL bar has left', () => {

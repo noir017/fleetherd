@@ -1103,8 +1103,9 @@ button:disabled{opacity:.5;cursor:default}
   .sched-acts button{min-height:44px;padding:0 14px}
   .sched-subtab{min-height:44px}
   .rev-open{min-height:44px;padding:0 14px}
-  /* Both answers on a suggestion are thumb targets here, like the button that opens a topic. */
-  .rev-adopt,.rev-dismiss{min-height:44px;padding:0 12px}
+  /* Both answers on a suggestion at an ordinary height: at 44px, two under every suggestion read
+     as a column of slabs between the lines they answer (2026-11-06). */
+  .rev-adopt,.rev-dismiss{min-height:32px;padding:0 12px}
   /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
      phone is an editor with a sliver of transcript behind it, and the transcript is not what the
      operator opened. */

@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adopt and Dismiss on a suggested preference are an ordinary height on a phone.** They were
+  44px, two under every suggestion, which read as a column of slabs between the lines they answer;
+  they are 32px now, the height the skills page's buttons went to.
+
 ## [2.46.0] - 2026-11-06
 
 ### Fixed
