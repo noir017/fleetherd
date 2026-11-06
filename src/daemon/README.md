@@ -714,9 +714,13 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   the part at once (so its answer can say it is running) and queues the same list as a card without
   buttons, gathered the same way and never dropped by a message from the person — but only in a
   conversation with no parent: a sub-agent's own topic still puts up the confirmation card, so an
-  agent cannot chain more agents without a tap. `task-agents` lists
-  the conversation's own agent first: `task-new` has no default, and the first usable row is what an
-  agent picks.
+  agent cannot chain more agents without a tap. `task-new` without `--agent` uses the asking
+  conversation's own agent, and `task-agents` lists that agent first.
+  `task-new --model` is checked against the agent's list when proposed (`scheduledModelProblem`,
+  the check `schedule add --model` uses), and applied by `openTask` before the first turn
+  (`applyScheduledModel`, strict): a refusal is said in the new topic and reported as a part that
+  could not start. It is then written to the topic's record like a `/model` choice, because nothing
+  re-applies it later — unlike a scheduled run's, which is applied per run and never written.
   Start opens each part with `ConversationRegistry.openTask` (`createThread` with `under`), whose
   `handTo` shows the text under a `↳ From [parent]` header and ingests it with `DELEGATE_SENDER`.
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).

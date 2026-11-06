@@ -192,6 +192,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     notes: [
       'Web UI only: each sub-agent gets a topic of its own, nested under this one, where the person can also talk to it directly.',
       'task-new proposes ONE sub-task; call it once per sub-task. Everything proposed before the person answers goes on one card, however far apart the calls are. Nothing starts until the person confirms the card — unless confirmation is off, then task-new starts each one at once and a card lists what started, and its result says it is running. Confirmation off reaches only conversations the person talks to directly; in a sub-agent\'s own topic the card still waits. Once confirmed (or started), they all run in parallel. With confirmation on, if the person writes instead, they want changes: propose again, and the new card replaces the old one.',
+      'Without --agent, task-new gives the sub-task to the agent answering this conversation. --model names the model it runs on, and must be in that agent\'s own /model list: a name it does not offer is refused at once, with the list. The card shows the model, and a sub-task that cannot switch to it when it starts fails with the reason instead of quietly using another. Without --model it runs on the agent\'s configured model.',
       'A sub-agent sees nothing of this conversation: <text> is all it gets. Make it whole — the goal, the constraints, how to tell it is done — and leave the how to the agent.',
       'The first row of task-agents is the agent answering this conversation; the next ones with here=true are on the same machine. Those are the ones to prefer — they have the same checkouts and tools. Agents on other machines work in their own checkouts.',
       'When a sub-agent finishes, fails or asks something, you are told here in a message beginning `[sub-agent updates]`, which says how many are still working. Its questions are the person\'s to answer in its topic unless they are only about what your task meant.',
@@ -908,20 +909,20 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     topic: 'tasks',
     description: 'Propose a sub-task: <text> for one agent, in a topic of its own — started once the person confirms, or at once when confirmation is off',
     options: [
-      { flags: '--agent <id>', description: 'who does the work: an id from task-agents (required)' },
+      { flags: '--agent <id>', description: "who does the work: an id from task-agents (default: this conversation's agent)" },
       { flags: '--cwd <dir>', description: "where it starts: a directory task-agents lists (default: the agent's own)" },
       { flags: '--title <title>', description: 'the topic’s name (default: named from <text>)' },
+      { flags: '--model <id>', description: "the model it runs on, from that agent's /model list (default: the agent's configured model)" },
     ],
     build: (positionals, opts) => {
       refuseChannel('task-new', opts);
-      const agent = str(opts.agent);
-      if (!agent) throw new Error('task-new needs --agent <id>; `talkcode task-agents` lists them');
       return {
         kind: 'task-new',
-        agent,
+        agent: str(opts.agent),
         text: pos(positionals, 0, 'text'),
         cwd: str(opts.cwd),
         title: str(opts.title),
+        model: str(opts.model),
       };
     },
   },

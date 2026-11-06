@@ -99,8 +99,9 @@ export interface ConversationRecord {
    * which replace the session object a runtime keeps them in. Both belong to the BOUND agent's lists,
    * so a rebind clears them (`bind`); `/new` and `/cd` keep them, as they keep the cwd.
    *
-   * Only a person's choice is written: a scheduled task's `--model` is applied per run and must not
-   * outlive it.
+   * Only a person's choice is written, and a sub-agent topic's `task-new --model` (the topic exists
+   * for that task, and nothing re-applies it later): a scheduled task's `--model` is applied per run
+   * and must not outlive it.
    */
   model?: string;
   effort?: string;

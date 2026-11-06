@@ -36,6 +36,8 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'schedule-list' },
     { kind: 'schedule-list', id: 'a1b2c3' },
     { kind: 'schedule-op', id: 'a1b2c3', op: 'remove' },
+    { kind: 'task-new', text: 'go' },
+    { kind: 'task-new', agent: 'cc', text: 'go', model: 'fast-model', cwd: '/tmp', title: 'part' },
     { kind: 'task-send', topic: 'web:main/t1', text: 'go' },
     { kind: 'task-send', topic: 'web:main/t1', text: 'go', interrupt: true },
     { kind: 'task-read', topic: 'web:main/t1' },
@@ -96,6 +98,8 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['schedule-op missing id', { token: TOKEN, action: { kind: 'schedule-op', op: 'remove' } }],
     ['schedule-list with a channel', { token: TOKEN, action: { kind: 'schedule-list', channelId: 'c' } }],
     // Task commands are strict too, and their bounds are real.
+    ['task-new empty agent', { token: TOKEN, action: { kind: 'task-new', agent: '', text: 'x' } }],
+    ['task-new empty model', { token: TOKEN, action: { kind: 'task-new', text: 'x', model: '' } }],
     ['task-read zero tail', { token: TOKEN, action: { kind: 'task-read', topic: 't', tail: 0 } }],
     ['task-read unknown field', { token: TOKEN, action: { kind: 'task-read', topic: 't', noTruncate: true } }],
     ['task-send non-boolean interrupt', { token: TOKEN, action: { kind: 'task-send', topic: 't', text: 'x', interrupt: 'yes' } }],

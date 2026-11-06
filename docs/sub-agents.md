@@ -12,10 +12,12 @@ in parallel, and come back with one report — so you follow one topic instead o
 
 ## What happens
 
-1. The agent reads what it needs and splits the job. For each part it picks an agent — one on its
-   own machine unless the part needs another — and writes the task that agent will get. It asks for
-   a reply it can act on: the conclusion first, then the evidence, under 2,000 characters.
-2. A card lists every part: the agent, its machine, the directory, and the full text of the task.
+1. The agent reads what it needs and splits the job. Each part goes to the same agent, in a topic
+   of its own, unless you named another or the part needs another machine; it writes the task that
+   agent will get. It asks for a reply it can act on: the conclusion first, then the evidence, under
+   2,000 characters.
+2. A card lists every part: the agent, its machine, the model if one was chosen, the directory, and
+   the full text of the task.
    **Nothing starts until you tap Start** — unless confirmation is off (`/setting delegation off`),
    in which case each part starts as it is proposed and the card is posted after it, listing what
    started and where, with no Start button. That applies only where you talk to the agent directly:
@@ -88,8 +90,15 @@ input mid-turn; elsewhere it waits for the turn to end, and the agent is told wh
   proposes it and posts the card afterwards as a record; `/setting delegation on` restores the tap.
   It reaches only conversations you talk to directly — a sub-agent's own topic still confirms.
   Only you can change it — no agent command reaches it.
-- With agents on several [machines](remote-hosts.md), the agent prefers those on its own machine,
-  which have the same checkouts and tools. A part that runs elsewhere shows `@ <host>` on the card.
+- A part can run on another model from the agent's `/model` list, when you ask for one or the
+  part plainly needs it (`task-new --model`). The card names it, because the model decides what the
+  part costs. A model the agent does not offer is refused when proposed; one the agent cannot
+  switch to when the part starts fails that part, with the reason, in its topic and on the card —
+  it never runs on another model instead. The topic keeps that model, as if chosen there with
+  `/model`.
+- With agents on several [machines](remote-hosts.md), a part goes to another machine only when it
+  needs that machine; otherwise it stays on the agent's own, which has the same checkouts and tools.
+  A part that runs elsewhere shows `@ <host>` on the card.
 - `/super` is a skill the gateway links into each agent's skill directory, next to the `talkcode`
   one. Claude Code offers it as a command; Codex, OpenCode and Antigravity pick it up from its
   description. The `gemini` and `dsh` harnesses get no skills from the gateway, so `/super` there

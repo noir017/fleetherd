@@ -1099,7 +1099,8 @@ function createAcpSession(
    * this closure does not outlive everything the choice must: `/new` and `/cd` replace the session
    * object, and a daemon restart replaces all of them — each of which used to put the conversation
    * back on the configured model while the status line still named the chosen one. The registry
-   * writes the record (only for a person's choice); this side only reads it.
+   * writes the record (a person's choice, or a sub-agent topic's `task-new --model`); this side only
+   * reads it.
    */
   let modelPreference: string | undefined = store?.conversationChoice?.(conversationId, def.id, 'model');
   /**

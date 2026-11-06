@@ -145,6 +145,7 @@ type Registry = Pick<
   | 'runScheduledPrompt'
   | 'workdirOf'
   | 'boundAgentOf'
+  | 'scheduledModelProblem'
 >;
 
 export interface DelegationDeps {
@@ -195,6 +196,7 @@ interface Item {
   text: string;
   cwd?: string;
   title?: string;
+  model?: string;
 }
 
 /** One sub-task that has started, as the card that stands in for a confirmation lists it. */
@@ -208,6 +210,7 @@ interface OpenedTask {
   agent: string;
   host?: string;
   cwd?: string;
+  model?: string;
 }
 
 /** What one sub-agent said, as the card quotes it. */
@@ -312,11 +315,10 @@ export class Delegation {
   /**
    * Every agent, the one answering this conversation first, then the ones on its own machine.
    *
-   * The order is the whole of "which agent by default": `task-new` has no default of its own, and an
-   * agent reading the list takes the first row it can use. That used to be whatever the config listed
-   * first — `cc` here, on 2026-11-03, even in conversations cbc was answering — so the row for the
-   * conversation's own agent goes first. It is also the safest default: already running on this
-   * machine, with the same checkouts and tools.
+   * The order mirrors the default: without --agent, `task-new` uses the agent bound to this
+   * conversation, and that agent also leads this list. The first row used to be whatever the config
+   * listed first — `cc` here, on 2026-11-03, even in conversations cbc was answering. The current
+   * agent is the safest default: already running on this machine, with the same checkouts and tools.
    */
   private agents(here: Place): TaskAgentsResult {
     const mine = this.hostOf(here.key);
@@ -368,15 +370,24 @@ export class Delegation {
    * it gathers a burst the same way, only for the record.
    */
   private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): Promise<TaskNewResult> {
-    const def = findAgent(this.deps.config, a.agent);
+    const agent = a.agent ?? this.deps.registry.boundAgentOf(here.key);
+    if (!agent) throw new Error('this conversation has no agent to use by default; give task-new --agent <id>');
+    const def = findAgent(this.deps.config, agent);
     if (!def) {
-      throw new Error(`no agent "${a.agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
+      throw new Error(`no agent "${agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
+    }
+    if (a.model) {
+      // Refuse a typo while the asking agent can still retry in this turn, using the same list
+      // /model and schedule add --model use. Applying it later is strict too (openTask).
+      const why = await this.deps.registry.scheduledModelProblem(agent, a.model, here.key);
+      if (why) throw new Error(why);
     }
     const item: Item = {
-      agent: a.agent,
+      agent,
       text: a.text,
       ...(a.cwd ? { cwd: a.cwd } : {}),
       ...(a.title ? { title: a.title } : {}),
+      ...(a.model ? { model: a.model } : {}),
     };
     if (!this.deps.config.delegation.confirm && !this.nested(here)) {
       const { opened, failed } = await this.start(here, [item]);
@@ -491,10 +502,11 @@ export class Delegation {
     items.forEach((item, i) => {
       const def = findAgent(this.deps.config, item.agent);
       const where = def?.host ? ` @ ${def.host}` : '';
+      const model = item.model ? ` · model \`${item.model}\`` : '';
       const dir = item.cwd ? ` · \`${item.cwd}\`` : '';
       const title = item.title ? ` — ${item.title}` : '';
       const text = item.text.length > PROPOSAL_TEXT_CHARS ? `${item.text.slice(0, PROPOSAL_TEXT_CHARS - 1)}…` : item.text;
-      lines.push('', `${i + 1}. **${item.agent}**${where}${dir}${title}`, ...text.split('\n').map((l) => `> ${l}`));
+      lines.push('', `${i + 1}. **${item.agent}**${where}${model}${dir}${title}`, ...text.split('\n').map((l) => `> ${l}`));
     });
     lines.push('', 'To change them, say what to change instead of tapping.');
     return lines.join('\n');
@@ -518,6 +530,7 @@ export class Delegation {
           header,
           ...(item.cwd ? { cwd: item.cwd } : {}),
           ...(item.title ? { title: item.title } : {}),
+          ...(item.model ? { model: item.model } : {}),
         });
         this.handedOut.add(key);
         const title = subjectOf(this.titleOf(key, { platformId: here.platformId, address }));
@@ -529,6 +542,7 @@ export class Delegation {
           agent: item.agent,
           ...(host ? { host } : {}),
           ...(item.cwd ? { cwd: item.cwd } : {}),
+          ...(item.model ? { model: item.model } : {}),
         });
         console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
       } catch (e) {
@@ -543,7 +557,9 @@ export class Delegation {
   /** The confirmed card's answer: where every sub-task went, and the agent told of any that failed. */
   private async announceStarted(here: Place, total: number, opened: OpenedTask[], failed: string[]): Promise<void> {
     const said = [
-      ...(opened.length ? [`Started ${opened.length}:`, ...opened.map((o) => `- [${o.title}](${o.link ?? '?t='}) — ${o.agent}`)] : []),
+      ...(opened.length
+        ? [`Started ${opened.length}:`, ...opened.map((o) => `- [${o.title}](${o.link ?? '?t='}) — ${o.agent}${o.model ? ` · model \`${o.model}\`` : ''}`)]
+        : []),
       ...(failed.length ? [`${opened.length ? '\n' : ''}Could not start ${failed.length}:`, ...failed] : []),
     ].join('\n');
     await here.adapter
@@ -592,9 +608,10 @@ export class Delegation {
     const lines = [head];
     for (const t of opened) {
       const where = t.host ? ` @ ${t.host}` : '';
+      const model = t.model ? ` · model \`${t.model}\`` : '';
       const dir = t.cwd ? ` · \`${t.cwd}\`` : '';
       const name = t.link ? `[${t.title}](${t.link})` : t.title;
-      lines.push(`- ${name} — ${t.agent}${where}${dir} · ${t.topic}`);
+      lines.push(`- ${name} — ${t.agent}${where}${model}${dir} · ${t.topic}`);
     }
     if (failed.length) lines.push('', `Could not start ${failed.length}:`, ...failed);
     lines.push('', '`/setting delegation on` makes new sub-tasks wait for Start again.');

@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ConversationRegistry } from './conversation.js';
+import { ConversationStore } from './conversation-store.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -25,7 +29,14 @@ function inbound(content: string, thread = 'tt'): InboundMessage {
 }
 
 function rig(
-  opts: { continue?: Record<string, unknown>; script?: Array<'fail' | 'ok'>; hold?: boolean; steer?: boolean } = {}
+  opts: {
+    continue?: Record<string, unknown>;
+    script?: Array<'fail' | 'ok'>;
+    hold?: boolean;
+    steer?: boolean;
+    modelFailure?: string;
+    store?: ConversationStore;
+  } = {}
 ) {
   const parsed = parseConfig({
     platforms: { web: { type: 'webui', token: 't' } },
@@ -76,11 +87,14 @@ function rig(
 
   const script = [...(opts.script ?? [])];
   const prompts: Array<{ conversation: string; prompt: string }> = [];
+  const models: Array<{ conversation: string; model: string }> = [];
+  const events: string[] = [];
   const factory: AgentFactory = {
     getOrCreate(conversationId): AgentSession {
       return {
         runTurn: async (input: { prompt: string }, h: AgentStreamHandlers) => {
           prompts.push({ conversation: conversationId, prompt: input.prompt });
+          events.push(`turn:${input.prompt}`);
           // A turn that stays running, so a handTo lands mid-turn (the queued/joined distinction).
           if (opts.hold) await new Promise<void>(() => {});
           const next = script.shift() ?? 'ok';
@@ -90,6 +104,13 @@ function rig(
         abort: () => {},
         setFollowUpSink: () => {},
         dispose: () => {},
+        ensureSession: async () => {},
+        setModel: async (model: string) => {
+          models.push({ conversation: conversationId, model });
+          events.push(`model:${model}`);
+          if (model === opts.modelFailure) throw new Error('the harness refused this model');
+          return model;
+        },
         ...(opts.steer ? { steer: async () => 'joined' as const } : {}),
       } as unknown as AgentSession;
     },
@@ -97,9 +118,12 @@ function rig(
     dispose: () => {},
   };
 
-  const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock);
-  return { registry, sent, prompts, activity, renamed, nested };
+  const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, undefined, opts.store);
+  return { registry, sent, prompts, models, events, activity, renamed, nested };
 }
+
+const storeDir = mkdtempSync(join(tmpdir(), 'delegation-registry-'));
+afterAll(() => rmSync(storeDir, { recursive: true, force: true }));
 
 let live: ConversationRegistry | undefined;
 afterEach(() => {
@@ -154,6 +178,43 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     expect(r.registry.boundAgentOf(opened.key)).toBe('oc');
     expect(r.sent).toContainEqual({ to: 'main/new1', text: `${header}\n\n修一下 bump` });
     expect(r.prompts).toEqual([{ conversation: 'web#main#new1', prompt: '修一下 bump' }]);
+  });
+
+  it('openTask applies an explicit model before the first turn, and keeps it for the topic', async () => {
+    const store = new ConversationStore(join(storeDir, 'applied.json'));
+    const r = rig({ store });
+    live = r.registry;
+    const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header, model: 'fast-model' });
+    await wait();
+    expect(r.models).toEqual([{ conversation: opened.key, model: 'fast-model' }]);
+    expect(r.events.slice(0, 2)).toEqual(['model:fast-model', 'turn:go']);
+    // On record like a /model choice: a later task-send, /new or restart reads it back.
+    expect(store.conversationChoice(opened.key, 'oc', 'model')).toBe('fast-model');
+  });
+
+  it('openTask without a model leaves the topic on the configured one', async () => {
+    const store = new ConversationStore(join(storeDir, 'default.json'));
+    const r = rig({ store });
+    live = r.registry;
+    const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header });
+    await wait();
+    expect(r.models).toEqual([]);
+    expect(store.conversationChoice(opened.key, 'oc', 'model')).toBeUndefined();
+  });
+
+  it('openTask runs nothing when the harness refuses the model, and the topic says why', async () => {
+    const store = new ConversationStore(join(storeDir, 'refused.json'));
+    const r = rig({ modelFailure: 'runtime-fail', store });
+    live = r.registry;
+    await expect(
+      r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header, model: 'runtime-fail' })
+    ).rejects.toThrow('could not set model "runtime-fail": the harness refused this model');
+    await wait();
+    expect(r.prompts).toEqual([]);
+    expect(r.sent).toEqual([
+      { to: 'main/new1', text: 'Not started — could not set model "runtime-fail": the harness refused this model.' },
+    ]);
+    expect(store.conversationChoice('web#main#new1', 'oc', 'model')).toBeUndefined();
   });
 
   it('openTask refuses an agent that is not configured, before opening anything', async () => {

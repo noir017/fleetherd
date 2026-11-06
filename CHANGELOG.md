@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A sub-task can name its model, and goes to the asking agent unless told otherwise.** A
+  sub-agent always ran on its agent's configured model, so a part that called for a cheaper or a
+  stronger one could only be switched by hand in its topic, after its first turn had already run.
+  `task-new --model <id>` now takes an id from that agent's `/model` list, checked the way
+  `schedule add --model` checks it: one the agent does not offer is refused when proposed, with the
+  list. The confirmation card and the card listing what started both name it, since the model
+  decides what the part costs. It is applied before the first turn; a part that cannot switch to it
+  does not start, says why in its topic and on the card, and never runs on another model instead.
+  The topic keeps it afterwards, as if chosen there with `/model`. `--agent` is now optional: without
+  it the part goes to the agent answering the conversation, which is what the `super` skill now
+  does unless the person named another. [→](docs/sub-agents.md)
+
 ## [2.38.1] - 2026-11-06
 
 ### Fixed
