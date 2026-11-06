@@ -8,12 +8,13 @@ All notable changes to this project are documented here. The format is based on
 ### Changed
 
 - **The web UI's composer splits into two rows by its own width, not the window's.** 2.39.0 gave
-  the text area a full-width row below 640px of window, so one pixel above that the file, voice,
-  Stop and Send buttons still shared its row: at 641px the sidebar is still a 240px column, the
-  composer 369px, and the input was left 213px. The split is now a container query on the composer
-  (below 480px of it), which covers the whole 641–1023px range where the topic list keeps a column,
-  and leaves the phone layout below 640px and the desktop one above 1023px as they were.
-  [→](docs/web-ui.md)
+  the text area a full-width row below 640px of window, so one pixel above that the file, voice and
+  Send buttons — Stop joins them only mid-turn — still shared its row: at 641px the sidebar is still
+  a 240px column, the composer 369px, the three buttons and the gaps around them 156px, and the
+  input was left 213px. The split is now a container query on the composer: at 480px of composer or
+  less, which with the sidebar at its default width means a window of 641–752px, and also a wider
+  window whose sidebar has been dragged wide. Below 640px the phone layout is unchanged, and a
+  composer with more than 480px still holds one row. [→](docs/web-ui.md)
 
 ### Fixed
 

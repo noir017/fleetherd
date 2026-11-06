@@ -915,9 +915,11 @@ button:disabled{opacity:.5;cursor:default}
 #input{flex:1;resize:none;max-height:40vh;max-height:40dvh;padding:8px 10px;background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:4px;font:inherit;overflow-y:auto}
 /* Whether the composer has room for one row is the composer's question, not the window's: at
    641px the sidebar is still a 240px column, so the composer is 369px while the window calls
-   itself a desktop, and the four controls take 156px of it, leaving the input 213px. A 1024px
-   window with both panels docked has a 512px composer, so no viewport breakpoint can tell the
-   two apart. Measured in Chromium at 641, 753, 1024 and 1440 on 2026-11-06. */
+   itself a desktop. The three buttons that are always there (attach 35px, mic 40px, Send 57px)
+   and the three gaps between the four items take 156px of it, leaving the input 213px; Stop,
+   which only appears mid-turn, takes one more button and gap. A 1024px window with both panels
+   docked has a 512px composer, so no viewport breakpoint can tell the two apart. Measured in
+   Chromium at 641, 753, 1024 and 1440 on 2026-11-06. */
 #composer{container-type:inline-size}
 /* Below 480px of composer the one-row layout leaves the input under 325px, so it takes a row of
    its own, exactly as the phone layout does — that block keeps its own copy of these rules for a

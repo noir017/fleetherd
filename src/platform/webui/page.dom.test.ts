@@ -4267,9 +4267,10 @@ describe('webui page: the narrow-screen stylesheet', () => {
   it('splits the composer by its own width, not the window, when the sidebar leaves it narrow', () => {
     // 2.39.0 split the composer at 640px of *window*, which is one pixel too high a bar for the
     // case that needed it: at 641px the sidebar is still a 240px column, so the composer is 369px
-    // and the four controls left the input 213px. The window cannot tell that apart from a 1024px
-    // window with both panels docked — 512px of composer — because the narrower composer belongs
-    // to the wider window. Hence a container query on the composer, not a media query.
+    // and the three buttons that are always there left the input 213px. The window cannot tell
+    // that apart from a 1024px window with both panels docked — 512px of composer — because the
+    // narrower composer belongs to the wider window. Hence a container query on the composer,
+    // not a media query.
     const html = renderPage('Chat', false);
     expect(html).toContain('#composer{container-type:inline-size}');
     expect(html).not.toContain('@media(max-width:480px)');
@@ -4279,6 +4280,10 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(css).toContain('#row button[type="submit"]{margin-left:auto}');
     expect(css).toContain('#row #stop-turn:not([hidden]){margin-left:auto}');
     expect(css).toContain('#row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}');
+    // And it stands on its own: nested inside the phone block it would still match every
+    // assertion above, while a 641–752px window lost the rule entirely and went back to one
+    // squeezed row. The phone block is a viewport query; this one is the composer's.
+    expect(narrowBlock()).not.toContain('@container');
     // The phone block keeps its own copy: at 640px the sidebar is a drawer and the composer is
     // 616px, wider than this query's threshold, and two rows are the layout a phone shipped with.
     expect(narrowBlock()).toContain('#row{flex-wrap:wrap}');
