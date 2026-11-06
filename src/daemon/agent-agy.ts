@@ -1,5 +1,4 @@
-import { promisify } from 'node:util';
-import { execFile as execFileCb, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
@@ -17,7 +16,6 @@ import type { QuotaPool } from '../types.js';
 import type { ConversationStore } from './conversation-store.js';
 import {
   buildAgentEnv,
-  buildHarnessEnv,
   buildInputPreview,
   killChildProcess,
   prepareRemoteSpawn,
@@ -29,7 +27,6 @@ import {
   type AgentChild,
 } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
-import type { RemoteHost } from '../remote/host.js';
 import { PreLaunchCancelled, runPreLaunchHook } from './agent-hooks.js';
 import {
   AGY_STATUS_FD,
@@ -40,20 +37,31 @@ import {
 } from './agy-statusline.js';
 import { agyContextWindow, agyStepContextTokens, parseAgyCurrentModel, parseAgyUsagePools } from './agy-meters.js';
 import { agentHome } from './skills-scan.js';
-
-const execFile = promisify(execFileCb);
+import {
+  AGY_COMMAND,
+  fetchAgyModelsFor,
+  runAgyCliCommand,
+  runAgyCliFor,
+  type AgyCliRunner,
+  type AgyModelFetcher,
+} from './agy-cli.js';
+import { agyToolLabel } from './agy-acp.js';
 
 /**
- * AgentFactory implementation for `agy` — the Google Antigravity CLI (which replaced Gemini CLI).
+ * The FALLBACK runtime for `agy` — the Google Antigravity CLI — over its own stream-json protocol.
  *
- * WHY THIS IS NOT IN agent-acp.ts: agy does not speak ACP. Unlike claude/gemini/codex/opencode, it
- * has no ACP mode at all; it exposes its own bidirectional NDJSON "stream-json" protocol (documented
- * at antigravity.google/docs/cli/headless). A community ACP adapter (agy-acp) exists, but it drives
- * agy through a PTY and reads its internal SQLite/protobuf records, and it deadlocks permanently on
- * the turn following any tool call — fatal for a chat gateway, where the bot would go silent forever
- * after its first real task. So this file speaks agy's own protocol directly, using only the
- * officially documented headless interface, and implements the same AgentFactory/AgentSession
- * contract as the ACP runtime. Everything above it (TurnRunner / SessionRegistry / StreamBuffer /
+ * Since 2026-11-06 an agy agent is served by the ACP runtime (agent-acp.ts, `agy acp`), which agy
+ * gained in 1.5.x; this file serves only an agent whose `env` sets `TALKCODE_AGY_RUNTIME:
+ * stream-json` (agy-acp.ts agyRuntime). It stays until every host has run the ACP one, and is then
+ * deleted whole — nothing outside agent-factory.ts imports it, the one-shot CLI helpers both
+ * runtimes use live in agy-cli.ts, and its conversations are the ACP runtime's too (an id this file
+ * stored resumes there through `session/load`, probed on 1.5.1).
+ *
+ * Why it was written at all: before 1.5, agy had no ACP mode. A community adapter (agy-acp) drove
+ * agy through a PTY, read its internal SQLite/protobuf records, and deadlocked permanently on the
+ * turn following any tool call — so this file spoke agy's own documented headless protocol directly
+ * (antigravity.google/docs/cli/headless) and implemented the same AgentFactory/AgentSession contract
+ * as the ACP runtime. Everything above it (TurnRunner / SessionRegistry / StreamBuffer /
  * ToolRenderer) is reused unchanged.
  *
  * Protocol mapping (verified empirically against agy 1.1.22):
@@ -152,36 +160,8 @@ export function buildAgyArgs(
   ];
 }
 
-/** The executable name; `agy install` puts it on PATH. Exported so doctor reports the same thing. */
-export const AGY_COMMAND = 'agy';
-
 /** An agy child, local or on a remote host: what AgentChild has, plus fd 3 for the status line. */
 type AgyChild = AgentChild & { readonly stdio: ReadonlyArray<unknown> };
-
-/**
- * Parse `agy models` TSV output into ModelSelector options (`{ value, name }`).
- * Lines are formatted as `<modelId>\t<displayName>` (e.g. `gemini-3.8-flash-high\tGemini 3.8 Flash (High)`).
- * Lines without tabs fall back to using the model ID as the display name.
- */
-export function parseAgyModelsOutput(stdout: string): Array<{ value: string; name: string }> {
-  return stdout
-    .trim()
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const tabIdx = line.indexOf('\t');
-      if (tabIdx >= 0) {
-        const value = line.slice(0, tabIdx).trim();
-        const name = line.slice(tabIdx + 1).trim();
-        return { value, name: name || value };
-      }
-      return { value: line, name: line };
-    })
-    .filter((o) => o.value.length > 0);
-}
-
-export type AgyModelFetcher = () => Promise<Array<{ value: string; name: string }>>;
 
 /**
  * A model as the status line named it, respelled as the id `agy models` lists for it.
@@ -195,194 +175,6 @@ export type AgyModelFetcher = () => Promise<Array<{ value: string; name: string 
  */
 export function agyModelId(name: string, options: ReadonlyArray<{ value: string; name: string }> = []): string {
   return (options.find((o) => o.value === name) ?? options.find((o) => o.name === name))?.value ?? name;
-}
-
-export async function defaultFetchAgyModels(): Promise<Array<{ value: string; name: string }>> {
-  try {
-    const { stdout } = await execFile(AGY_COMMAND, ['models']);
-    return parseAgyModelsOutput(stdout);
-  } catch (e) {
-    console.debug('[agy] fetch models failed:', e instanceof Error ? e.message : e);
-    return [];
-  }
-}
-
-// ───────────────────────── one-shot CLI commands ─────────────────────────
-
-/**
- * How long a one-shot `agy -p /<command>` may take before it is given up on.
- *
- * Generous because the floor is a cold CLI start (~5s observed for `agy models`), and the ceiling
- * only has to be short enough that a user does not think the gateway ignored them.
- */
-const CLI_COMMAND_TIMEOUT_MS = 60_000;
-
-/** Longest CLI answer forwarded whole. `/changelog` is the one that needs this; the rest are short. */
-const CLI_OUTPUT_MAX_CHARS = 2_500;
-
-export type AgyCliResult = { ok: true; output: string } | { ok: false; error: string };
-
-/** runAgyCliCommand's shape — a factory parameter so the session tests never start a real agy. */
-export type AgyCliRunner = (name: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<AgyCliResult>;
-
-/**
- * Run one of agy's own slash commands as its own process and return what it printed.
- *
- * This is the path agy itself points at when such a command reaches a stream-json session ("run it
- * as its own --print /model invocation"), and it is cheap in the way that matters: the CLI answers
- * these from local state, so no model is invoked, no tokens are spent, and the conversation's
- * resident child is never touched.
- *
- * Probed on agy 1.2.0 (2026-09-17) against all eleven commands `agy -p /help` lists: every one
- * exits 0 without a terminal, and none blocks waiting for input — including the four that render as
- * interactive panels in the TUI (`/config`, `/effort`, `/hooks`, `/permissions`), which print their
- * current state instead. `/agents`, `/hooks` and `/permissions` print NOTHING when there is nothing
- * configured, which is why an empty answer is reported rather than passed on as an empty message.
- *
- * `cwd` is the conversation's directory because some answers are workspace-scoped (`/agents` reads
- * the workspace's custom agents). Failure is returned, never thrown: this runs inside a chat
- * command, where the reason belongs in the reply.
- */
-export async function runAgyCliCommand(
-  name: string,
-  cwd: string,
-  env?: NodeJS.ProcessEnv
-): Promise<AgyCliResult> {
-  try {
-    const { stdout } = await execFile(AGY_COMMAND, [`-p=/${name}`], {
-      cwd,
-      env,
-      timeout: CLI_COMMAND_TIMEOUT_MS,
-      // agy prints the whole changelog for `/changelog`; the default 1MB buffer is ample, but say so.
-      maxBuffer: 1024 * 1024,
-    });
-    return { ok: true, output: stdout.trim() };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-/**
- * One agy invocation on a remote host — `agy models`, `agy -p=/usage` and the rest of the one-shots
- * — run there through talkcode-remote with the agent's environment, answered in AgyCliResult's
- * terms. The host is the one the agent runs on, because that is where agy is signed in.
- */
-export async function runAgyOnHost(host: RemoteHost, def: AgentDef, argv: string[], cwd?: string): Promise<AgyCliResult> {
-  const what = `agy ${argv.join(' ')}`;
-  try {
-    const r = await host.run({ argv: [AGY_COMMAND, ...argv], cwd, env: remoteAgentEnv(def), timeoutMs: CLI_COMMAND_TIMEOUT_MS, max: 1 << 20 });
-    if (r.spawnError) return { ok: false, error: `${what} on ${host.id}: ${r.spawnError}` };
-    if (r.timedOut) return { ok: false, error: `${what} on ${host.id} timed out` };
-    if (r.code !== 0) return { ok: false, error: `${what} on ${host.id} exited ${r.code ?? r.signal}${r.stderr ? `: ${r.stderr}` : ''}` };
-    return { ok: true, output: r.output.toString('utf8').trim() };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-/** One of agy's slash commands as a one-shot, wherever `def` runs (runAgyCliCommand locally). */
-export function runAgyCliFor(def: AgentDef, name: string, cwd: string, local: AgyCliRunner = runAgyCliCommand): Promise<AgyCliResult> {
-  const host = remoteHosts.hostFor(def);
-  return host ? runAgyOnHost(host, def, [`-p=/${name}`], cwd) : local(name, cwd, buildHarnessEnv(def));
-}
-
-/**
- * `agy models` from where the deployment's agy runs: the first agy agent's host when it has one,
- * so a gateway with no agy of its own still lists models. The list is Google's, the same for every
- * account, so one host answering for all is enough.
- */
-export async function fetchAgyModelsFor(cfg: Pick<Config, 'agents'>): Promise<Array<{ value: string; name: string }>> {
-  const def = cfg.agents.find((a) => a.harness === 'agy');
-  const host = remoteHosts.hostFor(def);
-  // An agy with `host:` whose host is not registered (yet) must not be asked for here: that ran
-  // `agy models` on the gateway's machine, which in a gateway-only container has no agy at all
-  // ("spawn agy ENOENT" at every start, 2026-10-29). Thrown rather than answered with `[]`, so the
-  // factory leaves its cache unfilled and the next read asks again (createAgyAgentFactory).
-  if (def?.host && !host) throw new Error(`host "${def.host}" is not registered yet`);
-  if (!def || !host) return defaultFetchAgyModels();
-  const r = await runAgyOnHost(host, def, ['models']);
-  if (!r.ok) {
-    console.debug('[agy] fetch models failed:', r.error);
-    return [];
-  }
-  return parseAgyModelsOutput(r.output);
-}
-
-/**
- * Render what a one-shot CLI command printed, as a chat message.
- *
- * Everything but `/usage` prints either a short TSV table (`/model`, `/credits`, `/effort`,
- * `/config`) or markdown (`/changelog`), so the honest rendering is the text itself in a fenced
- * block — inventing structure per command would be guessing at output this gateway does not own.
- *
- * Truncation is announced and points at the host, because the commands whose answers overflow are
- * exactly the ones a reader might need in full.
- */
-export function formatAgyCliOutput(name: string, output: string): string {
-  if (!output) {
-    return `\`/${name}\` — agy answered with nothing. That is its answer when there is none configured.`;
-  }
-  if (name === 'usage') {
-    const quota = formatAgyQuota(output);
-    if (quota) return quota;
-  }
-  let body = output;
-  let note = '';
-  if (body.length > CLI_OUTPUT_MAX_CHARS) {
-    body = body.slice(0, CLI_OUTPUT_MAX_CHARS);
-    note = `\n\nTruncated at ${CLI_OUTPUT_MAX_CHARS} characters — run \`agy -p=/${name}\` on the host for all of it.`;
-    console.log(`[agy] truncated the /${name} answer from ${output.length} to ${CLI_OUTPUT_MAX_CHARS} chars`);
-  }
-  return `\`\`\`\n${body}\n\`\`\`${note}`;
-}
-
-/**
- * `/usage` specifically: four tab-separated columns (pool, metric, remaining %, ISO reset), e.g.
- *
- *   Gemini Models\tWeekly Limit Remaining\t100%\t2026-09-24T06:12:21Z
- *
- * Worth a renderer of its own because a percentage and a timestamp are what the question was, and
- * the raw row buries both: the bar makes "how much is left" readable at a glance, and the reset is
- * rewritten as a duration because "in 6d" is actionable where a UTC timestamp is arithmetic.
- *
- * Returns undefined when the shape is not the expected four columns, so the caller falls back to
- * printing the output verbatim rather than dropping an answer it failed to parse.
- */
-export function formatAgyQuota(output: string, now: number = Date.now()): string | undefined {
-  const rows = output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.split('\t').map((c) => c.trim()));
-  if (rows.length === 0 || rows.some((r) => r.length !== 4)) return undefined;
-
-  const lines = rows.map((r) => {
-    const [pool, metric, remaining, resetAt] = r as [string, string, string, string];
-    const pct = Number.parseFloat(remaining);
-    const bar = Number.isNaN(pct) ? '' : ` ${quotaBar(pct)}`;
-    return `**${pool}** — ${metric}: ${remaining}${bar}${formatResetIn(resetAt, now)}`;
-  });
-  return `Quota:\n${lines.join('\n')}`;
-}
-
-/** An 8-cell bar for a remaining-percentage, matching the footer's plain-text idiom. */
-function quotaBar(percent: number, width = 8): string {
-  const clamped = Math.max(0, Math.min(100, percent));
-  const filled = Math.round((clamped / 100) * width);
-  return `[${'█'.repeat(filled)}${'░'.repeat(width - filled)}]`;
-}
-
-/** ` (resets in 6d 4h)` for a parseable ISO timestamp in the future, and nothing otherwise. */
-function formatResetIn(iso: string, now: number): string {
-  const at = Date.parse(iso);
-  if (Number.isNaN(at)) return '';
-  const secs = Math.round((at - now) / 1000);
-  if (secs <= 0) return ' (resets now)';
-  const d = Math.floor(secs / 86400);
-  const h = Math.floor((secs % 86400) / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const span = d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
-  return ` (resets in ${span})`;
 }
 
 // ───────────────────────────────── factory / session ─────────────────────────────────
@@ -1540,29 +1332,7 @@ function flushPendingTools(st: AgyTurnState): void {
  */
 export function toolLabel(name?: string): string {
   if (!name) return 'Tool';
-  const byName: Record<string, string> = {
-    run_command: 'Bash',
-    command_status: 'Bash',
-    send_command_input: 'Bash',
-    view_file: 'Read',
-    read_resource: 'Read',
-    notebook_edit: 'Edit',
-    replace_file_content: 'Edit',
-    multi_replace_file_content: 'Edit',
-    sed_file: 'Edit',
-    write_to_file: 'Write',
-    grep_search: 'Grep',
-    find_by_name: 'Glob',
-    list_dir: 'Glob',
-    read_url_content: 'WebFetch',
-    open_browser_url: 'WebFetch',
-    search_web: 'WebSearch',
-    invoke_subagent: 'Task',
-    browser_subagent: 'Task',
-    define_subagent: 'Task',
-    manage_task: 'Task',
-  };
-  return byName[name] ?? truncateToolName(name);
+  return agyToolLabel(name) ?? truncateToolName(name);
 }
 
 /** Sink for the in-flight turn: parsed events in, settle the runTurn promise out. */

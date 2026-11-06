@@ -132,16 +132,16 @@ describe('agy’s own CLI commands', () => {
     expect(replies().at(-1)).toContain('spawn agy ENOENT');
   });
 
-  it('answers /effort as unsupported without running the CLI at all', async () => {
-    // `/effort` is in agy's CLI-answered list, but it is also a generic command now — and the
-    // generic vocabulary wins, because agy has no level to set (`agy -p=/effort` says "not
-    // adjustable"). Spawning a process to print that is strictly worse than saying it. Still
-    // fatal to the session if forwarded, so `prompts` staying empty is the assertion that matters.
+  it('answers /effort itself, without running the CLI at all', async () => {
+    // `/effort` is in agy's CLI-answered list, but it is also a generic command — and the generic
+    // vocabulary wins: `agy acp` exposes the level as a config option (and `agy -p=/effort` only
+    // says "not adjustable"). Fatal to a stream-json session if forwarded, so `prompts` staying
+    // empty is the assertion that matters. This session offers no selector, so it says so.
     const { send, prompts, replies, ran } = rig({ ok: true, output: 'not adjustable' });
     await send('/effort');
     expect(prompts).toEqual([]);
     expect(ran).toEqual([]);
-    expect(replies().at(-1)).toContain('does not support /effort');
+    expect(replies().at(-1)).toContain('only for its Gemini models');
   });
 
   it('leaves a skill name alone — it is what the session is meant to expand', async () => {

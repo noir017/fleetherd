@@ -245,7 +245,8 @@ The web UI's sidebar uses the same name, in front of the directory under each to
   ends the helper when the last ssh connection closes. Run `loginctl enable-linger <user>` there.
 - `CLAUDE_CONFIG_DIR` set by the host's shell setup is not visible to the gateway. Set it in the
   agent's `env` if you use it, or the footer has no cache countdown for that agent.
-- `agy` older than 1.4.7 shows no context numbers on a remote host.
+- `agy` on its stream-json fallback shows no context numbers on a remote host when it is older than
+  1.4.7.
 
 ## Security
 

@@ -39,7 +39,7 @@ was called `agent-anywhere` until 2.0.0.
 
 - **Eight platforms, one daemon** — Discord, Telegram, Slack, Lark, QQ, LINE, WeCom, DingTalk; multi-account. [→](docs/platforms.md)
 - **Or no platform at all** — the [web UI](docs/web-ui.md) above, behind one shared token or your SSO, with an optional terminal.
-- **Any ACP agent, plus agy** — Claude Code, Codex, OpenCode, Antigravity, or `custom`; routed by platform, channel, user or command. [→](docs/agents.md)
+- **Any ACP agent** — Claude Code, Codex, OpenCode, Antigravity, or `custom`; routed by platform, channel, user or command. [→](docs/agents.md)
 - **Native streaming** — in-place edits, live tool-call bubbles, lifecycle reactions.
 - **Send while it works** — a message sent mid-turn joins the running turn instead of stopping it, as typing into Claude Code's own CLI does; `/stop` stops. [→](docs/chat-commands.md#sending-while-the-agent-works)
 - **Attachments** — images and files you send are downloaded and handed to the agent.

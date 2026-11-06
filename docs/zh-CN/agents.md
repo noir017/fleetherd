@@ -7,7 +7,7 @@
 | `claude` | 内置 [claude-agent-acp](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp) | 无 | `claude /login` 或 `ANTHROPIC_API_KEY` |
 | `codex` | `codex-acp` | [@agentclientprotocol/codex-acp](https://www.npmjs.com/package/@agentclientprotocol/codex-acp)（`npm i -g`） | Codex CLI 登录态 |
 | `opencode` | `opencode acp` | OpenCode CLI | OpenCode 登录态 |
-| `agy` | `agy --input-format stream-json` | Antigravity CLI | `agy` 的 Google 登录态（系统钥匙串） |
+| `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` 的 Google 登录态（系统钥匙串） |
 | `custom` | 你的 `command` + `args` | 任意 ACP 可执行文件 | 由智能体自身决定 |
 
 每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[启动前钩子](#启动前钩子)，以及[权限策略](#权限请求)。
@@ -106,45 +106,58 @@ agents:
 - `/stop` 会连同这一轮一起取消待处理的请求。
 - 定时任务始终自动批准，因为没人在场作答。
 - 没有按钮的平台（钉钉、企业微信）没法问，请求会被拒绝，同样会告诉智能体原因。
-- 只影响会请求权限的智能体。实测 Codex（`agent` 模式）和 OpenCode 执行写文件的命令时都没有问；`agy` 不能设成 `ask`。
+- 只影响会请求权限的智能体。实测 Codex（`agent` 模式）和 OpenCode 执行写文件的命令时都没有问；`agy` 执行命令前会问，在工作目录里写文件不问；它的 [stream-json 回退](#回退到-stream-json)不能设成 `ask`。
 
 ## Antigravity（`agy`）
 
-`agy` 是唯一不说 ACP 的预设——它根本没有 ACP 模式——因此改用它自带的
-[headless stream-json 协议](https://antigravity.google/docs/cli/headless/)驱动。
-流式输出、工具气泡、多轮上下文、重启续接、skills、`/model`、`/context`、`/usage`
-都与 ACP 预设一致；不同的是后三者从哪里取——agy 把它们各自发布在会话之外：
+`agy` 以 `agy acp` 运行——agy 从 1.5 起自带的 ACP 服务端——所以流式输出、工具气泡、
+[权限请求](#权限请求)、多轮上下文、重启续接、`/model`、`/effort`、`/stop`、skills 和两个
+[原生工具](agent-actions.md)都与其他 ACP harness 一致。不同之处：
 
-- **它自带的斜杠命令改由独立进程应答。** 在 stream-json 模式下，由 CLI 自己应答的
-  斜杠（`/model`、`/usage`、`/credits` 等）会直接中止整个会话，因此守护进程用一次性
-  的 `agy -p=/<name>` 回答这十一个命令，绝不转发进会话。其余输入——首先是你的
-  **skills**——照常进入会话并正常展开。
-- **上下文占用来自 agy 的输出流，额度和默认模型来自它的 CLI。** agy 1.4.7 起，每个
-  模型步骤都会上报自己的 token 数，页脚拿它对比模型的上下文窗口来显示。agy 从不告诉
-  窗口有多大，所以守护进程只认得实测过的模型（Gemini、Claude Sonnet/Opus 4.6、
-  GPT-OSS 120B），其他模型不显示上下文数字。额度池，以及没配置模型时 agy 的默认模型，
-  在这一轮进行的同时用 `agy -p=/usage` 和 `agy -p=/model` 取回——额度最多每分钟查
-  一次，精度是整数百分比。
-- **agy 低于 1.4.7 时，这三样都来自它的状态栏**：守护进程启动时先备份一次
-  `~/.gemini/antigravity-cli/settings.json`，再把其中的 `statusLine` 指向自己的 shim，
-  由它通过一条管道把数字交回守护进程，也照样为你的终端画出状态栏。agy 1.4.7 在无头
-  模式下不再运行状态栏，但守护进程仍会安装这个 shim，供旧版本和你自己交互使用的 agy
-  使用。设 `TALKCODE_NO_AGY_STATUSLINE=1` 可以不动这项配置。
+- **它自带的斜杠命令改由独立进程应答。** `/usage`、`/credits` 以及 `agy -p /help` 列出的其余
+  命令由 agy 的 CLI 应答，不归会话管——当成消息发进去，agy 会把它当成问题交给模型。守护进程改用
+  一次性的 `agy -p=/<name>` 回答这些命令。
+- **模型按 `agy acp` 的叫法。** `/model` 里是 `gemini-3.8-flash`，思考档位在 `/effort` 下（仅
+  Gemini 有）。按 `agy models` 的旧写法（`gemini-3.8-flash-high`）写在 `model:` 里、或对话之前选过
+  的，照样能用：会被拆成模型加档位。agy 在会话重新加载时会忘掉模型，守护进程每次加载后都会重新设上。
+- **只有不调工具的一轮才有上下文数字。** agy 每轮只报一次 token 用量，是这一轮所有模型调用的总和：
+  只调一次模型的一轮，这个数就是上下文；调过工具的一轮不是，页脚就不显示。agy 从不告诉窗口有多大，
+  所以守护进程只认得实测过的模型（Gemini、Claude Sonnet/Opus 4.6、GPT-OSS 120B），或者用智能体的
+  `contextWindow`。
+- **额度来自它的 CLI**：`agy -p=/usage`，与一轮同时进行，最多每分钟一次，精度是整数百分比。
+- **agy 自己的警告是通知，不进回复正文。** 重试（「API error (attempt 1) …」）只提示一次；以警告收尾
+  的一轮——额度用完、重试耗尽、服务器过载——按失败处理，`hooks.turnFailed` 能看到（归为 `provider`）。
+- **一轮中途发的消息要等这一轮结束**：`agy acp` 没有并入正在跑的那一轮的办法。
 - **skills** 从 `<cwd>/.agents/skills`、`~/.agents/skills`、
   `~/.gemini/antigravity-cli/skills`、`~/.gemini/skills`、`~/.gemini/config/skills`
   读取，所以 `/skills` 能列出它们，`/<名字> <请求>` 能直接调用。
-- **`/new` 开启新对话**，与其他 harness 一致。停下当轮（`/stop`）会重启子进程并续接同一
-  对话，因此上下文不会丢失。
-- **一轮中途发的消息要等这一轮结束**：agy 的 stream-json 输入把每条消息当成单独的一轮，
-  没有办法并入正在跑的那一轮。
-- **你发的图片只以路径交给它。** stream-json 输入只收文字，所以走 ACP 的 harness 能直接看到图片，
-  agy 拿到的是图片存放的位置。
+- **状态栏。** 守护进程启动时先备份一次 `~/.gemini/antigravity-cli/settings.json`，再把其中的
+  `statusLine` 指向自己的 shim，为你自己交互使用的 agy 画状态栏（在下面的回退方式里，也为低于 1.4.7
+  的 agy 上报用量）。设 `TALKCODE_NO_AGY_STATUSLINE=1` 可以不动这项配置。
 
-守护进程的所有默认参数都可通过 `args` 覆盖（它们追加在默认值之后，而 agy 的
-参数解析是后者生效）。
+`args` 追加在 `agy acp` 之后（见 `agy acp --help`）。
+
+### 回退到 stream-json
+
+在 ACP 运行时于各主机都跑过之前，旧的那套还留着：用 agy 自己的
+[headless stream-json 协议](https://antigravity.google/docs/cli/headless/)驱动。要让某个智能体回到旧方式，
+在它的 `env` 里设置——config.yaml 或主机的 `pod.yaml` 都行——然后 `/reload`：
+
+```yaml
+agents:
+  - id: agy
+    harness: agy
+    env:
+      TALKCODE_AGY_RUNTIME: stream-json
+```
+
+对话两个方向都能续上：两套运行时续接的是同一个 agy 对话。stream-json 下不接受 `permissions: ask`，
+没有 `/effort`，`/stop` 会重启子进程，上下文按每个模型步骤取，图片只以路径交给它。它自己的参数
+（`--model`、`--conversation`、`--dangerously-skip-permissions` 等）在前，`args` 在后；agy 的参数
+解析是后者生效。
 
 > [!NOTE]
 > Google 的 FAQ 声明：用第三方工具访问 Antigravity 违反其服务条款，可能导致
-> 账号封禁。本 harness 只调用 agy 官方自带的 headless 接口，且完全不接触你的
+> 账号封禁。本 harness 只调用 agy 官方自带的接口（`agy acp`，回退时是 headless 模式），且完全不接触你的
 > 凭据（登录全程在 `agy` 内部完成），但守护进程终究是一个非 Google 客户端在
 > 驱动你的账号——请自行判断。

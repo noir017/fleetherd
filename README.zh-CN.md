@@ -39,7 +39,7 @@ Code、Codex、OpenCode，以及 Google 的 Antigravity CLI。给机器人发消
 
 - **八个平台，一个进程** —— Discord、Telegram、Slack、飞书、QQ、LINE、企业微信、钉钉；支持多账号。[→](docs/zh-CN/platforms.md)
 - **也可以一个平台都不用** —— 就是上图的[网页端](docs/zh-CN/web-ui.md)，一个共享密钥或你的 SSO 登录，可选开终端。
-- **任意 ACP 智能体，外加 agy** —— Claude Code、Codex、OpenCode、Antigravity 或 `custom`；按平台、频道、用户或命令路由。[→](docs/zh-CN/agents.md)
+- **任意 ACP 智能体** —— Claude Code、Codex、OpenCode、Antigravity 或 `custom`；按平台、频道、用户或命令路由。[→](docs/zh-CN/agents.md)
 - **原生流式体验** —— 消息原地编辑、工具调用气泡、生命周期回应表情。
 - **干活时也能发消息** —— 一轮中途发的消息并入正在跑的这一轮，不会打断它，和在 Claude Code 自己的命令行里边跑边打字一样；要停用 `/stop`。[→](docs/zh-CN/chat-commands.md#智能体干活时发消息)
 - **附件处理** —— 你发的图片和文件自动下载并交给智能体。

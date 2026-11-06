@@ -74,13 +74,13 @@ describe('translateCommand', () => {
 
   it('answers /effort locally on exactly the harnesses probed to expose a level', () => {
     // claude, codex and opencode all expose a `thought_level` config option that
-    // session/set_config_option switches (probed 2026-09-23), so none needs a turn for it.
-    for (const h of ['claude', 'codex', 'opencode'] as const) {
+    // session/set_config_option switches (probed 2026-09-23), so none needs a turn for it; so does
+    // `agy acp` for Gemini (1.5.1, 2026-11-06) — answered locally, never forwarded into the session.
+    for (const h of ['claude', 'codex', 'opencode', 'agy'] as const) {
       expect(translateCommand('effort', h)).toEqual({ kind: 'local' });
     }
-    // agy has no level ("not adjustable") and dsh/gemini expose none: an explicit refusal, never
-    // a forward — on agy a forwarded /effort would also kill the resident session.
-    for (const h of ['agy', 'dsh', 'gemini'] as const) {
+    // dsh/gemini expose none: an explicit refusal, never a forward.
+    for (const h of ['dsh', 'gemini'] as const) {
       expect(translateCommand('effort', h)).toEqual({ kind: 'unsupported' });
     }
     expect(translateCommand('effort', 'custom')).toEqual({ kind: 'passthrough' });

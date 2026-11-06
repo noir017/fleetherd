@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **Antigravity (`agy`) now runs as `agy acp`, on the same runtime as every other harness.** agy 1.5
+  ships an ACP server, so the stream-json protocol code written for it before is no longer what
+  serves it, and agy gets what the ACP path already does: permission requests (`permissions: ask`
+  now works for agy), `/stop` through `session/cancel` instead of killing the process, `/effort` on
+  its Gemini models, pictures as images, and the `send_file` / `schedule` native tools. Measured on
+  1.5.1 here and on a remote host before the switch: models named the `agy models` way
+  (`gemini-3.8-flash-high`) are split into the model and its thinking level; the configured model is
+  set again after every reload, which agy otherwise answers on its default; agy's own `⚠` warnings
+  become notices instead of reply text, and a turn that ends on one — a spent quota, retries run out
+  — now fails instead of passing as an answer; quota still comes from `agy -p=/usage`. One thing is
+  coarser: agy reports usage once per turn, summed over its model calls, so the footer shows context
+  only after a turn that ran no tool. The stream-json runtime stays as a fallback for an agent whose
+  `env` sets `TALKCODE_AGY_RUNTIME: stream-json`, until every host has run the new one;
+  conversations carry over in both directions.
 - **The web UI's composer splits into two rows by its own width, not the window's.** 2.39.0 gave
   the text area a full-width row below 640px of window, so one pixel above that the file, voice and
   Send buttons — Stop joins them only mid-turn — still shared its row: at 641px the sidebar is still
