@@ -504,7 +504,8 @@ tap, so a column of tasks stays scannable.
 **Reviews** is the automatic review of quiet conversations (`daemon/review.ts`). A review that
 changed nothing posts no line in any chat, so this is the only place it can be read. Nothing on the
 tab changes a review or a skill: undoing a change is the `talkcode skills revert` / `archive`
-command the detail shows, not a button. Its one write is **Dismiss** on the pending list described
+command the detail shows, not a button. Its writes are **Adopt**, which opens a topic with a draft
+through the same `POST api/topics` the + makes, and **Dismiss** on the pending list described
 below, which touches `reviews.json` alone. A row is the
 reviewed topic, how long ago, and what happened (`changed`, `preferences`, `refused`, `proposed`,
 `nothing`, `failed`); opening it lists each change with its reason, whether the store applied it or
@@ -519,6 +520,16 @@ many reviews made it and up to three conversations it came from, less the ones d
 suggestion lived only inside its review before, so the same rule from three reviews was three rows
 to open. The block says nothing on it is in force: a suggestion only takes effect when the person
 has it added to their instructions.
+
+**Adopt** starts that. It opens a new topic whose composer holds a short draft asking an agent to
+add the suggestion to the person's instructions — the gateway's `instructions/common.md`, or the
+file for the agent's own harness ([docs/instructions.md](../../../docs/instructions.md)) — with
+the suggestion quoted at the end. Nothing is sent: the person can edit the draft, run `/agent`
+first, or throw it away. The suggestion stays on the list until a message that still carries its
+text is accepted by the daemon in that topic, and is then dismissed through the same
+`POST api/reviews/op` the button sends. The link is by topic and in memory only: a reload forgets
+it and the suggestion stays pending, which is the direction a lost link has to fail in. A topic
+that cannot be opened — every one starred or in use — says why and leaves the suggestion alone.
 
 A review recorded before results were kept has only its raw answer in the library. `review-panel.ts`
 parses that with `parseReviewOutput`, marks the entry `inferred` and leaves every change's `applied`
@@ -1537,8 +1548,11 @@ drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom 
 it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review
 opened for its changes
 and undo command, the link back to a topic that exists and its absence when the topic is gone, the
-inferred old record, all three empty states, and the pending suggestions with a Dismiss that posts
-the suggestion and redraws from the answer. The two side panels are driven as one component
+inferred old record, all three empty states, and the pending suggestions: a Dismiss that posts
+the suggestion and redraws from the answer, an Adopt that opens a topic with the draft and sends
+nothing, the dismissal that follows a message carrying the draft, a draft replaced before sending
+that leaves the suggestion alone, and a refused topic that says why. The two side panels are
+driven as one component
 there (`one panel component on both edges`):
 both close with the same ×, both go inert while shut, Escape puts away the right and then the
 left, each keeps its own width and clears it on a double-click, and the footer's two menus are

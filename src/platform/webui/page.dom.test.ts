@@ -4241,6 +4241,15 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(overlay).toContain('#app.sched-open #backdrop{display:block}');
   });
 
+  it('stacks the two answers under a suggested preference, and sizes both for a thumb', () => {
+    const css = renderPage('Chat', false);
+    // The panel is 240–380px wide at every screen size, so two buttons beside the suggestion
+    // would leave the text a sliver even on a desktop. The base rule puts them on their own row.
+    expect(css).toContain('.rev-pitem{display:flex;flex-wrap:wrap');
+    expect(css).toContain('.rev-pbody{flex:1 1 100%');
+    expect(narrowBlock()).toContain('.rev-adopt,.rev-dismiss{min-height:44px');
+  });
+
   it('measures height in dvh, which is the viewport the URL bar has left', () => {
     const css = narrowBlock();
     expect(css).toContain('html,body{height:100vh;height:100dvh}');
@@ -6672,10 +6681,13 @@ describe('webui page: the Reviews tab', () => {
     expect(h.el('sched-reviews-list').firstElementChild).toBe(block);
     expect(block.textContent).toContain('Suggested preferences · 2');
     expect(block.textContent).toContain('Not in effect anywhere');
+    // The note says what each answer does, now that there are two of them.
+    expect(block.textContent).toContain('Adopt opens a new topic');
     const items = block.querySelectorAll('.rev-pitem');
     expect(items).toHaveLength(2);
     expect(items[0]!.textContent).toContain('answers lead with the conclusion');
     expect(items[0]!.textContent).toContain('3 reviews · Right sidebar, Deploy');
+    expect(items[0]!.querySelector('.rev-adopt')!.textContent).toBe('Adopt');
     expect(items[1]!.querySelector('.rev-pmeta')!.textContent).toBe('Vault');
 
     (items[0]!.querySelector('.rev-dismiss') as HTMLElement).click();
@@ -6696,6 +6708,108 @@ describe('webui page: the Reviews tab', () => {
     await h.click('#sched-tab-reviews');
     await until('the review row', () => Boolean(h.doc.querySelector('.rev-item')));
     expect(h.doc.querySelector('.rev-pending')).toBeNull();
+  });
+
+  const SUGGESTION = 'answers lead with the conclusion';
+  const OTHER = 'delete credentials to the trash, never for good';
+  const pendingList = (): Array<Record<string, unknown>> => [
+    { text: SUGGESTION, count: 3, at, from: [{ title: 'Right sidebar', topic: A }] },
+    { text: OTHER, count: 1, at, from: [{ title: 'Vault' }] },
+  ];
+
+  /** The Reviews tab, open on a pending list, with `api/topics` answering the new topic. */
+  const reviewing = async (
+    opts: {
+      topicsStatus?: number;
+      topicsReply?: Record<string, unknown>;
+    } = {}
+  ): Promise<Harness> => {
+    const h = await open({
+      replies: {
+        'api/reviews': reply([review()], { pending: pendingList() }),
+        'api/reviews/op': reply([review()], { pending: [pendingList()[1]] }),
+        'api/topics': opts.topicsReply ?? { topic: { id: 'd4e5f6a7', title: '', lastAt: at } },
+      },
+      ...(opts.topicsStatus ? { status: { 'api/topics': opts.topicsStatus } } : {}),
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the pending list', () => Boolean(h.doc.querySelector('.rev-pending')));
+    return h;
+  };
+
+  it('adopts a suggestion into a new topic as a draft, and sends nothing', async () => {
+    const h = await reviewing();
+    const fresh = 'd4e5f6a7';
+
+    (h.doc.querySelector('.rev-adopt') as HTMLElement).click();
+    await until('the new topic', () => h.window.location.search.includes(fresh));
+
+    expect(h.calls.find((c) => c.path === 'api/topics')?.body).toEqual({});
+    const draft = (h.el('input') as HTMLTextAreaElement).value;
+    expect(draft).toContain('standing instructions');
+    expect(draft).toContain('instructions/');
+    expect(draft).toContain('diff');
+    expect(draft).toContain(`"${SUGGESTION}"`);
+    // A draft, not a message: nothing went out, and the suggestion is still on the list.
+    expect(h.calls.map((c) => c.path)).not.toContain('api/send');
+    expect(h.calls.map((c) => c.path)).not.toContain('api/reviews/op');
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 2');
+  });
+
+  it('takes a suggestion off the list once the draft is actually sent', async () => {
+    const h = await reviewing();
+
+    (h.doc.querySelector('.rev-adopt') as HTMLElement).click();
+    await until('the draft', () => Boolean((h.el('input') as HTMLTextAreaElement).value));
+    // The new topic's stream opening asks for the list again. Let that answer land first, so
+    // what is asserted below is the dismissal rather than a race with a list fetched earlier.
+    await until('the list refreshed', () => h.calls.filter((c) => c.path === 'api/reviews').length === 2);
+    await tick();
+    await h.click('#composer button[type="submit"]');
+    await until('the dismissal', () => h.calls.some((c) => c.path === 'api/reviews/op'));
+
+    expect(h.calls.find((c) => c.path === 'api/reviews/op')?.body).toEqual({
+      action: 'dismiss',
+      text: SUGGESTION,
+    });
+    await until('one suggestion left', () => h.doc.querySelectorAll('.rev-pitem').length === 1);
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 1');
+  });
+
+  it('leaves the suggestion alone when the draft is replaced before anything is sent', async () => {
+    const h = await reviewing();
+
+    (h.doc.querySelector('.rev-adopt') as HTMLElement).click();
+    await until('the draft', () => Boolean((h.el('input') as HTMLTextAreaElement).value));
+    // Thrown away and replaced: the message that goes out carries nothing of the suggestion.
+    (h.el('input') as HTMLTextAreaElement).value = 'never mind, something else';
+    await h.click('#composer button[type="submit"]');
+    await until('the send', () => h.calls.some((c) => c.path === 'api/send'));
+    await tick();
+
+    expect(h.calls.map((c) => c.path)).not.toContain('api/reviews/op');
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 2');
+  });
+
+  it('says why a topic could not be opened, and keeps the suggestion', async () => {
+    const refusal =
+      'every one of the 64 topics is starred or in use; unstar or delete one before opening another';
+    const h = await reviewing({
+      topicsStatus: 409,
+      topicsReply: { error: refusal },
+    });
+
+    (h.doc.querySelector('.rev-adopt') as HTMLElement).click();
+    await until('the refusal', () => h.alerts.length > 0);
+
+    expect(h.alerts[0]).toBe(`Could not open a new topic: ${refusal}`);
+    // Still in the conversation it was in, with the suggestion untouched and Adopt usable again.
+    expect(h.window.location.search).toContain(`t=${A}`);
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 2');
+    expect((h.doc.querySelector('.rev-adopt') as HTMLButtonElement).disabled).toBe(false);
+    expect(h.calls.map((c) => c.path)).not.toContain('api/send');
   });
 
   it('opens a review for its changes, reasons, undo command and preferences', async () => {
