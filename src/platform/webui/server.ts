@@ -107,12 +107,39 @@ const SHUTDOWN_GRACE_MS = 2_000;
 /** Below this, gzip's own framing costs more than it saves. */
 const MIN_COMPRESS_BYTES = 512;
 
+/**
+ * How far behind an event stream may fall — bytes written here that have not yet reached the
+ * socket — and for how long, before the connection is cut.
+ *
+ * Without a bound, nothing ever stopped writing to a client that had stopped reading: every write's
+ * return value was dropped, and whatever the socket would not take was held in this process. A
+ * phone put down with the page open is that client, and a busy daemon has plenty to send it — the
+ * topic list alone (~70 KB at 200 topics) goes to every client on every message posted anywhere.
+ * Measured 2026-11-07: one stream that had stopped reading held 153 MB after 2000 posts, and was
+ * never let go.
+ *
+ * Both halves, not the byte count alone, because one event can be larger than any sensible cap: a
+ * full `sync` of a long topic is ~3 MB of JSON, and on a slow link it takes a while to drain. Cut
+ * on bytes alone, that client would reconnect without a resume point, be sent the same sync, and be
+ * cut again — for ever. So a stream may be over the cap for a while and is only cut when it stays
+ * over it: a client that is draining a big sync gets under it, a client that has stopped reading
+ * does not.
+ *
+ * Cutting loses nothing. The page's `EventSource` reconnects by itself with the last id it received,
+ * and the room hands it what it missed — or a full sync, if its backlog no longer reaches that far.
+ * Counted in bytes before compression where there is compression (what the room wrote, which is
+ * what this process holds), plus the compressed bytes still in this process.
+ */
+const MAX_BEHIND_BYTES = 2 * 1024 * 1024;
+const MAX_BEHIND_MS = 60_000;
+
 /** How rarely an identical SSO refusal is repeated in the log, and how many are tracked. */
 const REFUSAL_QUIET_MS = 60_000;
 const MAX_WARN_KEYS = 256;
 
 /** One attached event stream, with whatever sits between it and the socket. */
 interface Stream {
+  /** A no-op once the stream has been cut for falling behind (see `MAX_BEHIND_BYTES`). */
   write(chunk: string): void;
   end(): void;
 }
@@ -539,22 +566,30 @@ async function login({ req, res }: Req, ctx: Ctx): Promise<void> {
 function stream({ req, res, url }: Req, ctx: Ctx): void {
   const wanted = url.searchParams.get('t');
   const topic = wanted && ctx.room.topics.has(wanted) ? wanted : ctx.room.topics.current().id;
-  const out = openStream(req, res);
+  const out = openStream(req, res, ctx.instance);
   ctx.streams.add(out);
   const lastId = req.headers['last-event-id'];
   const unsubscribe = ctx.room.subscribe(
     topic,
-    (id, ev) => out.write(`${id ? `id: ${id}\n` : ''}data: ${JSON.stringify(ev)}\n\n`),
+    // `data` is made once per event by the room, however many streams it goes to.
+    (id, _ev, data) => out.write(`${id ? `id: ${id}\n` : ''}data: ${data}\n\n`),
     Array.isArray(lastId) ? lastId[0] : lastId
   );
-  req.on('close', () => {
+  // The response's close, not only the request's: a stream cut for falling behind is ended from
+  // this side, and either way it has to leave the room's fan-out at once.
+  let left = false;
+  const leave = (): void => {
+    if (left) return;
+    left = true;
     unsubscribe();
     ctx.streams.delete(out);
-  });
+  };
+  req.on('close', leave);
+  res.on('close', leave);
 }
 
 /** Open the response as an event stream, compressed when the client will take it. */
-function openStream(req: IncomingMessage, res: ServerResponse): Stream {
+function openStream(req: IncomingMessage, res: ServerResponse, instance: WebuiInstance): Stream {
   const gzip = acceptsGzip(req);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -567,20 +602,52 @@ function openStream(req: IncomingMessage, res: ServerResponse): Stream {
     ...(gzip ? { 'Content-Encoding': 'gzip' } : {}),
   });
   res.flushHeaders();
-  if (!gzip) {
-    return { write: (chunk) => void res.write(chunk), end: () => res.end() };
-  }
-  const gz = createGzip();
-  gz.pipe(res);
+  const gz = gzip ? createGzip() : undefined;
+  gz?.pipe(res);
+  // Everything this process is holding for the client: the compressor's input and output, then the
+  // response's own buffer and its socket's (`writableLength` on a response counts both).
+  const behind = (): number => (gz ? gz.writableLength + gz.readableLength : 0) + res.writableLength;
+  let since = 0;
+  let cut = false;
+  /** Whether the stream has stayed over `MAX_BEHIND_BYTES` for `MAX_BEHIND_MS`; cuts it if so. */
+  const fallenBehind = (): boolean => {
+    const bytes = behind();
+    if (bytes <= MAX_BEHIND_BYTES) {
+      since = 0;
+      return false;
+    }
+    const now = Date.now();
+    if (since === 0) since = now;
+    if (now - since < MAX_BEHIND_MS) return false;
+    cut = true;
+    console.warn(
+      `[webui] "${instance.id}": cutting an event stream ${(bytes / 1048576).toFixed(1)} MB behind for ` +
+        `${Math.round((now - since) / 1000)}s; the page reconnects and resumes from its last event`
+    );
+    // Destroyed rather than ended: an end would queue behind everything the client is not reading.
+    gz?.destroy();
+    res.destroy();
+    return true;
+  };
   return {
-    // Z_SYNC_FLUSH after EVERY event, and this is the whole trap of compressing a stream: a
-    // gzip stream buffers until told otherwise, so without it the browser receives nothing
-    // until the connection closes — a live UI that shows the entire turn at the end of it.
+    // Checked before each write, against what earlier writes left behind. The event that finds the
+    // stream cut is not lost with it: it is in the topic's backlog, which the reconnect replays. A
+    // quiet stream is still checked, by the heartbeat.
     write: (chunk) => {
+      if (cut || fallenBehind()) return;
+      if (!gz) {
+        res.write(chunk);
+        return;
+      }
+      // Z_SYNC_FLUSH after EVERY event, and this is the whole trap of compressing a stream: a
+      // gzip stream buffers until told otherwise, so without it the browser receives nothing
+      // until the connection closes — a live UI that shows the entire turn at the end of it.
       gz.write(chunk);
       gz.flush(zlibConstants.Z_SYNC_FLUSH);
     },
-    end: () => gz.end(),
+    end: () => {
+      if (!cut) (gz ?? res).end();
+    },
   };
 }
 

@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { createSign, generateKeyPairSync } from 'node:crypto';
+import { createSign, generateKeyPairSync, randomBytes } from 'node:crypto';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -33,6 +33,7 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'webui-server-'));
 });
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   await Promise.all(running.splice(0).map((s) => s.stop()));
   fs.rmSync(dir, { recursive: true, force: true });
@@ -685,6 +686,114 @@ describe('webui server: built for a weak link', () => {
     expect(resumed).not.toContain('"t":"sync"');
     expect(resumed).not.toContain('one');
     second.close();
+  });
+
+  /**
+   * A client that asks for the stream and then stops reading, as a frozen phone's page does: a raw
+   * socket, so nothing on this side drains it. Resolves once the response has started.
+   */
+  async function stalled(
+    port: number,
+    topic: string,
+    cookie: string,
+    opts: { gzip: boolean; lastEventId?: string }
+  ): Promise<{ socket: net.Socket; closed: () => boolean; read: () => string }> {
+    const socket = net.connect(port, '127.0.0.1');
+    await new Promise<void>((r) => socket.once('connect', () => r()));
+    let closed = false;
+    socket.on('close', () => (closed = true));
+    socket.on('error', () => {});
+    let text = '';
+    socket.on('data', (b: Buffer) => (text += b.toString('latin1')));
+    socket.write(
+      `GET /api/events?t=${topic} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nCookie: ${cookie}\r\n` +
+        (opts.gzip ? 'Accept-Encoding: gzip\r\n' : '') +
+        (opts.lastEventId ? `Last-Event-ID: ${opts.lastEventId}\r\n` : '') +
+        '\r\n'
+    );
+    await until(() => text.includes('\r\n\r\n'), 'the stream starts');
+    socket.pause();
+    return { socket, closed: () => closed, read: () => text };
+  }
+
+  /** Post `n` replies of incompressible text, letting the compressor and the socket run between. */
+  async function flood(room: WebRoom, topic: string, n: number, tag: string): Promise<void> {
+    for (let i = 0; i < n; i++) {
+      room.post(topic, { own: false, html: `<p>${tag}-${i} ${randomBytes(192 * 1024).toString('base64')}</p>` }, `${tag}-${i}`);
+      await new Promise((r) => setImmediate(r));
+    }
+  }
+
+  it('cuts a stream that stopped reading, and the page catches up from its last event when it comes back', async () => {
+    // Nothing used to stop writing to a client that had stopped reading: every byte it did not take
+    // was held here, without limit — 153 MB after 2000 posts to one stalled stream (2026-11-07).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const first = await openStream(port, topic, cookie);
+    await first.next();
+    room.post(topic, { own: false, html: '<p>seen</p>' }, 'seen');
+    const id = /id: (\S+)/.exec(await first.next())?.[1] ?? '';
+    first.close();
+    await until(() => room.watchers === 0, 'the first stream leaves');
+
+    const phone = await stalled(port, topic, cookie, { gzip: true, lastEventId: id });
+    await until(() => room.watchers === 1, 'the stalled stream attaches');
+    // Far more than a loopback socket's buffers take, so most of it is held here.
+    await flood(room, topic, 80, 'missed');
+    // Behind, but not for long yet: a slow link draining a big sync looks like this too.
+    expect(room.watchers).toBe(1);
+    expect(phone.closed()).toBe(false);
+
+    vi.setSystemTime(Date.now() + 61_000);
+    room.post(topic, { own: false, html: '<p>the last word</p>' }, 'the last word');
+    await until(() => room.watchers === 0, 'the stalled stream is cut');
+    // A paused socket hears the hang-up once it reads again, as a frozen page does when it thaws.
+    phone.socket.resume();
+    await until(() => phone.closed(), 'the client sees the connection end');
+    expect(warn.mock.calls.flat().join('\n')).toMatch(/cutting an event stream [\d.]+ MB behind for 61s/);
+
+    // EventSource reconnects with the last id it received; the backlog still reaches it, so the
+    // page is handed exactly what it missed, the cut write included.
+    const back = await openStream(port, topic, cookie, id);
+    const missed = new Set<string>();
+    let synced = false;
+    let tail = '';
+    // Chunk by chunk, carrying a tail across the boundary, since this is ~20 MB of text.
+    for (;;) {
+      const text = tail + (await back.next());
+      for (const m of text.matchAll(/missed-\d+ /g)) missed.add(m[0]);
+      synced ||= text.includes('"t":"sync"');
+      if (text.includes('the last word')) break;
+      tail = text.slice(-32);
+    }
+    expect(synced).toBe(false);
+    expect(missed.size).toBe(80);
+    back.close();
+  });
+
+  it('keeps a stream that falls behind and then catches up', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const slow = await stalled(port, topic, cookie, { gzip: false });
+    await flood(room, topic, 80, 'burst');
+    vi.setSystemTime(Date.now() + 30_000);
+    room.post(topic, { own: false, html: '<p>still here</p>' }, 'still here');
+    expect(room.watchers).toBe(1);
+
+    // The link comes back and the backlog drains; being behind once is not held against it.
+    slow.socket.resume();
+    await until(() => slow.read().includes('still here'), 'the backlog drains');
+    vi.setSystemTime(Date.now() + 61_000);
+    room.post(topic, { own: false, html: '<p>and later</p>' }, 'and later');
+    await until(() => slow.read().includes('and later'), 'the next event arrives');
+    expect(room.watchers).toBe(1);
+    expect(slow.closed()).toBe(false);
+    slow.socket.destroy();
   });
 
   it('delivers a retried send once', async () => {

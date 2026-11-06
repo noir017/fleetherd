@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { MAX_TOPICS, TopicStore } from './topics.js';
 
@@ -11,7 +11,11 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'webui-topics-'));
   file = path.join(dir, 'topics.json');
 });
-afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 describe('TopicStore', () => {
   it('mints ids that carry no character the address form gives meaning to', () => {
@@ -29,9 +33,53 @@ describe('TopicStore', () => {
     const first = new TopicStore(file);
     const a = first.create('alpha');
     first.touch(a.id, 12_345);
+    // What shutdown does (WebRoom.dispose): a touch is gathered, not written at once.
+    first.save();
 
     const reopened = new TopicStore(file);
     expect(reopened.get(a.id)).toEqual({ id: a.id, title: 'alpha', lastAt: 12_345 });
+  });
+
+  it('gathers the touches of a streaming reply into one write a second, rather than one each', () => {
+    // A touch is every message posted into any topic, and each write is the whole file: with 200
+    // topics that was most of what a post cost. It only records the switcher's order.
+    vi.useFakeTimers();
+    const store = new TopicStore(file);
+    const a = store.create('streaming');
+    const writes = vi.spyOn(fs, 'writeFileSync');
+    for (let i = 1; i <= 50; i++) store.touch(a.id, 1_000 + i);
+    expect(writes).not.toHaveBeenCalled();
+    expect(new TopicStore(file).get(a.id)?.lastAt).not.toBe(1_050);
+
+    vi.advanceTimersByTime(1_000);
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(new TopicStore(file).get(a.id)?.lastAt).toBe(1_050);
+    // And nothing is left waiting for the way out.
+    store.save();
+    expect(writes).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes a deletion, a sweep or a star at once, and a waiting touch with it', () => {
+    vi.useFakeTimers();
+    const store = new TopicStore(file);
+    const a = store.create('a');
+    const b = store.create('b');
+    const c = store.create('c');
+    store.touch(a.id, 777);
+    // A × is a decision a restart would undo if it were gathered with the touches.
+    store.delete(b.id);
+    const disk = new TopicStore(file);
+    expect(disk.has(b.id)).toBe(false);
+    expect(disk.get(a.id)?.lastAt).toBe(777);
+
+    store.touch(a.id, 888);
+    store.star(c.id, true);
+    expect(new TopicStore(file).get(a.id)?.lastAt).toBe(888);
+    expect(new TopicStore(file).get(c.id)?.starred).toBe(true);
+
+    store.touch(a.id, 999);
+    store.clear();
+    expect(new TopicStore(file).list().map((t) => t.id)).toEqual([c.id]);
   });
 
   it('orders most recently active first', () => {
