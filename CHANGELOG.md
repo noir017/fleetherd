@@ -7,24 +7,27 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- **A sub-agent card now says who it went to, on the first line and in bold.** The card that records a
-  start — confirmation off, or the parts that started at once under `first` — led each row with the
-  topic, so `cbc@uniagent` sat in the middle of a line of ids. Its name now opens the card (every
-  started agent's name, when a batch went to several) and opens its own row again, with `--model`
-  straight after it; the topic link, the machine and the directory are unchanged. A card can be read
-  on a phone, where a row may be cut before its end, so the row has to carry the name itself. The
+- **A sub-agent card now says who it went to, on the first line and in bold.** Both messages the
+  daemon posts when parts start — the answer to Start, which the default tier sends every time, and
+  the record card with confirmation off — now share one layout: the first line names every started
+  agent (each once, however many parts it got) and every row of a batch opens with its own name in
+  bold, `--model` beside it. The old rows led with the topic, leaving `cbc@uniagent` in the middle of
+  a line of ids. A lone part is already named by the first line, so its row leaves the name out; the
+  machine is not repeated when the agent's own name ends in `@<host>`; and "started by" is dropped
+  when the asker is that agent itself. The topic link, machine and directory all stay. The
   confirmation card keeps its own shape — numbered items that quote the task and link nothing,
-  because no topic exists yet — and only moves the model next to the name, as the record card does.
-  [→](docs/sub-agents.md)
+  because no topic exists yet — and only moves the model next to the name. [→](docs/sub-agents.md)
 
 ### Fixed
 
-- **A just-started sub-agent's card shows the task's name, not its conversation id.**
-  `web#main#5e94945d` stood where the `--title` (or the name cut from the task text) belonged. The
-  card looked the title up in `channels`, which lists the newest 200 topics; a topic opened a moment
-  earlier has no last-turn timestamp yet and sorts last, so on a busy deployment it fell out of the
-  list and the lookup answered nothing. The name now comes back from `openTask`, which named the
-  topic in the first place.
+- **A topic opened a moment ago is named, not shown as `web#main#5e94945d`.** Every name lookup went
+  to `channels`, which lists the newest 200 topics; a topic with no turn yet has no last-turn
+  timestamp, sorts last, and on a busy deployment is cut from that list — so the record card, the
+  answer to Start, `tasks`, `task-status`, both stop notices and the `↳ From` header all fell back to
+  the conversation id. The lookup now reads the store's recorded title first, which `openTask`
+  writes before the first turn, and only then `channels`. `openTask` also answers the lane title it
+  actually gave the topic, so a `--title` with a newline or leading `[a]` groups cannot put one name
+  on the card and another on the topic.
 
 ## [2.40.0] - 2026-11-06
 

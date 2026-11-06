@@ -147,6 +147,7 @@ type Registry = Pick<
   | 'runScheduledPrompt'
   | 'workdirOf'
   | 'boundAgentOf'
+  | 'conversationTitle'
   | 'scheduledModelProblem'
 >;
 
@@ -627,10 +628,12 @@ export class Delegation {
 
   /** The confirmed card's answer: where every sub-task went, and the agent told of any that failed. */
   private async announceStarted(here: Place, total: number, opened: OpenedTask[], failed: string[]): Promise<void> {
+    // The same first line and rows as the record card: this is the path the default tier takes on
+    // every Start, so a card that read one way here and another way with confirmation off would be
+    // two layouts for one fact.
+    const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
     const said = [
-      ...(opened.length
-        ? [`Started ${opened.length}:`, ...opened.map((o) => `- [${o.title}](${o.link ?? '?t='}) — ${o.agent}${o.model ? ` · model \`${o.model}\`` : ''}`)]
-        : []),
+      ...startedSection(asker, opened),
       ...(failed.length ? [`${opened.length ? '\n' : ''}Could not start ${failed.length}:`, ...failed] : []),
     ].join('\n');
     await here.adapter
@@ -671,29 +674,13 @@ export class Delegation {
    * What the person sees when confirmation is off: the same list a confirmation card carries, with
    * the topics already open and no buttons. The last line says how to put the gate back.
    *
-   * Who got the work leads the card — every started agent's name on the first line, in bold, and
-   * again where it opens its own row. The name is the one thing a person scans a card for, and a
-   * list whose first column was the topic made them read a row of ids to find it; on a narrow
-   * platform a row can also be cut before it reaches its end, so the row has to carry the name
-   * itself. Several parts can go to one agent, which is why the header's list is deduplicated while
-   * the count is not.
+   * The head and the rows are `startedSection`'s, the same ones the answer to Start uses.
    */
   private startedCardText(here: Place, opened: OpenedTask[], failed: string[]): string {
     const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
-    const names = [...new Set(opened.map((o) => o.agent))].join(', ');
-    const many = opened.length !== 1;
-    const head = opened.length
-      ? `**${names}** — ${many ? `${opened.length} sub-agents` : 'a sub-agent'} started by ${asker}, ${
-          many ? 'each in a topic of its own' : 'in a topic of its own'
-        } under this one:`
-      : `**${asker} could not start the sub-agent** — no confirmation is asked here, so it was tried at once:`;
-    const lines = [head];
-    for (const t of opened) {
-      const where = t.host ? ` @ ${t.host}` : '';
-      const model = t.model ? ` · model \`${t.model}\`` : '';
-      const dir = t.cwd ? ` · \`${t.cwd}\`` : '';
-      const name = t.link ? `[${t.title}](${t.link})` : t.title;
-      lines.push(`- **${t.agent}**${model}${where} · ${name}${dir} · ${t.topic}`);
+    const lines = startedSection(asker, opened);
+    if (!lines.length) {
+      lines.push(`**${asker} could not start the sub-agent** — no confirmation is asked here, so it was tried at once:`);
     }
     if (failed.length) lines.push('', `Could not start ${failed.length}:`, ...failed);
     lines.push(
@@ -1132,8 +1119,18 @@ export class Delegation {
     return lane && adapter ? { key, platformId: lane.platformId, address: lane.address, adapter } : undefined;
   }
 
-  /** A conversation's name, from what `channels` knows. */
+  /**
+   * A conversation's name: the store's own record first, `channels` after it.
+   *
+   * The store is the only source that knows a name written a moment ago. `channels` lists the newest
+   * 200 topics and sorts a topic with no `lastAt` last (core/channel-list.ts), so a topic whose first
+   * turn has not run — a sub-agent opened seconds ago — falls out of it and the caller was left with
+   * `web#main#5e94945d` where the title belonged. `channels` stays for the records older than the
+   * title field, and for a channel root, which belongs to no single conversation.
+   */
   private titleOf(id: ConversationId, place: { platformId: string; address: ConversationAddress }): string {
+    const named = this.deps.registry.conversationTitle(id);
+    if (named) return named;
     const want = `${place.platformId}:${place.address.channel}${place.address.thread ? `/${place.address.thread}` : ''}`;
     const ch = this.deps.registry.listChannels({ platform: place.platformId, limit: 200 }).channels.find((c) => c.id === want);
     return ch?.title || id;
@@ -1398,6 +1395,43 @@ function describeStage(stage: TopicStage): string {
  */
 function subjectOf(title: string): string {
   return title.replace(/^\[[^\]]*\]\s*/, '').replace(/[[\]]/g, '');
+}
+
+/**
+ * The first line and one row per started sub-agent — the shape both cards use, so the answer to
+ * Start and the record card cannot drift apart.
+ *
+ * Who got the work leads: the name is what a person scans a card for, and the old row put the topic
+ * first, leaving the agent in the middle of a line of ids. The first line names every started agent
+ * once (several parts can go to one agent, so the list is deduplicated while the count is not); each
+ * row of a batch names its own again, because a row has to be readable on its own. A lone part is
+ * already named by the first line, so its row leaves the name out — repeating it there is the same
+ * word twice in two lines.
+ */
+function startedSection(asker: string, opened: OpenedTask[]): string[] {
+  if (!opened.length) return [];
+  const names = [...new Set(opened.map((o) => o.agent))].join(', ');
+  const many = opened.length !== 1;
+  // "started by cc" under a line that already opens with cc reads as a stutter.
+  const by = names === asker ? '' : ` started by ${asker}`;
+  const head = `**${names}** — ${many ? `${opened.length} sub-agents` : 'a sub-agent'}${by}, ${
+    many ? 'each in a topic of its own' : 'in a topic of its own'
+  } under this one:`;
+  return [head, ...opened.map((t) => startedRow(t, many))];
+}
+
+/** One started sub-agent's row; `lead` puts its name first, for a card carrying several parts. */
+function startedRow(t: OpenedTask, lead: boolean): string {
+  const model = t.model ? `model \`${t.model}\`` : '';
+  // A host names its own agents `<id>@<host>` (daemon/pods.ts), so that id already says the machine.
+  const machine = t.host && !t.agent.endsWith(`@${t.host}`) ? ` @ ${t.host}` : '';
+  const dir = t.cwd ? `\`${t.cwd}\`` : '';
+  const name = t.link ? `[${t.title}](${t.link})` : t.title;
+  // The machine hangs off whichever of name/model comes first, so no row ever starts with "@ host".
+  const fields = lead
+    ? [`**${t.agent}**${model ? '' : machine}`, model ? `${model}${machine}` : '', name, dir, t.topic]
+    : [`${name}${model ? '' : machine}`, model ? `${model}${machine}` : '', dir, t.topic];
+  return `- ${fields.filter(Boolean).join(' · ')}`;
 }
 
 /** `/home/user/workspace/x` → `~/workspace/x`, for a column that is read, not used. */

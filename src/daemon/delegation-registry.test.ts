@@ -230,7 +230,7 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     live = r.registry;
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: '修一下 bump', header });
     // The name it gave the topic comes back with it: the card cannot read it off `channels` yet.
-    expect(opened).toEqual({ key: 'web#main#new1', address: { channel: 'main', thread: 'new1' }, title: '修一下 bump' });
+    expect(opened).toEqual({ key: 'web#main#new1', address: { channel: 'main', thread: 'new1' }, title: '[oc] 修一下 bump' });
     expect(r.nested).toEqual([{ name: expect.stringContaining('修一下 bump'), under: 'main/aaaaaaaa' }]);
     await wait();
     expect(r.registry.boundAgentOf(opened.key)).toBe('oc');
@@ -244,8 +244,14 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     const r = rig();
     live = r.registry;
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'anything', header, title: '删掉 agy 旧运行时' });
-    expect(opened.title).toBe('删掉 agy 旧运行时');
+    expect(opened.title).toBe('[oc] 删掉 agy 旧运行时');
     expect(r.nested).toEqual([{ name: '[oc] 删掉 agy 旧运行时', under: 'main/aaaaaaaa' }]);
+
+    // The lane title, not the raw request: formatLaneTitle collapses whitespace and drops leading
+    // bracketed groups, and the card has to say what the topic actually says — a `--title` with a
+    // newline would otherwise split its row in two.
+    const odd = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'x', header, title: 'a\nb' });
+    expect(odd.title).toBe('[oc] a b');
   });
 
   it('openTask applies an explicit model before the first turn, and keeps it for the topic', async () => {
