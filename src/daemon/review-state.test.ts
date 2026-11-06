@@ -2,7 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, REVIEW_RETRY_MS, ReviewStateStore } from './review-state.js';
+import {
+  REVIEW_CAPACITY_MAX_ATTEMPTS,
+  REVIEW_CAPACITY_RETRY_MS,
+  REVIEW_RETRY_MS,
+  ReviewStateStore,
+  preferenceKey,
+} from './review-state.js';
 
 let dir: string;
 let file: string;
@@ -176,5 +182,30 @@ describe('ReviewStateStore', () => {
     fs.writeFileSync(file, '{not json');
     expect(store().markOf('a')).toBeUndefined();
     expect(logs.some((l) => l.includes('could not read'))).toBe(true);
+  });
+});
+
+describe('dismissed preference suggestions', () => {
+  it('names one suggestion the same however it is spaced or ended', () => {
+    expect(preferenceKey('代码只推送到自建 Gitea。')).toBe(preferenceKey('代码只推送到自建Gitea'));
+    expect(preferenceKey('回答先给结论')).not.toBe(preferenceKey('回答先说结论'));
+  });
+
+  it('keeps dismissals beside the watermarks, and neither write loses the other', () => {
+    const s = store();
+    s.reviewed('a', 42, T0);
+    s.dismissPreference('回答先给结论。');
+    s.failed('b', 'agy exited 1', T0);
+    const again = store();
+    expect([...again.dismissedPreferences()]).toEqual(['回答先给结论']);
+    expect(again.markOf('a')?.messageId).toBe(42);
+    expect(again.markOf('b')?.error).toBe('agy exited 1');
+  });
+
+  it('honours a dismissal it could not write, for this process', () => {
+    fs.mkdirSync(file);
+    const s = store();
+    s.dismissPreference('回答先给结论');
+    expect(s.dismissedPreferences().has('回答先给结论')).toBe(true);
   });
 });

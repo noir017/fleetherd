@@ -1798,10 +1798,13 @@ export class Daemon {
     const history = this.history;
     const reviews = this.reviews;
     if (!history || !reviews) return undefined;
+    const state = this.reviewState;
     return buildReviewPanel({
       history,
       instance,
       enabled: () => reviews.enabled(),
+      dismissed: () => state?.dismissedPreferences() ?? new Set<string>(),
+      dismiss: (text) => state?.dismissPreference(text),
     });
   }
 

@@ -238,6 +238,13 @@ export type ModelChooseRequest = z.infer<typeof ModelChooseRequestSchema>;
 export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;
 
 /**
+ * The Reviews tab's one write: dismiss a preference suggestion from the pending list. The text is
+ * the suggestion as the list showed it; the store matches it by its normalised form.
+ */
+export const ReviewOpRequestSchema = z.object({ action: z.literal('dismiss'), text: z.string().min(1).max(2000) }).strict();
+export type ReviewOpRequest = z.infer<typeof ReviewOpRequestSchema>;
+
+/**
  * Validate one inbound body against a schema.
  *
  * Returns a result rather than throwing, and names the offending path, so the server answers
