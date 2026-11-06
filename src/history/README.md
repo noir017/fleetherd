@@ -49,7 +49,11 @@ library from reaching into the conversation registry.
   on rows imported or written before they existed; a NULL turn reads as "unknown", never as a
   guessed turn.
 - `messages_fts` — FTS5 over `tokenize.indexText(text)`, rowid = `messages.id`, `unicode61`.
-- `imported` — one row per web UI transcript file already folded in. This is what makes the
+- `imported` — one row per web UI transcript file already folded in (with how many rows it
+  took). `importSession` takes nothing of a conversation the library already has: the import
+  runs at startup before anything is recorded, so such a conversation was recorded live, and
+  until 2026-11-06 every topic opened after the library existed came back as a second copy at the
+  next restart (94 conversations, 10,087 rows on the live gateway). This is what makes the
   import idempotent; the transcript files themselves are rewritten every few seconds and must
   not be re-read into duplicate rows.
 - `reviews` — one row per automatic review, keyed by its `review` session, holding what the
@@ -190,7 +194,8 @@ mixed). `record.test.ts` pins a tool row's text. `store.test.ts` pins search in 
 truncation notes, one row per call and the `call` migration, folding in every read shape, the
 review window's order and its skill calls, the turns table (old-file migration, every trigger and
 outcome, `restart` on reopen, turn selection), list, `0600`, and a write that fails without
-throwing. `import-webui.test.ts` pins the roles, tool lines, kinds and idempotency.
+throwing. `import-webui.test.ts` pins the roles, tool lines, kinds, idempotency, and that a topic
+recorded live is not imported again.
 `daemon/history-record.test.ts` pins what a turn records — including background output as its own
 turn and the generation after `/new` — and that a library which throws on every write still
 answers. `daemon/turn-trigger.test.ts` pins which sender becomes which trigger.

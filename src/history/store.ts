@@ -643,38 +643,50 @@ export class HistoryStore {
    * idempotent even though the transcript files are rewritten every few seconds.
    *
    * One transaction per transcript: a process that dies halfway leaves no half-imported
-   * topic, and the next start does it again.
+   * topic, and the next start does it again. Answers how many rows it took, which is fewer than
+   * it was given when the conversation was already being recorded (see below).
    */
   importSession(
     source: string,
     meta: HistorySessionMeta,
     messages: HistoryMessage[]
-  ): 'imported' | 'skipped' {
+  ): { status: 'imported' | 'skipped'; messages: number } {
     const db = this.db;
-    if (!db) return 'skipped';
+    const skipped = { status: 'skipped' as const, messages: 0 };
+    if (!db) return skipped;
     try {
       const done = db.prepare('SELECT 1 AS yes FROM imported WHERE source = ?').get(source);
-      if (done) return 'skipped';
+      if (done) return skipped;
+      // A conversation the library already has is the live recorder's, and its transcript repeats
+      // it. The import runs at startup, before anything is recorded, so on the first start with a
+      // library no topic is here yet and every transcript is taken whole; on any later start, a
+      // transcript not yet taken belongs to a topic opened since — recorded live from its first
+      // message. Until 2026-11-06 it was taken anyway: 94 conversations on the live gateway held a
+      // second copy of themselves (10,087 rows), which doubled search hits and the messages a
+      // review counted. Cutting at the first live row's time is not enough: the web UI stamps a
+      // message when it arrives, the recorder when its turn starts, so the prompt still doubled.
+      const take = this.findSession(meta.key) ? [] : messages;
       db.exec('BEGIN');
       try {
-        const id = this.upsertSession(meta);
-        for (const msg of messages) this.insertMessage(id, msg);
+        const id = take.length > 0 ? this.upsertSession(meta) : this.findSession(meta.key)?.id;
+        for (const msg of take) this.insertMessage(id!, msg);
+        // Recorded even when nothing was taken, so the file is not compared again on every start.
         db.prepare('INSERT INTO imported (source, at, session_id, messages) VALUES (?, ?, ?, ?)').run(
           source,
           Date.now(),
-          id,
-          messages.length
+          id ?? 0,
+          take.length
         );
         db.exec('COMMIT');
         this.lockDown();
-        return 'imported';
+        return take.length > 0 ? { status: 'imported', messages: take.length } : skipped;
       } catch (e) {
         db.exec('ROLLBACK');
         throw e;
       }
     } catch (e) {
       this.log(`[history] could not import ${source}: ${e instanceof Error ? e.message : e}`);
-      return 'skipped';
+      return skipped;
     }
   }
 

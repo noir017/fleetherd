@@ -24,6 +24,13 @@ All notable changes to this project are documented here. The format is based on
   ending with the arguments the call ran with — a heredoc, an edit, a written file's content (up to
   100k characters). The output is still not kept.
 
+- **A restart no longer imports a web UI topic the library already recorded.** The one-time import
+  of the web UI's transcripts took any transcript it had not taken yet, and a topic opened after the
+  library existed was one of those at the next restart: its whole conversation came back as a
+  second copy. On the live gateway 94 conversations held one (10,087 rows), which doubled search
+  hits and the messages a review counted. The import now takes nothing of a conversation the
+  library already has. Copies already written stay where they are.
+
 ### Changed
 
 - **`sessions search` leaves tool calls out unless `--tools` asks, and `sessions read` folds

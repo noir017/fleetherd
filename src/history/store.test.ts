@@ -188,8 +188,8 @@ describe('HistoryStore', () => {
     const at = Date.UTC(2026, 10, 4, 9, 0);
     const meta = { key: 'webui#main#12345678', platform: 'webui', title: 't', kind: 'normal' as const, at };
     const messages = [{ ts: at, role: 'user' as const, kind: 'normal' as const, text: '导入一次' }];
-    expect(store.importSession('webui-transcripts-webui/12345678.json', meta, messages)).toBe('imported');
-    expect(store.importSession('webui-transcripts-webui/12345678.json', meta, messages)).toBe('skipped');
+    expect(store.importSession('webui-transcripts-webui/12345678.json', meta, messages).status).toBe('imported');
+    expect(store.importSession('webui-transcripts-webui/12345678.json', meta, messages).status).toBe('skipped');
     expect(store.list({ days: 30 })[0]!.messages).toBe(1);
     store.close();
   });

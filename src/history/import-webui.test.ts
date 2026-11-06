@@ -172,6 +172,33 @@ describe('importWebuiTranscripts', () => {
     store.close();
   });
 
+  it('takes nothing of a topic the library already recorded live', () => {
+    // The duplicate this guards against was on the live gateway: every topic opened after the
+    // library existed was imported again at the next restart, a second copy of every row.
+    const dir = tempDir();
+    const at = Date.now() - 60_000;
+    fs.mkdirSync(path.join(dir, 'webui-transcripts-webui'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'webui-transcripts-webui', 'abcdef12.json'),
+      JSON.stringify([
+        kept(at, '帮我实现跨会话查询', { own: true }),
+        kept(at + 1, '🔧 Bash: "git status" ✓ 1.2s', { kind: 'tools' }),
+        kept(at + 2, '查询做完了，测试全过。'),
+      ])
+    );
+    const store = new HistoryStore(path.join(dir, 'history.db'));
+    const id = store.session({ key: 'webui#main#abcdef12', platform: 'webui', at })!;
+    store.message(id, { ts: at + 1, role: 'tool', kind: 'normal', text: 'Bash: git status' });
+    store.message(id, { ts: at + 2, role: 'agent', kind: 'normal', text: '查询做完了，测试全过。' });
+
+    // The prompt is older than the first live row — the web UI stamps it on arrival, the recorder
+    // when the turn starts — and is still not taken: the live recorder wrote it too.
+    expect(importWebuiTranscripts(dir, store)).toMatchObject({ files: 1, imported: 0, skipped: 1 });
+    expect(store.sessionOf('webui#main#abcdef12')?.messages).toBe(2);
+    expect(store.imported('webui-transcripts-webui/abcdef12.json')).toBe(true);
+    store.close();
+  });
+
   it('does nothing when there is no transcript directory', () => {
     const dir = tempDir();
     const store = new HistoryStore(path.join(dir, 'history.db'));

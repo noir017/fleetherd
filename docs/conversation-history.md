@@ -153,7 +153,10 @@ for.
 The web UI has kept each topic's transcript on disk since 2.13.0
 ([Web UI](web-ui.md#what-to-expect)). On the first start with a library, those
 transcripts are folded in, with their topic titles, so the history does not begin empty. The
-import records each file once; a restart does not duplicate anything. Conversations on Telegram,
+import records each file once, and takes nothing of a topic the library already recorded as it
+happened, so a restart does not duplicate anything. (Before 2026-11-06 it did: a topic opened
+after the library existed was imported again at the next restart, and those copies are still in
+a library that ran then.) Conversations on Telegram,
 Discord, Slack and the rest cannot be read back from those platforms, so for them the library
 begins the day it is turned on.
 
