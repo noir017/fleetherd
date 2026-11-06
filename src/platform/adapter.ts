@@ -601,7 +601,13 @@ export interface PlatformAdapter {
    */
   hasThread?(address: ConversationAddress): boolean;
 
-  /** Send a message with buttons (used by clarify). */
+  /**
+   * Send a message with buttons (used by clarify).
+   *
+   * `opts.kind` means the same thing it does on `sendMessage`, and is given on the SEND only: the
+   * web UI uses it for the sub-agent confirmation card, which is a dispatch. Every other
+   * implementation ignores the parameter, and may leave it off its signature.
+   */
   sendButtons(
     address: ConversationAddress,
     text: string,
@@ -610,7 +616,8 @@ export interface PlatformAdapter {
      * The same menu as a structured screen, for a platform declaring `settingsScreen` (the web
      * UI). Every other implementation ignores it: its buttons already are the whole screen.
      */
-    screen?: SettingsScreen
+    screen?: SettingsScreen,
+    opts?: SendOptions
   ): Promise<MessageRef>;
 
   /**
@@ -658,9 +665,21 @@ export interface PlatformAdapter {
  *   line per tool call, edited in place as they finish. The web UI draws each line folded to one
  *   row and lets the reader open it, which is only possible if it knows the lines are tool lines
  *   and not prose — by the time it reaches an adapter, a bubble is otherwise just text.
+ * - `dispatch` — work handed to a sub-agent (`daemon/delegation.ts`): the confirmation card and
+ *   the "started" card in the parent topic, and the task text a sub-agent's topic is handed
+ *   (whose first message opens with `↳ From …`). The web UI marks these so a hand-off does not
+ *   read as an ordinary reply.
+ * - `report` — a `[sub-agent updates]` card: what the sub-agents did, shown to the parent. The
+ *   web UI keeps its lines folded the way it folds a tool bubble, and marks it apart from a
+ *   dispatch.
+ *
+ * Every other platform ignores this: a chat app shows the text as sent, so the distinction is
+ * the web UI's alone to draw.
  */
+export type MessageKind = 'tools' | 'dispatch' | 'report';
+
 export interface SendOptions {
-  kind?: 'tools';
+  kind?: MessageKind;
 }
 
 export interface PlatformCapabilities {

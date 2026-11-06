@@ -3956,7 +3956,10 @@ ${formatTokens(left)} left before compaction — ${name}`;
     if (!adapter) throw new Error(`platform instance "${platformId}" is not running`);
     const state = this.ensureState(key, platformId, agentId);
     if (this.draining && state.merger.isIdle()) throw new Error('the gateway is restarting; send it again in a minute');
-    const posted = await adapter.sendMessage(address, `${header}\n\n${text}`);
+    // Marked a dispatch: this is the `↳ From …` line (or a later task-send) a sub-agent's topic
+    // receives, and the web UI draws it apart from the agent's own replies. Every chat platform
+    // ignores the kind.
+    const posted = await adapter.sendMessage(address, `${header}\n\n${text}`, { kind: 'dispatch' });
     const busy = !state.merger.isIdle();
     const joins = !opts.queue && busy && this.turnRunner.canSteer(key);
     this.outcomes.personActed(key);

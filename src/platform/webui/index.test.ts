@@ -174,6 +174,31 @@ describe('webui adapter: outbound', () => {
     await expect(a.editButtons(ref, 'Pick one\n\nanswered', [])).resolves.toBeUndefined();
   });
 
+  it('marks a dispatch and a report, and renders a report one line per row so the page can fold it', async () => {
+    // What `delegation.ts` sends: the card and the task a sub-agent is handed are dispatches; its
+    // `[sub-agent updates]` card is a report. The mark has to survive the send, and a report's
+    // lines have to reach the page as rows — markdown would merge them into one paragraph and
+    // there would be nothing left to fold.
+    const a = adapter();
+    const address = await somewhere(a);
+    await a.sendMessage(address, '**↳ From [Parent](?t=aaaaaaaa)**\n\ndo the thing', { kind: 'dispatch' });
+    await a.sendMessage(address, '🔔 a (cc) — finished: done.', { kind: 'report' });
+    await a.sendButtons(address, 'wants to start a sub-agent', [{ id: 'ask:r:0', label: 'Start it' }], undefined, {
+      kind: 'dispatch',
+    });
+    await a.stop();
+
+    const at = path.join(dir, 'webui-transcripts-webui', `${address.thread ?? ''}.json`);
+    const written = JSON.parse(fs.readFileSync(at, 'utf8')) as Kept[];
+    expect(written.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch']);
+    // A dispatch is prose (the card, or the task text) and stays markdown; a report is rows.
+    expect(written[0]?.msg.html).not.toContain('class="tl"');
+    expect(written[1]?.msg.html).toContain('<div class="tools"><div class="tl">');
+    // And the transcript store carries the kinds across a restart, which is what a reload paints.
+    const restored = diskTranscriptStore(path.dirname(at)).load().get(address.thread ?? '') ?? [];
+    expect(restored.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch']);
+  });
+
   it('quotes the message a reply answers', async () => {
     const a = adapter();
     const address = await somewhere(a);
@@ -332,14 +357,24 @@ describe('webui adapter: where a topic keeps its transcript', () => {
   it('writes a topic to a file of its own that only the operator can read, and reads it back', () => {
     const at = path.join(dir, 'transcripts');
     const store = diskTranscriptStore(at);
-    store.save('a1b2c3d4', [kept('w1', { nonce: 'n1', kind: 'tools' }), kept('w2')]);
+    store.save('a1b2c3d4', [
+      kept('w1', { nonce: 'n1', kind: 'tools' }),
+      kept('w2'),
+      kept('w3', { kind: 'dispatch' }),
+      kept('w4', { kind: 'report' }),
+    ]);
 
     const file = path.join(at, 'a1b2c3d4.json');
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.statSync(at).mode & 0o777).toBe(0o700);
     // No temporary file left beside it: the write is a rename.
     expect(fs.readdirSync(at)).toEqual(['a1b2c3d4.json']);
-    expect(diskTranscriptStore(at).load().get('a1b2c3d4')).toEqual([kept('w1', { nonce: 'n1', kind: 'tools' }), kept('w2')]);
+    expect(diskTranscriptStore(at).load().get('a1b2c3d4')).toEqual([
+      kept('w1', { nonce: 'n1', kind: 'tools' }),
+      kept('w2'),
+      kept('w3', { kind: 'dispatch' }),
+      kept('w4', { kind: 'report' }),
+    ]);
 
     store.drop('a1b2c3d4');
     expect(fs.existsSync(file)).toBe(false);

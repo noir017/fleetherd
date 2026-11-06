@@ -635,6 +635,24 @@ Real-browser layout (a folded row is one line high, the ✓ stays inside it, an 
 instead of widening the transcript) was checked in Chromium at 1280 and 390 px against a live
 daemon on 2026-10-10; jsdom has no layout and cannot see any of it.
 
+## Sub-agent bubbles
+
+Two more kinds travel on `SendOptions` and are drawn as bubbles of their own, so a hand-off cannot
+be read as the agent's next reply:
+
+- **`dispatch`** — work handed to a sub-agent: the confirmation card (`daemon.ts` `askButtons` →
+  `sendButtons`), the started card, and the `↳ From …` task text a sub-agent's topic is handed
+  (`conversation.ts` `handTo`, which also covers every later `task-send`).
+- **`report`** — the `[sub-agent updates]` card (`delegation.ts` `tell`), which used to ride as
+  `tools` only to borrow its folding. It still folds: `webMessageHtml` (`room.ts`) is the one place
+  that decides "line-based or prose", for the send and for every later edit, so a report reaches
+  the page as one `.tl` per line exactly as a tool bubble does.
+
+The page puts `dispatch` / `report` on the message's class and a `.sub-k` tag above the body, and
+only a dispatch skips `foldLines` and the "Show all" control. The kind is stored on the message
+(`WebMessage.kind`), in the transcript file (`parseKept`), and on the page's cached copy — a reload
+and a restart redraw the same bubble. Every other platform ignores the field.
+
 ## Menus
 
 Every message with buttons — `/cd`, `/model`, `/agent`, an `ask` — is drawn by `menu()` in

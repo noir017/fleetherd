@@ -152,8 +152,9 @@ tell apart from the rest.
 of it and the operator's `tools.previewLimit`, so a platform declares one only if it can fold a long
 tool line itself — a chat app shows the text as sent, and there a short preview is the only thing
 keeping a run of tools one line each. It travels with the other half of that arrangement,
-`sendMessage`'s optional `SendOptions` (`kind: 'tools'` on a tool bubble's send), which every
-adapter but the web UI ignores. See the web UI's [Tool bubbles](webui/README.md#tool-bubbles).
+`sendMessage`'s optional `SendOptions` (`MessageKind`: `tools`, `dispatch`, `report`), which every
+adapter but the web UI ignores. See the web UI's [Tool bubbles](webui/README.md#tool-bubbles) and
+[Sub-agent bubbles](webui/README.md#sub-agent-bubbles).
 
 **`menuPageSize` is a declaration, not a preference.** It says how many items one page of
 a button menu (`/cd`, `/model`, `/setting`) may hold here, and the limits are nowhere near

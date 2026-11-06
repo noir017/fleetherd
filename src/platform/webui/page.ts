@@ -78,7 +78,7 @@ const STYLE = `
    as ragged. min-height rather than height because the panel's bar grows to 49px for a finger
    under 640px, and because a bar's own content can only make it taller, never shorter: whatever
    goes inside one has to fit this number. */
-:root{--bg:#131313;--fg:#dcdcdc;--dim:#7d7d7d;--line:#272727;--own:#1c222b;--own-edge:#3a5f86;--field:#1a1a1a;--headh:42px;color-scheme:dark}
+:root{--bg:#131313;--fg:#dcdcdc;--dim:#7d7d7d;--line:#272727;--own:#1c222b;--own-edge:#3a5f86;--field:#1a1a1a;--disp:#1a1622;--disp-edge:#8b6cc1;--rep:#14201a;--rep-edge:#3f8f6b;--headh:42px;color-scheme:dark}
 *{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#333 transparent}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -655,6 +655,17 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    any code block it carries are lifted a step. */
 .m.own .q{border-left-color:#3d4a5a;color:#8b96a3}
 .m.own .b pre,.m.own .b :not(pre)>code{background:#161b22;border-color:#2b3441}
+/* A bubble that is about a sub-agent rather than something the agent said to the reader: a task
+   handed to one (dispatch), and what one reported back (report). A rail and a tag, not a tint
+   alone — a tint is the first thing lost in a screenshot at phone width, and the tag also says
+   which of the two this is. Both colours are variables beside the rest, so a second palette
+   moves four values instead of this rule. Dispatch is violet (blue is already "mine", amber is
+   "waiting on you"); report is green, the colour a finished thing has everywhere else here. */
+.m.dispatch{background:var(--disp);border-left:3px solid var(--disp-edge);border-radius:0 6px 6px 0;padding:9px 12px}
+.m.report{background:var(--rep);border-left:3px solid var(--rep-edge);border-radius:0 6px 6px 0;padding:9px 12px}
+.sub-k{display:inline-block;margin:0 0 6px;padding:1px 8px;border:1px solid;border-radius:9px;font-size:10.5px;line-height:1.6;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
+.m.dispatch .sub-k{color:#cbb5ee;background:rgba(139,108,193,.16);border-color:rgba(139,108,193,.45)}
+.m.report .sub-k{color:#9ad6b3;background:rgba(63,143,107,.16);border-color:rgba(63,143,107,.45)}
 /* A message that is on screen because it was typed here, not because the daemon sent it back.
    Dimmed while the request is in flight; edged red and given something to do about it once the
    request has failed, since the text in it is the only copy left. */
@@ -2372,13 +2383,20 @@ const SCRIPT = `
       els[key]=el;
     }
     var hist = isHistory(m);
+    var kind = m.kind;
+    // A report is a line-based bubble like a tool one: fold it and offer the same control. A
+    // dispatch is prose (the card, or the task a sub-agent was handed), so it only takes the tag.
+    var folded = kind === 'tools' || kind === 'report';
     var cls = 'm' + (m.own ? ' own' : '') + (hist ? ' hist' : '')
+      + (kind === 'dispatch' ? ' dispatch' : kind === 'report' ? ' report' : '')
       + (m._local && m._state === 'sending' ? ' pending' : '')
       + (stuck(m) ? ' failed' : '');
     var h='';
-    var tools = m.kind === 'tools';
+    // The tag, not the text, is what makes the two kinds tell apart before the body is read.
+    if(kind === 'dispatch' || kind === 'report')
+      h += '<div class="sub-k">'+(kind === 'dispatch' ? 'Sub-agent task' : 'Sub-agent report')+'</div>';
     if(m.quote && m.quote.html) h += '<div class="q">'+m.quote.html+'</div>';
-    h += '<div class="b">'+(tools ? foldLines(key, m.html) : m.html)+'</div>';
+    h += '<div class="b">'+(folded ? foldLines(key, m.html) : m.html)+'</div>';
     if(m.file){
       // An image is drawn, not just named — a screenshot the agent took is about to be looked
       // at, and a round trip through the downloads folder to do that is the friction this
@@ -2401,7 +2419,7 @@ const SCRIPT = `
     if(!hist && m.buttons && m.buttons.length) h += menu(m);
     if(stuck(m)) h += failedActions(m);
     var meta = clock(m.at) + (m.reactions && m.reactions.length ? '  '+m.reactions.join(' ') : '');
-    h += '<div class="t">'+text(meta)+(tools ? allToggle(key) : '')+'</div>';
+    h += '<div class="t">'+text(meta)+(folded ? allToggle(key) : '')+'</div>';
     // Write nothing when nothing changed. A sync re-paints every message it carries, and most of
     // them are messages already on screen unchanged — rewriting innerHTML for those would drop
     // the caret out of a selection, restart any <img> decode, and undo the enabled state of a

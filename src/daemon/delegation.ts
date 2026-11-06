@@ -547,7 +547,7 @@ export class Delegation {
       ...(failed.length ? [`${opened.length ? '\n' : ''}Could not start ${failed.length}:`, ...failed] : []),
     ].join('\n');
     await here.adapter
-      .sendMessage(here.address, said)
+      .sendMessage(here.address, said, { kind: 'dispatch' })
       .catch((e) => console.warn('[delegation] could not say which sub-agents started:', e instanceof Error ? e.message : e));
     if (failed.length) this.tell(here, [`[sub-agent updates] ${failed.length} of ${total} could not be started:`, ...failed], [], failed.length);
   }
@@ -576,7 +576,7 @@ export class Delegation {
     const here = this.place(key);
     if (!s || !here) return;
     void here.adapter
-      .sendMessage(here.address, this.startedCardText(here, s.opened, s.failed))
+      .sendMessage(here.address, this.startedCardText(here, s.opened, s.failed), { kind: 'dispatch' })
       .catch((e) => console.warn('[delegation] could not post the started card:', e instanceof Error ? e.message : e));
   }
 
@@ -1008,7 +1008,7 @@ export class Delegation {
     if (!agentId || !findAgent(this.deps.config, agentId)) return;
     if (shown.length) {
       void here.adapter
-        .sendMessage(here.address, shown.join('\n'), { kind: 'tools' })
+        .sendMessage(here.address, shown.join('\n'), { kind: 'report' })
         .catch((e) => console.warn('[delegation] could not show a sub-agent update:', e instanceof Error ? e.message : e));
     }
     void this.deps.registry

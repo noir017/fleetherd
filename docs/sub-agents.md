@@ -82,6 +82,9 @@ input mid-turn; elsewhere it waits for the turn to end, and the agent is told wh
 - Web UI only: the topics have to be nested somewhere you can see them. `/super` is in the web UI's
   command list and nowhere else's; typed on another platform it is answered with that, and no turn
   runs.
+- In the web UI, a card about sub-agents and the task text a sub-agent's topic receives carry a
+  **Sub-agent task** tag, and the 🔔 update card a **Sub-agent report** tag. The text itself is
+  unchanged, and every other platform shows it as sent.
 - Any agent can propose sub-agents when you ask it to split work, without `/super`, and any
   configured agent can be one. The card waits for your tap by default.
 - `/setting delegation off` (or `delegation.confirm: false`) starts each sub-task as the agent
