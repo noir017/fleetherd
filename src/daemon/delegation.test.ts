@@ -648,6 +648,67 @@ describe('Delegation: confirming each agent only the first time', () => {
     expect(r.cards).toHaveLength(2);
   });
 
+  it('does not record an agent when a superseded card answers Start after a newer card replaced it', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    const releases: Array<(v: string | null) => void> = [];
+    // The signal is deliberately ignored: this is the card whose answer arrives late, after a newer
+    // card has already taken its place.
+    const d = new Delegation({
+      ...(r.d as unknown as { deps: DelegationDeps }).deps,
+      confirm: ({ text, labels, signal }) => {
+        r.cards.push({ text, labels, signal });
+        return new Promise((res) => {
+          releases.push(res);
+        });
+      },
+    });
+    await d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(1);
+
+    // A second proposal re-renders the card and aborts the first; its Start has not come back yet.
+    await d.handle(P, task('cx', 'second'));
+    await settle();
+    expect(r.cards.map((c) => c.signal.aborted)).toEqual([true, false]);
+
+    releases[0]!('Start it');
+    await settle();
+    await settle();
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+
+    // The newer card is cancelled, so cc is still unconfirmed and the next proposal asks again. If
+    // the late Start had been taken, cc would have started at once and no third card would appear.
+    releases[1]!('Cancel');
+    await settle();
+    await d.handle(P, task('cc', 'third'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(3);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+  });
+
+  it('still counts an agent whose first sub-task failed to start as confirmed', async () => {
+    const r = rig({ failOpen: 'cx' });
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cx', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.cards).toHaveLength(1);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+
+    // The person tapped Start; the directory being wrong does not un-tap it.
+    const res = (await r.d.handle(P, task('cx', 'second'))) as TaskNewResult;
+    expect(r.cards).toHaveLength(1);
+    expect(res.result).toContain('Could not start');
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.posted.some((p) => p.text.includes('could not start the sub-agent'))).toBe(true);
+  });
+
   it('forgets what was confirmed when the gateway restarts', async () => {
     const r = rig();
     r.deps.config.delegation.confirm = 'first';

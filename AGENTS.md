@@ -245,10 +245,10 @@ Do not weaken these without saying so explicitly in the PR:
    says can start one. `'first'`: only an agent's first sub-task in a conversation waits on that
    card; once the person has tapped Start on a card containing it, later `task-new` calls for that
    agent in that conversation start at once and post the record card. That memory is in-process and
-   per conversation — a restart or another conversation asks again. `false`: every sub-task starts
-   at once, and a card listing every one and its topic is still posted afterwards, without buttons —
-   but the agent may now spend the operator's machines and money without being asked. All three
-   reach only conversations the person talks to directly: a sub-agent's own topic (one with a
+   per conversation — a restart or another conversation asks again, and changing the tier clears the
+   record. `false`: every sub-task starts at once, and a card listing every one and its topic is
+   still posted afterwards, without buttons — but the agent may now spend the operator's machines
+   and money without being asked. All three reach only conversations the person talks to directly: a sub-agent's own topic (one with a
    parent) still puts up the card, so an agent cannot chain more agents without a tap. Only a person
    can change it: `/setting delegation` or `delegation.confirm: true | 'first' | false` in
    config.yaml; no reverse command reaches it. That is an interface boundary, not code enforcement:

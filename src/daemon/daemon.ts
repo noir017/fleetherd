@@ -1665,6 +1665,9 @@ export class Daemon {
     this.registry.warmRemoteScans();
 
     if (diff.sections.includes('session')) this.registry.idleTimeoutChanged();
+    // A tier change voids what Delegation remembered. This is the `/reload` half: a change away and
+    // back across two reloads, with no `task-new` in between, is invisible to a read at propose time.
+    if (diff.sections.includes('delegation')) this.delegation.forgetConfirmations();
     const respawn = this.registry.respawnAgents(new Set([...diff.agentsChanged, ...diff.agentsRemoved]));
     // Only when the set changed: re-registering is a platform API call per instance, and Telegram
     // and Discord rate-limit it.

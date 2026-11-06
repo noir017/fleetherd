@@ -12,9 +12,9 @@ All notable changes to this project are documented here. The format is based on
   in a conversation still waits for Start on the card; once that card has been confirmed, later
   sub-tasks for that agent there start at once and post the record card, and a batch that mixes
   confirmed and new agents starts the former while putting only the latter on the card. The memory
-  is the daemon's process, per conversation: a restart, another conversation, or a change of tier
-  asks again, and a sub-agent's own topic still asks every time whatever the tier. `on` and `off`
-  keep their meaning, including in existing config files. [→](docs/sub-agents.md)
+  lives in the daemon's process, per conversation: a restart, another conversation, or a change of
+  tier asks again, and a sub-agent's own topic still asks every time whatever the tier. `on` and
+  `off` keep their meaning, including in existing config files. [→](docs/sub-agents.md)
 
 ## [2.38.1] - 2026-11-06
 
