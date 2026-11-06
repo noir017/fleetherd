@@ -23,8 +23,8 @@ directly.
 - Two sub-agents in the same checkout edit the same working tree. Give parts in one repository
   disjoint files, or tell each to work in a `git worktree` of its own.
 - A part that changes code needs a review before you call it done. Propose it once the change is
-  in: a sub-agent of its own, the same checkout, told to read the diff and run the tests. You read
-  the verdict, not the diff.
+  in: a sub-agent of its own, the same checkout, told to read the diff and run the tests that cover
+  it. You read the verdict, not the diff.
 
 ## 2. Propose
 
@@ -44,6 +44,8 @@ directly.
 - The text is everything the sub-agent will see — it has not read this conversation. Give it the
   goal, the constraints, and how it will know it is done (a test that passes, a command whose
   output changes). Not the steps: it will read the code and choose them.
+- Ask for the tests that cover the change, not the whole suite: that runs once, before merging.
+  Run by every part and every review, it is most of the wait.
 - Ask for the reply you will read: the conclusion first, then the evidence, under 2,000 characters.
   Say it in the text — the sub-agent gets nothing else. A review part also gets what to check and
   that its verdict comes first.
@@ -64,6 +66,8 @@ Updates arrive as messages beginning `[sub-agent updates]`, with how many are st
 - **Finished**: read its reply — the conclusion and the evidence it names. If it changed code,
   propose its review now, with `task-new`; do not read the diff or run the tests yourself. If it is
   wrong or incomplete, `talkcode task-send <topic> "<what to fix>"`.
+- **A fix after a review** goes back to the same reviewer, for the fix alone. Skip that second
+  look when the fix is small and comes with a test that fails without it.
 - **A question about what your task meant**: answer it with `task-send`.
 - **The person wrote to it directly** (the entry quotes them first): that part now goes their way.
   Do not undo it or answer its questions for them; if it changes the rest of the job, say so in one

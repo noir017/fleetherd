@@ -27,7 +27,8 @@ in parallel, and come back with one report — so you follow one topic instead o
    without you. With confirmation on, to change something, write what instead of tapping, and it
    proposes again; the new card replaces the old one. A part that changes code is reviewed before
    it counts as done: once its change is in, the agent proposes a review part — another agent, the
-   same checkout, told to read the diff and run the tests.
+   same checkout, told to read the diff and run the tests that cover it. The whole suite runs once,
+   before merging, not in every part and every review.
 3. Each part gets a topic of its own, nested under this one, and they all run at once. The first
    message in each says which topic it came from.
 4. When a sub-agent finishes, fails or asks something, the agent that started it is told. A folded

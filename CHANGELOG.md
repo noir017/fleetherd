@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **`/super` asks for the tests that cover a change, not the whole suite.** Every part and every
+  review ran the full suite again, and on a busy machine that was most of the wait: two small
+  changes with one review round each ran it twelve times in an hour and a half. The `super` skill
+  now asks parts and reviews for the tests that cover what changed, leaves the whole suite to one
+  run before merging, and sends a fix after a review back to the same reviewer for the fix alone —
+  or skips that second look when the fix is small and comes with a test that fails without it.
+
 ## [2.44.0] - 2026-11-06
 
 ### Changed
