@@ -28,6 +28,11 @@ import path from 'node:path';
  *
  * The file is 0600 like everything else beside it. A missing or unreadable file degrades to empty
  * — the cost is one repeated review, never a daemon that will not start.
+ *
+ * It also keeps the preference suggestions the person dismissed from the Reviews tab's pending
+ * list (`dismissedPreferences`, normalised by preferenceKey), so one taken care of — added to the
+ * instructions, or not wanted — does not come back on the next refresh. That is the file's only
+ * write that a person makes, and it touches nothing a review or an agent reads.
  */
 
 export interface ReviewMark {
@@ -65,6 +70,21 @@ export interface ReviewMark {
 interface ReviewFile {
   version: 1;
   conversations: Record<string, ReviewMark>;
+  /** Dismissed preference suggestions, by preferenceKey. Absent in files from before the list. */
+  dismissedPreferences?: string[];
+}
+
+/** How many dismissals the file keeps. The oldest go first; a suggestion that comes back is rare. */
+const DISMISSED_MAX = 1_000;
+
+/**
+ * One suggestion's identity: no whitespace at all, no trailing punctuation. A model spaces Chinese
+ * next to Latin inconsistently (`自建 Gitea` / `自建Gitea`), so spacing cannot tell two
+ * suggestions apart; wording can, and rewording a rule is a different suggestion — which the
+ * reviewer is given the standing instructions to avoid.
+ */
+export function preferenceKey(text: string): string {
+  return text.replace(/\s+/g, '').replace(/[。．.;；!！,，]+$/u, '');
 }
 
 /** How long a failed review waits before the same conversation is tried again. */
@@ -103,6 +123,8 @@ export interface ReviewFailure {
 export class ReviewStateStore {
   /** Marks whose write failed; `markOf` prefers them over what is still on disk. */
   private readonly unpersisted = new Map<string, ReviewMark>();
+  /** Dismissals whose write failed, honoured for this process like an unpersisted mark. */
+  private readonly unpersistedDismissals = new Set<string>();
 
   constructor(
     private readonly file: string,
@@ -166,6 +188,23 @@ export class ReviewStateStore {
     });
   }
 
+  /** Every dismissed suggestion, by preferenceKey. */
+  dismissedPreferences(): ReadonlySet<string> {
+    return new Set([...(this.read().dismissedPreferences ?? []), ...this.unpersistedDismissals]);
+  }
+
+  /** Take one suggestion off the pending list for good. */
+  dismissPreference(text: string): void {
+    const key = preferenceKey(text);
+    if (!key) return;
+    const data = this.read();
+    const list = (data.dismissedPreferences ?? []).filter((k) => k !== key);
+    list.push(key);
+    data.dismissedPreferences = list.slice(-DISMISSED_MAX);
+    if (this.write(data)) this.unpersistedDismissals.delete(key);
+    else this.unpersistedDismissals.add(key);
+  }
+
   /** Whether a failure's back-off has passed. */
   ready(key: string, now = Date.now()): boolean {
     const retryAt = this.markOf(key)?.retryAt;
@@ -190,7 +229,10 @@ export class ReviewStateStore {
         this.log(`[review] ${this.file} is not a version-1 review file; starting its records over`);
         return empty();
       }
-      return { version: 1, conversations: parsed.conversations };
+      const dismissed = Array.isArray(parsed.dismissedPreferences)
+        ? parsed.dismissedPreferences.filter((k): k is string => typeof k === 'string')
+        : undefined;
+      return { version: 1, conversations: parsed.conversations, ...(dismissed ? { dismissedPreferences: dismissed } : {}) };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
         this.log(`[review] could not read ${this.file}: ${e instanceof Error ? e.message : e}`);

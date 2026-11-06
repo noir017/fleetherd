@@ -10,7 +10,15 @@ import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { AGY_COMMAND } from './agy-cli.js';
 import type { ReviewFacts } from './conversation.js';
 import { remoteHosts } from './remote-hosts.js';
-import { buildReviewPrompt, parseReviewOutput, usedSkillNames, type PromptSkill, type PromptSkillText, type ReviewChange } from './review-prompt.js';
+import {
+  buildReviewPrompt,
+  parseReviewOutput,
+  usedSkillNames,
+  writtenSkillFiles,
+  type PromptSkill,
+  type PromptSkillText,
+  type ReviewChange,
+} from './review-prompt.js';
 import { classifyReview, recordedChange, undoOf, type AppliedChange } from './review-result.js';
 import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, type ReviewStateStore } from './review-state.js';
 import {
@@ -238,6 +246,8 @@ export interface ReviewDeps {
    * once. Absent in a test, where they simply run.
    */
   writeSkills?: <T>(fn: () => T) => Promise<T>;
+  /** What every agent is told (`instructions/common.md`), read per review; see PromptInput.standing. */
+  standing?: () => string | undefined;
   run?: ReviewRunner;
   log?: (message: string) => void;
 }
@@ -489,8 +499,12 @@ export class ReviewService {
     const catalog = listSkills(dir)
       .filter((s) => s.status !== 'archived')
       .map((s): PromptSkill => ({ name: s.name, version: s.version, description: s.description }));
+    // The calls are not in the conversation the reviewer reads (see HistoryStore.reviewWindow);
+    // the ones that touched a skill are what says which skills were used and which were written.
+    const calls = plan.window.skillCalls;
+    const signals = [...calls.map((text) => ({ role: 'tool', text })), ...plan.window.messages];
     const used: PromptSkillText[] = [];
-    for (const name of usedSkillNames(plan.window.messages, new Set(activeSkillNames(dir))).slice(0, MAX_USED_SKILLS)) {
+    for (const name of usedSkillNames(signals, new Set(activeSkillNames(dir))).slice(0, MAX_USED_SKILLS)) {
       try {
         used.push(this.usedSkill(name));
       } catch (e) {
@@ -505,7 +519,24 @@ export class ReviewService {
       dropped: plan.window.dropped,
       catalog,
       used,
+      written: writtenSkillFiles(calls),
+      ...this.standing(),
     });
+  }
+
+  /**
+   * The rules every agent is already given, for the prompt's preference check. Best-effort: a review
+   * without them only risks suggesting a preference the person already set, so an unreadable file
+   * is logged and the review goes on.
+   */
+  private standing(): { standing?: string } {
+    try {
+      const text = this.deps.standing?.();
+      return text ? { standing: text } : {};
+    } catch (e) {
+      this.log(`[review] could not read the standing instructions: ${e instanceof Error ? e.message : e}`);
+      return {};
+    }
   }
 
   /** One used skill in full: its `SKILL.md`, its version and the names of the files beside it. */

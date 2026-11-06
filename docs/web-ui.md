@@ -92,7 +92,9 @@ topics a new-session run opened; those topics are kept out of the main topic lis
 they live, and tapping one opens it (the × deletes it). **Reviews** lists the automatic reviews of
 quiet conversations (see [skills](skills.md#auto-review)): what each one changed, what the store
 refused and why, the preferences it noticed, and the command that undoes each change. A review that
-changed nothing posts no line anywhere else, so this tab is its only home.
+changed nothing posts no line anywhere else, so this tab is its only home. Above the reviews,
+**Suggested preferences** lists the preference suggestions still pending, merged across reviews,
+each with **Dismiss**.
 A run waiting on an answer puts an amber dot on the clock itself, on the Scheduled tab, and on the
 Sessions sub-tab, since it has no row in the topic list to show it.
 The panel is a column of its own on a wide screen. It is the same component as the topic sidebar

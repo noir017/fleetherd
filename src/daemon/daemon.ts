@@ -133,6 +133,7 @@ import { startSkillSweep } from './skill-lifecycle.js';
 import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
 import { ReviewStateStore } from './review-state.js';
 import { buildReviewPanel } from './review-panel.js';
+import { commonInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
   archiveSkill,
@@ -1027,6 +1028,7 @@ export class Daemon {
         candidates: () => this.reviewCandidates(),
         notify: (lane, text) => this.notifyReview(lane, text),
         writeSkills: (fn) => this.skillsRepo.write(fn),
+        standing: () => commonInstructions(),
       });
     }
     // Before anything can start an agent: an agent with `host:` reaches its machine through this.
@@ -1493,12 +1495,14 @@ export class Daemon {
   private handleSessionsQuery(action: SessionsQuery): unknown {
     switch (action.kind) {
       case 'sessions-search':
-        // Scheduled runs sort after ordinary conversations — see HistoryStore.search.
+        // Scheduled runs sort after ordinary conversations, and tool calls are left out unless
+        // asked for — see HistoryStore.search.
         return {
           hits: this.requireHistory().search(action.query, {
             agent: action.agent,
             days: action.days,
             limit: action.limit,
+            tools: action.tools,
           }),
         };
       case 'sessions-read':
@@ -1842,10 +1846,13 @@ export class Daemon {
     const history = this.history;
     const reviews = this.reviews;
     if (!history || !reviews) return undefined;
+    const state = this.reviewState;
     return buildReviewPanel({
       history,
       instance,
       enabled: () => reviews.enabled(),
+      dismissed: () => state?.dismissedPreferences() ?? new Set<string>(),
+      dismiss: (text) => state?.dismissPreference(text),
     });
   }
 

@@ -18,7 +18,15 @@ One row per fact, in the conversation it belongs to:
 - the prompt a turn gave the agent — an attachment is recorded by file name only, never by
   content;
 - the agent's reply, in full;
-- every tool call, as one line (`Bash: git status`, `Read: src/daemon/turn-runner.ts`).
+- every tool call, as one row: its line (`Bash: git status`, `Read: src/daemon/turn-runner.ts`)
+  and, under it, its whole arguments — a heredoc, an edit's replacement, a written file's content
+  (up to 100,000 characters; a longer one says how much was cut). What the tool printed back is
+  not kept: it is several times the size, and what the agent made of it is in its reply.
+
+A harness that streams a call's arguments sends the call several times while they arrive; the
+library keeps one row for it and rewrites that row, ending with the arguments the call ran with.
+Rows written before this (2026-11-06) may hold several copies of one call, each with the line
+only.
 
 Work that happens outside a normal exchange is recorded too, with its kind: a scheduled task's
 run (`schedule`), a sub-agent's topic or a `[sub-agent updates]` card (`subagent`), and output
@@ -59,8 +67,8 @@ Who owns which row:
 - a scheduled run is a turn of its own (`schedule`), even when it speaks into a normal topic;
 - a stopped turn keeps what it had written. The turn ran, and its partial reply is real.
 
-An existing `history.db` is migrated in place: the `turn` column is added and left empty on old
-rows, which read as turn `?`, outcome `unknown`. No turn is invented for them. Rows folded in
+An existing `history.db` is migrated in place: the `turn` and `call` columns are added and left
+empty on old rows, which read as turn `?`, outcome `unknown`. No turn is invented for them. Rows folded in
 from web UI transcripts have no turn either — the web UI wrote them, not a turn.
 
 ## Reading part of a conversation
@@ -92,9 +100,21 @@ talkcode sessions read '#12' --role tool --tail 20
 The filters combine (AND), except `--since` with the turn filters or `--tail`, which is refused
 rather than guessed at. A filtered read prints each row's turn number, that turn's outcome and
 the agent that ran it. `--around` cannot be combined with them: it selects a window of its own.
-Without any filter the output is exactly what it was before turns existed.
 
-Every read is bounded: 500 rows and 200,000 characters. A read that hits a bound says how many
+**Tool calls are folded.** A read that does not choose rows by `--role` or `--grep` turns each
+run of consecutive tool calls into one line, and a single call into its first line:
+
+```text
+[37 tool calls: Bash ×20, Edit ×12, Write ×5]
+```
+
+Tool calls are most of what a working conversation holds — 94% of the rows recorded on two days
+in November — so an unfolded read was a page of commands with the person's words somewhere in
+it. A run never spans two turns. `--role tool` lists the calls with their arguments, `--grep`
+shows a matching call whole, and an `--around` window is not folded; the note says when a read
+folded anything.
+
+Every read is bounded: 500 rows (folded rows count as one) and 200,000 characters. A read that hits a bound says how many
 rows it left out and which end it cut — a tail read (`--turn`, `--turns`, `--tail`) keeps the
 newest rows, an ordinary or `--since` read keeps the oldest.
 
@@ -102,13 +122,15 @@ newest rows, an ordinary or `--since` read keeps the oldest.
 
 ```bash
 talkcode sessions search 跨会话查询
-talkcode sessions search git status --agent cc --days 30 --limit 20
+talkcode sessions search 部署 --agent cc --days 30 --limit 20
+talkcode sessions search 'git push' --tools
 talkcode sessions read '#12' --around '#87' --window 10
 talkcode sessions list --days 7
 ```
 
 `search` answers with the conversation id, the message id, the date, the title, the agent, the
-platform and a matching excerpt. `read` takes the conversation id and prints it oldest first;
+platform and a matching excerpt. It searches what the person and the agents said; `--tools`
+searches the tool calls too, arguments included. `read` takes the conversation id and prints it oldest first;
 `--around <message>` shows a window of `--window` messages on each side (10 by default). `list`
 is the recently active conversations.
 
@@ -131,7 +153,10 @@ for.
 The web UI has kept each topic's transcript on disk since 2.13.0
 ([Web UI](web-ui.md#what-to-expect)). On the first start with a library, those
 transcripts are folded in, with their topic titles, so the history does not begin empty. The
-import records each file once; a restart does not duplicate anything. Conversations on Telegram,
+import records each file once, and takes nothing of a topic the library already recorded as it
+happened, so a restart does not duplicate anything. (Before 2026-11-06 it did: a topic opened
+after the library existed was imported again at the next restart, and those copies are still in
+a library that ran then.) Conversations on Telegram,
 Discord, Slack and the rest cannot be read back from those platforms, so for them the library
 begins the day it is turned on.
 

@@ -112,9 +112,8 @@ function importOne(
       at: first.ts,
       lastAt: last.ts,
     };
-    return store.importSession(source, meta, messages) === 'imported'
-      ? { status: 'imported', messages: messages.length }
-      : { status: 'skipped' };
+    const result = store.importSession(source, meta, messages);
+    return result.status === 'imported' ? { status: 'imported', messages: result.messages } : { status: 'skipped' };
   } catch (e) {
     log(`[history] could not import ${source}: ${e instanceof Error ? e.message : e}`);
     return { status: 'failed' };

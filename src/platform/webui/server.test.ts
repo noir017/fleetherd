@@ -1256,7 +1256,8 @@ describe('webui server: traffic', () => {
       invalid: [],
       topic: 'a1b2c3d4',
     };
-    const list = { enabled: true, running: true, reviews: [review] };
+    const pending = [{ text: 'answers lead with the conclusion', count: 2, at: Date.UTC(2026, 10, 5, 12, 0), from: [{ title: 'deploy' }] }];
+    const list = { enabled: true, running: true, reviews: [review], pending };
 
     it('lists what the daemon handed the room, and says when it offered none', async () => {
       const { base, room } = await boot();
@@ -1265,24 +1266,54 @@ describe('webui server: traffic', () => {
         enabled: false,
         running: false,
         reviews: [],
+        pending: [],
       });
 
-      room.useReviewPanel({ list: () => list });
+      room.useReviewPanel({ list: () => list, dismiss: () => list });
       const res = await fetch(`${base}/api/reviews`, { headers: { cookie } });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(list);
     });
 
-    it('has no write side: only a GET is routed', async () => {
+    it('has no write side beside dismissing a suggestion: a review cannot be started or changed', async () => {
       const { base, room } = await boot();
       const cookie = await signIn(base);
-      room.useReviewPanel({ list: () => list });
+      room.useReviewPanel({ list: () => list, dismiss: () => list });
       const res = await fetch(`${base}/api/reviews`, {
         method: 'POST',
         headers: { ...JSON_HEADERS, cookie },
         body: JSON.stringify({ action: 'run' }),
       });
       expect(res.status).toBe(404);
+      // The op route takes one verb and refuses every other.
+      const run = await fetch(`${base}/api/reviews/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'run' }),
+      });
+      expect(run.status).toBe(400);
+    });
+
+    it('dismisses a suggestion and answers with the fresh list', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const dismissed: string[] = [];
+      room.useReviewPanel({
+        list: () => list,
+        dismiss: (text) => {
+          dismissed.push(text);
+          return { ...list, pending: [] };
+        },
+      });
+      const res = await fetch(`${base}/api/reviews/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'dismiss', text: 'answers lead with the conclusion' }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ pending: [] });
+      expect(dismissed).toEqual(['answers lead with the conclusion']);
+      expect((await fetch(`${base}/api/reviews/op`, { method: 'POST', headers: JSON_HEADERS, body: '{}' })).status).toBe(401);
     });
 
     it('is behind the session like every other route', async () => {

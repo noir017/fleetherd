@@ -162,6 +162,34 @@ describe('a turn in the conversation library', () => {
     store.close();
   });
 
+  it('keeps one row per call, with the arguments the call ended with', async () => {
+    // CodeBuddy's shape (frames captured 2026-11-02): the call opens empty, the start is re-emitted
+    // as the parameters stream in, and the content can keep growing after the line stops changing.
+    const { store } = tempStore();
+    const h = rig(async (t) => {
+      t.onToolStart({ name: 'Write', inputPreview: '', input: {}, index: 0, id: 'call-w' });
+      t.onToolStart({ name: 'Write', inputPreview: '{"content":"---"}', input: { content: '---' }, index: 0, id: 'call-w' });
+      const half = { file_path: '/s/vlt/SKILL.md', content: '---\nname: vlt' };
+      t.onToolStart({ name: 'Write', inputPreview: '/s/vlt/SKILL.md', input: half, index: 0, id: 'call-w' });
+      const whole = { file_path: '/s/vlt/SKILL.md', content: '---\nname: vlt\n---\n正文' };
+      t.onToolFinish({ name: 'Write', ok: true, durationMs: 5, index: 0, id: 'call-w', input: whole });
+      // No id (a runtime that has none): each start is a row, as before.
+      t.onToolStart({ name: 'Bash', inputPreview: 'ls', index: 1 });
+      t.onToolFinish({ name: 'Bash', ok: true, durationMs: 1, index: 1 });
+      t.onText('写好了');
+    }, store);
+    h.reg.route(inbound('把 vlt 写成技能'));
+    await drain();
+
+    const session = String(store.list({ days: 30 })[0]!.id);
+    const tools = store.read(session, { role: 'tool' }).messages.map((m) => m.text);
+    expect(tools).toEqual([
+      'Write: /s/vlt/SKILL.md\n{"file_path":"/s/vlt/SKILL.md","content":"---\\nname: vlt\\n---\\n正文"}',
+      'Bash: ls',
+    ]);
+    store.close();
+  });
+
   it('records attachment names, never their contents', async () => {
     const { store } = tempStore();
     const h = rig(async (t) => void t.onText('收到'), store);

@@ -2829,6 +2829,8 @@ export interface TurnState {
  */
 interface ToolRec {
   index: number;
+  /** The harness's `toolCallId`, carried on both events so the library keeps one row per call. */
+  id: string;
   title?: string;
   kind?: string;
   rawInput?: unknown;
@@ -2987,7 +2989,7 @@ function ingestUsage(st: TurnState, used: unknown, size: unknown, cost: unknown)
 function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): void {
   let rec = st.toolLedger.get(id);
   if (!rec) {
-    rec = { index: st.toolIndexSeq++, startAt: nowMs(), started: false, finished: false };
+    rec = { index: st.toolIndexSeq++, id, startAt: nowMs(), started: false, finished: false };
     st.toolLedger.set(id, rec);
     st.agy?.tool();
   }
@@ -3107,6 +3109,7 @@ function toolStartEvent(st: TurnState, rec: ToolRec): ToolEvent {
       (rec.spawns && subagentDescription(rec)) || buildInputPreview(rec.rawInput) || stripCode(rec.title),
     input: rec.rawInput,
     index: rec.index,
+    id: rec.id,
     // The spawning call always precedes its subagent's first tool, so its name is known by now.
     agent: rec.parent ? (st.subagents?.get(rec.parent) ?? UNNAMED_SUBAGENT) : undefined,
   };
@@ -3147,6 +3150,8 @@ function finishTool(st: TurnState, id: string, ok: boolean): void {
   st.handlers.onToolFinish({
     name: rec.label ?? toolLabel(rec.kind, rec.title), // same name as onToolStart, so findLine's index fallback stays consistent
     index: rec.index,
+    id: rec.id,
+    input: rec.rawInput,
     ok,
     durationMs: nowMs() - rec.startAt,
   });

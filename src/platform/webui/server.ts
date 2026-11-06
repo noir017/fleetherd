@@ -63,6 +63,7 @@ import {
   ModelChooseRequestSchema,
   SeenRequestSchema,
   SkillOpRequestSchema,
+  ReviewOpRequestSchema,
   StarTopicRequestSchema,
   parseBody,
   type WebEvent,
@@ -335,6 +336,8 @@ const GUARDED: Route[] = [
   { method: 'GET', path: '/api/skills', run: skillsList },
   { method: 'POST', path: '/api/skills/op', run: skillsOp },
   { method: 'GET', path: '/api/reviews', run: reviewsList },
+  // Dismissing a preference suggestion — the Reviews tab's only write, to reviews.json alone.
+  { method: 'POST', path: '/api/reviews/op', run: reviewsOp },
   { method: 'DELETE', path: '/api/topics', run: deleteTopic },
   { method: 'POST', path: '/api/logout', run: logout },
   { method: 'GET', path: '/f/', prefix: true, run: ({ req, res, rest }, ctx) => download(req, res, ctx.room, rest) },
@@ -778,14 +781,23 @@ async function skillsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
 }
 
 /**
- * Every recorded automatic review, for the panel's Reviews tab.
+ * Every recorded automatic review, for the panel's Reviews tab, with the preference suggestions
+ * still pending.
  *
- * A GET and nothing else: a review is written by the sweep through the skill store's own rules,
- * and the only way to undo one is the `talkcode skills revert` / `archive` command the row names.
- * There is deliberately no POST beside this route — see `useReviewPanel`.
+ * A review is written by the sweep through the skill store's own rules, and the only way to undo
+ * one is the `talkcode skills revert` / `archive` command the row names. Nothing the page posts
+ * changes a review or a skill — see `useReviewPanel`.
  */
 function reviewsList({ req, res }: Req, ctx: Ctx): void {
   send(req, res, 200, ctx.room.reviews());
+}
+
+/** Dismiss one pending preference suggestion, answering with the fresh list. */
+async function reviewsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, ReviewOpRequestSchema);
+  if (!parsed) return;
+  const result = ctx.room.reviewOp(parsed);
+  send(req, res, result.ok ? 200 : 400, result.ok ? result.list : { error: result.error });
 }
 
 async function download(req: IncomingMessage, res: ServerResponse, room: WebRoom, token: string): Promise<void> {

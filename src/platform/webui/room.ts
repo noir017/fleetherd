@@ -78,7 +78,7 @@ import type {
 } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
-import type { ClickRequest, SendRequest, WebEvent, WebMessage } from './protocol.js';
+import type { ClickRequest, ReviewOpRequest, SendRequest, WebEvent, WebMessage } from './protocol.js';
 import type { TerminalSessions } from './terminal-sessions.js';
 import { MAX_TOPICS, TopicStore, type Topic } from './topics.js';
 
@@ -719,10 +719,12 @@ export class WebRoom {
   /**
    * Accept the daemon's automatic reviews, for the Reviews tab.
    *
-   * Read-only: the list is rebuilt from `history.db` on every request, and there is no operation
-   * here at all — a review is written by the sweep, through the skill store's own rules, and undoing
-   * one is the `talkcode skills revert` command the row names. A page that could trigger a review
-   * would be a second writer, which AGENTS.md invariant 8 does not allow.
+   * The list is rebuilt from `history.db` on every request. The one operation is dismissing a
+   * preference suggestion from the pending list, which writes `reviews.json` and nothing else. No
+   * operation here reaches a skill or starts a review — a review is written by the sweep, through
+   * the skill store's own rules, and undoing one is the `talkcode skills revert` command the row
+   * names. A page that could trigger a review would be a second writer, which AGENTS.md invariant 8
+   * does not allow.
    */
   useReviewPanel(panel: ReviewPanel): void {
     this.reviewPanel = panel;
@@ -730,8 +732,14 @@ export class WebRoom {
 
   /** Every recorded review. `enabled: false` when the daemon offered none. */
   reviews(): ReviewPanelList {
-    if (!this.reviewPanel) return { enabled: false, running: false, reviews: [] };
+    if (!this.reviewPanel) return { enabled: false, running: false, reviews: [], pending: [] };
     return this.reviewPanel.list();
+  }
+
+  /** Dismiss one pending preference suggestion, answering with the fresh list. */
+  reviewOp(op: ReviewOpRequest): { ok: true; list: ReviewPanelList } | { ok: false; error: string } {
+    if (!this.reviewPanel) return { ok: false, error: 'this daemon has no conversation library, so there are no reviews' };
+    return { ok: true, list: this.reviewPanel.dismiss(op.text) };
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */

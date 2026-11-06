@@ -501,15 +501,24 @@ it is not the ordinary `active`), the schedule, the next run and the target, and
 only when it did not end `ok`. The prompt or command, the run mode and the bookkeeping are behind a
 tap, so a column of tasks stays scannable.
 
-**Reviews** is the automatic review of quiet conversations (`daemon/review.ts`), and the one tab
-with no operation at all. A review that changed nothing posts no line in any chat, so this is the
-only place it can be read; the tab is therefore read-only by construction, and undoing a change is
-the `talkcode skills revert` / `archive` command the detail shows, not a button. A row is the
+**Reviews** is the automatic review of quiet conversations (`daemon/review.ts`). A review that
+changed nothing posts no line in any chat, so this is the only place it can be read. Nothing on the
+tab changes a review or a skill: undoing a change is the `talkcode skills revert` / `archive`
+command the detail shows, not a button. Its one write is **Dismiss** on the pending list described
+below, which touches `reviews.json` alone. A row is the
 reviewed topic, how long ago, and what happened (`changed`, `preferences`, `refused`, `proposed`,
 `nothing`, `failed`); opening it lists each change with its reason, whether the store applied it or
 refused it and why, the undo command, the preference suggestions, and — only while the topic is
 still in `topics` — a button that opens the reviewed topic. There is no quota line: the sweep has
 no daily limit, so the list is the whole story.
+
+Above the rows, **Suggested preferences** is `ReviewPanelList.pending`: every review's preference
+suggestions (the newest 200 reviews, not just the 50 rows shown), one entry per wording —
+`preferenceKey` in `daemon/review-state.ts` ignores spacing and trailing punctuation — with how
+many reviews made it and up to three conversations it came from, less the ones dismissed. A
+suggestion lived only inside its review before, so the same rule from three reviews was three rows
+to open. The block says nothing on it is in force: a suggestion only takes effect when the person
+has it added to their instructions.
 
 A review recorded before results were kept has only its raw answer in the library. `review-panel.ts`
 parses that with `parseReviewOutput`, marks the entry `inferred` and leaves every change's `applied`
@@ -525,9 +534,11 @@ timer while visible (5s while a run is in flight, 30s otherwise) — the daemon 
 run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
 arrives formatted in the task's own zone.
 
-Reviews travel the same way and on the same timer: `useReviewPanel` hands the room one `list()`,
-`daemon/review-panel.ts` builds it from `history.db` and `reviews.json`, and `GET api/reviews` is
-the only route — there is no POST, because a review has no writer but the sweep. The list is pulled
+Reviews travel the same way and on the same timer: `useReviewPanel` hands the room `list()` and
+`dismiss(text)`, `daemon/review-panel.ts` builds them from `history.db` and `reviews.json`, and the
+routes are `GET api/reviews` and `POST api/reviews/op` — the latter takes one verb,
+`{action:'dismiss', text}` (`ReviewOpRequestSchema`), and answers with the fresh list. There is no
+verb that starts, changes or undoes a review, because a review has no writer but the sweep. The list is pulled
 when the tab is selected and on the panel's timer while it is the visible one.
 
 **What it cannot do.** It does not create tasks. Creation is a sentence to an agent in a topic, and
@@ -1526,7 +1537,8 @@ drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom 
 it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review
 opened for its changes
 and undo command, the link back to a topic that exists and its absence when the topic is gone, the
-inferred old record, and all three empty states. The two side panels are driven as one component
+inferred old record, all three empty states, and the pending suggestions with a Dismiss that posts
+the suggestion and redraws from the answer. The two side panels are driven as one component
 there (`one panel component on both edges`):
 both close with the same ×, both go inert while shut, Escape puts away the right and then the
 left, each keeps its own width and clears it on a double-click, and the footer's two menus are

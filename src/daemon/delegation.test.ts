@@ -1087,7 +1087,10 @@ describe('Delegation: seeing what a sub-agent is doing', () => {
     seedTurn(
       r.history,
       'web#main#c1000000',
-      Array.from({ length: 12 }, (_, i) => ({ role: 'tool' as const, text: `Bash: step ${i}` }))
+      // Alternating, so no run of calls folds and twelve rows stay twelve.
+      Array.from({ length: 12 }, (_, i) =>
+        i % 2 === 0 ? { role: 'agent' as const, text: `step ${i}` } : { role: 'tool' as const, text: `Bash: step ${i}` }
+      )
     );
     const read = (await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', turn: 'last' })) as TaskReadResult;
     expect(read.messages).toHaveLength(12);

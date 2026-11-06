@@ -237,6 +237,13 @@ describe('sessions <action> [arg]', () => {
     });
   });
 
+  it('takes --tools for a search only', () => {
+    expect(sessions(['search', 'git', 'push'], { tools: true })).toMatchObject({ kind: 'sessions-search', tools: true });
+    expect(sessions(['search', 'git'])).not.toHaveProperty('tools');
+    expect(() => sessions(['read', '#12'], { tools: true })).toThrow(/--tools does not apply to `sessions read`/);
+    expect(() => sessions(['list'], { tools: true })).toThrow(/--tools does not apply/);
+  });
+
   it('builds a read with its window', () => {
     expect(sessions(['read', '#12'], { around: 87, window: 3 })).toEqual({
       kind: 'sessions-read',

@@ -1,7 +1,8 @@
 import type { HistoryReviewChange, HistoryReviewRecord, HistoryReviewRow, HistorySessionRow, HistoryStore } from '../history/store.js';
-import type { ReviewPanel, ReviewPanelEntry, ReviewPanelList } from '../platform/adapter.js';
+import type { ReviewPanel, ReviewPanelEntry, ReviewPanelList, ReviewPanelPreference } from '../platform/adapter.js';
 import { parseReviewOutput } from './review-prompt.js';
 import { inferOutcome, summaryOf, undoOf, type AppliedChange } from './review-result.js';
+import { preferenceKey } from './review-state.js';
 
 /**
  * The daemon's side of the web UI's Reviews tab: `history.db`'s review sessions → the flat rows
@@ -20,28 +21,79 @@ import { inferOutcome, summaryOf, undoOf, type AppliedChange } from './review-re
 /** How many reviews the tab carries. Reviews are slow; this is a screenful of history. */
 export const REVIEW_PANEL_LIMIT = 50;
 
+/**
+ * How many reviews the pending list is gathered from — more than the tab shows, because a
+ * suggestion nobody has dealt with yet is still pending after its review scrolls off. The store
+ * reads at most 200.
+ */
+export const PENDING_SCAN = 200;
+
+/** How many suggestions the pending list carries. */
+export const PENDING_LIMIT = 50;
+
 export interface ReviewPanelOptions {
   history: HistoryStore;
   /** The platform instance showing the panel; a topic of another instance gets no link. */
   instance: string;
   /** Whether a reviewer is configured right now — read per call, so `/reload` shows at once. */
   enabled: () => boolean;
+  /** The suggestions already dismissed, by preferenceKey (ReviewStateStore). */
+  dismissed: () => ReadonlySet<string>;
+  /** Dismiss one suggestion (ReviewStateStore.dismissPreference). */
+  dismiss: (text: string) => void;
   max?: number;
 }
 
 export function buildReviewPanel(options: ReviewPanelOptions): ReviewPanel {
+  const list = (): ReviewPanelList => {
+    const rows = options.history.reviewSessions(Math.max(options.max ?? REVIEW_PANEL_LIMIT, PENDING_SCAN));
+    const entries = rows.map((row) =>
+      row.record ? recordedEntry(row.record, row.session, options.instance) : inferredEntry(row, options.history, options.instance)
+    );
+    return {
+      enabled: true,
+      running: options.enabled(),
+      reviews: entries.slice(0, options.max ?? REVIEW_PANEL_LIMIT),
+      pending: pendingPreferences(entries, options.dismissed()),
+    };
+  };
   return {
-    list(): ReviewPanelList {
-      const rows = options.history.reviewSessions(options.max ?? REVIEW_PANEL_LIMIT);
-      return {
-        enabled: true,
-        running: options.enabled(),
-        reviews: rows.map((row) =>
-          row.record ? recordedEntry(row.record, row.session, options.instance) : inferredEntry(row, options.history, options.instance)
-        ),
-      };
+    list,
+    dismiss(text: string): ReviewPanelList {
+      options.dismiss(text);
+      return list();
     },
   };
+}
+
+/**
+ * The suggestions no one has dealt with: every review's preferences, newest first, one entry per
+ * wording (preferenceKey), less the dismissed ones.
+ *
+ * Why a list at all: a suggestion used to live only inside the review that made it, so the same
+ * rule suggested by three reviews was three rows to open, and one already in the person's
+ * instructions looked as new as one that was not. On 2026-11-06 the thirteen suggestions so far
+ * included two the instructions already carried; the reviewer is now shown those instructions, and
+ * what still gets through is dismissed here.
+ */
+export function pendingPreferences(entries: ReviewPanelEntry[], dismissed: ReadonlySet<string>): ReviewPanelPreference[] {
+  const byKey = new Map<string, ReviewPanelPreference>();
+  for (const entry of entries) {
+    for (const text of entry.preferences) {
+      const key = preferenceKey(text);
+      if (!key || dismissed.has(key)) continue;
+      const seen = byKey.get(key);
+      const from = { title: entry.title, ...(entry.topic ? { topic: entry.topic } : {}) };
+      if (!seen) {
+        byKey.set(key, { text: text.trim(), count: 1, at: entry.at, from: [from] });
+        continue;
+      }
+      seen.count += 1;
+      seen.at = Math.max(seen.at, entry.at);
+      if (seen.from.length < 3 && !seen.from.some((f) => f.title === from.title)) seen.from.push(from);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => b.at - a.at).slice(0, PENDING_LIMIT);
 }
 
 function recordedEntry(record: HistoryReviewRecord, session: HistorySessionRow, instance: string): ReviewPanelEntry {

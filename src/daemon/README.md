@@ -445,6 +445,15 @@ mode: `--input-format=stream-json --output-format=stream-json -p=`, one NDJSON
 (and the `agent_response` deltas before it). Remote reuses `RemoteHost.run`'s body as the child's
 stdin, so the temporary directory stays empty.
 
+**What the prompt holds.** The rules, the skill catalog, the text of the skills the conversation
+used, the skill files its own agent wrote (`writtenSkillFiles`, from the write-type calls in
+`reviewWindow`'s `skillCalls`), `instructions/common.md` (`standing`, read per review through
+`commonInstructions`; unreadable is logged and the review goes on without it), and last the
+conversation — without tool calls (see `history/README.md#what-a-review-reads`). The written files
+are named because on 2026-11-06 a review created `vlt` an hour after the person had the agent write
+that very skill in another library; the calls that showed it were not in the window. The standing
+rules are there because two of the first thirteen suggestions were already in them.
+
 **Who writes.** Only the gateway, one change at a time through `createSkill` / `patchSkill` /
 `writeSkillFile`. A change the store refuses — a taken name, a file outside the three
 directories, a version that moved while the reviewer was thinking — is dropped and logged; the
@@ -461,9 +470,12 @@ the store's `error` when it refused one, the `revertId` a `revert` names, the pr
 suggestions, the shape-check rejects, and the outcome `classifyReview` derives from them. A failed
 run is filed too, so "why was this conversation never reviewed" is answerable from the web UI
 instead of only from the log. `review-panel.ts` turns those rows into the Reviews tab's entries,
-reads the quota from the same `ReviewStateStore` the sweep writes, and marks an old review (raw
-answer only, no result row) as inferred. `review-result.ts` holds the wording and the
-classification both sides share; the panel is read-only — the undo is the command the row names.
+gathers the pending preference suggestions across the newest 200 reviews, less the ones dismissed
+in the same `ReviewStateStore` the sweep writes (`dismissedPreferences`), and marks an old review
+(raw answer only, no result row) as inferred. `review-result.ts` holds the wording and the
+classification both sides share. The panel's one write is dismissing a suggestion, to
+`reviews.json` alone; nothing on it touches a skill or a review — the undo is the command the row
+names.
 
 ## Scheduled tasks
 

@@ -76,6 +76,54 @@ All notable changes to this project are documented here. The format is based on
   also answers the lane title it actually gave the topic, so a `--title` with a newline or leading
   `[a]` groups cannot put one name on the card and another on the topic.
 
+## [2.41.0] - 2026-11-06
+
+### Fixed
+
+- **The automatic review reads the conversation, not its tool calls.** Over the first 42 reviews,
+  76% of what the reviewer was given was tool calls and 0.6% was what the person said: the 40k
+  budget filled newest-first with calls, so 262 of the 577 messages the person sent in those spans
+  reached it, and five reviews saw none of them. The window is now what the person and the agent
+  said — every message of the person first, then the agent's replies newest-first to the budget —
+  and replayed on the same batches every message arrives, at a median of 13k characters instead of
+  41k. Two things the calls did say are kept as facts: the skills the conversation used, and the
+  skill files its own agent wrote, so a review no longer creates a skill the person had just had
+  written somewhere else (it created a second `vlt` that way). The prompt also carries
+  `instructions/common.md`, so a preference the person already set is not suggested again.
+- **One tool call is one row in the conversation library, with its whole arguments.** A harness
+  that streams a call's arguments re-sends the call as they arrive, and each one became a row: one
+  CodeBuddy Write was twelve identical lines, and 14k of 55k tool rows in two days were copies,
+  each holding a 200-character preview. A row now carries the call's id and is rewritten in place,
+  ending with the arguments the call ran with — a heredoc, an edit, a written file's content (up to
+  100k characters). The output is still not kept.
+
+- **A restart no longer imports a web UI topic the library already recorded.** The one-time import
+  of the web UI's transcripts took any transcript it had not taken yet, and a topic opened after the
+  library existed was one of those at the next restart: its whole conversation came back as a
+  second copy. On the live gateway 94 conversations held one (10,087 rows), which doubled search
+  hits and the messages a review counted. The import now takes nothing of a conversation the
+  library already has. Copies already written stay where they are.
+
+### Changed
+
+- **`sessions search` leaves tool calls out unless `--tools` asks, and `sessions read` folds
+  them.** Tool calls are 94% of the library's rows, so a search for a word the person used came
+  back as the commands that contained it, and a read of a working conversation was a page of
+  commands with the conversation somewhere in it — the 500-row bound usually spent before it got
+  going. A read that does not choose rows by `--role` or `--grep` (including `task-read`) now turns
+  each run of calls into one line, `[37 tool calls: Bash ×20, Edit ×12, Write ×5]`, and says so;
+  `--role tool` lists them with their arguments, and an `--around` window is unchanged.
+
+### Added
+
+- **The web UI's Reviews tab leads with the preference suggestions still pending.** A suggestion
+  lived only inside the review that made it, so the same rule from three reviews was three rows to
+  open, and nothing said which had been dealt with. **Suggested preferences** merges them — one
+  entry per wording, how many reviews made it, which conversations — and each has **Dismiss**,
+  which takes it off for good. None of them is in force: one takes effect when you have it added to
+  your instructions. Dismissing writes `reviews.json` and nothing else; nothing on the tab touches a
+  skill or a review.
+
 ## [2.40.0] - 2026-11-06
 
 ### Changed

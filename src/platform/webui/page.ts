@@ -489,6 +489,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .rev-note.bad{color:#f87171}
 .rev-open{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer;align-self:flex-start}
 .rev-open:hover{border-color:#3a3a3a;background:#2a2a2a}
+.rev-pending{border:1px solid #23404f;border-radius:6px;padding:9px 10px;background:#162028;display:flex;flex-direction:column;gap:7px}
+.rev-pitem{display:flex;align-items:flex-start;gap:8px}
+.rev-pbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.rev-ptext{font-size:12.5px;color:#e5e5e5;line-height:1.5;overflow-wrap:anywhere}
+.rev-pmeta{font-size:11px;color:var(--dim);overflow-wrap:anywhere}
+.rev-dismiss{flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
+.rev-dismiss:hover:not(:disabled){color:var(--fg);border-color:#3a3a3a}
+.rev-dismiss:disabled{opacity:.5;cursor:default}
 /* ── The skills page ─────────────────────────────────────────────────────────
    A window over the transcript rather than a column: an editor needs width, and a history row
    needs more than a sidebar's 240px. The backdrop dims the chat for the same reason the reader's
@@ -1833,9 +1841,47 @@ const SCRIPT = `
         : 'Automatic review is off. Name an agent under review.agent to turn it on; reviews recorded before then still appear here.') + '</div>';
       return;
     }
-    var h='';
+    var h = revPending(reviewData.pending || []);
     for(var i=0;i<reviewData.reviews.length;i++) h += revRow(reviewData.reviews[i]);
     revList.innerHTML = h;
+  }
+
+  /**
+   * The preference suggestions nobody has dealt with, merged across reviews. Nothing acts on them:
+   * the person has one added to the instructions every agent gets, or dismisses it — so this block
+   * says that, rather than looking like settings that are already in force.
+   */
+  function revPending(list){
+    if(!list.length) return '';
+    var h = '<div class="rev-pending"><div class="rev-label">Suggested preferences · ' + list.length + '</div>';
+    h += '<div class="rev-note">Not in effect anywhere. Ask an agent to add one to your instructions, or dismiss it.</div>';
+    for(var i=0;i<list.length;i++){
+      var p = list[i], from = [];
+      for(var j=0;j<p.from.length;j++) from.push(p.from[j].title);
+      h += '<div class="rev-pitem"><div class="rev-pbody"><div class="rev-ptext">' + text(p.text) + '</div>';
+      h += '<div class="rev-pmeta">' + (p.count > 1 ? text(p.count + ' reviews · ') : '') + text(from.join(', ')) + '</div></div>';
+      h += '<button type="button" class="rev-dismiss" data-rev-dismiss="' + i + '">Dismiss</button></div>';
+    }
+    return h + '</div>';
+  }
+
+  /** Take one suggestion off the pending list; the daemon answers with the fresh list. */
+  function dismissPreference(btn){
+    var i = Number(btn.getAttribute('data-rev-dismiss'));
+    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
+    if(!p) return;
+    btn.disabled = true;
+    post('api/reviews/op', {action:'dismiss', text:p.text}, 1).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      reviewData = d || reviewData;
+      paintReviews();
+      paintSchedCounts();
+    }).catch(function(e){
+      btn.disabled = false;
+      showSchedNote('Could not dismiss that suggestion: ' + ((e && e.message) || 'network error'));
+    });
   }
 
   /** The panel is a column: a review is one line until it is opened, like a task card. */
@@ -2202,6 +2248,12 @@ const SCRIPT = `
   schedTabSessions.addEventListener('click', function(){ setSchedSubtab('sessions'); });
 
   revList.addEventListener('click', function(e){
+    var dismissBtn = e.target.closest ? e.target.closest('[data-rev-dismiss]') : null;
+    if(dismissBtn){
+      e.stopPropagation();
+      dismissPreference(dismissBtn);
+      return;
+    }
     var openBtn = e.target.closest ? e.target.closest('[data-rev-topic]') : null;
     if(openBtn){
       e.stopPropagation();

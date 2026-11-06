@@ -4499,8 +4499,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
 
 /**
  * One library row from a turn event. Kept outside the registry because it is a pure mapping:
- * a prompt gains its attachment names (never their contents), a tool event is already one line,
- * and a reply with no text adds nothing at all.
+ * a prompt gains its attachment names (never their contents), a tool event is already its text
+ * and carries its call id (one row per call, see HistoryStore.message), and a reply with no text
+ * adds nothing at all.
  */
 function historyRow(event: HistoryEvent): HistoryMessage | undefined {
   if (event.type === 'prompt') {
@@ -4509,7 +4510,14 @@ function historyRow(event: HistoryEvent): HistoryMessage | undefined {
     return text.trim() ? { ts: event.at, role: 'user', kind: event.kind, text, turn: event.turn } : undefined;
   }
   if (event.type === 'tool') {
-    return { ts: event.at, role: 'tool', kind: event.kind, text: event.title, turn: event.turn };
+    return {
+      ts: event.at,
+      role: 'tool',
+      kind: event.kind,
+      text: event.title,
+      turn: event.turn,
+      ...(event.call !== undefined ? { call: event.call } : {}),
+    };
   }
   return event.text.trim()
     ? { ts: event.at, role: 'agent', kind: event.kind, text: event.text, turn: event.turn }

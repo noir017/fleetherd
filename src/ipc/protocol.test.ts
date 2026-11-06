@@ -49,6 +49,7 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'task-stop', topic: 'web:main/t1' },
     { kind: 'sessions-search', query: '跨会话查询' },
     { kind: 'sessions-search', query: 'git status', agent: 'cc', days: 30, limit: 20 },
+    { kind: 'sessions-search', query: 'git push', tools: true },
     { kind: 'sessions-read', session: '#12' },
     { kind: 'sessions-read', session: '12', around: 87, window: 10 },
     { kind: 'sessions-read', session: '12', role: 'tool', turn: 'last', since: 40, grep: '查询', tail: 20 },
