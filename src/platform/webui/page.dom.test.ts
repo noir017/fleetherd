@@ -4264,6 +4264,26 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(css).toContain('#row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}');
   });
 
+  it('splits the composer by its own width, not the window, when the sidebar leaves it narrow', () => {
+    // 2.39.0 split the composer at 640px of *window*, which is one pixel too high a bar for the
+    // case that needed it: at 641px the sidebar is still a 240px column, so the composer is 369px
+    // and the four controls left the input 213px. The window cannot tell that apart from a 1024px
+    // window with both panels docked — 512px of composer — because the narrower composer belongs
+    // to the wider window. Hence a container query on the composer, not a media query.
+    const html = renderPage('Chat', false);
+    expect(html).toContain('#composer{container-type:inline-size}');
+    expect(html).not.toContain('@media(max-width:480px)');
+    const css = blockAt('@container (max-width:480px){');
+    expect(css).toContain('#row{flex-wrap:wrap}');
+    expect(css).toContain('#input{width:100%;flex:0 0 100%}');
+    expect(css).toContain('#row button[type="submit"]{margin-left:auto}');
+    expect(css).toContain('#row #stop-turn:not([hidden]){margin-left:auto}');
+    expect(css).toContain('#row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}');
+    // The phone block keeps its own copy: at 640px the sidebar is a drawer and the composer is
+    // 616px, wider than this query's threshold, and two rows are the layout a phone shipped with.
+    expect(narrowBlock()).toContain('#row{flex-wrap:wrap}');
+  });
+
   it('structures the composer with input first and buttons grouped for two-row mobile flow', () => {
     const html = renderPage('Chat', false);
     const rowMatch = html.match(/<div id="row">([\s\S]*?)<\/div>/);
@@ -6127,8 +6147,10 @@ describe('webui page: the scheduled-task panel', () => {
     });
     await h.click('#schedules-toggle');
 
-    // Both task count and session count are shown on outer Scheduled tab ('1 · 1')
-    expect(h.el('sched-tab-scheduled-n').textContent).toBe('1 · 1');
+    // Both task count and session count are shown on outer Scheduled tab ('1·1'). No spaces
+    // around the separator: at the panel's narrowest 220px the two of them pushed the amber
+    // dot past the tab's clip edge (measured in Chromium; see page.ts).
+    expect(h.el('sched-tab-scheduled-n').textContent).toBe('1·1');
     expect(h.el('sched-tab-tasks-n').textContent).toBe('1');
     expect(h.el('sched-tab-sessions-n').textContent).toBe('1');
 
@@ -6150,12 +6172,12 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.window.localStorage.getItem('aa_sched_subtab')).toBe('tasks');
     expect(h.el('schedules-summary').textContent).toBe('1 active');
 
-    // Switch to Reviews outer tab: outer Scheduled tab still shows '1 · 1'
+    // Switch to Reviews outer tab: outer Scheduled tab still shows '1·1'
     await h.click('#sched-tab-reviews');
     await until('reviews list', () => h.el('sched-reviews-list').textContent!.includes('Reviewed Topic'));
     expect(h.el('sched-tab-reviews').getAttribute('aria-selected')).toBe('true');
     expect(h.el('sched-tab-scheduled').getAttribute('aria-selected')).toBe('false');
-    expect(h.el('sched-tab-scheduled-n').textContent).toBe('1 · 1');
+    expect(h.el('sched-tab-scheduled-n').textContent).toBe('1·1');
     expect(h.el('sched-tab-reviews-n').textContent).toBe('1');
     expect(h.el('sched-subnav').hidden).toBe(true);
     expect(h.el('sched-reviews').hidden).toBe(false);

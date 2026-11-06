@@ -1468,6 +1468,14 @@ without it. `page.test.ts` pins the viewport tag so this does not get added by r
   padded out to a 44px square (a `:not([hidden])` selector, because the rule sets `display` and would
   otherwise beat the UA's `[hidden]` rule while the drawer is open), and the input is not
   focused on open — the keyboard would take half the viewport before a word had been read.
+- **The composer's two-row split is a container query, not a media query** — `#composer` carries
+  `container-type:inline-size` and the rules live in `@container (max-width:480px)`. 2.39.0 keyed
+  the split to the window's 640px, and one pixel above it the sidebar is still a column: at 641px
+  the composer is 369px and the four controls left the input 213px, while a 1024px window with
+  both panels docked leaves the composer 512px. The narrower composer belongs to the wider
+  window, so only the composer can tell them apart. The `@media(max-width:640px)` block keeps its
+  own copy of the same four rules: a phone's composer is 616px at that width, wider than the
+  threshold, and the split is the layout a phone shipped with.
 - **Enter sends; under the narrow-screen layout it writes a newline instead.** 1.22.0 made it a
   newline at every width, and the half of that which was right is the phone: held upright there
   is no Shift key to hold, so Enter-to-send makes a multi-line prompt impossible to type rather
