@@ -222,5 +222,8 @@ describe('webui page', () => {
     expect(html).toContain('#input,#secret{font-size:16px}');
     // The Send row belongs above the home indicator, not under it.
     expect(html).toContain('env(safe-area-inset-bottom');
+    // On handsets the composer wraps onto two rows to keep the input box full-width.
+    expect(html).toContain('#row{flex-wrap:wrap}');
+    expect(html).toContain('#input{width:100%;flex:0 0 100%}');
   });
 });

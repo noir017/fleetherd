@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI splits the composer into two rows on mobile screens.** Under narrow viewports (640px
+  and below), the file upload, voice, Stop, and Send buttons shared the same flex row as the text
+  box and squeezed it into a narrow sliver. The composer now wraps onto two rows below 640px: the
+  textarea takes the full width across the first row, and the action buttons sit on the second row,
+  with file attachment and voice recording on the left, and Stop and Send on the right. Desktop
+  layouts and button states remain unchanged. [→](docs/web-ui.md)
+
 ## [2.38.1] - 2026-11-06
 
 ### Fixed
