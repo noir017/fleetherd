@@ -3698,6 +3698,15 @@ ${formatTokens(left)} left before compaction — ${name}`;
     return this.conversations.get(id)?.agentId ?? this.config.routing.default;
   }
 
+  /**
+   * The name recorded for a conversation's lane, if one was ever given — including one written a
+   * moment ago, which `channels` cannot answer for yet (it lists the newest 200 topics and a topic
+   * with no turn has no `lastAt`, so it sorts last and is cut).
+   */
+  conversationTitle(key: ConversationId): string | undefined {
+    return this.store?.conversationTitle(key);
+  }
+
   // ───────────────────────────── scheduled runs (daemon/scheduler.ts) ─────────────────────────────
 
   /** The agent bound to a conversation, in memory or on disk; undefined when it has none yet. */
@@ -3878,6 +3887,12 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * Throws a sentence for the agent that asked when it cannot: a platform that cannot open topics (it
    * would have to post into the chat itself, which is not a conversation of its own), an unknown
    * agent, a directory that is not there.
+   *
+   * Answers the name it gave the topic as well, because the card about to be posted needs it before
+   * the conversation store can supply it: `channels` lists the newest 200 topics, a topic opened a
+   * moment ago has no `lastAt` yet and sorts last, so a lookup by key there finds nothing and the
+   * card fell back to the conversation id (`web#main#5e94945d`) instead of the title. It is the
+   * lane title (`[agent] …`), exactly what a later lookup would return.
    */
   async openTask(opts: {
     platform: string;
@@ -3888,7 +3903,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     cwd?: string;
     title?: string;
     model?: string;
-  }): Promise<{ key: ConversationId; address: ConversationAddress }> {
+  }): Promise<{ key: ConversationId; address: ConversationAddress; title: string }> {
     const adapter = this.platforms.get(opts.platform);
     if (!adapter?.capabilities.thread) {
       throw new Error(`platform instance "${opts.platform}" cannot open a conversation of its own here`);
@@ -3901,7 +3916,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const cwd = opts.cwd ? this.taskDirectory(def, opts.cwd) : undefined;
     // Named now from the request when no title was given; the namer renames it from the same text
     // once the turn starts (it names a conversation once, and nothing has named this one yet).
-    const name = formatLaneTitle(opts.agentId, opts.title ?? fallbackTitle(opts.text));
+    const bare = opts.title ?? fallbackTitle(opts.text);
+    const name = formatLaneTitle(opts.agentId, bare);
     const opened = (await adapter.createThread({ address: { channel: opts.parent.channel }, messageId: '' }, name, { under: opts.parent }))
       .address;
     const conv = this.conversationAt(opts.platform, opened);
@@ -3930,7 +3946,10 @@ ${formatTokens(left)} left before compaction — ${name}`;
       this.store?.setConversationChoice?.(conv.key, opts.agentId, 'model', opts.model);
     }
     await this.handTo(conv.key, opts.platform, opened, opts.text, opts.header);
-    return { key: conv.key, address: opened };
+    // `name`, not the bare title: formatLaneTitle collapses whitespace and drops leading bracketed
+    // groups, so a `--title` with a newline or `[a][b] x` would otherwise put a different string on
+    // the card than on the topic.
+    return { key: conv.key, address: opened, title: name };
   }
 
   /**

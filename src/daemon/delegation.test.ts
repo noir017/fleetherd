@@ -157,14 +157,16 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
   const telegram = { capabilities: { thread: true }, sendMessage: async () => ({ messageId: 'm' }) } as unknown as PlatformAdapter;
 
   const registry = {
-    openTask: async (o: { parent: ConversationAddress; agentId: string; text: string; header: string; cwd?: string; model?: string }) => {
+    openTask: async (o: { parent: ConversationAddress; agentId: string; text: string; header: string; cwd?: string; title?: string; model?: string }) => {
       calls.push(['openTask', o]);
       if (o.agentId === opts.failOpen) throw new Error(`no directory ${o.cwd} on the machine`);
       if (o.model && o.model === opts.failModel) throw new Error(`could not set model "${o.model}": the harness refused it`);
       const key = `web#main#c${++threads}0000000`.slice(0, 17);
       parents.set(key, keyOf(o.parent));
       bound.set(key, o.agentId);
-      return { key, address: addrOf(key) };
+      // What openTask names the topic: the requested --title, else a name cut from the task text,
+      // behind the `[agent] ` tag formatLaneTitle adds.
+      return { key, address: addrOf(key), title: `[${o.agentId}] ${o.title ?? 'part'}` };
     },
     handTo: async (key: string, _p: string, _a: ConversationAddress, text: string, header: string, opts?: { queue?: boolean }) => {
       calls.push(['handTo', { key, text, header, ...(opts?.queue ? { queue: true } : {}) }]);
@@ -219,6 +221,9 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     },
     workdirOf: () => '/home/u/workspace/talkcode',
     boundAgentOf: (k: string) => bound.get(k),
+    // The store's record, which knows a name written before the topic's first turn; `listChannels`
+    // below is the fallback `titleOf` uses when there is none.
+    conversationTitle: (k: string) => (k === P ? '[cc] Release' : bound.has(k) ? `[${bound.get(k)}] part` : undefined),
     scheduledModelProblem: async (agent: string, model: string, from: string) => {
       calls.push(['modelProblem', { agent, model, from }]);
       return model === 'nope' ? `unknown model "nope" for agent "${agent}"; choose one of: base-model, fast-model` : undefined;
@@ -271,6 +276,15 @@ const task = (agent: string | undefined, text: string, extra: Record<string, str
   text,
   ...extra,
 });
+
+/**
+ * The record card among the messages posted to a topic. It is the only one that closes by naming
+ * `/setting delegation`, which tells it apart from the answer a confirmed Start gets — that one has
+ * the same first line and rows but no closing line.
+ */
+function recordCard(r: ReturnType<typeof rig>, to = P): { to: string; text: string; kind?: string } | undefined {
+  return r.posted.filter((p) => p.to === to && p.text.includes('/setting delegation')).at(-1);
+}
 
 describe('Delegation: where the commands run', () => {
   it('refuses a call from no conversation, and a platform that cannot nest topics', async () => {
@@ -325,8 +339,12 @@ describe('Delegation: proposing, and the card every start waits on', () => {
       ['cx', P],
     ]);
     expect(opened[0]!.header).toBe('**↳ From [Release](?t=aaaaaaaa)**');
-    const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 2'))!;
-    expect(said.text).toContain('- [part](?t=c1000000) — cc');
+    // The answer to Start is the record card's layout: names first, in bold, one row per part.
+    const said = r.posted.find((p) => p.to === P && p.text.includes('2 sub-agents'))!;
+    // The asker is one of the names, so "started by cc" is left off.
+    expect(said.text.split('\n')[0]).toBe('**cc, cx** — 2 sub-agents, each in a topic of its own under this one:');
+    expect(said.text).toContain('- **cc** @ near · [part](?t=c1000000) · web:main/c1000000');
+    expect(said.text).toContain('- **cx** @ near · [part](?t=c2000000) · web:main/c2000000');
     // The confirmed card's answer is a dispatch: the web UI marks it as a hand-off.
     expect(said.kind).toBe('dispatch');
   });
@@ -341,10 +359,13 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
     await settle();
-    expect(r.cards[0]!.text).toContain('1. **cx** @ near · model `fast-model`');
+    expect(r.cards[0]!.text).toContain('1. **cx** · model `fast-model` @ near');
     expect(r.calls.find(([c]) => c === 'openTask')?.[1]).toMatchObject({ agentId: 'cx', model: 'fast-model' });
-    const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 1'))!;
-    expect(said.text).toContain('— cx · model `fast-model`');
+    // One part, and the asker is the agent itself: the name is on the first line once, the row
+    // leaves it out, and "started by cx" would stutter.
+    const said = r.posted.find((p) => p.to === P && p.text.includes('— a sub-agent, in a topic of its own'))!;
+    expect(said.text.split('\n')[0]).toBe('**cx** — a sub-agent, in a topic of its own under this one:');
+    expect(said.text).toContain('- [part](?t=c1000000) · model `fast-model` @ near · web:main/c1000000');
   });
 
   it('refuses a model outside the agent’s list before either confirmation path starts anything', async () => {
@@ -383,7 +404,7 @@ describe('Delegation: proposing, and the card every start waits on', () => {
       await settle();
       const said = r.posted.find((p) => p.to === P && /could not start/i.test(p.text))!;
       expect(said.text).toContain('- 1. cx: could not set model "fast-model": the harness refused it');
-      expect(said.text).not.toMatch(/Started 1|started a sub-agent/);
+      expect(said.text).not.toMatch(/Started \d|sub-agent started by/);
       // The asking agent learns it with the reason, so it can propose again without --model or another one.
       // Confirmed later, it is told in an update; started at once, task-new's own answer says it.
       if (confirm) {
@@ -481,7 +502,8 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
     await settle();
-    const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 1'))!;
+    const said = r.posted.find((p) => p.to === P && p.text.includes('Could not start 1:'))!;
+    expect(said.text.split('\n')[0]).toBe('**cc** — a sub-agent, in a topic of its own under this one:');
     expect(said.text).toMatch(/Could not start 1:\n- 2\. cx: no directory nowhere/);
     expect(said.kind).toBe('dispatch');
     const prompt = r.calls.find(([c]) => c === 'prompt')![1] as { prompt: string; user: string };
@@ -523,8 +545,9 @@ describe('Delegation: with confirmation off', () => {
 
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
-    const card = r.posted.find((p) => p.to === P && p.text.includes('started a sub-agent'))!;
-    expect(card.text).toContain('— cc @ near · model `fast-model` · web:main/c1000000');
+    const card = recordCard(r)!;
+    expect(card.text.split('\n')[0]).toBe('**cc** — a sub-agent, in a topic of its own under this one:');
+    expect(card.text).toContain('- [part](?t=c1000000) · model `fast-model` @ near · web:main/c1000000');
   });
 
   it('posts a card listing what started and where, with no Start to tap', async () => {
@@ -533,11 +556,55 @@ describe('Delegation: with confirmation off', () => {
     await r.d.handle(P, task('cc', 'Fix the bump workflow'));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
-    const card = r.posted.find((p) => p.to === P && p.text.includes('started a sub-agent'))!;
+    const card = recordCard(r)!;
     expect(card).toBeDefined();
     expect(card.kind).toBe('dispatch'); // a dispatch bubble, not a folded tool card
-    expect(card.text).toContain('- [part](?t=c1000000) — cc @ near · web:main/c1000000');
+    expect(card.text).toContain('**cc** — a sub-agent, in a topic of its own under this one:');
+    expect(card.text).toContain('- [part](?t=c1000000) @ near · web:main/c1000000');
     expect(card.text).toContain('/setting delegation on');
+  });
+
+  it('opens with the sub-agent’s name first and bold, and leaves it out of a lone row', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    await r.d.handle(P, task('oc2', 'Check the arm64 build', { cwd: 'talkcode', title: 'arm64', model: 'fast-model' }));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const card = recordCard(r)!;
+    const [head, row] = card.text.split('\n');
+    expect(head).toBe('**oc2** — a sub-agent started by cc, in a topic of its own under this one:');
+    expect(row).toBe('- [arm64](?t=c1000000) · model `fast-model` @ far · `talkcode` · web:main/c1000000');
+  });
+
+  it('does not repeat a machine the agent’s own name already carries', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    // A host names its own agents `<id>@<host>` (daemon/pods.ts): `cbc@far` already says `far`.
+    r.deps.config.agents.push({ ...r.deps.config.agents[0]!, id: 'cbc@far', host: 'far' });
+    await r.d.handle(P, task('cbc@far', 'x'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const row = recordCard(r)!.text.split('\n')[1];
+    expect(row).toBe('- [part](?t=c1000000) · web:main/c1000000');
+  });
+
+  it('names every agent on the first line of a burst, and again where each row begins', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    await r.d.handle(P, task('cc', 'a'));
+    await r.d.handle(P, task('oc2', 'b', { cwd: 'talkcode' }));
+    await r.d.handle(P, task('cc', 'c'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const card = recordCard(r)!;
+    expect(card.text.split('\n')[0]).toBe(
+      '**cc, oc2** — 3 sub-agents, each in a topic of its own under this one:'
+    );
+    // One row per part, in the order they were proposed; two went to the same agent.
+    const rows = card.text.split('\n').filter((l) => l.startsWith('- '));
+    expect(rows[0]).toContain('- **cc** @ near · [part]');
+    expect(rows[1]).toContain('- **oc2** @ far · [part]');
+    expect(rows[2]).toContain('- **cc** @ near · [part]');
   });
 
   it('gathers a burst into one card, and the person writing does not drop it', async () => {
@@ -549,10 +616,10 @@ describe('Delegation: with confirmation off', () => {
     r.d.personSpoke(P);
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
-    const cards = r.posted.filter((p) => p.to === P && p.text.includes('started 2 sub-agents'));
+    const cards = r.posted.filter((p) => p.to === P && p.text.includes('2 sub-agents'));
     expect(cards).toHaveLength(1);
-    expect(cards[0]!.text).toContain('— cc @ near');
-    expect(cards[0]!.text).toContain('— cx @ near');
+    expect(cards[0]!.text).toContain('**cc** @ near');
+    expect(cards[0]!.text).toContain('**cx** @ near');
     expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
   });
 
@@ -606,7 +673,7 @@ describe('Delegation: confirming each agent only the first time', () => {
     expect(res.result).toContain('running now');
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
-    const card = r.posted.find((p) => p.text.includes('started a sub-agent'))!;
+    const card = recordCard(r)!;
     expect(card.text).toContain('once per agent in each conversation');
     expect(card.text).toContain('/setting delegation on');
   });
@@ -851,6 +918,15 @@ describe('Delegation: acting on the topics it opened, and only those', () => {
     ]);
     await r.d.handle(P, { kind: 'task-stop', topic: 'c1000000' });
     expect(r.calls).toContainEqual(['stop', 'web#main#c1000000']);
+  });
+
+  it('names a topic from the store when `channels` cannot list it yet', async () => {
+    const r = await withChild();
+    // A topic opened seconds ago has no lastAt, so `channels` — the newest 200 — can drop it; the
+    // store still knows the name openTask gave it, and that is what the row must show.
+    r.registry.listChannels = () => ({ channels: [], totalTopics: 0, limit: 200 });
+    const list = (await r.d.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(list.tasks[0]!.title).toBe('part');
   });
 
   it('refuses a topic it did not open', async () => {
