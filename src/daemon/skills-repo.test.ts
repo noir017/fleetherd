@@ -40,8 +40,20 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // Retried: a push the repository leaves running in the background (the kept branch's, in
+  // integrate) can still be writing into .git when a test ends, and rmdir then meets a file that
+  // arrived after the directory was listed — ENOTEMPTY, seen once in CI on 2026-11-06.
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
+
+/** Poll until `fn` holds, or fail naming what never happened. */
+async function until(what: string, fn: () => boolean, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!fn()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
 
 const remote = (url = bare): SkillsRemote => ({ url, branch: 'main', identityFile: '/nonexistent', knownHostsFile: '/nonexistent' });
 
@@ -198,6 +210,16 @@ describe('SkillsRepo with a remote', () => {
     expect(logs.some((l) => /kept on branch talkcode-unpushed-/.test(l))).toBe(true);
     const branches = gitSync(repoRoot(dir), ['branch', '--list', 'talkcode-unpushed-*']);
     expect(branches.trim()).not.toBe('');
+    // The kept branch is pushed in the background, not awaited by sync; wait for it to land — the
+    // docs promise it reaches the repository, and a test that ends while that push is still
+    // writing into .git races its own cleanup.
+    await until('the kept branch on the repository', () =>
+      gitSync(bare, ['branch', '--list', 'talkcode-unpushed-*']).trim() !== ''
+      && !logs.some((l) => /could not push talkcode-unpushed-/.test(l))
+    );
+    await until('the push to finish updating the local tracking ref', () =>
+      gitSync(repoRoot(dir), ['branch', '-r', '--list', 'origin/talkcode-unpushed-*']).trim() !== ''
+    );
   });
 
   it('keeps a write local while the repository is unreachable, says so once, and pushes it later', async () => {
