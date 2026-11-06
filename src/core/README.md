@@ -342,6 +342,11 @@ submit(job) ─▶ [ per-chat FIFO ] ─▶ bucket (chat) ─▶ bucket (instanc
 - **A drop is reported, never swallowed.** `WriteDroppedError` leaves the caller's state
   untouched, which is what makes "a progress update is never lost" structural rather than
   lucky.
+- **An idle lane is forgotten** (since 2.47.0). Under `paceByLane` every web UI topic — each
+  sub-agent's, each scheduled run's — is a lane, so the map grew for the daemon's whole life. At
+  most once a minute, `submit` drops the lanes a fresh one would equal: nothing queued or running,
+  no timer, not paused, bucket full. A paused lane or one still refilling is kept, or forgetting it
+  would hand the chat a fresh allowance.
 
 The pacer is pure; `daemon/paced-adapter.ts` applies it to every `PlatformAdapter` method
 and is the one place a `RateLimitedError` becomes a lane pause.

@@ -5,6 +5,45 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+A pass over what a gateway running for weeks, with dozens of topics streaming at once on two cores,
+spends its memory and its event loop on. Each item was measured before it was changed.
+
+### Fixed
+
+- **The web UI no longer holds an unbounded backlog for a browser that stopped reading its event
+  stream** — a phone put down with the page open used to cost the daemon hundreds of megabytes on a
+  busy day. A stream more than 2 MB behind for a minute is cut, and the page reconnects and catches
+  up from its last event.
+- **`conversations.json` is now written atomically** (temp file + rename). The old in-place rewrite
+  could leave a truncated file if the process was killed mid-write, and the next start read that as
+  empty, losing every binding and session id at once. A turn's lane now rides on its in-flight mark,
+  so a turn costs two full rewrites instead of three.
+- **Several pieces of per-conversation state no longer outlive what they describe.** A harness
+  picker nobody clicked is replaced by the next one. A finished one-off scheduled run's status and
+  outcome are dropped, and so is its pending auto-continue. The outbound pacer forgets a chat's lane
+  once a fresh one would behave the same.
+- **A line of unmatched `[` no longer stalls the gateway:** each one re-read the rest of the line
+  for its `]`, so 20 000 of them took 0.8 s.
+
+### Changed
+
+- **Long replies render faster on Telegram, Slack, LINE/QQ/WeCom and the web UI.** Every streaming
+  edit re-renders the whole message, and the inline scanners tried every rule at every character;
+  they now copy plain text up to the next character a rule can start with — 6–10× less work on real
+  agent replies, under 3× on the web UI where block parsing is now most of the cost — with
+  byte-identical output.
+- **Keeping a long topic's transcript on disk no longer stalls the daemon** for tens of milliseconds
+  every few seconds while it streams, a message no longer rewrites the whole topic list on its way
+  in, and a topic list that has not changed is no longer re-sent to every open page.
+- **A sub-agent's `task-read` and `sessions read` no longer fetch 20,000 rows to fold ten:** they
+  read in batches and stop once they have enough, 44 ms down to 2 on a long topic, with the same
+  answer.
+- **The skills tool's search no longer reads and hashes every skill file** to see whether its index
+  is stale; it compares file stats, so a search over 17 skills dropped from up to 25 ms to 4.
+- **Opening the conversation library after a restart no longer scans every message for each
+  interrupted turn**, and listing conversations and the minute-by-minute review sweep stop counting
+  rows they never show.
+
 ## [2.46.2] - 2026-11-07
 
 ### Fixed

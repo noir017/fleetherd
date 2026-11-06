@@ -32,7 +32,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `claude-transcript.ts` | claude's prompt-cache expiry, read off Claude Code's own transcript (headless Claude Code runs no status line) |
 | `agent-common.ts` | Protocol-agnostic helpers shared by the ACP runtime and the one-shot CLI paths |
 | `agent-hooks.ts` | The operator's `agents[].hooks`: `preLaunch`, run to completion before every spawn of an agent's child |
-| `conversation-store.ts` | Persisted per conversation: the bound agent, each agent's own session id, and the directory it works in |
+| `conversation-store.ts` | Persisted per conversation: the bound agent, each agent's own session id, and the directory it works in. Written atomically (temp file + rename, `0600`); only a turn's lane and `lastAt` wait up to 1 s to ride on the next write, everything restart needs is written at once |
 | `workdir-scan.ts` | The `/cd` option list: an agent's configured root plus the projects one level inside it |
 | `workdir-usage.ts` | How often each directory has been chosen with `/cd`, so the menu leads with the ones in use |
 | `skills-scan.ts` | The `/skills` list: where each harness keeps its installed skills, read off disk |

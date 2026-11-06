@@ -163,6 +163,12 @@ renamed) and `useTranscripts` reads them back before anything can attach. Decisi
   and later ones ride along, so a reply streaming for minutes is on disk every few seconds, and a
   kill mid-reply costs at most that much. `dispose` writes whatever is pending on the way out — but
   the 2026-10-31 case did not need it: the reply had been on disk for seven minutes.
+- **Off the event loop, one write per topic at a time** (since 2.47.0). The routine write
+  serialises a message at a time and writes it out in batches; one `JSON.stringify` and
+  `writeFileSync` of a 1000-message ring held the daemon 28 ms at the median, every three seconds,
+  while a long topic streamed. The exit write stays synchronous. A write begun before the exit write
+  or a delete finds the topic's fence moved and throws its temporary file away instead of renaming
+  over them (`index.ts` explains the ordering); a `.tmp` left by a killed run is removed at start.
 - **Each message keeps the run it was said in** (`WebMessage.g`, that run's sync `epoch`), through
   any number of restarts. The page keys a message by `<generation>:<id>`, so this is what lets a
   restored message land on the copy its own cache has rather than beside it — a half-finished tool
@@ -1019,6 +1025,16 @@ Two consequences worth knowing:
 - **An edit to an id the ring has evicted throws `MessageNotEditableError`**, not a silent
   success. `StreamBuffer` answers it by sealing and continuing in a fresh message. A silent
   success would have it record text as delivered that nobody can see.
+
+**A stream that stops reading is cut** (since 2.47.0, `server.ts`). A phone put down with the page
+open keeps its connection half-alive, and everything written to it used to wait in the daemon's
+memory for good — 153 MB after 2000 posts in a test. A stream more than 2 MB behind for 60 s is
+closed, and `EventSource` reconnects with its last event id and catches up from the backlog. Not a
+plain size cap: a full sync of a long topic is about 3 MB on its own, so a slow link would be cut,
+reconnect, receive the same sync and loop. The topic list (`announceTopics`) is serialised once for
+every client and not sent at all when it has not changed; each client's gzip stream is its own, so
+compression stays per client. `topics.json` gathers a streaming reply's touches into one write a
+second, while creating, deleting, clearing and starring still write at once.
 
 **The page reconciles; it does not rebuild.** A `sync` carries the whole topic, and the obvious
 reading of that — empty `#log`, paint it again — is what made entering a topic jarring: the
