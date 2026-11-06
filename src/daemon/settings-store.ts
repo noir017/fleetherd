@@ -45,6 +45,13 @@ export interface SettingsLiveHooks {
    * value becomes 0. See ConversationRegistry.setIdleTimeout.
    */
   onIdleTimeout(ms: number): void;
+
+  /**
+   * `delegation.confirm` changed tier: Delegation's in-memory record of agents already confirmed
+   * no longer applies. A hook because a change away and back is invisible to a read of the config
+   * at the next `task-new` — the value it would compare against is the same again.
+   */
+  onDelegationChanged(): void;
 }
 
 export class SettingsStore {
@@ -106,6 +113,7 @@ export class SettingsStore {
     if (row.effect !== 'restart') {
       applyToConfig(this.config, row, parsed.value);
       if (row.id === 'idle') this.live.onIdleTimeout(Number(parsed.value));
+      if (row.id === 'delegation') this.live.onDelegationChanged();
     }
 
     console.log(

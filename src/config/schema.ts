@@ -635,7 +635,7 @@ export const ConfigSchema = z
          * - `'first'` — an agent's first sub-task in a conversation waits; once the person has
          *   tapped Start on a card that included it, later sub-tasks for that agent in that
          *   conversation start at once and post the record card. Kept in memory only: a restart,
-         *   or another conversation, asks again.
+         *   another conversation, or a change of tier (in either direction) asks again.
          * - `false` — every sub-task starts as it is proposed; the card is posted afterwards as a
          *   record, without buttons.
          *

@@ -930,6 +930,9 @@ export class Daemon {
       // A message that reaches the agent here replaces a sub-agent card still waiting for a tap: the
       // person writing is how they change the proposal, and the agent proposes again from scratch.
       supersedeProposals: (id) => this.delegation.personSpoke(id),
+      // `/setting delegation` moved to another tier: what the delegation remembered about agents
+      // already confirmed in a conversation no longer counts, even if the tier changes back later.
+      onDelegationSettingChanged: () => this.delegation.forgetConfirmations(),
       // A bare `/model` on a platform that can carry (and later edit) buttons.
       onModelMenuRequest: (id, agentId, msg, selector) =>
         this.onModelMenuRequest(id, agentId, msg, selector),

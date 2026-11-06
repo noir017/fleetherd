@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { parse } from 'yaml';
 import { Daemon } from './daemon.js';
+import { SettingsStore } from './settings-store.js';
+import { resolveSettingKey } from '../core/settings.js';
 import { loadConfig } from '../config/load.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -366,6 +368,40 @@ describe('writing a setting', () => {
     await r.send('/setting delegation on');
     expect(r.cfg.delegation.confirm).toBe(true);
     expect(onDisk()['delegation']).toEqual({ confirm: true });
+  });
+
+  it('notifies the delegation memory on a tier change, and only on a tier change', () => {
+    const cfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc' },
+    });
+    const ctx = { boundAgent: 'cc', models: [] };
+    let cleared = 0;
+    const store = new SettingsStore(cfg, {
+      onIdleTimeout: () => undefined,
+      onDelegationChanged: () => cleared++,
+    });
+    const delegation = resolveSettingKey('delegation', cfg, ctx);
+    if (delegation.kind !== 'row') throw new Error('expected a row');
+
+    expect(store.apply(delegation.row, 'first', ctx)).toMatchObject({ kind: 'saved', display: 'first' });
+    expect(cfg.delegation.confirm).toBe('first');
+    expect(cleared).toBe(1);
+
+    // The same value is a no-op: nothing written, and the memory is not thrown away for nothing.
+    expect(store.apply(delegation.row, 'first', ctx)).toMatchObject({ kind: 'unchanged' });
+    expect(cleared).toBe(1);
+
+    // Another setting's write does not touch it.
+    const stream = resolveSettingKey('stream', cfg, ctx);
+    if (stream.kind !== 'row') throw new Error('expected a row');
+    expect(store.apply(stream.row, 'on', ctx)).toMatchObject({ kind: 'saved' });
+    expect(cleared).toBe(1);
+
+    // Every tier change notifies, including away from `first`.
+    expect(store.apply(delegation.row, 'off', ctx)).toMatchObject({ kind: 'saved' });
+    expect(cleared).toBe(2);
   });
 
   it('routes the next new conversation to the agent just made default', async () => {

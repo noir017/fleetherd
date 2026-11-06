@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 默认智能体 | `routing.default` | 任一已配置的 agent id | 立即 |
 | 某个智能体的默认模型 | `agents[].model`；主机 pod 声明的智能体写 `podModels` | 该智能体上报的模型、任意名字，或 `-` 清空 | 它的下一个会话（`/new` 可立刻开一个） |
-| 确认子代理开跑 | `delegation.confirm` | `on`、`first`、`off`（默认 `on`） | 立即 —— 你自己直接对话的话题里，下一个 `task-new` 生效。`first` 在每个对话里对每个智能体只问一次，且只记在内存里，重启或换一个对话会重新确认；子代理的话题每次都仍要确认 |
+| 确认子代理开跑 | `delegation.confirm` | `on`、`first`、`off`（默认 `on`） | 立即 —— 你自己直接对话的话题里，下一个 `task-new` 生效。`first` 在每个对话里对每个智能体只问一次，且只记在内存里，重启、换一个对话或改动档位都会重新确认；子代理的话题每次都仍要确认 |
 | 空闲回收窗口 | `session.idleTimeoutMs` | `off`、`15m`、`4h` …… | 立即 |
 | 会话粒度 | `session.scope` | `per_thread`、`per_channel`、`per_user`、`shared` | 重启后 |
 | 流式输出 | `stream.enabled` | `on`、`off`（默认 `off`） | 立即 —— 下一条回复生效 |

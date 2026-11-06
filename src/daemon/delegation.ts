@@ -255,9 +255,12 @@ export class Delegation {
   /**
    * Agents this conversation has confirmed at least once, for `delegation.confirm: 'first'`. In
    * memory only, and per proposing conversation: a restart asks again, and another conversation
-   * asks for itself. A sub-agent's topic never reads or writes it — it asks every time.
+   * asks for itself. A change of tier clears it (see syncConfirmMode). A sub-agent's topic never
+   * reads or writes it — it asks every time.
    */
   private readonly confirmedOnce = new Map<ConversationId, Set<string>>();
+  /** The tier `confirmedOnce` was gathered under. Kept so a change made behind our back — /reload — is noticed. */
+  private confirmMode: Config['delegation']['confirm'] | undefined;
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
   private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void }>();
   /**
@@ -380,6 +383,7 @@ export class Delegation {
    * own; it gathers a burst the same way, only for the record.
    */
   private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): Promise<TaskNewResult> {
+    this.syncConfirmMode();
     const def = findAgent(this.deps.config, a.agent);
     if (!def) {
       throw new Error(`no agent "${a.agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
@@ -454,6 +458,24 @@ export class Delegation {
   }
 
   /**
+   * Clear what was confirmed under a tier the operator has since left. Called by the settings store
+   * the moment `/setting delegation` lands — including a change away and back with no `task-new` in
+   * between, which `syncConfirmMode` could not see — and by `propose` for a `/reload`.
+   */
+  forgetConfirmations(): void {
+    this.confirmedOnce.clear();
+    this.confirmMode = this.deps.config.delegation.confirm;
+  }
+
+  /** Forget confirmations when the tier read at this proposal differs from the one they were gathered under. */
+  private syncConfirmMode(): void {
+    const mode = this.deps.config.delegation.confirm;
+    if (this.confirmMode === mode) return;
+    this.confirmedOnce.clear();
+    this.confirmMode = mode;
+  }
+
+  /**
    * Put the proposal up as one card, and start what it lists if the person says so.
    *
    * A newer card replaces this one (a `task-new` arrived, or the person wrote and `personSpoke` dropped
@@ -462,6 +484,9 @@ export class Delegation {
    * on the next card, so a tap can never start something the person did not see.
    */
   private async putUp(key: ConversationId): Promise<void> {
+    // A tier change while the card waited still invalidates the old confirmations before this tap
+    // is recorded.
+    this.syncConfirmMode();
     const g = this.gathering.get(key);
     const here = this.place(key);
     if (!g?.items.length || !here) return;

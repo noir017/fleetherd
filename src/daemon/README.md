@@ -713,7 +713,9 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   A newer card aborts the one on screen (`signal`). With `delegation.confirm: 'first'`, only an
   agent's first sub-task in a conversation goes on that card; a confirmed Start records the agents
   it covered (`confirmedOnce`, in memory and per proposing conversation), and later `task-new` calls
-  for them open at once and queue the record card. With `delegation.confirm: false`, `task-new` opens
+  for them open at once and queue the record card. A change of tier clears that record — the
+  settings store calls `forgetConfirmations` on a `/setting` write, and `propose` compares the tier
+  so a `/reload` is noticed too. With `delegation.confirm: false`, `task-new` opens
   every part at once (so its answer can say it is running) and queues the same list as a card without
   buttons, gathered the same way and never dropped by a message from the person. The `'first'` and
   `false` tiers apply only in a conversation with no parent: a sub-agent's own topic still puts up

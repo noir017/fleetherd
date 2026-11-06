@@ -90,7 +90,8 @@ input mid-turn; elsewhere it waits for the turn to end, and the agent is told wh
   asks once per agent in a conversation: after you tap Start on a card that included that agent,
   later sub-tasks for it there start at once — a batch mixing confirmed and new agents starts the
   former and puts only the latter on the card. That memory lives in the gateway's process and per
-  conversation, so a restart or another conversation asks again. `off` (or
+  conversation, so a restart or another conversation asks again; changing the setting, in either
+  direction, forgets it too. `off` (or
   `delegation.confirm: false`) starts every sub-task as the agent proposes it and posts the card
   afterwards as a record. All three reach only conversations you talk to directly — a sub-agent's
   own topic still confirms every time. Only you can change it — no agent command reaches it.

@@ -601,6 +601,53 @@ describe('Delegation: confirming each agent only the first time', () => {
     expect(r.cards[1]!.text).toContain('dig deeper');
   });
 
+  it('forgets every confirmation when the tier changes, even if it changes back', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+
+    // `/setting delegation on`, then back to `first` with no task-new in between — the case a
+    // read at propose time cannot see, and the reason the settings store calls this directly.
+    r.deps.config.delegation.confirm = true;
+    r.d.forgetConfirmations();
+    r.deps.config.delegation.confirm = 'first';
+    r.d.forgetConfirmations();
+
+    const res = (await r.d.handle(P, task('cc', 'after the change'))) as TaskNewResult;
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+    expect(res.result).toContain('Nothing starts until they confirm');
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(2);
+  });
+
+  it('notices a tier changed by /reload at the next proposal', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    await r.d.handle(P, task('cc', 'first'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+
+    // A reload replaces the section in place; no hook runs, so the next proposal compares.
+    r.deps.config.delegation.confirm = false;
+    await r.d.handle(P, task('cc', 'while off'));
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+
+    r.deps.config.delegation.confirm = 'first';
+    const res = (await r.d.handle(P, task('cc', 'back to first'))) as TaskNewResult;
+    expect(res.result).toContain('Nothing starts until they confirm');
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toHaveLength(2);
+  });
+
   it('forgets what was confirmed when the gateway restarts', async () => {
     const r = rig();
     r.deps.config.delegation.confirm = 'first';
