@@ -12,7 +12,7 @@ All notable changes to this project are documented here. The format is based on
   to misclick. Clear is now an icon button in the sidebar header directly following the "Topics"
   title, using the broom icon, with its title and aria-label reflecting whether unstarred or all
   topics will be cleared. The confirmation step remains in place, and Manage holds Close idle
-  alone. [→](docs/web-ui.md)
+  alone (showing a disabled "No idle agents" when none are idle). [→](docs/web-ui.md)
 
 ## [2.38.1] - 2026-11-06
 

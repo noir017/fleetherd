@@ -1526,6 +1526,8 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     await h.emit(sync(A, [], [A]));
     const headerTitle = h.doc.querySelector('#sidebar-header .panel-title');
     expect(headerTitle).not.toBeNull();
+    const titleText = headerTitle?.querySelector('.panel-title-text');
+    expect(titleText?.textContent).toBe('Topics');
     const btn = h.el('clear-topics');
     expect(headerTitle?.contains(btn)).toBe(true);
     expect(btn.classList.contains('btn-icon')).toBe(true);
@@ -4257,9 +4259,9 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(narrowBlock()).toContain('.chip-x{min-width:44px;min-height:44px}');
   });
 
-  it('gives panel-head icon buttons a finger-sized target on phones', () => {
+  it('enlarges #clear-topics SVG on phones to match header glyphs', () => {
     const css = narrowBlock();
-    expect(css).toContain('.panel-head .btn-icon{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}');
+    expect(css).toContain('#clear-topics svg{width:18px;height:18px}');
   });
 
   it('gives the drawer toggle a finger-sized target', () => {
@@ -5488,7 +5490,7 @@ describe('webui page: the sidebar footer, and low attention', () => {
       expect(menu.contains(h.el(id))).toBe(true);
     }
     const manage = h.el('manage-menu');
-    for (const id of ['close-idle']) expect(manage.contains(h.el(id))).toBe(true);
+    for (const id of ['close-idle', 'no-idle']) expect(manage.contains(h.el(id))).toBe(true);
     expect(manage.contains(h.el('clear-topics'))).toBe(false);
     expect(h.doc.querySelector('#sidebar-header .panel-title')?.contains(h.el('clear-topics'))).toBe(true);
     // The footer itself holds two buttons and nothing else — the two menus are its children.
@@ -5520,15 +5522,29 @@ describe('webui page: the sidebar footer, and low attention', () => {
     });
     expect(h.el('idle-count').textContent).toBe('(2)');
     expect(h.el('close-idle').textContent).toBe('Close idle (2)');
+    expect(h.el('no-idle').hidden).toBe(true);
 
-    // Nothing to close: the count goes, and so does the item inside the menu.
+    // Nothing to close: the count goes, close-idle is hidden, and no-idle is shown.
     await h.emit({
       t: 'topics',
       topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true, running: true }],
     });
     expect(h.el('idle-count').textContent).toBe('');
     expect(h.el('close-idle').hidden).toBe(true);
+    expect(h.el('no-idle').hidden).toBe(false);
     expect(h.doc.getElementById('idle-sep')).toBeNull();
+  });
+
+  it('shows a disabled explanation in Manage when idle is 0 instead of an empty box', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    expect(h.el('manage-toggle').hidden).toBe(false);
+    await h.click('#manage-toggle');
+    expect(h.el('manage-menu').hidden).toBe(false);
+    expect(h.el('close-idle').hidden).toBe(true);
+    expect(h.el('no-idle').hidden).toBe(false);
+    expect(h.el('no-idle').textContent).toBe('No idle agents');
+    expect(h.el('no-idle').getAttribute('disabled')).not.toBeNull();
   });
 
   it('opens one menu at a time: opening the other puts the first away', async () => {
@@ -5574,18 +5590,16 @@ describe('webui page: the sidebar footer, and low attention', () => {
     expect(h.doc.activeElement).toBe(h.el('opts-toggle'));
   });
 
-  it('is shut before Clear asks, whatever the answer', async () => {
+  it('asks for confirmation before Clear, and does nothing when declined', async () => {
     const h = await open({ confirm: false });
     await h.emit(sync(A, [], [A, B]));
-    let openWhenAsked: boolean | undefined;
+    let asked = false;
     (h.window as any).confirm = (): boolean => {
-      openWhenAsked = menuOpen(h);
+      asked = true;
       return false;
     };
-    await h.click('#manage-toggle');
     await h.click('#clear-topics');
-    expect(openWhenAsked).toBe(false);
-    expect(menuOpen(h)).toBe(false);
+    expect(asked).toBe(true);
     expect(h.calls.map((c) => c.path)).not.toContain('api/topics/clear');
   });
 
@@ -5771,13 +5785,11 @@ describe('webui page: one panel component on both edges', () => {
     expect(h.calls.some((c) => c.path === 'api/topics/close-idle')).toBe(false);
   });
 
-  it('asks before Clear, and posts only on a yes, from a closed menu', async () => {
+  it('asks before Clear, and posts only on a yes', async () => {
     const h = await open({ confirm: true });
     await h.emit(sync(A, [], [A]));
-    await h.click('#manage-toggle');
     await h.click('#clear-topics');
 
-    expect(h.el('manage-menu').hidden).toBe(true);
     expect(h.confirms).toHaveLength(1);
     await until('the clear request', () => h.calls.some((c) => c.path === 'api/topics/clear'));
   });

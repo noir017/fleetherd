@@ -132,7 +132,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* One bar, one height, one way out on both sides. The × is the panel's close button:
    the topic list and the task panel are both things a person opens and closes. */
 .panel-head{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;border-bottom:1px solid var(--line);min-height:var(--headh);flex:0 0 auto}
-.panel-title{flex:1;min-width:0;display:inline-flex;align-items:center;gap:2px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.panel-title{flex:1;min-width:0;display:inline-flex;align-items:center;gap:2px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);white-space:nowrap}
+.panel-title-text{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .btn-icon{background:none;border:0;padding:4px 7px;color:var(--dim);font:inherit;font-size:13px;cursor:pointer;border-radius:4px;line-height:1}
 .btn-icon:hover{color:var(--fg);background:var(--field)}
 .panel-head .add{font-size:15px;font-weight:600}
@@ -291,6 +292,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .panel-menu{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:4px;z-index:12;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
 .panel-menu button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
 .panel-menu button:hover{background:var(--field)}
+.panel-menu button:disabled{color:var(--dim);cursor:default}
 .panel-menu button:disabled:hover{background:none}
 .opt-state{color:var(--dim);font-size:12px}
 [aria-pressed="true"]>.opt-state{color:#4ade80}
@@ -1009,6 +1011,7 @@ button:disabled{opacity:.5;cursor:default}
      a target three times its size and reads as a stray mark rather than a control. */
   #kill-agent{min-width:44px;height:44px}
   #kill-agent svg{width:18px;height:18px}
+  #clear-topics svg{width:18px;height:18px}
   /* The panel keeps the drawer's width here rather than taking the whole screen: it is the same
      overlay the 1023px rule makes, sliding in from the right, and a strip of the conversation
      stays visible behind it. Only the header and the targets grow for a finger. */
@@ -1113,7 +1116,7 @@ const SCRIPT = `
       chips=$('chips'), hints=$('hints'), typing=$('typing'), note=$('note'), picker=$('picker'),
       bar=$('topics'), sidebar=$('sidebar'), collapseBtn=$('collapse-sidebar'),
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
-      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), idleCount=$('idle-count'),
+      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), noIdleBtn=$('no-idle'), idleCount=$('idle-count'),
       notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
@@ -3542,6 +3545,7 @@ const SCRIPT = `
     // says what closing would do, and is absent when there is nothing to close.
     var idle=idleTopics().length;
     idleBtn.hidden = !idle;
+    noIdleBtn.hidden = Boolean(idle);
     idleBtn.textContent = 'Close idle ('+idle+')';
     idleCount.textContent = idle ? '('+idle+')' : '';
     var below = cur ? busyBelow(cur.id) : false;
@@ -5899,7 +5903,7 @@ __GATE__
 <main id="app" hidden>
   <aside id="sidebar" class="panel panel-left">
     <div id="sidebar-header" class="panel-head">
-      <span class="panel-title">Topics<button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button></span>
+      <span class="panel-title"><span class="panel-title-text">Topics</span><button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button></span>
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
       <button type="button" class="btn-icon panel-close" id="collapse-sidebar" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
@@ -5923,6 +5927,7 @@ __GATE__
       </div>
       <div id="manage-menu" class="panel-menu" hidden>
         <button type="button" id="close-idle" hidden title="End the agent process of every topic that is idle — each conversation is kept">Close idle</button>
+        <button type="button" id="no-idle" disabled>No idle agents</button>
       </div>
     </div>
     <div id="sidebar-resize" class="panel-resize" title="Drag to resize · double-click for the default width"></div>
