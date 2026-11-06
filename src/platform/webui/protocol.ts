@@ -174,7 +174,7 @@ export const ModelChooseRequestSchema = z
  * one `show` printed. Keeping the numbers in step matters only so a page cannot make the daemon
  * buffer something the store will reject a moment later.
  *
- * There is no `delete`: the store has no hard delete, and the page's "Delete" is `archive`.
+ * There is no `delete`: the store has no hard delete, and the page's "Off" switch is `archive`.
  */
 const SkillName = z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'not a skill name');
 const SkillFilePath = z.string().min(1).max(300);

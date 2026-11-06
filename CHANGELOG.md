@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Skills are switched on and off, and between resident and library, from the list.** The web UI's
+  skills page now groups skills under **Resident**, **Library** and **Off**, and every row carries
+  a **Resident** / **Library** switch and an **On** / **Off** switch. Both used to be inside a
+  skill's own page, and turning one off was a **Delete** that took two taps — when what it did was
+  an archive, kept whole and brought back by the same page. Off is still exactly that archive, and
+  still tells the conversation that created the skill; it now takes one tap because one tap undoes
+  it. An off skill's tier is greyed rather than hidden, since it comes back where it was, and the
+  store's refusal (a description too long for a resident skill) stays in sight of the row that was
+  tapped however far down the list it is.
+
 ## [2.42.0] - 2026-11-06
 
 ### Added

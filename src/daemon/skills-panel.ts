@@ -35,7 +35,7 @@ import { configDir } from '../config/load.js';
  * page draws, and every operation forwarded to the store function `talkcode skills` calls.
  *
  * There is deliberately no `delete` here. The store has none — `archive` moves a skill into
- * `archive/` whole, and `restore` brings it back — so the page's "Delete" is the archive and
+ * `archive/` whole, and `restore` brings it back — so the page's "Off" switch is the archive and
  * nothing in this module can reach a hard delete even if a request asked for one.
  *
  * The one thing this adds over the store is the archive notice: `notifyArchived` is the daemon's
