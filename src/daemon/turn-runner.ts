@@ -58,6 +58,25 @@ export const DELEGATE_SENDER = 'delegated';
  */
 export const UPDATE_SENDER = 'sub-agent-updates';
 
+/** The senders the gateway writes as. A message from any other sender is one a person typed. */
+const GATEWAY_SENDERS: ReadonlySet<string> = new Set([SCHEDULED_SENDER, CONTINUE_SENDER, DELEGATE_SENDER, UPDATE_SENDER]);
+
+/**
+ * What a person's own messages put in front of an agent, as one turn's batch or a message merged into
+ * a running turn (TurnRunnerDeps.recordPersonWords). Built from the person's messages alone: in a batch
+ * the merger mixed with a sub-agent task, the task is the gateway's and is left out.
+ *
+ * `text` is the prompt as the agent read it (mergePrompt: a quoted line kept as its `(replying to: …)`
+ * line, a voice message as the transcript the person confirmed), without the attachments' contents;
+ * `attachments` are their names. `turn` is the library's number for the turn they went into, when it
+ * was recorded.
+ */
+export interface PersonWords {
+  text: string;
+  attachments: string[];
+  turn?: number;
+}
+
 /**
  * How much of a failed turn's reason the ❌ notice in its topic carries.
  *
@@ -291,6 +310,14 @@ export interface TurnRunnerDeps {
    */
   recordTurnEnd?(id: ConversationId, end: TurnEnd): void;
   /**
+   * A person's own messages reached the agent here: the batch a turn starts with, or messages a
+   * harness took into the running turn (steer). Called only when the batch holds a message a person
+   * typed — never for a scheduled run, a continue, a sub-agent task or an update card alone.
+   * Delegation listens: what the person writes in a sub-agent's topic is reported to the agent that
+   * opened it, with the turn's outcome (daemon/delegation.ts).
+   */
+  recordPersonWords?(id: ConversationId, words: PersonWords): void;
+  /**
    * Open the library's row for a turn, returning its id and number, and close it when the turn
    * ends.
    *
@@ -345,6 +372,11 @@ function withTurn(end: TurnEnd, turn: HistoryTurnRef | undefined): TurnEnd {
 /** The row id of the turn just opened, or undefined when the library did not take it. */
 function turnIdOf(turn: HistoryTurnRef | undefined): number | undefined {
   return turn?.id;
+}
+
+/** The turn's number in its conversation (`turns.seq`), or undefined when the library did not take it. */
+function turnSeqOf(turn: HistoryTurnRef | undefined): number | undefined {
+  return turn?.seq;
 }
 
 /**
@@ -478,6 +510,8 @@ interface RunningTurn {
   kind: HistoryKind;
   /** The library's row for this turn; a mid-turn message merged into it belongs to it. */
   turnId?: number;
+  /** The library's number for this turn, as a person's words merged into it are reported (PersonWords.turn). */
+  seq?: number;
   /**
    * Where messages that belong to this turn come from: the lane the batch was sent in, and the lane
    * the reply is going to. The two differ under autoThread, which opens a thread for the reply and
@@ -641,6 +675,7 @@ export class TurnRunner {
       at: this.clock.now(),
     });
     const turnId = turnIdOf(historyTurn);
+    const turnSeq = turnSeqOf(historyTurn);
     // Everything that turns agent events into messages in this lane. Shared with the follow-up
     // path (see followUpSink) so out-of-turn output renders exactly like in-turn output.
     const render = this.beginRender(conversationId, platform, address, historyKind, turnId);
@@ -663,10 +698,12 @@ export class TurnRunner {
       platformId,
       kind: historyKind,
       turnId,
+      seq: turnSeq,
       lanes: [addressOf(last.conversation), address],
     };
     this.running.set(conversationId, turn);
     this.reportStart(conversationId);
+    this.reportPersonWords(conversationId, batch, turnSeq);
     // Exactly one end per start, whichever way out the turn takes (see TurnRunnerDeps.recordTurnEnd).
     let end: TurnEnd = { kind: 'stopped' };
 
@@ -778,6 +815,21 @@ export class TurnRunner {
     }
   }
 
+  /** recordPersonWords for the person's messages in `batch`, if it has any; likewise never fatal. */
+  private reportPersonWords(conversationId: ConversationId, batch: InboundMessage[], turn: number | undefined): void {
+    const theirs = batch.filter((m) => !GATEWAY_SENDERS.has(m.conversation.user));
+    if (theirs.length === 0) return;
+    try {
+      this.deps.recordPersonWords?.(conversationId, {
+        text: this.mergePrompt(theirs),
+        attachments: attachmentNames(theirs),
+        ...(turn !== undefined ? { turn } : {}),
+      });
+    } catch (e) {
+      console.error('[turn] recordPersonWords failed:', e instanceof Error ? e.message : e);
+    }
+  }
+
   /**
    * recordHistory, likewise — and for a stronger reason: the library is a convenience, and a
    * full disk or a corrupt database must not fail the turn it was describing. The store's own
@@ -837,6 +889,9 @@ export class TurnRunner {
         at: this.clock.now(),
         turn: outcome === 'joined' ? turn.turnId : undefined,
       });
+      // The same split for the person's words: a message the turn took is reported with the turn it
+      // joined; a `refused` one is reported when the turn it waits for starts, and never twice.
+      this.reportPersonWords(conversationId, batch, outcome === 'joined' ? turn.seq : undefined);
     }
     console.log(`[turn] ${conversationId} ${batch.length} message(s) sent mid-turn: ${outcome}`);
     return outcome;

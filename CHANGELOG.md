@@ -17,6 +17,16 @@ All notable changes to this project are documented here. The format is based on
   when the asker is among the names. The topic link, machine and directory all stay. The
   confirmation card keeps its own shape — numbered items that quote the task and link nothing,
   because no topic exists yet — and only moves the model next to the name. [→](docs/sub-agents.md)
+- **What you say to a sub-agent in its own topic now reaches the agent that started it.** A turn
+  you started in a sub-agent's topic used to be yours alone, so the agent that opened the topic kept
+  working from what it last heard — it would summarise, review or redo the part from a reply you had
+  already corrected there. Now the end of such a turn, or of one you wrote into while it ran, comes
+  back as a `[sub-agent updates]` entry like the work the agent handed over, gathered and counted the
+  same way: your words first, marked as written to the sub-agent directly, then its reply. Your words
+  are cut at 2,000 characters with a note saying how long they were and where to read the rest;
+  attachments are named, and a voice message is its confirmed transcript. Each round you have there
+  is one update when it ends — rounds a few seconds apart share one. A turn you `/stop` sends nothing,
+  and only the topic's own parent is told. [→](docs/sub-agents.md#talking-to-a-sub-agent)
 
 ### Removed
 

@@ -11,6 +11,7 @@ import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js
 import { TurnFailure } from './agent.js';
 import { readPromptRefusal } from './session-failure.js';
 import type { InboundMessage, TopicActivity } from '../types.js';
+import type { PersonWords } from './turn-runner.js';
 
 /**
  * The turn-outcome and sub-agent wiring through a real registry, merger and turn runner, with a fake
@@ -37,6 +38,7 @@ function rig(
     steer?: boolean;
     modelFailure?: string;
     store?: ConversationStore;
+    onPersonWords?: (id: string, words: PersonWords) => void;
   } = {}
 ) {
   const parsed = parseConfig({
@@ -134,7 +136,8 @@ function rig(
     dispose: () => {},
   };
 
-  const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, undefined, opts.store);
+  const hooks = opts.onPersonWords ? { onPersonWords: opts.onPersonWords } : undefined;
+  const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, hooks, opts.store);
   return { registry, sent, prompts, models, events, activity, renamed, nested };
 }
 
@@ -324,5 +327,47 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     expect(r.registry.canSteer(opened.key)).toBe(true);
     await expect(r.registry.handTo(opened.key, 'web', opened.address, 'also the docs', header)).resolves.toBe('joined');
     expect(r.sent.at(-1)).toEqual({ to: 'main/new1', text: `${header}\n\nalso the docs`, kind: 'dispatch' });
+  });
+});
+
+describe('what a person writes reaches delegation (recordPersonWords)', () => {
+  const header = '**↳ From [Release](?t=aaaaaaaa)**';
+  const parent = { channel: 'main', thread: 'aaaaaaaa' };
+
+  it('reports the person’s message as the agent read it, quoted line and all, and never a task the parent handed over', async () => {
+    const words: Array<{ id: string; words: PersonWords }> = [];
+    const r = rig({ onPersonWords: (id, w) => words.push({ id, words: w }) });
+    live = r.registry;
+    const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'the task', header });
+    await wait();
+    expect(words).toEqual([]);
+    r.registry.route({ ...inbound('use sqlite instead', 'new1'), quotedContent: 'Which database?' });
+    await wait();
+    expect(r.prompts.map((p) => p.prompt)).toEqual(['the task', '(replying to: "Which database?")\nuse sqlite instead']);
+    expect(words).toEqual([
+      { id: opened.key, words: { text: '(replying to: "Which database?")\nuse sqlite instead', attachments: [] } },
+    ]);
+  });
+
+  it('reports a message the running turn took (joined) at once, and a queued one only when its turn starts', async () => {
+    const joined: PersonWords[] = [];
+    const a = rig({ hold: true, steer: true, onPersonWords: (_id, w) => joined.push(w) });
+    live = a.registry;
+    await a.registry.openTask({ platform: 'web', parent, agentId: 'cc', text: 'go', header });
+    await wait(20);
+    a.registry.route(inbound('and keep it short', 'new1'));
+    await wait();
+    expect(joined.map((w) => w.text)).toEqual(['and keep it short']);
+    a.registry.dispose();
+
+    const queued: PersonWords[] = [];
+    const b = rig({ hold: true, onPersonWords: (_id, w) => queued.push(w) });
+    live = b.registry;
+    await b.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header });
+    await wait(20);
+    b.registry.route(inbound('and keep it short', 'new1'));
+    await wait();
+    // Waiting behind a turn that never ends here: nothing has reached the agent, so nothing is reported.
+    expect(queued).toEqual([]);
   });
 });

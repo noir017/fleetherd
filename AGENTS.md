@@ -146,7 +146,11 @@ Two things reach an agent that the person did not type in that conversation, eac
 2026-11-02 and each kept to the one place it is for. An agent that started **sub-agents**
 (`daemon/delegation.ts`) is told what they did in a `[sub-agent updates]` card, because no harness
 can carry another conversation's state; it goes only to the conversation that opened those topics,
-only about turns it handed them, and is shown folded there before it is sent. And
+only about turns it handed them or that the person started or joined by writing in one, and is
+shown folded there before it is sent. The person's turns were added on 2026-11-06, quoting what
+they wrote above the result: until then such a turn was theirs alone, and the agent that opened the
+topic went on summarising, reviewing or redoing work from a reply the person had already corrected
+there. And
 `hooks.turnFailed.continue.message` is sent after a failed turn — the operator's own words,
 announced in the chat first, off unless configured. A sub-agent gets the task text it was handed
 and nothing else; how to split a job and use the updates is the `super` skill's (`skill-super/`),

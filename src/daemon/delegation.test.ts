@@ -20,6 +20,7 @@ import {
   CARD_DELAY_MS,
   CARD_ITEM_CHARS,
   CARD_MAX_ENTRIES,
+  CARD_SAID_CHARS,
   CARD_TOTAL_CHARS,
   Delegation,
   PROPOSAL_GATHER_MS,
@@ -1532,7 +1533,7 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(positional.turn!.outcome).toBe('done');
   });
 
-  it('does not tell the parent about a turn the person started in the sub-agent’s topic', async () => {
+  it('does not tell the parent about a turn nobody handed it and the person did not write in', async () => {
     const r = rig();
     await r.d.handle(P, task('cc', 'a'));
     r.clock.advance(PROPOSAL_GATHER_MS);
@@ -1542,7 +1543,7 @@ describe('Delegation: [sub-agent updates]', () => {
     r.d.childChanged('web#main#c1000000');
     r.clock.advance(CARD_DELAY_MS);
     expect(r.calls.filter(([c]) => c === 'prompt')).toHaveLength(1);
-    // Reported; the person now writes there directly, and that turn ends.
+    // Reported; a turn nobody wrote — a scheduled run there, say — ends.
     r.d.childChanged('web#main#c1000000');
     r.clock.advance(CARD_DELAY_MS);
     expect(r.calls.filter(([c]) => c === 'prompt')).toHaveLength(1);
@@ -1572,6 +1573,214 @@ describe('Delegation: [sub-agent updates]', () => {
     r.busy.add('web#main#c1000000');
     r.clock.advance(CARD_DELAY_MS);
     expect(r.calls.filter(([c]) => c === 'prompt')).toEqual([]);
+  });
+});
+
+describe('Delegation: what the person writes in a sub-agent’s topic', () => {
+  const C = 'web#main#c1000000';
+
+  /** One sub-agent opened by P, its handed-out first turn already reported, so only what follows counts. */
+  const reported = async () => {
+    const r = rig();
+    await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    r.activity.set(C, { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+    r.replies.set(C, 'Done.');
+    r.d.childChanged(C);
+    r.clock.advance(CARD_DELAY_MS);
+    return r;
+  };
+
+  const prompts = (r: ReturnType<typeof rig>) =>
+    r.calls.filter(([c]) => c === 'prompt').map(([, o]) => o as { key: string; prompt: string });
+
+  /** A turn in C ending normally with `reply`, as TurnOutcomes would report it. */
+  const ends = (r: ReturnType<typeof rig>, reply: string, key = C): void => {
+    r.activity.set(key, { outcome: { kind: 'done', at: 9, line: reply.split('\n')[0]! } });
+    r.replies.set(key, reply);
+    r.d.childChanged(key);
+  };
+
+  it('tells the parent about a turn the person started there, their words above the reply', async () => {
+    const r = await reported();
+    r.d.personWrote(C, { text: 'also cover the CLI,\nnot only the API', attachments: [], turn: 2 });
+    ends(r, 'Done: CLI covered too.');
+    r.clock.advance(CARD_DELAY_MS);
+    const sent = prompts(r);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.key).toBe(P);
+    expect(sent[1]!.prompt.split('\n')).toEqual([
+      '[sub-agent updates] 1 of 1 sub-agent has finished or stopped.',
+      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/talkcode · finished',
+      '  the person wrote to it directly: also cover the CLI,',
+      '  not only the API',
+      '  reply: Done: CLI covered too.',
+      '  link: ?t=c1000000',
+    ]);
+    expect(r.posted.filter((p) => p.kind === 'report').at(-1)?.text).toBe(
+      '🔔 part (cc @ near) — finished after you wrote there: Done: CLI covered too.'
+    );
+  });
+
+  it('leaves a handed-out turn’s card as it was when the person wrote nothing', async () => {
+    const r = await reported();
+    expect(prompts(r)[0]!.prompt).not.toContain('the person wrote');
+    expect(r.posted.find((p) => p.kind === 'report')?.text).toBe('🔔 part (cc @ near) — finished: Done.');
+  });
+
+  it('cuts long words at CARD_SAID_CHARS, saying how long they were and which turn holds them, and keeps the reply whole', async () => {
+    const r = await reported();
+    r.d.personWrote(C, { text: 'w'.repeat(5_000), attachments: [], turn: 3 });
+    ends(r, 'Read it all. Verdict: fine.');
+    r.clock.advance(CARD_DELAY_MS);
+    const card = prompts(r)[1]!.prompt;
+    const said = card.split('\n  the person wrote to it directly: ')[1]!.split('\n  reply: ')[0]!.replace(/\n {2}/g, '\n');
+    expect(said.length).toBe(CARD_SAID_CHARS);
+    expect(said).toContain('5000 chars total, cut at');
+    expect(said).toContain("all of it is in this topic's turn 3 — task-read web:main/c1000000 --turn 3 --role user --full");
+    expect(card).toContain('  reply: Read it all. Verdict: fine.');
+    expect(card.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
+  });
+
+  it('names the attachments in the heading, and points at every user row when the words span turns', async () => {
+    const r = await reported();
+    r.d.personWrote(C, { text: 'see the log', attachments: ['build.log'], turn: 2 });
+    r.d.personWrote(C, { text: '', attachments: ['shot.png'], turn: 3 });
+    r.d.personWrote(C, { text: 'x'.repeat(3_000), attachments: [], turn: 3 });
+    ends(r, 'Fixed.');
+    r.clock.advance(CARD_DELAY_MS);
+    const card = prompts(r)[1]!.prompt;
+    expect(card).toContain('  the person wrote to it directly, attaching build.log, shot.png: see the log\n  xxx');
+    expect(card).toContain('all of it is in this topic — task-read web:main/c1000000 --role user --full');
+  });
+
+  it('merges words the person sent into a running handed-out turn into that turn’s one card', async () => {
+    const r = await reported();
+    await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'now the docs' });
+    // The harness took the person's message into the turn task-send started (steer: joined).
+    r.d.personWrote(C, { text: 'and keep it short', attachments: [], turn: 2 });
+    ends(r, 'Docs done, short.');
+    r.clock.advance(CARD_DELAY_MS);
+    const sent = prompts(r);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.prompt).toContain('  the person wrote to it directly: and keep it short\n  reply: Docs done, short.');
+  });
+
+  it('waits for the person’s queued turn behind a handed-out one, and sends one card for both', async () => {
+    const r = await reported();
+    await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'now the docs' });
+    ends(r, 'Docs done.');
+    // A harness with no steer: the person's message waited, and starts as the next turn before the card goes.
+    r.busy.add(C);
+    r.d.personWrote(C, { text: 'and the README', attachments: [], turn: 3 });
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    r.busy.delete(C);
+    ends(r, 'README done.');
+    r.clock.advance(CARD_DELAY_MS);
+    const sent = prompts(r);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.prompt).toContain('  the person wrote to it directly: and the README\n  reply: README done.');
+  });
+
+  it('wakes the parent once per round, and never repeats words a card already carried', async () => {
+    const r = await reported();
+    for (const [i, words] of ['first ask', 'second ask'].entries()) {
+      r.d.personWrote(C, { text: words, attachments: [], turn: i + 2 });
+      ends(r, `answer ${i + 1}`);
+      r.clock.advance(CARD_DELAY_MS);
+    }
+    const sent = prompts(r);
+    expect(sent).toHaveLength(3);
+    expect(sent[1]!.prompt).toContain('directly: first ask\n  reply: answer 1');
+    expect(sent[2]!.prompt).toContain('directly: second ask\n  reply: answer 2');
+    expect(sent[2]!.prompt).not.toContain('first ask');
+  });
+
+  it('shows the words on a question card once, and the end of that turn without them', async () => {
+    const r = await reported();
+    r.d.personWrote(C, { text: 'use the other database', attachments: [], turn: 2 });
+    r.questions.set(C, 'postgres or sqlite?');
+    r.asking.add(C);
+    r.d.childChanged(C);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)[1]!.prompt).toContain('directly: use the other database\n  question: postgres or sqlite?');
+    r.asking.delete(C);
+    ends(r, 'Switched to sqlite.');
+    r.clock.advance(CARD_DELAY_MS);
+    const last = prompts(r)[2]!.prompt;
+    expect(last).toContain('  reply: Switched to sqlite.');
+    expect(last).not.toContain('the person wrote');
+  });
+
+  it('keeps what the person wrote before a /stop for the next card from that topic', async () => {
+    const r = await reported();
+    r.d.personWrote(C, { text: 'try the slow path', attachments: [], turn: 2 });
+    // Stopped: TurnOutcomes reports nothing, so no card goes and nothing is woken.
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'carry on' });
+    ends(r, 'Carried on.');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)[1]!.prompt).toContain('directly: try the slow path\n  reply: Carried on.');
+  });
+
+  it('tells only the direct parent about a topic a sub-agent opened', async () => {
+    const r = await reported();
+    const G = 'web#main#g1000000';
+    r.parents.set(G, C);
+    r.bound.set(G, 'cx');
+    r.d.personWrote(G, { text: 'grandchild, check X', attachments: [], turn: 1 });
+    ends(r, 'X checked.', G);
+    r.clock.advance(CARD_DELAY_MS);
+    const sent = prompts(r);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.key).toBe(C);
+    expect(sent[1]!.prompt).toContain('- topic web:main/g1000000');
+    expect(sent.filter((p) => p.key === P)).toHaveLength(1);
+  });
+
+  it('names the topic by its stored title on the start card and on the card quoting the person', async () => {
+    const r = rig();
+    // Only the store knows this name: `channels` still lists the topic as "[cc] part".
+    const names = new Map<string, string>([[P, '[cc] Release']]);
+    (r.registry as { conversationTitle: (k: string) => string | undefined }).conversationTitle = (k) => names.get(k);
+    await r.d.handle(P, task('cc', 'count the lines', { title: 'Count lines' }));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    names.set(C, '[cc] Count lines');
+    const started = r.posted.find((p) => p.kind === 'dispatch')?.text ?? '';
+    expect(started.split('\n')[0]).toBe('**cc** — a sub-agent, in a topic of its own under this one:');
+    expect(started).toContain('[Count lines](?t=c1000000)');
+    r.d.personWrote(C, { text: 'and the blank ones too', attachments: [], turn: 2 });
+    ends(r, 'Seven, two of them blank.');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)[0]!.prompt.split('\n').slice(1, 4)).toEqual([
+      '- topic web:main/c1000000 · "Count lines" · cc @ near in ~/workspace/talkcode · finished',
+      '  the person wrote to it directly: and the blank ones too',
+      '  reply: Seven, two of them blank.',
+    ]);
+    expect(r.posted.filter((p) => p.kind === 'report').at(-1)?.text).toBe(
+      '🔔 Count lines (cc @ near) — finished after you wrote there: Seven, two of them blank.'
+    );
+  });
+
+  it('keeps nothing for a topic with no parent, and still reports a sub-agent topic after a restart', async () => {
+    const r = rig();
+    r.d.personWrote(P, { text: 'in my own topic', attachments: [], turn: 1 });
+    ends(r, 'ok', P);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toEqual([]);
+    // Opened by an earlier process: nothing was handed out in this one, but the platform keeps the parent.
+    r.parents.set(C, P);
+    r.bound.set(C, 'cc');
+    r.d.personWrote(C, { text: 'still there?', attachments: [], turn: 4 });
+    ends(r, 'Yes.');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)[0]!.prompt).toContain('directly: still there?\n  reply: Yes.');
   });
 });
 

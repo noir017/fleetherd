@@ -45,8 +45,15 @@ in parallel, and come back with one report — so you follow one topic instead o
 
 ## Talking to a sub-agent
 
-A sub-agent's topic is an ordinary topic: open it, read it, write in it, `/stop` it. A turn you
-start there is yours, so the agent that opened the topic is not told about it.
+A sub-agent's topic is an ordinary topic: open it, read it, write in it, `/stop` it. When a turn you
+started there ends — or a turn you wrote into while it ran — the agent that opened the topic is told,
+the same way as for the work it handed over: the update quotes what you wrote, marked as written to
+the sub-agent directly, then the sub-agent's reply. Your words are cut at 2,000 characters, saying
+so and where the rest is; attachments are listed by name, and a voice message is the transcript you
+confirmed. Each round you have there is one update when it ends, so the agent stays current with what
+you changed; rounds that end within a few seconds of each other, or of other sub-agents' news, share
+one. A turn you `/stop` is not reported, but what you wrote stays for the next update from that topic.
+Only the topic's own parent is told: a topic a sub-agent opened reports to that sub-agent.
 
 To stop the whole job, use **Stop** (or `/stop`) in the topic you started it from: it stops that
 topic and every sub-agent it started that is still working, theirs included. Stop is shown there

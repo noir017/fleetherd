@@ -970,6 +970,8 @@ export class Daemon {
       // What a turn left for the person (and a question asked, see askButtons): in a sub-agent's
       // topic, the agent that opened it is told.
       onNeedsPerson: (id) => this.delegation.childChanged(id),
+      // What the person wrote in a turn there goes with it: the agent that opened the topic is told.
+      onPersonWords: (id, words) => this.delegation.personWrote(id, words),
       // `/stop` in a topic that opened sub-agents stops them too.
       stopSubAgents: (id) => this.delegation.stopOpened(id),
     }, store, workdirUsage, undefined, history);
