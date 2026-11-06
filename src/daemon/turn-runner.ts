@@ -25,7 +25,7 @@ import { ingestAttachments, type AttachmentInput } from '../core/attachment-inge
 import { createAttachmentIngestDeps, remoteAttachmentSave } from './attachment-io.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { HistoryEvent } from '../history/record.js';
-import { kindForTrigger, toolLine } from '../history/record.js';
+import { kindForTrigger, toolText } from '../history/record.js';
 import type { HistoryKind, HistoryTurnEnd, HistoryTurnRef, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
 
 /**
@@ -878,6 +878,18 @@ export class TurnRunner {
     /** The library turn every row of this render belongs to (a background burst has its own). */
     turnId: number | undefined
   ): AgentStreamHandlers {
+    /** The latest start of each call by id, so its finish can rewrite the row with the same line. */
+    const toolStarts = new Map<string, ToolEvent>();
+    const recordTool = (evt: ToolEvent, input: unknown): void => {
+      this.recordHistory(conversationId, {
+        type: 'tool',
+        title: toolText(evt.name, evt.inputPreview, input, evt.agent),
+        ...(evt.id !== undefined ? { call: evt.id } : {}),
+        kind: historyKind,
+        at: this.clock.now(),
+        turn: turnId,
+      });
+    };
     return {
       onText: (delta) => {
         if (delta) ref.producedOutput = true;
@@ -889,13 +901,10 @@ export class TurnRunner {
         // Before the rendering chain: the live status is read while this turn runs, and must not
         // wait for a rate-limited bubble to be painted. See TurnRunnerDeps.recordTool.
         this.deps.recordTool?.(conversationId, evt);
-        this.recordHistory(conversationId, {
-          type: 'tool',
-          title: toolLine(evt.name, evt.inputPreview, evt.agent),
-          kind: historyKind,
-          at: this.clock.now(),
-          turn: turnId,
-        });
+        // A start is re-emitted whenever the bubble's line changes (agent-acp.ts upgradeToolRow);
+        // with the call's id the library rewrites one row rather than adding one per emission.
+        if (evt.id !== undefined) toolStarts.set(evt.id, evt);
+        recordTool(evt, evt.input);
         rollSegment(ref);
         // Before a tool: finish the current text as its own bubble (no footer: not the last segment), then
         // register the tool. Registering is synchronous — the bubble is delivered by the renderer's own
@@ -912,7 +921,15 @@ export class TurnRunner {
           await tools.placed(BUBBLE_PLACEMENT_WAIT_MS);
         });
       },
-      onToolFinish: (evt) => enqueue(() => tools.onToolFinish(evt)),
+      onToolFinish: (evt) => {
+        // The finish carries the arguments as they ended. A start is re-emitted only when the
+        // line changes, so a Write whose path came first and content after would otherwise be
+        // filed with half its content.
+        const start = evt.id !== undefined ? toolStarts.get(evt.id) : undefined;
+        if (evt.id !== undefined) toolStarts.delete(evt.id);
+        if (start && evt.input !== undefined && evt.input !== start.input) recordTool(start, evt.input);
+        enqueue(() => tools.onToolFinish(evt));
+      },
       onSegmentBreak: () => {
         rollSegment(ref);
         // Tool→text boundary: finish the current (pre-tool) buffer, reset the tool segment, then start a

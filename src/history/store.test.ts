@@ -79,10 +79,12 @@ describe('HistoryStore', () => {
     store.close();
   });
 
-  it('finds English words', () => {
+  it('finds English words, in a tool call only when asked to', () => {
     const { store } = tempStore();
     seed(store);
-    const hits = store.search('git status');
+    // The only row with these words is a tool call, and a search leaves those out by default.
+    expect(store.search('git status')).toHaveLength(0);
+    const hits = store.search('git status', { tools: true });
     expect(hits).toHaveLength(1);
     expect(hits[0]!.role).toBe('tool');
     expect(hits[0]!.excerpt).toBe('Bash: git status');
@@ -465,8 +467,9 @@ describe('HistoryStore turns', () => {
     ]);
     const lastTwo = store.read(String(session), { turns: 2 });
     expect(lastTwo.messages.map((m) => m.turn)).toEqual([2, 2, 2, 3, 3]);
-    // Asking for more turns than exist is not a cut, so it carries no note.
-    expect(store.read(String(session), { turns: 150 }).note).toBeUndefined();
+    // Asking for more turns than exist is not a cut, so it carries no cut note — only the one
+    // saying turn 2's tool call was folded.
+    expect(store.read(String(session), { turns: 150 }).note).toMatch(/^Each run of tool calls is folded/);
     // A running turn reads as running, not as an outcome that never happened.
     const running = store.startTurn(session, { agent: 'cc', generation: 0, trigger: 'person', at: 99_000 })!;
     store.message(session, { ts: 99_000, role: 'user', kind: 'normal', text: '还在跑', turn: running });
@@ -772,6 +775,146 @@ describe('HistoryStore turns', () => {
     // A bare `turn` index cannot narrow by session; the planner would walk the conversation's
     // messages from its start instead.
     expect(plan.some((p) => p.detail.includes('messages_session_turn'))).toBe(true);
+  });
+});
+
+/**
+ * Tool calls: one row per call however many times the harness re-sends it, and reads that fold a
+ * run of calls into one line unless the read asks for the calls themselves.
+ */
+describe('HistoryStore tool calls', () => {
+  function toolSession(store: HistoryStore): { session: number; at: number; turn: number } {
+    const at = Date.UTC(2026, 10, 6, 9, 0);
+    const session = store.session({ key: 'web#main#tools', platform: 'web', agent: 'cbc', at })!;
+    const turn = store.startTurn(session, { agent: 'cbc', generation: 0, trigger: 'person', at })!;
+    return { session, at, turn };
+  }
+
+  it('rewrites the row of a call it has already recorded, keeping when the call started', () => {
+    const { store } = tempStore();
+    const { session, at, turn } = toolSession(store);
+    const write = (ts: number, text: string, call?: string, t = turn): void =>
+      store.message(session, { ts, role: 'tool', kind: 'normal', text, turn: t, ...(call ? { call } : {}) });
+    write(at, 'Write: {"content":"---\\nname: v"}', 'call-1');
+    write(at + 1, 'Write: {"content":"---\\nname: vlt\\n"}', 'call-1');
+    write(at + 2, 'Write: /skills/vlt/SKILL.md\n{"file_path":"/skills/vlt/SKILL.md","content":"---\\nname: vlt\\n"}', 'call-1');
+    const rows = store.read(String(session), { role: 'tool' }).messages;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.text).toMatch(/^Write: \/skills\/vlt\/SKILL\.md\n/);
+    expect(rows[0]!.at).toBe(new Date(at).toISOString());
+    // The index follows the text: the final path is found, the first frame's words are not.
+    expect(store.search('SKILL.md', { tools: true })).toHaveLength(1);
+    expect(store.search('"name: v"', { tools: true })).toHaveLength(0);
+    // Without an id every write is a row, as before; the same id in another turn is another call.
+    write(at + 3, 'Bash: ls');
+    write(at + 4, 'Bash: ls');
+    const next = store.startTurn(session, { agent: 'cbc', generation: 0, trigger: 'person', at: at + 5 })!;
+    write(at + 5, 'Edit: a.ts', 'call-1', next);
+    expect(store.read(String(session), { role: 'tool' }).messages).toHaveLength(4);
+    store.close();
+  });
+
+  it('adds the call column to a file that predates it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-nocall-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'history.db');
+    const raw = new Sqlite(file);
+    raw.exec(`
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, ts INTEGER NOT NULL,
+        role TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'normal', text TEXT NOT NULL, turn INTEGER
+      );
+    `);
+    raw.close();
+    const store = new HistoryStore(file);
+    const { session, at, turn } = toolSession(store);
+    store.message(session, { ts: at, role: 'tool', kind: 'normal', text: 'Bash: a', turn, call: 'c' });
+    store.message(session, { ts: at, role: 'tool', kind: 'normal', text: 'Bash: b', turn, call: 'c' });
+    expect(store.read(String(session), { role: 'tool' }).messages.map((m) => m.text)).toEqual(['Bash: b']);
+    store.close();
+  });
+
+  /** user, three calls, a reply, one call, user — in one turn — then one call in the next. */
+  function seedRuns(store: HistoryStore): { session: number; ids: number[] } {
+    const { session, at, turn } = toolSession(store);
+    const rows: Array<['user' | 'agent' | 'tool', string, number?]> = [
+      ['user', '把 vlt 整理成技能'],
+      ['tool', 'Bash: cat SKILL.md\n{"command":"cat SKILL.md"}'],
+      ['tool', 'Bash: git status'],
+      ['tool', 'reviewer · Edit: SKILL.md'],
+      ['agent', '写好了'],
+      ['tool', 'Write: notes.md\n{"file_path":"notes.md","content":"x"}'],
+      ['user', '提交吧'],
+    ];
+    rows.forEach(([role, text], i) => store.message(session, { ts: at + i, role, kind: 'normal', text, turn }));
+    const next = store.startTurn(session, { agent: 'cbc', generation: 0, trigger: 'person', at: at + 100 })!;
+    store.message(session, { ts: at + 100, role: 'tool', kind: 'normal', text: 'Bash: git push', turn: next });
+    const ids = store.read(String(session), { role: 'tool' }).messages.map((m) => m.id);
+    return { session, ids };
+  }
+
+  it('folds each run of calls in a plain read, one call to its first line, and says so', () => {
+    const { store } = tempStore();
+    const { session, ids } = seedRuns(store);
+    const read = store.read(String(session));
+    expect(read.messages.map((m) => m.text)).toEqual([
+      '把 vlt 整理成技能',
+      '[3 tool calls: Bash ×2, Edit]',
+      '写好了',
+      'Write: notes.md',
+      '提交吧',
+      // A new turn starts a new run, even with no other row between.
+      'Bash: git push',
+    ]);
+    // A run reads at its first call, which is what --around takes.
+    expect(read.messages[1]!.id).toBe(ids[0]);
+    expect(read.note).toBe('Each run of tool calls is folded into one line; --role tool lists them with their arguments.');
+    store.close();
+  });
+
+  it('lists the calls whole for --role tool and --grep, and does not fold a window', () => {
+    const { store } = tempStore();
+    const { session, ids } = seedRuns(store);
+    const tools = store.read(String(session), { role: 'tool' });
+    expect(tools.messages).toHaveLength(5);
+    expect(tools.messages[0]!.text).toBe('Bash: cat SKILL.md\n{"command":"cat SKILL.md"}');
+    expect(tools.note).toBeUndefined();
+    expect(store.read(String(session), { grep: 'git' }).messages.map((m) => m.text)).toEqual([
+      'Bash: git status',
+      'Bash: git push',
+    ]);
+    const window = store.read(String(session), { around: ids[1]!, window: 1 });
+    expect(window.messages.map((m) => m.role)).toEqual(['tool', 'tool', 'tool']);
+    store.close();
+  });
+
+  it('counts folded rows against --limit, and resumes --since after a run, not inside it', () => {
+    const { store } = tempStore();
+    const { session, ids } = seedRuns(store);
+    expect(store.read(String(session), { limit: 3 }).messages.map((m) => m.text)).toEqual([
+      'Write: notes.md',
+      '提交吧',
+      'Bash: git push',
+    ]);
+    const first = store.read(String(session), { turn: '1' });
+    expect(first.messages.map((m) => m.text)).toContain('[3 tool calls: Bash ×2, Edit]');
+    const userId = store.read(String(session), { role: 'user' }).messages[0]!.id;
+    const since = store.read(String(session), { since: userId });
+    expect(since.messages[0]!.text).toBe('[3 tool calls: Bash ×2, Edit]');
+    expect(since.messages[0]!.id).toBe(ids[0]);
+    store.close();
+  });
+
+  it('says nothing about folding when the rows it returns hold no call', () => {
+    const { store } = tempStore();
+    const { session } = seedRuns(store);
+    const read = store.read(String(session), { limit: 2, turn: '1' });
+    expect(read.messages.map((m) => m.text)).toEqual(['Write: notes.md', '提交吧']);
+    expect(read.note).toMatch(/^Each run of tool calls is folded/);
+    const plain = store.read(String(session), { turn: '1', limit: 1 });
+    expect(plain.messages.map((m) => m.text)).toEqual(['提交吧']);
+    expect(plain.note).toBeUndefined();
+    store.close();
   });
 });
 

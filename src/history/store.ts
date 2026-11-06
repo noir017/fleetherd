@@ -122,6 +122,13 @@ export interface HistoryMessage {
   text: string;
   /** The turn this row belongs to (turns.id); absent for an import or a row from before turns. */
   turn?: number;
+  /**
+   * A tool row's call id (the harness's `toolCallId`). A second write with the same id in the same
+   * conversation and turn rewrites that row instead of adding one: the harness streams a call's
+   * arguments as a run of updates, and before this every update was a row of its own — one
+   * CodeBuddy Write was twelve identical lines, and 14k of 55k tool rows in two days were copies.
+   */
+  call?: string;
 }
 
 export interface HistorySessionRow {
@@ -303,6 +310,12 @@ export interface HistorySearchOptions {
   agent?: string;
   days?: number;
   limit?: number;
+  /**
+   * Include tool calls. Off by default: they are 94% of the rows (72k of 76k recorded 11-04 to
+   * 11-06), so a word the person and the agent used is buried under every command that happened
+   * to contain it.
+   */
+  tools?: boolean;
 }
 
 /** What one review reads: a tail of a conversation plus the two facts its trigger decides on. */
@@ -323,6 +336,19 @@ const DEFAULT_LIST_LIMIT = 30;
 const DEFAULT_LIST_DAYS = 7;
 /** How much of one session `read` returns when no window was asked for. */
 const READ_ALL_LIMIT = 500;
+
+/**
+ * How many rows a folding read scans before folding. The 500-row bound counts FOLDED rows, so SQL
+ * cannot apply it; this bounds the scan instead. The longest conversation on 2026-11-06 had 3,196
+ * rows, almost all of them tool calls.
+ */
+const READ_FOLD_SCAN = 20_000;
+
+/** How much of a tool row a folding read takes: its first line is all it shows. */
+const TOOL_HEAD_CHARS = 300;
+
+/** Said once when a read folded tool calls, so an agent knows the rows are there and how to see them. */
+const FOLD_NOTE = 'Each run of tool calls is folded into one line; --role tool lists them with their arguments.';
 
 /**
  * How many characters of text `read` returns in one answer.
@@ -395,7 +421,8 @@ export class HistoryStore {
           role TEXT NOT NULL,
           kind TEXT NOT NULL DEFAULT 'normal',
           text TEXT NOT NULL,
-          turn INTEGER
+          turn INTEGER,
+          call TEXT
         );
         CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id, ts, id);
         CREATE TABLE IF NOT EXISTS turns (
@@ -446,20 +473,23 @@ export class HistoryStore {
   /**
    * Bring an older file up to the current schema, in place, without rewriting a row.
    *
-   * `messages.turn` is the only column a previous version lacks: `CREATE TABLE IF NOT EXISTS`
-   * cannot add it to an existing table, and a migration that back-filled it would be inventing
-   * turn boundaries nobody recorded. So the column is added NULL and old rows stay NULL — read
-   * as "unknown" (see HistoryReadMessage) rather than guessed at.
+   * `messages.turn` and `messages.call` are the columns a previous version lacks: `CREATE TABLE IF
+   * NOT EXISTS` cannot add them to an existing table, and a migration that back-filled them would be
+   * inventing what nobody recorded. So both are added NULL and old rows stay NULL — a turn reads as
+   * "unknown" (see HistoryReadMessage), and an old tool row simply has no call to be rewritten by.
    */
   private migrate(): void {
     const db = this.db;
     if (!db) return;
     const columns = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>;
     if (!columns.some((c) => c.name === 'turn')) db.exec('ALTER TABLE messages ADD COLUMN turn INTEGER');
+    if (!columns.some((c) => c.name === 'call')) db.exec('ALTER TABLE messages ADD COLUMN call TEXT');
     // (session_id, turn), not (turn): every read starts from one conversation, and a turn number
     // is per-conversation. A bare `turn` index cannot narrow by session, so the planner falls back
     // to messages_session and walks the conversation's whole tail to prove there is no later row.
     db.exec('CREATE INDEX IF NOT EXISTS messages_session_turn ON messages(session_id, turn)');
+    // Partial: only tool rows written since calls were kept have one, and every lookup names one.
+    db.exec('CREATE INDEX IF NOT EXISTS messages_call ON messages(session_id, call) WHERE call IS NOT NULL');
   }
 
   /**
@@ -638,7 +668,8 @@ export class HistoryStore {
   /**
    * Keyword search over every recorded turn. Scheduled results sort after everything else
    * (the trap Hermes hit: a noisy every-minute task buries the conversation someone is
-   * looking for), then by BM25, then newest first.
+   * looking for), then by BM25, then newest first. Tool calls are left out unless asked for
+   * (HistorySearchOptions.tools).
    */
   search(query: string, opts: HistorySearchOptions = {}): HistoryHit[] {
     const db = this.requireDb();
@@ -654,6 +685,7 @@ export class HistoryStore {
       params.push(match);
     }
     where.push("m.kind != 'review'");
+    if (!opts.tools) where.push("m.role != 'tool'");
     if (opts.agent) {
       where.push('s.agent = ?');
       params.push(opts.agent);
@@ -742,26 +774,30 @@ export class HistoryStore {
     };
   }
 
-  /** The whole conversation, oldest first, bounded by rows and characters. */
+  /**
+   * The whole conversation, oldest first, bounded by rows and characters, with each run of tool
+   * calls folded into one line (see foldToolRuns) — the 500-row bound counts the folded rows.
+   */
   private readAll(session: HistorySessionRow): HistoryReadResult {
     const db = this.requireDb();
     const rows = db
-      .prepare('SELECT id, ts, role, kind, text FROM messages WHERE session_id = ? ORDER BY ts, id LIMIT ?')
-      .all(session.id, READ_ALL_LIMIT + 1) as Array<Record<string, unknown>>;
-    const more = rows.length > READ_ALL_LIMIT;
-    const all = (more ? rows.slice(0, READ_ALL_LIMIT) : rows).map(messageRow);
-    const { messages, dropped } = capRead(all);
+      .prepare(
+        `SELECT id, ts, role, kind, ${foldTextColumn()} AS text, turn AS turn_ref FROM messages
+         WHERE session_id = ? ORDER BY ts, id LIMIT ?`
+      )
+      .all(session.id, READ_FOLD_SCAN + 1) as Array<Record<string, unknown>>;
+    const scanned = rows.length > READ_FOLD_SCAN;
+    const folded = foldToolRuns(scanned ? rows.slice(0, READ_FOLD_SCAN) : rows);
+    const more = scanned || folded.length > READ_ALL_LIMIT;
+    const picked = folded.slice(0, READ_ALL_LIMIT);
+    const { messages, dropped } = capRead(picked.map(messageRow));
     const notes = [
       more ? `This conversation has more than ${READ_ALL_LIMIT} messages.` : '',
       dropped > 0 ? `${dropped} later message(s) were left out of this answer.` : '',
     ].filter(Boolean);
-    return {
-      session,
-      messages,
-      ...(notes.length > 0
-        ? { note: `${notes.join(' ')} Read a window with --around <message>.` }
-        : {}),
-    };
+    const tail = notes.length > 0 ? `${notes.join(' ')} Read a window with --around <message>.` : '';
+    const note = [tail, anyFolded(picked.slice(0, messages.length)) ? FOLD_NOTE : ''].filter(Boolean).join(' ');
+    return { session, messages, ...(note ? { note } : {}) };
   }
 
   /** Messages on both sides of one id (`--around`), oldest first. */
@@ -829,41 +865,63 @@ export class HistoryStore {
     // A since read must be in the cursor's own coordinate system (see above); everything else
     // keeps the order it has always had.
     const order = opts.since !== undefined ? 'm.id' : newestFirst ? 'm.ts DESC, m.id DESC' : 'm.ts, m.id';
-    const { messages, more, dropped } = this.selectFiltered(where, params, tail ?? limit, newestFirst, order);
-    // Where a since read continues from: the newest row it actually kept, after any cut.
-    const resumeFrom = !newestFirst && opts.since !== undefined ? messages[messages.length - 1]?.id : undefined;
-    const notes = [scope?.note, readNote(more, dropped, newestFirst, resumeFrom)].filter(
+    const fold = foldsTools(opts);
+    const { messages, more, dropped, resumeFrom: last, folded } = this.selectFiltered(where, params, {
+      cap: tail ?? limit,
+      newestFirst,
+      order,
+      fold,
+    });
+    // Where a since read continues from: the newest row it actually kept, after any cut — the
+    // last call of a folded run, not its first, or the next page would repeat the run.
+    const resumeFrom = !newestFirst && opts.since !== undefined ? last : undefined;
+    const notes = [scope?.note, readNote(more, dropped, newestFirst, resumeFrom), folded ? FOLD_NOTE : undefined].filter(
       (n): n is string => n !== undefined
     );
     return { session, messages, ...(notes.length > 0 ? { note: notes.join(' ') } : {}) };
   }
 
-  /** Run the filtered query, and cut it from the end the filter is about (see readFiltered). */
+  /**
+   * Run the filtered query, fold its tool runs when the read does (foldsTools), and cut it from
+   * the end the filter is about (see readFiltered). A folding read cannot let SQL apply the row
+   * bound — the bound counts folded rows — so it scans up to READ_FOLD_SCAN and bounds after.
+   */
   private selectFiltered(
     where: string[],
     params: Array<string | number>,
-    cap: number | undefined,
-    newestFirst: boolean,
-    order: string
-  ): { messages: HistoryReadMessage[]; more: boolean; dropped: number } {
+    how: { cap: number | undefined; newestFirst: boolean; order: string; fold: boolean }
+  ): { messages: HistoryReadMessage[]; more: boolean; dropped: number; resumeFrom?: number; folded: boolean } {
     const db = this.requireDb();
-    const limit = cap ?? READ_ALL_LIMIT + 1;
+    const { cap, newestFirst, order, fold } = how;
+    const bound = cap ?? READ_ALL_LIMIT + 1;
     const sql = `
-      SELECT m.id AS id, m.ts AS ts, m.role AS role, m.kind AS kind, m.text AS text,
+      SELECT m.id AS id, m.ts AS ts, m.role AS role, m.kind AS kind,
+             ${fold ? foldTextColumn('m.') : 'm.text'} AS text,
              m.turn AS turn_ref, t.seq AS turn_seq, t.outcome AS turn_outcome, t.agent AS turn_agent
       FROM messages m
       LEFT JOIN turns t ON t.id = m.turn
       WHERE ${where.join(' AND ')}
       ORDER BY ${order}
       LIMIT ?`;
-    const rows = db.prepare(sql).all(...params, limit) as Array<Record<string, unknown>>;
+    let rows = db.prepare(sql).all(...params, fold ? READ_FOLD_SCAN + 1 : bound) as Array<Record<string, unknown>>;
+    const scanned = fold && rows.length > READ_FOLD_SCAN;
+    if (fold) rows = foldToolRuns(scanned ? rows.slice(0, READ_FOLD_SCAN) : rows).slice(0, bound);
     // A cap the caller asked for (`--tail`, `--limit`) is exactly how many rows it wanted, so
     // reaching it is not a cut worth a note. Only the default 500-row bound is reported.
-    const more = cap === undefined && rows.length > READ_ALL_LIMIT;
-    let selected = (more ? rows.slice(0, READ_ALL_LIMIT) : rows).map(readMessageRow);
-    if (newestFirst) selected = selected.reverse();
-    const { messages, dropped } = newestFirst ? capTail(selected) : capRead(selected);
-    return { messages, more, dropped };
+    const more = cap === undefined && (scanned || rows.length > READ_ALL_LIMIT);
+    let picked = more ? rows.slice(0, READ_ALL_LIMIT) : rows;
+    if (newestFirst) picked = picked.reverse();
+    const selected = picked.map((row) => ({ row, message: readMessageRow(row) }));
+    const cut = newestFirst ? capTail(selected.map((s) => s.message)) : capRead(selected.map((s) => s.message));
+    const keptRows = newestFirst ? selected.slice(selected.length - cut.messages.length) : selected.slice(0, cut.messages.length);
+    const lastRow = keptRows[keptRows.length - 1]?.row;
+    return {
+      messages: cut.messages,
+      more,
+      dropped: cut.dropped,
+      ...(lastRow ? { resumeFrom: Number(lastRow.last_id ?? lastRow.id) } : {}),
+      folded: anyFolded(keptRows.map((k) => k.row)),
+    };
   }
 
   /** The WHERE a filtered read selects, and its parameters. Split out to keep readFiltered short. */
@@ -1240,9 +1298,24 @@ export class HistoryStore {
 
   private insertMessage(sessionId: number, msg: HistoryMessage): void {
     const db = this.requireDb();
+    if (msg.call !== undefined) {
+      // The same call again: the newer text replaces the older one, and the row keeps the time
+      // the call started. Scoped to the turn too, so a harness that reuses ids across turns cannot
+      // overwrite an older turn's record.
+      const existing = db
+        .prepare('SELECT id FROM messages WHERE session_id = ? AND call = ? AND turn IS ?')
+        .get(sessionId, msg.call, msg.turn ?? null) as { id: number | bigint } | undefined;
+      if (existing) {
+        const id = Number(existing.id);
+        db.prepare('UPDATE messages SET text = ? WHERE id = ?').run(msg.text, id);
+        db.prepare('DELETE FROM messages_fts WHERE rowid = ?').run(id);
+        db.prepare('INSERT INTO messages_fts (rowid, body) VALUES (?, ?)').run(id, indexText(msg.text));
+        return;
+      }
+    }
     const res = db
-      .prepare('INSERT INTO messages (session_id, ts, role, kind, text, turn) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(sessionId, msg.ts, msg.role, msg.kind, msg.text, msg.turn ?? null);
+      .prepare('INSERT INTO messages (session_id, ts, role, kind, text, turn, call) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(sessionId, msg.ts, msg.role, msg.kind, msg.text, msg.turn ?? null, msg.call ?? null);
     const id = Number(res.lastInsertRowid);
     db.prepare('INSERT INTO messages_fts (rowid, body) VALUES (?, ?)').run(id, indexText(msg.text));
   }
@@ -1285,6 +1358,94 @@ function readMessageRow(row: Record<string, unknown>): HistoryReadMessage {
     outcome: row.turn_outcome === null || row.turn_outcome === undefined ? 'running' : String(row.turn_outcome),
     agent: String(row.turn_agent ?? ''),
   };
+}
+
+/**
+ * Whether a read folds tool calls: every read that does not choose rows by role or by text. A
+ * `--role tool` read is asking for the calls themselves, and a `--grep` hit inside a call must be
+ * shown, not counted.
+ */
+function foldsTools(opts: HistoryReadOptions): boolean {
+  return opts.role === undefined && opts.grep === undefined;
+}
+
+/** The text column a folding read selects: a tool row's head, any other row whole. */
+function foldTextColumn(alias = ''): string {
+  return `CASE WHEN ${alias}role = 'tool' THEN substr(${alias}text, 1, ${TOOL_HEAD_CHARS}) ELSE ${alias}text END`;
+}
+
+/**
+ * Fold each run of consecutive tool rows into one row, in whichever order the rows came.
+ *
+ * Why the default read folds: a conversation's tool calls outnumber everything else in it — 94% of
+ * the rows recorded 11-04 to 11-06 — so an unfolded read of a working session is a page of commands
+ * with the person's words somewhere in it, and the 500-row bound was usually spent before the
+ * conversation got going. A run breaks at any other row and where the turn or kind changes, so a
+ * fold never hides a turn boundary. One call stays one row, cut to its first line; a longer run
+ * becomes `[37 tool calls: Bash ×20, Edit ×12, Write ×5]`, carrying the run's oldest id (what
+ * `--around` takes) and, as `last_id`, its newest (what a `--since` read resumes after). Every
+ * folded row is marked `folded_run`, so a read says it folded only when it returns one.
+ */
+function foldToolRuns(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  let run: Array<Record<string, unknown>> = [];
+  const flush = (): void => {
+    if (run.length === 0) return;
+    out.push(foldedRun(run));
+    run = [];
+  };
+  for (const row of rows) {
+    if (row.role !== 'tool') {
+      flush();
+      out.push(row);
+      continue;
+    }
+    const prev = run[run.length - 1];
+    if (prev && (prev.turn_ref !== row.turn_ref || prev.kind !== row.kind)) flush();
+    run.push(row);
+  }
+  flush();
+  return out;
+}
+
+/** Whether any row a read is returning is a folded run — the only time FOLD_NOTE is said. */
+function anyFolded(rows: Array<Record<string, unknown>>): boolean {
+  return rows.some((r) => r.folded_run === 1);
+}
+
+/** One run as one row: its oldest row's fields, its newest id, and a line naming what ran. */
+function foldedRun(run: Array<Record<string, unknown>>): Record<string, unknown> {
+  const ids = run.map((r) => Number(r.id));
+  const first = run.reduce((a, b) => (Number(b.id) < Number(a.id) ? b : a));
+  const last = Math.max(...ids);
+  if (run.length === 1) return { ...first, text: firstLine(String(first.text ?? '')), last_id: last, folded_run: 1 };
+  const counts = new Map<string, number>();
+  for (const row of [...run].sort((a, b) => Number(a.id) - Number(b.id))) {
+    const name = toolNameOf(String(row.text ?? ''));
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const named = [...counts].sort((a, b) => b[1] - a[1]);
+  const shown = named.slice(0, FOLD_NAMES).map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
+  const rest = named.length > FOLD_NAMES ? `, +${named.length - FOLD_NAMES} more` : '';
+  return { ...first, text: `[${run.length} tool calls: ${shown.join(', ')}${rest}]`, last_id: last, folded_run: 1 };
+}
+
+/** How many tool names a folded line spells out. */
+const FOLD_NAMES = 6;
+
+function firstLine(text: string): string {
+  const end = text.indexOf('\n');
+  return end < 0 ? text : text.slice(0, end);
+}
+
+/** `Bash` from `Bash: git status`, and from a sub-agent's `reviewer · Bash: …`. */
+function toolNameOf(text: string): string {
+  const line = firstLine(text);
+  const colon = line.indexOf(': ');
+  const who = colon < 0 ? line : line.slice(0, colon);
+  const dot = who.lastIndexOf(' · ');
+  const name = (dot < 0 ? who : who.slice(dot + 3)).trim();
+  return name.length > 40 ? `${name.slice(0, 39)}…` : name || 'tool';
 }
 
 /** Whether any of the read filters that select rows was given. */

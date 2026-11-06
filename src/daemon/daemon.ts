@@ -1473,12 +1473,14 @@ export class Daemon {
   private handleSessionsQuery(action: SessionsQuery): unknown {
     switch (action.kind) {
       case 'sessions-search':
-        // Scheduled runs sort after ordinary conversations — see HistoryStore.search.
+        // Scheduled runs sort after ordinary conversations, and tool calls are left out unless
+        // asked for — see HistoryStore.search.
         return {
           hits: this.requireHistory().search(action.query, {
             agent: action.agent,
             days: action.days,
             limit: action.limit,
+            tools: action.tools,
           }),
         };
       case 'sessions-read':

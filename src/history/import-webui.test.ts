@@ -56,10 +56,11 @@ describe('importWebuiTranscripts', () => {
       kind: 'normal',
       messages: 4,
     });
+    // A plain read folds the two calls into one line; --role tool is what lists them.
     const read = store.read(String(sessions[0]!.id));
-    expect(read.messages.map((m) => m.role)).toEqual(['user', 'tool', 'tool', 'agent']);
-    expect(read.messages[1]!.text).toBe('Bash: git status');
-    expect(read.messages[2]!.text).toBe('Read: src/daemon/turn-runner.ts');
+    expect(read.messages.map((m) => m.role)).toEqual(['user', 'tool', 'agent']);
+    const tools = store.read(String(sessions[0]!.id), { role: 'tool' });
+    expect(tools.messages.map((m) => m.text)).toEqual(['Bash: git status', 'Read: src/daemon/turn-runner.ts']);
     store.close();
   });
 
@@ -81,8 +82,7 @@ describe('importWebuiTranscripts', () => {
     const store = new HistoryStore(path.join(dir, 'history.db'));
     importWebuiTranscripts(dir, store);
 
-    const read = store.read(String(store.list({ days: 30 })[0]!.id));
-    expect(read.messages.map((m) => m.role)).toEqual(['tool', 'tool']);
+    const read = store.read(String(store.list({ days: 30 })[0]!.id), { role: 'tool' });
     expect(read.messages.map((m) => m.text)).toEqual(['finished: Done: all green.', 'failed: upstream 503']);
     store.close();
   });

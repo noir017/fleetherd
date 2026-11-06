@@ -536,13 +536,13 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
   }
   const num = (key: string): number | undefined => (typeof opts[key] === 'number' ? (opts[key] as number) : undefined);
   const refuse = (allowed: readonly string[]): void => {
-    const all = ['agent', 'days', 'limit', 'around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail'];
+    const all = ['agent', 'days', 'limit', 'tools', 'around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail'];
     const stray = all.find((k) => !allowed.includes(k) && opts[k] !== undefined);
     if (stray) throw new Error(`--${stray} does not apply to \`sessions ${action}\``);
   };
   switch (action) {
     case 'search': {
-      refuse(['agent', 'days', 'limit']);
+      refuse(['agent', 'days', 'limit', 'tools']);
       // A quoted phrase arrives as one argument; joining keeps several (from a caller that
       // passes them) as the phrase the person typed.
       const query = args.slice(1).join(' ').trim();
@@ -553,6 +553,7 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
         agent: str(opts.agent),
         days: num('days'),
         limit: num('limit'),
+        ...(opts.tools === true ? { tools: true } : {}),
       };
     }
     case 'read': {
@@ -851,11 +852,12 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'sessions <action> [arg]',
     topic: 'sessions',
     description:
-      'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] | read <session> [--around <message>] [--window] | read <session> [filters] | list [--days]',
+      'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] [--tools] | read <session> [--around <message>] [--window] | read <session> [filters] | list [--days]',
     options: [
       { flags: '-a, --agent <id>', description: 'search: only conversations answered by this agent' },
       { flags: '-d, --days <n>', description: 'search/list: only the last n days', parse: intArg('--days') },
       { flags: '-l, --limit <n>', description: 'search/list: how many rows (search default 10, list 30)', parse: intArg('--limit') },
+      { flags: '--tools', description: 'search: include tool calls (commands, edits and their arguments); left out by default' },
       { flags: '--around <message>', description: 'read: a message id from a search hit, to read around', parse: idArg('--around') },
       { flags: '--window <n>', description: 'read: messages on each side of --around (default 10)', parse: intArg('--window') },
       ...READ_FILTER_OPTIONS,
