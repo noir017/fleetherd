@@ -5065,6 +5065,114 @@ describe('webui page: tool bubbles fold and open', () => {
   });
 });
 
+describe('webui page: sub-agent bubbles', () => {
+  const T = 'a1b2c3d4';
+  const at = `http://localhost:8787/?t=${T}`;
+  /** A message in the shape `index.ts` posts one: rendered html, and the kind it was sent with. */
+  const sub = (
+    id: string,
+    html: string,
+    kind: 'dispatch' | 'report'
+  ): Record<string, unknown> => ({ ...message(id, html), kind });
+  const tag = (h: Harness, cls: string): string | null =>
+    h.doc.querySelector(`#log .m.${cls} .sub-k`)?.textContent ?? null;
+
+  it('draws a dispatch and a report apart, and leaves an ordinary reply alone', async () => {
+    const h = await open({ url: at });
+    await h.emit(
+      sync(T, [sub('m1', '<p>a task</p>', 'dispatch'), sub('m2', renderWebToolLines('🔔 a — done.'), 'report'), message('m3', '<p>a reply</p>')], [T])
+    );
+
+    expect(h.doc.querySelectorAll('#log .m.dispatch')).toHaveLength(1);
+    expect(h.doc.querySelectorAll('#log .m.report')).toHaveLength(1);
+    // The tag is what says which is which before the body is read.
+    expect(tag(h, 'dispatch')).toBe('Sub-agent task');
+    expect(tag(h, 'report')).toBe('Sub-agent report');
+    // A plain reply gets neither mark.
+    expect(h.doc.querySelectorAll('#log .m:not(.dispatch):not(.report)')).toHaveLength(1);
+    expect(h.doc.querySelectorAll('#log .sub-k')).toHaveLength(2);
+  });
+
+  it('folds a report like a tool bubble, and leaves a dispatch unfolded prose', async () => {
+    const h = await open({ url: at });
+    await h.emit(
+      sync(
+        T,
+        [
+          sub('m1', '<p>do the thing</p>', 'dispatch'),
+          sub('m2', renderWebToolLines('🔔 a — done.\n🔔 b — waiting on a question.'), 'report'),
+        ],
+        [T]
+      )
+    );
+
+    // The report's lines are rows, folded, with the same control a tool bubble offers.
+    expect(h.doc.querySelectorAll('#log .m.report .tl')).toHaveLength(2);
+    expect(Array.from(h.doc.querySelectorAll('#log .m.report .tl')).map((r) => r.classList.contains('open'))).toEqual([
+      false,
+      false,
+    ]);
+    expect(h.doc.querySelector('#log .m.report [data-tl-all]')?.textContent).toBe('Show all');
+    // A dispatch is the card or the task text itself: prose, nothing to fold.
+    expect(h.doc.querySelectorAll('#log .m.dispatch .tl')).toHaveLength(0);
+    expect(h.doc.querySelector('#log .m.dispatch [data-tl-all]')).toBeNull();
+
+    await h.click('#log .m.report [data-tl-all]');
+    expect(Array.from(h.doc.querySelectorAll('#log .m.report .tl')).map((r) => r.classList.contains('open'))).toEqual([
+      true,
+      true,
+    ]);
+  });
+
+  it('keeps the report a report while it is edited', async () => {
+    // The card is edited in place as the burst it gathers grows, before it settles.
+    const h = await open({ url: at });
+    await h.emit(sync(T, [sub('m1', renderWebToolLines('🔔 a — done.'), 'report')], [T]));
+    await h.emit({ t: 'msg', msg: sub('m1', renderWebToolLines('🔔 a — done.\n🔔 b — failed.'), 'report') });
+
+    expect(h.doc.querySelectorAll('#log .m.report')).toHaveLength(1);
+    expect(h.doc.querySelectorAll('#log .m.report .tl')).toHaveLength(2);
+    expect(tag(h, 'report')).toBe('Sub-agent report');
+  });
+
+  it('keeps both markings across a reload', async () => {
+    // The transcript cache is what paints before the daemon answers, so the marking has to be in
+    // the message it kept — not in markup only the previous page remembered.
+    const first = await open({ url: at });
+    const messages = [
+      sub('m1', '<p>a task</p>', 'dispatch'),
+      sub('m2', renderWebToolLines('🔔 a — done.'), 'report'),
+    ];
+    await first.emit(sync(T, messages, [T]));
+    await saved();
+    first.window.close();
+
+    const again = await open({ url: at, idb: first.idb });
+    // The cache paints before the daemon answers, so this half is the message it kept — not the
+    // sync repeating itself.
+    await until('the cached transcript is painted', () => again.painted() === 2);
+    expect(again.doc.querySelectorAll('#log .m.dispatch')).toHaveLength(1);
+    expect(again.doc.querySelectorAll('#log .m.report')).toHaveLength(1);
+    expect(tag(again, 'dispatch')).toBe('Sub-agent task');
+    expect(tag(again, 'report')).toBe('Sub-agent report');
+    expect(again.doc.querySelectorAll('#log .m.report .tl')).toHaveLength(1);
+
+    await again.emit(sync(T, messages, [T]));
+    expect(again.doc.querySelectorAll('#log .m.dispatch')).toHaveLength(1);
+    expect(again.doc.querySelectorAll('#log .m.report')).toHaveLength(1);
+    expect(again.doc.querySelectorAll('#log .m.report .tl')).toHaveLength(1);
+  });
+
+  it('styles both kinds with variables, a rail and a tag, so another palette moves no rule', () => {
+    // jsdom does not evaluate the cascade (see the README); the assertion is on what is served.
+    const html = renderPage('Chat', false, true, false);
+    expect(html).toContain('.m.dispatch{background:var(--disp);border-left:3px solid var(--disp-edge)');
+    expect(html).toContain('.m.report{background:var(--rep);border-left:3px solid var(--rep-edge)');
+    expect(html).toContain('--disp:#1a1622;--disp-edge:#8b6cc1;--rep:#14201a;--rep-edge:#3f8f6b');
+    expect(html).toContain('.sub-k{');
+  });
+});
+
 describe('webui page: what needs you, and sub-agent topics', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';

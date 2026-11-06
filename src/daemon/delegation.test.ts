@@ -124,7 +124,7 @@ const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 function rig(opts: { answer?: string | null; failOpen?: string; failModel?: string } = {}) {
   const clock = manualClock();
-  const posted: Array<{ to: string; text: string; tools?: boolean }> = [];
+  const posted: Array<{ to: string; text: string; kind?: string }> = [];
   const parents = new Map<string, string>(); // child key → parent key
   const bound = new Map<string, string>([[P, 'cc']]);
   const activity = new Map<string, TopicActivity>();
@@ -149,7 +149,7 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     childrenOf: (a: ConversationAddress) =>
       [...parents.entries()].filter(([, p]) => p === keyOf(a)).map(([c]) => addrOf(c)),
     sendMessage: async (a: ConversationAddress, text: string, o?: { kind?: string }) => {
-      posted.push({ to: keyOf(a), text, ...(o?.kind === 'tools' ? { tools: true } : {}) });
+      posted.push({ to: keyOf(a), text, ...(o?.kind ? { kind: o.kind } : {}) });
       return { address: a, messageId: 'm' };
     },
   } as unknown as PlatformAdapter;
@@ -326,6 +326,8 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     expect(opened[0]!.header).toBe('**↳ From [Release](?t=aaaaaaaa)**');
     const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 2'))!;
     expect(said.text).toContain('- [part](?t=c1000000) — cc');
+    // The confirmed card's answer is a dispatch: the web UI marks it as a hand-off.
+    expect(said.kind).toBe('dispatch');
   });
 
   it('defaults to the bound agent and shows a validated model on the proposal and started cards', async () => {
@@ -480,6 +482,7 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     await settle();
     const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 1'))!;
     expect(said.text).toMatch(/Could not start 1:\n- 2\. cx: no directory nowhere/);
+    expect(said.kind).toBe('dispatch');
     const prompt = r.calls.find(([c]) => c === 'prompt')![1] as { prompt: string; user: string };
     expect(prompt.prompt).toMatch(/^\[sub-agent updates\] 1 of 2 could not be started/);
     expect(prompt.user).toBe(UPDATE_SENDER);
@@ -531,7 +534,7 @@ describe('Delegation: with confirmation off', () => {
     await settle();
     const card = r.posted.find((p) => p.to === P && p.text.includes('started a sub-agent'))!;
     expect(card).toBeDefined();
-    expect(card.tools).toBeUndefined(); // a message in the transcript, not a folded tool card
+    expect(card.kind).toBe('dispatch'); // a dispatch bubble, not a folded tool card
     expect(card.text).toContain('- [part](?t=c1000000) — cc @ near · web:main/c1000000');
     expect(card.text).toContain('/setting delegation on');
   });
@@ -1181,7 +1184,7 @@ describe('Delegation: [sub-agent updates]', () => {
       '  reply: Done: all green, 12 tests.',
       '  link: ?t=c1000000',
     ]);
-    expect(r.posted).toContainEqual({ to: P, text: '🔔 part (cc @ near) — finished: Done: all green.', tools: true });
+    expect(r.posted).toContainEqual({ to: P, text: '🔔 part (cc @ near) — finished: Done: all green.', kind: 'report' });
   });
 
   it('carries a finished reply whole, line breaks and lists intact, with no separate first line', async () => {
@@ -1303,7 +1306,7 @@ describe('Delegation: [sub-agent updates]', () => {
     r.d.childChanged(key);
     r.clock.advance(CARD_DELAY_MS);
     expect(cardOf(r)).toContain(`  question: ${question.replace(/\n/g, '\n  ')}`);
-    expect(r.posted.find((p) => p.tools)?.text).toBe(
+    expect(r.posted.find((p) => p.kind === 'report')?.text).toBe(
       '🔔 part (cc @ near) — waiting on a question: This needs a decision. Which database should I use? - postgres - sqlite'
     );
     const list = (await r.d.handle(P, { kind: 'task-list' })) as TaskListResult;

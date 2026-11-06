@@ -61,6 +61,7 @@ import type {
 import type {
   ButtonSpec,
   ConversationWorkdir,
+  MessageKind,
   SchedulePanel,
   ModelPicker,
   ModelPickerList,
@@ -190,6 +191,18 @@ interface Stored {
   msg: WebMessage;
   /** The markdown the html was rendered from — what `fetch-messages` must hand back. */
   text: string;
+}
+
+/**
+ * One message body's html, from its kind and its text.
+ *
+ * A line-based kind is one row per line: a tool's progress, and a sub-agent report, whose whole
+ * point is that a burst of `🔔` lines folds to one row each. Markdown would merge them into one
+ * paragraph. Shared by the send path (`index.ts`) and every later edit (`revise`) because a
+ * bubble's kind is given once and both ends must render the same way.
+ */
+export function webMessageHtml(kind: MessageKind | undefined, text: string): string {
+  return kind === 'tools' || kind === 'report' ? renderWebToolLines(text) : renderWebMarkdown(text);
 }
 
 /** Where an event goes. `id` is the SSE event id a reconnect may resume from. */
@@ -1178,9 +1191,9 @@ export class WebRoom {
     const room = this.roomOf(topicId);
     const rec = this.mustFind(room, id, 'edit');
     rec.text = text;
-    // A tool bubble stays one: its kind was given on the send, and every edit after it is the
-    // same bubble with another line or another ✓ (see SendOptions in adapter.ts).
-    const html = rec.msg.kind === 'tools' ? renderWebToolLines(text) : renderWebMarkdown(text);
+    // A tool or report bubble stays one: its kind was given on the send, and every edit after it
+    // is the same bubble with another line or another ✓ (see SendOptions in adapter.ts).
+    const html = webMessageHtml(rec.msg.kind, text);
     rec.msg = { ...rec.msg, html, ...(buttons ? { buttons } : {}) };
     if (screen) {
       rec.msg.settings = screen;

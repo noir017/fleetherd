@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Daemon } from './daemon.js';
+import { PROPOSAL_GATHER_MS } from './delegation.js';
 import { parseConfig } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
@@ -42,7 +43,7 @@ const ONE_QUESTION: AgentElicitation = {
 
 function rig() {
   const sent: string[] = [];
-  const buttonSends: Array<{ text: string; buttons: Array<{ id: string; label: string }> }> = [];
+  const buttonSends: Array<{ text: string; buttons: Array<{ id: string; label: string }>; opts?: { kind?: string } }> = [];
   const buttonEdits: Array<{ text: string; buttons: Array<{ id: string; label: string }> }> = [];
   const answers: ElicitAnswer[] = [];
   const sessions = new Map<string, AgentSession>();
@@ -93,9 +94,11 @@ function rig() {
     sendButtons: async (
       address: { channel: string },
       text: string,
-      buttons: Array<{ id: string; label: string }>
+      buttons: Array<{ id: string; label: string }>,
+      _screen?: unknown,
+      opts?: { kind?: string }
     ) => {
-      buttonSends.push({ text, buttons });
+      buttonSends.push({ text, buttons, ...(opts?.kind ? { opts } : {}) });
       return { address, messageId: `b${buttonSends.length}` };
     },
     editButtons: async (
@@ -110,6 +113,10 @@ function rig() {
     startTyping: async () => {},
     stopTyping: async () => {},
     measureRendered: (t: string) => t.length,
+    // Both present, so `commandSurface(adapter).nested` is true and task-new can reach putUp —
+    // which is where the confirmation card's kind is decided.
+    parentOf: () => undefined,
+    childrenOf: () => [],
   } as unknown as PlatformAdapter;
 
   const daemon = new Daemon(
@@ -250,5 +257,24 @@ describe('ask question reminders, timeouts, and session reclaim', () => {
     expect(r.buttonSends).toHaveLength(1);
     const questionOf = (r.daemon as unknown as { questionOf(id: string): string | undefined }).questionOf.bind(r.daemon);
     expect(questionOf('tg#c1#')).toBe(prompt);
+  });
+
+  it('marks the sub-agent confirmation card as a dispatch, through askButtons', async () => {
+    // delegation.ts's confirm is the Daemon's own askButtons call, so this is the one path where
+    // the card's kind can be checked end to end. Unmarked, the page draws it as an ordinary
+    // question rather than the hand-off it is.
+    const r = rig();
+    await r.send('hello');
+    const delegation = (
+      r.daemon as unknown as {
+        delegation: { handle: (id: string, a: { kind: 'task-new'; agent: string; text: string }) => Promise<unknown> };
+      }
+    ).delegation;
+    await delegation.handle('tg#c1#', { kind: 'task-new', agent: 'cc', text: 'refactor the parser' });
+    await vi.advanceTimersByTimeAsync(PROPOSAL_GATHER_MS + 500);
+
+    const card = r.buttonSends.at(-1);
+    expect(card?.text).toContain('wants to start a sub-agent');
+    expect(card?.opts).toEqual({ kind: 'dispatch' });
   });
 });

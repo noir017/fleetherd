@@ -935,6 +935,29 @@ describe('WebRoom: outbound basics', () => {
     });
   });
 
+  it('keeps a report a report through its edits, rendered as rows so it stays foldable', () => {
+    // A report is a line-based bubble like a tool one (a `[sub-agent updates]` card can be
+    // edited as the burst it gathers grows before it is sent). Re-rendered as markdown, its
+    // lines would merge into one paragraph and the page would have nothing left to fold.
+    vi.useFakeTimers();
+    const { room, topic, seen } = attached();
+    const msg = room.post(topic, { own: false, html: '', kind: 'report' }, '');
+    seen.length = 0;
+    room.revise(topic, msg.id, '🔔 part (cc) — finished: all green.\n🔔 other (cx) — finished: done.');
+    vi.advanceTimersByTime(1_600);
+    expect(lastOf(seen, 'msg')).toMatchObject({
+      t: 'msg',
+      msg: {
+        kind: 'report',
+        html:
+          '<div class="tools">' +
+          '<div class="tl"><span class="tl-c">🔔 part (cc) — finished: all green.</span></div>' +
+          '<div class="tl"><span class="tl-c">🔔 other (cx) — finished: done.</span></div>' +
+          '</div>',
+      },
+    });
+  });
+
   it('strips buttons when handed an empty list, which is how every menu is retired', () => {
     vi.useFakeTimers();
     const { room, topic, seen } = attached();

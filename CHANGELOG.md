@@ -26,6 +26,12 @@ All notable changes to this project are documented here. The format is based on
   lives in the daemon's process, per conversation: a restart, another conversation, or a change of
   tier asks again, and a sub-agent's own topic still asks every time whatever the tier. `on` and
   `off` keep their meaning, including in existing config files. [→](docs/sub-agents.md)
+- **The web UI draws sub-agent traffic as its own kind of bubble.** A card that hands work to a
+  sub-agent — the confirmation card, the record of what started — and the task text a sub-agent's
+  topic receives are marked **Sub-agent task** with a rail of their own; the `[sub-agent updates]`
+  card is marked **Sub-agent report** and keeps its folded lines. The mark travels on the message
+  itself (`SendOptions.kind`), so it survives a reload and a transcript restored after a restart,
+  and every other platform shows the same text unchanged. [→](docs/web-ui.md)
 
 ## [2.38.1] - 2026-11-06
 

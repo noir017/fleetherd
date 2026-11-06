@@ -156,9 +156,12 @@ function kindOf(topic: TopicRecord | undefined): HistoryKind {
 }
 
 /**
- * One kept message into library rows. A tool bubble's `text` is one rendered line per call
- * (`🔧 Bash: "git status"`), so it becomes one row per line, with the decoration removed —
+ * One kept message into library rows. A line-based bubble's `text` is one rendered line per
+ * call (`🔧 Bash: "git status"`), so it becomes one row per line, with the decoration removed —
  * the library's tool rows read `Bash: git status`, the same as the live recorder writes them.
+ * `report` is line-based for the same reason `tools` is (a `[sub-agent updates]` card folds one
+ * row per sub-agent), and was recorded as `tools` before it had a kind of its own, so it keeps
+ * importing the same way.
  */
 function toMessages(kept: KeptMessage, kind: HistoryKind): HistoryMessage[] {
   // A `/setting` screen is a control surface, not something anyone said: the web UI draws it in
@@ -168,7 +171,7 @@ function toMessages(kept: KeptMessage, kind: HistoryKind): HistoryMessage[] {
   const text = typeof kept.text === 'string' ? kept.text.trim() : '';
   if (!text) return [];
   const ts = kept.msg?.at as number;
-  if (kept.msg?.kind === 'tools') {
+  if (kept.msg?.kind === 'tools' || kept.msg?.kind === 'report') {
     return text
       .split('\n')
       .map((line) => toolLineFromRendered(line))

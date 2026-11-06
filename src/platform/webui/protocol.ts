@@ -16,7 +16,7 @@
  */
 import { z } from 'zod';
 
-import type { ButtonSpec } from '../adapter.js';
+import type { ButtonSpec, MessageKind } from '../adapter.js';
 import type { AgentCatalog, AgentStatus, SettingsScreen, SlashCommandSpec } from '../../types.js';
 import { MAX_TOPICS, type Topic } from './topics.js';
 
@@ -407,13 +407,16 @@ export interface WebMessage {
    */
   nonce?: string;
   /**
-   * Set on a tool-progress bubble, whose html is `renderWebToolLines`' one `.tl` per tool call.
+   * What the message is beyond its text (SendOptions.kind): a tool-progress bubble, a sub-agent
+   * dispatch, or a sub-agent report.
    *
-   * The page needs to know rather than sniff the markup: it is what puts the "Show all" control
-   * under the bubble, and it is what keeps the lines a reader opened open while the bubble is
-   * still being edited — which is most of a tool bubble's life.
+   * The page needs to know rather than sniff the markup. For `tools` it is what puts the "Show
+   * all" control under the bubble and keeps the lines a reader opened open while the bubble is
+   * still being edited — most of a tool bubble's life. `dispatch` and `report` are drawn with a
+   * mark of their own so they cannot be read as the agent's next reply; `report` also keeps the
+   * folded lines of a tool bubble.
    */
-  kind?: 'tools';
+  kind?: MessageKind;
   /**
    * The run of the daemon this message was said in (that run's sync `epoch`), set only on a message
    * kept on disk from an EARLIER run — a topic's transcript, restored at startup.

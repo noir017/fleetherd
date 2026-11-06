@@ -142,6 +142,15 @@ screen shows as much as fits, and the ✓ and duration at its end always stay vi
 Click a row to read it in full, and again to fold it; **Show all** under the bubble
 opens every row, including the ones the agent adds after you press it.
 
+**Sub-agent traffic.** A bubble that is about a sub-agent rather than a reply is marked at its
+top with **Sub-agent task** or **Sub-agent report**, and gets a rail in a colour of its own. A
+task is the hand-off: the card that asks you to start the sub-agents, the record of what started,
+and the task text a sub-agent's topic is handed (the message opening `↳ From …`, and every
+`task-send` after it). A report is the folded `🔔` card the agent that opened the sub-agents is
+told with — one row per sub-agent, folded and opened exactly like a tool bubble. The mark travels
+with the message, so a reload and a daemon restart keep it; a chat platform shows the same text
+unmarked.
+
 **Pictures.** Paste a screenshot (Ctrl-V) or attach one and it shows as a thumbnail in the
 composer, with an × to take it back off the message. Once sent, your message shows it too, and a
 tap fills the screen with it. The daemon keeps that copy only while it is running: after a

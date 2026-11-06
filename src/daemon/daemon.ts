@@ -74,7 +74,14 @@ import {
   type SettingRow,
   type SettingsScreenInput,
 } from '../core/settings.js';
-import type { ButtonSpec, PlatformAdapter, ReviewPanel, SchedulePanel, SchedulePanelTask } from '../platform/adapter.js';
+import type {
+  ButtonSpec,
+  MessageKind,
+  PlatformAdapter,
+  ReviewPanel,
+  SchedulePanel,
+  SchedulePanelTask,
+} from '../platform/adapter.js';
 import { OutboundPacer } from '../core/outbound-pacer.js';
 import { splitIntoChunks } from '../core/stream-buffer.js';
 import { formatEmptyCatalog, formatSkillCatalog } from '../core/skills-catalog.js';
@@ -987,6 +994,7 @@ export class Daemon {
           acceptsText: false,
           timeoutNote: '(expired — nothing was started)',
           signal,
+          kind: 'dispatch',
         });
         return outcome?.kind === 'option' ? (outcome.labels[0] ?? null) : null;
       },
@@ -1854,7 +1862,14 @@ export class Daemon {
     labels: string[],
     timeoutMs: number,
     conversationId?: ConversationId,
-    opts: { acceptsText?: boolean; multi?: boolean; timeoutNote?: string; signal?: AbortSignal } = {}
+    opts: {
+      acceptsText?: boolean;
+      multi?: boolean;
+      timeoutNote?: string;
+      signal?: AbortSignal;
+      /** What the message IS, for a platform that draws kinds differently (SendOptions.kind). */
+      kind?: MessageKind;
+    } = {}
   ): Promise<AskOutcome | null> {
     const reqId = randomUUID().slice(0, 8);
     const acceptsText = opts.acceptsText ?? true;
@@ -1863,7 +1878,13 @@ export class Daemon {
     // The Done affordance is appended here rather than baked into `prompt`, because `prompt` is
     // what retireAsk reprints under the answer — and "tap Done when you're finished" under a
     // question that is already answered is stale instruction, not a record of what happened.
-    return platform.sendButtons(address, selected ? `${prompt}\n\n${MULTI_HINT}` : prompt, buttons).then(
+    return platform.sendButtons(
+      address,
+      selected ? `${prompt}\n\n${MULTI_HINT}` : prompt,
+      buttons,
+      undefined,
+      opts.kind ? { kind: opts.kind } : undefined
+    ).then(
       (ref) =>
         new Promise<AskOutcome | null>((resolve) => {
           const timer = setTimeout(() => {

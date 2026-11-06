@@ -28,8 +28,8 @@ import path from 'node:path';
 import { configDir } from '../../config/load.js';
 import type { ConversationAddress } from '../../core/conversation.js';
 import type { MessageRef, SettingsScreen, SlashCommandSpec } from '../../types.js';
-import type { PlatformAdapter } from '../adapter.js';
-import { renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
+import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
+import { renderWebMarkdown } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
 import { readableKind } from './reading.js';
 import {
@@ -37,6 +37,7 @@ import {
   inlineImageType,
   TopicStore,
   WebRoom,
+  webMessageHtml,
   type Kept,
   type TranscriptStore,
   type UploadStore,
@@ -311,6 +312,7 @@ function parseKept(value: unknown): Kept | null {
   if (!msg || typeof text !== 'string') return null;
   const { id, own, html, at, g, reactions, quote, file, nonce, kind } = msg;
   if (typeof id !== 'string' || typeof html !== 'string' || typeof at !== 'number' || typeof g !== 'number') return null;
+  const k = keptKind(kind);
   const q = quote as { html?: unknown } | undefined;
   const f = file as { name?: unknown; url?: unknown; image?: unknown } | undefined;
   return {
@@ -330,9 +332,19 @@ function parseKept(value: unknown): Kept | null {
         ? { file: { name: f.name, url: f.url, ...(f.image === true ? { image: true } : {}) } }
         : {}),
       ...(typeof nonce === 'string' ? { nonce } : {}),
-      ...(kind === 'tools' ? { kind: 'tools' as const } : {}),
+      // The kinds the page draws differently, restored across a restart so the marking — and a
+      // report's folding — survives a reload exactly as it was.
+      ...(k ? { kind: k } : {}),
     },
   };
+}
+
+/**
+ * A `kind` this build knows, or nothing: an older file may hold a value from a future one. The
+ * list lives beside `MessageKind` in adapter.ts, so this cannot carry a second copy of the union.
+ */
+function keptKind(kind: unknown): MessageKind | undefined {
+  return (MESSAGE_KINDS as readonly unknown[]).includes(kind) ? (kind as MessageKind) : undefined;
 }
 
 type Outbound = Pick<
@@ -399,10 +411,8 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
   return {
     async sendMessage(address, text, opts) {
       const topic = topicOf(address, 'sendMessage');
-      const part =
-        opts?.kind === 'tools'
-          ? { own: false, html: renderWebToolLines(text), kind: 'tools' as const }
-          : { own: false, html: renderWebMarkdown(text) };
+      const kind = opts?.kind;
+      const part = { own: false, html: webMessageHtml(kind, text), ...(kind ? { kind } : {}) };
       return ref(topic, room.post(topic, part, text).id);
     },
     async editMessage(r, text) {
@@ -444,13 +454,22 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
       const quote = room.htmlOf(topic, r.messageId);
       return ref(topic, room.post(topic, { own: false, html: renderWebMarkdown(text), quote: { html: quote } }, text).id);
     },
-    async sendButtons(address, text, buttons, screen?: SettingsScreen) {
+    async sendButtons(address, text, buttons, screen?: SettingsScreen, opts?: SendOptions) {
       const topic = topicOf(address, 'sendButtons');
+      const kind = opts?.kind;
       return ref(
         topic,
         room.post(
           topic,
-          { own: false, html: renderWebMarkdown(text), buttons, ...(screen ? { settings: screen } : {}) },
+          {
+            own: false,
+            // The same rule as a plain send: a report sent with buttons is still line-based, and
+            // rendering it as markdown would leave the page a "Show all" with nothing to open.
+            html: webMessageHtml(kind, text),
+            buttons,
+            ...(screen ? { settings: screen } : {}),
+            ...(kind ? { kind } : {}),
+          },
           text
         ).id
       );

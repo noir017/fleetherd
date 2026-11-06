@@ -58,7 +58,7 @@ function rig(
     },
   };
 
-  const sent: Array<{ to: string; text: string }> = [];
+  const sent: Array<{ to: string; text: string; kind?: string }> = [];
   const renamed: Array<{ to: string; name: string }> = [];
   const activity: Array<{ to: string; a: TopicActivity | undefined }> = [];
   const nested: Array<{ name: string; under: string }> = [];
@@ -69,8 +69,8 @@ function rig(
     platform: 'web',
     capabilities: { thread: true, renameThread: true, editMessage: true, maxMessageLength: 2000 },
     measureRendered: (s: string) => s.length,
-    sendMessage: async (address: ConversationAddress, text: string) => {
-      sent.push({ to: where(address), text });
+    sendMessage: async (address: ConversationAddress, text: string, opts?: { kind?: string }) => {
+      sent.push({ to: where(address), text, ...(opts?.kind ? { kind: opts.kind } : {}) });
       return { address, messageId: `s${++seq}` };
     },
     editMessage: async () => {},
@@ -176,7 +176,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     expect(r.nested).toEqual([{ name: expect.stringContaining('修一下 bump'), under: 'main/aaaaaaaa' }]);
     await wait();
     expect(r.registry.boundAgentOf(opened.key)).toBe('oc');
-    expect(r.sent).toContainEqual({ to: 'main/new1', text: `${header}\n\n修一下 bump` });
+    // The `↳ From …` header and the task text are a dispatch, so the web UI draws them as a
+    // hand-off rather than as the agent's own words.
+    expect(r.sent).toContainEqual({ to: 'main/new1', text: `${header}\n\n修一下 bump`, kind: 'dispatch' });
     expect(r.prompts).toEqual([{ conversation: 'web#main#new1', prompt: '修一下 bump' }]);
   });
 
@@ -238,6 +240,8 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     await wait(20);
     expect(r.registry.canSteer(opened.key)).toBe(false);
     await expect(r.registry.handTo(opened.key, 'web', opened.address, 'stop that', header)).resolves.toBe('queued');
+    // A later task-send is the same dispatch as the first message.
+    expect(r.sent.at(-1)).toEqual({ to: 'main/new1', text: `${header}\n\nstop that`, kind: 'dispatch' });
   });
 
   it('says joined only when the running harness really takes mid-turn input', async () => {
@@ -247,5 +251,6 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     await wait(20);
     expect(r.registry.canSteer(opened.key)).toBe(true);
     await expect(r.registry.handTo(opened.key, 'web', opened.address, 'also the docs', header)).resolves.toBe('joined');
+    expect(r.sent.at(-1)).toEqual({ to: 'main/new1', text: `${header}\n\nalso the docs`, kind: 'dispatch' });
   });
 });

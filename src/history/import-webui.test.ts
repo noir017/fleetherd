@@ -63,6 +63,30 @@ describe('importWebuiTranscripts', () => {
     store.close();
   });
 
+  it('splits a sub-agent report into tool rows, exactly as it did when the card rode as tools', () => {
+    // The card used to be sent with `kind: 'tools'` only to borrow the web UI's folding, so the
+    // import already read it as rows. It has a kind of its own now; the library must not change.
+    const dir = tempDir();
+    const at = Date.now() - 60_000;
+    fs.mkdirSync(path.join(dir, 'webui-transcripts-webui'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'webui-topics-webui.json'), JSON.stringify({ abcdef12: { title: '子代理' } }));
+    fs.writeFileSync(
+      path.join(dir, 'webui-transcripts-webui', 'abcdef12.json'),
+      JSON.stringify([
+        kept(at, '🔔 part (cc @ near) — finished: Done: all green.\n🔔 other (cx @ far) — failed: upstream 503', {
+          kind: 'report',
+        }),
+      ])
+    );
+    const store = new HistoryStore(path.join(dir, 'history.db'));
+    importWebuiTranscripts(dir, store);
+
+    const read = store.read(String(store.list({ days: 30 })[0]!.id));
+    expect(read.messages.map((m) => m.role)).toEqual(['tool', 'tool']);
+    expect(read.messages.map((m) => m.text)).toEqual(['finished: Done: all green.', 'failed: upstream 503']);
+    store.close();
+  });
+
   it('leaves settings screens out of the library, live or retired', () => {
     // A /setting screen is a control surface, not something anyone said: the page draws it in a
     // page of its own, and the daemon marks a retired one `wasSettings`. Neither should come back
