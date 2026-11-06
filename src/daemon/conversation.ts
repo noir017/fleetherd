@@ -2732,7 +2732,7 @@ export class ConversationRegistry {
         def?.harness === 'opencode'
           ? ' On opencode that means a model from a custom provider: give it a `limit` block in opencode.json (e.g. `"limit": { "context": 128000 }`) and the numbers appear.'
           : def?.harness === 'agy'
-            ? ' agy reports usage once per turn, summed over every model call in it, so the count is known only after a turn that ran no tool; and agy never says how big the window is, so the daemon only knows it for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.'
+            ? ' agy reports usage once per turn, summed over every model call in it, so after a turn that ran tools the count comes from its transcript on the agent\'s machine, and is missing when that cannot be read; and agy never says how big the window is, so the daemon only knows it for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.'
             : '';
       return (
         `Context: not reported. ${name} finished a turn without sending any usage numbers, and ` +

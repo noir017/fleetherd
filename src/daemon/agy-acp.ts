@@ -26,7 +26,8 @@ import { agentHome } from './skills-scan.js';
  *     `agent_message_chunk` of the form `"\n⚠ <text>\n"` — no failure record, no error. See
  *     agyWarningOf and AgyTurnWatch.
  *   - **No `usage_update`.** Usage comes once, in the `session/prompt` response, summed over every
- *     model call the turn made. See AgyTurnWatch.settle.
+ *     model call the turn made. See AgyTurnWatch.settle; a turn that ran tools reads its context
+ *     off agy's transcript instead (agy-transcript.ts).
  *   - **No quota over ACP**, so it is still a one-shot `agy -p=/usage` (createAgyQuotaMeter).
  *   - **Tool names in the title.** `kind` is good for the common tools; the rest are `other`, titled
  *     `Run <tool name>` (`Run invoke_subagent`, `Run mcp_chat_send_file`). See agyAcpToolLabel.
@@ -141,11 +142,23 @@ export interface AgyTurnOutcome {
   failure?: TurnFailure;
   /** Tokens in context after the turn, when the usage can say (see contextTokensOf). */
   contextTokens?: number;
-  /** Why there are no context tokens, when there are none. */
+  /**
+   * Why the usage gives no context tokens. On `tools` it is a sum over several calls, and the
+   * runtime reads the context off agy's transcript instead (agy-transcript.ts).
+   */
   noContext?: 'tools' | 'no-usage';
 }
 
-export function agyTurnWatch(agentId: string, notice: (text: string) => void, inTurn: boolean): AgyTurnWatch {
+/**
+ * `onModelCall` runs on every tool call the turn opens: each one ends a model call, after which agy's
+ * transcript has a newer context to read (agent-acp.ts refreshAgyContext).
+ */
+export function agyTurnWatch(
+  agentId: string,
+  notice: (text: string) => void,
+  inTurn: boolean,
+  onModelCall?: () => void
+): AgyTurnWatch {
   /** Keys already said this turn: a retry loop repeats itself, the chat should not. */
   const said = new Set<string>();
   const say = (key: string, text: string): void => {
@@ -179,6 +192,7 @@ export function agyTurnWatch(agentId: string, notice: (text: string) => void, in
     tool() {
       tools++;
       endedInWarning = false;
+      onModelCall?.();
     },
     settle(usage) {
       if (endedInWarning && lastWarning) {

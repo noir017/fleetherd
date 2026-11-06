@@ -146,9 +146,12 @@ harnesses. What differs:
   lists it (`gemini-3.8-flash-high`), still works in `model:` and in a conversation's earlier
   choice: it is split into the model and the level. agy forgets the model when a session is
   reloaded, so the daemon sets it again after every reload.
-- **Context numbers only after a turn without tools.** agy reports token usage once per turn,
-  summed over every model call in it: for a turn of one call that is the context, for a turn that
-  ran tools it is not, and the footer then shows none. agy never says how big the window is, so the
+- **Context numbers come from agy's transcript.** agy reports token usage once per turn, summed
+  over every model call in it, which is the context only for a turn of one call. For a turn that ran
+  tools the daemon reads the last call's figure from the session's own transcript
+  (`~/.gemini/antigravity-cli/brain/<session>/.system_generated/logs/transcript.jsonl`), on the
+  agent's machine, at the end of the turn and every few seconds while it runs; if that file cannot
+  be read, such a turn shows none. agy never says how big the window is, so the
   daemon knows it only for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS
   120B), or from the agent's `contextWindow`.
 - **Quota comes from its CLI**: `agy -p=/usage`, run alongside a turn at most once a minute, in

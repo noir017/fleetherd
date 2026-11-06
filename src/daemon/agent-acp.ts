@@ -84,6 +84,7 @@ import {
   type AgyTurnWatch,
 } from './agy-acp.js';
 import { markActivePools } from './agy-meters.js';
+import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
 
 /**
  * AgentFactory's ACP (Agent Client Protocol) implementation on the official @agentclientprotocol/sdk.
@@ -1639,7 +1640,10 @@ function createAcpSession(
       // Local override for a harness that under-reports the window (e.g. claude-opus-5 → 200k fallback).
       contextWindow: def.contextWindow,
       subagents: subagentNames,
-      agy: def.harness === 'agy' ? agyTurnWatch(def.id, (text) => handlers.onNotice?.(text), inTurn) : undefined,
+      agy:
+        def.harness === 'agy'
+          ? agyTurnWatch(def.id, (text) => handlers.onNotice?.(text), inTurn, () => refreshAgyContext(handlers))
+          : undefined,
     };
   }
 
@@ -2002,10 +2006,14 @@ function createAcpSession(
   }
 
   /**
-   * The end of an agy turn that came back `end_turn`: fail it on agy's own word, or report the
-   * context its usage can vouch for (agy-acp.ts AgyTurnWatch). Nothing for any other harness.
+   * The end of an agy turn that came back `end_turn`: fail it on agy's own word, or report its
+   * context — from the prompt's usage when that can vouch for it, else from agy's transcript
+   * (agy-acp.ts AgyTurnWatch, agy-transcript.ts). Nothing for any other harness.
+   *
+   * Waits for the transcript read, because the footer is drawn from the turn's last usage once this
+   * returns: a local read is a file tail, a remote one a single filtered request with a short cap.
    */
-  function settleAgyTurn(state: TurnState, response: PromptResponse): void {
+  async function settleAgyTurn(state: TurnState, response: PromptResponse): Promise<void> {
     const watch = state.agy;
     // A stopped turn has nothing to settle.
     if (!watch || aborting || response.stopReason === 'cancelled') return;
@@ -2013,13 +2021,51 @@ function createAcpSession(
     const outcome = watch.settle(response.usage);
     if (outcome.failure) throw outcome.failure;
     if (outcome.contextTokens !== undefined) {
-      const model = currentModelValue();
-      const size = agyWindow(def, model);
-      if (size) handlers.onUsage?.({ used: outcome.contextTokens, size });
-      else logOnce(`window:${model}`, `[acp] ${conversationId}: no known context window for agy's ${model}, so its footer shows no context numbers (see daemon/agy-meters.ts)`);
-    } else if (outcome.noContext === 'tools') {
-      logOnce('tools', `[acp] ${conversationId}: agy reports usage once per turn, summed over its model calls, so a turn that ran tools gets no context numbers (see daemon/agy-acp.ts)`);
+      agyContextShown = ++agyContextSeq;
+      reportAgyContext(handlers, outcome.contextTokens);
+    } else if (outcome.noContext === 'tools' && !(await readAgyContextInto(handlers))) {
+      logOnce('tools', `[acp] ${conversationId}: agy reports usage once per turn, summed over its model calls, and its transcript could not be read, so a turn that ran tools gets no context numbers (see daemon/agy-transcript.ts)`);
     }
+  }
+
+  /** Report agy's context against the window known for the session's model, or say once why not. */
+  function reportAgyContext(handlers: AgentStreamHandlers, used: number): void {
+    const model = currentModelValue();
+    const size = agyWindow(def, model);
+    if (size) handlers.onUsage?.({ used, size });
+    else logOnce(`window:${model}`, `[acp] ${conversationId}: no known context window for agy's ${model}, so its footer shows no context numbers (see daemon/agy-meters.ts)`);
+  }
+
+  /**
+   * Readings of agy's transcript are numbered, so a slow mid-turn one that lands after the turn's
+   * last cannot put an older number back on the strip.
+   */
+  let agyContextSeq = 0;
+  let agyContextShown = 0;
+  let agyContextReadAt = 0;
+
+  /** Read agy's context off its transcript and report it; false when there was nothing to report. */
+  async function readAgyContextInto(handlers: AgentStreamHandlers): Promise<boolean> {
+    const sessionId = active?.sessionId;
+    if (!sessionId) return false;
+    const seq = ++agyContextSeq;
+    agyContextReadAt = Date.now();
+    const used = await readAgyContext(def, sessionId);
+    if (used === undefined || disposed) return false;
+    if (seq < agyContextShown) return true;
+    agyContextShown = seq;
+    reportAgyContext(handlers, used);
+    return true;
+  }
+
+  /**
+   * Mid-turn, after a model call that asked for a tool: the strip and `talkcode tasks` follow a long
+   * agy turn the way they follow one that sends `usage_update`. Not waited for, and at most one read
+   * per AGY_CONTEXT_REFRESH_MS — a burst of tools is a burst of calls to this.
+   */
+  function refreshAgyContext(handlers: AgentStreamHandlers): void {
+    if (Date.now() - agyContextReadAt < AGY_CONTEXT_REFRESH_MS) return;
+    void readAgyContextInto(handlers);
   }
 
   /**
@@ -2381,7 +2427,7 @@ function createAcpSession(
         // agy first: its warning is the harness's own account of a turn that got no answer, so a
         // refusal that ended on one must report `agy: <warning>` (provider) rather than the generic
         // refusal. settleAgyTurn returns at once for every other harness.
-        settleAgyTurn(state, response);
+        await settleAgyTurn(state, response);
         // A refusal is a failed turn when it names a cause, or when an unnamed one showed nothing
         // (see failIfRefused).
         failIfRefused(response, output.sawOutput());

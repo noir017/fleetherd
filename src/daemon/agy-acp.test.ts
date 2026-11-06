@@ -90,6 +90,14 @@ describe('agyTurnWatch', () => {
     expect(w.settle(usage)).toEqual({ noContext: 'tools' });
   });
 
+  it('says when a model call ended in a tool, so the runtime can read the newer context', () => {
+    let calls = 0;
+    const w = agyTurnWatch('agy', () => {}, true, () => calls++);
+    w.tool();
+    w.tool();
+    expect(calls).toBe(2);
+  });
+
   it('declines a turn with no usage at all', () => {
     const { w } = watch();
     w.text('hi');

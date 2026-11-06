@@ -19,7 +19,9 @@ import type { QuotaPool, ToolEvent } from '../types.js';
  *   call through ends `end_turn` with no `usage`;
  * - usage comes once, in the prompt response, summed over the turn's model calls;
  * - a tool call of kind `other` is titled `Run <tool name>` (it also carries a `name` field, which
- *   the SDK strips before the gateway sees it).
+ *   the SDK strips before the gateway sees it);
+ * - each model call is a `PLANNER_RESPONSE` line in the session's transcript under HOME, written as
+ *   the call completes (agy-transcript.ts).
  *
  * The fake is put on PATH as `agy` through the agent's own env, with HOME pointed at a temp dir so
  * nothing is linked into the real home. Every request it receives is logged for the assertions.
@@ -28,6 +30,7 @@ import type { QuotaPool, ToolEvent } from '../types.js';
 const FAKE_AGY = /* js */ `
 const readline = require('node:readline');
 const fs = require('node:fs');
+const path = require('node:path');
 // argv: [node, script, 'acp', LOG]
 const LOG = process.argv[3];
 const state = { model: 'gemini-3.8-flash', level: 'high' };
@@ -49,6 +52,12 @@ const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
 const update = (sessionId, u) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: u } });
 const text = (sid, t) => update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: t } });
 const warn = (sid, t) => text(sid, '\\n\\u26a0 ' + t + '\\n');
+// One model call, as agy 1.5.2 writes it to the session's transcript (agy-transcript.ts).
+const call = (sid, input, cached) => {
+  const file = path.join(process.env.HOME, '.gemini', 'antigravity-cli', 'brain', sid, '.system_generated', 'logs', 'transcript.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, JSON.stringify({ source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: input, cache_read_tokens: cached, output_tokens: 10 }) + '\\n');
+};
 const usage = (input, cached) => ({ inputTokens: input, outputTokens: 10, cachedReadTokens: cached, cachedWriteTokens: 0, thoughtTokens: 0, totalTokens: input + cached + 10 });
 
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
@@ -60,7 +69,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (msg.method === 'initialize') {
     return reply(msg.id, { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true } }, authMethods: [] });
   }
-  if (msg.method === 'session/new') return reply(msg.id, { sessionId: 'agy-1', configOptions: options() });
+  if (msg.method === 'session/new') return reply(msg.id, { sessionId: 'agy-session-1', configOptions: options() });
   // agy 1.5.1: a reload comes back on the default model, whatever the session was on.
   if (msg.method === 'session/load') {
     state.model = 'gemini-3.8-flash';
@@ -77,15 +86,31 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       text(sid, 'hi');
       return reply(msg.id, { stopReason: 'end_turn', usage: usage(230, 5696) });
     }
-    if (p === 'tool') {
-      const call = { toolCallId: 'c1', name: 'invoke_subagent', kind: 'other', title: 'Run invoke_subagent', rawInput: { Prompt: 'echo SUB-OK' } };
-      update(sid, { sessionUpdate: 'tool_call', status: 'in_progress', ...call });
-      update(sid, { sessionUpdate: 'tool_call_update', status: 'completed', ...call });
+    if (p === 'tool' || p === 'tool-bare') {
+      // Two model calls: one asked for the tools, one answered. Their sum is what the prompt reports.
+      if (p === 'tool') call(sid, 2800, 9000);
+      const sub = { toolCallId: 'c1', name: 'invoke_subagent', kind: 'other', title: 'Run invoke_subagent', rawInput: { Prompt: 'echo SUB-OK' } };
+      update(sid, { sessionUpdate: 'tool_call', status: 'in_progress', ...sub });
+      update(sid, { sessionUpdate: 'tool_call_update', status: 'completed', ...sub });
       const mcp = { toolCallId: 'c2', name: 'mcp_chat_send_file', kind: 'other', title: 'Run mcp_chat_send_file', rawInput: { path: 'a.png' } };
       update(sid, { sessionUpdate: 'tool_call', status: 'in_progress', ...mcp });
       update(sid, { sessionUpdate: 'tool_call_update', status: 'completed', ...mcp });
+      if (p === 'tool') call(sid, 2801, 9176);
       text(sid, 'done');
       return reply(msg.id, { stopReason: 'end_turn', usage: usage(5601, 18176) });
+    }
+    if (p === 'slow-tool') {
+      // A tool that runs a while: the first call's context is on the strip before the turn ends.
+      call(sid, 2800, 9000);
+      const run = { toolCallId: 'c3', kind: 'execute', title: 'sleep 1', rawInput: { CommandLine: 'sleep 1' } };
+      update(sid, { sessionUpdate: 'tool_call', status: 'in_progress', ...run });
+      setTimeout(() => {
+        update(sid, { sessionUpdate: 'tool_call_update', status: 'completed', ...run });
+        call(sid, 2801, 9176);
+        text(sid, 'done');
+        reply(msg.id, { stopReason: 'end_turn', usage: usage(5601, 18176) });
+      }, 300);
+      return;
     }
     if (p === 'quota') {
       warn(sid, 'You have exhausted your quota on this model.');
@@ -286,10 +311,28 @@ describe('agy over ACP: a turn', () => {
     expect(r.usage).toEqual([{ used: 5926, size: 200_000 }]);
   });
 
-  it('reports no context for a turn that ran tools, whose usage is a sum over several calls', async () => {
+  it('reads the context of a turn that ran tools off its transcript, not the summed usage', async () => {
     const { session } = rig();
     const r = record();
     await turn(session, 'tool', r);
+    expect(r.text()).toBe('done');
+    // The last call's input plus cache reads — not 5601 + 18176, the sum over both calls.
+    expect(r.usage.at(-1)).toEqual({ used: 2801 + 9176, size: 1_048_576 });
+    // A mid-turn reading may land first, but only ever one of the calls' own figures.
+    expect(r.usage.every((u) => u.used === 2800 + 9000 || u.used === 2801 + 9176)).toBe(true);
+  });
+
+  it('follows a long turn mid-way, as its model calls end', async () => {
+    const { session } = rig();
+    const r = record();
+    await turn(session, 'slow-tool', r);
+    expect(r.usage.map((u) => u.used)).toEqual([2800 + 9000, 2801 + 9176]);
+  });
+
+  it('reports no context for a turn that ran tools when there is no transcript to read', async () => {
+    const { session } = rig();
+    const r = record();
+    await turn(session, 'tool-bare', r);
     expect(r.usage).toEqual([]);
     expect(r.text()).toBe('done');
   });
@@ -297,7 +340,7 @@ describe('agy over ACP: a turn', () => {
   it('labels a subagent as a Task and the gateway’s own MCP tool by its name', async () => {
     const { session } = rig();
     const r = record();
-    await turn(session, 'tool', r);
+    await turn(session, 'tool-bare', r);
     expect(r.tools.map((t) => t.name)).toEqual(['Task', 'send_file']);
   });
 

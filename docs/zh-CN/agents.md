@@ -126,8 +126,10 @@ agents:
 - **模型按 `agy acp` 的叫法。** `/model` 里是 `gemini-3.8-flash`，思考档位在 `/effort` 下（仅
   Gemini 有）。按 `agy models` 的旧写法（`gemini-3.8-flash-high`）写在 `model:` 里、或对话之前选过
   的，照样能用：会被拆成模型加档位。agy 在会话重新加载时会忘掉模型，守护进程每次加载后都会重新设上。
-- **只有不调工具的一轮才有上下文数字。** agy 每轮只报一次 token 用量，是这一轮所有模型调用的总和：
-  只调一次模型的一轮，这个数就是上下文；调过工具的一轮不是，页脚就不显示。agy 从不告诉窗口有多大，
+- **上下文数字来自 agy 的会话记录。** agy 每轮只报一次 token 用量，是这一轮所有模型调用的总和，
+  只有只调一次模型的一轮，这个数才是上下文。调过工具的一轮，守护进程到智能体所在机器上读这个会话自己的
+  记录（`~/.gemini/antigravity-cli/brain/<会话>/.system_generated/logs/transcript.jsonl`），取最后一次
+  调用的数，一轮结束时读一次，进行中每隔几秒读一次；读不到这个文件时，这样的一轮不显示。agy 从不告诉窗口有多大，
   所以守护进程只认得实测过的模型（Gemini、Claude Sonnet/Opus 4.6、GPT-OSS 120B），或者用智能体的
   `contextWindow`。
 - **额度来自它的 CLI**：`agy -p=/usage`，与一轮同时进行，最多每分钟一次，精度是整数百分比。
