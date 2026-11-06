@@ -44,6 +44,29 @@ function isLeftBoundary(ch: string | undefined): boolean {
 }
 
 /**
+ * The characters an inline rule can start with: every rule in flattenInline begins with one of them.
+ * Same set as telegram-markdown.ts.
+ */
+const DELIMITER_RE = /[`[*_~]/;
+
+/**
+ * Where the plain text starting at `from` ends: the next delimiter (DELIMITER_RE), or the end of `s`.
+ * flattenInline copies that run in one step rather than one character at a time; telegram-markdown.ts
+ * plainRunEnd says why. A rule that starts with any other character has to be added to
+ * DELIMITER_RE, or it will only ever be tried right after a delimiter.
+ */
+function plainRunEnd(s: string, from: number): number {
+  const at = s.slice(from).search(DELIMITER_RE);
+  return at < 0 ? s.length : from + at;
+}
+
+/** Index of the first `]` after position `i` of `s`, or `s.length` when there is none. */
+function closingBracket(s: string, i: number): number {
+  const at = s.indexOf(']', i + 1);
+  return at < 0 ? s.length : at;
+}
+
+/**
  * Flatten inline markdown within a single logical line into plain text.
  *
  * Left-to-right scan, first-match-wins, by priority: inline code → link → bold →
@@ -52,11 +75,28 @@ function isLeftBoundary(ch: string | undefined): boolean {
  * telegram-markdown.ts: an unclosed `**` just stays as the characters `*` `*`
  * rather than swallowing the rest of the line. Recurses into emphasis/link content
  * so `**bold _and italic_**` flattens fully to `bold and italic`.
+ *
+ * The rules are tried only where one can start, at a DELIMITER_RE character; the text between is
+ * copied whole (plainRunEnd). A new rule's first character goes into DELIMITER_RE.
  */
 export function flattenInline(s: string): string {
   let out = '';
   let i = 0;
+  // A link's text runs to the first `]` after its `[`, so unless that `]` is followed by `(` no
+  // link starts at this `[` — nor at any other before that `]`. Remembering where it is keeps a
+  // line of unmatched `[` linear: finding it again from every `[` took 0.8 s for 20 000 of them.
+  let close = -1;
+  const linkMayStart = (at: number): boolean => {
+    if (close <= at) close = closingBracket(s, at);
+    return s[close + 1] === '(';
+  };
   while (i < s.length) {
+    const end = plainRunEnd(s, i);
+    if (end > i) {
+      out += s.slice(i, end);
+      i = end;
+      continue;
+    }
     const rest = s.slice(i);
     const prev = s[i - 1];
     let m: RegExpExecArray | null;
@@ -68,7 +108,7 @@ export function flattenInline(s: string): string {
       continue;
     }
     // 2) link [text](url) → `text (url)` so the target isn't lost. Display text recurses.
-    if ((m = /^\[([^\]]+)\]\((\S+?)\)/.exec(rest))) {
+    if (s[i] === '[' && linkMayStart(i) && (m = /^\[([^\]]+)\]\((\S+?)\)/.exec(rest))) {
       out += `${flattenInline(m[1]!)} (${m[2]})`;
       i += m[0].length;
       continue;

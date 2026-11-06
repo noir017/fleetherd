@@ -29,12 +29,41 @@ function isLeftBoundary(ch: string | undefined): boolean {
 }
 
 /**
+ * The characters an inline rule can start with: every rule in parseInline begins with one of them.
+ * plaintext-markdown.ts and slack-markdown.ts keep the same set for the same rules.
+ */
+const DELIMITER_RE = /[`[*_~]/;
+
+/**
+ * Where the plain text starting at `from` ends: the next delimiter (DELIMITER_RE), or the end of `s`.
+ *
+ * At any other character every rule fails and the character is copied as-is, so copying the whole
+ * run in one step is the same output without trying seven regexes per character — which was nearly
+ * all of a long line's cost, paid on every streaming edit over the whole message (a 10 KB line
+ * took 2.8 ms; measured 2026-11-07). A rule that starts with any other character has to be added
+ * to DELIMITER_RE, or it will only ever be tried right after a delimiter.
+ */
+function plainRunEnd(s: string, from: number): number {
+  const at = s.slice(from).search(DELIMITER_RE);
+  return at < 0 ? s.length : from + at;
+}
+
+/** Index of the first `]` after position `i` of `s`, or `s.length` when there is none. */
+function closingBracket(s: string, i: number): number {
+  const at = s.indexOf(']', i + 1);
+  return at < 0 ? s.length : at;
+}
+
+/**
  * Parse inline markdown within a single logical line into Satori nodes.
  *
  * Left-to-right scan, first-match-wins, by priority: inline code → link → bold → strikethrough
  * → italic. Anything that doesn't match a fully-closed construct is accumulated as literal text
  * (this is the stream-safety property: an unclosed `**` just stays as the characters `*` `*`).
  * Recurses into emphasis/link content so `**bold _and italic_**` nests correctly.
+ *
+ * The rules are tried only where one can start, at a DELIMITER_RE character; the text between is
+ * copied whole (plainRunEnd). A new rule's first character goes into DELIMITER_RE.
  */
 export function parseInline(s: string): h[] {
   const out: h[] = [];
@@ -46,7 +75,21 @@ export function parseInline(s: string): h[] {
       buf = '';
     }
   };
+  // A link's text runs to the first `]` after its `[`, so unless that `]` is followed by `(` no
+  // link starts at this `[` — nor at any other before that `]`. Remembering where it is keeps a
+  // line of unmatched `[` linear: finding it again from every `[` took 0.8 s for 20 000 of them.
+  let close = -1;
+  const linkMayStart = (at: number): boolean => {
+    if (close <= at) close = closingBracket(s, at);
+    return s[close + 1] === '(';
+  };
   while (i < s.length) {
+    const end = plainRunEnd(s, i);
+    if (end > i) {
+      buf += s.slice(i, end);
+      i = end;
+      continue;
+    }
     const rest = s.slice(i);
     const prev = s[i - 1];
     let m: RegExpExecArray | null;
@@ -59,7 +102,7 @@ export function parseInline(s: string): h[] {
       continue;
     }
     // 2) link [text](url) — display text recurses, url goes to href.
-    if ((m = /^\[([^\]]+)\]\((\S+?)\)/.exec(rest))) {
+    if (s[i] === '[' && linkMayStart(i) && (m = /^\[([^\]]+)\]\((\S+?)\)/.exec(rest))) {
       flush();
       out.push(h('a', { href: m[2] }, ...parseInline(m[1]!)));
       i += m[0].length;

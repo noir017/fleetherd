@@ -397,14 +397,57 @@ type Scanner = (s: string, i: number) => Match | null;
 // wrong.
 const SCANNERS: readonly Scanner[] = [scanCode, scanLink, scanAutolink, scanEmphasis, scanStrike];
 
+/**
+ * Where a scanner can start: at one of its delimiter characters, or — scanAutolink — at an
+ * `http://` or `https://`. A scanner that starts anywhere else has to be added here, or it will
+ * only ever be tried right after one of these.
+ */
+const SCAN_START_RE = /[`[*_~]|https?:\/\//;
+
+/**
+ * Where the plain text starting at `from` ends: the next place a scanner can start, or the end.
+ *
+ * Everywhere else every scanner returns null and the character is copied as-is, so copying the
+ * whole run in one step is the same output without five scanner calls per character. This runs on
+ * every streaming edit, over every paragraph of the message.
+ */
+function plainRunEnd(s: string, from: number): number {
+  const at = s.slice(from).search(SCAN_START_RE);
+  return at < 0 ? s.length : from + at;
+}
+
+/** Index of the first `]` after position `i` of `s`, or `s.length` when there is none. */
+function closingBracket(s: string, i: number): number {
+  const at = s.indexOf(']', i + 1);
+  return at < 0 ? s.length : at;
+}
+
 export function inline(s: string): string {
   let out = '';
   let i = 0;
+  // A link's text runs to the first `]` after its `[`, so unless that `]` is followed by `(` no
+  // link starts at this `[` — nor at any other before that `]`. Remembering where it is keeps a
+  // paragraph of unmatched `[` linear: scanLink finding it again from every `[` took 0.8 s for
+  // 20 000 of them.
+  let close = -1;
+  const linkMayStart = (at: number): boolean => {
+    if (close <= at) close = closingBracket(s, at);
+    return s[close + 1] === '(';
+  };
   while (i < s.length) {
+    const end = plainRunEnd(s, i);
+    if (end > i) {
+      out += s.slice(i, end);
+      i = end;
+      continue;
+    }
     let hit: Match | null = null;
-    for (const scan of SCANNERS) {
-      hit = scan(s, i);
-      if (hit) break;
+    // scanLink is the only scanner that starts at `[`, so a `[` no link can start at is literal.
+    if (s[i] !== '[' || linkMayStart(i)) {
+      for (const scan of SCANNERS) {
+        hit = scan(s, i);
+        if (hit) break;
+      }
     }
     if (hit) {
       out += hit.html;

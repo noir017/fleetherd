@@ -130,4 +130,15 @@ describe('parseInline output is unchanged by the fast paths', () => {
   it.each(CASES)('case %#', (input, expected) => {
     expect(parseInline(input)).toBe(expected);
   });
+
+  it('keeps a line of unmatched [ literal, without rescanning it from every [', () => {
+    // Each `[` used to re-read the rest of the line for its `]`: 20 000 took 0.8 s and these
+    // 100 000 about 20 s, against a few milliseconds now. Measured, because the test timeout cannot
+    // be the assertion: it never interrupts a synchronous test. The bound leaves a loaded machine
+    // two orders of magnitude.
+    const line = '['.repeat(100_000);
+    const t0 = performance.now();
+    expect(parseInline(line)).toBe(line);
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
 });
