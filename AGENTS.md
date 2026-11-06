@@ -286,7 +286,7 @@ Do not weaken these without saying so explicitly in the PR:
    relax either half, and keep the list complete when the CLI gains a class.
 
    **The third writer is whoever can push to `skills.repo`** (`daemon/skills-repo.ts`,
-   `docs/skills.md#the-repository`, since 2.41.0). With a shared repository configured, a person's
+   `docs/skills.md#the-repository`, since 2.42.0). With a shared repository configured, a person's
    commit reaches every agent the same way an agent's `patch` does, so write access to that
    repository is a gate on what every agent reads, beside `access.allowFrom`. It is held to the
    store's rules where it lands: a pulled skill that breaks them (`skillProblem` — no frontmatter, a

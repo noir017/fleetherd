@@ -1442,7 +1442,7 @@ When both sides changed one file the repository wins and the gateway's commits g
 `talkcode-unpushed-*` branch; nothing is force-pushed. Every git call runs with the machine's
 config switched off (`GIT_CONFIG_GLOBAL=/dev/null`): a global hook, signing requirement or prompting
 credential helper of the operator's must not turn a skill write into a hang. The store directory
-became a repository in 2.41.0; `prepareSkillsRepo` moves an old one in as one commit at start and
+became a repository in 2.42.0; `prepareSkillsRepo` moves an old one in as one commit at start and
 keeps it as `skills.pre-git`.
 
 **Resident and library.** A skill's tier is its frontmatter's `metadata.talkcode-resident`
