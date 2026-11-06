@@ -5,9 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseConfig, type Config } from '../config/schema.js';
 import { HistoryStore } from '../history/store.js';
 import {
+  REVIEW_MAX_ATTEMPTS,
+  REVIEW_PASS_BUDGET_MS,
   ReviewService,
   agyReviewAnswer,
   eligible,
+  isCapacityFailure,
   noticeLine,
   reviewAgyArgs,
   reviewAgyInput,
@@ -15,7 +18,7 @@ import {
   type ReviewCandidate,
   type ReviewRunner,
 } from './review.js';
-import { ReviewStateStore } from './review-state.js';
+import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, REVIEW_RETRY_MS, ReviewStateStore } from './review-state.js';
 import { buildReviewPrompt, parseReviewOutput, usedSkillNames } from './review-prompt.js';
 import { createSkill, listSkills, readSkillFiles, showSkill } from './skills-store.js';
 
@@ -86,6 +89,7 @@ function candidate(over: Partial<ReviewCandidate> = {}): ReviewCandidate {
 
 interface Harness {
   service: ReviewService;
+  state: ReviewStateStore;
   notifications: Array<{ platform: string; channel: string; text: string }>;
   logs: string[];
   calls: Array<{ agent: string; model: string | undefined; prompt: string }>;
@@ -102,10 +106,11 @@ function harness(opts: { candidates?: ReviewCandidate[]; output?: string | (() =
       calls.push({ agent: def.id, model, prompt });
       return { ok: true, output: typeof output === 'function' ? await output() : output };
     });
+  const state = new ReviewStateStore(path.join(dir, 'reviews.json'), (m) => logs.push(m));
   const service = new ReviewService({
     config: opts.cfg ?? config(),
     history,
-    state: new ReviewStateStore(path.join(dir, 'reviews.json'), (m) => logs.push(m)),
+    state,
     clock,
     candidates: () => opts.candidates ?? [candidate()],
     notify: async (lane, text) => {
@@ -115,7 +120,7 @@ function harness(opts: { candidates?: ReviewCandidate[]; output?: string | (() =
     run,
     log: (m) => logs.push(m),
   });
-  return { service, notifications, logs, calls };
+  return { service, state, notifications, logs, calls };
 }
 
 const SKILL_MD = (name: string, description = 'When deploying') =>
@@ -647,6 +652,228 @@ describe('ReviewService', () => {
     expect(prompt).toContain('other-skill');
     expect(prompt).not.toContain('别的内容。');
     expect(prompt).toContain(showSkill('deploy-check', undefined, dir).version);
+  });
+});
+
+describe('isCapacityFailure', () => {
+  it('recognises the provider saying it has no capacity', () => {
+    expect(
+      isCapacityFailure(
+        'agy ended with status ERROR: UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server'
+      )
+    ).toBe(true);
+    expect(isCapacityFailure('No capacity available')).toBe(true);
+    expect(isCapacityFailure('503 Service Unavailable')).toBe(true);
+    expect(isCapacityFailure('UNAVAILABLE (503)')).toBe(true);
+  });
+
+  it('needs both halves when it is not the explicit sentence', () => {
+    expect(isCapacityFailure('UNAVAILABLE')).toBe(false);
+    expect(isCapacityFailure('something returned 503')).toBe(false);
+  });
+
+  it('does not match a bare timeout, a dead host or an unrelated 503', () => {
+    // The runners mark a timeout themselves (see the service tests); this check is only for what a
+    // finished run wrote. Text alone must not turn an ssh failure into a capacity exemption.
+    expect(isCapacityFailure('agy on awsfree2 timed out after 30 min')).toBe(false);
+    expect(isCapacityFailure('agy did not finish within 30 min')).toBe(false);
+    expect(isCapacityFailure('ssh: connect to host box port 22: Connection timed out')).toBe(false);
+    expect(isCapacityFailure('resource temporarily unavailable')).toBe(false);
+    expect(isCapacityFailure('line 503 of the transcript')).toBe(false);
+    expect(isCapacityFailure('agy exited 1')).toBe(false);
+    expect(isCapacityFailure('agy ended without a result event')).toBe(false);
+    expect(isCapacityFailure('could not prepare the review: ENOTDIR')).toBe(false);
+    expect(isCapacityFailure('host "box" is not registered')).toBe(false);
+  });
+});
+
+describe('a review with no capacity', () => {
+  it('does not count the attempt, waits an hour, and never gives up on the batch', async () => {
+    seed('telegram:chat:1', 3);
+    let attempts = 0;
+    const h = harness({
+      run: async () => {
+        attempts += 1;
+        return {
+          ok: false,
+          error: 'agy ended with status ERROR: UNAVAILABLE (503): No capacity available for model gemini-3.8-flash-high',
+        };
+      },
+    });
+
+    await h.service.sweep();
+    expect(attempts).toBe(1);
+    const mark = h.state.markOf('telegram:chat:1');
+    expect(mark).toMatchObject({ attempts: 0, capacity: true });
+    expect(Date.parse(mark!.retryAt!)).toBe(now + REVIEW_CAPACITY_RETRY_MS);
+    expect(h.logs.some((l) => l.includes('not counted as an attempt'))).toBe(true);
+
+    // An hour, not six: a drought clears in minutes, and the lane should come back sooner.
+    now += REVIEW_CAPACITY_RETRY_MS - 1;
+    await h.service.sweep();
+    expect(attempts).toBe(1);
+    now += 1;
+    await h.service.sweep();
+    expect(attempts).toBe(2);
+
+    // Six more droughts later the batch is still alive — well inside the twelve-failure cap — and
+    // none of them counted. (Past the cap it does count; the next test covers that.)
+    for (let i = 0; i < 6; i++) {
+      now += REVIEW_CAPACITY_RETRY_MS;
+      await h.service.sweep();
+    }
+    expect(attempts).toBe(8);
+    expect(h.state.markOf('telegram:chat:1')).toMatchObject({ attempts: 0, capacity: true, capacityAttempts: 8 });
+    expect(history.reviewSessions().some((r) => r.record?.error?.includes('gave up'))).toBe(false);
+  });
+
+  it('treats a bare timeout as capacity: a killed run has no cause to read', async () => {
+    seed('telegram:chat:1', 3);
+    const h = harness({
+      // The runner marks its own timeout; the sentence has no 503 to match.
+      run: async () => ({ ok: false, error: 'agy on awsfree2 timed out after 30 min', capacity: true }),
+    });
+    await h.service.sweep();
+    const mark = h.state.markOf('telegram:chat:1');
+    expect(mark).toMatchObject({ attempts: 0, capacity: true, capacityAttempts: 1 });
+    expect(Date.parse(mark!.retryAt!)).toBe(now + REVIEW_CAPACITY_RETRY_MS);
+    expect(h.logs.some((l) => l.includes('not counted as an attempt'))).toBe(true);
+  });
+
+  it('bounds a hang with the twelve-failure cap, then gives up like any other', async () => {
+    seed('telegram:chat:1', 3);
+    let attempts = 0;
+    const h = harness({
+      run: async () => {
+        attempts += 1;
+        return { ok: false, error: 'agy on awsfree2 timed out after 30 min', capacity: true };
+      },
+    });
+
+    for (let i = 1; i <= REVIEW_CAPACITY_MAX_ATTEMPTS; i++) {
+      await h.service.sweep();
+      expect(h.state.markOf('telegram:chat:1')).toMatchObject({ attempts: 0, capacity: true, capacityAttempts: i });
+      now += REVIEW_CAPACITY_RETRY_MS;
+    }
+
+    // The 13th timeout is past the cap: it counts, so a permanently hung agy still reaches the
+    // three-attempt limit instead of retrying forever.
+    await h.service.sweep();
+    expect(h.state.markOf('telegram:chat:1')).toMatchObject({ attempts: 1 });
+    expect(h.state.markOf('telegram:chat:1')?.capacity).toBeUndefined();
+
+    now += REVIEW_RETRY_MS;
+    await h.service.sweep();
+    now += REVIEW_RETRY_MS;
+    await h.service.sweep();
+    expect(attempts).toBe(REVIEW_CAPACITY_MAX_ATTEMPTS + 3);
+    expect(history.reviewSessions().some((r) => r.record?.error?.includes('gave up'))).toBe(true);
+  });
+
+  it('starts the wait when the attempt ended, not when it started', async () => {
+    seed('telegram:chat:1', 3);
+    let attempts = 0;
+    const h = harness({
+      run: async () => {
+        attempts += 1;
+        now += 30 * 60_000; // a review that spent its whole timeout before returning
+        return { ok: false, error: 'agy on awsfree2 timed out after 30 min', capacity: true };
+      },
+    });
+    await h.service.sweep();
+    const endedAt = now;
+    const mark = h.state.markOf('telegram:chat:1');
+    expect(mark!.attemptAt).toBe(new Date(endedAt).toISOString());
+    expect(Date.parse(mark!.retryAt!)).toBe(endedAt + REVIEW_CAPACITY_RETRY_MS);
+
+    // An hour counts from the end of the run, not from the start of the sweep.
+    now = endedAt + REVIEW_CAPACITY_RETRY_MS - 1;
+    await h.service.sweep();
+    expect(attempts).toBe(1);
+    now = endedAt + REVIEW_CAPACITY_RETRY_MS;
+    await h.service.sweep();
+    expect(attempts).toBe(2);
+  });
+
+  it('stops exempting capacity failures after twelve in a row, then gives up like any other', async () => {
+    seed('telegram:chat:1', 3);
+    const h = harness({
+      run: async () => ({ ok: false, error: 'No capacity available for model gemini-3.8-flash-high' }),
+    });
+
+    for (let i = 1; i <= REVIEW_CAPACITY_MAX_ATTEMPTS; i++) {
+      await h.service.sweep();
+      expect(h.state.markOf('telegram:chat:1')).toMatchObject({ attempts: 0, capacity: true, capacityAttempts: i });
+      now += REVIEW_CAPACITY_RETRY_MS;
+    }
+
+    // One past the cap: it counts, waits six hours, and is no longer flagged as capacity. This is
+    // the backstop for a permanent fault that keeps producing capacity-looking output.
+    await h.service.sweep();
+    expect(h.state.markOf('telegram:chat:1')).toMatchObject({
+      attempts: 1,
+      capacityAttempts: REVIEW_CAPACITY_MAX_ATTEMPTS + 1,
+    });
+    expect(h.state.markOf('telegram:chat:1')?.capacity).toBeUndefined();
+    expect(h.logs.some((l) => l.includes(`counting this as attempt 1 of ${REVIEW_MAX_ATTEMPTS}`))).toBe(true);
+
+    now += REVIEW_RETRY_MS;
+    await h.service.sweep();
+    now += REVIEW_RETRY_MS;
+    await h.service.sweep();
+    const gaveUp = history.reviewSessions().find((r) => r.record?.error?.includes('gave up'));
+    expect(gaveUp?.record?.error).toContain('gave up after 3 attempts');
+  });
+
+  it('puts a conversation that keeps hitting capacity behind fresh work', async () => {
+    seed('telegram:chat:1', 3);
+    seed('telegram:chat:2', 3);
+    const order: string[] = [];
+    const runner =
+      (fail: boolean): ReviewRunner =>
+      async (_def, _model, prompt) => {
+        order.push(prompt.includes('telegram:chat:1') ? 'chat:1' : 'chat:2');
+        return fail
+          ? { ok: false, error: 'UNAVAILABLE (503): No capacity available' }
+          : { ok: true, output: '{"changes":[],"preferences":[]}' };
+      };
+
+    const first = harness({ candidates: [candidate({ key: 'telegram:chat:1' })], run: runner(true) });
+    await first.service.sweep();
+    expect(order).toEqual(['chat:1']);
+    expect(first.state.markOf('telegram:chat:1')?.capacity).toBe(true);
+
+    // Its retry is due, and a fresh conversation is waiting. The fresh one goes first: a batch in
+    // a drought must not hold the head of the queue every time its hour comes round.
+    now += REVIEW_CAPACITY_RETRY_MS;
+    const both = harness({
+      candidates: [candidate({ key: 'telegram:chat:1' }), candidate({ key: 'telegram:chat:2' })],
+      run: runner(false),
+    });
+    await both.service.sweep();
+    expect(order).toEqual(['chat:1', 'chat:2', 'chat:1']);
+  });
+
+  it('stops starting reviews once a pass has spent its budget, and resumes on the next tick', async () => {
+    seed('telegram:chat:1', 3);
+    seed('telegram:chat:2', 3);
+    const started: string[] = [];
+    const h = harness({
+      candidates: [candidate({ key: 'telegram:chat:1' }), candidate({ key: 'telegram:chat:2' })],
+      run: async (_def, _model, prompt) => {
+        started.push(prompt.includes('telegram:chat:1') ? 'chat:1' : 'chat:2');
+        now += REVIEW_PASS_BUDGET_MS;
+        return { ok: true, output: '{"changes":[],"preferences":[]}' };
+      },
+    });
+
+    await h.service.sweep();
+    expect(started).toEqual(['chat:1']);
+    expect(h.logs.some((l) => l.includes('pass budget'))).toBe(true);
+
+    // The rest is not lost: the next sweep, a minute later in production, picks it up.
+    await h.service.sweep();
+    expect(started).toEqual(['chat:1', 'chat:2']);
   });
 });
 

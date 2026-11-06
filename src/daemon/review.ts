@@ -12,7 +12,7 @@ import type { ReviewFacts } from './conversation.js';
 import { remoteHosts } from './remote-hosts.js';
 import { buildReviewPrompt, parseReviewOutput, usedSkillNames, type PromptSkill, type PromptSkillText, type ReviewChange } from './review-prompt.js';
 import { classifyReview, recordedChange, undoOf, type AppliedChange } from './review-result.js';
-import type { ReviewStateStore } from './review-state.js';
+import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, type ReviewStateStore } from './review-state.js';
 import {
   activeSkillNames,
   createSkill,
@@ -66,11 +66,14 @@ import {
  *
  * ── What it costs ───────────────────────────────────────────────────────────────────────────────
  * One review at a time, a six-hour back-off after a failure, and at most REVIEW_MAX_ATTEMPTS tries
- * on the same batch of messages before the sweep gives up on it. There is no daily cap: each
- * conversation's watermark is what stops it being reviewed again, and REVIEW_LAST_MESSAGE_MAX_MS
- * keeps the first start from replaying months of history for conversations it has never seen. A
- * watermark that cannot be written is held in memory (review-state.ts), so a full disk does not
- * become a review loop.
+ * on the same batch of messages before the sweep gives up on it. A failure whose output says the
+ * provider has no capacity for the model is not the reviewer failing: it waits an hour, does not
+ * count toward those tries, and does not abandon the batch — up to
+ * REVIEW_CAPACITY_MAX_ATTEMPTS such failures in a row, after which they count like any other (see
+ * isCapacityFailure). There is no daily cap: each conversation's watermark is what stops it being
+ * reviewed again, and REVIEW_LAST_MESSAGE_MAX_MS keeps the first start from replaying months of
+ * history for conversations it has never seen. A watermark that cannot be written is held in
+ * memory (review-state.ts), so a full disk does not become a review loop.
  */
 
 /** A conversation has to be quiet this long before a review — the reclaim deadline's own hour. */
@@ -103,8 +106,38 @@ export const REVIEW_CONVERSATION_CHARS = 40_000;
 /** How many used skills are quoted in full. The rest stay in the catalog. */
 const MAX_USED_SKILLS = 8;
 
-/** One review's wall clock. A review reads, thinks and prints one JSON object. */
-export const REVIEW_TIMEOUT_MS = 5 * 60_000;
+/**
+ * One review's wall clock. A review reads, thinks and prints one JSON object — but it can also
+ * spend a long time waiting on the provider.
+ *
+ * Thirty minutes, not five, measured on 2026-11-05/06: of 26 reviews, the 6 failures were all
+ * `agy on awsfree2 timed out after 5 min`, and every one was Google queueing
+ * `gemini-3.8-flash-high` — the request hangs for 2–4.5 minutes, then answers `UNAVAILABLE (503):
+ * No capacity available for model gemini-3.8-flash-high`. agy 1.5.1 retries that itself after 4 s
+ * (`attempt 1 failed … retrying in 4s`; a recovery after attempt 3 was seen on 11-04), so the old
+ * five-minute cap killed agy before its own retry loop could finish. Successful reviews took
+ * 37–251 s regardless of prompt size, so 30 minutes is about six worst-case queue waits — enough
+ * for a 10–20 minute drought with room to spare. A review has no deadline; holding the single lane
+ * longer is cheaper than losing the batch.
+ *
+ * The timeout is treated as capacity even though it proves nothing about the cause. Measured on
+ * 11-06 in agy 1.5.1 (cli-20261106_110242.log): it retried past `attempt 5 failed … retrying in
+ * 18.9s`, and no give-up limit was found in the binary, so a capacity queue can keep it running
+ * past any cap — and a kill leaves no result event or stderr to read. Calling every timeout an
+ * ordinary failure would bring back exactly the six lost batches this change is for. A permanently
+ * hung agy is bounded by the twelve-in-a-row capacity limit instead: those timeouts stop being
+ * exempt, count, and the batch is given up on after three more. Errors that fail at once — no such
+ * host, a spawn failure, ssh refused — never reach the timeout and stay ordinary failures.
+ */
+export const REVIEW_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * How long one sweep may keep starting reviews. A pass that has already spent this long stops
+ * starting new ones and leaves the rest to the next minute's tick, so a run of capacity-starved
+ * batches cannot make one pass last for hours. It bounds *starting*, not the pass: the review
+ * already running finishes, so a pass takes at most 40 minutes plus its last review's 30.
+ */
+export const REVIEW_PASS_BUDGET_MS = 40 * 60_000;
 
 /**
  * Every permission class the CLI knows, denied. `"*"` is NOT a wildcard here — measured on agy
@@ -153,7 +186,37 @@ export interface ReviewCandidate {
   unresumable: boolean;
 }
 
-export type ReviewRun = { ok: true; output: string } | { ok: false; error: string };
+export type ReviewRun =
+  | { ok: true; output: string }
+  | {
+      ok: false;
+      error: string;
+      /**
+       * The provider had no capacity for the model, or the run hit the review timeout. The caller
+       * then retries without counting the attempt, up to the consecutive-capacity limit.
+       */
+      capacity?: boolean;
+    };
+
+/**
+ * Whether a run that finished said the provider had no capacity for this model.
+ *
+ * Narrow on purpose. This failure alone skips the attempt count, so a false positive turns any
+ * permanent fault into an endless retry and defeats the three-attempt limit. The evidence agy
+ * actually produces is `UNAVAILABLE (code 503): No capacity available for model <id> on the
+ * server` (measured 11-04/11-06, in the result event or on stderr); it is matched either as
+ * `no capacity available` or as `UNAVAILABLE` and a standalone `503` in the same text. A bare
+ * `503` (a port, an id), `resource temporarily unavailable`, `Connection timed out`, or any other
+ * error is not evidence.
+ *
+ * A timeout is handled separately, by the runner's own `capacity` flag, not by this match: a
+ * killed run has no output to read and no cause to name. See REVIEW_TIMEOUT_MS for why it is
+ * still treated as capacity and what bounds that.
+ */
+export function isCapacityFailure(error: string): boolean {
+  if (/no capacity available/i.test(error)) return true;
+  return /\bunavailable\b/i.test(error) && /\b503\b/.test(error);
+}
 
 /** One `agy -p`, injected so tests never start a model. */
 export type ReviewRunner = (def: AgentDef, model: string | undefined, prompt: string) => Promise<ReviewRun>;
@@ -237,13 +300,20 @@ export class ReviewService {
     this.busy = true;
     try {
       const reclaimOff = !(this.deps.config.session.idleTimeoutMs > 0);
-      const candidates = this.deps
-        .candidates()
-        .filter((c) => eligible(c, reclaimOff))
-        // Freshest first: on the first start with this feature every conversation looks
-        // reviewable, and the ones that just went quiet are the useful ones. The freshness rule
-        // in `plan` is what keeps months of history out; there is no daily cap any more.
-        .sort((a, b) => a.idleMs - b.idleMs);
+      const all = this.deps.candidates();
+      const ready = all.filter((c) => eligible(c, reclaimOff));
+      // A conversation whose last failure was the provider out of capacity goes behind the rest.
+      // It is the one kind that can spend the whole 30-minute timeout and still be retried an hour
+      // later, so leaving it at the head of the queue would let one starved batch delay every
+      // fresh conversation behind it again and again.
+      const stalled = new Set(ready.filter((c) => this.deps.state.markOf(c.key)?.capacity).map((c) => c.key));
+      const candidates = ready.sort(
+        (a, b) => Number(stalled.has(a.key)) - Number(stalled.has(b.key)) || a.idleMs - b.idleMs
+      );
+      // Freshest first otherwise: on the first start with this feature every conversation looks
+      // reviewable, and the ones that just went quiet are the useful ones. The freshness rule
+      // in `plan` is what keeps months of history out; there is no daily cap any more.
+      const startedAt = this.deps.clock.now();
       for (const candidate of candidates) {
         const current = this.reviewer();
         if (!current || this.stopped) break;
@@ -252,6 +322,10 @@ export class ReviewService {
           // Per candidate, not once per pass: with no cap a pass can outlive the hour, and a
           // retry that is six hours old by now must not be held back by a stale clock.
           const now = this.deps.clock.now();
+          if (now - startedAt >= REVIEW_PASS_BUDGET_MS) {
+            this.log(`[review] pass budget of ${REVIEW_PASS_BUDGET_MS / 60_000} min reached; the rest waits for the next sweep`);
+            break;
+          }
           const plan = this.plan(candidate, now);
           if (!plan) continue;
           await this.runOne(candidate, plan, current, now);
@@ -289,15 +363,31 @@ export class ReviewService {
   }
 
   /**
-   * Record one failed attempt and return the sentence for the log and the Reviews row. The third
-   * failure gives up on this batch: the watermark moves past it, so only messages that arrive
-   * afterwards can start another review.
+   * Record one failure and return the sentence for the log and the Reviews row. A counted failure
+   * is one of the three that give up on the batch: the watermark moves past it, so only messages
+   * that arrive afterwards can start another review.
+   *
+   * A capacity failure is not counted — up to REVIEW_CAPACITY_MAX_ATTEMPTS in a row. Past that the
+   * store counts it, and the sentence says so, because the batch is now on its way to being given
+   * up on like any other repeated failure. `at` is when the attempt ended, so the back-off runs
+   * from there rather than from before a 30-minute timeout.
    */
-  private fail(candidate: ReviewCandidate, plan: Plan, error: string, now: number): string {
-    const attempts = this.deps.state.failed(candidate.key, error, now);
-    const message = attempts < REVIEW_MAX_ATTEMPTS ? error : `gave up after ${attempts} attempts: ${error}`;
+  private fail(candidate: ReviewCandidate, plan: Plan, error: string, at: number, capacity: boolean): string {
+    const { attempts, counted } = this.deps.state.failed(candidate.key, error, at, capacity ? 'capacity' : 'attempt');
+    if (!counted) {
+      const message = `${error} (no capacity at the provider; retrying in ${REVIEW_CAPACITY_RETRY_MS / 3_600_000}h, not counted as an attempt)`;
+      this.log(`[review] ${candidate.key}: ${message}`);
+      return message;
+    }
+    let message = error;
     if (attempts >= REVIEW_MAX_ATTEMPTS) {
-      this.deps.state.gaveUp(candidate.key, plan.window.lastMessageId, message, now);
+      message = `gave up after ${attempts} attempts: ${error}`;
+      this.deps.state.gaveUp(candidate.key, plan.window.lastMessageId, message, at);
+    } else if (capacity) {
+      // The capacity streak reached its cap: this is the first one that counts, and the ones after
+      // it will count too.
+      const streak = this.deps.state.markOf(candidate.key)?.capacityAttempts ?? REVIEW_CAPACITY_MAX_ATTEMPTS;
+      message = `${error} (no capacity ${streak} times in a row; counting this as attempt ${attempts} of ${REVIEW_MAX_ATTEMPTS})`;
     }
     this.log(`[review] ${candidate.key}: ${message}`);
     return message;
@@ -311,7 +401,7 @@ export class ReviewService {
       // Building the prompt reads the skill library and every skill the conversation used. A
       // failure there — an unreadable directory, a broken `SKILL.md` — is a failed review like any
       // other: back off, and leave a row so the Reviews tab can say why nothing happened.
-      const error = this.fail(candidate, plan, `could not prepare the review: ${e instanceof Error ? e.message : String(e)}`, now);
+      const error = this.fail(candidate, plan, `could not prepare the review: ${e instanceof Error ? e.message : String(e)}`, now, false);
       const failedId = this.record(plan, '', '', reviewer, candidate, now);
       this.writeResult(failedId, plan, candidate, now, {
         outcome: 'failed',
@@ -325,7 +415,14 @@ export class ReviewService {
     const model = this.deps.config.review?.model ?? reviewer.model;
     const result = await this.run(reviewer, model, prompt);
     if (!result.ok) {
-      const error = this.fail(candidate, plan, result.error, now);
+      // Two sources: the runner's own `capacity` flag, which is how a timeout is marked (a killed
+      // run has no output to read), and the text of a run that finished with a 503. An immediate
+      // failure — spawn, ssh — sets neither and counts as ordinary.
+      const capacity = result.capacity === true || isCapacityFailure(result.error);
+      // The back-off runs from the end of the attempt: `now` was taken before a run that may have
+      // spent 30 minutes timing out, and "an hour" from its start would only be 30 minutes of wait.
+      const endedAt = this.deps.clock.now();
+      const error = this.fail(candidate, plan, result.error, endedAt, capacity);
       // A failed attempt is a review too. Until this row existed the reason a quiet conversation
       // was never reviewed lived only in the log, which is not where a person looks; the Reviews
       // tab is. The session has no answer to file, only the prompt and the failure.
@@ -762,8 +859,19 @@ export async function runAgyReview(def: AgentDef, model: string | undefined, pro
       max: 1 << 20,
     });
     if (r.spawnError) return { ok: false, error: `agy on ${host.id}: ${r.spawnError}` };
-    if (r.timedOut) return { ok: false, error: `agy on ${host.id} timed out after ${REVIEW_TIMEOUT_MS / 60_000} min` };
-    if (r.code !== 0) return { ok: false, error: `agy on ${host.id} exited ${r.code ?? r.signal}${r.stderr ? `: ${r.stderr}` : ''}` };
+    // A timeout is capacity by the runner's own judgement, not by text: a killed run usually
+    // leaves nothing to match. Errors that fail at once (spawn, ssh) never reach this branch and
+    // stay ordinary failures, so they still count toward the three-attempt limit.
+    if (r.timedOut) {
+      return { ok: false, error: `agy on ${host.id} timed out after ${REVIEW_TIMEOUT_MS / 60_000} min`, capacity: true };
+    }
+    if (r.code !== 0) {
+      const error = `agy on ${host.id} exited ${r.code ?? r.signal}${r.stderr ? `: ${r.stderr}` : ''}`;
+      // Both streams, as in the local runner: the 503 may be in a result event on stdout while
+      // stderr holds only the exit reason.
+      const captured = `${r.output.toString('utf8')}\n${r.stderr ?? ''}`;
+      return isCapacityFailure(captured) ? { ok: false, error, capacity: true } : { ok: false, error };
+    }
     return agyReviewAnswer(r.output.toString('utf8'));
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -790,9 +898,17 @@ async function runAgyReviewLocal(def: AgentDef, argv: string[], input: string): 
         clearTimeout(timer);
         resolve(result);
       };
+      // Classified from the full stderr and stdout, before the error sentence keeps only 500
+      // characters of it. agy's retry lines go to its own CLI log, not these streams, but a 503 in
+      // a result event or a final error does arrive here. The timeout branch below does not use
+      // this: a killed run is capacity whether or not it wrote anything.
+      const failed = (error: string): ReviewRun => {
+        const capacity = isCapacityFailure(`${err}\n${out}`);
+        return capacity ? { ok: false, error, capacity } : { ok: false, error };
+      };
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
-        finish({ ok: false, error: `agy did not finish within ${REVIEW_TIMEOUT_MS / 60_000} min` });
+        finish({ ok: false, error: `agy did not finish within ${REVIEW_TIMEOUT_MS / 60_000} min`, capacity: true });
       }, REVIEW_TIMEOUT_MS);
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => {
@@ -807,7 +923,7 @@ async function runAgyReviewLocal(def: AgentDef, argv: string[], input: string): 
       child.on('error', (e) => finish({ ok: false, error: `agy: ${e.message}` }));
       child.on('close', (code) => {
         if (code !== 0) {
-          finish({ ok: false, error: `agy exited ${code ?? 'by signal'}${err.trim() ? `: ${err.trim().slice(0, 500)}` : ''}` });
+          finish(failed(`agy exited ${code ?? 'by signal'}${err.trim() ? `: ${err.trim().slice(0, 500)}` : ''}`));
           return;
         }
         finish(agyReviewAnswer(out));

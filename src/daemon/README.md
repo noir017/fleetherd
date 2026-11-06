@@ -401,7 +401,7 @@ conversation, the last message id a review saw — the same integer `reviewWindo
 what to quote. "Three" counts `role: user, kind: normal` rows, so a scheduled turn or a sub-agent
 prompt in the same topic does not count as the person speaking.
 
-**One at a time, six-hour back-off, three tries per batch, and a 24-hour rule for unseen
+**One at a time, a back-off and three tries per batch, and a 24-hour rule for unseen
 conversations.** `sweep` is guarded by a flag, so a review that outlives the minute simply makes
 the next tick a no-op; it reads the clock per candidate, because without the cap a pass can outlast
 the hour. There is no daily cap: the per-conversation watermark is what stops the same conversation
@@ -413,6 +413,22 @@ same batch gives up, advances the watermark past it, and leaves a failed row in 
 so, so an exhausted reviewer cannot hold the single lane forever. And a mark that cannot be written
 to disk is held in memory (`review-state.ts`): with no cap, a full disk would otherwise leave the
 watermark unchanged and review the same conversation on every sweep.
+
+**A provider with no capacity is not a failed attempt, and neither is a timeout.** A run that ends
+with `No capacity available`, or with `UNAVAILABLE` and a standalone `503`, records `capacity: true`
+and waits `REVIEW_CAPACITY_RETRY_MS` (an hour) without moving `attempts`. A timeout does the same:
+agy retries a 503 itself with no give-up limit (1.5.1 retried past attempt 5), so it can still be
+waiting when `REVIEW_TIMEOUT_MS` kills it, and the kill leaves no result event or stderr to read.
+Failures that happen at once — a spawn error, ssh refused — never reach the timeout and stay
+ordinary, counted failures. The exemption stops after `REVIEW_CAPACITY_MAX_ATTEMPTS` (12) in a row,
+about 18 hours with an hour's wait and up to 30 minutes each; after that the same failure is counted
+and the batch can be given up on. Two scheduling rules keep the lane from starving everything else:
+a conversation whose mark says `capacity` sorts behind conversations without it, and a pass stops
+*starting* reviews after `REVIEW_PASS_BUDGET_MS` (40 minutes), leaving the rest to the next tick.
+The review already running is never cut short, so a pass can last 70 minutes.
+
+One known limit: `host.run` has no gateway-side deadline, only the host-side `timeoutMs`, so an ssh
+link that drops mid-review leaves `sweep` busy until the host's timeout fires. Not addressed here.
 
 **The reviewer cannot touch anything.** One `agy -p` on the agent's machine, in an empty directory
 that is removed afterwards, with every permission class denied (`AGY_NO_TOOLS`). Measured on agy
