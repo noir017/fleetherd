@@ -80,7 +80,7 @@ function rig(opts: { canShow: boolean }) {
     } as InboundMessage);
     await drain();
   };
-  return { send, shown, onTurn: (fn: (h: AgentStreamHandlers) => void) => void (report = fn), dispose: () => reg.dispose() };
+  return { reg, send, shown, onTurn: (fn: (h: AgentStreamHandlers) => void) => void (report = fn), dispose: () => reg.dispose() };
 }
 
 describe('the status strip, through the registry', () => {
@@ -118,6 +118,32 @@ describe('the status strip, through the registry', () => {
     r.onTurn((h) => h.onUsage?.({ used: 1, size: 10 }));
     await r.send('hi');
     expect(r.shown).toEqual([]);
+    r.dispose();
+  });
+
+  it('lets a throwaway scheduled run go whole — its status and its outcome — and blanks nobody’s strip', async () => {
+    // A platform that cannot open a topic: a new-session run posts into the target and is released
+    // after (releaseScheduled). Each such run used to leave a status entry and an outcome behind.
+    const r = rig({ canShow: true });
+    r.onTurn((h) => h.onUsage?.({ used: 5, size: 100 }));
+    const opened = await r.reg.openScheduledConversation({
+      platform: 'discord',
+      address: { channel: 'c1' },
+      agentId: 'agy',
+      title: 'nightly',
+      ephemeralKey: 'schedule#t1#1',
+    });
+    expect(opened.ephemeral).toBe(true);
+    await r.reg.runScheduledPrompt({ key: opened.key, platform: 'discord', address: { channel: 'c1' }, agentId: 'agy', prompt: 'go' });
+    expect(r.reg.statusOf(opened.key)?.context).toEqual({ used: 5, size: 100 });
+    expect(r.reg.activityOf(opened.key)?.outcome?.kind).toBe('done');
+
+    const shownBefore = r.shown.length;
+    r.reg.releaseScheduled(opened.key);
+    expect(r.reg.statusOf(opened.key)).toBeUndefined();
+    expect(r.reg.activityOf(opened.key)).toBeUndefined();
+    // The lane it showed on is the person's own conversation: forgetting the run sends nothing there.
+    expect(r.shown).toHaveLength(shownBefore);
     r.dispose();
   });
 });

@@ -1,9 +1,11 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ConversationStore,
+  DEFER_MS,
   migrateLegacySessions,
   parseLegacyKey,
 } from './conversation-store.js';
@@ -245,6 +247,7 @@ describe('ConversationStore: lane and last use (what `channels` lists)', () => {
   it('records where and when a turn ran, and survives a reload', () => {
     const s = new ConversationStore(file);
     s.recordLane('tg#586#8068', 'cc', 'tg', { channel: '586', thread: '8068' }, 1_000);
+    s.flush(); // the lane is the one change held back (see "when a change reaches the disk")
     const again = new ConversationStore(file);
     expect(again.entries()).toEqual([
       ['tg#586#8068', expect.objectContaining({ agent: 'cc', lane: { platform: 'tg', channel: '586', thread: '8068' }, lastAt: 1_000 })],
@@ -270,6 +273,94 @@ describe('ConversationStore: lane and last use (what `channels` lists)', () => {
     const [, rec] = s.entries()[0]!;
     expect(rec.lane).toBeUndefined();
     expect(rec.lastAt).toBeUndefined();
+  });
+});
+
+describe('ConversationStore: when a change reaches the disk', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const onDisk = (): Record<string, { lane?: unknown; inFlight?: number }> =>
+    fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, { lane?: unknown; inFlight?: number }>) : {};
+
+  it('a turn costs two writes, not three: its lane rides on its in-flight mark', () => {
+    vi.useFakeTimers();
+    const s = new ConversationStore(file);
+    s.bind('k', 'cc');
+    const writes = vi.spyOn(fs, 'writeFileSync');
+
+    s.recordLane('k', 'cc', 'web', { channel: 'main', thread: 't' }, 1);
+    expect(writes).toHaveBeenCalledTimes(0);
+    s.setInFlight('k', 1);
+    expect(writes).toHaveBeenCalledTimes(1);
+    // The lane went with it, so nothing is left for the timer.
+    expect(onDisk()['k']).toMatchObject({ lane: { platform: 'web', channel: 'main', thread: 't' }, inFlight: 1 });
+    s.setInFlight('k', undefined);
+    vi.advanceTimersByTime(DEFER_MS * 2);
+    expect(writes).toHaveBeenCalledTimes(2);
+  });
+
+  it('a lane with no company is written alone after DEFER_MS', () => {
+    vi.useFakeTimers();
+    const s = new ConversationStore(file);
+    s.bind('k', 'cc');
+    s.recordLane('k', 'cc', 'tg', { channel: '586' }, 1);
+    expect(onDisk()['k']?.lane).toBeUndefined();
+    vi.advanceTimersByTime(DEFER_MS);
+    expect(onDisk()['k']?.lane).toEqual({ platform: 'tg', channel: '586' });
+  });
+
+  it('the in-flight mark is on disk before setInFlight returns, in both directions', () => {
+    vi.useFakeTimers(); // no timer may be what puts it there
+    const s = new ConversationStore(file);
+    s.bind('k', 'cc');
+    s.setInFlight('k', 5);
+    // What a crash right now would leave for the next start's recoverInterrupted.
+    expect(new ConversationStore(file).entries()[0]?.[1].inFlight).toBe(5);
+    s.setInFlight('k', undefined);
+    expect(new ConversationStore(file).entries()[0]?.[1].inFlight).toBeUndefined();
+  });
+
+  it('a write that dies halfway leaves the previous file whole', () => {
+    const s = new ConversationStore(file);
+    s.bind('k', 'cc');
+    s.setAgentSession('k', 'cc', 'ses-1');
+    const real = fs.writeFileSync;
+    // A kill or a full disk part-way through: half the bytes, then nothing.
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((target, data, opts) => {
+      real(target, String(data).slice(0, 20), opts);
+      throw new Error('ENOSPC: no space left on device');
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    s.bind('k', 'oc');
+    vi.restoreAllMocks();
+
+    // In place, this would have been a truncated file the next start reads as empty — every binding
+    // and session id gone. Atomically, the last good version is still there.
+    const reloaded = new ConversationStore(file);
+    expect(reloaded.boundAgent('k')).toBe('cc');
+    expect(reloaded.agentSession('k', 'cc')).toBe('ses-1');
+    expect(fs.readdirSync(dir)).toEqual(['conversations.json']); // no temp file left behind
+  });
+
+  it('a held change is written when the process exits', () => {
+    // process.exit runs no timers, and it is how the daemon leaves after stop(). A child process,
+    // because emitting 'exit' here would run every other exit listener in the test worker.
+    const store = new URL('./conversation-store.ts', import.meta.url).pathname;
+    const script = [
+      `const { ConversationStore } = await import(${JSON.stringify(store)});`,
+      `new ConversationStore(${JSON.stringify(file)}).recordLane('k', 'cc', 'tg', { channel: '1' }, 7);`,
+      'process.exit(0);',
+    ].join('\n');
+    execFileSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], { stdio: 'pipe' });
+    expect(onDisk()['k']).toMatchObject({ lane: { platform: 'tg', channel: '1' } });
+  });
+
+  it('is written owner-only', () => {
+    new ConversationStore(file).bind('k', 'cc');
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });
 });
 

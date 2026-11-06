@@ -4436,10 +4436,13 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.tokens.release(id);
     this.unresumableWarned.delete(id);
     this.progress.forget(id);
-    // Only releaseScheduled and dispose call this; idle reclaim keeps the conversation and its
-    // outcome, so this is not where a quiet conversation's reply is dropped. A released scheduled
-    // conversation can produce no sub-agent card, and shutdown produces none at all.
-    this.outcomes.dropTexts(id);
+    // Only releaseScheduled and dispose call this; idle reclaim keeps the conversation, its outcome
+    // and its status, so this is not where a quiet conversation's reply is dropped. A released
+    // scheduled conversation can produce no sub-agent card, and shutdown produces none at all — so
+    // what the outcomes and the status board hold for it goes too, or every run of a task without a
+    // topic of its own left an entry in each for the life of the process.
+    this.outcomes.release(id);
+    this.status.forget(id);
   }
 
   private buildMerger(conversationId: ConversationId): InboundMerger {

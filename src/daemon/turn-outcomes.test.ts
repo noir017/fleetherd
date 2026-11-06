@@ -118,12 +118,27 @@ describe('TurnOutcomes — what a turn leaves for the person', () => {
     expect(r.outcomes.failureOf(ID)).toBeUndefined();
   });
 
-  it('drops the kept texts with the conversation’s runtime state, keeping the outcome', () => {
+  it('lets a released conversation go whole: its texts and its outcome, pushing nothing', () => {
     const r = rig(config());
     r.outcomes.turnEnded(ID, { kind: 'done', text: 'a long enough reply' });
-    r.outcomes.dropTexts(ID);
+    const pushes = r.pushed.length;
+    r.outcomes.release(ID);
     expect(r.outcomes.replyOf(ID)).toBeUndefined();
-    expect(r.outcomes.activityOf(ID)?.outcome?.kind).toBe('done');
+    // The outcome used to stay: one entry per run of a scheduled task with no topic of its own.
+    expect(r.outcomes.activityOf(ID)).toBeUndefined();
+    // Its lane is the person's own conversation; that list entry is not the run's to clear.
+    expect(r.pushed).toHaveLength(pushes);
+  });
+
+  it('a released conversation’s pending continue is called off rather than fired at nothing', () => {
+    const r = rig(config({ on: ['service'], max: 2 }));
+    r.outcomes.turnEnded(ID, fail('service'));
+    expect(r.clock.pending()).toBe(1);
+    r.outcomes.release(ID);
+    expect(r.clock.pending()).toBe(0);
+    r.clock.advance(10 * 60_000);
+    expect(r.continued).toEqual([]);
+    expect(r.outcomes.activityOf(ID)).toBeUndefined();
   });
 
   it('a stopped turn leaves nothing', () => {
