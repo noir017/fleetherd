@@ -5928,6 +5928,11 @@ describe('webui page: the scheduled-task panel', () => {
     });
     await h.click('#schedules-toggle');
 
+    // Both task count and session count are shown on outer Scheduled tab ('1 · 1')
+    expect(h.el('sched-tab-scheduled-n').textContent).toBe('1 · 1');
+    expect(h.el('sched-tab-tasks-n').textContent).toBe('1');
+    expect(h.el('sched-tab-sessions-n').textContent).toBe('1');
+
     // Switch to Sessions subtab
     await h.click('#sched-tab-sessions');
     expect(h.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('true');
@@ -5946,11 +5951,13 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.window.localStorage.getItem('aa_sched_subtab')).toBe('tasks');
     expect(h.el('schedules-summary').textContent).toBe('1 active');
 
-    // Switch to Reviews outer tab
+    // Switch to Reviews outer tab: outer Scheduled tab still shows '1 · 1'
     await h.click('#sched-tab-reviews');
     await until('reviews list', () => h.el('sched-reviews-list').textContent!.includes('Reviewed Topic'));
     expect(h.el('sched-tab-reviews').getAttribute('aria-selected')).toBe('true');
     expect(h.el('sched-tab-scheduled').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('sched-tab-scheduled-n').textContent).toBe('1 · 1');
+    expect(h.el('sched-tab-reviews-n').textContent).toBe('1');
     expect(h.el('sched-subnav').hidden).toBe(true);
     expect(h.el('sched-reviews').hidden).toBe(false);
     expect(h.el('schedules-list').hidden).toBe(true);
@@ -6013,6 +6020,79 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.el('sched-tab-alert').hidden).toBe(true);
     expect(h.el('sched-sessions-alert').hidden).toBe(true);
   });
+
+  it.each([
+    {
+      legacyTab: 'sessions',
+      expectedTab: 'scheduled',
+      expectedSubtab: 'sessions',
+      scheduledSelected: 'true',
+      reviewsSelected: 'false',
+      tasksSelected: 'false',
+      sessionsSelected: 'true',
+      subnavHidden: false,
+      visiblePanel: 'sched-sessions',
+    },
+    {
+      legacyTab: 'tasks',
+      expectedTab: 'scheduled',
+      expectedSubtab: 'tasks',
+      scheduledSelected: 'true',
+      reviewsSelected: 'false',
+      tasksSelected: 'true',
+      sessionsSelected: 'false',
+      subnavHidden: false,
+      visiblePanel: 'schedules-list',
+    },
+    {
+      legacyTab: 'reviews',
+      expectedTab: 'reviews',
+      expectedSubtab: 'tasks',
+      scheduledSelected: 'false',
+      reviewsSelected: 'true',
+      tasksSelected: 'false',
+      sessionsSelected: 'false',
+      subnavHidden: true,
+      visiblePanel: 'sched-reviews',
+    },
+  ] as const)(
+    'restores legacy aa_sched_tab = $legacyTab to $expectedTab + $expectedSubtab',
+    async ({
+      legacyTab,
+      scheduledSelected,
+      reviewsSelected,
+      tasksSelected,
+      sessionsSelected,
+      subnavHidden,
+      visiblePanel,
+    }) => {
+      const C = 'c3d4e5f6';
+      const replies = {
+        'api/schedules': listReply([task()]),
+        'api/reviews': { enabled: true, reviews: [] },
+      };
+      const h = await open({
+        storage: { aa_sched_tab: legacyTab },
+        replies,
+      });
+      await h.emit(sync(A, [], [A]));
+      await h.emit({
+        t: 'topics',
+        topics: [
+          { id: A, title: 'ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+          { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 2, stage: 'idle', scheduled: true },
+        ],
+      });
+      await h.click('#schedules-toggle');
+
+      expect(h.el('sched-tab-scheduled').getAttribute('aria-selected')).toBe(scheduledSelected);
+      expect(h.el('sched-tab-reviews').getAttribute('aria-selected')).toBe(reviewsSelected);
+      expect(h.el('sched-subnav').hidden).toBe(subnavHidden);
+      expect(h.el('sched-tab-tasks').getAttribute('aria-selected')).toBe(tasksSelected);
+      expect(h.el('sched-tab-sessions').getAttribute('aria-selected')).toBe(sessionsSelected);
+      expect(h.el(visiblePanel).hidden).toBe(false);
+    }
+  );
 
   it('stays open across a topic switch and a reload, and a first visit starts closed', async () => {
     const replies = { 'api/schedules': listReply([task()]) };

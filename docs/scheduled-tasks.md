@@ -45,11 +45,12 @@ stops applying its own model.
 
 On the web UI, the clock at the right of the chat header opens the **⏰ Side tasks** panel of its
 own: the bottom has **Scheduled** and **Reviews** tabs. Under **Scheduled**, the **Tasks** sub-tab
-is the same list, plus "run now". A task that runs in a new or daily session opens topics; the
-**Sessions** sub-tab lists those topics, and they no longer appear in the ordinary topic list.
-The panel's second outer tab, **Reviews**, is the automatic review of quiet conversations — see
-[skills](skills.md#auto-review) — not scheduled work, and shares the panel only because both are
-background jobs with no conversation of their own.
+is the same list, plus "run now". On a phone the same panel is a drawer from the right, with the chat
+still visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
+session opens topics; the **Sessions** sub-tab lists those topics, and they no longer appear in the
+ordinary topic list. The panel's second outer tab, **Reviews**, is the automatic review of quiet
+conversations — see [skills](skills.md#auto-review) — not scheduled work, and shares the panel only
+because both are background jobs with no conversation of their own.
 `/setting` has a **⏰ Scheduled tasks** button everywhere: every task with its
 next and last run, and pause, resume and delete (delete asks twice). Where there are no buttons,
 `/setting schedule [pause|resume|delete|run <id>]` does the same by typing.

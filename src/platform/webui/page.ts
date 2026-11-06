@@ -1019,7 +1019,7 @@ button:disabled{opacity:.5;cursor:default}
   #schedules-toggle{min-width:44px;height:44px}
   #schedules-toggle svg{width:18px;height:18px}
   .sched-acts button{min-height:44px;padding:0 14px}
-  .sched-subtab{min-height:36px}
+  .sched-subtab{min-height:44px}
   .rev-open{min-height:44px;padding:0 14px}
   /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
      phone is an editor with a sliver of transcript behind it, and the transcript is not what the
@@ -1864,10 +1864,11 @@ const SCRIPT = `
 
   function paintSchedCounts(){
     var tCount = schedTasks ? String(schedTasks.length) : '';
+    var sList = schedSessions();
     schedTabTasksN.textContent = tCount;
-    schedTabSessionsN.textContent = String(schedSessions().length);
+    schedTabSessionsN.textContent = String(sList.length);
     schedTabReviewsN.textContent = reviewData ? String(reviewData.reviews.length) : '';
-    schedTabScheduledN.textContent = tCount;
+    schedTabScheduledN.textContent = sList.length > 0 ? (tCount ? tCount + ' · ' + sList.length : String(sList.length)) : tCount;
   }
 
   /**
@@ -1959,10 +1960,6 @@ const SCRIPT = `
   }
 
   function setSchedTab(tab){
-    if(tab === 'sessions' || tab === 'tasks'){
-      setSchedSubtab(tab);
-      return;
-    }
     schedTab = tab==='reviews' ? 'reviews' : 'scheduled';
     try { localStorage.setItem('aa_sched_tab', schedTab); } catch(x){}
     if(schedTab==='reviews') loadReviews();
