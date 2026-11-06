@@ -31,6 +31,60 @@ function fileKind(elementType: string): 'audio' | 'file' {
   return elementType === 'audio' ? 'audio' : 'file';
 }
 
+const STARTUP_ONLINE_WARN_MS = 60_000;
+/** Satori Login.Status by value: OFFLINE=0, ONLINE=1, CONNECT=2, DISCONNECT=3, RECONNECT=4. */
+const STATUS_NAMES = ['offline', 'online', 'connecting', 'disconnecting', 'reconnecting'];
+
+/**
+ * Say so when an instance is not online a minute after start, and again when it comes online.
+ *
+ * `ctx.start()` resolving means each adapter was asked to connect, not that it did:
+ * adapter-telegram returns before its first request has answered (telegram-start-retry.ts), and
+ * LINE and WeCom turn a failed login into a quiet OFFLINE. The daemon's "started" line used to be
+ * the last word on an instance that never came up.
+ */
+function startupWatch(label: string, instanceId: string, bots: () => Bot[]) {
+  let timer: NodeJS.Timeout | undefined;
+  let warned = false;
+  let startedAt = 0;
+  const online = (): boolean => bots().some((b) => b.status === 1);
+  const disarm = (): void => {
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    /** After `ctx.start()`; `since` is when it was called. */
+    arm(since: number): void {
+      startedAt = since;
+      if (online()) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (online()) return;
+        warned = true;
+        const states = bots().length
+          ? bots()
+              .map((b) => `bot ${b.selfId ?? '?'} ${STATUS_NAMES[b.status] ?? `status=${b.status}`}`)
+              .join(', ')
+          : 'the adapter created no bot';
+        console.warn(
+          `${label} platform instance "${instanceId}" is not online ${STARTUP_ONLINE_WARN_MS / 1000}s after start (${states}); nothing is received or sent through it until it is`
+        );
+      }, STARTUP_ONLINE_WARN_MS);
+      // Never the reason a stopping daemon stays up.
+      timer.unref();
+    },
+    /** A bot came online: the line to log instead of the usual one, if the warning went out. */
+    cameOnline(selfId: string): string | undefined {
+      disarm();
+      if (!warned) return undefined;
+      warned = false;
+      const after = Math.round((Date.now() - startedAt) / 1000);
+      return `${label} platform instance "${instanceId}" is online now, ${after}s after start (bot ${selfId})`;
+    },
+    disarm,
+  };
+}
+
 /**
  * Assemble a generic PlatformAdapter from a profile + one platform instance
  * (`platforms.<id>` entry + its id). InboundMessage.platform and interaction
@@ -288,16 +342,27 @@ export async function createSatoriAdapter(
     };
   };
 
+  const watch = startupWatch(
+    `[${profile.type}]`,
+    instance.id,
+    () => ctx.bots.filter((b) => b.platform === profile.satoriPlatform)
+  );
+
   // Bot connection-status log. Beyond confirming "online", surface offline/disconnect/reconnect so
   // a silently-dropped gateway (bot can't deliver, turns produce nothing) is visible in the logs
   // instead of looking healthy. Satori Login.Status: OFFLINE=0, ONLINE=1, CONNECT=2, DISCONNECT=3,
   // RECONNECT=4.
-  ctx.on('login-updated', (login) => {
-    const status = (login as { status?: number })?.status;
-    const selfId = (login as { selfId?: string })?.selfId ?? '?';
+  //
+  // The listener receives a Session, not a Login: satori's Bot.dispatchLoginEvent puts the login at
+  // `session.event.login` (core 4.6.0, lib/index.mjs:356-361). This read `login.status` off the
+  // session until 2026-11-06 — always undefined — so every status change, "online" included, went to
+  // the debug line below and none of these lines was ever printed.
+  ctx.on('login-updated', (session: Session) => {
+    const status = session.event.login?.status;
+    const selfId = session.selfId ?? '?';
     switch (status) {
       case 1:
-        console.log(`[${profile.type}] bot ${selfId} is online`);
+        console.log(watch.cameOnline(selfId) ?? `[${profile.type}] bot ${selfId} is online`);
         break;
       case 0:
       case 3:
@@ -516,11 +581,15 @@ export async function createSatoriAdapter(
     },
 
     async start() {
-      // Start context: connect gateway, the 'message' listener takes effect.
+      // Start context: connect gateway, the 'message' listener takes effect. Started is not
+      // online, so the watch reports an instance that does not come up (startupWatch).
+      const since = Date.now();
       await ctx.start();
+      watch.arm(since);
     },
 
     async stop() {
+      watch.disarm();
       await ctx.stop();
     },
   };

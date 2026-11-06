@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Telegram no longer stays offline for good when it cannot connect at startup.** One 502 from
+  Telegram's `getMe` as the daemon started was enough: adapter-telegram never waits on its own
+  startup, so the failure surfaced only as an `[unhandledRejection]` line, the poll loop — which
+  holds the adapter's only retry — never began, and the bot sat in "connecting" until the next
+  restart while the daemon reported the instance `started`. Startup now retries a 5xx, a 429, a
+  network error or a timeout after 5 s, doubling to once a minute, until it connects, with one line
+  per attempt naming the instance, the error and the wait — the same holds for the requests between
+  `getMe` and the first poll, which failed the same way. A 401 or 404, a wrong token, is logged as an
+  error once and not retried. The bot token, which plugin-http puts in the URL of a failed request,
+  is cut from these lines. [→](docs/platforms.md#when-a-platform-does-not-connect)
+- **An instance that has not connected a minute after start says so.** Every platform instance with
+  no bot online 60 s after start now logs a warning naming each bot's state, and logs again when it
+  connects. The connection-state lines that were meant to make a dropped bot visible — online,
+  offline, reconnecting — had never been printed: they read the status off the event's session
+  instead of its login, found nothing, and fell through to a debug line. They print now.
+  [→](docs/platforms.md#when-a-platform-does-not-connect)
+
 ## [2.38.1] - 2026-11-06
 
 ### Fixed
