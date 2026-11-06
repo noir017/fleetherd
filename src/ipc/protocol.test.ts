@@ -33,6 +33,7 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', channelId: 'tg:586' },
     { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'fast-model' },
     { kind: 'schedule-add', at: '+30m', bash: 'du -sh /', timeoutMs: 60_000, cwd: '/tmp' },
+    { kind: 'schedule-edit', id: 'a1b2c3', agent: 'oc', cwd: '/srv/app', cron: '0 9 * * *' },
     { kind: 'schedule-list' },
     { kind: 'schedule-list', id: 'a1b2c3' },
     { kind: 'schedule-op', id: 'a1b2c3', op: 'remove' },
@@ -98,6 +99,10 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['schedule-op unknown op', { token: TOKEN, action: { kind: 'schedule-op', id: 'a', op: 'explode' } }],
     ['schedule-op missing id', { token: TOKEN, action: { kind: 'schedule-op', op: 'remove' } }],
     ['schedule-list with a channel', { token: TOKEN, action: { kind: 'schedule-list', channelId: 'c' } }],
+    ['schedule-edit missing id', { token: TOKEN, action: { kind: 'schedule-edit', name: 'x' } }],
+    ['schedule-edit with a session', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', session: 'new' } }],
+    ['schedule-edit with a channel', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', channelId: 'c' } }],
+    ['schedule-edit empty prompt', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', prompt: '' } }],
     // Task commands are strict too, and their bounds are real.
     ['task-new empty agent', { token: TOKEN, action: { kind: 'task-new', agent: '', text: 'x' } }],
     ['task-new empty model', { token: TOKEN, action: { kind: 'task-new', text: 'x', model: '' } }],

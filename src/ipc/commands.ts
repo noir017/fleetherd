@@ -103,6 +103,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '--channel is where output goes (ids from `talkcode channels`); default this conversation.',
       'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped.',
       '`add` and `show` print the task id; `list` shows every task with its next run and last result; pause / resume / run (run it now, once) / rm take the id.',
+      '`edit <id> [options]` changes a task in place: --agent, --cwd, --model, --cron / --at / --tz, --name, --prompt, and --bash / --timeout for a bash task. The id, the run count and the last result stay; the next run is recomputed from now under the new time rule, and the gateway posts the updated card. What a task IS cannot change: --session, prompt ↔ bash and --channel are refused — `rm` it and add a new one. A daily task whose agent or directory changes opens a new topic for the rest of today; the day\'s earlier topic is left as it is.',
       'Where you have a schedule tool, it is this same command.',
     ],
   },
@@ -467,6 +468,9 @@ const durationArg = (value: string): number => {
 /** `schedule add`'s own options, by commander's camel-cased key — refused on every other action. */
 const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'prompt', 'bash', 'agent', 'session', 'cwd', 'model', 'timeout'] as const;
 
+/** What `schedule edit` may set: add's options minus `--session`, plus nothing of its own. */
+const SCHEDULE_EDIT_KEYS = ['cron', 'at', 'tz', 'name', 'prompt', 'bash', 'agent', 'cwd', 'model', 'timeout'] as const;
+
 function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
   const session = str(opts.session);
   if (session !== undefined && session !== 'fixed' && session !== 'new' && session !== 'daily') {
@@ -489,6 +493,50 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
   };
 }
 
+/**
+ * `schedule edit <id> [options]` — the fields a task can change, never what it is or where it
+ * posts. The type (`--prompt` ↔ `--bash`), the session and `--channel` are refused here, before the
+ * daemon is asked: the way to have a different task is `rm` + `add`, and saying so beats a daemon
+ * round trip that could only refuse the same thing.
+ */
+function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcAction {
+  const taskId = p[1]?.replace(/^#/, '');
+  if (!taskId) throw new Error('schedule edit needs a task id (`talkcode schedule list` shows them)');
+  if (str(opts.session) !== undefined) {
+    throw new Error('--session cannot be changed by edit: a task keeps its session and its kind; `talkcode schedule rm <id>` and add a new one');
+  }
+  if (str(opts.channel) !== undefined) {
+    throw new Error('--channel cannot be changed by edit: where a task posts is part of the task; `talkcode schedule rm <id>` and add a new one there');
+  }
+  if (str(opts.prompt) !== undefined && str(opts.bash) !== undefined) {
+    throw new Error('give at most one of --prompt <text> or --bash <command>');
+  }
+  if (str(opts.cron) !== undefined && str(opts.at) !== undefined) {
+    throw new Error('give at most one of --cron <expr> or --at <time>');
+  }
+  const action: Extract<IpcAction, { kind: 'schedule-edit' }> = {
+    kind: 'schedule-edit',
+    id: taskId,
+    name: str(opts.name),
+    cron: str(opts.cron),
+    at: str(opts.at),
+    tz: str(opts.tz),
+    prompt: str(opts.prompt),
+    bash: str(opts.bash),
+    agent: str(opts.agent),
+    cwd: str(opts.cwd),
+    model: str(opts.model),
+    timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
+  };
+  const changed = SCHEDULE_EDIT_KEYS.some((k) => opts[k] !== undefined);
+  if (!changed) {
+    throw new Error(
+      'schedule edit needs something to change: --agent, --cwd, --model, --cron, --at, --tz, --name, --prompt, --bash or --timeout'
+    );
+  }
+  return action;
+}
+
 /** `schedule <action> [id]` → one IpcAction, refusing flags that do not belong to the action. */
 function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
   const action = pos(p, 0, 'action').toLowerCase();
@@ -496,6 +544,7 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
     if (p[1] !== undefined) throw new Error('schedule add takes no id; its options describe the task');
     return buildScheduleAdd(opts);
   }
+  if (action === 'edit') return buildScheduleEdit(p, opts);
   const stray = SCHEDULE_ADD_KEYS.find((k) => opts[k] !== undefined);
   if (stray) throw new Error(`--${stray} only applies to \`schedule add\``);
   if (str(opts.channel) !== undefined) throw new Error(`--channel only applies to \`schedule add\` (where output goes)`);
@@ -519,7 +568,7 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
     case 'delete':
       return { kind: 'schedule-op', id: id(), op: 'remove' };
     default:
-      throw new Error(`unknown schedule action "${action}"; use add | list | show | pause | resume | run | rm`);
+      throw new Error(`unknown schedule action "${action}"; use add | list | show | edit | pause | resume | run | rm`);
   }
 }
 
@@ -888,19 +937,19 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'schedule <action> [id]',
     topic: 'schedule',
     description:
-      'Scheduled tasks kept by the gateway (they survive restarts): add | list | show <id> | pause <id> | resume <id> | run <id> | rm <id>',
+      'Scheduled tasks kept by the gateway (they survive restarts): add | list | show <id> | edit <id> [options] | pause <id> | resume <id> | run <id> | rm <id>',
     options: [
-      { flags: '--cron <expr>', description: 'add: recurring, 5-field cron, e.g. "0 8 * * *"' },
-      { flags: '--at <time>', description: 'add: once — +30m, +2h, 08:00, "2026-10-01 08:00", or ISO with a zone' },
-      { flags: '--tz <zone>', description: "add: IANA zone for --cron/--at (default: the gateway's own)" },
-      { flags: '--prompt <text>', description: 'add: an agent runs this' },
-      { flags: '--bash <command>', description: 'add: the gateway runs this with bash and posts the output' },
-      { flags: '--session <mode>', description: 'add: fixed = a turn in this conversation, 24h max (default) | new = a fresh session each run | daily = one session a day: the first run opens a topic, later runs that day join it' },
-      { flags: '--agent <id>', description: "add: who runs --prompt (default: this conversation's agent)" },
-      { flags: '--model <id>', description: "add: model for a --session new or daily task (default: the agent's configured model)" },
-      { flags: '--name <name>', description: 'add: short name for lists and cards' },
-      { flags: '--cwd <dir>', description: 'add: working directory for --bash, --session new or --session daily' },
-      { flags: '--timeout <duration>', description: 'add: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
+      { flags: '--cron <expr>', description: 'add/edit: recurring, 5-field cron, e.g. "0 8 * * *"' },
+      { flags: '--at <time>', description: 'add/edit: once — +30m, +2h, 08:00, "2026-10-01 08:00", or ISO with a zone' },
+      { flags: '--tz <zone>', description: "add/edit: IANA zone for --cron/--at (default: the gateway's; edit keeps the task's)" },
+      { flags: '--prompt <text>', description: 'add/edit: the text an agent runs (edit cannot turn a --bash task into a prompt task)' },
+      { flags: '--bash <command>', description: 'add/edit: the gateway runs this with bash and posts the output (edit cannot turn a --prompt task into one)' },
+      { flags: '--session <mode>', description: 'add only: fixed = a turn in this conversation, 24h max (default) | new = a fresh session each run | daily = one session a day: the first run opens a topic, later runs that day join it' },
+      { flags: '--agent <id>', description: "add/edit: who runs --prompt (default: this conversation's agent; edit keeps the task's)" },
+      { flags: '--model <id>', description: "add/edit: model for a --session new or daily task (default: the agent's configured model)" },
+      { flags: '--name <name>', description: 'add/edit: short name for lists and cards' },
+      { flags: '--cwd <dir>', description: 'add/edit: working directory for --bash, --session new or --session daily' },
+      { flags: '--timeout <duration>', description: 'add/edit: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
     ],
     build: buildSchedule,
   },

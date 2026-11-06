@@ -556,6 +556,185 @@ function firstRunCheck(task: ScheduleTask, now: number): Built {
   return nextRunOf(task, now) === undefined ? fail('that schedule never runs') : { ok: true, task };
 }
 
+// ─────────────────────────────── changing one ───────────────────────────────
+
+/**
+ * What `schedule edit` may change: everything about a task except what it IS (prompt ↔ bash, the
+ * session kind) and where it posts (the target). Those are refused by the command itself, with the
+ * `rm` + `add` that does mean "a different task"; a type change would silently keep the id, the run
+ * count and the last result of something that never ran this way.
+ */
+export interface EditTaskInput {
+  name?: string;
+  cron?: string;
+  at?: string;
+  tz?: string;
+  prompt?: string;
+  bash?: string;
+  agent?: string;
+  cwd?: string;
+  model?: string;
+  timeoutMs?: number;
+}
+
+/**
+ * Change a task in place, or say exactly what is wrong with the change.
+ *
+ * The merged task goes through `buildTask` unchanged, so every rule is the one `schedule add`
+ * enforces — the same refusals, word for word. What edit adds is what the id means: the task keeps
+ * its identity (id, createdAt, runs, lastRun), its state, its target and — for a fixed session —
+ * the window it was registered with, because an edit is not a new registration and must not
+ * extend how long a schedule may talk into someone's own conversation.
+ *
+ * A refusal is a value, not a throw, and nothing is written: the caller still holds the old task.
+ */
+export function editTask(task: ScheduleTask, input: EditTaskInput, ctx: NewTaskContext): Built {
+  const blocked = editRefusal(task, input);
+  if (blocked) return fail(blocked);
+
+  const built = buildTask(mergedInput(task, input), ctx);
+  if (!built.ok) return built;
+
+  const edited = preserveTask(task, built.task);
+  // A new time rule starts now. Carrying the old lastPlannedAt over would let a schedule that
+  // never existed catch up a run it "missed" — an edit at 10:00 to "0 9 * * *" would fire at once
+  // (inside the catch-up grace) while the card says tomorrow 09:00. Keeping it when the rule did
+  // not change is the other half: renaming a task must not swallow a run that is already due.
+  const next = sameWhen(task.when, edited.when) ? edited : { ...edited, lastPlannedAt: ctx.now };
+
+  const windowProblem = fixedWindowProblem(next, ctx.now);
+  if (windowProblem) return fail(windowProblem);
+  return { ok: true, task: withoutStaleDayTopic(task, next) };
+}
+
+/** What an edit refuses before `buildTask` is even asked: a task that is over, or a type change. */
+function editRefusal(task: ScheduleTask, input: EditTaskInput): string | undefined {
+  if (task.state === 'expired') {
+    return `#${task.id} has expired (a fixed-session task lives ${FIXED_SESSION_WINDOW_MS / 3_600_000}h); add a new task instead`;
+  }
+  if (task.state === 'done') {
+    return `#${task.id} was a one-time task and has already had its run; add a new task instead`;
+  }
+  if (input.prompt !== undefined && input.bash !== undefined) {
+    return 'give at most one of --prompt <text> or --bash <command>';
+  }
+  if (task.run.kind === 'bash' && input.prompt !== undefined) {
+    return `#${task.id} is a --bash task, and edit does not change a task's kind; \`talkcode schedule rm ${task.id}\` and add the prompt task instead`;
+  }
+  if (task.run.kind === 'agent' && input.bash !== undefined) {
+    return `#${task.id} is a --prompt task, and edit does not change a task's kind; \`talkcode schedule rm ${task.id}\` and add the bash task instead`;
+  }
+  return undefined;
+}
+
+/**
+ * `buildTask` builds a NEW task: it stamps createdAt and expiresAt, starts at zero runs and has no
+ * history. All of that belongs to the task being edited, not to the edit.
+ */
+function preserveTask(task: ScheduleTask, built: ScheduleTask): ScheduleTask {
+  const { expiresAt: _newWindow, ...fresh } = built;
+  return {
+    ...fresh,
+    id: task.id,
+    createdAt: task.createdAt,
+    createdBy: task.createdBy,
+    target: task.target,
+    state: task.state,
+    runs: task.runs,
+    ...(task.lastRun !== undefined ? { lastRun: task.lastRun } : {}),
+    ...(task.conversation !== undefined ? { conversation: task.conversation } : {}),
+    ...(task.expiresAt !== undefined ? { expiresAt: task.expiresAt } : {}),
+    ...(task.lastPlannedAt !== undefined ? { lastPlannedAt: task.lastPlannedAt } : {}),
+    ...(task.daySession !== undefined ? { daySession: task.daySession } : {}),
+  };
+}
+
+/**
+ * buildTask checked the window it would have given a NEW task (24h from now); this task keeps the
+ * one it was registered with, which may be closer. Returns the refusal, or undefined.
+ */
+function fixedWindowProblem(task: ScheduleTask, now: number): string | undefined {
+  if (task.run.kind !== 'agent' || task.run.session !== 'fixed' || task.expiresAt === undefined) return undefined;
+  const first = nextRunOf({ ...task, state: 'active' }, now);
+  if (first !== undefined && first <= task.expiresAt) return undefined;
+  return (
+    `a fixed-session task lives until ${formatInZone(task.expiresAt, task.when.tz)} ${task.when.tz} (24h from registration) and the new schedule has no run before then; ` +
+    `\`talkcode schedule rm ${task.id}\` and add it again with --session new for a longer-lived one`
+  );
+}
+
+/**
+ * A daily task's topic for today is one conversation with one agent and one working directory,
+ * and a topic keeps its agent. An edit that changes either cannot go on in it — the remaining runs
+ * today would each be skipped ("this topic is now answered by …"). So the day's topic is left as
+ * it is, like yesterday's, and the next run opens a new one for the rest of the day. Changing only
+ * the prompt, name, time or model keeps the topic: the day's context survives, and a model is
+ * applied per run anyway (unless a person set it by hand — see personModel).
+ */
+function withoutStaleDayTopic(task: ScheduleTask, next: ScheduleTask): ScheduleTask {
+  if (task.run.kind !== 'agent' || task.run.session !== 'daily' || next.run.kind !== 'agent') return next;
+  if (next.run.agent === task.run.agent && next.run.cwd === task.run.cwd) return next;
+  const { daySession: _oldDay, ...rest } = next;
+  return rest;
+}
+
+/**
+ * The task's own fields, with what was given laid over them — the input `buildTask` validates.
+ *
+ * `from` in the context deliberately carries no cwd or agent of its own: every default here is the
+ * task's current value, so an edit that does not name a field cannot quietly adopt the caller's
+ * directory or agent.
+ */
+function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
+  const run = task.run;
+  const common: NewTaskInput = {
+    name: input.name ?? task.name,
+    ...mergedTime(task, input),
+    tz: input.tz ?? task.when.tz,
+    ...(input.cwd !== undefined ? { cwd: input.cwd } : run.cwd !== undefined ? { cwd: run.cwd } : {}),
+  };
+  if (run.kind === 'bash') {
+    return {
+      ...common,
+      bash: input.bash ?? run.command,
+      timeoutMs: input.timeoutMs ?? run.timeoutMs,
+      // Passed through, not merged away: buildBashTask is what refuses them, in its own words.
+      ...(input.agent !== undefined ? { agent: input.agent } : {}),
+      ...(input.model !== undefined ? { model: input.model } : {}),
+    };
+  }
+  return {
+    ...common,
+    prompt: input.prompt ?? run.prompt,
+    session: run.session,
+    agent: input.agent ?? run.agent,
+    ...(input.model !== undefined ? { model: input.model } : run.model !== undefined ? { model: run.model } : {}),
+    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+  };
+}
+
+function sameWhen(a: ScheduleWhen, b: ScheduleWhen): boolean {
+  if (a.tz !== b.tz) return false;
+  if ('cron' in a) return 'cron' in b && a.cron === b.cron;
+  return 'at' in b && a.at === b.at;
+}
+
+/**
+ * The time rule an edit leaves behind: what was given, else the task's own.
+ *
+ * Both given are passed through together, so buildTask refuses with add's "exactly one of" rather
+ * than this function silently choosing cron.
+ */
+function mergedTime(task: ScheduleTask, input: EditTaskInput): Pick<NewTaskInput, 'cron' | 'at'> {
+  if (input.cron !== undefined && input.at !== undefined) return { cron: input.cron, at: input.at };
+  if (input.cron !== undefined) return { cron: input.cron };
+  if (input.at !== undefined) return { at: input.at };
+  if ('cron' in task.when) return { cron: task.when.cron };
+  // The one form that keeps the exact instant: a wall-clock string would be read in the task's
+  // zone and could land a second off across a DST change.
+  return { at: new Date(task.when.at).toISOString() };
+}
+
 // ─────────────────────────────── saying things ───────────────────────────────
 
 /** `\`0 8 * * *\` (Asia/Shanghai)` / `once at …` — plus the zone, which is what makes the time mean something. */

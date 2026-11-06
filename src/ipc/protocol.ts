@@ -141,6 +141,25 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       timeoutMs: z.number().int().positive().optional(),
     })
     .strict(),
+  // The same fields as schedule-add minus `session` and `channelId`: an edit never changes what a
+  // task is or where it posts (the command refuses those and names `rm` + `add`), and the id is the
+  // task's. Cross-field rules are core/schedule.ts editTask's, exactly as buildTask's are for add.
+  z
+    .object({
+      kind: z.literal('schedule-edit'),
+      id: z.string().min(1),
+      name: z.string().min(1).max(200).optional(),
+      cron: z.string().min(1).max(200).optional(),
+      at: z.string().min(1).max(100).optional(),
+      tz: z.string().min(1).max(64).optional(),
+      prompt: z.string().min(1).max(20_000).optional(),
+      bash: z.string().min(1).max(20_000).optional(),
+      agent: z.string().min(1).optional(),
+      cwd: z.string().min(1).optional(),
+      model: z.string().min(1).max(200).optional(),
+      timeoutMs: z.number().int().positive().optional(),
+    })
+    .strict(),
   z.object({ kind: z.literal('schedule-list'), id: z.string().min(1).optional() }).strict(),
   // About the whole deployment: no target, so no channelId.
   z.object({ kind: z.literal('reload-config') }).strict(),
@@ -322,6 +341,20 @@ export type IpcAction =
       bash?: string;
       agent?: string;
       session?: 'fixed' | 'new' | 'daily';
+      cwd?: string;
+      model?: string;
+      timeoutMs?: number;
+    }
+  | {
+      kind: 'schedule-edit';
+      id: string;
+      name?: string;
+      cron?: string;
+      at?: string;
+      tz?: string;
+      prompt?: string;
+      bash?: string;
+      agent?: string;
       cwd?: string;
       model?: string;
       timeoutMs?: number;

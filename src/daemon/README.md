@@ -496,6 +496,7 @@ edit an agent's toolbox, and the help page says which one survives.
 ```
 schedule add ──IPC──► ScheduleService.add ── core buildTask (every rule, every refusal) ──► ScheduleStore
                                          └── card posted in the caller's conversation (the daemon's words)
+schedule edit ──IPC──► ScheduleService.edit ── core editTask (the same buildTask, over the old task) ──► ScheduleStore
 Scheduler.look ── core decide ──► run │ skip │ missed │ expire │ done
       run ─► ScheduleService.run ─┬─ bash  → schedule-bash (process group, tail + log) → result posted
                                   ├─ fixed → notice, then registry.runScheduledPrompt in THAT conversation
@@ -552,15 +553,33 @@ What each piece is shaped by, one line each:
   `daySession`, because that override is in memory and a restart would otherwise let the next run
   put the task's model back. A fixed-session task runs in a person's topic and keeps its model, so
   `--model` is refused for it.
+- **`schedule edit` changes the fields, never the task.** `ScheduleService.edit` merges the task
+  with what was given and hands it to the same `buildTask`, so every refusal is add's; only after
+  it passes does anything get written, which is why a refused edit leaves the file untouched. The
+  id, `createdAt`, `runs`, `lastRun` and the state stay, and a fixed-session task keeps the 24 h
+  window it was registered with (an edit must not extend how long a schedule may talk into
+  someone's own conversation). A changed time rule starts from the edit (`lastPlannedAt` = now),
+  so a task edited at 10:00 to "0 9 * * *" waits for tomorrow instead of firing a catch-up run
+  that never existed; a change that leaves the time alone keeps it, so a rename cannot swallow a
+  run that is already due. What a task IS — prompt ↔ bash, the session, `--channel` — is refused
+  with `rm` + `add`. A daily task whose agent or directory changed drops today's `daySession`: the
+  day's topic keeps its agent and its directory, so the next run opens a new topic for the rest of
+  the day, and the earlier one is left as it is (like yesterday's). Editing a task whose run is in
+  flight is refused — that run is using the old values and, for a daily task, would write the old
+  day's topic back over the edit. A `--cwd` is refused when the task's host is not the editing
+  conversation's (`hostOfTask`): the path was resolved on the machine the edit was typed on, and on
+  the task's machine it names a different place. Nothing is written until every check passes, and
+  the task is re-read after the one `await` (the model list): a run that finished meanwhile, or a
+  delete, is reported rather than overwritten, and `Scheduler.update` refuses an id that is gone.
 - **A bash run is not an agent**: `bash -lc` in its own process group (killed whole on timeout — `a |
   b` forks), the daemon's environment minus the reverse-command token, a 16 KB tail kept for the chat
   and the full output in `<configDir>/schedule-runs/<id>/` (20 per task). Longer than 3000 characters
   inline, the log is attached.
 - **Every run speaks first.** A notice before an agent run, the result for a bash one — output that
   arrives unasked always says which task produced it.
-- **Cards are the daemon's.** Register, pause, resume and delete post the task's card in the caller's
-  conversation, never left to the agent's retelling. `/setting` (below) answers in its own message
-  instead of posting a second one.
+- **Cards are the daemon's.** Register, edit, pause, resume and delete post the task's card in the
+  caller's conversation, never left to the agent's retelling. `/setting` (below) answers in its own
+  message instead of posting a second one.
 - **Trust.** Registering needs a reverse-command token — an agent the operator already runs with
   full tool access — so a bash task grants nothing that agent could not have written into crontab
   itself. What IS new is persistence past the session: a prompt-injected agent's task outlives the

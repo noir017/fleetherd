@@ -16,6 +16,7 @@ import { registerReverseCommand } from './reverse-cli.js';
 
 const sessionsSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('sessions'))!;
 const taskNewSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('task-new'))!;
+const scheduleSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('schedule'))!;
 
 /** Parse one argv and return the action the CLI would hand to `runReverse`. */
 function parse(argv: string[], spec = sessionsSpec): IpcAction {
@@ -93,6 +94,16 @@ describe('task-new on the command line', () => {
     expect(parse(['task-new', 'review the fix', '--model', 'fast-model'], taskNewSpec)).toMatchObject({
       kind: 'task-new',
       model: 'fast-model',
+    });
+  });
+});
+
+describe('schedule edit on the command line', () => {
+  it('builds an edit from the id and its options', () => {
+    expect(parse(['schedule', 'edit', 'a1b2c3', '--agent', 'oc'], scheduleSpec)).toMatchObject({
+      kind: 'schedule-edit',
+      id: 'a1b2c3',
+      agent: 'oc',
     });
   });
 });

@@ -35,6 +35,21 @@ const parsed = parseConfig({
 });
 const cfg = { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
 
+/** The shared config plus a machine one agent runs on — for the cross-host `--cwd` rule. */
+const cfgHosts = (() => {
+  const p = parseConfig({
+    platforms: { tg: { type: 'telegram', token: 't' }, web: { type: 'webui', token: 'w' } },
+    hosts: { box: { ssh: 'u@box.example' } },
+    agents: [
+      { id: 'cc', harness: 'claude' },
+      { id: 'oc', harness: 'opencode' },
+      { id: 'remote', harness: 'claude', host: 'box' },
+    ],
+    routing: { default: 'cc' },
+  });
+  return { ...p, inbound: { ...p.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
+})();
+
 type Sent = { platform: string; address: { channel: string; thread?: string }; text: string };
 type Menu = { text: string; buttons: Array<{ id: string; label: string }> };
 
@@ -136,7 +151,15 @@ afterEach(async () => {
 async function rig(
   existing?: string,
   alive?: Set<string>,
-  over: { standaloneThread?: boolean; hasThread?: boolean; emptyThread?: boolean; perUser?: boolean; holdProbe?: boolean } = {}
+  over: {
+    standaloneThread?: boolean;
+    hasThread?: boolean;
+    emptyThread?: boolean;
+    perUser?: boolean;
+    holdProbe?: boolean;
+    /** A config of its own, for a test that needs a host or an agent the shared one lacks. */
+    config?: typeof cfg;
+  } = {}
 ) {
   const dir = existing ?? fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-'));
   if (!dirs.includes(dir)) dirs.push(dir);
@@ -202,10 +225,11 @@ async function rig(
   const tg = adapter('tg', 'telegram', sent, { thread: false });
   const menus: Menu[] = [];
   const web = adapter('web', 'webui', sent, { thread: true, buttons: true, menus, ...(alive ? { alive } : {}), ...over });
+  const base = over.config ?? cfg;
   const daemon = new Daemon(
     // `per_user` keys every conversation by its sender, so a new topic has no conversation of
     // its own to map to — the scope a daily run must be refused under before it opens one.
-    over.perUser ? { ...cfg, session: { ...cfg.session, scope: 'per_user' as const } } : cfg,
+    over.perUser ? { ...base, session: { ...base.session, scope: 'per_user' as const } } : base,
     new Map<string, PlatformAdapter>([
       ['tg', tg],
       ['web', web],
@@ -648,6 +672,198 @@ describe('schedule over IPC', () => {
     expect(r.sent.map((s) => s.text.split(' — ')[0])).toEqual(['⏰ Scheduled task paused', '⏰ Scheduled task deleted']);
     const gone = await r.call({ kind: 'schedule-op', id: task.id, op: 'pause' });
     expect(gone).toMatchObject({ ok: false, error: `no scheduled task #${task.id}` });
+  });
+});
+
+/**
+ * `schedule edit`: the same task, some fields changed. What is asserted is what a delete-and-add
+ * would have lost (the id and the history), and that a refusal writes nothing at all.
+ */
+describe('schedule edit over IPC', () => {
+  const saved = (r: Awaited<ReturnType<typeof rig>>): Array<Record<string, unknown>> =>
+    (JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as { tasks: Array<Record<string, unknown>> }).tasks;
+
+  it('changes only the fields given, keeps the id and history, and posts the updated card', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'morning brief', session: 'new', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+
+    r.sent.length = 0;
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, agent: 'oc', prompt: 'evening brief' });
+    expect(resp.ok).toBe(true);
+    const after = (resp as { data: { task: ScheduleTaskView } }).data.task;
+    expect(after).toMatchObject({ id: task.id, name: 'brief', runs: 'oc · new session each run', prompt: 'evening brief', count: 1 });
+    expect(after.last).toMatch(/^ok /); // the run before the edit is still the task's last
+
+    await settle();
+    const card = r.sent.find((s) => s.text.includes('Scheduled task updated'))!;
+    expect(card.text).toContain(`#${task.id}`);
+    expect(card.text).toContain('oc · new session each run');
+    expect(card.text).toContain('evening brief');
+
+    const [stored] = saved(r);
+    expect(stored).toMatchObject({ id: task.id, name: 'brief', runs: 1, run: { agent: 'oc', prompt: 'evening brief', session: 'new' } });
+  });
+
+  it('refuses an invalid change and leaves the task exactly as it was', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc', name: 'brief' });
+    const before = JSON.stringify(saved(r));
+
+    const unknownAgent = await r.call({ kind: 'schedule-edit', id: task.id, agent: 'zz' });
+    expect((unknownAgent as { error: string }).error).toMatch(/unknown agent "zz"/);
+    const unknownModel = await r.call({ kind: 'schedule-edit', id: task.id, model: 'nope' });
+    expect((unknownModel as { error: string }).error).toMatch(/unknown model "nope" for agent "cc"; choose one of: base-model, fast-model, runtime-fail/);
+    const badCron = await r.call({ kind: 'schedule-edit', id: task.id, cron: '0 8 * * * *' });
+    expect((badCron as { error: string }).error).toMatch(/not a 5-field cron/);
+
+    expect(JSON.stringify(saved(r))).toBe(before);
+  });
+
+  it('recomputes the next run from the edit under the new time rule', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', at: '+1h', prompt: 'brief', session: 'new' });
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, at: '+2h' });
+    const after = (resp as { data: { task: ScheduleTaskView } }).data.task;
+    expect(after.next).not.toBe(task.next);
+    expect(Date.parse(after.next.replace(' ', 'T'))).toBeGreaterThan(Date.parse(task.next.replace(' ', 'T')));
+  });
+
+  it('a daily task whose agent changes opens a new topic for the rest of the day', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    const first = r.turns.at(-1)!.conversation;
+
+    await r.call({ kind: 'schedule-edit', id: task.id, agent: 'oc' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.web.threads).toHaveLength(2);
+    expect(r.web.threads[1]).toMatch(/^\[oc\] ⏰ brief · \d{4}-\d{2}-\d{2}$/);
+    expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new2', agent: 'oc' });
+    expect(r.turns.at(-1)!.conversation).not.toBe(first);
+  });
+
+  it('a daily task that only changes its name keeps today\'s topic', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    const first = r.turns.at(-1)!.conversation;
+
+    await r.call({ kind: 'schedule-edit', id: task.id, name: 'the brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.web.threads).toHaveLength(1);
+    expect(r.turns.at(-1)!.conversation).toBe(first);
+  });
+
+  it('refuses while a run of that task is in flight', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', bash: 'sleep 1' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, name: 'renamed' });
+    expect(resp).toMatchObject({ ok: false, error: `#${task.id} is running right now; edit it once that run finishes` });
+    await settle(1_200);
+  });
+
+  it('a run that finishes while the model list is being read is not overwritten by the edit', async () => {
+    const r = await rig(undefined, undefined, { holdProbe: true });
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc' });
+    // The edit asks about `lazy`'s models, which means bringing a cold session up: the gate holds
+    // it there while a run of the task finishes and writes runs/lastRun/lastPlannedAt.
+    const pending = r.call({ kind: 'schedule-edit', id: task.id, agent: 'lazy', model: 'fast-model' });
+    await settle();
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle(300);
+    expect(saved(r)[0]).toMatchObject({ runs: 1 });
+
+    r.sent.length = 0;
+    r.openProbe();
+    const resp = await pending;
+    expect((resp as { error: string }).error).toMatch(/#\S+ changed while this edit was being checked.*run the edit again/);
+    // The edit was not applied over the run's record, and no card said it was.
+    expect(saved(r)[0]).toMatchObject({ runs: 1, run: { agent: 'cc', prompt: 'brief' } });
+    expect(r.sent.some((s) => s.text.includes('Scheduled task updated'))).toBe(false);
+  });
+
+  it('a task removed while the model list is being read is not brought back', async () => {
+    const r = await rig(undefined, undefined, { holdProbe: true });
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc' });
+    const pending = r.call({ kind: 'schedule-edit', id: task.id, agent: 'lazy', model: 'fast-model' });
+    await settle();
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'remove' });
+
+    r.sent.length = 0;
+    r.openProbe();
+    const resp = await pending;
+    expect((resp as { error: string }).error).toMatch(/#\S+ was removed while this edit was being checked; nothing was changed/);
+    expect(saved(r)).toEqual([]);
+    expect(r.sent.some((s) => s.text.includes('Scheduled task updated'))).toBe(false);
+  });
+
+  it('edits a fixed-session task in place: same window, same conversation, new prompt', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '*/30 * * * *', prompt: 'check the build' });
+    const before = (await r.call({ kind: 'schedule-list', id: task.id }) as { data: { tasks: ScheduleTaskView[] } }).data.tasks[0]!;
+    expect(before.expires).not.toBe('');
+
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, prompt: 'check the deploy' });
+    const after = (resp as { data: { task: ScheduleTaskView } }).data.task;
+    expect(after).toMatchObject({ id: task.id, runs: 'cc · fixed session', expires: before.expires, prompt: 'check the deploy' });
+
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#t1', agent: 'cc', prompt: 'check the deploy' });
+
+    // The conversation still keeps its agent: the edit cannot move a fixed task to another one.
+    const other = await r.call({ kind: 'schedule-edit', id: task.id, agent: 'oc' });
+    expect((other as { error: string }).error).toMatch(/answered by cc.*--session new to run oc/);
+  });
+
+  it('refuses a --cwd edit when the task runs on another machine', async () => {
+    const r = await rig(undefined, undefined, { config: cfgHosts });
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote' });
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, cwd: '/srv/app' });
+    expect((resp as { error: string }).error).toMatch(
+      /--cwd \/srv\/app is a path on this machine, but this task runs on box; .*run the edit from a conversation there/
+    );
+    // Everything else still edits.
+    const ok = await r.call({ kind: 'schedule-edit', id: task.id, name: 'renamed' });
+    expect(ok.ok).toBe(true);
+  });
+
+  it('refuses a --cwd edit on a bash task that runs on another machine', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-'));
+    new ScheduleStore(path.join(dir, 'schedules.json')).put({
+      id: 'b0x1',
+      name: 'backup',
+      when: { cron: '0 3 * * *', tz: 'UTC' },
+      run: { kind: 'bash', command: 'true', timeoutMs: 60_000, host: 'box' },
+      target: { platform: 'web', channel: 'main', thread: 't1' },
+      state: 'active',
+      createdAt: Date.now(),
+      createdBy: { conversation: 'web#main#t1', platform: 'web' },
+      runs: 0,
+    });
+    const r = await rig(dir, undefined, { config: cfgHosts });
+    await r.inbound(WEB, 'hello');
+    const resp = await r.call({ kind: 'schedule-edit', id: 'b0x1', cwd: '/srv/app' });
+    expect((resp as { error: string }).error).toMatch(/this task runs on box/);
+    const ok = await r.call({ kind: 'schedule-edit', id: 'b0x1', timeoutMs: 120_000 });
+    expect(ok.ok).toBe(true);
   });
 });
 

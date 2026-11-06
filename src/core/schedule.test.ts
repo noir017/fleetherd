@@ -4,6 +4,7 @@ import {
   buildTask,
   CATCH_UP_GRACE_MS,
   decide,
+  editTask,
   FIXED_SESSION_WINDOW_MS,
   formatDay,
   formatInZone,
@@ -229,6 +230,150 @@ describe('buildTask', () => {
 
   it('names the task from its prompt when no --name is given', () => {
     expect(built({ cron: '0 * * * *', prompt: 'summarise   the\nnews' }).name).toBe('summarise the news');
+  });
+});
+
+describe('editTask', () => {
+  // The service builds this context: no cwd and no agent of the caller's, because an edit keeps
+  // every field it does not name. Passing ctx() here would hide that (its from.cwd is /work).
+  const editCtx = (over: Partial<NewTaskContext> = {}): NewTaskContext =>
+    ctx({ from: { key: 'web#main#t1', platform: 'web', agent: 'cc' }, ...over });
+
+  const edited = (task: ScheduleTask, input: Parameters<typeof editTask>[1], c = editCtx()): ScheduleTask => {
+    const r = editTask(task, input, c);
+    if (!r.ok) throw new Error(r.error);
+    return r.task;
+  };
+  const refused = (task: ScheduleTask, input: Parameters<typeof editTask>[1], c = editCtx()): string => {
+    const r = editTask(task, input, c);
+    if (r.ok) throw new Error('expected a refusal');
+    return r.error;
+  };
+
+  /** A task with a history, so "kept" can be asserted rather than "still zero". */
+  const ran = (t: ScheduleTask): ScheduleTask => ({
+    ...t,
+    runs: 3,
+    lastPlannedAt: NOW - 2 * HOUR,
+    lastRun: { at: NOW - 2 * HOUR, status: 'ok', durationMs: 1_500 },
+  });
+
+  it('changes only the fields it was given, and keeps the task\'s identity and history', () => {
+    const before = ran(built({ cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc', name: 'brief' }));
+    const after = edited(before, { agent: 'oc', prompt: 'write the brief' });
+    expect(after.id).toBe(before.id);
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(after.createdBy).toEqual(before.createdBy);
+    expect(after.target).toEqual(before.target);
+    expect(after.runs).toBe(3);
+    expect(after.lastRun).toEqual(before.lastRun);
+    expect(after.lastPlannedAt).toBe(before.lastPlannedAt);
+    expect(after.name).toBe('brief'); // not re-derived from the new prompt
+    expect(after.run).toEqual({ kind: 'agent', agent: 'oc', prompt: 'write the brief', session: 'new', cwd: '/work' });
+    expect(after.when).toEqual(before.when);
+  });
+
+  it('keeps a paused task paused', () => {
+    const paused = { ...built({ cron: '0 8 * * *', prompt: 'x', session: 'new' }), state: 'paused' as const };
+    expect(edited(paused, { name: 'renamed' }).state).toBe('paused');
+  });
+
+  it('reuses buildTask\'s refusals, word for word', () => {
+    const fresh = built({ cron: '0 8 * * *', prompt: 'x', session: 'new' });
+    expect(refused(fresh, { agent: 'zz' })).toMatch(/unknown agent "zz"; configured: cc, oc/);
+    expect(refused(fresh, { cron: '0 8 * * * *' })).toMatch(/not a 5-field cron/);
+    expect(refused(fresh, { cron: '0 9 * * *', at: '+2h' })).toMatch(/exactly one of --cron/);
+    expect(refused(fresh, { at: 'soon' })).toMatch(/not a time I can read/);
+    expect(refused(fresh, { at: '2026-09-29 08:00' })).toMatch(/already in the past/);
+    expect(refused(fresh, { tz: 'Mars/Base' })).toMatch(/unknown time zone "Mars\/Base"/);
+  });
+
+  it('refuses what add refuses for a fixed-session task: a model, a directory, another agent', () => {
+    const fixed = built({ cron: '*/30 * * * *', prompt: 'x' });
+    expect(refused(fixed, { model: 'fast-model' })).toMatch(/fixed-session.*\/model there/s);
+    expect(refused(fixed, { cwd: '/elsewhere' })).toMatch(/runs where its topic already works/);
+    expect(refused(fixed, { agent: 'oc' })).toMatch(/answered by cc.*--session new to run oc/);
+  });
+
+  it('refuses to change what a task is, naming rm + add', () => {
+    const bash = built({ cron: '0 3 * * *', bash: 'ls' });
+    const prompt = built({ cron: '0 8 * * *', prompt: 'x', session: 'new' });
+    expect(refused(bash, { prompt: 'do it' })).toMatch(/#a1b2c3 is a --bash task.*schedule rm a1b2c3.*add the prompt task/);
+    expect(refused(prompt, { bash: 'ls' })).toMatch(/#a1b2c3 is a --prompt task.*schedule rm a1b2c3.*add the bash task/);
+    expect(refused(prompt, { prompt: 'x', bash: 'ls' })).toMatch(/at most one of --prompt/);
+  });
+
+  it('refuses a daily task given a one-shot time, like add', () => {
+    const daily = built({ cron: '0 8 * * *', prompt: 'x', session: 'daily' });
+    expect(refused(daily, { at: '+1h' })).toMatch(/needs --cron.*no rest of the day/);
+  });
+
+  it('refuses an expired or finished task instead of resurrecting it', () => {
+    const fixed = built({ cron: '*/30 * * * *', prompt: 'x' });
+    expect(refused({ ...fixed, state: 'expired' }, { name: 'x' })).toMatch(/has expired.*add a new task/);
+    const once = built({ at: '+1h', prompt: 'x', session: 'new' });
+    expect(refused({ ...once, state: 'done' }, { name: 'x' })).toMatch(/has already had its run.*add a new task/);
+  });
+
+  it('a new time rule starts now, so an edit does not catch up a run that never existed', () => {
+    const before = ran(built({ cron: '0 8 * * *', prompt: 'x', session: 'new' }));
+    // NOW is 10:00 Shanghai; 09:00 today is already past, but the old task last ran at 08:00.
+    const after = edited(before, { cron: '0 9 * * *' });
+    expect(after.lastPlannedAt).toBe(NOW);
+    expect(formatInZone(nextRunOf(after, NOW)!, SH)).toBe('2026-10-01 09:00');
+    expect(decide(after, NOW)).toEqual({ kind: 'wait', at: Date.UTC(2026, 9, 1, 1, 0) });
+  });
+
+  it('keeps lastPlannedAt when the time rule did not change, so a rename cannot swallow a due run', () => {
+    const before = ran(built({ cron: '0 8 * * *', prompt: 'x', session: 'new' }));
+    const after = edited(before, { name: 'renamed' });
+    expect(after.lastPlannedAt).toBe(before.lastPlannedAt);
+    expect(after.when).toEqual(before.when);
+  });
+
+  it('keeps a fixed task\'s window, and refuses a schedule with no run left inside it', () => {
+    const fixed = built({ cron: '0 8 * * *', prompt: 'x' }); // registered 10:00 on the 30th, ends 10:00 on the 1st
+    const kept = edited(fixed, { name: 'renamed' });
+    expect(kept.expiresAt).toBe(NOW + FIXED_SESSION_WINDOW_MS);
+    expect(kept.conversation).toBe('web#main#t1');
+    // Edited at 22:00 that night, "18:00 daily" would first run at 18:00 on the 1st — inside the
+    // 24h a NEW task would get, but past this task's own window.
+    const later = editCtx({ now: NOW + 12 * HOUR });
+    expect(refused(fixed, { cron: '0 18 * * *' }, later)).toMatch(
+      /lives until .*24h from registration.*schedule rm a1b2c3.*--session new/
+    );
+  });
+
+  it('a bash task can change its command and timeout, and keeps its host', () => {
+    const bash = built({ cron: '0 3 * * *', bash: 'du -sh /data', timeoutMs: 60_000 });
+    const onBox = { ...bash, run: { ...bash.run, host: 'box' } } as ScheduleTask;
+    const c = editCtx({ from: { key: 'web#main#t1', platform: 'web', agent: 'cc', host: 'box' } });
+    const after = edited(onBox, { bash: 'du -sh /backup', timeoutMs: 120_000 }, c);
+    expect(after.run).toEqual({ kind: 'bash', command: 'du -sh /backup', timeoutMs: 120_000, cwd: '/work', host: 'box' });
+    expect(refused(onBox, { agent: 'cc' }, c)).toMatch(/--agent and --session are for --prompt/);
+    expect(refused(onBox, { model: 'fast-model' }, c)).toMatch(/--model is for --prompt/);
+    expect(refused(onBox, { timeoutMs: 500 }, c)).toMatch(/--timeout must be between 1s and 6h/);
+  });
+
+  it('keeps a one-shot\'s exact instant when only its name changes', () => {
+    const once = built({ at: '2026-10-01T08:00:00+08:00', prompt: 'x', session: 'new' });
+    const after = edited(once, { name: 'renamed' });
+    expect(after.when).toEqual(once.when);
+    expect(after.lastPlannedAt).toBeUndefined();
+  });
+
+  it('keeps a task\'s empty directory empty when --cwd is not given', () => {
+    const bare = built({ cron: '0 8 * * *', prompt: 'x', session: 'new' }, ctx({ from: { key: 'k', platform: 'web', agent: 'cc' } }));
+    expect(bare.run).toEqual({ kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' });
+    expect(edited(bare, { name: 'x' }).run).not.toHaveProperty('cwd');
+  });
+
+  it('a daily task keeps today\'s topic unless its agent or directory changes', () => {
+    const day = { day: '2026-09-30', conversation: 'web#main#new1', address: { channel: 'main', thread: 'new1' } };
+    const daily = { ...built({ cron: '0 8 * * *', prompt: 'x', session: 'daily' }), daySession: day };
+    expect(edited(daily, { name: 'renamed', model: 'fast-model' }).daySession).toEqual(day);
+    expect(edited(daily, { agent: 'oc' })).not.toHaveProperty('daySession');
+    expect(edited(daily, { cwd: '/elsewhere' })).not.toHaveProperty('daySession');
   });
 });
 

@@ -18,6 +18,21 @@ All notable changes to this project are documented here. The format is based on
   suggestion stays pending, which is the way a lost link has to fail. A topic that cannot be
   opened — every one starred or in use — says why and keeps the suggestion. Both answers sit under
   the suggestion so neither squeezes it at the panel's width, and are 44px tall on a phone.
+- **A scheduled task can be changed in place instead of deleted and rebuilt.** `talkcode schedule
+  edit <id>` takes the fields `add` does — `--agent`, `--cwd`, `--model`, `--cron` / `--at` /
+  `--tz`, `--name`, `--prompt`, and `--bash` / `--timeout` for a bash task — and keeps what made
+  the task worth keeping: its id, its run count, its last result and its state. The merged task
+  goes through the same `buildTask` as `add`, so every refusal is the one `add` gives, word for
+  word, and nothing is written until it passes. The next run is computed from the edit under the
+  new time rule, so moving a daily 8 o'clock to 9 at ten in the morning waits for tomorrow rather
+  than making a catch-up run that never existed. What a task *is* still cannot change: the type
+  (prompt ↔ bash), the session and the output target are refused, naming `rm` + `add`. A daily
+  task whose agent or directory changed leaves the topic it opened today as it is and opens a new
+  one for the rest of the day, because a topic keeps its agent and its directory. A `--cwd` is
+  refused when the task runs on another machine: the path means the machine the edit was typed on.
+  Nothing is written until every check passes, and a task is re-read after the one wait (the model
+  list), so a run that finished meanwhile is not undone and a deleted task is not brought back.
+  [→](docs/scheduled-tasks.md)
 
 ## [2.44.0] - 2026-11-06
 

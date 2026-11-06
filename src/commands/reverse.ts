@@ -72,7 +72,7 @@ export function normalizeActionPaths(action: IpcAction, base = process.cwd()): I
     return { ...action, path: resolvePathArg(action.path, base) };
   }
   // Same reason: a schedule's --cwd is read by the daemon, whose own CWD is not the agent's.
-  if (action.kind === 'schedule-add' && action.cwd !== undefined) {
+  if ((action.kind === 'schedule-add' || action.kind === 'schedule-edit') && action.cwd !== undefined) {
     return { ...action, cwd: resolvePathArg(action.cwd, base) };
   }
   return action;
@@ -301,9 +301,9 @@ function renderChannels(data: unknown): string {
 }
 
 /**
- * schedule-add / schedule-op: the one task, in full, and the next step. The id is the thing to
- * keep, and the card the gateway posted is what the user sees — said so, so the agent does not
- * restate every field in its reply.
+ * schedule-add / schedule-edit / schedule-op: the one task, in full, and the next step. The id is
+ * the thing to keep, and the card the gateway posted is what the user sees — said so, so the agent
+ * does not restate every field in its reply.
  *
  * The next step is worded for both ways in (`schedule pause <id>` in a shell, `action: pause` with
  * `id` as a tool), since this exact text reaches both.
@@ -476,6 +476,7 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown, action: I
   'voice-log': renderVoiceLog,
   'list-channels': renderChannels,
   'schedule-add': renderScheduleTask,
+  'schedule-edit': renderScheduleTask,
   'schedule-op': renderScheduleTask,
   'schedule-list': renderScheduleList,
   // Already a sentence written for a person (it is also the reply to /reload in chat).

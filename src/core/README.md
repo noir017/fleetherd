@@ -40,7 +40,7 @@ conversation, not part of its name — see [`daemon/README.md`](../daemon/README
 |---|---|
 | `conversation.ts` | Conversation identity: `ConversationRef` / `ConversationAddress`, the key function, the address parser, and the platform-qualified target (`tg:586/8068`) `--channel` accepts |
 | `channel-list.ts` | `talkcode channels` as data: the places a turn has run, in the qualified id form, roots first then recent topics |
-| `schedule.ts` | Scheduled tasks as data: building one from `schedule add`, when it runs next, catch-up and expiry, every sentence about one |
+| `schedule.ts` | Scheduled tasks as data: building one from `schedule add`, changing one with `schedule edit`, when it runs next, catch-up and expiry, every sentence about one |
 | `schedule-menu.ts` | `/setting` → ⏰ Scheduled tasks: the list, one task, the delete confirmation, their button ids |
 | `inbound-gate.ts` | "Should we respond to this message?" — a pure decision tree |
 | `inbound-merger.ts` | Per-conversation state machine: coalesce bursts, hand mid-turn messages to the turn or queue them, `/stop` |
@@ -144,7 +144,14 @@ idle ──ingest──► collecting ──window elapsed──► running ─�
 
 Scheduled tasks as data — see [`daemon/README.md`](../daemon/README.md#scheduled-tasks) for the
 running half. `buildTask` turns `schedule add` into a task or into a sentence naming the flag and
-the fix (the reader is an agent that retries with whatever it is told). `decide` is the whole
+the fix (the reader is an agent that retries with whatever it is told). `editTask` changes an
+existing one by merging it with what was given and running the result through the same `buildTask`
+— so the rules are add's, word for word — then putting back what an edit must not touch: the id,
+`createdAt`, the run count, the last result, the state and a fixed-session task's original 24 h
+window. A changed time rule resets `lastPlannedAt` to now, so an edit never catches up a run that
+never existed; an unchanged one keeps it, so a rename cannot swallow a due run. A daily task whose
+agent or directory changes drops today's `daySession`, because the topic keeps its agent: the next
+run opens a new topic for the rest of the day. `decide` is the whole
 timing policy: the next planned time strictly after the last one handled, catch-up to the
 LATEST missed time within an hour, a fixed-session window of 24 h. Times are computed with
 [croner](https://github.com/hexagon/croner) (MIT, no dependencies, time-zone and DST aware) given
