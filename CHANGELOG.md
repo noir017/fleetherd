@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.40.0] - 2026-11-06
+
 ### Changed
 
 - **Antigravity (`agy`) now runs as `agy acp`, on the same runtime as every other harness.** agy 1.5
