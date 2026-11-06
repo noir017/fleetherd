@@ -5867,6 +5867,153 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.el('schedules-list').textContent).toContain('posts to Topic ' + A);
   });
 
+  it('divides the side panel into Scheduled and Reviews outer tabs, with Tasks and Sessions sub-tabs', async () => {
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/reviews': { reviews: [] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+
+    // Outer tabs at the foot
+    expect(h.el('sched-tab-scheduled').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sched-tab-scheduled').classList.contains('on')).toBe(true);
+    expect(h.el('sched-tab-reviews').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('sched-tab-reviews').classList.contains('on')).toBe(false);
+
+    // Sub-tabs under the header
+    expect(h.el('sched-subnav').hidden).toBe(false);
+    expect(h.el('sched-tab-tasks').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sched-tab-tasks').classList.contains('on')).toBe(true);
+    expect(h.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('sched-tab-sessions').classList.contains('on')).toBe(false);
+
+    // Initial content visibility
+    expect(h.el('schedules-list').hidden).toBe(false);
+    expect(h.el('sched-sessions').hidden).toBe(true);
+    expect(h.el('sched-reviews').hidden).toBe(true);
+
+    // Counts on outer tab and sub-tabs
+    expect(h.el('sched-tab-scheduled-n').textContent).toBe('1');
+    expect(h.el('sched-tab-tasks-n').textContent).toBe('1');
+    expect(h.el('sched-tab-sessions-n').textContent).toBe('0');
+  });
+
+  it('switches between Tasks and Sessions sub-tabs and outer Reviews tab', async () => {
+    const C = 'c3d4e5f6';
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/reviews': {
+        enabled: true,
+        reviews: [{
+          id: 'rev1',
+          title: 'Reviewed Topic',
+          at: 1000,
+          outcome: 'nothing',
+          changes: [],
+          preferences: [],
+          topic: A,
+        }],
+      },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 2, stage: 'idle', scheduled: true },
+      ],
+    });
+    await h.click('#schedules-toggle');
+
+    // Switch to Sessions subtab
+    await h.click('#sched-tab-sessions');
+    expect(h.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sched-tab-tasks').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('sched-sessions').hidden).toBe(false);
+    expect(h.el('schedules-list').hidden).toBe(true);
+    expect(h.window.localStorage.getItem('aa_sched_subtab')).toBe('sessions');
+    expect(h.el('schedules-summary').textContent).toContain('1 session');
+
+    // Switch back to Tasks subtab
+    await h.click('#sched-tab-tasks');
+    expect(h.el('sched-tab-tasks').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('schedules-list').hidden).toBe(false);
+    expect(h.el('sched-sessions').hidden).toBe(true);
+    expect(h.window.localStorage.getItem('aa_sched_subtab')).toBe('tasks');
+    expect(h.el('schedules-summary').textContent).toBe('1 active');
+
+    // Switch to Reviews outer tab
+    await h.click('#sched-tab-reviews');
+    await until('reviews list', () => h.el('sched-reviews-list').textContent!.includes('Reviewed Topic'));
+    expect(h.el('sched-tab-reviews').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sched-tab-scheduled').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('sched-subnav').hidden).toBe(true);
+    expect(h.el('sched-reviews').hidden).toBe(false);
+    expect(h.el('schedules-list').hidden).toBe(true);
+    expect(h.el('sched-sessions').hidden).toBe(true);
+    expect(h.window.localStorage.getItem('aa_sched_tab')).toBe('reviews');
+
+    // Switch back to Scheduled outer tab
+    await h.click('#sched-tab-scheduled');
+    expect(h.el('sched-tab-scheduled').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sched-tab-reviews').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('sched-subnav').hidden).toBe(false);
+    expect(h.el('sched-reviews').hidden).toBe(true);
+    expect(h.el('schedules-list').hidden).toBe(false);
+    expect(h.window.localStorage.getItem('aa_sched_tab')).toBe('scheduled');
+  });
+
+  it('shows waiting-on-answer amber alert on outer Scheduled tab and Sessions sub-tab', async () => {
+    const C = 'c3d4e5f6';
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/reviews': { reviews: [] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+
+    expect(h.el('sched-alert').hidden).toBe(true);
+    expect(h.el('sched-tab-alert').hidden).toBe(true);
+    expect(h.el('sched-sessions-alert').hidden).toBe(true);
+
+    // Scheduled run is waiting on answer
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 3, stage: 'answer', asking: true, scheduled: true },
+      ],
+    });
+
+    expect(h.el('sched-alert').hidden).toBe(false);
+    expect(h.el('sched-tab-alert').hidden).toBe(false);
+    expect(h.el('sched-sessions-alert').hidden).toBe(false);
+    expect(h.el('sched-tab-scheduled').getAttribute('title')).toContain('waiting');
+    expect(h.el('sched-tab-sessions').getAttribute('title')).toContain('waiting');
+
+    // Outer alert stays visible even when viewing Reviews tab
+    await h.click('#sched-tab-reviews');
+    expect(h.el('sched-tab-alert').hidden).toBe(false);
+
+    // Clear waiting state
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 4, stage: 'idle', scheduled: true },
+      ],
+    });
+
+    expect(h.el('sched-alert').hidden).toBe(true);
+    expect(h.el('sched-tab-alert').hidden).toBe(true);
+    expect(h.el('sched-sessions-alert').hidden).toBe(true);
+  });
+
   it('stays open across a topic switch and a reload, and a first visit starts closed', async () => {
     const replies = { 'api/schedules': listReply([task()]) };
     const h = await open({ replies });
@@ -6066,7 +6213,8 @@ describe('webui page: the scheduled-task panel', () => {
 
     await h.click('#schedules-toggle');
     await h.click('#sched-tab-sessions');
-    expect(h.window.localStorage.getItem('aa_sched_tab')).toBe('sessions');
+    expect(h.window.localStorage.getItem('aa_sched_tab')).toBe('scheduled');
+    expect(h.window.localStorage.getItem('aa_sched_subtab')).toBe('sessions');
 
     (h.doc.querySelector('.sess-item') as HTMLElement).click();
     await until('the switch', () => h.window.location.search.includes(C));
@@ -6074,9 +6222,10 @@ describe('webui page: the scheduled-task panel', () => {
     // not a side glance that gets out of the way.
     expect(h.el('app').classList.contains('sched-open')).toBe(true);
 
-    const again = await open({ storage: { aa_sched_tab: 'sessions' } });
+    const again = await open({ storage: { aa_sched_tab: 'scheduled', aa_sched_subtab: 'sessions' } });
     expect(again.el('sched-tab-sessions').getAttribute('aria-selected')).toBe('true');
     expect(again.el('sched-sessions').hidden).toBe(false);
+    expect(again.el('sched-tab-scheduled').getAttribute('aria-selected')).toBe('true');
   });
 
   it('deletes a run from its row, without switching to it first', async () => {

@@ -481,15 +481,20 @@ none, and a new-session task makes one per run — and the sidebar is the conver
 panel is also the only place on this page where a task can be managed, so its toggle is always in
 the header, unlike the terminal's.
 
-**Three tabs, at the foot of the panel.** **Sessions** is the topics a new-session run opened
-(`Topic.scheduled`): the switcher leaves those out (`topicRows` filters them), so the tab is their
-only listing and its × is the only delete. **Tasks** is the definitions and their controls. The tab
-row is the panel's last line — literally the same `.panel-foot` the sidebar keeps its menus in — so
-the two columns end together. Sessions needs no request of its own — the `topics` event that keeps
-the switcher current carries their titles, state, message counts and unread marks, so a run that
-starts or finishes moves the tab as it happens. Tapping a row opens the topic and leaves the panel
-where it is. A run holding a question puts an amber dot on the clock (`#sched-alert`), because it
-has no row in the switcher to show it there.
+**Two tabs at the foot of the panel, with Scheduled subdivided into Tasks and Sessions.**
+The footer row — literally the same `.panel-foot` the sidebar keeps its menus in — chooses
+between the two main domains of background work: **Scheduled** background tasks and automatic
+**Reviews**, so the two columns end together.
+Within **Scheduled**, a sub-nav bar under the panel header separates **Tasks** (the definitions
+and their controls, default) from **Sessions** (the topics a new-session run opened,
+`Topic.scheduled`). Grouping them keeps the footer clean while preserving the distinction between
+a task definition and a run instance. The switcher leaves session topics out (`topicRows` filters
+them), so the Sessions sub-tab is their only listing and its × is the only delete. Sessions needs
+no request of its own — the `topics` event that keeps the switcher current carries their titles,
+state, message counts and unread marks, so a run that starts or finishes moves the tab as it
+happens. Tapping a row opens the topic and leaves the panel where it is. A run holding a question
+puts an amber dot on the clock (`#sched-alert`), on the Scheduled outer tab, and on the Sessions
+sub-tab, because it has no row in the switcher to show it there.
 
 A task card is four lines, in the order the questions come: the name (with a state word only when
 it is not the ordinary `active`), the schedule, the next run and the target, and the last run — red

@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Web UI Side tasks merges Scheduled tasks and Sessions into a single tab.** The side panel footer
+  previously had three tabs (Sessions, Tasks, Reviews), which crowded the bottom row in narrow viewports
+  and treated runs as top-level peers of definitions. The footer now holds two main tabs — **Scheduled**
+  and **Reviews** — with Scheduled subdivided into **Tasks** (default) and **Sessions** under the header.
+  Counts and the waiting-on-answer amber alert are shown on the outer Scheduled tab as well as on the
+  sub-tabs. [→](docs/web-ui.md#side-tasks)
+
 ## [2.38.1] - 2026-11-06
 
 ### Fixed
