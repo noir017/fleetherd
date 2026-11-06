@@ -3785,8 +3785,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
-   * Whether `agentId` offers `model`, for `schedule add --model` — the same list `/model` shows,
-   * resolved the same way (refresh, then warm the session if that is what it takes to learn it).
+   * Whether `agentId` offers `model`, for `schedule add --model` and `task-new --model` — the same
+   * list `/model` shows, resolved the same way (refresh, then warm the session if that is what it
+   * takes to learn it).
    *
    * The registering conversation already has a session for its own agent, so that agent's list is
    * read there. Another agent's is not: a conversation belongs to one agent, and building a
@@ -3829,9 +3830,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
-   * Put a scheduled task's model on the conversation it is about to run in, before the turn —
-   * the same `session.setModel` path `/model` takes, because the ACP runtime does not read a
-   * model off the turn input.
+   * Put a scheduled or delegated task's model on the conversation it is about to run in, before
+   * the turn — the same `session.setModel` path `/model` takes, because the ACP runtime does not
+   * read a model off the turn input.
    *
    * An override already on the conversation wins: it is either the task's own earlier application
    * (a daily topic's first run) or a person typing `/model` in the topic, and the person's choice
@@ -3870,7 +3871,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
   /**
    * Open a conversation of its own for a piece of work (`task-new`, once the person confirmed it): a
    * new topic on `platform` nested under `parent`, bound to `agentId`, started in `cwd`, and handed
-   * `text` as its first message under `header` (handTo).
+   * `text` as its first message under `header` (handTo). An explicit `model` is applied first;
+   * if it cannot be, the topic says so, no turn starts, and this throws the reason.
    *
    * Throws a sentence for the agent that asked when it cannot: a platform that cannot open topics (it
    * would have to post into the chat itself, which is not a conversation of its own), an unknown
@@ -3884,6 +3886,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     header: string;
     cwd?: string;
     title?: string;
+    model?: string;
   }): Promise<{ key: ConversationId; address: ConversationAddress }> {
     const adapter = this.platforms.get(opts.platform);
     if (!adapter?.capabilities.thread) {
@@ -3908,6 +3911,22 @@ ${formatTokens(left)} left before compaction — ${name}`;
       const moved = this.setWorkdir(conv.key, opts.agentId, cwd);
       if (moved.kind === 'missing') throw new Error(`no directory ${cwd} on the machine "${opts.agentId}" runs on`);
       if (moved.kind === 'failed') throw new Error(moved.reason);
+    }
+    if (opts.model) {
+      // Strict, as a scheduled run's is: the card named this model, and the first turn must not
+      // start on the configured one. The topic is already open, so it says why nothing happens in
+      // it; the caller reports the sub-task as not started, with the same reason.
+      const why = await this.applyScheduledModel(conv.key, opts.platform, opts.agentId, opts.model);
+      if (why) {
+        await adapter
+          .sendMessage(opened, `Not started — ${why}.`)
+          .catch((e) => console.warn(`[conversation] ${conv.key}: could not say why the task did not start:`, e instanceof Error ? e.message : e));
+        throw new Error(why);
+      }
+      // Recorded as the topic's model, unlike a scheduled run's: a schedule re-applies its model at
+      // every run, while this topic has no next run to do it at. A task-send or the person's own
+      // message after a restart or `/new` would otherwise run on the configured model.
+      this.store?.setConversationChoice?.(conv.key, opts.agentId, 'model', opts.model);
     }
     await this.handTo(conv.key, opts.platform, opened, opts.text, opts.header);
     return { key: conv.key, address: opened };

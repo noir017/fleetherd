@@ -15,13 +15,14 @@ import { registerReverseCommand } from './reverse-cli.js';
  */
 
 const sessionsSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('sessions'))!;
+const taskNewSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('task-new'))!;
 
 /** Parse one argv and return the action the CLI would hand to `runReverse`. */
-function parse(argv: string[]): IpcAction {
+function parse(argv: string[], spec = sessionsSpec): IpcAction {
   const program = new Command();
   program.exitOverride(); // a usage error throws instead of exiting the test process
   let action: IpcAction | undefined;
-  registerReverseCommand(program, sessionsSpec, (a) => {
+  registerReverseCommand(program, spec, (a) => {
     action = a;
   });
   program.parse(['node', 'talkcode', ...argv]);
@@ -76,5 +77,22 @@ describe('sessions on the command line', () => {
     expect(() => parse(['sessions', 'read', '#12', '--since', '5', '--role', 'tool', '--tail', '2'])).toThrow(
       /cannot be combined/
     );
+  });
+});
+
+describe('task-new on the command line', () => {
+  it('allows the agent to be omitted and carries --model through unchanged', () => {
+    expect(parse(['task-new', 'review the fix'], taskNewSpec)).toEqual({
+      kind: 'task-new',
+      agent: undefined,
+      text: 'review the fix',
+      cwd: undefined,
+      title: undefined,
+      model: undefined,
+    });
+    expect(parse(['task-new', 'review the fix', '--model', 'fast-model'], taskNewSpec)).toMatchObject({
+      kind: 'task-new',
+      model: 'fast-model',
+    });
   });
 });

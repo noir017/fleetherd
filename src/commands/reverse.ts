@@ -504,7 +504,7 @@ function renderTaskAgents(data: unknown): string {
   return toon({
     agents: agents.map((a) => ({ ...a, dirs: a.dirs.join(', ') })),
     help: [
-      'task-new --agent <id> [--cwd <dir>] "<the task>" proposes a sub-task for one of these; --cwd is the root or one of its dirs.',
+      'task-new [--agent <id>] [--model <id>] [--cwd <dir>] "<the task>" proposes a sub-task; without --agent it uses this conversation\'s agent. --cwd is the root or one of its dirs.',
       'here=true: on the same machine as you — prefer these. Another machine has its own checkouts and tools; use one only when the work needs that machine.',
     ],
   });

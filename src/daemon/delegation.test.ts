@@ -122,7 +122,7 @@ function manualClock() {
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
+function rig(opts: { answer?: string | null; failOpen?: string; failModel?: string } = {}) {
   const clock = manualClock();
   const posted: Array<{ to: string; text: string; tools?: boolean }> = [];
   const parents = new Map<string, string>(); // child key → parent key
@@ -156,9 +156,10 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
   const telegram = { capabilities: { thread: true }, sendMessage: async () => ({ messageId: 'm' }) } as unknown as PlatformAdapter;
 
   const registry = {
-    openTask: async (o: { parent: ConversationAddress; agentId: string; text: string; header: string; cwd?: string }) => {
+    openTask: async (o: { parent: ConversationAddress; agentId: string; text: string; header: string; cwd?: string; model?: string }) => {
       calls.push(['openTask', o]);
       if (o.agentId === opts.failOpen) throw new Error(`no directory ${o.cwd} on the machine`);
+      if (o.model && o.model === opts.failModel) throw new Error(`could not set model "${o.model}": the harness refused it`);
       const key = `web#main#c${++threads}0000000`.slice(0, 17);
       parents.set(key, keyOf(o.parent));
       bound.set(key, o.agentId);
@@ -217,6 +218,10 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
     },
     workdirOf: () => '/home/u/workspace/talkcode',
     boundAgentOf: (k: string) => bound.get(k),
+    scheduledModelProblem: async (agent: string, model: string, from: string) => {
+      calls.push(['modelProblem', { agent, model, from }]);
+      return model === 'nope' ? `unknown model "nope" for agent "${agent}"; choose one of: base-model, fast-model` : undefined;
+    },
   };
 
   const deps: DelegationDeps = {
@@ -259,7 +264,12 @@ function rig(opts: { answer?: string | null; failOpen?: string } = {}) {
   };
 }
 
-const task = (agent: string, text: string, extra: Record<string, string> = {}) => ({ kind: 'task-new' as const, agent, text, ...extra });
+const task = (agent: string | undefined, text: string, extra: Record<string, string> = {}) => ({
+  kind: 'task-new' as const,
+  ...(agent ? { agent } : {}),
+  text,
+  ...extra,
+});
 
 describe('Delegation: where the commands run', () => {
   it('refuses a call from no conversation, and a platform that cannot nest topics', async () => {
@@ -316,6 +326,71 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     expect(opened[0]!.header).toBe('**↳ From [Release](?t=aaaaaaaa)**');
     const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 2'))!;
     expect(said.text).toContain('- [part](?t=c1000000) — cc');
+  });
+
+  it('defaults to the bound agent and shows a validated model on the proposal and started cards', async () => {
+    const r = rig();
+    r.bound.set(P, 'cx');
+    await r.d.handle(P, task(undefined, 'Review the fix', { model: 'fast-model' }));
+    expect(r.calls.find(([c]) => c === 'modelProblem')?.[1]).toEqual({ agent: 'cx', model: 'fast-model', from: P });
+    expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.cards[0]!.text).toContain('1. **cx** @ near · model `fast-model`');
+    expect(r.calls.find(([c]) => c === 'openTask')?.[1]).toMatchObject({ agentId: 'cx', model: 'fast-model' });
+    const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 1'))!;
+    expect(said.text).toContain('— cx · model `fast-model`');
+  });
+
+  it('refuses a model outside the agent’s list before either confirmation path starts anything', async () => {
+    for (const confirm of [true, false]) {
+      const r = rig();
+      r.deps.config.delegation.confirm = confirm;
+      await expect(r.d.handle(P, task('cc', 'x', { model: 'nope' }))).rejects.toThrow(
+        /unknown model "nope" for agent "cc"; choose one of: base-model, fast-model/
+      );
+      r.clock.advance(PROPOSAL_GATHER_MS);
+      await settle();
+      expect(r.cards).toEqual([]);
+      expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+    }
+  });
+
+  it('does not probe the model list when --model is absent', async () => {
+    const r = rig({ answer: null });
+    await r.d.handle(P, task(undefined, 'x'));
+    expect(r.calls.filter(([c]) => c === 'modelProblem')).toEqual([]);
+  });
+
+  it('refuses to guess when neither --agent nor a bound agent names one', async () => {
+    const r = rig();
+    r.bound.delete(P);
+    await expect(r.d.handle(P, task(undefined, 'x'))).rejects.toThrow(/give task-new --agent <id>/);
+  });
+
+  it('reports a model the harness refuses at start as a sub-task that could not start, on both paths', async () => {
+    for (const confirm of [true, false]) {
+      const r = rig({ failModel: 'fast-model' });
+      r.deps.config.delegation.confirm = confirm;
+      const res = (await r.d.handle(P, task('cx', 'Review the fix', { model: 'fast-model' }))) as TaskNewResult;
+      r.clock.advance(PROPOSAL_GATHER_MS);
+      await settle();
+      await settle();
+      const said = r.posted.find((p) => p.to === P && /could not start/i.test(p.text))!;
+      expect(said.text).toContain('- 1. cx: could not set model "fast-model": the harness refused it');
+      expect(said.text).not.toMatch(/Started 1|started a sub-agent/);
+      // The asking agent learns it with the reason, so it can propose again without --model or another one.
+      // Confirmed later, it is told in an update; started at once, task-new's own answer says it.
+      if (confirm) {
+        const prompt = r.calls.find(([c]) => c === 'prompt')![1] as { prompt: string };
+        expect(prompt.prompt).toMatch(/^\[sub-agent updates\] 1 of 1 could not be started:\n- 1\. cx: could not set model/);
+      } else {
+        expect(res.result).toContain('could not set model "fast-model"');
+        expect(res.result).not.toContain('running now');
+      }
+    }
   });
 
   it('opens nothing when the card is cancelled', async () => {
@@ -432,6 +507,20 @@ describe('Delegation: with confirmation off', () => {
     expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
     expect(res.result).toContain('running now');
     expect(res.result).not.toMatch(/confirm|until they|wait/i);
+  });
+
+  it('starts the bound agent with the requested model and shows it on the record card', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    const res = (await r.d.handle(P, task(undefined, 'Fix the bump workflow', { model: 'fast-model' }))) as TaskNewResult;
+    expect(res.result).toContain('running now');
+    expect(r.calls.find(([c]) => c === 'modelProblem')?.[1]).toEqual({ agent: 'cc', model: 'fast-model', from: P });
+    expect(r.calls.find(([c]) => c === 'openTask')?.[1]).toMatchObject({ agentId: 'cc', model: 'fast-model' });
+
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const card = r.posted.find((p) => p.to === P && p.text.includes('started a sub-agent'))!;
+    expect(card.text).toContain('— cc @ near · model `fast-model` · web:main/c1000000');
   });
 
   it('posts a card listing what started and where, with no Start to tap', async () => {

@@ -196,10 +196,11 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('task-new'),
-      agent: z.string().min(1).max(100),
+      agent: z.string().min(1).max(100).optional(),
       text: z.string().min(1).max(20_000),
       cwd: z.string().min(1).max(4_096).optional(),
       title: z.string().min(1).max(200).optional(),
+      model: z.string().min(1).max(200).optional(),
     })
     .strict(),
   z
@@ -351,7 +352,7 @@ export type IpcAction =
   | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run' }
   | { kind: 'task-agents' }
   | { kind: 'task-list'; limit?: number }
-  | { kind: 'task-new'; agent: string; text: string; cwd?: string; title?: string }
+  | { kind: 'task-new'; agent?: string; text: string; cwd?: string; title?: string; model?: string }
   | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean }
   | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number; role?: 'user' | 'agent' | 'tool'; turn?: string; turns?: number; since?: number; grep?: string; reply?: boolean }
   | { kind: 'task-status'; topic: string }
