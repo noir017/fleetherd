@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.39.0] - 2026-11-06
+
 ### Added
 
 - **A sub-task can name its model, and goes to the asking agent unless told otherwise.** A
