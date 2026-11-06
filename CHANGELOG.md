@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.45.0] - 2026-11-06
+
 ### Added
 
 - **A suggested preference can be adopted into a topic, not only dismissed.** The web UI's
