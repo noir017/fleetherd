@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The skills page shows Library and Resident as two tabs, each with its count.** One list
+  grouped three ways put a long library between the reader and the few resident skills; now each
+  tier is a tab of its own, and an off skill sits at the end of its tier's tab, where it comes back
+  to when turned on. The searches that found nothing are at the end of the Library tab, since they
+  are what the library was asked for.
+
 ## [2.43.1] - 2026-11-06
 
 ### Fixed

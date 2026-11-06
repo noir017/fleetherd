@@ -6900,7 +6900,7 @@ describe('webui page: the skills page', () => {
     expect(pressed('deploy-check')).toBe('Library');
   });
 
-  it('groups the list into resident, library and off, each with its count', async () => {
+  it('splits the list into Library and Resident tabs with their counts, off skills last in their tab', async () => {
     const h = await open({
       replies: {
         'api/skills': list([
@@ -6915,16 +6915,20 @@ describe('webui page: the skills page', () => {
     await h.click('#skills-toggle');
     await until('the skill list', () => h.el('skills-list').textContent!.includes('a-lib'));
 
-    const groups = [...h.doc.querySelectorAll('#skills-list [data-group]')].map((g) => ({
-      key: g.getAttribute('data-group'),
-      head: g.querySelector('.skill-section')!.textContent,
-      rows: [...g.querySelectorAll('[data-skill]')].map((r) => r.getAttribute('data-skill')),
-    }));
-    expect(groups).toEqual([
-      { key: 'resident', head: 'Resident \u00b7 1', rows: ['b-res'] },
-      { key: 'library', head: 'Library \u00b7 2', rows: ['a-lib', 'd-lib'] },
-      { key: 'off', head: 'Off \u00b7 1', rows: ['c-off'] },
-    ]);
+    const tabs = [...h.doc.querySelectorAll('#skills-list [data-stab]')].map((t) => t.textContent);
+    expect(tabs).toEqual(['Library2', 'Resident2']);
+    const pane = (k: string): Element => h.doc.querySelector(`#skills-list [data-pane="${k}"]`)!;
+    const rows = (k: string, g: string): Array<string | null> =>
+      [...pane(k).querySelectorAll(`[data-group="${g}"] [data-skill]`)].map((r) => r.getAttribute('data-skill'));
+    expect((pane('library') as HTMLElement).hidden).toBe(false);
+    expect((pane('resident') as HTMLElement).hidden).toBe(true);
+    expect(rows('library', 'library')).toEqual(['a-lib', 'd-lib']);
+    expect(rows('resident', 'resident')).toEqual(['b-res']);
+    expect(rows('resident', 'off')).toEqual(['c-off']);
+
+    (h.doc.querySelector('[data-stab="resident"]') as HTMLElement).click();
+    expect((pane('resident') as HTMLElement).hidden).toBe(false);
+    expect((pane('library') as HTMLElement).hidden).toBe(true);
     // An expired skill is still on — still delivered — and says why it may not stay that way.
     const expired = h.doc.querySelector('[data-skill="d-lib"]')!;
     expect(expired.querySelector('[data-sop="enabled"]')!.getAttribute('aria-checked')).toBe('true');

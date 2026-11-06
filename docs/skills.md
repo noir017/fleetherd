@@ -149,10 +149,11 @@ for a skill worth writing. They are kept in `<config dir>/skills-queries.jsonl`.
 
 ## From the web UI
 
-**Skills** in the web UI's **⚙ Menu** at the foot of the topic list. It lists every managed skill in
-three groups — **Resident**, **Library** and **Off** — with whether it is pinned, its category, and
-when it was last used, then the searches that found nothing. Every row carries two switches, so
-neither needs the skill opened:
+**Skills** in the web UI's **⚙ Menu** at the foot of the topic list. It lists every managed skill
+under two tabs, **Library** and **Resident**, each with its count; an off skill stays in its tier's
+tab, listed last. A row shows whether the skill is pinned, its category, and when it was last
+used; the Library tab ends with the searches that found nothing. Every row carries two switches,
+so neither needs the skill opened:
 
 - **Resident** / **Library** puts a skill in every agent's list or takes it out to the library; a
   description over 120 characters is refused until it is shortened. An off skill's tier is greyed

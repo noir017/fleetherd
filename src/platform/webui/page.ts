@@ -551,6 +551,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .skill-group-head .skill-section{margin:0}
 .skill-group-hint{font-size:11.5px;color:var(--dim)}
 .skill-off .skill-main{opacity:.6}
+/* Library and Resident as two tabs, each counting its skills; an off skill stays in its tier's tab. */
+.skill-tabs{display:flex;gap:4px;margin:0 0 8px}
+.skill-tab{flex:none;display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border:1px solid var(--line);border-radius:5px;background:var(--field);color:var(--dim);font:inherit;font-size:12px;cursor:pointer}
+.skill-tab:hover{color:var(--fg);border-color:#3a3a3a}
+.skill-tab.on{background:#2b3a4c;color:#fff;font-weight:600;border-color:#38bdf8}
+.skill-tab-n{font-weight:500;color:#6b7683}
+.skill-tab.on .skill-tab-n{color:#94a3b8}
+.skill-pane>.skill-group-hint{margin:0 0 8px}
 .skill-seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
 .skill-seg button{background:var(--field);border:0;color:var(--dim);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
 .skill-seg button+button{border-left:1px solid var(--line)}
@@ -1106,6 +1114,7 @@ button:disabled{opacity:.5;cursor:default}
   .skill-main{flex-basis:100%}
   .skill-seg button{min-height:32px;padding:0 12px}
   .skill-switch{min-height:32px}
+  .skill-tab{flex:1;justify-content:center;min-height:32px}
   .skill-text{min-height:40dvh;font-size:14px}
   /* The settings page, for the same reason and the same way: a 760px window shrunk into a phone
      is a column of rows behind a sliver of transcript nobody opened it to read. */
@@ -4978,18 +4987,15 @@ const SCRIPT = `
       delivered. Off is archived: the store's only way to stop delivering a skill without losing it. */
   function skillOn(s){ return s.status !== 'archived'; }
 
-  /** Where a skill stands, in the words of the list's groups — which is what its two switches set. */
-  function skillGroupOf(s){ return !skillOn(s) ? 'off' : (s.resident ? 'resident' : 'library'); }
-  var SKILL_GROUPS = [
-    {key:'resident', title:'Resident', hint:'In every agent\\u2019s skill list, on every request'},
-    {key:'library', title:'Library', hint:'Delivered, but found only through a search'},
-    {key:'off', title:'Off', hint:'Archived: delivered to no agent, kept with its history'}
+  /** The list's two tabs. A skill's tab is its tier whether it is on or off: an off one is listed
+      after the rest of its tab, which is where it comes back to when it is turned on. */
+  var SKILL_TABS = [
+    {key:'library', title:'Library', hint:'Delivered, but found only through a search.'},
+    {key:'resident', title:'Resident', hint:'In every agent\u2019s skill list, on every request.'}
   ];
-  function skillPlace(s){
-    var g = skillGroupOf(s);
-    for(var i=0;i<SKILL_GROUPS.length;i++) if(SKILL_GROUPS[i].key === g) return SKILL_GROUPS[i].title;
-    return '';
-  }
+  var skillTab = 'library';
+  function skillTabOf(s){ return s.resident ? 'resident' : 'library'; }
+  function skillPlace(s){ return !skillOn(s) ? 'Off' : (s.resident ? 'Resident' : 'Library'); }
 
   var SKILL_EXPIRED_TITLE = 'Unused for a while: it is turned off (archived) unless an agent uses it or you pin it';
 
@@ -5043,19 +5049,34 @@ const SCRIPT = `
     return h;
   }
 
-  function skillGroupsHtml(){
-    var h = '<div class="skill-group-hint">Agents pick up a change when they next start; a library search sees it at once.</div>';
-    for(var g=0; g<SKILL_GROUPS.length; g++){
-      var grp = SKILL_GROUPS[g], rows = '', n = 0;
-      for(var i=0;i<skillList.length;i++){
-        if(skillGroupOf(skillList[i]) !== grp.key) continue;
-        rows += skillCard(skillList[i]);
-        n++;
+  /** Both tabs are drawn and one is shown, so switching tabs is no request and keeps each one's
+      rows as they were. The searches belong to the library: they are what it was asked for. */
+  function skillTabsHtml(){
+    var counts = {library:0, resident:0};
+    for(var i=0;i<skillList.length;i++) counts[skillTabOf(skillList[i])]++;
+    var h = '<div class="skill-tabs" role="tablist">';
+    for(var t=0;t<SKILL_TABS.length;t++){
+      var tab = SKILL_TABS[t], sel = tab.key === skillTab;
+      h += '<button type="button" class="skill-tab' + (sel ? ' on' : '') + '" role="tab" aria-selected="' + (sel ? 'true' : 'false')
+        + '" data-stab="' + tab.key + '">' + text(tab.title) + '<span class="skill-tab-n">' + counts[tab.key] + '</span></button>';
+    }
+    h += '</div>';
+    for(var p=0;p<SKILL_TABS.length;p++){
+      var pane = SKILL_TABS[p], on = '', off = '', offN = 0;
+      for(var j=0;j<skillList.length;j++){
+        var s = skillList[j];
+        if(skillTabOf(s) !== pane.key) continue;
+        if(skillOn(s)) on += skillCard(s);
+        else { off += skillCard(s); offN++; }
       }
-      if(!n) continue;
-      h += '<div class="skill-group" data-group="' + grp.key + '"><div class="skill-group-head">'
-        + '<span class="skill-section">' + text(grp.title) + ' \\u00b7 ' + n + '</span>'
-        + '<span class="skill-group-hint">' + text(grp.hint) + '</span></div>' + rows + '</div>';
+      h += '<div class="skill-pane" role="tabpanel" data-pane="' + pane.key + '"' + (pane.key === skillTab ? '' : ' hidden') + '>';
+      h += '<div class="skill-group-hint">' + text(pane.hint) + ' Agents pick up a change when they next start; a library search sees it at once.</div>';
+      if(!on && !off) h += '<div class="skills-empty">' + (pane.key === 'resident' ? 'No resident skills.' : 'Nothing in the library.') + '</div>';
+      if(on) h += '<div class="skill-group" data-group="' + pane.key + '">' + on + '</div>';
+      if(off) h += '<div class="skill-group" data-group="off"><div class="skill-group-head"><span class="skill-section">Off \u00b7 ' + offN
+        + '</span><span class="skill-group-hint">Archived: delivered to no agent, kept with its history</span></div>' + off + '</div>';
+      if(pane.key === 'library') h += skillSearchesHtml();
+      h += '</div>';
     }
     return h;
   }
@@ -5081,8 +5102,7 @@ const SCRIPT = `
     var h = '';
     if(!skillsEnabled) h = '<div class="skills-empty">Skills are not enabled in this daemon.</div>';
     else if(!skillList.length) h = '<div class="skills-empty">No managed skills yet. An agent can create one when you ask it to remember a procedure, or press New.</div>';
-    else h = skillGroupsHtml();
-    h += skillSearchesHtml();
+    else h = skillTabsHtml();
     if(skillNewMode) h = skillNewForm() + h;
     skillsListEl.innerHTML = h;
     if(skillNewMode){ var n = $('skill-new-name'); if(n) n.focus(); }
@@ -5322,6 +5342,18 @@ const SCRIPT = `
   });
 
   skillsBody.addEventListener('click', function(e){
+    var tabBtn = e.target.closest ? e.target.closest('[data-stab]') : null;
+    if(tabBtn){
+      skillTab = tabBtn.getAttribute('data-stab') === 'resident' ? 'resident' : 'library';
+      var tabs = skillsListEl.querySelectorAll('[data-stab]'), panes = skillsListEl.querySelectorAll('[data-pane]');
+      for(var ti=0;ti<tabs.length;ti++){
+        var isOn = tabs[ti].getAttribute('data-stab') === skillTab;
+        tabs[ti].classList.toggle('on', isOn);
+        tabs[ti].setAttribute('aria-selected', isOn ? 'true' : 'false');
+      }
+      for(var pi=0;pi<panes.length;pi++) panes[pi].hidden = panes[pi].getAttribute('data-pane') !== skillTab;
+      return;
+    }
     var rev = e.target.closest ? e.target.closest('[data-revert]') : null;
     if(rev){
       e.stopPropagation();
