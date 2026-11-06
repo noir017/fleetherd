@@ -438,8 +438,8 @@ purpose: `page.dom.test.ts` checks that the rows are identical either way and th
 in two when the three buttons stopped fitting).
 Menu holds All settings, Notifications, Low attention and Skills — things set once per device or
 visited rarely. Manage holds Close idle and carries the idle count on its own
-face so the number is still seen without opening anything (Clear all topics is an icon button beside
-Topics in the header). The two menus are the same box, opened
+face so the number is still seen without opening anything (with no idle agents, it shows a disabled
+No idle agents line; Clear all topics is an icon button beside Topics in the header). The two menus are the same box, opened
 upward over the list, one at a time, and dismissed by a click outside either (the drawer's backdrop
 included) or Escape, which also gives the focus back to the button that opened it (`setMenu`). The
 footer is a size container: at the narrowest sidebar (180px) both words drop and the row

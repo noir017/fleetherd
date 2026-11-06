@@ -3542,7 +3542,7 @@ const SCRIPT = `
     clearBtn.title = clearLabel;
     clearBtn.setAttribute('aria-label', clearLabel);
     // The count sits on Manage's face, so it is read without opening the menu; the item inside
-    // says what closing would do, and is absent when there is nothing to close.
+    // says what closing would do, or shows a disabled explanation when there is nothing to close.
     var idle=idleTopics().length;
     idleBtn.hidden = !idle;
     noIdleBtn.hidden = Boolean(idle);
