@@ -106,8 +106,8 @@ Two details that exist for correctness, not style:
 
 ## `mcp.ts`
 
-`talkcode mcp` is an MCP server on stdio serving `send_file` and `schedule`
-([`src/ipc/README.md`](../ipc/README.md#why-exactly-two-tools) says why those two). The daemon
+`talkcode mcp` is an MCP server on stdio serving `send_file`, `schedule` and `skills`
+([`src/ipc/README.md`](../ipc/README.md#why-exactly-these-three-tools) says why those three). The daemon
 lists it in every ACP session, and the harness starts one per session as its own child.
 
 - **Hand-rolled**, not `@modelcontextprotocol/sdk`: four stateless methods (`initialize`, `ping`,

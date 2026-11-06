@@ -160,6 +160,25 @@ export interface SkillPanelEntry {
   agents: string[];
   /** Why the skill is not delivered — a hand-made commit that breaks the store's rules. */
   problem?: string;
+  /** Delivered, but a rule a person should know is broken (a resident description too long). */
+  warning?: string;
+  /** In every agent's skill list (true), or in the library, found through the `skills` tool. */
+  resident: boolean;
+  category?: string;
+}
+
+/** A search of the skill library, as the page lists it (daemon/skill-queries.ts). */
+export interface SkillPanelSearch {
+  at: string;
+  query: string;
+  agent?: string;
+  hits: string[];
+}
+
+/** Where the library falls short: searches that found nothing, and hits nobody opened. */
+export interface SkillPanelSearches {
+  misses: SkillPanelSearch[];
+  unread: SkillPanelSearch[];
 }
 
 /** One file a skill is made of, as the page's file list shows it. */
@@ -212,6 +231,8 @@ export type SkillPanelOp =
   | { action: 'archive'; name: string }
   | { action: 'restore'; name: string }
   | { action: 'pin'; name: string; pinned: boolean }
+  /** In every agent's context, or back to the library — a person's call, so only the page has it. */
+  | { action: 'resident'; name: string; resident: boolean }
   | { action: 'revert'; name: string; id: string };
 
 /**
@@ -229,6 +250,8 @@ export type SkillPanelResult =
 /** What `useSkillsPanel` hands a platform: the list, and every operation the store allows. */
 export interface SkillsPanel {
   list(): SkillPanelEntry[];
+  /** The searches worth a person's look. */
+  searches?(): SkillPanelSearches;
   /** Asynchronous: a write waits for the skills repository's pull before it and push after it. */
   op(op: SkillPanelOp): Promise<SkillPanelResult>;
 }

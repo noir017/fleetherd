@@ -28,8 +28,10 @@ repository — a README, scripts of its own, `skills-alone/` — is left alone a
 
 | action | what it does |
 |---|---|
-| `list` | every skill, with status, pin, uses, last use and the agents that used it |
-| `show <name> [file]` | one file (default `SKILL.md`) and the version every `patch` must name |
+| `search <what you need>` | up to five skills that fit, best first — how an agent finds a library skill |
+| `show <name> [file] [--again]` | one file (default `SKILL.md`, with the list of the skill's other files) and the version every `patch` must name |
+| `list` | every skill, with tier, status, pin, uses, last use and the agents that used it |
+| `categories` | how many skills, per category |
 | `create <name> --description "<when to use it>" [--body <markdown>]` | a new skill |
 | `patch <name> --version <v> --content <full SKILL.md>` | replace `SKILL.md`, only from the version read |
 | `write-file <name> <path> --content <text>` | add or replace a file under `references/`, `templates/`, `scripts/` |
@@ -89,10 +91,67 @@ takes effect at the next fetch.
 The gateway needs `git` (the container image has it). The first start with this version moves an
 old store into a repository as one commit and keeps the old directory as `skills.pre-git`.
 
+## Resident and library
+
+A skill is in one of two tiers, set in its own frontmatter:
+
+```yaml
+---
+name: server-ops
+description: Use when operating a fleet server — SSH, EasyTier, backups.
+metadata:
+  talkcode-resident: "true"        # absent: the library
+  talkcode-category: "运维"
+  talkcode-hosts: "uniagent, awsfree2"   # optional: only agents on these hosts get it
+  talkcode-harnesses: "claude, codex"    # optional: only these harnesses get it
+---
+```
+
+- **Resident** skills are linked into every harness's skill directory, so every agent sees their
+  name and description on every request. That is why the description is held to **120
+  characters** — written as "Use when …" — and why only a person makes a skill resident: the web
+  UI's **Make resident** / **Move to library**, or a commit. A `patch` from an agent or from the
+  review that changes `talkcode-resident` is refused.
+- **Library** skills are everything else. They are delivered to every host like a resident one but
+  linked nowhere, so they cost no context until an agent looks one up with the `skills` tool. A
+  skill an agent or the review creates starts here.
+- **Category** groups skills; the `skills` tool's description ends with how many each holds
+  (`In the library: 运维 6, 开发 2, other 3.`), which is what tells an agent the library is worth a
+  search. **Hosts** and **harnesses** (a host is a `hosts:` id, or `local`; a harness is `claude`,
+  `codex`, `opencode`, `agy` or `codebuddy`) keep a skill off the agents it would only mislead.
+
+The values are quoted strings because the Agent Skills spec makes `metadata` a map of strings, so
+a harness that checks the spec lists the skill unchanged.
+
+## Finding a skill: the `skills` tool
+
+Every agent has a `skills` tool beside `send_file` and `schedule` (an agent without native tools
+runs `talkcode skills search` / `show`, which is the same thing):
+
+- **search** — what it needs, in a few words, in any language. Up to five skills come back, best
+  first, without the tail that scores under 40% of the best one: name, description, category, tier, and where the files are on its machine. A resident hit
+  says it is already in the agent's own list. Ranking is BM25 over the name, description, category
+  and body, the description weighted above a passing mention in a body; Chinese is matched by
+  two-character words, so 「部署检查」 finds a skill about 「检查部署」. Only skills that reach the
+  asking agent (its host and harness) are searched.
+- **show** — one skill: `SKILL.md` whole, with the list of its other files, which `file` reads.
+  Reading counts as a use. A version this conversation already read comes back as "unchanged"
+  instead of the whole text again, until `/new` or a change; `--again` reads it anyway, for an
+  agent whose context was compacted since.
+
+A skill created after an agent started is searchable and readable at once; its files reach that
+agent's machine at the agent's next start.
+
+**Searches that found nothing** are where the library falls short. The web UI's skills page lists
+them, and the searches whose hits nobody opened (the descriptions did not say "this is the one");
+the [automatic review](#auto-review) is shown the ones from the conversation it reviews, as a hint
+for a skill worth writing. They are kept in `<config dir>/skills-queries.jsonl`.
+
 ## From the web UI
 
 **Skills** in the web UI's **⚙ Menu** at the foot of the topic list. It lists every managed skill with its
-status, whether it is pinned, and when it was last used, and opens one for editing:
+status, whether it is resident and pinned, its category, and when it was last used — then the
+searches that found nothing — and opens one for editing:
 
 - **New** creates a skill from a name, a one-line description and an optional body.
 - **Edit** changes `SKILL.md` or any file under `references/`, `templates/` or `scripts/`;
@@ -100,6 +159,8 @@ status, whether it is pinned, and when it was last used, and opens one for editi
   read-before-write rule as `patch` applies, and a refusal says the current version.
 - **History** lists every commit that touched the skill; **Restore this version** is `revert`, and
   is itself recorded as a new change.
+- **Make resident** / **Move to library** puts a skill in every agent's list or takes it out; a
+  description over 120 characters is refused until it is shortened.
 - **Delete** is `archive` — the skill moves into `archive/` whole and can be restored from the
   same page. Nothing in the gateway hard-deletes a skill, and the page has no such operation.
 
@@ -110,9 +171,9 @@ restored too.
 
 ## How it reaches an agent
 
-At every agent start the gateway copies each active skill to
-`~/.talkcode/skills/<name>/` on the machine the agent runs on, then links it into the directory
-that harness reads:
+At every agent start the gateway copies each active skill that reaches the agent to
+`~/.talkcode/skills/<name>/` on the machine the agent runs on, then links each **resident** one into
+the directory that harness reads (a library skill stays a copy, for the `skills` tool to point at):
 
 | agent | its skills directory |
 |---|---|
@@ -128,19 +189,22 @@ start would overwrite.
 Only a link pointing into `~/.talkcode/skills` is ever repointed or removed. A real directory, a
 real file, or a link of your own at `~/.claude/skills/<name>` stays as it is, and the log says that
 agent does not get the managed copy. An unchanged version is not written again. An archived skill
-has its copy and every link of the gateway's taken back at the next start.
+has its copy and every link of the gateway's taken back at the next start; a skill moved to the
+library has its links taken back and keeps its copy.
 
 ## When a skill counts as used
 
-Three signals, all from events the gateway already receives:
+Four signals, all from events the gateway already receives:
 
 1. an agent calls the skill as a `Skill` tool (Claude Code, CodeBuddy);
 2. a message starts with `/<name>`;
 3. any tool call mentions a file under `~/.talkcode/skills/<name>/` — how Codex, OpenCode, agy and
-   AtomCode read a skill, and how a reference or script under it counts.
+   AtomCode read a skill, and how a reference or script under it counts;
+4. an agent reads it with `show` (the `skills` tool, or `talkcode skills show`) — how a library
+   skill is used.
 
-A turn counts a skill once however many times it appears. `talkcode skills` itself is management,
-not use, and does not count.
+A turn counts a skill once however many times it appears through the first three. The rest of
+`talkcode skills` is management, not use, and does not count.
 
 ## Expiry and archive
 

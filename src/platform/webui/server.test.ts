@@ -1120,6 +1120,7 @@ describe('webui server: traffic', () => {
       version: '0123456789ab',
       status: 'active',
       pinned: false,
+      resident: false,
       createdAt: '2026-11-01T00:00:00.000Z',
       uses: 3,
       agents: ['cc'],

@@ -6,8 +6,8 @@ import { findNativeTool, NATIVE_TOOLS, toolAction, toolInputSchema } from '../ip
 import { friendlyError, normalizeActionPaths, renderResult } from './reverse.js';
 
 /**
- * `talkcode mcp` — an MCP server on stdio that gives an agent `send_file` and `schedule` as
- * native tools (see ipc/tools.ts for why those two). The daemon lists it in `session/new`'s
+ * `talkcode mcp` — an MCP server on stdio that gives an agent `send_file`, `schedule` and `skills`
+ * as native tools (see ipc/tools.ts for why those three). The daemon lists it in `session/new`'s
  * `mcpServers` for every ACP session, and the harness starts one per session as its own child.
  *
  * It is a reverse command with a different front door: a tool call becomes the IpcAction the same
@@ -99,14 +99,44 @@ async function dispatch(method: string, params: unknown, deps: McpDeps): Promise
     case 'ping':
       return { ok: {} };
     case 'tools/list':
-      return {
-        ok: { tools: NATIVE_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: toolInputSchema(t) })) },
-      };
+      return { ok: { tools: await listTools(deps) } };
     case 'tools/call':
       return callTool(params, deps);
     default:
       return { error: { code: METHOD_NOT_FOUND, message: `Method not found: ${method}` } };
   }
+}
+
+/**
+ * The tools, with the `skills` tool's description ending in what the library holds — its
+ * categories and how many skills each has. That line is what tells a model the library is worth a
+ * search before it starts on something: a description alone says a library exists, not that it
+ * has six skills about operations. Asked of the daemon once per session (a harness lists tools at
+ * start); a daemon that does not answer in time leaves the description as written.
+ */
+async function listTools(deps: McpDeps): Promise<Array<{ name: string; description: string; inputSchema: unknown }>> {
+  let library = '';
+  try {
+    const res = await Promise.race([
+      deps.call({ kind: 'skills', action: 'categories' }),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 3000).unref?.()),
+    ]);
+    if (res?.ok) library = libraryLine(res.data);
+  } catch {
+    // no daemon, or no answer: the tool still works, its description just says less
+  }
+  return NATIVE_TOOLS.map((t) => ({
+    name: t.name,
+    description: t.name === 'skills' && library ? `${t.description} ${library}` : t.description,
+    inputSchema: toolInputSchema(t),
+  }));
+}
+
+/** `In the library: 运维 6, 开发 2, other 3.` from the daemon's `skills categories` answer. */
+export function libraryLine(result: unknown): string {
+  const r = result as { library?: number; categories?: Array<{ name: string; count: number }> } | undefined;
+  if (!r?.library || !Array.isArray(r.categories) || r.categories.length === 0) return '';
+  return `In the library: ${r.categories.map((c) => `${c.name} ${c.count}`).join(', ')}.`;
 }
 
 /**

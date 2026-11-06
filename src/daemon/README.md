@@ -52,6 +52,9 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`, a git repository): names, paths and size rules, content versions, the usage file, `archive/`, and history and `revert` read from git |
 | `skills-git.ts` | The git under the store: commits with trailers, the log per skill, files at a commit — run with the machine's git config switched off |
 | `skills-repo.ts` | `skills.repo`: moving an old store into a repository, and fetch → rebase → push around every write and every five minutes |
+| `skill-library.ts` | The `skills` tool's search and show for one asking agent: what reaches it, the resident note, "unchanged" for a version this conversation read |
+| `skill-index.ts` | BM25 over a skill's name, description, category and body, Chinese split into two-character words — pure, handed the skills |
+| `skill-queries.ts` | The search log (`skills-queries.jsonl`): searches that found nothing, hits nobody opened, and one conversation's misses for the review |
 | `skills-panel.ts` | The web UI's skills page: store records → the page's shape, every operation forwarded to `skills-store.ts`, and the archive notice the reverse command sends |
 | `skill-usage.ts` | What counts as using a managed skill — a `Skill` tool call, `/<name>`, a file under its directory — once per turn, with `talkcode skills` excluded |
 | `skill-lifecycle.ts` | The daily check (14 days expired, 30 archived; pinned and hand-written skills exempt) and its archive notice |
@@ -1280,7 +1283,7 @@ there (`daemon.ts` sendAgentFile), and `/cd`, `/skills`, the claude cache countd
 log are read there. The `/cd` menu code is synchronous, so a remote listing is read into
 `ConversationRegistry.remoteScans` first; an explicit `/cd` always refreshes it.
 
-### What a session is given: the user's words, two tools, a skill
+### What a session is given: the user's words, three tools, a skill
 
 Neither runtime adds text of its own to a turn. `promptBlocks` sends the user's text as the only
 text block on every turn; agy's stream-json fallback gets the same string. Until 1.40 a `<system-reminder>` went in front of
@@ -1441,6 +1444,21 @@ config switched off (`GIT_CONFIG_GLOBAL=/dev/null`): a global hook, signing requ
 credential helper of the operator's must not turn a skill write into a hang. The store directory
 became a repository in 2.41.0; `prepareSkillsRepo` moves an old one in as one commit at start and
 keeps it as `skills.pre-git`.
+
+**Resident and library.** A skill's tier is its frontmatter's `metadata.talkcode-resident`
+(`skillMetaOf`; the Agent Skills spec makes `metadata` strings to strings, so the gateway's keys are
+flat quoted strings). Delivery copies every skill that reaches the agent (`talkcode-hosts`,
+`talkcode-harnesses`, `deliveredTo`) but links only the resident ones; a skill moved to the library
+has its links taken back — on a remote host once per daemon instance, remembered as `absent`. A
+resident description is held to 120 characters on every gateway write; a person's commit over it
+is delivered with a `warning`. Only a person changes the tier: `patchSkill` refuses an agent's or
+the review's edit of that line (`assertResidentUnchanged`), and `setResident` is reached only from
+the web UI's page. The library is reached through the `skills` native tool (`skill-library.ts`):
+`search` ranks with `skill-index.ts` over the skills that reach the asker, and `show` returns the
+file from the gateway (so a skill created after the agent started is readable at once), counts a
+`read` use, and answers "unchanged" for a version this conversation and generation already read.
+Every search and read goes to `skill-queries.ts`; the review is handed the reviewed conversation's
+misses.
 
 The same store is behind the web UI's skills page (`skills-panel.ts`): the page lists, creates,
 edits, archives/restores and reverts through these functions, so its rules are these rules, and an

@@ -41,6 +41,11 @@ export interface PromptInput {
   dropped: number;
   catalog: PromptSkill[];
   used: PromptSkillText[];
+  /**
+   * What the agents in this conversation searched the skill library for and did not find
+   * (skill-queries.ts): the clearest sign of a skill worth writing, said by the agent that needed it.
+   */
+  searchedFor?: string[];
 }
 
 const ROLE_LABEL: Record<string, string> = { user: '用户', agent: '助手', tool: '工具' };
@@ -75,6 +80,7 @@ export function buildReviewPrompt(input: PromptInput): string {
     '- 不删技能。不记一次性的事：这次的具体报错、临时路径、单个 PR 都不算。',
     '- 只写对下一次同类任务有用的规则，不要抄对话原文。',
     '- 没什么可改就返回空清单。',
+    '- patch 时 frontmatter 里的 metadata 原样保留：talkcode-resident 只有人能改，改了会被拒。',
     '- 不要调用任何工具，直接输出 JSON。',
     '',
     '输出',
@@ -91,6 +97,9 @@ export function buildReviewPrompt(input: PromptInput): string {
     '这段对话用到的技能全文',
     used,
     '',
+    ...(input.searchedFor?.length
+      ? ['智能体在技能库里搜过、没找到的', ...input.searchedFor.map((q) => `- ${q}`), '']
+      : []),
     `对话记录：${input.title || '（无标题）'}，${span}，共 ${input.messages.length} 条${dropped}`,
     conversation,
   ].join('\n');

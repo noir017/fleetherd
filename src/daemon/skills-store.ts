@@ -67,7 +67,42 @@ export const MAX_SKILL_BYTES = 64 * 1024;
 export const MAX_EXTRA_BYTES = 1024 * 1024;
 
 export const EXTRA_DIRS = ['references', 'templates', 'scripts'] as const;
+
+/**
+ * The gateway's keys under a skill's frontmatter `metadata:`. The Agent Skills spec makes
+ * `metadata` a map of strings to strings, so each is a flat, quoted string — a harness that
+ * validates the spec lists the skill unchanged, and one that does not ignores the block.
+ */
+export const META_RESIDENT = 'talkcode-resident';
+export const META_CATEGORY = 'talkcode-category';
+export const META_HOSTS = 'talkcode-hosts';
+export const META_HARNESSES = 'talkcode-harnesses';
+
+/**
+ * A resident skill's description is in every agent's context on every request, so it is held to
+ * one short line (decided 2026-11-06, after Hermes, which holds its whole index to 60 characters).
+ * A library skill's is not: it is read only by the search, where more words find it more often.
+ */
+export const RESIDENT_DESCRIPTION_MAX = 120;
 export type ExtraDir = (typeof EXTRA_DIRS)[number];
+
+/**
+ * Where a skill sits and who gets it, read from its frontmatter.
+ *
+ * - resident: linked into every harness's skill directory, so its name and description are in
+ *   every agent's context. Only a person makes a skill resident (the web UI's page, or a commit);
+ *   see `assertResidentUnchanged`.
+ * - library (resident false): delivered to every host but not linked — reached through the
+ *   `skills` tool's search, so a library of hundreds costs one tool definition, not hundreds of
+ *   descriptions.
+ * - hosts / harnesses: when set, only agents on those hosts, or of those harnesses, get it at all.
+ */
+export interface SkillMeta {
+  resident: boolean;
+  category?: string;
+  hosts?: string[];
+  harnesses?: string[];
+}
 
 /** Lowercase words joined by hyphens, as a harness lists a skill by name. */
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -85,7 +120,8 @@ export const ARCHIVE_DAYS = 30;
 const DAY_MS = 86_400_000;
 
 export type SkillStatus = 'active' | 'expired' | 'archived';
-export type SkillSignal = 'skill-tool' | 'slash' | 'path';
+/** How a use was seen: the harness's Skill tool, `/<name>`, a file of it touched, or read through `show`. */
+export type SkillSignal = 'skill-tool' | 'slash' | 'path' | 'read';
 export type { SkillChangeBy } from './skills-git.js';
 
 /** A change with no `by` was made by an agent through `talkcode skills`. */
@@ -143,12 +179,19 @@ export interface SkillRecord {
   source?: SkillSource;
   /** Why this skill is not delivered — a hand-made change the store's rules would have refused. */
   problem?: string;
+  /** Delivered, but breaking a rule a person should know about (a resident description too long). */
+  warning?: string;
+  resident: boolean;
+  category?: string;
+  hosts?: string[];
+  harnesses?: string[];
 }
 
 export interface SkillFileSet {
   name: string;
   version: string;
   files: Map<string, Buffer>;
+  meta: SkillMeta;
 }
 
 export interface SkillHistoryEntry {
@@ -292,6 +335,121 @@ function unquote(raw: string): string {
   }
   if (raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1);
   return raw;
+}
+
+/**
+ * The first-level keys under a top-level `metadata:` block of the frontmatter. Deeper levels (a
+ * `hermes:` map some skills carry for another agent) are skipped, not misread as the gateway's.
+ */
+export function frontmatterMetadata(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  if (!match) return out;
+  const lines = match[1]!.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^metadata:\s*$/.test(l));
+  if (start < 0) return out;
+  let indent: number | undefined;
+  for (const line of lines.slice(start + 1)) {
+    if (!line.trim()) continue;
+    const lead = /^(\s*)/.exec(line)![1]!.length;
+    if (lead === 0) break;
+    indent ??= lead;
+    if (lead !== indent) continue;
+    const kv = /^\s*([A-Za-z0-9_.-]+):\s*(.*)$/.exec(line);
+    if (kv && kv[2]!.trim()) out.set(kv[1]!, unquote(kv[2]!.trim()));
+  }
+  return out;
+}
+
+function listOf(value: string | undefined): string[] | undefined {
+  const items = value
+    ?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return items && items.length > 0 ? items : undefined;
+}
+
+/** A skill's tier, category and conditions, from its SKILL.md. */
+export function skillMetaOf(files: Map<string, Buffer>): SkillMeta {
+  const md = files.get(SKILL_FILE);
+  const meta = md ? frontmatterMetadata(md.toString('utf8')) : new Map<string, string>();
+  const category = meta.get(META_CATEGORY)?.trim();
+  const hosts = listOf(meta.get(META_HOSTS));
+  const harnesses = listOf(meta.get(META_HARNESSES));
+  return {
+    resident: meta.get(META_RESIDENT)?.trim().toLowerCase() === 'true',
+    ...(category ? { category } : {}),
+    ...(hosts ? { hosts } : {}),
+    ...(harnesses ? { harnesses } : {}),
+  };
+}
+
+/**
+ * Whether an agent gets a skill at all: no condition, or its host and harness among the named
+ * ones. `host` is the agent's `host:` (`local` for one on the gateway's own machine); `harness` is
+ * its kind as the delivery names it (`claude`, `codex`, `opencode`, `agy`, `codebuddy`, …).
+ */
+export function skillReaches(meta: SkillMeta, host: string, harness: string): boolean {
+  if (meta.hosts && !meta.hosts.includes(host)) return false;
+  if (meta.harnesses && !meta.harnesses.includes(harness)) return false;
+  return true;
+}
+
+/** The warning a person should see on a delivered skill, or undefined. */
+function skillWarning(meta: SkillMeta, files: Map<string, Buffer>): string | undefined {
+  if (!meta.resident) return undefined;
+  const length = [...descriptionOf(files)].length;
+  return length > RESIDENT_DESCRIPTION_MAX
+    ? `the description is ${length} characters; a resident skill's is in every agent's context and should be at most ${RESIDENT_DESCRIPTION_MAX}`
+    : undefined;
+}
+
+/**
+ * Refuse a write that would move a skill in or out of every agent's context unless a person makes
+ * it. An agent or the review writes library skills; promoting one to resident — or demoting one a
+ * person chose — is the person's call, made on the web UI's page or in the repository.
+ */
+function assertResidentUnchanged(before: SkillMeta, after: SkillMeta, by: SkillChangeBy | undefined): void {
+  if (before.resident === after.resident || by?.kind === 'person') return;
+  throw new Error(
+    `${META_RESIDENT} decides whether a skill is in every agent's context, and only a person changes it (the web UI's skills page, or a commit to the repository); patch the skill without changing that line`
+  );
+}
+
+/** A resident skill's description must fit one short line; checked on every write the gateway makes. */
+function assertResidentDescription(meta: SkillMeta, content: string): void {
+  if (!meta.resident) return;
+  const description = frontmatterFields(content).get('description')?.trim() ?? '';
+  const length = [...description].length;
+  if (length > RESIDENT_DESCRIPTION_MAX) {
+    throw new Error(
+      `a resident skill's description is in every agent's context: at most ${RESIDENT_DESCRIPTION_MAX} characters, this one is ${length}; shorten it and move the detail into the body`
+    );
+  }
+}
+
+/**
+ * SKILL.md with `talkcode-resident` set or removed. Removed rather than set to "false": absence is
+ * the library tier, so a skill that was never promoted and one that was demoted read the same.
+ */
+export function withResident(content: string, resident: boolean): string {
+  const match = /^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(content);
+  if (!match) throw new Error('SKILL.md has no frontmatter to set the tier in');
+  const lines = match[2]!.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^metadata:\s*$/.test(l));
+  const isResidentLine = (l: string): boolean => new RegExp(`^\\s+${META_RESIDENT}:`).test(l);
+  let next: string[];
+  if (start < 0) {
+    next = resident ? [...lines, 'metadata:', `  ${META_RESIDENT}: "true"`] : lines;
+  } else {
+    let end = start + 1;
+    while (end < lines.length && (!lines[end]!.trim() || /^\s/.test(lines[end]!))) end++;
+    const block = lines.slice(start + 1, end).filter((l) => !isResidentLine(l));
+    const indent = /^(\s+)/.exec(block.find((l) => l.trim()) ?? '  ')?.[1] ?? '  ';
+    const kept = resident ? [`${indent}${META_RESIDENT}: "true"`, ...block] : block;
+    next = [...lines.slice(0, start), ...(kept.some((l) => l.trim()) ? ['metadata:', ...kept] : []), ...lines.slice(end)];
+  }
+  return `${match[1]}${next.join('\n')}${match[3]}${content.slice(match[0].length)}`;
 }
 
 function composeSkillMd(name: string, description: string, body: string): string {
@@ -487,6 +645,8 @@ export function skillProblem(name: string, files: Map<string, Buffer>): string |
 
 function recordOf(name: string, usage: SkillUsage, files: Map<string, Buffer>, archived: boolean, now: number): SkillRecord {
   const problem = archived ? undefined : skillProblem(name, files);
+  const meta = skillMetaOf(files);
+  const warning = archived || problem ? undefined : skillWarning(meta, files);
   return {
     name,
     description: descriptionOf(files),
@@ -500,6 +660,8 @@ function recordOf(name: string, usage: SkillUsage, files: Map<string, Buffer>, a
     agents: [...usage.agents],
     source: usage.source,
     ...(problem ? { problem } : {}),
+    ...(warning ? { warning } : {}),
+    ...meta,
   };
 }
 
@@ -567,7 +729,7 @@ export function activeSkillFiles(dir = configDir()): SkillFileSet[] {
       }
       continue;
     }
-    out.push({ name, version, files });
+    out.push({ name, version, files, meta: skillMetaOf(files) });
   }
   return out;
 }
@@ -665,9 +827,12 @@ export function patchSkill(input: PatchSkillInput, dir = configDir()): SkillReco
     );
   }
   assertSkillMd(input.content, name);
-  ensureRepo(dir);
   const next = new Map(files);
   next.set(SKILL_FILE, Buffer.from(input.content));
+  const nextMeta = skillMetaOf(next);
+  assertResidentUnchanged(skillMetaOf(files), nextMeta, input.by);
+  assertResidentDescription(nextMeta, input.content);
+  ensureRepo(dir);
   const after = skillVersionOf(next);
   const now = input.now ?? Date.now();
   writeAtomic(path.join(skillDir(name, dir), SKILL_FILE), input.content, 0o600);
@@ -795,6 +960,29 @@ export function pinSkill(name: string, pinned: boolean, dir = configDir()): Skil
   const archived = !fs.existsSync(skillDir(clean, dir));
   const files = archived ? readAllFiles(archivedDir(clean, dir)) : readSkillFiles(clean, dir);
   return recordOf(clean, usage.skills[clean]!, files, archived, Date.now());
+}
+
+/**
+ * Put a skill in every agent's context (resident) or take it out to the library. A person's
+ * choice: the web UI's page calls this, and there is no reverse command for it — see
+ * `assertResidentUnchanged`. Going resident is refused while the description is too long for it.
+ */
+export function setResident(name: string, resident: boolean, dir = configDir(), now = Date.now(), by: SkillChangeBy = { kind: 'person' }): SkillRecord {
+  const clean = validateSkillName(name);
+  requireActive(clean, dir);
+  const files = readSkillFiles(clean, dir);
+  const md = files.get(SKILL_FILE)?.toString('utf8') ?? '';
+  if (skillMetaOf(files).resident === resident) return recordOf(clean, readUsage(dir).skills[clean] ?? defaultUsage(clean, dir), files, false, now);
+  const content = withResident(md, resident);
+  assertSkillMd(content, clean);
+  assertResidentDescription({ resident }, content);
+  ensureRepo(dir);
+  const before = skillVersionOf(files);
+  const next = new Map(files);
+  next.set(SKILL_FILE, Buffer.from(content));
+  writeAtomic(path.join(skillDir(clean, dir), SKILL_FILE), content, 0o600);
+  commit(dir, clean, { action: resident ? 'resident' : 'library', before, after: skillVersionOf(next), by, now });
+  return recordOf(clean, readUsage(dir).skills[clean] ?? defaultUsage(clean, dir), next, false, now);
 }
 
 /** Mark a skill expired without moving it. Returns whether the stored status changed. */

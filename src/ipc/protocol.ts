@@ -164,6 +164,8 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       kind: z.literal('skills'),
       action: z.enum([
         'list',
+        'search',
+        'categories',
         'show',
         'create',
         'patch',
@@ -183,6 +185,8 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       description: z.string().min(1).max(2_000).optional(),
       body: z.string().max(32_000).optional(),
       id: z.string().min(1).max(64).optional(),
+      query: z.string().min(1).max(500).optional(),
+      again: z.boolean().optional(),
     })
     .strict(),
   z
@@ -330,6 +334,8 @@ export type IpcAction =
       kind: 'skills';
       action:
         | 'list'
+        | 'search'
+        | 'categories'
         | 'show'
         | 'create'
         | 'patch'
@@ -348,6 +354,10 @@ export type IpcAction =
       description?: string;
       body?: string;
       id?: string;
+      /** search: what the agent needs, in its own words. */
+      query?: string;
+      /** show: read it whole even if this conversation already read this version. */
+      again?: boolean;
     }
   | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run' }
   | { kind: 'task-agents' }

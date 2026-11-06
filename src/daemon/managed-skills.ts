@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { allSkillDirs, linkSkill, removeSkillLink, skillHomes } from './skill-link.js';
-import { activeSkillFiles, archivedSkillNames, type SkillFileSet } from './skills-store.js';
+import { activeSkillFiles, archivedSkillNames, skillReaches, type SkillFileSet } from './skills-store.js';
 
 /**
  * Delivering the gateway's managed skills to the machine an agent runs on.
@@ -29,6 +29,19 @@ import { activeSkillFiles, archivedSkillNames, type SkillFileSet } from './skill
  * side remembers the version it delivered per host and instance.
  */
 
+/**
+ * The harness as a skill's `talkcode-harnesses` names it: the harness, except CodeBuddy, which runs
+ * as a `custom` agent and is told apart by its command (the reading skillHomes gives it too).
+ */
+export function skillHarnessOf(def: AgentDef): string {
+  return def.harness === 'custom' && path.basename(def.command ?? '') === 'codebuddy' ? 'codebuddy' : def.harness;
+}
+
+/** Whether `def` gets `skill` at all — its `talkcode-hosts` / `talkcode-harnesses`, if any. */
+export function deliveredTo(skill: SkillFileSet, def: AgentDef): boolean {
+  return skillReaches(skill.meta, def.host ?? 'local', skillHarnessOf(def));
+}
+
 /** The directory on a host that holds the copies; also what makes a link "ours". */
 export function managedSkillsHome(home: string): string {
   return path.join(home, '.talkcode', 'skills');
@@ -50,10 +63,21 @@ export function applyManagedSkills(def: AgentDef, home: string, dir?: string): M
   const owned = managedSkillsHome(home);
   const results: ManagedResult[] = [];
   for (const skill of activeSkillFiles(dir)) {
+    if (!deliveredTo(skill, def)) continue;
     const copy = path.join(owned, skill.name);
     const files = syncFiles(copy, skill);
     results.push({ name: skill.name, path: copy, ...files });
     if (files.outcome === 'failed') continue;
+    // A library skill is on disk for the search to point at, never linked: a link would put its
+    // description in this agent's context, which is what the library tier exists to avoid. One
+    // that was resident before has its links taken back, in every directory a link could be in.
+    if (!skill.meta.resident) {
+      for (const d of allSkillDirs(home)) {
+        const r = removeSkillLink(path.join(d, skill.name), owned);
+        if (r.outcome !== 'skipped') results.push({ name: skill.name, path: r.link, outcome: r.outcome, ...(r.detail ? { detail: r.detail } : {}) });
+      }
+      continue;
+    }
     for (const h of skillHomes(def.harness, home, def.command)) {
       const r = linkSkill(copy, h, skill.name, owned);
       results.push({ name: skill.name, path: r.link, source: copy, outcome: r.outcome, ...(r.detail ? { detail: r.detail } : {}) });
@@ -136,7 +160,7 @@ function report(r: ManagedResult): void {
   if (r.outcome === 'placed') console.log(`[skills] placed ${r.name} at ${r.path}`);
   else if (r.outcome === 'linked') console.log(`[skills] linked ${r.path} → ${r.source ?? ''}`);
   else if (r.outcome === 'relinked') console.log(`[skills] repointed ${r.path} → ${r.source ?? ''} (was ${r.detail})`);
-  else if (r.outcome === 'removed') console.log(`[skills] took back ${r.path} (archived)`);
+  else if (r.outcome === 'removed') console.log(`[skills] took back ${r.path} (archived, or in the library now)`);
   else if (r.outcome === 'occupied' || r.outcome === 'failed') {
     const key = `${r.path}:${r.outcome}:${r.detail ?? ''}`;
     if (warned.has(key)) return;

@@ -135,7 +135,7 @@ and dropped items are logged, never silent.
 **Nothing of the gateway's in the agent's prompt.** The agent reads what the user sent — the
 message, a quoted line, an attachment's path — and nothing the gateway wrote about itself: no
 preamble, no reminder, no instructions on how to work. What the agent can do here reaches it
-through its harness's own mechanisms instead: two native tools over MCP (`commands/mcp.ts`), and
+through its harness's own mechanisms instead: three native tools over MCP (`commands/mcp.ts`), and
 a skill (`skill/`) whose one-line description is all that sits in context. This was decided on
 2026-10-09, after the injected hint had already shrunk from thirteen lines to three: any text the
 gateway puts in front of the work tells the model what kind of job this is before it reads the
@@ -296,6 +296,16 @@ Do not weaken these without saying so explicitly in the PR:
    (invariant 5): its own key and known_hosts, `-F none`, strict host key checking — it never learns
    the repository's key, and it never force-pushes: when both sides changed one file the
    repository's version wins and the gateway's commits are kept on a branch.
+
+   **Only a person puts a skill into every agent's context** (since 2.42.0). A skill is resident —
+   linked into every harness's skill directory — only when its frontmatter says
+   `talkcode-resident: "true"`, and the store refuses a write by an agent or the review that changes
+   that line (`skills-store.ts` assertResidentUnchanged); the web UI's page (a person) and a commit
+   to the repository are the only ways to set it. Everything an agent or the review creates lands in
+   the library, reached only through a search an agent chose to run. Keep it that way: an agent
+   that can promote its own skill to resident is an agent writing every other agent's standing
+   instructions. Like invariant 6's, this is an interface boundary, not code enforcement: an agent
+   that holds the operator's push access to the repository can commit the line itself.
 
 ## Adding things
 

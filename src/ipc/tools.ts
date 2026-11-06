@@ -5,19 +5,24 @@ import { CHANNEL_OPTION, REVERSE_COMMANDS, type ReverseCommandSpec, type Reverse
  * The reverse commands an agent gets as native tools — served over MCP by `talkcode mcp`
  * (commands/mcp.ts), which the daemon hands to every ACP session in `session/new`.
  *
- * ── Why two, and why these two ────────────────────────────────────────────────────────────────
+ * ── Why three, and why these three ────────────────────────────────────────────────────────────
  * A tool's definition is context the agent pays for whether or not it is used. Measured 2026-10-09:
- * on Claude Code (claude-agent-acp 0.81, which loads MCP tools in full at this size) these two cost
- * about 1,030 input tokens per request — cached after the first, but every request. Codex 0.159.2
- * lazy-loads MCP tools behind its own `tool_search`, and OpenCode 2.0.26 exposes them inside its
- * code tool (`tools.chat.send_file(…)`), so there they cost less and are found less directly. So a
- * tool has to earn its place by being something the agent could neither do without nor guess exists:
+ * on Claude Code (claude-agent-acp 0.81, which loads MCP tools in full at this size) the first two
+ * cost about 1,030 input tokens per request — cached after the first, but every request. Codex
+ * 0.159.2 lazy-loads MCP tools behind its own `tool_search`, and OpenCode 2.0.26 exposes them inside
+ * its code tool (`tools.chat.send_file(…)`), so there they cost less and are found less directly.
+ * So a tool has to earn its place by being something the agent could neither do without nor guess
+ * exists:
  *  - `send_file` — the one thing a text reply cannot carry. A file has to be uploaded.
  *  - `schedule` — the one capability an agent reliably gets wrong without being told: asked for
  *    "every morning at 8", it reaches for its own harness's scheduler, which lives inside the agent
  *    process and dies with it (the gateway stops idle sessions after an hour, and on every restart).
+ *  - `skills` (2026-11-06) — search and read the skill library. A library skill is linked nowhere,
+ *    so no agent can guess it exists; the alternative, linking every skill, puts every description
+ *    in every request, which past a few dozen costs more than this one definition. It offers only
+ *    `search` and `show` (`options: []`): the writes stay CLI commands behind the bundled skill.
  * Everything else stays a CLI command behind the bundled skill, which costs one line of skill
- * description until it is needed (see HELP_TOPICS). The skill covers these two as well, which is
+ * description until it is needed (see HELP_TOPICS). The skill covers these as well, which is
  * what an agent that does not see the tools up front — codex, agy — ends up using.
  *
  * ── One source ────────────────────────────────────────────────────────────────────────────────
@@ -42,6 +47,12 @@ export interface NativeTool {
   positionals: Record<string, string>;
   /** Closed sets of accepted values, keyed by parameter name (positional or option). */
   enums?: Record<string, readonly string[]>;
+  /**
+   * The command's options the tool offers, by key; all of them (and `channel`) when absent. For a
+   * command whose other actions the tool does not offer — `skills`, whose writes stay a CLI command
+   * — the rest would be schema every request pays for and the model could only misuse.
+   */
+  options?: readonly string[];
 }
 
 export const NATIVE_TOOLS: readonly NativeTool[] = [
@@ -71,6 +82,21 @@ export const NATIVE_TOOLS: readonly NativeTool[] = [
       action: ['add', 'list', 'show', 'pause', 'resume', 'run', 'rm'],
       session: ['fixed', 'new', 'daily'],
     },
+  },
+  {
+    name: 'skills',
+    command: 'skills',
+    description:
+      'The skill library. Most skills are not in your skill list: before work your listed skills do not ' +
+      'cover, search here. search: name is what you need, in a few words; up to 5 skills come back. ' +
+      "show: name is a skill; its SKILL.md comes back whole with the list of its other files, which file reads one of.",
+    positionals: {
+      action: 'search or show',
+      name: 'search: what you need, in a few words. show: the skill',
+      file: 'show: one of the skill\'s other files (default SKILL.md)',
+    },
+    enums: { action: ['search', 'show'] },
+    options: [],
   },
 ];
 
@@ -103,8 +129,9 @@ export function optionKey(opt: ReverseOption): string {
   return long.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-function optionsOf(spec: ReverseCommandSpec): ReverseOption[] {
-  return [...spec.options, CHANNEL_OPTION];
+function optionsOf(spec: ReverseCommandSpec, tool?: NativeTool): ReverseOption[] {
+  const all = [...spec.options, CHANNEL_OPTION];
+  return tool?.options ? all.filter((o) => tool.options!.includes(optionKey(o))) : all;
 }
 
 /** JSON Schema for a tool's arguments, as MCP `tools/list` carries it. */
@@ -121,7 +148,7 @@ export function toolInputSchema(tool: NativeTool): Record<string, unknown> {
     properties[p.name] = prop(p.name, tool.positionals[p.name]);
     if (p.required) required.push(p.name);
   }
-  for (const opt of optionsOf(spec)) {
+  for (const opt of optionsOf(spec, tool)) {
     const key = optionKey(opt);
     properties[key] = prop(key, opt.description);
   }
@@ -145,7 +172,7 @@ export function toolAction(tool: NativeTool, args: unknown): IpcAction {
   const given = input as Record<string, unknown>;
 
   const positionals = positionalsOf(spec);
-  const options = optionsOf(spec);
+  const options = optionsOf(spec, tool);
   const known = new Set([...positionals.map((p) => p.name), ...options.map(optionKey)]);
   const unknown = Object.keys(given).filter((k) => !known.has(k));
   if (unknown.length) {

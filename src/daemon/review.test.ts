@@ -943,6 +943,22 @@ describe('review prompt', () => {
     expect(prompt).toContain('不要调用任何工具');
     expect(prompt.startsWith('这是一次自动复盘')).toBe(true);
     expect(prompt).toContain('不要请求确认，不要等待批准，不要先给方案');
+    // Nothing searched for: no section for it.
+    expect(prompt).not.toContain('搜过、没找到');
+  });
+
+  it('lists what the agents searched the library for and did not find, before the conversation', () => {
+    const prompt = buildReviewPrompt({
+      title: 't',
+      messages: [{ at: '2026-11-04T09:00:00.000Z', role: 'user', text: '续一下证书' }],
+      dropped: 0,
+      catalog: [],
+      used: [],
+      searchedFor: ['rotate the vpn certificate', '续证书'],
+    });
+    expect(prompt).toContain('智能体在技能库里搜过、没找到的\n- rotate the vpn certificate\n- 续证书');
+    expect(prompt.indexOf('搜过、没找到')).toBeLessThan(prompt.indexOf('用户：续一下证书'));
+    expect(prompt).toContain('talkcode-resident 只有人能改');
   });
 });
 

@@ -31,9 +31,9 @@ CLI 给你弹按钮，模型通过内置 skill 找到它；再不行就用纯文
 自己跑在哪里；它拿到的就是你的话和你的附件。回答之外它还能做的事，和别的能力一样，经由它
 自己的 harness 送到它面前：
 
-- **两个原生工具** `send_file` 和 `schedule`，所有走 ACP 的智能体（Claude Code、Codex、
+- **三个原生工具** `send_file`、`schedule` 和 `skills`，所有走 ACP 的智能体（Claude Code、Codex、
   OpenCode、Antigravity……）都有：守护进程给每个会话挂一个小的 MCP server，它们就和别的工具一样出现在
-  智能体的工具列表里。
+  智能体的工具列表里。`skills` 用来搜索和阅读[技能库](skills.md#常驻与库内)里那些不在智能体自己列表里的技能。
 - **一个 skill** 管其余的——发到别的聊天、读聊天记录、回复、编辑、话题、按钮提问、语音转写。
   守护进程把内置的 [skill](../../skill/SKILL.md) 软链到各 harness 读 skill 的地方——Claude Code 是
   `~/.claude/skills`，Codex 和 OpenCode 是 `~/.agents/skills`，Antigravity 是 `~/.gemini/config/skills`
@@ -42,9 +42,9 @@ CLI 给你弹按钮，模型通过内置 skill 找到它；再不行就用纯文
   `schedule`、`channels`、`history`、`messages`、`threads`、`ask`、`voice`、`tasks`——打印该主题的命令
   和规则。旁边还链着第二个 skill `super`：你发 `/super` 时，它告诉智能体怎样把活拆给[子代理](sub-agents.md)。
 
-Antigravity（`agy`）改用 `agy acp` 运行后也有这两个工具；在它的
+Antigravity（`agy`）改用 `agy acp` 运行后也有这些工具；在它的
 [stream-json 回退方式](agents.md#回退到-stream-json)下只有 skill——那种模式没有按会话添加工具的途径，
-而网关不会去改 agy 的全局 MCP 配置——同样的两件事在 skill 里以 CLI 命令的形式提供。为什么正好两个工具、被它替换掉的提示词注入
+而网关不会去改 agy 的全局 MCP 配置——同样的事在 skill 里以 CLI 命令的形式提供。为什么正好是这几个工具、被它替换掉的提示词注入
 是怎么退场的，见 [`src/ipc/README.md`](../../src/ipc/README.md)。
 
 **图片就是图片。** 你发的截图或照片会以图片的形式直接交给 Claude Code、Codex 和 OpenCode，

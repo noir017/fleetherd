@@ -179,6 +179,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     summary: "The skills the gateway keeps for every agent: read, write, archive, restore, roll back",
     notes: [
       'These are the gateway\'s own skills, not the harness\'s installed ones. Each one is delivered to every agent on every host, so what you write here reaches all of them: keep it about a kind of task, not about one conversation. It acts on the whole gateway, so --channel does not apply.',
+      'Most skills are in the library, not in your skill list: `search <what you need>` finds them (up to 5), and `show <name>` reads one — SKILL.md whole, with the list of its other files. A skill already in your list says so; use it from there. `show` of a version this conversation already read answers "unchanged"; add --again if it is no longer in your context. Resident skills — the ones in every agent\'s list — are chosen by a person; a patch that changes `talkcode-resident` in the frontmatter is refused.',
       'Names are lowercase words joined by hyphens (a-z, 0-9). `talkcode` and `super` are the bundled skills and cannot be reused. `SKILL.md` is at most 64 KB and must begin with frontmatter naming the skill and a one-line description of when to use it; files beyond it go only in references/, templates/ or scripts/.',
       'Read before you write: `show <name>` prints the content and a version. `patch <name> --version <that version> --content <full SKILL.md>` is refused if the skill has changed since — run show again, re-apply your edit, and patch with the new version.',
       '`create <name> --description "<when to use it>" [--body <markdown>]` starts a skill; `write-file` and `remove-file` add or remove a reference, template or script. Every change is a commit in the skills repository, a person\'s included; `history <name>` lists them and `revert <name> <id>` puts back the files as they were before that one.',
@@ -650,19 +651,37 @@ function skillsWriteFile(name: string, file: string, opts: Record<string, unknow
 }
 
 /** `skills <action> …`: one IpcAction. The store validates every rule; this only maps the words. */
+/** The `skills` actions that only read; undefined for the others. */
+function buildSkillsRead(action: string, p: string[], opts: Record<string, unknown>): IpcAction | undefined {
+  switch (action) {
+    case 'list':
+    case 'categories':
+      return { kind: 'skills', action };
+    case 'search': {
+      // The rest of the line is the query, so `talkcode skills search deploy check` needs no quotes.
+      const query = p.slice(1).join(' ').trim();
+      if (!query) throw new Error('skills search needs what you are looking for, in a few words');
+      return { kind: 'skills', action, query };
+    }
+    case 'show':
+      if (!p[1]) throw new Error('skills show needs a <name>');
+      return { kind: 'skills', action, name: p[1], ...(p[2] ? { file: p[2] } : {}), ...(opts.again ? { again: true } : {}) };
+    default:
+      return undefined;
+  }
+}
+
 function buildSkills(p: string[], opts: Record<string, unknown>): IpcAction {
   if (str(opts.channel) !== undefined) throw new Error('skills are the whole gateway\'s; --channel does not apply');
   const action = pos(p, 0, 'action').toLowerCase();
+  const read = buildSkillsRead(action, p, opts);
+  if (read) return read;
   const need = (i: number, name: string): string => {
     const value = p[i];
     if (!value) throw new Error(`skills ${action} needs a <${name}>`);
     return value;
   };
   switch (action) {
-    case 'list':
-      return { kind: 'skills', action };
-    case 'show':
-      return { kind: 'skills', action, name: need(1, 'name'), ...(p[2] ? { file: p[2] } : {}) };
     case 'create':
       return skillsCreate(need(1, 'name'), opts);
     case 'patch':
@@ -680,7 +699,7 @@ function buildSkills(p: string[], opts: Record<string, unknown>): IpcAction {
     case 'history':
       return { kind: 'skills', action, name: need(1, 'name') };
     default:
-      throw new Error(`unknown skills action "${action}"; use list | show | create | patch | write-file | remove-file | archive | restore | pin | unpin | history | revert`);
+      throw new Error(`unknown skills action "${action}"; use list | search | categories | show | create | patch | write-file | remove-file | archive | restore | pin | unpin | history | revert`);
   }
 }
 
@@ -1021,8 +1040,9 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'skills <action> [name] [file]',
     topic: 'skills',
     description:
-      'The skills the gateway keeps for every agent: list | show <name> [file] | create <name> --description … | patch <name> --version … --content … | write-file | remove-file | archive | restore | pin | unpin | history | revert <name> <id>',
+      'The skills the gateway keeps for every agent: search <what you need> | show <name> [file] | list | categories | create <name> --description … | patch <name> --version … --content … | write-file | remove-file | archive | restore | pin | unpin | history | revert <name> <id>',
     options: [
+      { flags: '--again', description: 'show: read it whole even if this conversation already read this version' },
       { flags: '--description <text>', description: 'create: one line on when to use the skill (required)' },
       { flags: '--body <markdown>', description: 'create: the SKILL.md body' },
       { flags: '--version <version>', description: 'patch: the version `show` printed (required; the write is refused if it changed)' },
