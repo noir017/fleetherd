@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import {
   agyAcpToolLabel,
-  agyRuntime,
   agySplitModel,
   agyTurnWatch,
   agyWarningOf,
@@ -36,15 +35,6 @@ const OPTIONS: SessionConfigOption[] = [
     options: ['low', 'medium', 'high'].map((v) => ({ value: v, name: v })),
   },
 ];
-
-describe('agyRuntime', () => {
-  it('is ACP unless the agent’s env names the stream-json fallback', () => {
-    expect(agyRuntime({ env: {} })).toBe('acp');
-    expect(agyRuntime({ env: { TALKCODE_AGY_RUNTIME: 'acp' } })).toBe('acp');
-    expect(agyRuntime({ env: { TALKCODE_AGY_RUNTIME: ' Stream-JSON ' } })).toBe('stream-json');
-    expect(agyRuntime({ env: { TALKCODE_AGY_RUNTIME: 'something-else' } })).toBe('acp');
-  });
-});
 
 describe('agySplitModel', () => {
   it('splits the `agy models` spelling into the offered model and its thinking level', () => {

@@ -504,22 +504,21 @@ though the gateway could answer it outright. Four do:
 | command | why there is no native name to translate to | what answers it |
 |---|---|---|
 | `/context` (opencode, dsh) | opencode's `/compact`-family commands are TUI-only; ACP mode never sees them | the last `usage_update {used, size}` the agent sent, the same numbers the footer prints |
-| `/context` (agy) | `agy acp` sends no `usage_update`, only a per-turn sum in the prompt response (`daemon/agy-acp.ts`); its stream-json fallback has per-step counts, or an old agy's status line | the last context the runtime could vouch for — after a turn of one model call on `agy acp` |
-| `/usage` (agy) | agy's own CLI answers it: forwarded, `agy acp` hands it to the model as a question, and the stream-json fallback **dies** of it | a one-shot `agy -p=/usage`, rendered as quota bars |
-| `/model` (opencode, claude, agy) | all three expose the selector as a config option (`agy acp` since 1.5); agy's stream-json fallback reads it from `agy models` and switches via kill-and-respawn with `--model` and `--conversation` | `ConversationRegistry.applyModelCommand` via `AgentSession.modelSelector()` / `setModel()` |
+| `/context` (agy) | `agy acp` sends no `usage_update`, only a per-turn sum in the prompt response (`daemon/agy-acp.ts`) | the last context the runtime could vouch for — after a turn of one model call |
+| `/usage` (agy) | agy's own CLI answers it: forwarded, `agy acp` hands it to the model as a question | a one-shot `agy -p=/usage`, rendered as quota bars |
+| `/model` (opencode, claude, agy) | all three expose the selector as a config option (`agy acp` since 1.5) | `ConversationRegistry.applyModelCommand` via `AgentSession.modelSelector()` / `setModel()` |
 | `/effort` (claude, codex, opencode, agy) | all four expose the level as a config option in category `thought_level` (ids differ: `effort`, `reasoning_effort`, `thought_level`); none advertises a command for it | `ConversationRegistry.applyEffortCommand` via `AgentSession.effortSelector()` / `setEffort()` |
 
 ### `HARNESS_CLI_ANSWERED` — the names that must not be forwarded
 
 A separate list from the vocabulary above, answering a different question: not "can this
 be translated" but "would sending this anywhere near the agent break it". On `agy` the
-twelve commands its own CLI answers (`agy -p /help` prints them) end a stream-json
-session and every turn behind it — `status:ERROR`, process exit 2 — and under `agy acp` reach
-the model as a question it can only guess at, so `isCliAnsweredCommand` diverts them to a
-one-shot process instead. Everything else, skills above all, passes
-through untouched; both halves of that were probed on agy 1.2.0 and the evidence is in the
-file. It is a static copy of a list the CLI can produce, and the header says what that
-costs if agy adds another (1.5.1 added `/plugin`).
+twelve commands its own CLI answers (`agy -p /help` prints them) reach `agy acp` as a
+question the model can only guess at, so `isCliAnsweredCommand` diverts them to a one-shot
+process instead. Everything else, skills above all, passes through untouched; both halves of
+that were probed on agy 1.2.0 and the evidence is in the file. It is a static copy of a list
+the CLI can produce, and the header says what that costs if agy adds another (1.5.1 added
+`/plugin`).
 
 `/model` has two surfaces, both built from `model-menu.ts` so they cannot disagree about
 what happened. On a platform that can post buttons **and** edit them afterwards, a bare

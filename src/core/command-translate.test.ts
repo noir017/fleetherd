@@ -64,9 +64,8 @@ describe('translateCommand', () => {
     // A native spelling still wins where the harness really does own the answer.
     expect(translateCommand('context', 'claude')).toEqual({ kind: 'translated', native: 'context' });
     expect(translateCommand('context', 'gemini')).toEqual({ kind: 'translated', native: 'stats' });
-    // agy speaks no ACP, but each of these was tracked down to the channel agy does publish on:
-    // the model selector to `agy models` + kill-and-respawn, /usage to a one-shot `agy -p=/usage`,
-    // and /context to the snapshot agy hands its statusLine command (daemon/agy-statusline.ts).
+    // agy answers each of these on a channel of its own: the model selector and /context from
+    // `agy acp`'s session, and /usage from a one-shot `agy -p=/usage` (daemon/agy-acp.ts).
     expect(translateCommand('model', 'agy')).toEqual({ kind: 'local' });
     expect(translateCommand('usage', 'agy')).toEqual({ kind: 'local' });
     expect(translateCommand('context', 'agy')).toEqual({ kind: 'local' });
@@ -258,11 +257,12 @@ describe('agentCommandSpecs', () => {
 
 describe('translateCommand — agy', () => {
   it('reports unsupported generic commands as unsupported rather than forwarding them', () => {
-    // agy answers /compact itself and doing so aborts its stream-json session, so the daemon
-    // must reject the generic name instead of passing it through to the agent.
+    // agy is not in /compact's `native` map: `agy acp` advertises a `compact` built-in, but the
+    // gateway has no measured translation to it, so it refuses the generic name rather than
+    // forwarding it as text.
     expect(translateCommand('compact', 'agy')).toEqual({ kind: 'unsupported' });
-    // /model via kill-and-respawn with --model and --conversation; /context from the snapshot agy
-    // hands its statusLine command; /usage from a one-shot `agy -p=/usage`.
+    // /model and /context come from the ACP session (a config option and the turn's usage), and
+    // /usage from a one-shot `agy -p=/usage`.
     expect(translateCommand('model', 'agy')).toEqual({ kind: 'local' });
     expect(translateCommand('context', 'agy')).toEqual({ kind: 'local' });
     expect(translateCommand('usage', 'agy')).toEqual({ kind: 'local' });

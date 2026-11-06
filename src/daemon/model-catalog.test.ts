@@ -12,13 +12,10 @@ import { ModelCatalog } from './model-catalog.js';
 
 const SELECTOR: ModelSelector = { current: 'a', options: [{ value: 'a', name: 'A' }, { value: 'b', name: 'B' }] };
 
-function setup(opts: { selector?: ModelSelector; ensure?: () => Promise<void>; refresh?: () => Promise<void> } = {}) {
+function setup(opts: { selector?: ModelSelector; ensure?: () => Promise<void> } = {}) {
   const cfg = parseConfig({
     platforms: { tg: { type: 'telegram', token: 't' } },
-    agents: [
-      { id: 'oc', harness: 'opencode' },
-      { id: 'ag', harness: 'agy' },
-    ],
+    agents: [{ id: 'oc', harness: 'opencode' }],
     routing: { default: 'oc' },
   });
   const sessions = new Map<string, AgentSession>();
@@ -43,7 +40,6 @@ function setup(opts: { selector?: ModelSelector; ensure?: () => Promise<void>; r
               },
             }
           : {}),
-        ...(opts.refresh ? { refreshModels: opts.refresh } : {}),
       } as unknown as AgentSession;
       sessions.set(id, s);
       return s;
@@ -89,13 +85,6 @@ describe('ModelCatalog', () => {
     const [a, b] = await Promise.all([t.catalog.ask('oc'), t.catalog.ask('oc')]);
     expect(a).toBe(b);
     expect(t.created).toHaveLength(1);
-  });
-
-  it('reads a list served outside the session (agy) without starting one', async () => {
-    let refreshed = false;
-    const t = setup({ selector: SELECTOR, refresh: async () => void (refreshed = true) });
-    expect(await t.catalog.ask('ag')).toEqual({ kind: 'list', options: SELECTOR.options });
-    expect(refreshed).toBe(true);
   });
 
   it('says "none" for a harness that offers no model choice', async () => {

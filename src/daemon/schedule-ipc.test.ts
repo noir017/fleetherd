@@ -181,7 +181,6 @@ async function rig(
             if (agentId === 'lazy' && over.holdProbe) await probeGate;
             warm = true;
           },
-          refreshModels: async () => {},
           setModel: async (value: string) => {
             if (value === 'runtime-fail') throw new Error('the harness refused this model');
             models.push({ conversation: conversationId, model: value });

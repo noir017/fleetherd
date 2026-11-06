@@ -290,8 +290,8 @@ function candidateOf(config: Config): Config {
 /**
  * A model row's write. The agent DEF is mutated in place, not replaced: findAgent returns the live
  * array element, which is the very object each AgentSession captured at construction — so the next
- * spawn of an already-running conversation reads the new model (agent-acp applyModelPreference /
- * agent-agy's --model=) without anything having to re-resolve it.
+ * spawn of an already-running conversation reads the new model (agent-acp applyModelPreference)
+ * without anything having to re-resolve it.
  */
 function applyModel(cfg: Config, row: SettingRow, value: string | number | boolean | undefined): void {
   const def = findAgent(cfg, row.target ?? '');

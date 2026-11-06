@@ -8,15 +8,16 @@ import type { InboundMessage } from '../types.js';
 /**
  * The slash names agy's own CLI answers, and why they are handled here instead of being forwarded.
  *
- * This is a correctness test before it is a feature test. Probed on agy 1.2.0 (2026-09-17): writing
- * one of these into a resident stream-json session makes agy answer "…is answered by the CLI itself
- * and is unavailable with --input-format stream-json", set `status:ERROR`, and EXIT with code 2 —
- * the conversation's child dies and every later turn in that message is lost. So the assertion that
- * matters in each case below is the negative one: `prompts` stays empty.
+ * This is a correctness test before it is a feature test. Forwarded, one of these reaches `agy acp`
+ * as an ordinary question for the model — probed on 1.5.1 (2026-11-06): `/usage` got "which kind of
+ * usage information are you looking for?" — so the turn is spent and the CLI's real answer never
+ * arrives. Before ACP it was worse: on agy 1.2.0 (2026-09-17) the same text made agy set
+ * `status:ERROR` and exit 2, ending the session. Either way the assertion that matters in each case
+ * below is the negative one: `prompts` stays empty.
  *
- * The same probe found that a skill slash (`/aa-probe`) and an unrecognized one both pass through
- * harmlessly, which is what made dropping `--disable-slash-commands` possible — and is why the last
- * test here pins that a non-CLI name still reaches the agent untouched.
+ * A skill slash (`/aa-probe`) and an unrecognized one pass through harmlessly (same agy 1.2.0
+ * probe), which is why the last test here pins that a non-CLI name still reaches the agent
+ * untouched.
  */
 
 const parsed = parseConfig({
@@ -135,8 +136,9 @@ describe('agy’s own CLI commands', () => {
   it('answers /effort itself, without running the CLI at all', async () => {
     // `/effort` is in agy's CLI-answered list, but it is also a generic command — and the generic
     // vocabulary wins: `agy acp` exposes the level as a config option (and `agy -p=/effort` only
-    // says "not adjustable"). Fatal to a stream-json session if forwarded, so `prompts` staying
-    // empty is the assertion that matters. This session offers no selector, so it says so.
+    // says "not adjustable"). Forwarding it would spend a turn on a question the CLI owns, so
+    // `prompts` staying empty is the assertion that matters. This session offers no selector, so it
+    // says so.
     const { send, prompts, replies, ran } = rig({ ok: true, output: 'not adjustable' });
     await send('/effort');
     expect(prompts).toEqual([]);

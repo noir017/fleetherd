@@ -152,7 +152,7 @@ export function effortSummaryText(selector: EffortSelector): string {
  * - **opencode** offers levels only for a model with reasoning variants (none on
  *   `opencode/mimo-v2.6-flash-free`; switching to an Anthropic model adds them).
  * - **agy** (`agy acp` 1.5.1) offers a `thought_level` for Gemini and none for GPT-OSS or the
- *   Claude models; its stream-json fallback offers none for any model.
+ *   Claude models.
  * - anything else gets the generic sentence, with no advice it cannot back up.
  */
 export function effortNoSelectorText(harness: Harness | undefined, model: string | undefined): string {

@@ -253,7 +253,7 @@ describe('moving a conversation', () => {
   it('is what the runtimes will read at spawn', async () => {
     const { reg, send, key } = rig();
     await send('/cd quantlab');
-    // workdirOf is the same call agent-acp/agent-agy make (resolveConversationCwd), so this is the
+    // workdirOf is the same call the runtime makes (resolveConversationCwd), so this is the
     // directory the next child actually starts in — and what the footer reports.
     expect(reg.workdirOf(key, 'cc')).toBe(QUANTLAB);
     // …for every agent that answers here, not only the one bound when the move was made.
@@ -417,11 +417,11 @@ describe('applying a click', () => {  it('moves the conversation the menu was op
 });
 
 /**
- * The other end of the wire: what agent-acp and agent-agy call at spawn to decide where to put the
- * child. Tested directly because the runtimes themselves can only be exercised by launching a
- * harness — and this one function is the whole of what `/cd` changes about them.
+ * The other end of the wire: what agent-acp calls at spawn to decide where to put the child.
+ * Tested directly because the runtime itself can only be exercised by launching a harness — and
+ * this one function is the whole of what `/cd` changes about it.
  */
-describe('resolveConversationCwd (read by both runtimes at spawn)', () => {
+describe('resolveConversationCwd (read by the runtime at spawn)', () => {
   const def = cfg.agents.find((a) => a.id === 'cc')!;
   const file = () => join(mkdtempSync(join(tmpdir(), 'workdir-resolve-')), 'conversations.json');
 

@@ -56,9 +56,8 @@ export type SessionScope = z.infer<typeof SessionScope>;
  * command points at any ACP-speaking executable. harness-specific switches (e.g.
  * claude's --setting-sources) go through args, not the generic schema.
  *
- * All presets except `agy` speak ACP (see daemon/agent-acp.ts). `agy` (Google Antigravity CLI) has
- * no ACP mode at all and is driven over its own stream-json protocol by daemon/agent-agy.ts; the
- * factory picks the runtime from this field.
+ * Every preset speaks ACP (see daemon/agent-acp.ts); `agy` (Google Antigravity CLI) since agy 1.5,
+ * through `agy acp`.
  */
 const AgentDefFields = z
   .object({
@@ -165,47 +164,14 @@ const AgentDefFields = z
     group: z.string().min(1).max(64).optional(),
   });
 
-/**
- * The agent-env key that keeps one agy agent on the stream-json runtime (daemon/agent-agy.ts) instead
- * of `agy acp` (daemon/agent-acp.ts), which serves agy since 2026-11-06.
- *
- * In `env` rather than a config field because it is temporary: it exists so a host where `agy acp`
- * misbehaves can be put back without a release, and goes with agent-agy.ts once every host has run
- * the ACP runtime. `env` is already per agent and already reachable from a host's own pod.yaml, so a
- * host can be switched on its own, and a reload applies it — the changed agent's conversations end
- * their child and the next message starts the other runtime, resuming the same conversation (an agy
- * conversation id is the same in both protocols: probed 2026-11-06, a stream-json conversation
- * loaded through `session/load` and answered from its history). Like the rest of `env` it also
- * reaches the agent's own environment, where nothing reads it.
- *
- * Here rather than in daemon/ because the schema needs it too (`permissions: ask`, below).
- */
-export const AGY_RUNTIME_ENV = 'TALKCODE_AGY_RUNTIME';
-
-/** Which runtime serves an agy agent: ACP unless its env names the stream-json fallback. */
-export function agyRuntime(def: { env?: Record<string, string> }): 'acp' | 'stream-json' {
-  return def.env?.[AGY_RUNTIME_ENV]?.trim().toLowerCase() === 'stream-json' ? 'stream-json' : 'acp';
-}
-
 /** The cross-field rules every agent definition obeys, wherever it was written. */
-function agentRules<
-  O extends { harness: string; command?: string; permissions: string; env?: Record<string, string> },
-  I,
->(schema: z.ZodType<O, z.ZodTypeDef, I>) {
-  return (
-    schema
-      .refine((a) => a.harness !== 'custom' || (a.command !== undefined && a.command.length > 0), {
-        message: 'command is required when harness=custom',
-        path: ['command'],
-      })
-      // agy's stream-json fallback is launched with --dangerously-skip-permissions (agent-agy.ts):
-      // there is no request for the gateway to put to anyone, so `ask` would be a promise silently
-      // not kept. `agy acp` sends `session/request_permission` like any ACP harness (probed on 1.5.1).
-      .refine((a) => a.harness !== 'agy' || a.permissions !== 'ask' || agyRuntime(a) === 'acp', {
-        message: `permissions: ask is not available for agy on the stream-json runtime (${AGY_RUNTIME_ENV}) — it has no permission requests the gateway can answer`,
-        path: ['permissions'],
-      })
-  );
+function agentRules<O extends { harness: string; command?: string }, I>(
+  schema: z.ZodType<O, z.ZodTypeDef, I>
+) {
+  return schema.refine((a) => a.harness !== 'custom' || (a.command !== undefined && a.command.length > 0), {
+    message: 'command is required when harness=custom',
+    path: ['command'],
+  });
 }
 
 export const AgentDefSchema = agentRules(AgentDefFields);

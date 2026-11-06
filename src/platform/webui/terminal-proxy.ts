@@ -2,9 +2,9 @@
  * A reverse proxy to the `ttyd` behind the terminal pane, over a unix socket.
  *
  * ── Why the terminal is not built here ───────────────────────────────────────
- * Nothing in this daemon has raw terminal output to offer. Both agent runtimes spawn their
- * child over plain pipes and read strictly line-delimited JSON (`agent-acp.ts`,
- * `agent-agy.ts`); a line that does not parse is dropped, and the ACP handshake even declares
+ * Nothing in this daemon has raw terminal output to offer. The agent runtime spawns its
+ * child over plain pipes and reads strictly line-delimited JSON (`agent-acp.ts`); a line that
+ * does not parse is dropped, and the ACP handshake even declares
  * `terminal: false`. A pane showing "the command line" therefore cannot tap the agent — it has
  * to be a second, parallel thing: a real PTY, and a terminal emulator in the browser.
  *

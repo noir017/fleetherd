@@ -1,34 +1,22 @@
 import type { QuotaPool } from '../types.js';
 
 /**
- * What agy tells the footer about a session — context, model, quota — now that its status line is
- * gone from the mode the daemon runs it in.
+ * What agy tells the footer about a session — context window, quota — where ACP does not.
  *
- * ── Why this exists ───────────────────────────────────────────────────────────
- * All three used to arrive together, off the status line (agy-statusline.ts). agy 1.4.7
- * (2026-10-27) stopped running it in `-p`, which is the only way stream-json can be driven — its
- * changelog: headless runs "no longer start your custom status line and window title commands,
- * none of which print mode shows". Probed the same day, a turn put nothing at all on fd 3, and the
- * footer and the web UI's status strip lost the context bar, the default model's name and the
- * quota pools in one go. So each now comes from wherever agy still publishes it:
- *
- *   context  ← the stream itself: every `agent_response` step's DONE frame carries that model
- *              call's `usage` (new since the status line was built — it is what made it necessary)
- *   window   ← nowhere; agy names no window size on the wire, so it is the table below
- *   model    ← `init` when `--model=` was passed, else a one-shot `agy -p=/model`
- *   quota    ← a one-shot `agy -p=/usage`, the same command `/usage` in chat runs
- *
- * The one-shots are the expensive part (~3.5s each, a round trip to Google, measured on 1.4.7), so
- * the runtime starts them alongside the turn rather than after it; see agent-agy.ts.
+ * `agy acp` reports usage once per turn (the prompt response, summed over the turn's model calls —
+ * see agent-acp.ts settleAgyTurn) but never says how big the window is, has no quota method, and
+ * answers a `/usage` prompt as a question about usage. So the window is a table of the ones
+ * measured, and the quota is a one-shot `agy -p=/usage` (agy-cli.ts, driven by agy-acp.ts
+ * createAgyQuotaMeter).
  */
 
 /**
- * Context window sizes, by model. agy reports none — not in the stream, not in `agy models`, not
- * in its hooks — so the only way to know one is to have seen agy's own status line draw it.
+ * Context window sizes, by model. agy reports none — not in ACP, not in `agy models`, not in its
+ * hooks — so the only way to know one is to have seen agy's own status line draw it.
  *
  * Every entry was read off that status line under a PTY, where agy 1.4.7 still runs it, with no
- * prompt sent (2026-10-27, `project-scripts/talkcode-agy-147-usage/window.py`). The shim draws the
- * window to one decimal of a thousand, so the Claude and GPT-OSS figures are exact to within that:
+ * prompt sent (2026-10-27, `project-scripts/talkcode-agy-147-usage/window.py`). It draws the window
+ * to one decimal of a thousand, so the Claude and GPT-OSS figures are exact to within that:
  *
  *   Gemini 3.8 Flash (High)        → 1.0M     (1048576 exactly, from the raw snapshot on 1.2.0)
  *   Claude Sonnet / Opus 4.6       → 250.0k
@@ -49,64 +37,6 @@ const CONTEXT_WINDOWS: ReadonlyArray<{ match: RegExp; size: number }> = [
 export function agyContextWindow(model: string | undefined): number | undefined {
   if (!model) return undefined;
   return CONTEXT_WINDOWS.find((w) => w.match.test(model.trim()))?.size;
-}
-
-/**
- * Tokens in context, from one `step_update` frame — an `agent_response` step that has finished,
- * its `input_tokens` plus its `cache_read_tokens` — and undefined for anything else.
- *
- * Captured on agy 1.4.7 (2026-10-27), one tool call then a reply, then a second turn, on Gemini:
- *
- *   step 1 agent_response DONE  usage.input_tokens 7454   (the step that chose the tool)
- *   step 3 agent_response DONE  usage.input_tokens 7672
- *   result                      usage.input_tokens 15126  ← 7454 + 7672
- *   step 5 agent_response DONE  usage.input_tokens 7760
- *   result                      usage.input_tokens 22886  ← all three
- *
- * So each step's figure is the prompt that model call was sent — the context as it stood — and the
- * `result`'s is a running total over the whole conversation, the same way its `status` is (see
- * settleErrorResult in agent-agy.ts). Reading `result` would put a number in the footer that only
- * ever grows, past the window, in a conversation that never came near it.
- *
- * The cached part is NOT in `input_tokens`. The same prompts on Claude Sonnet 4.6, once with no
- * cache hit and once with:
- *
- *   first step   input 8713, cache_read 0       vs   input 4566 + cache_read 4150 = 8716
- *   next turn    input 9004, cache_read 0       vs   input  776 + cache_read 8231 = 9007
- *
- * Read alone, the second turn's context came out as 157 tokens of a 250k window. `total_tokens` is
- * input + output with the cache left out too, so the split looks like agy's own schema rather than
- * Claude's, but on Gemini `cache_read_tokens` was 0 in every frame seen, so that is unconfirmed.
- *
- * Only `agent_response`: a subagent's steps would describe the subagent's own context, not this one.
- */
-export function agyStepContextTokens(step: {
-  step_type?: string;
-  usage?: { input_tokens?: unknown; cache_read_tokens?: unknown };
-}): number | undefined {
-  if (step.step_type !== 'agent_response') return undefined;
-  const input = tokenCount(step.usage?.input_tokens);
-  if (input === undefined) return undefined;
-  return input + (tokenCount(step.usage?.cache_read_tokens) ?? 0);
-}
-
-function tokenCount(n: unknown): number | undefined {
-  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : undefined;
-}
-
-/**
- * The model `agy -p=/model` names as the current default: its first row, `<id>\t<display name>`.
- * Verbatim on agy 1.4.7 (2026-10-27): `gemini-3.8-flash-high\tGemini 3.8 Flash (High)`. The id is
- * kept, because `init` and the `/model` menu both spell a model that way.
- */
-export function parseAgyCurrentModel(output: string): string | undefined {
-  const first = output
-    .split('\n')
-    .map((l) => l.trim())
-    .find(Boolean);
-  const id = first?.split('\t')[0]?.trim();
-  // A model id is one token; anything with spaces is prose agy printed instead of the table.
-  return id && !/\s/.test(id) && id.length <= 120 ? id : undefined;
 }
 
 /**
@@ -160,4 +90,25 @@ function poolWindow(metric: string): string | undefined {
   if (/five hour|\b5 ?h/i.test(metric)) return '5h';
   if (/day/i.test(metric)) return 'daily';
   return undefined;
+}
+
+/** The model families agy's third-party pool serves. */
+const THIRD_PARTY_MODEL = /claude|gpt|sonnet|haiku|opus|o1|o3|3p/i;
+
+/**
+ * Mark the pools the serving model spends from.
+ *
+ * agy meters Gemini and third-party models (Claude, GPT) separately, and names its pools after
+ * which: `gemini-*` and `3p-*`. A pool of neither family, or a turn with no known model, is left
+ * unmarked — the page then shows every pool alike rather than highlighting a guess.
+ */
+export function markActivePools(pools: QuotaPool[], model: string | undefined): QuotaPool[] {
+  if (!model) return pools;
+  const thirdParty = THIRD_PARTY_MODEL.test(model);
+  return pools.map((p) => {
+    const family = p.id.split('-')[0]?.toLowerCase();
+    if (family === '3p' || family === 'claude') return { ...p, active: thirdParty };
+    if (family === 'gemini') return { ...p, active: !thirdParty };
+    return p;
+  });
 }

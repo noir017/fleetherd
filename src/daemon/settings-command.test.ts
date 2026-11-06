@@ -179,12 +179,13 @@ function rig(opts: RigOptions = {}) {
           runTurn: async () => {},
           abort: () => {},
           dispose: () => {},
-          modelSelector: () => selector.value,
+          modelSelector: () => (opts.slowModels ? undefined : selector.value),
           setModel: async (value: string) => value,
-          ...(opts.slowModels ? { refreshModels: () => new Promise<void>(() => {}) } : {}),
-          ...(opts.ensureFails
-            ? { ensureSession: () => Promise.reject(new Error(opts.ensureFails)) }
-            : {}),
+          ...(opts.slowModels
+            ? { ensureSession: () => new Promise<void>(() => {}) }
+            : opts.ensureFails
+              ? { ensureSession: () => Promise.reject(new Error(opts.ensureFails)) }
+              : {}),
         } as AgentSession;
         sessions.set(conversationId, s);
       }

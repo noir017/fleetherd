@@ -363,25 +363,6 @@ func TestSignalsReachTheProcess(t *testing.T) {
 	}
 }
 
-func TestFd3ReachesTheGateway(t *testing.T) {
-	d := testDaemon(t, "fd3")
-	g := dialGateway(t, d.sockPath, "E1", 0, 0)
-	g.send(&Header{T: "spawn", ID: "p1", Cmd: "sh", Args: []string{"-c", "echo status >&3"}, Fd3: true}, nil)
-	var got string
-	for {
-		h, body := g.next(5 * time.Second)
-		if h.T == "out" && h.Fd == 3 {
-			got += string(body)
-		}
-		if h.T == "exit" {
-			break
-		}
-	}
-	if got != "status\n" {
-		t.Fatalf("fd 3: %q", got)
-	}
-}
-
 func TestReverseCommandRoundTrip(t *testing.T) {
 	d := testDaemon(t, "cli")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)

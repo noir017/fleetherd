@@ -10,9 +10,8 @@
  * stub around state `room.ts` holds anyway, and `satori-core` would be carrying a `Context`
  * that installs nothing.
  *
- * So it implements `PlatformAdapter` directly, which is all the daemon ever sees. Same shape
- * as `daemon/agent-agy.ts` being a sibling runtime to `agent-acp.ts` rather than a pretend
- * ACP harness.
+ * So it implements `PlatformAdapter` directly, which is all the daemon ever sees — a sibling
+ * implementation rather than a pretend member of a protocol it does not speak.
  *
  * ── What that costs, and where it is paid back ───────────────────────────────
  * Bypassing `satori-core` means bypassing what it does for EVERY platform, and the failure

@@ -172,19 +172,17 @@ DMs always get a response regardless of `requireMention` (frozen behavior).
 
 Notes:
 - `harness: claude` with no API key reuses the machine's `claude /login` session.
-- `harness: agy` (Google Antigravity CLI) is the one preset that does not speak ACP —
-  it has no ACP mode — so it runs over agy's own headless `stream-json` protocol.
-  Needs `agy` on PATH (`agy install`) and one interactive sign-in; headless runs never
-  prompt. It launches with `--disable-slash-commands`, because in stream-json mode a
-  CLI-answered slash (`/model`, `/usage`) aborts the whole session; pass
-  `args: ["--disable-slash-commands=false"]` to opt back in. Every default flag is
-  overridable via `args` (appended after the defaults; agy's parsing is last-wins).
+- `harness: agy` (Google Antigravity CLI) runs as `agy acp`, agy's own ACP server (agy 1.5
+  or later). Needs `agy` on PATH (`agy install`) and one interactive sign-in; headless runs
+  never prompt. `/model` and `/effort` are answered by the gateway from the session's own
+  config options; the names agy's CLI owns (`/usage`, `/credits`, …) run as one-shot processes
+  rather than being sent to the session. `args` are appended after `agy acp`.
 - `permissions: auto` (the default) approves every tool request the agent asks about, so it
   runs with full tool access and the only gate is `access.allowFrom`. `permissions: ask` puts
   each request to the user as buttons in the chat; one nobody answers within an hour is
   declined, and the agent is told no one answered (not that the user refused). Scheduled runs
-  are always approved. Only harnesses that ask at all are affected — Claude Code does in its
-  default mode; Codex and OpenCode did not ask when measured. Not available for `agy`.
+  are always approved. Only harnesses that ask at all are affected — Claude Code and `agy` do
+  in their default modes; Codex and OpenCode did not ask when measured.
 - `hooks.preLaunch` runs before every start of the agent's process; a non-zero exit or 60s
   without finishing fails the turn and the agent is not started. See docs/agents.md.
 - `hooks.turnFailed.continue.on` takes: `service`, `limit`, `connection`, `access`, `request`

@@ -150,4 +150,4 @@ and codex only for models in the installed codex-cli's own catalog (on 0.155.1,
 The choice is remembered like the model's: it survives the agent being stopped for
 idleness — the gateway re-applies it, since claude and codex come back at their
 default level — and `/new`, `/cd` and a daemon restart, until another agent is chosen.
-`agy` offers levels only on its Gemini models (none on its stream-json fallback).
+`agy` offers levels only on its Gemini models.

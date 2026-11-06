@@ -55,7 +55,6 @@ type Header struct {
 	Cwd    string            `json:"cwd,omitempty"`
 	Env    map[string]string `json:"env,omitempty"`
 	Unset  []string          `json:"unset,omitempty"`
-	Fd3    bool              `json:"fd3,omitempty"`
 	Fd     int               `json:"fd,omitempty"`
 	Sig    string            `json:"sig,omitempty"`
 	Code   *int              `json:"code,omitempty"`

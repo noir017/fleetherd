@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Removed
+
+- **agy's old stream-json runtime is gone.** 2.40.0 moved `harness: agy` onto `agy acp` and kept the
+  print-mode runtime as a fallback for an agent whose `env` set `TALKCODE_AGY_RUNTIME: stream-json`,
+  until every host had run the new one. Both hosts have run it, so the fallback and its switch are
+  deleted, along with what existed only for it: the factory that dispatched between two runtimes,
+  doctor's check that agy's `statusLine` still named the daemon's shim, the schema rule that refused
+  `permissions: ask` there, the per-step usage and `agy -p=/model` parsers, and the status-line shim
+  with its fourth-pipe plumbing (agy 1.4.7 had already stopped running it in print mode). `agy acp`
+  reports what it needs itself, and quota still comes from `agy -p=/usage`; the one-shot commands
+  (`agy -p=/<command>`) and the automatic review's `agy -p` with every tool denied are untouched. A
+  `TALKCODE_AGY_RUNTIME` left in an agent's `env` is now ignored, not refused — `env` reaches the
+  agent as written and nothing reads that name, so the agent runs on `agy acp`; delete the line. The
+  daemon also stops installing the `statusLine` shim into agy's `settings.json`, and leaves an
+  existing one in place: the script it points at stays on disk, so it keeps drawing.
+
 ## [2.40.0] - 2026-11-06
 
 ### Changed

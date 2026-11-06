@@ -128,7 +128,7 @@ agents:
   with the agent told why.
 - Only agents that ask are affected. Codex (mode `agent`) and OpenCode ran a file-writing command
   without asking when measured; `agy` asks before commands, not before writing in its working
-  directory, and cannot be set to `ask` on its [stream-json fallback](#falling-back-to-stream-json).
+  directory.
 
 ## Antigravity (`agy`)
 
@@ -160,36 +160,12 @@ harnesses. What differs:
 - **Skills** are read from `<cwd>/.agents/skills`, `~/.agents/skills`,
   `~/.gemini/antigravity-cli/skills`, `~/.gemini/skills` and
   `~/.gemini/config/skills`, so `/skills` lists them and `/<name> <request>` runs one.
-- **The status line.** On startup the daemon backs `~/.gemini/antigravity-cli/settings.json` up
-  once and points its `statusLine` at the daemon's own shim, which draws a status line for your own
-  interactive agy (and reports usage on an agy older than 1.4.7 under the fallback below). Set
-  `TALKCODE_NO_AGY_STATUSLINE=1` to leave the setting alone.
 
 `args` are passed after `agy acp` (see `agy acp --help`).
-
-### Falling back to stream-json
-
-Until the ACP runtime has run on every host, the previous one is still there: agy driven over its
-own [headless stream-json protocol](https://antigravity.google/docs/cli/headless/). Put an agent
-back on it through its `env` — in config.yaml, or in a host's `pod.yaml` — and `/reload`:
-
-```yaml
-agents:
-  - id: agy
-    harness: agy
-    env:
-      TALKCODE_AGY_RUNTIME: stream-json
-```
-
-The conversation carries over in both directions: both runtimes resume the same agy conversation.
-On stream-json, `permissions: ask` is refused, there is no `/effort`, a `/stop` restarts the child,
-context comes from each model step, and pictures go by path only. Its flags (`--model`,
-`--conversation`, `--dangerously-skip-permissions`, …) come first and `args` after them; agy's flag
-parsing is last-wins.
 
 > [!NOTE]
 > Google's FAQ states that accessing Antigravity with third-party tools violates
 > its Terms of Service and may lead to account suspension. This harness only
-> calls agy's own official interfaces (`agy acp`, or its headless mode on the fallback) and never handles your credentials
+> calls agy's own official interface (`agy acp`) and never handles your credentials
 > (sign-in stays entirely inside `agy`), but the daemon is still a non-Google
 > client driving your account — decide accordingly.

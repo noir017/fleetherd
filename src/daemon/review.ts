@@ -49,7 +49,7 @@ import {
  *    directory stayed empty);
  *  - the prompt cannot ride in argv: Linux caps one argument at 128 KB (`MAX_ARG_STRLEN`), and a
  *    360 KB `-p=` fails with "Argument list too long". It goes on stdin as one NDJSON user
- *    message instead (`reviewAgyInput`), in the same stream-json shape `agent-agy.ts` drives.
+ *    message instead (`reviewAgyInput`), in the stream-json shape agy's headless protocol defines.
  * The agent's own CLI still keeps its conversation state under `~/.gemini`, as any CLI does; that
  * is not a tool call. A tool added in a permission class not in that list would not be denied, so
  * the list is part of the security contract — see AGENTS.md invariant 8.
@@ -760,8 +760,9 @@ function addressOfLane(lane: ReviewLane): { channel: string; thread?: string } {
  * The argv for one review. The prompt is NOT here: a single argv entry is capped at 128 KB
  * (`MAX_ARG_STRLEN`), and a long Chinese conversation (40k characters is ~120 KB) plus the skills
  * it used blows through that — measured: a 360 KB `-p=` fails with "Argument list too long".
- * Instead agy is driven the way talkcode drives it everywhere else: stream-json on both ends, one
- * NDJSON user message on stdin, the answer on stdout.
+ * Instead agy runs in its headless print mode, stream-json in and out: one NDJSON user message on
+ * stdin, the answer on stdout. This is the one place the daemon still speaks that protocol — the
+ * reviewer has to be a one-shot process with no tools, not a session.
  */
 export function reviewAgyArgs(model: string | undefined): string[] {
   return [
@@ -770,13 +771,12 @@ export function reviewAgyArgs(model: string | undefined): string[] {
     '--disable-slash-commands',
     '--input-format=stream-json',
     '--output-format=stream-json',
-    // No prompt after `-p=`: stream-json reads stdin. This is the daemon's own resident shape
-    // (agent-agy.ts buildAgyArgs), with stdin closed after the one message.
+    // No prompt after `-p=`: stream-json reads stdin, which is closed after the one message.
     '-p=',
   ];
 }
 
-/** The one NDJSON frame agy expects from stdin, shaped as agent-agy.ts writes it. */
+/** The one NDJSON frame agy expects from stdin in that mode. */
 export function reviewAgyInput(prompt: string): string {
   return `${JSON.stringify({ event: 'user', message: { content: prompt } })}\n`;
 }
@@ -842,7 +842,7 @@ export async function runAgyReview(def: AgentDef, model: string | undefined, pro
   const host = remoteHosts.hostFor(def);
   // An agent with `host:` whose host is not registered (yet) must not be run HERE: in a
   // gateway-only container that is a machine with no agy, and on any other it is the wrong account
-  // and the wrong quota. Same rule as fetchAgyModelsFor.
+  // and the wrong quota.
   if (def.host && !host) return { ok: false, error: `host "${def.host}" is not registered` };
   if (!host) return runAgyReviewLocal(def, argv, input);
   const welcome = await host.ready();
