@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.47.0] - 2026-11-07
+
 A pass over what a gateway running for weeks, with dozens of topics streaming at once on two cores,
 spends its memory and its event loop on. Each item was measured before it was changed.
 
