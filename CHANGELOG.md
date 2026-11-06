@@ -38,15 +38,15 @@ All notable changes to this project are documented here. The format is based on
   now meet without spaces around the separator ("2·1"), which leaves the dot 2.3px inside the tab.
   [→](docs/web-ui.md#side-tasks)
 - **A turn an ACP agent ends with `stopReason: "refusal"` is a failed turn when the agent names a
-  cause, and an empty reply otherwise.** CodeBuddy reports an upstream rejection that way — its own
-  log said `category=quota`, while the gateway logged `turn complete`, the sub-agent card said
-  finished with no reply, and the chat showed nothing. The gateway now fails such a turn and carries
-  the cause the harness attached (`_meta["codebuddy.ai/errorMessage"]`), so a quota rejection is
-  classified `limit` and `hooks.turnFailed.continue` can continue it. This applies even when the
-  turn had already opened a tool or streamed text: the provider rejected it, so what came before is
-  a partial reply. A refusal that names no cause — a model declining to answer, which CodeBuddy
-  reports the same way — fails only when the turn showed nothing, and is `request`, which the
-  default continue list leaves alone because asking again does not change it. Claude sends its
+  cause, or when an unnamed refusal showed nothing.** CodeBuddy reports an upstream rejection that
+  way — its own log said `category=quota`, while the gateway logged `turn complete`, the sub-agent
+  card said finished with no reply, and the chat showed nothing. The gateway now fails such a turn
+  and carries the cause the harness attached (`_meta["codebuddy.ai/errorMessage"]`), so a quota
+  rejection is classified `limit` and `hooks.turnFailed.continue` can continue it. This applies even
+  when the turn had already opened a tool or streamed text: the provider rejected it, so what came
+  before is a partial reply. A refusal that names no cause — a model declining to answer, which
+  CodeBuddy reports the same way — fails only when the turn showed nothing, and is `request`, which
+  the default continue list leaves alone because asking again does not change it. Claude sends its
   refusal explanation as an ordinary message first, so that shape stays a normal end.
 
 ## [2.39.0] - 2026-11-06

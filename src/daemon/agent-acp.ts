@@ -2378,12 +2378,13 @@ function createAcpSession(
         // the tools are flushed, exactly as a rejection was, so the two read the same downstream.
         const failure = readSessionFailure(response._meta);
         if (failure?.severity === 'error') throw new TurnFailure(describeSessionFailure(failure), failureReasonOf(failure));
-        // A refusal is a failed turn when it names a cause, or when an unnamed one showed nothing
-        // (see failIfRefused). Checked before agy's settle so a refusal fails at once; agy's own
-        // warning lane is an `end_turn` with its own reason to report (agy-acp.ts AgyTurnWatch).
-        failIfRefused(response, output.sawOutput());
-        // agy's equivalent arrives as text, and its usage only here (agy-acp.ts AgyTurnWatch).
+        // agy first: its warning is the harness's own account of a turn that got no answer, so a
+        // refusal that ended on one must report `agy: <warning>` (provider) rather than the generic
+        // refusal. settleAgyTurn returns at once for every other harness.
         settleAgyTurn(state, response);
+        // A refusal is a failed turn when it names a cause, or when an unnamed one showed nothing
+        // (see failIfRefused).
+        failIfRefused(response, output.sawOutput());
         flushPendingTools(state);
       } catch (err) {
         if (aborting) return; // intentional abort is not an error

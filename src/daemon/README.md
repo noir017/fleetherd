@@ -679,8 +679,8 @@ when its upstream rejects the call (a JSON `{code, message, data}`; a `quota*` c
 `request` is not in the default continue list, because re-asking a model that declined does not
 change its answer, while a quota rejection is exactly what continuing is for. `max` still
 bounds either. This lane does not overlap agy's: its warning failures arrive on an `end_turn`
-(`AgyTurnWatch`, above), so `settleAgyTurn` reports those and the refusal check only sees the
-prompt's own stop reason.
+(`AgyTurnWatch`, below), and `settleAgyTurn` runs first, so a refusal that ended on one reports
+agy's own reason.
 
 One more silence is not a hang at all: claude-agent-acp's **folded prompt** (upstream
 #1145, unfixed as of 0.84.0). A prompt sent while Claude Code is reporting a finished
