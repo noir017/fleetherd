@@ -4202,6 +4202,27 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(narrowBlock()).toContain('env(safe-area-inset-bottom');
   });
 
+  it('splits the composer into two rows on narrow screens with full-width input and action buttons', () => {
+    const css = narrowBlock();
+    expect(css).toContain('#row{flex-wrap:wrap}');
+    expect(css).toContain('#input{width:100%;flex:0 0 100%}');
+    expect(css).toContain('#row button[type="submit"]{margin-left:auto}');
+    expect(css).toContain('#row #stop-turn:not([hidden]){margin-left:auto}');
+    expect(css).toContain('#row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}');
+  });
+
+  it('structures the composer with input first and buttons grouped for two-row mobile flow', () => {
+    const html = renderPage('Chat', false);
+    const rowMatch = html.match(/<div id="row">([\s\S]*?)<\/div>/);
+    expect(rowMatch).not.toBeNull();
+    const rowContent = rowMatch![1]!;
+    expect(rowContent).toMatch(/^\s*<textarea id="input"/);
+    expect(rowContent).toContain('<button type="button" id="attach"');
+    expect(rowContent).toContain('<button type="button" id="mic"');
+    expect(rowContent).toContain('<button type="button" id="stop-turn"');
+    expect(rowContent).toContain('<button type="submit"');
+  });
+
   it('gives the attachment × a target a finger can hit', () => {
     expect(narrowBlock()).toContain('.chip-x{min-width:44px;min-height:44px}');
   });

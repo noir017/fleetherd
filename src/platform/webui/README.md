@@ -1455,9 +1455,11 @@ without it. `page.test.ts` pins the viewport tag so this does not get added by r
   picking a topic should then close the drawer. They have to hold the same number. Under it
   the sidebar is a fixed-position drawer over the chat with a backdrop to dismiss it, heights
   are `dvh` so the collapsing URL bar does not push the composer off screen, the composer and
-  the token field are 16px so Safari does not zoom in on focus and stay there, the Send row
-  clears the home indicator via `env(safe-area-inset-bottom)`, the drawer toggle is padded out
-  to a 44px square (a `:not([hidden])` selector, because the rule sets `display` and would
+  the token field are 16px so Safari does not zoom in on focus and stay there, the composer
+  wraps onto two rows (full-width input on the first, actions on the second with attach and
+  mic on the left and Stop and Send on the right) so buttons do not squeeze the input box, the
+  Send row clears the home indicator via `env(safe-area-inset-bottom)`, the drawer toggle is
+  padded out to a 44px square (a `:not([hidden])` selector, because the rule sets `display` and would
   otherwise beat the UA's `[hidden]` rule while the drawer is open), and the input is not
   focused on open — the keyboard would take half the viewport before a word had been read.
 - **Enter sends; under the narrow-screen layout it writes a newline instead.** 1.22.0 made it a

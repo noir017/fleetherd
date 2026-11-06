@@ -1077,6 +1077,14 @@ button:disabled{opacity:.5;cursor:default}
      back out afterwards — every tap on the composer would leave the page a little larger. */
   #input,#secret{font-size:16px}
   #input{max-height:30dvh}
+  /* On a handset the composer splits into two rows so buttons do not squeeze the input box:
+     row 1 is the full-width textarea, row 2 carries the actions — attach and mic on the left,
+     Stop and Send on the right. Desktop keeps them all in one row. */
+  #row{flex-wrap:wrap}
+  #input{width:100%;flex:0 0 100%}
+  #row button[type="submit"]{margin-left:auto}
+  #row #stop-turn:not([hidden]){margin-left:auto}
+  #row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}
   /* The window's two controls, for a finger. Same 44px the drawer toggle gets, and for the
      same reason — but here it also matters WHICH of the two a near miss lands on: one hides the
      terminal and the other kills what is running in it. The gap is the separation. Setting
