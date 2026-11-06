@@ -20,7 +20,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentStatus, ConversationId, TopicActivity, TopicStage } from '../types.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { ConversationRegistry } from './conversation.js';
-import { UPDATE_SENDER } from './turn-runner.js';
+import { UPDATE_SENDER, type PersonWords } from './turn-runner.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
@@ -58,6 +58,12 @@ import { UPDATE_SENDER } from './turn-runner.js';
  * to the conversation that opened those topics, and is shown there (folded) before it is sent, so the
  * person sees exactly what the agent was told. What a sub-agent receives is the task text and nothing
  * else.
+ *
+ * It covers the turns the parent handed out and, since 2026-11-06, the turns the person starts or
+ * joins by writing in a sub-agent's topic, with what they wrote quoted above the result. Until then
+ * a turn the person started there was theirs alone, and the parent went on from a picture of its
+ * sub-agent that the person had already changed — it would report, review or redo work on the
+ * strength of a reply the person had since corrected.
  */
 
 /**
@@ -88,6 +94,17 @@ export const CARD_DELAY_MS = 5_000;
  */
 export const CARD_ITEM_CHARS = 4_000;
 export const CARD_TOTAL_CHARS = 8_000;
+
+/**
+ * How much of what the person wrote in a sub-agent's topic one card entry carries, above the result.
+ * Less than a reply's CARD_ITEM_CHARS: the reply is what the parent acts on, the person's words are
+ * what it needs to read that reply right, and a pasted log should not crowd the reply off the card.
+ * A cut says so and where the whole is read, as every other cut on the card does.
+ */
+export const CARD_SAID_CHARS = 2_000;
+
+/** How many attachment names one entry lists after the person's words; the rest are counted. */
+const SAID_ATTACHMENTS_SHOWN = 10;
 
 /**
  * How many sub-agents one card lists. A card has no fixed frame size — every entry's heading and
@@ -216,9 +233,12 @@ interface OpenedTask {
   model?: string;
 }
 
-/** What one sub-agent said, as the card quotes it. */
+/** What one sub-agent said — or the person said to it — as the card quotes it. */
 interface CardQuote {
-  label: 'question' | 'failure' | 'reply';
+  /** `person`: what the person wrote in the topic themselves, quoted above the sub-agent's result. */
+  label: 'question' | 'failure' | 'reply' | 'person';
+  /** What the card prints before the text, when that is not the label itself. */
+  heading?: string;
   /** The head kept for the card; `total` may be larger (see turn-outcomes.ts KeptText). */
   text: string;
   /** The length of the whole text, before the head was cut. */
@@ -233,9 +253,28 @@ interface CardEntry {
   topic: string;
   /** The `- topic … · stage` line. */
   head: string;
+  /** What the person wrote in the topic since the last card, shown first (Delegation.said). */
+  said?: CardQuote;
   /** What the sub-agent said, whole; the card cuts it (quotedBlock). */
   quote?: CardQuote;
   link?: string;
+}
+
+/**
+ * What the person wrote directly in one sub-agent's topic since its parent was last told: every
+ * message, in order, as the agent read them. Bounded like a kept reply — the head the card can show
+ * and the whole length — because nothing else bounds what a person may paste.
+ */
+interface Said {
+  text: string;
+  total: number;
+  /** Attachment names, the first SAID_ATTACHMENTS_SHOWN of them; `moreAttachments` counts the rest. */
+  attachments: string[];
+  moreAttachments: number;
+  /** The library's numbers for the turns the words went into, distinct, oldest first. */
+  turns: number[];
+  /** Some went in with no number (no library, or a harness that took them outside a turn). */
+  unnumbered: boolean;
 }
 
 type TaskAction = Extract<IpcAction, { kind: `task-${string}` }>;
@@ -268,13 +307,30 @@ export class Delegation {
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
   private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void }>();
   /**
-   * Sub-agent topics working on something their parent handed them (task-new, task-send) and not yet
-   * reported back. Only those turns are the parent's news: a turn the person starts by writing in a
-   * sub-agent's topic is theirs, and telling the parent about it would wake an agent to read a
-   * conversation it is not in. In memory only — a turn a restart cuts off is reported as failed in its
-   * own topic (TurnOutcomes), not to the parent.
+   * Sub-agent topics whose turn the parent is told about when it ends: one the parent handed them
+   * (task-new, task-send), or one the person started or joined by writing there (personWrote). Kept
+   * while a question holds the turn open, and dropped once the end is on a card. Any other turn there
+   * — a scheduled run, a burst of background output — is nobody's news.
+   *
+   * Until 2026-11-06 only handed-out turns counted, on the view that a turn the person starts in a
+   * sub-agent's topic is theirs and telling the parent would wake an agent to read a conversation it
+   * is not in. It is in it, though: it opened that topic for a part of its job and reports on it, and
+   * a parent that never hears the person redirect its sub-agent goes on to summarise, review or redo
+   * work from a reply the person already corrected.
+   *
+   * In memory only — a turn a restart cuts off is reported as failed in its own topic (TurnOutcomes),
+   * not to the parent. What the person writes after a restart is reported as before: the relation
+   * is the platform's record, not this set.
    */
-  private readonly handedOut = new Set<ConversationId>();
+  private readonly owed = new Set<ConversationId>();
+  /**
+   * What the person wrote in each sub-agent topic and no card has carried yet. Shown on the next card
+   * from that topic, above its result, and then dropped — including on a card about a question, so
+   * the end of the same turn does not repeat it. A turn the person stops is not reported (nothing is
+   * left of it to act on), but what they wrote stays here for the next card: the sub-agent's session
+   * still holds it, and so whatever it does next was asked for partly in those words.
+   */
+  private readonly said = new Map<ConversationId, Said>();
 
   constructor(private readonly deps: DelegationDeps) {}
 
@@ -289,7 +345,8 @@ export class Delegation {
     this.confirmedOnce.clear();
     this.updates.clear();
     this.onScreen.clear();
-    this.handedOut.clear();
+    this.owed.clear();
+    this.said.clear();
   }
 
   // ── The task commands ─────────────────────────────────────────────────────────────────────────
@@ -604,7 +661,7 @@ export class Delegation {
           ...(item.title ? { title: item.title } : {}),
           ...(item.model ? { model: item.model } : {}),
         });
-        this.handedOut.add(key);
+        this.owed.add(key);
         const title = subjectOf(named);
         const host = findAgent(this.deps.config, item.agent)?.host;
         opened.push({
@@ -706,7 +763,7 @@ export class Delegation {
       header,
       interrupt ? { queue: true } : {}
     );
-    this.handedOut.add(c.key);
+    this.owed.add(c.key);
     return { topic, result: sendResult(how, stopped) };
   }
 
@@ -954,7 +1011,7 @@ export class Delegation {
    * finishes is one card rather than one turn each.
    */
   childChanged(id: ConversationId): void {
-    if (!this.handedOut.has(id)) return;
+    if (!this.owed.has(id)) return;
     const parent = this.parentOf(id);
     if (!parent) return;
     const u = this.updates.get(parent.key) ?? {
@@ -963,6 +1020,35 @@ export class Delegation {
     };
     u.children.add(id);
     this.updates.set(parent.key, u);
+  }
+
+  /**
+   * The person's own messages reached the agent in conversation `id` (TurnRunnerDeps.recordPersonWords).
+   * In a sub-agent's topic that turn becomes the parent's news, and the words go on its card.
+   *
+   * Only the topic's own parent is told: in a topic a sub-agent opened in turn, the person's words
+   * reach that sub-agent, never the agent above it. A topic with no parent — the person's own, or one
+   * whose parent was deleted — keeps nothing.
+   */
+  personWrote(id: ConversationId, words: PersonWords): void {
+    if (!words.text.trim() && words.attachments.length === 0) return;
+    const parent = this.parentOf(id);
+    if (!parent) return;
+    const s = this.said.get(id) ?? { text: '', total: 0, attachments: [], moreAttachments: 0, turns: [], unnumbered: false };
+    if (words.text) {
+      const sep = s.total > 0 ? '\n' : '';
+      // The head stays the head: once it is full, later words count toward `total` and nothing else.
+      s.text = `${s.text}${sep}${words.text}`.slice(0, CARD_SAID_CHARS);
+      s.total += sep.length + words.text.length;
+    }
+    const room = Math.max(0, SAID_ATTACHMENTS_SHOWN - s.attachments.length);
+    s.attachments.push(...words.attachments.slice(0, room));
+    s.moreAttachments += Math.max(0, words.attachments.length - room);
+    if (words.turn === undefined) s.unnumbered = true;
+    else if (s.turns[s.turns.length - 1] !== words.turn) s.turns.push(words.turn);
+    this.said.set(id, s);
+    this.owed.add(id);
+    console.log(`[delegation] ${id}: the person wrote in a sub-agent's topic; ${parent.key} is told when the turn ends`);
   }
 
   /** The conversation that opened this one, while both are still there. */
@@ -988,12 +1074,15 @@ export class Delegation {
       if (!c) continue;
       const stage = this.stageOf(c);
       // Started again since (someone wrote there): what it is doing now is news only when it ends.
+      // What the person wrote is kept for that card.
       if (stage === 'working' || stage === 'idle' || stage === 'retrying') continue;
-      // A question leaves the turn open; an end closes what the parent handed out.
-      if (stage !== 'answer') this.handedOut.delete(c.key);
+      // A question leaves the turn open; an end closes it.
+      if (stage !== 'answer') this.owed.delete(c.key);
+      const said = this.said.get(c.key);
+      this.said.delete(c.key);
       const row = this.row(c);
-      entries.push(this.entry(c, row, stage));
-      shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage)}${row.line ? `: ${row.line}` : ''}`);
+      entries.push(this.entry(c, row, stage, said));
+      shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage)}${said ? ' after you wrote there' : ''}${row.line ? `: ${row.line}` : ''}`);
     }
     if (entries.length === 0) return;
     const visible = entries.slice(0, CARD_MAX_ENTRIES);
@@ -1004,18 +1093,20 @@ export class Delegation {
   }
 
   /**
-   * One sub-agent on the card: where it is, how it stands, and what it said.
+   * One sub-agent on the card: where it is, how it stands, and what it said — after what the person
+   * wrote to it directly, when they did.
    *
    * The body is the whole of what the sub-agent said — the reply the turn ended on, the question it
    * is waiting on, the error the turn failed with — because the parent agent is meant to act on the
    * card without opening the topic. A reply is not accompanied by its first line: that line is
-   * already in it.
+   * already in it. The person's words come first because they are what the reply answers.
    */
-  private entry(c: Place, row: TaskRow, stage: TopicStage): CardEntry {
+  private entry(c: Place, row: TaskRow, stage: TopicStage, said: Said | undefined): CardEntry {
     const quote = this.quoteOf(c, row, stage);
     return {
       topic: row.topic,
       head: `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}`,
+      ...(said ? { said: saidQuote(said) } : {}),
       ...(quote ? { quote } : {}),
       ...(row.link ? { link: row.link } : {}),
     };
@@ -1049,8 +1140,9 @@ export class Delegation {
    * Headings and links are the frame and are counted, but the frame is bounded: at most
    * CARD_MAX_ENTRIES entries are listed, and any beyond that are one line pointing at
    * `talkcode tasks`. Within that frame, quote blocks share CARD_TOTAL_CHARS and one may take at
-   * most CARD_ITEM_CHARS. Every later entry's notice is reserved before an earlier one takes the
-   * rest, so an entry with a quote keeps at least its notice. The frame is not itself capped by
+   * most CARD_ITEM_CHARS (CARD_SAID_CHARS for the person's words). Every later quote's notice is
+   * reserved before an earlier one takes the rest — the result under the person's words as much as
+   * the entries below — so a quote keeps at least its notice. The frame is not itself capped by
    * CARD_TOTAL_CHARS — twenty very long titles or cwds can still fill it — and when it does,
    * blocks are dropped and the card can pass the budget on the headings alone.
    */
@@ -1063,11 +1155,14 @@ export class Delegation {
       header.length + 1 + (tail ? tail.length + 1 : 0)
     );
     let left = CARD_TOTAL_CHARS - frame;
-    for (const [i, e] of entries.entries()) {
+    const needs = entries.flatMap((e) => quotesOf(e).map((q) => quoteNeed(q, e.topic)));
+    let next = 0;
+    for (const e of entries) {
       lines.push(e.head);
-      if (e.quote) {
-        const reserved = entries.slice(i + 1).reduce((n, later) => n + quoteNeed(later), 0);
-        const block = quotedBlock(e.quote, e.topic, Math.max(0, left - reserved));
+      for (const q of quotesOf(e)) {
+        next++;
+        const reserved = needs.slice(next).reduce((n, need) => n + need, 0);
+        const block = quotedBlock(q, e.topic, Math.max(0, left - reserved));
         if (block) {
           lines.push(block);
           left -= block.length + 1;
@@ -1230,12 +1325,43 @@ function clip(text: string, cap: number, tail: number | undefined): string {
  * only way to say it — so it is the one line added to the prompt, and only when something was cut.
  */
 function renderQuote(q: CardQuote, topic: string, cut: number): string {
-  return `  ${q.label}: ${quoteBody(q, topic, cut)}`.replace(/\n/g, '\n  ');
+  // Empty only for the person's words when they sent files and no text: the heading names the files.
+  const body = quoteBody(q, topic, cut);
+  return `  ${q.heading ?? q.label}${body ? `: ${body}` : ''}`.replace(/\n/g, '\n  ');
 }
 
 /** The quoted text itself, cut after `cut` characters, with its notice when anything was left out. */
 function quoteBody(q: CardQuote, topic: string, cut: number): string {
   return q.total <= q.text.length && cut >= q.total ? q.text : `${q.text.slice(0, cut)}${cutNote(q, topic, cut)}`;
+}
+
+/** The most of one quote's body a card carries. */
+function capOf(q: CardQuote): number {
+  return q.label === 'person' ? CARD_SAID_CHARS : CARD_ITEM_CHARS;
+}
+
+/** The quotes an entry carries, in the order the card shows them: the person's words, then the result. */
+function quotesOf(e: CardEntry): CardQuote[] {
+  return [e.said, e.quote].filter((q): q is CardQuote => q !== undefined);
+}
+
+/**
+ * The person's words as the card quotes them. The heading says whose they are and that they went to
+ * the sub-agent directly — not through the parent, which otherwise reads a reply to something it never
+ * asked. Attachments go in the heading, by name, so a cut of the text cannot take them with it; their
+ * contents stay in the topic, as the library keeps them.
+ */
+function saidQuote(s: Said): CardQuote {
+  const more = s.moreAttachments ? ` and ${s.moreAttachments} more` : '';
+  const attached = s.attachments.length ? `, attaching ${s.attachments.join(', ')}${more}` : '';
+  const turn = s.turns.length === 1 && !s.unnumbered ? s.turns[0] : undefined;
+  return {
+    label: 'person',
+    heading: `the person wrote to it directly${attached}`,
+    text: s.text,
+    total: s.total,
+    ...(turn !== undefined ? { turn } : {}),
+  };
 }
 
 /**
@@ -1249,19 +1375,35 @@ function quoteBody(q: CardQuote, topic: string, cut: number): string {
  * A question names no turn and no command: it is the ask waiting on the person, which the gateway
  * sends itself, so it is not a row the library keeps and `task-read` cannot show it. The topic is
  * where it waits.
+ *
+ * The person's words are the user rows of the turn they went into; words spread over several turns
+ * are every user row there, which the newest-first `--full` read keeps.
  */
 function cutNote(q: CardQuote, topic: string, cut: number): string {
-  const rest =
-    q.label === 'question'
-      ? 'the question is waiting in this topic for the person to answer it'
-      : q.turn !== undefined
-        ? q.label === 'reply'
-          ? `the rest is in this topic's turn ${q.turn} — task-read ${topic} --turn ${q.turn} --full`
-          : `the whole error is in this topic's turn ${q.turn} — task-read ${topic} --turn ${q.turn}`
-        : q.label === 'reply'
-          ? `the whole reply is in this topic — task-read ${topic} --reply`
-          : `the whole error is in this topic's record — task-read ${topic} --turn last`;
-  return `\n…[${q.total} chars total, cut at ${cut}; ${rest}]`;
+  return `\n…[${q.total} chars total, cut at ${cut}; ${whereTheRestIs(q, topic)}]`;
+}
+
+function whereTheRestIs(q: CardQuote, topic: string): string {
+  switch (q.label) {
+    case 'question':
+      return 'the question is waiting in this topic for the person to answer it';
+    case 'person':
+      return q.turn !== undefined
+        ? `all of it is in this topic's turn ${q.turn} — task-read ${topic} --turn ${q.turn} --role user --full`
+        : `all of it is in this topic — task-read ${topic} --role user --full`;
+    case 'reply':
+      return q.turn !== undefined
+        ? `the rest is in this topic's turn ${q.turn} — task-read ${topic} --turn ${q.turn} --full`
+        : `the whole reply is in this topic — task-read ${topic} --reply`;
+    case 'failure':
+      return q.turn !== undefined
+        ? `the whole error is in this topic's turn ${q.turn} — task-read ${topic} --turn ${q.turn}`
+        : `the whole error is in this topic's record — task-read ${topic} --turn last`;
+    default: {
+      const _exhaustive: never = q.label;
+      return String(_exhaustive);
+    }
+  }
 }
 
 /**
@@ -1320,17 +1462,16 @@ function roleOf(role: string): 'user' | 'agent' | 'tool' {
   return role === 'user' || role === 'tool' ? role : 'agent';
 }
 
-/** The least an entry needs to say anything at all: its cut notice (or its whole text, if short). */
-function quoteNeed(e: CardEntry): number {
-  if (!e.quote) return 0;
-  const full = renderQuote(e.quote, e.topic, Math.min(e.quote.text.length, e.quote.total));
-  const noteOnly = renderQuote(e.quote, e.topic, 0);
+/** The least a quote needs to say anything at all: its cut notice (or its whole text, if short). */
+function quoteNeed(q: CardQuote, topic: string): number {
+  const full = renderQuote(q, topic, Math.min(q.text.length, q.total));
+  const noteOnly = renderQuote(q, topic, 0);
   // +1 for the newline the joined card puts after it.
   return Math.min(full.length, noteOnly.length) + 1;
 }
 
 /**
- * One quote block no longer than `budget` and no longer than CARD_ITEM_CHARS, cutting the text as
+ * One quote block no longer than `budget` and no longer than its cap (capOf), cutting the text as
  * far as both allow.
  *
  * Empty when even the notice does not fit: CARD_TOTAL_CHARS is a hard cap. The reservation in
@@ -1338,10 +1479,11 @@ function quoteNeed(e: CardEntry): number {
  */
 function quotedBlock(q: CardQuote, topic: string, budget: number): string {
   if (budget <= 0) return '';
+  const cap = capOf(q);
   const fits = (cut: number): boolean =>
-    renderQuote(q, topic, cut).length <= budget && quoteBody(q, topic, cut).length <= CARD_ITEM_CHARS;
+    renderQuote(q, topic, cut).length <= budget && quoteBody(q, topic, cut).length <= cap;
   let lo = 0;
-  let hi = Math.min(q.text.length, CARD_ITEM_CHARS);
+  let hi = Math.min(q.text.length, cap);
   let best = fits(0) ? renderQuote(q, topic, 0) : '';
   while (lo <= hi) {
     const mid = Math.floor((lo + hi) / 2);

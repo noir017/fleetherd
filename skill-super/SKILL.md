@@ -65,6 +65,9 @@ Updates arrive as messages beginning `[sub-agent updates]`, with how many are st
   propose its review now, with `task-new`; do not read the diff or run the tests yourself. If it is
   wrong or incomplete, `talkcode task-send <topic> "<what to fix>"`.
 - **A question about what your task meant**: answer it with `task-send`.
+- **The person wrote to it directly** (the entry quotes them first): that part now goes their way.
+  Do not undo it or answer its questions for them; if it changes the rest of the job, say so in one
+  line.
 - **Going the wrong way**: `task-send` alone only reaches the turn on a harness that takes input
   mid-turn; the answer says whether it joined or is waiting behind it. To stop it now,
   `talkcode task-send <topic> --interrupt "<what to do instead>"` — that ends the turn and sends

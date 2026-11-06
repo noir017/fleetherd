@@ -122,7 +122,7 @@ import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
 import { InboundMerger, type SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
-import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner } from './turn-runner.js';
+import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, type PersonWords } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
 import { TurnOutcomes, type KeptText } from './turn-outcomes.js';
 import { TurnProgressBoard } from './turn-progress.js';
@@ -720,6 +720,12 @@ export class ConversationRegistry {
        * opened it (daemon/delegation.ts).
        */
       onNeedsPerson?(id: ConversationId): void;
+      /**
+       * A person's own messages reached the agent here, as a turn or merged into one
+       * (TurnRunnerDeps.recordPersonWords). Delegation listens: in a sub-agent's topic, the agent that
+       * opened it is told what the person wrote there, with how that turn ended.
+       */
+      onPersonWords?(id: ConversationId, words: PersonWords): void;
     },
     /** Persistent conversation state (agent binding + each agent's own session id). */
     private readonly store?: ConversationStore,
@@ -807,6 +813,7 @@ export class ConversationRegistry {
           this.outcomes.turnStarted(id);
         },
         recordTurnEnd: (id, end) => this.outcomes.turnEnded(id, end),
+        recordPersonWords: (id, words) => this.hooks?.onPersonWords?.(id, words),
         recordHistory: (id, event) => this.recordHistory(id, event),
         beginHistoryTurn: (id, start) => this.beginHistoryTurn(id, start),
         endHistoryTurn: (turnId, end) => this.endHistoryTurn(turnId, end),

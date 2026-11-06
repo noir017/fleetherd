@@ -763,11 +763,22 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   `handTo` shows the text under a `↳ From [parent]` header and ingests it with `DELEGATE_SENDER`.
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).
 - Updates come back through `childChanged` — TurnOutcomes' `onNeedsPerson`, and a sub-agent's ask —
-  only for turns the parent handed out (`handedOut`, in memory): a turn the person starts in a
-  sub-agent's topic is theirs. Gathered for `CARD_DELAY_MS`, shown folded in the parent's topic,
+  for turns the parent is owed (`owed`, in memory): one it handed out (task-new, task-send), or one
+  the person started or joined by writing in the sub-agent's topic. The second kind was added on
+  2026-11-06; before that a person's turn there was theirs alone, and the parent kept acting on a
+  reply the person had since corrected. TurnRunner reports the person's own messages of a batch —
+  never a gateway sender's — through `recordPersonWords` at turn start, and again when `steer`
+  hands them to the running turn (`joined`, or `detached`; a `refused` one is reported when its own
+  turn starts, so never twice); the registry passes them on as `onPersonWords` to
+  `Delegation.personWrote`, which keeps them only for a topic with a parent and tells only that
+  parent. They are quoted on the next card from that topic, above the result, and dropped once shown
+  — a question card included, so the turn's end does not repeat them. A turn the person stops is not
+  reported, but its words stay for the next card: the sub-agent's session still holds them.
+  Gathered for `CARD_DELAY_MS`, shown folded in the parent's topic,
   then run there as a solo turn with `UPDATE_SENDER`, which the namer skips. The card quotes what
   the sub-agent said — reply, question or error, line breaks kept — within `CARD_ITEM_CHARS` for
-  one entry and `CARD_TOTAL_CHARS` for a burst, both hard limits; one card lists at most
+  one entry and `CARD_TOTAL_CHARS` for a burst, both hard limits, and the person's words within
+  `CARD_SAID_CHARS`, attachments by name in the heading; one card lists at most
   `CARD_MAX_ENTRIES` and folds the rest into a line pointing at `talkcode tasks`. A cut states its
   full length and where the rest is, by the turn's number: the card quotes `turns.seq` (carried from
   `TurnEnd.turn` into `KeptText.turn`), so `task-read <topic> --turn <n> --full` reads that reply
