@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.44.0] - 2026-11-06
+
 ### Changed
 
 - **The skills page shows Library and Resident as two tabs, each with its count.** One list
