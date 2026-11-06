@@ -15,7 +15,13 @@ agent 里说过的事，隔几天几周都行。这是网关自己的记录，�
 
 - 一轮发给 agent 的那段话——附件只记文件名，不记内容；
 - agent 的完整回复；
-- 每个工具调用一行（`Bash: git status`、`Read: src/daemon/turn-runner.ts`）。
+- 每个工具调用一行：先是它那一行（`Bash: git status`、`Read: src/daemon/turn-runner.ts`），下面是
+  完整参数——heredoc、编辑的替换内容、写入文件的内容（最多 10 万字符，更长的会注明截掉了多少）。
+  工具的输出不记：它比参数大好几倍，agent 从中得出的结论在它的回复里。
+
+参数是流式下发的 harness，一个调用会在参数到达过程中发好几次；库里只为它留一行并原地改写，
+最终是这个调用实际运行时的参数。在此之前（2026-11-06）写下的行，同一个调用可能有好几行，
+而且只有那一行、没有参数。
 
 普通对话之外的事情也记，并标上类型：定时任务的一次运行（`schedule`）、子代理的话题或
 `[sub-agent updates]` 汇报卡片（`subagent`）、agent 在轮次结束后才报回来的输出
@@ -49,7 +55,7 @@ agent 里说过的事，隔几天几周都行。这是网关自己的记录，�
 - 定时任务自成一**轮**（`schedule`），即使它是说进一个普通话题里的；
 - 被停的轮保留已经写下的内容。它确实跑过，半截回复也是真的。
 
-已有的 `history.db` 原地迁移：加上 `turn` 列，旧行留空，读出来是轮次 `?`、结局 `unknown`。
+已有的 `history.db` 原地迁移：加上 `turn` 和 `call` 列，旧行留空，读出来是轮次 `?`、结局 `unknown`。
 不会给旧行补造轮次。从 web UI 转录导入的行同样没有轮次——写下它们的是 web UI，不是某一轮。
 
 ## 读其中一部分
@@ -77,21 +83,34 @@ talkcode sessions read '#12' --role tool --tail 20
 
 这些筛选可以叠加（AND），但 `--since` 与轮次筛选或 `--tail` 的组合会被拒绝，而不是猜一个语义。
 带筛选的读会额外打印每行的轮次、那一轮的结局和 agent。`--around`
-不能和它们一起用：它自己定义了一段窗口。不加任何筛选时，输出与有轮次之前完全一样。
+不能和它们一起用：它自己定义了一段窗口。
 
-每次读都有上限：500 行、20 万字符。碰到上限会说明漏掉了多少行、从哪一端截的——尾部读
+**工具调用会折叠。** 没有用 `--role` 或 `--grep` 挑行的读，会把每一串连续的工具调用合成一行，
+单个调用只留它的第一行：
+
+```text
+[37 tool calls: Bash ×20, Edit ×12, Write ×5]
+```
+
+一个干活的会话里大部分是工具调用——11 月两天里记下的行有 94% 是它——不折叠时读出来是一页命令，
+人说的话夹在中间。一串不会跨两轮。`--role tool` 连参数逐条列出，`--grep` 命中的调用整行显示，
+`--around` 的窗口不折叠；折叠过时 note 会说明。
+
+每次读都有上限：500 行（折叠后的一行算一行）、20 万字符。碰到上限会说明漏掉了多少行、从哪一端截的——尾部读
 （`--turn`、`--turns`、`--tail`）保留最新的行，普通读和 `--since` 读保留最早的行。
 
 ## 怎么查
 
 ```bash
 talkcode sessions search 跨会话查询
-talkcode sessions search git status --agent cc --days 30 --limit 20
+talkcode sessions search 部署 --agent cc --days 30 --limit 20
+talkcode sessions search 'git push' --tools
 talkcode sessions read '#12' --around '#87' --window 10
 talkcode sessions list --days 7
 ```
 
-`search` 返回会话 id、消息 id、日期、标题、agent、平台和命中的片段。`read` 接会话 id，
+`search` 返回会话 id、消息 id、日期、标题、agent、平台和命中的片段。它搜的是人和 agent 说的话；
+加 `--tools` 连工具调用（含参数）一起搜。`read` 接会话 id，
 从最早一条往后打印；`--around <消息>` 以某条为中心，前后各显示 `--window` 条（默认 10）。
 `list` 是最近活跃的会话。
 
@@ -110,7 +129,8 @@ talkcode sessions list --days 7
 
 网页端从 2.13.0 起就把每个话题的记录存在磁盘上（[网页端](web-ui.md#要有的预期)）。
 第一次带着库启动时，这些记录连同话题标题一起导入，历史不会从空白开始。每个文件只导入一次，
-重启不会重复。Telegram、Discord、Slack 等平台上的旧对话没法从平台读回来，那些对话从开启
+库里已经实时记下的话题一条也不导入，所以重启不会重复。（2026-11-06 之前会：库建好之后才开的
+话题，下次重启时会被再导入一遍，那时跑过的库里仍留着这些副本。）Telegram、Discord、Slack 等平台上的旧对话没法从平台读回来，那些对话从开启
 这个功能的那天开始记。
 
 ## 隐私

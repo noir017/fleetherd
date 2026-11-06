@@ -156,6 +156,23 @@ export function composeInstructions(dir: string, name: string): Composed {
   return bytes > INSTRUCTIONS_MAX_BYTES ? { kind: 'too-big', bytes } : { kind: 'text', text };
 }
 
+/**
+ * `common.md` alone — what every agent is told — for the automatic review, which must not suggest
+ * a preference the person has already written there. Undefined when there is none; any read error
+ * other than a missing file is thrown, for the caller to log.
+ */
+export function commonInstructions(dir: string = instructionsDir()): string | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(dir, 'common.md'), 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw e;
+  }
+  const trimmed = text.trim();
+  return trimmed ? trimmed.slice(0, INSTRUCTIONS_MAX_BYTES) : undefined;
+}
+
 export type InstructionsOutcome =
   | 'linked'
   | 'relinked'

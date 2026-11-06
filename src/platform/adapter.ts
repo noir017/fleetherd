@@ -285,11 +285,35 @@ export interface ReviewPanelList {
   enabled: boolean;
   running: boolean;
   reviews: ReviewPanelEntry[];
+  /** The preference suggestions waiting for the person, merged across reviews (see ReviewPanelPreference). */
+  pending: ReviewPanelPreference[];
 }
 
-/** What `useReviewPanel` hands a platform: the list, and nothing to write — a review is not a control. */
+/**
+ * One preference suggestion on the pending list: the same sentence from every review that made it,
+ * once. Nothing acts on it — the person reads it and either has it added to the instructions every
+ * agent gets or dismisses it — so a wrong suggestion costs a tap, never an agent's behaviour.
+ */
+export interface ReviewPanelPreference {
+  /** The sentence, as the newest review worded it. */
+  text: string;
+  /** How many reviews suggested it. */
+  count: number;
+  /** Epoch ms of the newest of them. */
+  at: number;
+  /** The reviewed conversations it came from, newest first, at most three. */
+  from: Array<{ title: string; topic?: string }>;
+}
+
+/**
+ * What `useReviewPanel` hands a platform: the list, and one write — dismissing a suggestion from
+ * the pending list, which touches only `reviews.json`. Nothing here reaches a skill or a review:
+ * those are written by the sweep alone.
+ */
 export interface ReviewPanel {
   list(): ReviewPanelList;
+  /** Take one suggestion off the pending list; answers with the fresh list. */
+  dismiss(text: string): ReviewPanelList;
 }
 
 /**

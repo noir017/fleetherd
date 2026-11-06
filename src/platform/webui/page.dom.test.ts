@@ -6651,6 +6651,53 @@ describe('webui page: the Reviews tab', () => {
     expect(h.window.localStorage.getItem('aa_sched_tab')).toBe('reviews');
   });
 
+  it('lists the pending preference suggestions above the reviews, and dismisses one', async () => {
+    const pending = [
+      { text: 'answers lead with the conclusion', count: 3, at, from: [{ title: 'Right sidebar', topic: A }, { title: 'Deploy' }] },
+      { text: 'delete credentials to the trash, never for good', count: 1, at, from: [{ title: 'Vault' }] },
+    ];
+    const h = await open({
+      replies: {
+        'api/reviews': reply([review()], { pending }),
+        'api/reviews/op': reply([review()], { pending: [pending[1]] }),
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the pending list', () => Boolean(h.doc.querySelector('.rev-pending')));
+
+    const block = h.doc.querySelector('.rev-pending')!;
+    // Above the reviews, and saying that nothing here is in force.
+    expect(h.el('sched-reviews-list').firstElementChild).toBe(block);
+    expect(block.textContent).toContain('Suggested preferences · 2');
+    expect(block.textContent).toContain('Not in effect anywhere');
+    const items = block.querySelectorAll('.rev-pitem');
+    expect(items).toHaveLength(2);
+    expect(items[0]!.textContent).toContain('answers lead with the conclusion');
+    expect(items[0]!.textContent).toContain('3 reviews · Right sidebar, Deploy');
+    expect(items[1]!.querySelector('.rev-pmeta')!.textContent).toBe('Vault');
+
+    (items[0]!.querySelector('.rev-dismiss') as HTMLElement).click();
+    await until('the dismissal', () => h.doc.querySelectorAll('.rev-pitem').length === 1);
+    expect(h.calls.find((c) => c.path === 'api/reviews/op')?.body).toEqual({
+      action: 'dismiss',
+      text: 'answers lead with the conclusion',
+    });
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 1');
+    // Dismissing is not opening: no review row was toggled by the click.
+    expect(h.doc.querySelector('.rev-detail')).toBeNull();
+  });
+
+  it('draws no pending block when nothing is pending', async () => {
+    const h = await open({ replies: { 'api/reviews': reply([review()], { pending: [] }) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the review row', () => Boolean(h.doc.querySelector('.rev-item')));
+    expect(h.doc.querySelector('.rev-pending')).toBeNull();
+  });
+
   it('opens a review for its changes, reasons, undo command and preferences', async () => {
     const h = await open({ replies: { 'api/reviews': reply() } });
     await h.emit(sync(A, [], [A]));

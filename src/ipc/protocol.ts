@@ -242,6 +242,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       agent: z.string().min(1).max(100).optional(),
       days: z.number().int().positive().max(3_650).optional(),
       limit: z.number().int().positive().max(100).optional(),
+      tools: z.boolean().optional(),
     })
     .strict(),
   z
@@ -357,7 +358,7 @@ export type IpcAction =
   | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number; role?: 'user' | 'agent' | 'tool'; turn?: string; turns?: number; since?: number; grep?: string; reply?: boolean }
   | { kind: 'task-status'; topic: string }
   | { kind: 'task-stop'; topic: string }
-  | { kind: 'sessions-search'; query: string; agent?: string; days?: number; limit?: number }
+  | { kind: 'sessions-search'; query: string; agent?: string; days?: number; limit?: number; tools?: boolean }
   | {
       kind: 'sessions-read';
       session: string;

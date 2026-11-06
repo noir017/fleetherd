@@ -15,8 +15,12 @@ import type { HistoryKind, HistoryTrigger } from './store.js';
 export type HistoryEvent =
   /** The prompt a turn (or a mid-turn message) gave the agent. Attachments are names only. */
   | { type: 'prompt'; text: string; attachments?: string[]; kind: HistoryKind; at: number; turn?: number }
-  /** One tool call, as the single line the library keeps. */
-  | { type: 'tool'; title: string; kind: HistoryKind; at: number; turn?: number }
+  /**
+   * One tool call: its line, then its whole arguments (see toolText). `call` is the harness's id
+   * for it: a start re-emitted as the arguments stream in, and the finish that carries the final
+   * ones, rewrite the same row instead of adding one each (see HistoryStore.message).
+   */
+  | { type: 'tool'; title: string; call?: string; kind: HistoryKind; at: number; turn?: number }
   /** What the agent said, in full, when a render was sealed. */
   | { type: 'reply'; text: string; kind: HistoryKind; at: number; turn?: number };
 
@@ -55,4 +59,43 @@ export function toolLine(name: string, preview: string, agent?: string): string 
   const who = agent ? `${agent} · ${name}` : name;
   if (!flat) return who;
   return `${who}: ${flat.length > 200 ? `${flat.slice(0, 199)}…` : flat}`;
+}
+
+/**
+ * How much of one call's arguments the library keeps. Measured on 2026-11-06 over two days of
+ * Claude Code transcripts (3,500 calls): median 305 characters, p99 7.5k, largest 31k. The bound is
+ * for the pathological call — a Write of a generated file — and the cut says so in the row.
+ */
+export const TOOL_INPUT_KEEP = 100_000;
+
+/**
+ * One tool call as the library keeps it: the line (`Bash: git status`), then the whole arguments
+ * as JSON when they say more than the line does.
+ *
+ * The line alone was the record until 2026-11-06: a 200-character preview, so a heredoc, an Edit's
+ * replacement or a Write's content was never in the library at all. The line stays first because
+ * it is what a folded read counts by name and what a search excerpt starts from. The output is not
+ * kept — it is several times the size of the arguments (12.7 MB against 2.6 MB in the same sample)
+ * and what the agent concluded from it is in the reply.
+ */
+export function toolText(name: string, preview: string, input: unknown, agent?: string): string {
+  const line = toolLine(name, preview, agent);
+  const full = argumentsText(input);
+  if (!full || full === preview.trim()) return line;
+  const cut =
+    full.length > TOOL_INPUT_KEEP
+      ? `${full.slice(0, TOOL_INPUT_KEEP)}\n[cut: ${full.length - TOOL_INPUT_KEEP} more characters]`
+      : full;
+  return `${line}\n${cut}`;
+}
+
+function argumentsText(input: unknown): string {
+  if (typeof input === 'string') return input.trim();
+  if (!input || typeof input !== 'object') return '';
+  if (Object.keys(input).length === 0) return '';
+  try {
+    return JSON.stringify(input);
+  } catch {
+    return '';
+  }
 }

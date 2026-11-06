@@ -56,10 +56,11 @@ describe('importWebuiTranscripts', () => {
       kind: 'normal',
       messages: 4,
     });
+    // A plain read folds the two calls into one line; --role tool is what lists them.
     const read = store.read(String(sessions[0]!.id));
-    expect(read.messages.map((m) => m.role)).toEqual(['user', 'tool', 'tool', 'agent']);
-    expect(read.messages[1]!.text).toBe('Bash: git status');
-    expect(read.messages[2]!.text).toBe('Read: src/daemon/turn-runner.ts');
+    expect(read.messages.map((m) => m.role)).toEqual(['user', 'tool', 'agent']);
+    const tools = store.read(String(sessions[0]!.id), { role: 'tool' });
+    expect(tools.messages.map((m) => m.text)).toEqual(['Bash: git status', 'Read: src/daemon/turn-runner.ts']);
     store.close();
   });
 
@@ -81,8 +82,7 @@ describe('importWebuiTranscripts', () => {
     const store = new HistoryStore(path.join(dir, 'history.db'));
     importWebuiTranscripts(dir, store);
 
-    const read = store.read(String(store.list({ days: 30 })[0]!.id));
-    expect(read.messages.map((m) => m.role)).toEqual(['tool', 'tool']);
+    const read = store.read(String(store.list({ days: 30 })[0]!.id), { role: 'tool' });
     expect(read.messages.map((m) => m.text)).toEqual(['finished: Done: all green.', 'failed: upstream 503']);
     store.close();
   });
@@ -169,6 +169,33 @@ describe('importWebuiTranscripts', () => {
     const summary = importWebuiTranscripts(dir, store, (m) => logs.push(m));
     expect(summary).toMatchObject({ files: 1, imported: 0, failed: 1 });
     expect(logs.some((l) => l.includes('could not import'))).toBe(true);
+    store.close();
+  });
+
+  it('takes nothing of a topic the library already recorded live', () => {
+    // The duplicate this guards against was on the live gateway: every topic opened after the
+    // library existed was imported again at the next restart, a second copy of every row.
+    const dir = tempDir();
+    const at = Date.now() - 60_000;
+    fs.mkdirSync(path.join(dir, 'webui-transcripts-webui'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'webui-transcripts-webui', 'abcdef12.json'),
+      JSON.stringify([
+        kept(at, '帮我实现跨会话查询', { own: true }),
+        kept(at + 1, '🔧 Bash: "git status" ✓ 1.2s', { kind: 'tools' }),
+        kept(at + 2, '查询做完了，测试全过。'),
+      ])
+    );
+    const store = new HistoryStore(path.join(dir, 'history.db'));
+    const id = store.session({ key: 'webui#main#abcdef12', platform: 'webui', at })!;
+    store.message(id, { ts: at + 1, role: 'tool', kind: 'normal', text: 'Bash: git status' });
+    store.message(id, { ts: at + 2, role: 'agent', kind: 'normal', text: '查询做完了，测试全过。' });
+
+    // The prompt is older than the first live row — the web UI stamps it on arrival, the recorder
+    // when the turn starts — and is still not taken: the live recorder wrote it too.
+    expect(importWebuiTranscripts(dir, store)).toMatchObject({ files: 1, imported: 0, skipped: 1 });
+    expect(store.sessionOf('webui#main#abcdef12')?.messages).toBe(2);
+    expect(store.imported('webui-transcripts-webui/abcdef12.json')).toBe(true);
     store.close();
   });
 

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { HistoryStore } from '../history/store.js';
 import { buildReviewPanel } from './review-panel.js';
+import { ReviewStateStore } from './review-state.js';
 
 /**
  * The Reviews tab's data, built from a real `history.db` in a temp dir: the point of the module is
@@ -25,11 +26,14 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function panel(over: { running?: boolean; instance?: string } = {}) {
+function panel(over: { running?: boolean; instance?: string; state?: ReviewStateStore } = {}) {
+  const state = over.state ?? new ReviewStateStore(path.join(dir, 'reviews.json'), () => {});
   return buildReviewPanel({
     history,
     instance: over.instance ?? 'web',
     enabled: () => over.running ?? true,
+    dismissed: () => state.dismissedPreferences(),
+    dismiss: (text) => state.dismissPreference(text),
   });
 }
 
@@ -171,6 +175,55 @@ describe('buildReviewPanel', () => {
 
   it('answers an empty list, not an error, when nothing has been reviewed', () => {
     const list = panel().list();
-    expect(list).toMatchObject({ enabled: true, reviews: [] });
+    expect(list).toMatchObject({ enabled: true, reviews: [], pending: [] });
+  });
+});
+
+describe('the pending preference list', () => {
+  /** A recorded review of `title` that suggested `preferences`, `minutes` after `now`. */
+  function suggested(n: number, title: string, preferences: string[], thread = `t${n}`): void {
+    const at = now + n * 60_000;
+    const id = reviewSession(`review:web#main#${thread}:${at}`, `复盘：${title}`, at);
+    history.recordReview(id, {
+      reviewedKey: `web#main#${thread}`,
+      reviewedTitle: title,
+      platform: 'web',
+      channel: 'main',
+      thread,
+      outcome: 'preferences',
+      changes: [],
+      preferences,
+      invalid: [],
+      at,
+    });
+  }
+
+  it('merges one wording across reviews, newest first, with where it came from', () => {
+    suggested(1, '部署', ['回答先给结论。']);
+    suggested(2, '查日志', ['删除凭据默认移入垃圾箱', '回答先给结论']);
+    suggested(3, '再部署', ['回答  先给结论'], 't1');
+    const pending = panel().list().pending;
+    expect(pending.map((p) => [p.text, p.count])).toEqual([
+      ['回答  先给结论', 3],
+      ['删除凭据默认移入垃圾箱', 1],
+    ]);
+    expect(pending[0]!.from).toEqual([
+      { title: '再部署', topic: 't1' },
+      { title: '查日志', topic: 't2' },
+      { title: '部署', topic: 't1' },
+    ]);
+  });
+
+  it('drops a dismissed suggestion for good, whatever review suggests it again', () => {
+    const state = new ReviewStateStore(path.join(dir, 'reviews.json'), () => {});
+    suggested(1, '部署', ['回答先给结论', '代码只推送到自建 Gitea']);
+    const after = panel({ state }).dismiss('代码只推送到自建 Gitea。');
+    expect(after.pending.map((p) => p.text)).toEqual(['回答先给结论']);
+    suggested(2, '又一次', ['代码只推送到自建 Gitea']);
+    // A new store over the same file: the dismissal is on disk, not in this process.
+    const fresh = new ReviewStateStore(path.join(dir, 'reviews.json'), () => {});
+    expect(panel({ state: fresh }).list().pending.map((p) => p.text)).toEqual(['回答先给结论']);
+    // Reviews are untouched by it.
+    expect(panel({ state: fresh }).list().reviews).toHaveLength(2);
   });
 });

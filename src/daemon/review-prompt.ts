@@ -36,11 +36,23 @@ export interface PromptMessage {
 
 export interface PromptInput {
   title: string;
+  /** What the person and the agent said — no tool calls (HistoryStore.reviewWindow). */
   messages: PromptMessage[];
-  /** Messages the character budget left out, so the reviewer knows the log is a tail. */
+  /** Messages the character budget left out, so the reviewer knows the log is not whole. */
   dropped: number;
   catalog: PromptSkill[];
   used: PromptSkillText[];
+  /**
+   * Skill files the conversation's own agent wrote (writtenSkillFiles). Named because the calls
+   * are not in the log: on 2026-11-06 a review created `vlt` in the gateway's library an hour after
+   * the person had asked the agent to write that very skill elsewhere, and did it.
+   */
+  written?: string[];
+  /**
+   * The rules every agent already gets (`instructions/common.md`), so a preference the person set
+   * long ago is not suggested again. Absent when there is none.
+   */
+  standing?: string;
 }
 
 const ROLE_LABEL: Record<string, string> = { user: '用户', agent: '助手', tool: '工具' };
@@ -58,8 +70,15 @@ export function buildReviewPrompt(input: PromptInput): string {
   const span = input.messages.length
     ? `${input.messages[0]!.at} 至 ${input.messages[input.messages.length - 1]!.at}`
     : '（空）';
-  const dropped = input.dropped > 0 ? `，省略了最早的 ${input.dropped} 条` : '';
+  const dropped = input.dropped > 0 ? `，省略了较早的 ${input.dropped} 条` : '';
   const conversation = input.messages.map((m) => `${ROLE_LABEL[m.role] ?? m.role}：${m.text}`).join('\n');
+  const written = input.written?.length
+    ? ['', '这段对话里已经写过的技能文件（同一件事不要再新建技能）', ...input.written.map((f) => `- ${f}`)]
+    : [];
+  const standing = input.standing?.trim() ? ['', '用户已有的要求', input.standing.trim()] : [];
+  const preferences = standing.length
+    ? 'preferences：用户在这段对话里表达、值得长期遵守的要求，每条一句话；「用户已有的要求」里有的不要再写；没有就空数组。'
+    : 'preferences：用户在这段对话里表达、值得长期遵守的要求，每条一句话；没有就空数组。';
   return [
     // The first two lines exist because agy reads the operator's global AGENTS.md, whose standing
     // rule is "propose first, wait for 开工". This run has nobody to ask, so it has to be told so
@@ -83,15 +102,17 @@ export function buildReviewPrompt(input: PromptInput): string {
     '{"action":"create","name":"…","description":"一句话说明什么时候用","body":"SKILL.md 正文，不含 frontmatter","reason":"为什么"}',
     '{"action":"patch","name":"…","version":"技能库里的版本号","content":"改后的完整 SKILL.md，含 frontmatter","reason":"为什么"}',
     '{"action":"write-file","name":"…","file":"references/xxx.md","content":"文件内容","reason":"为什么"}',
-    'preferences：用户在这段对话里表达、值得长期遵守的要求，每条一句话；没有就空数组。',
+    preferences,
     '',
     '技能库（名字、版本、简介）',
     catalog,
     '',
     '这段对话用到的技能全文',
     used,
+    ...written,
+    ...standing,
     '',
-    `对话记录：${input.title || '（无标题）'}，${span}，共 ${input.messages.length} 条${dropped}`,
+    `对话记录：${input.title || '（无标题）'}，${span}，共 ${input.messages.length} 条，不含工具调用${dropped}`,
     conversation,
   ].join('\n');
 }
@@ -223,4 +244,52 @@ export function usedSkillNames(messages: Array<{ role: string; text: string }>, 
     }
   }
   return out;
+}
+
+/**
+ * Tool names that change a file, as the library records them: `Edit` is what claude-agent-acp's
+ * `edit` kind becomes (Write included), `Write` is CodeBuddy's own, `edit_file`/`write_file` agy's.
+ * Measured on the library 2026-11-06 over every tool row naming a skills path.
+ */
+const WRITE_TOOLS: ReadonlySet<string> = new Set([
+  'edit',
+  'write',
+  'multiedit',
+  'notebookedit',
+  'edit_file',
+  'write_file',
+  'apply_patch',
+  'delete',
+  'move',
+]);
+
+/**
+ * A path to a file in a skill: `…/skills/<name>/<file>`. `skills` must be a whole path segment
+ * (`quantlab-skills/work/…` is not a skill), and the path stops at quotes and braces, because an
+ * agy edit's line is a JSON preview (`{"Path":"/…/skills/server-ops/…"`). Both cases were in the
+ * library on 2026-11-06.
+ */
+const SKILL_PATH = /(?:[^\s"'`{}(),:]*\/)?(?<![\w.-])skills\/[a-z0-9][a-z0-9-]*\/[^\s"'`{}(),]+/g;
+
+/**
+ * The skill files the conversation's own agent wrote: a write-type call whose line names a path
+ * under any `skills/<name>/`, whichever library it is in. Only the line is read — for these tools
+ * it is the path — so a command that merely mentions a skill is not counted as writing one.
+ */
+export function writtenSkillFiles(calls: string[]): string[] {
+  const out: string[] = [];
+  for (const text of calls) {
+    const newline = text.indexOf('\n');
+    const line = newline < 0 ? text : text.slice(0, newline);
+    const colon = line.indexOf(': ');
+    if (colon < 0) continue;
+    const who = line.slice(0, colon);
+    const dot = who.lastIndexOf(' · ');
+    const name = (dot < 0 ? who : who.slice(dot + 3)).trim().toLowerCase();
+    if (!WRITE_TOOLS.has(name)) continue;
+    for (const match of line.slice(colon + 2).matchAll(SKILL_PATH)) {
+      if (!out.includes(match[0])) out.push(match[0]);
+    }
+  }
+  return out.slice(0, 20);
 }

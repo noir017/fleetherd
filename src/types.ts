@@ -305,6 +305,12 @@ export interface ToolEvent {
    */
   index?: number;
   /**
+   * The harness's own id for this call (ACP `toolCallId`), when it has one. Unlike `index`, which
+   * restarts with every translation state, it names one call for the life of the session — which is
+   * what lets the conversation library keep ONE row per call while the start is re-emitted.
+   */
+  id?: string;
+  /**
    * Name of the subagent that ran this tool; undefined when the main agent ran it. The bubble line
    * leads with it, because otherwise a subagent's tools are indistinguishable from the main agent's
    * (see daemon/agent-acp.ts claudeAttribution).
@@ -321,6 +327,14 @@ export interface ToolFinishEvent {
   name: string;
   /** Index relating back to start; corresponds to ToolEvent.index. */
   index?: number;
+  /** The harness's id for the call, as on its ToolEvent. */
+  id?: string;
+  /**
+   * The call's arguments as they stood when it ended. A start is re-emitted only when what the
+   * bubble shows changes, so arguments that keep streaming after that (a Write's content) reach the
+   * library only here.
+   */
+  input?: unknown;
   /** Success (true = completed normally, false = errored). */
   ok: boolean;
   /** Duration of this tool call (ms). */
