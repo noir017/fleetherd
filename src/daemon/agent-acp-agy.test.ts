@@ -91,6 +91,11 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       warn(sid, 'You have exhausted your quota on this model.');
       return reply(msg.id, { stopReason: 'end_turn' });
     }
+    if (p === 'refusal') {
+      // The warning lane and the refusal lane on one turn: agy's own reason must win.
+      warn(sid, 'You have exhausted your quota on this model.');
+      return reply(msg.id, { stopReason: 'refusal' });
+    }
     if (p === 'retry') {
       warn(sid, 'API error (attempt 1): INTERNAL (code 500): Internal error encountered.');
       warn(sid, 'API error (attempt 2): INTERNAL (code 500): Internal error encountered.');
@@ -342,6 +347,19 @@ describe('agy over ACP: its warnings', () => {
     expect((err as Error).message).toContain('You have exhausted your quota on this model.');
     expect(r.text()).toBe('');
     expect(r.notices).toEqual([]);
+  });
+
+  it('keeps its own reason when the prompt ends in a refusal after a warning', async () => {
+    // settleAgyTurn runs before the refusal check, so the warning's `provider` wins over the
+    // generic unnamed-refusal `request` the gateway would otherwise report.
+    const { session } = rig();
+    const err = await turn(session, 'refusal', record()).then(
+      () => undefined,
+      (e: unknown) => e
+    );
+    expect(err).toBeInstanceOf(TurnFailure);
+    expect((err as TurnFailure).reason).toBe('provider');
+    expect((err as Error).message).toBe('agy: You have exhausted your quota on this model.');
   });
 
   it('fails a turn whose retries ran out, even after it had started to answer', async () => {

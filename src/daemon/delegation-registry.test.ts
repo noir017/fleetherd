@@ -9,6 +9,7 @@ import type { ConversationAddress } from '../core/conversation.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
 import { TurnFailure } from './agent.js';
+import { readPromptRefusal } from './session-failure.js';
 import type { InboundMessage, TopicActivity } from '../types.js';
 
 /**
@@ -31,7 +32,7 @@ function inbound(content: string, thread = 'tt'): InboundMessage {
 function rig(
   opts: {
     continue?: Record<string, unknown>;
-    script?: Array<'fail' | 'ok'>;
+    script?: Array<'fail' | 'ok' | 'refuse'>;
     hold?: boolean;
     steer?: boolean;
     modelFailure?: string;
@@ -99,6 +100,21 @@ function rig(
           if (opts.hold) await new Promise<void>(() => {});
           const next = script.shift() ?? 'ok';
           if (next === 'fail') throw new TurnFailure('upstream 503', 'service');
+          if (next === 'refuse') {
+            // Exactly what the ACP runtime throws for CodeBuddy's quota refusal (session-failure.ts),
+            // so this half of the test starts from the message the chat and the card would show.
+            const refusal = readPromptRefusal({
+              stopReason: 'refusal',
+              _meta: {
+                'codebuddy.ai/errorMessage': JSON.stringify({
+                  code: -32003,
+                  message: 'Quota exceeded: request rejected by the upstream gateway',
+                  data: { statusCode: 429, category: 'quota' },
+                }),
+              },
+            })!;
+            throw new TurnFailure(refusal.message, refusal.reason);
+          }
           h.onText('Done: all green.');
         },
         abort: () => {},
@@ -161,6 +177,47 @@ describe('hooks.turnFailed.continue through a real turn', () => {
     await wait();
     expect(r.prompts.map((p) => p.prompt)).toEqual(['build it']);
     expect(r.activity[r.activity.length - 1]?.a?.outcome).toMatchObject({ kind: 'failed', reason: 'service', line: 'upstream 503' });
+  });
+
+  it('a refusal is a failure like any other: the reason reaches the topic and the continue', async () => {
+    const r = rig({ continue: { on: ['limit'], message: '继续', max: 3, backoffMs: 1_000 }, script: ['refuse', 'ok'] });
+    live = r.registry;
+    r.registry.route(inbound('build it'));
+    for (let i = 0; i < 20 && r.prompts.length < 2; i++) await wait(20);
+    await wait();
+
+    const message = 'the agent refused this request: Quota exceeded: request rejected by the upstream gateway';
+    // The failure was listed with its reason (that is what the card shows), and a retry was scheduled.
+    expect(r.activity).toContainEqual({
+      to: 'main/tt',
+      a: expect.objectContaining({
+        outcome: expect.objectContaining({ kind: 'failed', reason: 'limit', line: message }),
+        retry: expect.objectContaining({ attempt: 1, max: 3 }),
+      }),
+    });
+    // ...the chat got the failure and the announcement, in that order...
+    expect(r.sent.filter((m) => m.text.startsWith('❌')).map((m) => m.text)).toEqual([
+      `❌ This turn failed: ${message}`,
+    ]);
+    expect(r.sent.some((m) => m.text.startsWith('↻ A usage limit was hit'))).toBe(true);
+    // ...and the policy that names `limit` continued it.
+    expect(r.prompts.map((p) => p.prompt)).toEqual(['build it', '继续']);
+    expect(r.activity[r.activity.length - 1]?.a?.outcome).toMatchObject({ kind: 'done', line: 'Done: all green.' });
+  });
+
+  it('stops after max refusals instead of continuing forever', async () => {
+    const r = rig({
+      continue: { on: ['limit'], message: '继续', max: 3, backoffMs: 1_000 },
+      script: ['refuse', 'refuse', 'refuse', 'refuse'],
+    });
+    live = r.registry;
+    r.registry.route(inbound('build it'));
+    for (let i = 0; i < 40 && r.prompts.length < 4; i++) await wait(20);
+    await wait(80);
+
+    // The initial turn and exactly three continues — the fourth refusal ends the run.
+    expect(r.prompts.map((p) => p.prompt)).toEqual(['build it', '继续', '继续', '继续']);
+    expect(r.sent.some((m) => m.text.startsWith('↻ Not continuing again: 3 automatic continues'))).toBe(true);
   });
 });
 

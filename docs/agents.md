@@ -73,7 +73,7 @@ What `on` can name:
 
 | reason | what happened |
 |---|---|
-| `service`, `limit`, `connection`, `access`, `request` | the model provider failed: an outage, a rate or usage limit, a dropped connection, a sign-in problem, a refused request. Reported by Claude Code only |
+| `service`, `limit`, `connection`, `access`, `request` | the model provider failed: an outage, a rate or usage limit, a dropped connection, a sign-in problem, a refused request. Reported by Claude Code, and by a harness that names the cause of a `refusal` |
 | `provider` | the model provider failed in a way the agent did not classify |
 | `hung` | the agent sent nothing for 10 minutes |
 | `startup` | the agent's process could not be started |
@@ -86,13 +86,22 @@ What `on` can name:
 - A turn that ends normally resets the count. After `max` failures in a row the chat says it
   will not continue again, and the topic is listed as failed.
 - `access` and `request` are not in the default list, because continuing does not fix a missing
-  sign-in or a request the provider refuses.
+  sign-in or a request the provider refuses — including a refusal that names no cause.
 - `command` runs after every failure, on the agent's own machine, under `bash -lc`. The failure is
   in `$TALKCODE_TURN_FAILURE` as JSON: `agent`, `conversation`, `reason`, `message`, `at` and, when a
   continue was scheduled, `continuing`. It does not affect the turn, and its output is kept in
   `~/.config/talkcode/hooks/<agent-id>/`.
 - A turn cut off by a restart is said in its topic when the gateway is back (`⚠️ The gateway
   restarted before this turn finished`), whether or not anything continues it.
+
+An ACP agent can also end a turn with `stopReason: refusal` instead of answering — CodeBuddy does
+this when its upstream rejects the call, and a model that declines does too. A refusal that names
+its cause is always a failed turn, even if the turn had already streamed text or opened a tool: the
+provider rejected the turn, and the cause is classified like any provider failure (a quota rejection
+is `limit`, so the default list continues it). A refusal with no cause is the model declining: it
+fails only when the turn showed nothing, and says `request`; one that already explained itself —
+Claude sends its refusal explanation as an ordinary message first — is a normal end, because that
+explanation is the answer.
 
 ## Permission requests
 

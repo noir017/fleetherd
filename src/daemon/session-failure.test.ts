@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   sessionFailureMeta,
@@ -8,6 +9,7 @@ import {
 import {
   describeSessionFailure,
   failureNoticeKey,
+  readPromptRefusal,
   readSessionFailure,
   SESSION_FAILURE_CAPABILITY_META,
   type SessionFailure,
@@ -102,6 +104,107 @@ describe('failureNoticeKey', () => {
   });
 });
 
+describe('readPromptRefusal', () => {
+  /** A prompt response the way codebuddy 2.180.0 sends one when its upstream rejects the call. */
+  const refused = (errorMessage?: string) => ({
+    stopReason: 'refusal',
+    ...(errorMessage !== undefined ? { _meta: { 'codebuddy.ai/errorMessage': errorMessage } } : {}),
+  });
+
+  it('turns a quota rejection into a limit failure carrying the provider’s own words', () => {
+    const body = JSON.stringify({
+      code: -32003,
+      message: 'Quota exceeded: you have used your weekly allowance',
+      data: { statusCode: 429, category: 'quota' },
+    });
+    expect(readPromptRefusal(refused(body))).toEqual({
+      reason: 'limit',
+      message: 'the agent refused this request: Quota exceeded: you have used your weekly allowance',
+      named: true,
+    });
+  });
+
+  it('leaves an unnamed refusal as a request failure that says which stop reason it was', () => {
+    // What a model's own refusal looks like: finish_reason content_filter/refusal, no provider error.
+    expect(readPromptRefusal(refused())).toEqual({
+      reason: 'request',
+      message: 'the agent refused this request (stopReason: refusal)',
+      named: false,
+    });
+    expect(readPromptRefusal({ stopReason: 'refusal', _meta: { quota: { token_count: {} } } })).toEqual({
+      reason: 'request',
+      message: 'the agent refused this request (stopReason: refusal)',
+      named: false,
+    });
+  });
+
+  it('classifies the other causes CodeBuddy names, including the families', () => {
+    const at = (data: Record<string, unknown>) =>
+      readPromptRefusal(refused(JSON.stringify({ message: 'upstream said no', data })))?.reason;
+    expect(at({ category: 'auth' })).toBe('access');
+    expect(at({ category: 'auth_expired' })).toBe('access');
+    expect(at({ category: 'custom_model_auth' })).toBe('access');
+    expect(at({ category: 'quota_token_limit' })).toBe('limit');
+    expect(at({ category: 'quota_balance_exhausted' })).toBe('limit');
+    expect(at({ category: 'quota_request_limit' })).toBe('limit');
+    expect(at({ category: 'quota_active_session' })).toBe('limit');
+    expect(at({ category: 'network' })).toBe('connection');
+    expect(at({ category: 'model_service' })).toBe('service');
+    expect(at({ category: 'empty_model_response' })).toBe('service');
+    expect(at({ category: 'internal' })).toBe('provider');
+    // A body that carries only an HTTP status still classifies; CodeBuddy calls 408/502/503/504 a
+    // network error, not a model-service one.
+    expect(at({ statusCode: 401 })).toBe('access');
+    expect(at({ statusCode: 429 })).toBe('limit');
+    expect(at({ statusCode: 408 })).toBe('connection');
+    expect(at({ statusCode: 503 })).toBe('connection');
+  });
+
+  it('reads a plain string under CodeBuddy’s key, and ignores every other key', () => {
+    expect(readPromptRefusal(refused('the model is not available'))).toEqual({
+      reason: 'provider',
+      message: 'the agent refused this request: the model is not available',
+      named: true,
+    });
+    // A blocked sensitive input arrives as a plain namespaced string too (no category), and reads
+    // as `provider` — still a refused turn, never an answered one.
+    expect(readPromptRefusal(refused('This prompt contains sensitive information.'))).toEqual({
+      reason: 'provider',
+      message: 'the agent refused this request: This prompt contains sensitive information.',
+      named: true,
+    });
+    // The unnamespaced key is not ours: it does not survive to the wire, and another harness may
+    // put anything there.
+    expect(
+      readPromptRefusal({ stopReason: 'refusal', _meta: { errorMessage: 'local command failed' } })
+    ).toEqual({
+      reason: 'request',
+      message: 'the agent refused this request (stopReason: refusal)',
+      named: false,
+    });
+  });
+
+  it('never turns JSON it cannot read into chat text', () => {
+    expect(readPromptRefusal(refused('{"code":-32003,"data":{}}'))).toEqual({
+      reason: 'request',
+      message: 'the agent refused this request (stopReason: refusal)',
+      named: false,
+    });
+    expect(readPromptRefusal({ stopReason: 'refusal', _meta: 'nonsense' })).toEqual({
+      reason: 'request',
+      message: 'the agent refused this request (stopReason: refusal)',
+      named: false,
+    });
+  });
+
+  it('ignores every other way a prompt can end', () => {
+    expect(readPromptRefusal(undefined)).toBeUndefined();
+    expect(readPromptRefusal({ stopReason: 'end_turn' })).toBeUndefined();
+    expect(readPromptRefusal({ stopReason: 'cancelled' })).toBeUndefined();
+    expect(readPromptRefusal({ stopReason: 'max_tokens' })).toBeUndefined();
+  });
+});
+
 /**
  * Hyrum's Law guards for a private extension (see session-failure.ts). Each one fails loudly in
  * the case where the gateway would otherwise lose the records without noticing, and a retry loop
@@ -153,5 +256,63 @@ describe('the installed claude-agent-acp (contract)', () => {
     // for records. If this ever goes back to a rejection, the read is harmless; if the shape moves,
     // failed turns would be reported as successes.
     expect(dist).toContain('settleActive(turnOutcome(session, "end_turn", sessionFailureMeta(failure)), "providerError")');
+  });
+});
+
+/**
+ * The other private contract: CodeBuddy's refusal shape (see session-failure.ts). The installed
+ * package lives outside this project's node_modules, so a machine without it skips the suite rather
+ * than failing. What it guards is exactly what the reader depends on — that a refusal is still a
+ * `stopReason` value, that the cause is still under `codebuddy.ai/errorMessage`, and that a quota
+ * rejection still arrives as `category: "quota"`. Renaming any of them would otherwise degrade to
+ * the unnamed refusal and read as a model declining.
+ */
+/**
+ * Where the installed CodeBuddy keeps its bundle. Found through the `codebuddy` a PATH lookup would
+ * run (the package root is outside this project's node_modules), with the packaged path as a
+ * fallback for a machine that did not link the binary. Undefined means "not installed here": the
+ * suite says so once and skips, rather than failing on a machine that never had it.
+ */
+function findCodeBuddyDist(): string | undefined {
+  const candidates = (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map((dir) => join(dir, 'codebuddy'));
+  candidates.push('/opt/ua/codebuddy/current/bin/codebuddy');
+  for (const bin of candidates) {
+    try {
+      // realpath resolves the launcher symlink; the bundle sits one level above bin/.
+      const packageRoot = resolve(dirname(realpathSync(bin)), '..');
+      const dist = join(packageRoot, 'dist', 'codebuddy-headless.js');
+      if (existsSync(dist)) return dist;
+    } catch {
+      // Not here, or a dangling link: try the next one.
+    }
+  }
+  return undefined;
+}
+
+const CODEBUDDY_DIST = findCodeBuddyDist();
+if (!CODEBUDDY_DIST) {
+  console.log(
+    '[session-failure.test] skipping the CodeBuddy contract: no codebuddy on PATH and no install at /opt/ua/codebuddy/current'
+  );
+}
+let codebuddyDist: string | undefined;
+const readCodeBuddyDist = (): string => (codebuddyDist ??= readFileSync(CODEBUDDY_DIST!, 'utf8'));
+
+describe.skipIf(!CODEBUDDY_DIST)('the installed CodeBuddy (contract)', () => {
+  it('still turns a refusal finish reason into stopReason "refusal"', () => {
+    expect(readCodeBuddyDist()).toMatch(/case\s*"content_filter"\s*:\s*case\s*"refusal"\s*:\s*return\s*"refusal"/);
+    expect(readCodeBuddyDist()).toMatch(/stopReason\s*:\s*"refusal"/);
+  });
+
+  it('still carries the provider error under codebuddy.ai/errorMessage', () => {
+    expect(readCodeBuddyDist()).toMatch(/_meta\["codebuddy\.ai\/errorMessage"\]/);
+  });
+
+  it('still classifies a quota rejection as category "quota"', () => {
+    expect(readCodeBuddyDist()).toMatch(/category\s*:\s*"quota"/);
+    expect(readCodeBuddyDist()).toContain('Quota exceeded: ');
   });
 });
