@@ -110,8 +110,19 @@ export class TurnOutcomes {
     return this.activity.get(id)?.outcome?.kind === 'failed' ? this.failures.get(id) : undefined;
   }
 
-  /** A released scheduled run, or shutdown, is dropping the conversation's state: its texts go too. */
-  dropTexts(id: ConversationId): void {
+  /**
+   * The registry let the conversation go (ConversationRegistry.releaseState: a throwaway scheduled
+   * run when it ends, or shutdown): everything kept for it goes, and a continue still waiting is
+   * called off — it could only find no lane, log that it could not be sent, and put the outcome back.
+   * Nothing reads these afterwards: such a run has no topic, so no list or sub-agent card asks for
+   * it. Nothing is pushed either: its lane was the person's own conversation, whose entry in the list
+   * is not this run's to clear. Before this, only the texts went, and every run of a task without a
+   * topic of its own left its outcome here for the life of the process.
+   */
+  release(id: ConversationId): void {
+    this.callOffPending(id);
+    this.continuing.delete(id);
+    this.activity.delete(id);
     this.replies.delete(id);
     this.failures.delete(id);
   }

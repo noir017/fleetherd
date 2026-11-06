@@ -169,6 +169,20 @@ export class StatusBoard {
     this.entries.clear();
   }
 
+  /**
+   * Drop a conversation the registry has let go of (ConversationRegistry.releaseState: a throwaway
+   * scheduled run when it ends, or shutdown), timers and all. Nothing is sent, unlike reset: such a
+   * run shows its status on the lane it posted into, which is the person's own conversation, and
+   * blanking that strip is not the run's to do. Without this every such run left its entry here for
+   * the life of the process.
+   */
+  forget(id: ConversationId): void {
+    const e = this.entries.get(id);
+    if (!e) return;
+    this.cancel(e);
+    this.entries.delete(id);
+  }
+
   /** What would be shown for a conversation right now, throttle aside. For tests. */
   statusOf(id: ConversationId): AgentStatus | undefined {
     const e = this.entries.get(id);

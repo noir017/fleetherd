@@ -182,4 +182,17 @@ describe('StatusBoard', () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+
+  it('forgets a conversation without sending anything, and nothing owed arrives later', async () => {
+    const { board, clock, shown, cacheReading } = rig({ reading: { expiresAt: T0 + HOUR, ttlMs: HOUR } });
+    board.usage('c1', { used: 1, size: 100 });
+    board.usage('c1', { used: 2, size: 100 }); // owed to the window's end
+    board.settled('c1'); // a transcript read armed
+    board.forget('c1');
+    expect(board.statusOf('c1')).toBeUndefined();
+    await clock.advance(CACHE_READ_DELAY_MS + MIN_INTERVAL_MS * 2);
+    // Unlike reset, the strip is left as it was: the first report, and nothing after it.
+    expect(shown.map((s) => s?.context?.used)).toEqual([1]);
+    expect(cacheReading).not.toHaveBeenCalled();
+  });
 });
