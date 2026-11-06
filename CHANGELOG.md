@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.46.1] - 2026-11-06
+
 ### Fixed
 
 - **Adopt and Dismiss on a suggested preference are an ordinary height on a phone.** They were
