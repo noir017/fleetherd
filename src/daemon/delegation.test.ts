@@ -26,6 +26,7 @@ import {
   type DelegationDeps,
 } from './delegation.js';
 import { TurnOutcomes } from './turn-outcomes.js';
+import { TurnFailure } from './agent.js';
 import type { LiveTurn } from './turn-progress.js';
 import { jobInCommand, UPDATE_SENDER } from './turn-runner.js';
 
@@ -1375,6 +1376,16 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(prompt).toContain(`${error.length} chars total, cut at`);
     expect(prompt).toContain("the whole error is in this topic's turn 1 — task-read web:main/c1000000 --turn 1");
     expect(prompt).not.toContain('--turn last');
+  });
+
+  it('shows a refused turn as failed, with the reason its harness gave', async () => {
+    const chain = realChain();
+    await openOne(chain);
+    const message = 'the agent refused this request: Quota exceeded: request rejected by the upstream gateway';
+    chain.outcomes.turnEnded('web#main#c1000000', { kind: 'failed', error: new TurnFailure(message, 'limit'), turn: 1 });
+    chain.r.clock.advance(CARD_DELAY_MS);
+    // Not "finished with no reply": the parent reads the same sentence the chat got.
+    expect(cardOf(chain.r)).toContain(`  failure: ${message}`);
   });
 
   it('points a cut reply at the turn it quoted, not at whatever is newest after a burst', async () => {

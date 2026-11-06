@@ -23,7 +23,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agent.ts` | `AgentFactory` / `AgentSession` / `AgentStreamHandlers` interfaces. Dependency-free. |
 | `agent-factory.ts` | Dispatch: which runtime serves which agent |
 | `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under `permissions: auto`, ask through the turn's (or a background burst's) `onPermission` under `ask` — see answerPermission / permissionResponse for why an unanswered request goes back as an error |
-| `session-failure.ts` | claude-agent-acp's typed failure records: the capability that asks for them, and reading one off the wire |
+| `session-failure.ts` | Failures read off the ACP wire: claude-agent-acp's typed failure records (the capability that asks for them), and a prompt that ended in `stopReason: "refusal"` with whatever cause the harness attached |
 | `acp-steering.ts` | How an ACP harness takes a message into a running turn (a second prompt, `_session/steering`, or not at all), read off `initialize` |
 | `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, per-turn usage, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy models`, `agy -p=/<command>`), here or on a host — used by both agy runtimes and by chat commands |
@@ -663,6 +663,24 @@ The before/after was reproduced against the real adapter and Claude Code with a 
 answering 503 (`project-scripts/aa-air-failure/`): without the capability the turn failed
 as hung while Claude Code was still retrying, and with it the turn ended with the
 provider's own error text.
+
+**A refusal is a failed turn — always when it names a cause.** `stopReason: "refusal"` is ACP's
+"the agent refused to complete the request without answering". An empty turn that ended that
+way used to unwind as a normal `turn complete`: no ❌ in the chat, a sub-agent card that said
+finished with no reply, and no `hooks.turnFailed.continue`. `runTurn` fails a refusal that
+carries CodeBuddy's cause (`readPromptRefusal` in `session-failure.ts`) whatever the turn had
+already streamed — a 429 after a tool call is still a rejected turn. Only an unnamed refusal
+consults `trackVisibleOutput`: claude-agent-acp sends `lastRefusalExplanation` as an ordinary
+`agent_message_chunk` before its refusal, and that text is the answer, so a ❌ under it would
+be a bug. The cause is read from `_meta["codebuddy.ai/errorMessage"]`, which CodeBuddy attaches
+when its upstream rejects the call (a JSON `{code, message, data}`; a `quota*` category is
+`limit`, `auth*` or `custom_model_auth` is `access`). An unnamed refusal is `request`, said as
+`the agent refused this request (stopReason: refusal)`. That split is the one worth making:
+`request` is not in the default continue list, because re-asking a model that declined does not
+change its answer, while a quota rejection is exactly what continuing is for. `max` still
+bounds either. This lane does not overlap agy's: its warning failures arrive on an `end_turn`
+(`AgyTurnWatch`, above), so `settleAgyTurn` reports those and the refusal check only sees the
+prompt's own stop reason.
 
 One more silence is not a hang at all: claude-agent-acp's **folded prompt** (upstream
 #1145, unfixed as of 0.84.0). A prompt sent while Claude Code is reporting a finished

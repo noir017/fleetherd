@@ -47,6 +47,7 @@ import {
   describeSessionFailure,
   failureNoticeKey,
   failureReasonOf,
+  readPromptRefusal,
   readSessionFailure,
   SESSION_FAILURE_CAPABILITY_META,
   type SessionFailure,
@@ -783,6 +784,48 @@ async function applyModelPreference(
     );
     return undefined;
   }
+}
+
+/**
+ * Watch whether a turn shows the person anything. It only decides the fate of an UNNAMED refusal
+ * (see failIfRefused): claude-agent-acp sends `lastRefusalExplanation` as an ordinary
+ * `agent_message_chunk` before reporting `stopReason: "refusal"`, and that explanation is a
+ * perfectly good answer. Text counts only when it is not blank; a tool bubble counts as soon as it
+ * opens.
+ */
+function trackVisibleOutput(handlers: AgentStreamHandlers): {
+  handlers: AgentStreamHandlers;
+  sawOutput: () => boolean;
+} {
+  let seen = false;
+  return {
+    sawOutput: () => seen,
+    handlers: {
+      ...handlers,
+      onText: (delta) => {
+        if (delta.trim() !== '') seen = true;
+        handlers.onText(delta);
+      },
+      onToolStart: (evt) => {
+        seen = true;
+        handlers.onToolStart(evt);
+      },
+    },
+  };
+}
+
+/**
+ * Fail a turn whose prompt ended in `stopReason: "refusal"`. A cause CodeBuddy attached always
+ * fails, however much the turn had already streamed — a 429 after a tool call is still a rejected
+ * turn. Only an unnamed refusal is spared when something was already visible: that is the model
+ * declining, and Claude sends its explanation as ordinary text first. Kept out of `runTurn` so its
+ * own branch count stays where lint wants it.
+ */
+function failIfRefused(response: PromptResponse, visibleOutput: boolean): void {
+  const refusal = readPromptRefusal(response);
+  if (!refusal) return;
+  if (!refusal.named && visibleOutput) return;
+  throw new TurnFailure(refusal.message, refusal.reason);
 }
 
 function createAcpSession(
@@ -2101,8 +2144,12 @@ function createAcpSession(
   return {
     conversationId,
 
-    async runTurn(input: RunTurnInput, handlers: AgentStreamHandlers): Promise<void> {
+    async runTurn(input: RunTurnInput, incomingHandlers: AgentStreamHandlers): Promise<void> {
       aborting = false;
+      // Everything this turn renders goes through the probe, so a refusal can tell an empty turn
+      // from one whose explanation already reached the chat (see trackVisibleOutput).
+      const output = trackVisibleOutput(incomingHandlers);
+      const handlers = output.handlers;
       // From here until the prompt is out, a message sent mid-turn waits for it (see promptSent).
       // Closed on every way out: the prompt sent, the start failing below, or the turn's `finally`.
       // What runs between this try and that one is synchronous bookkeeping that cannot throw.
@@ -2331,6 +2378,10 @@ function createAcpSession(
         // the tools are flushed, exactly as a rejection was, so the two read the same downstream.
         const failure = readSessionFailure(response._meta);
         if (failure?.severity === 'error') throw new TurnFailure(describeSessionFailure(failure), failureReasonOf(failure));
+        // A refusal is a failed turn when it names a cause, or when an unnamed one showed nothing
+        // (see failIfRefused). Checked before agy's settle so a refusal fails at once; agy's own
+        // warning lane is an `end_turn` with its own reason to report (agy-acp.ts AgyTurnWatch).
+        failIfRefused(response, output.sawOutput());
         // agy's equivalent arrives as text, and its usage only here (agy-acp.ts AgyTurnWatch).
         settleAgyTurn(state, response);
         flushPendingTools(state);

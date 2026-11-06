@@ -231,6 +231,74 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       }, 150 * steps.length);
       return;
     }
+    if (asked.includes('REFUSE_TOOL_THEN_QUOTA')) {
+      // A run that got as far as a tool, then the upstream 429. The tool must not make the refused
+      // turn look finished.
+      notify(sessionId, {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'q1',
+        title: 'Bash',
+        kind: 'execute',
+        status: 'in_progress',
+        rawInput: { command: './check.sh' },
+      });
+      notify(sessionId, { sessionUpdate: 'tool_call_update', toolCallId: 'q1', status: 'completed' });
+      reply(msg.id, {
+        stopReason: 'refusal',
+        _meta: {
+          'codebuddy.ai/errorMessage': JSON.stringify({
+            code: -32003,
+            message: 'Quota exceeded: request rejected by the upstream gateway',
+            data: { statusCode: 429, category: 'quota' },
+          }),
+        },
+      });
+      return;
+    }
+    if (asked.includes('REFUSE_TEXT_THEN_QUOTA')) {
+      // Same, one streamed sentence earlier.
+      text(sessionId, 'Checking the deploy now.');
+      reply(msg.id, {
+        stopReason: 'refusal',
+        _meta: {
+          'codebuddy.ai/errorMessage': JSON.stringify({
+            code: -32003,
+            message: 'Quota exceeded: request rejected by the upstream gateway',
+            data: { statusCode: 429, category: 'quota' },
+          }),
+        },
+      });
+      return;
+    }
+    if (asked.includes('REFUSE_EXPLAINED')) {
+      // claude-agent-acp's refusal shape: lastRefusalExplanation goes out as an ordinary message
+      // chunk, then the prompt answers with stopReason refusal (dist/acp-agent.js 0.81.0). The
+      // explanation IS the answer, so this turn must end normally.
+      text(sessionId, 'I can’t help with that request.');
+      reply(msg.id, { stopReason: 'refusal' });
+      return;
+    }
+    if (asked.includes('REFUSE_QUOTA')) {
+      // CodeBuddy's refusal when its upstream rejects the call: no answer, no rejection, and the
+      // provider's own error JSON under its private _meta key (see session-failure.ts).
+      reply(msg.id, {
+        stopReason: 'refusal',
+        _meta: {
+          'codebuddy.ai/errorMessage': JSON.stringify({
+            code: -32003,
+            message: 'Quota exceeded: request rejected by the upstream gateway',
+            data: { statusCode: 429, category: 'quota' },
+          }),
+        },
+      });
+      return;
+    }
+    if (asked.includes('REFUSE_PLAIN')) {
+      // A model's own refusal: finish_reason content_filter/refusal maps to the same stopReason,
+      // with no provider error to attach.
+      reply(msg.id, { stopReason: 'refusal' });
+      return;
+    }
     if (asked.includes('FAIL_TYPED')) {
       // Retries ran out: the adapter settles the prompt as end_turn and puts the failure in _meta,
       // instead of rejecting it, because the client asked for records.
@@ -694,6 +762,78 @@ describe('the silence watchdog distinguishes a hang from a long tool call', () =
     expect(Date.now() - started).toBeGreaterThanOrEqual(TIMEOUT * (1 + TOOL_SILENCE_FACTOR));
     // ...but the ceiling is finite, which is what keeps a wedged tool from pinning the
     // conversation in `running` forever.
+  });
+});
+
+/**
+ * `stopReason: "refusal"` (see session-failure.ts). Before this the prompt resolved normally and
+ * the gateway logged `turn complete`: the sub-agent card said finished with no reply, the chat got
+ * no ❌, and `hooks.turnFailed.continue` never saw a failure. Reproduced against CodeBuddy, whose
+ * harness reports an upstream 429 exactly this way.
+ */
+describe('a prompt the agent refused', () => {
+  it('fails the turn with the cause the harness attached', async () => {
+    const { session } = rig();
+    const turn = collector();
+    await expect(session.runTurn({ prompt: 'REFUSE_QUOTA', sessionToken: 'tok' }, turn.handlers)).rejects.toMatchObject(
+      {
+        name: 'TurnFailure',
+        reason: 'limit',
+        message: 'the agent refused this request: Quota exceeded: request rejected by the upstream gateway',
+      }
+    );
+    expect(turn.turn.join('')).toBe('');
+  });
+
+  it('fails an unexplained refusal too, naming the stop reason', async () => {
+    const { session } = rig();
+    const turn = collector();
+    await expect(session.runTurn({ prompt: 'REFUSE_PLAIN', sessionToken: 'tok' }, turn.handlers)).rejects.toMatchObject(
+      {
+        name: 'TurnFailure',
+        reason: 'request',
+        message: 'the agent refused this request (stopReason: refusal)',
+      }
+    );
+  });
+
+  it('still fails a refusal that names a cause after a tool bubble', async () => {
+    // The reported shape: work got going, then the upstream rejected the turn. A tool bubble is
+    // visible output, but it is not an answer — the turn must still fail.
+    const { session } = rig();
+    const turn = collector();
+    await expect(
+      session.runTurn({ prompt: 'REFUSE_TOOL_THEN_QUOTA', sessionToken: 'tok' }, turn.handlers)
+    ).rejects.toMatchObject({ name: 'TurnFailure', reason: 'limit' });
+    expect(turn.tools).toEqual(['Bash']);
+  });
+
+  it('still fails a refusal that names a cause after streamed text', async () => {
+    // Same for one sentence already on screen: the provider rejected the turn, so what it said
+    // before is a partial reply, not an answer.
+    const { session } = rig();
+    const turn = collector();
+    await expect(
+      session.runTurn({ prompt: 'REFUSE_TEXT_THEN_QUOTA', sessionToken: 'tok' }, turn.handlers)
+    ).rejects.toMatchObject({ name: 'TurnFailure', reason: 'limit' });
+    expect(turn.turn.join('')).toBe('Checking the deploy now.');
+  });
+
+  it('keeps a refusal that explains itself a normal end, the way Claude sends one', async () => {
+    // Claude's safety refusal: the explanation arrives as an agent_message_chunk first, then the
+    // prompt reports refusal. The person already has an answer, so no ❌ and no turnFailed.
+    const { session } = rig();
+    const turn = collector();
+    await session.runTurn({ prompt: 'REFUSE_EXPLAINED', sessionToken: 'tok' }, turn.handlers);
+    expect(turn.turn.join('')).toBe('I can’t help with that request.');
+  });
+
+  it('still ends an ordinary turn normally', async () => {
+    // Control: reading the stop reason must not turn every successful turn into a failure.
+    const { session } = rig();
+    const turn = collector();
+    await session.runTurn({ prompt: 'META_ONLY', sessionToken: 'tok' }, turn.handlers);
+    expect(turn.turn.join('')).toBe('done');
   });
 });
 

@@ -36,6 +36,37 @@ import type { TurnFailureReason } from '../types.js';
  * JetBrains' AIR client), not ACP. session-failure.test.ts runs this module against the installed
  * adapter's own encoder and capability check. If either is renamed the test fails, instead of the
  * false "hung" quietly coming back.
+ *
+ * ── Refusals ────────────────────────────────────────────────────────────────────────────────────
+ * A prompt also ends with `stopReason: "refusal"` — no rejection, no failure record, one field
+ * saying the agent would not answer. ACP defines that reason as "the agent refused to complete the
+ * request without answering", so a turn that ends this way with nothing rendered must not read
+ * downstream as a finished reply (the card said "finished", `turnFailed.continue` never fired, and
+ * only `turn complete` reached the log).
+ *
+ * CodeBuddy (`custom` harness, `codebuddy --acp`) uses the same reason for two different things.
+ * Read from codebuddy 2.180.0's dist/codebuddy-headless.js on 2026-11-06:
+ *  - the upstream rejected the request (a 429/usage limit, a sign-in failure, an upstream fault):
+ *    the response carries `_meta["codebuddy.ai/errorMessage"]`, a JSON string of
+ *    `{code, message, data}` where `data.category` is `quota`, `quota_token_limit`, `auth_expired`,
+ *    `network`, `model_service`, … (`classifyErrorAsRequestError`); a 408/502/503/504 is classified
+ *    `network`, not a model error;
+ *  - the model itself declined (finish reason `content_filter`/`refusal`): `mapFinishReasonToStopReason`
+ *    turns that into `refusal`, with no provider error to report.
+ *
+ * A refusal that carries CodeBuddy's cause always fails, even if the turn had already streamed text
+ * or opened a tool: the provider rejected the turn, and a 429 after a tool call is exactly the case
+ * that used to read as a finished reply. Only an unnamed refusal — the model declining — asks
+ * whether the turn showed anything. claude-agent-acp sends `lastRefusalExplanation` as an ordinary
+ * `agent_message_chunk` before reporting that refusal (dist/acp-agent.js, 0.81.0), and that
+ * explanation is the answer the person reads, so a ❌ under it would be a bug. An unnamed refusal
+ * with nothing visible is a `TurnFailure`.
+ *
+ * The two causes are kept apart only where it changes what happens next: a named upstream cause is
+ * classified into the same lanes as a failure record, so a quota rejection is `limit` and the
+ * default `hooks.turnFailed.continue.on` list may continue it; an unnamed refusal is `request`,
+ * which that list deliberately leaves out — asking the same model the same question again does not
+ * change a content refusal. The `max` on a continue bounds either.
  */
 
 /** One failure record as the gateway uses it. */
@@ -125,6 +156,127 @@ export function failureReasonOf(f: SessionFailure): TurnFailureReason {
  */
 export function failureNoticeKey(f: SessionFailure): string {
   return f.severity === 'warning' ? `warning:${f.category}` : `error:${f.id}`;
+}
+
+/** A prompt that ended in `stopReason: "refusal"`, as a failed turn needs it. */
+export interface PromptRefusal {
+  /** The failure lane the cause falls into, or `request` when the harness gave none. */
+  reason: TurnFailureReason;
+  /** The sentence the chat and a sub-agent's card show. */
+  message: string;
+  /**
+   * Whether CodeBuddy attached the cause itself. A named cause is an upstream failure and fails the
+   * turn whatever it had already streamed; an unnamed one is the model declining, which is a normal
+   * end when the turn showed something.
+   */
+  named: boolean;
+}
+
+const REFUSAL_WITHOUT_CAUSE = 'the agent refused this request (stopReason: refusal)';
+
+/**
+ * Read a prompt response that stopped on a refusal. Undefined for every other stop reason, so the
+ * caller can run this on the ordinary path without a branch of its own.
+ *
+ * The cause is only ever read from `_meta`, never from text the agent streamed: a refusal's own
+ * message is a sequence of `session/update`s that may be empty (a quota rejection sends none) and,
+ * when it is not, is the model's words rather than a reason. `codebuddy.ai/errorMessage` is
+ * CodeBuddy's private key, in the same Hyrum's Law position as the AIR record above; a renamed key
+ * degrades to the unnamed refusal.
+ */
+export function readPromptRefusal(
+  response: { stopReason?: string; _meta?: unknown } | undefined
+): PromptRefusal | undefined {
+  if (response?.stopReason !== 'refusal') return undefined;
+  const detail = refusalDetail(response._meta);
+  if (!detail) return { reason: 'request', message: REFUSAL_WITHOUT_CAUSE, named: false };
+  return { reason: refusalReasonOf(detail), message: `the agent refused this request: ${detail.text}`, named: true };
+}
+
+/** One refusal's cause: the provider's sentence, plus what it admits about its lane. */
+interface RefusalDetail {
+  text: string;
+  category?: string;
+  statusCode?: number;
+}
+
+/**
+ * The cause a refusal attached, if any. Only CodeBuddy's namespaced key is read: the plain
+ * `_meta.errorMessage` some of its fallback paths set is not carried onto the wire, so reading it
+ * would only risk catching something else. A JSON body without a usable `message` yields nothing
+ * rather than dumping the JSON into the chat.
+ *
+ * The same key also carries a blocked sensitive input's safe message (`prepareSensitiveUserPrompt`
+ * denies with it). That body has no `data.category`, so it lands as `provider` — the turn was
+ * refused, not answered, which is the right outcome; the key is not "upstream errors only".
+ */
+function refusalDetail(meta: unknown): RefusalDetail | undefined {
+  const m = asRecord(meta);
+  if (!m) return undefined;
+  const raw = m['codebuddy.ai/errorMessage'];
+  const body = typeof raw === 'string' ? parseJsonObject(raw) : asRecord(raw);
+  if (body) {
+    const text = typeof body.message === 'string' ? body.message.trim() : '';
+    if (!text) return undefined;
+    const data = asRecord(body.data);
+    const category = typeof data?.category === 'string' ? data.category : undefined;
+    const statusCode = typeof data?.statusCode === 'number' ? data.statusCode : undefined;
+    return { text, ...(category ? { category } : {}), ...(statusCode !== undefined ? { statusCode } : {}) };
+  }
+  if (typeof raw === 'string' && raw.trim() !== '' && !raw.trimStart().startsWith('{')) {
+    return { text: raw.trim() };
+  }
+  return undefined;
+}
+
+/**
+ * Which lane a named cause belongs to. CodeBuddy's own categories first, then the HTTP status for
+ * a body that carries only that. Categories are matched by prefix because the quota and auth
+ * families are many (`quota_token_limit`, `quota_balance_exhausted`, `auth_expired`,
+ * `custom_model_auth`, …). Anything unrecognised is `provider`: it did come from the model path,
+ * and reading it as `other` would hide it from a policy naming `provider`.
+ */
+function refusalReasonOf(detail: RefusalDetail): TurnFailureReason {
+  const category = detail.category ?? '';
+  if (category.startsWith('quota')) return 'limit';
+  if (category.startsWith('auth') || category === 'custom_model_auth') return 'access';
+  switch (category) {
+    case 'network':
+      return 'connection';
+    case 'service':
+    case 'model_service':
+    case 'empty_model_response':
+      return 'service';
+    case 'request':
+      return 'request';
+    default:
+      break;
+  }
+  switch (detail.statusCode) {
+    case 401:
+    case 403:
+      return 'access';
+    case 429:
+      return 'limit';
+    // CodeBuddy classifies these as a network error, not a model-service one (see the comment
+    // above): the request never reached a model, which is `connection` in the gateway's vocabulary.
+    case 408:
+    case 502:
+    case 503:
+    case 504:
+      return 'connection';
+    default:
+      return 'provider';
+  }
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | undefined {
+  if (!text.trimStart().startsWith('{')) return undefined;
+  try {
+    return asRecord(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -450,8 +450,12 @@ export interface AgentCatalogEntry {
  * matches `continue.on` against, so the words are the operator's vocabulary as much as ours.
  *
  * The first five are claude-agent-acp's own failure lanes (its AIR `sessionFailure` category, see
- * daemon/session-failure.ts) and are only ever reported for the `claude` harness — the others fail a
- * turn with nothing but text, which is `other`. The rest are the gateway's:
+ * daemon/session-failure.ts). A refusal that names its cause is classified into the same five —
+ * CodeBuddy's quota rejection is `limit` — and always fails, however much the turn had already
+ * streamed, so `hooks.turnFailed.continue` can continue the ones worth continuing. An unnamed
+ * refusal (a model declining) fails only when the turn showed nothing; one that explained itself
+ * is a normal end. Anything else a harness reports as text alone is `other`. The rest are the
+ * gateway's:
  *  - `provider` — the model provider failed in a lane the harness did not name;
  *  - `hung`     — the silence watchdog gave up on the turn (session.turnTimeoutMs of nothing);
  *  - `startup`  — the agent's child could not be started at all;

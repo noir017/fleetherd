@@ -69,7 +69,7 @@ agents:
 
 | 原因 | 发生了什么 |
 |---|---|
-| `service`、`limit`、`connection`、`access`、`request` | 模型服务出错：故障、频率或用量限制、连接断开、登录问题、请求被拒。只有 Claude Code 会报这几种 |
+| `service`、`limit`、`connection`、`access`、`request` | 模型服务出错：故障、频率或用量限制、连接断开、登录问题、请求被拒。Claude Code 会报这几种；harness 以 `refusal` 结束并写明原因时也会归到这几类 |
 | `provider` | 模型服务出错，但智能体没给出具体类型 |
 | `hung` | 智能体 10 分钟没有任何输出 |
 | `startup` | 智能体进程没能启动 |
@@ -80,12 +80,18 @@ agents:
 - 每次自动继续前都会先在聊天里说明（`↻ … sending "继续" in 30s (1/3)`），然后作为单独的一轮发出。
   等待期间你发任何消息、`/stop`、`/new` 或 `/kill` 都会取消它。
 - 一轮正常结束会把计数清零。连续失败 `max` 次后，聊天里会说明不再继续，这个话题会被列为失败。
-- 默认列表里没有 `access` 和 `request`，因为没登录、请求被拒，继续多少次也没用。
+- 默认列表里没有 `access` 和 `request`，因为没登录、请求被拒（包括没写原因的拒答），继续多少次也没用。
 - `command` 在每次失败后运行，在智能体自己的机器上用 `bash -lc` 执行。失败信息以 JSON 放在
   `$TALKCODE_TURN_FAILURE` 里：`agent`、`conversation`、`reason`、`message`、`at`，安排了自动继续时还有
   `continuing`。它不影响这一轮，输出保存在 `~/.config/talkcode/hooks/<agent-id>/`。
 - 被重启打断的一轮，网关回来后会在它的话题里说明（`⚠️ The gateway restarted before this turn
   finished`），不管有没有自动继续。
+
+ACP 智能体也可能以 `stopReason: refusal` 结束一轮，而不是给出回答——CodeBuddy 在上游拒绝请求时
+会这样，模型自己拒答时也会。写明原因的 refusal 一律算失败，即使这一轮已经输出过文字或开过工具：
+是上游拒绝了这一轮，原因按普通服务故障归类（额度拒绝是 `limit`，默认列表会继续）。没写原因的
+是模型自己拒答：只有这一轮没有任何可见输出才算失败，归为 `request`；已经先发过解释的（Claude
+会把拒答解释当普通消息发出来）正常结束，那段解释就是回答。
 
 ## 权限请求
 
