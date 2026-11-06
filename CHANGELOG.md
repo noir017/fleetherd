@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The skills page's buttons are an ordinary height on a phone.** Every button on it — the two
+  switches on each row of the list, and Pin, Save and the file buttons on a skill's page — was
+  44px tall there, which with two controls on every row read as a page of slabs. They are 32px
+  now; the window's own bar keeps its 44px close and New.
+
 ## [2.43.0] - 2026-11-06
 
 ### Changed
