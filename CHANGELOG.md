@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's composer splits into two rows by its own width, not the window's.** 2.39.0 gave
+  the text area a full-width row below 640px of window, so one pixel above that the file, voice and
+  Send buttons — Stop joins them only mid-turn — still shared its row: at 641px the sidebar is still
+  a 240px column, the composer 369px, the three buttons and the gaps around them 156px, and the
+  input was left 213px. The split is now a container query on the composer: at 480px of composer or
+  less, which with the sidebar at its default width means a window of 641–752px, and also a wider
+  window whose sidebar has been dragged wide. Below 640px the phone layout is unchanged, and a
+  composer with more than 480px still holds one row. [→](docs/web-ui.md)
+
+### Fixed
+
+- **Side tasks keeps its amber alert dot whole at the panel's narrowest width.** At 220px the
+  outer Scheduled tab is 100px wide, and "Scheduled 2 · 1" with the alert dot beside it needed a
+  little more: 1.5px of the dot was cut off by the tab's own clipping. The task and session counts
+  now meet without spaces around the separator ("2·1"), which leaves the dot 2.3px inside the tab.
+  [→](docs/web-ui.md#side-tasks)
+
 ## [2.39.0] - 2026-11-06
 
 ### Added

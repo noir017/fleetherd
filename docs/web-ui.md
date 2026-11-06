@@ -74,7 +74,7 @@ behind the topic, the power button beside its title ends the process (`/kill`) �
 conversation is kept, and the next message picks up where it left off. Both simply
 send the command, so a draft in the composer is left where it is.
 
-**Mobile layout.** On a handset (640px and below), the composer splits into two rows so buttons do not squeeze the input box: the text area takes the full width across the top row, and the action buttons sit on the second row with file attachment and voice recording on the left, and Stop and Send on the right.
+**Narrow composer.** When the composer itself is too narrow to hold the input and the buttons side by side, it splits into two rows: the text area takes the full width across the top row, and the action buttons sit on the second row with file attachment and voice recording on the left, and Stop and Send on the right. The width that counts is the composer's own, not the window's: at 480px of composer or less it splits, which with the sidebar at its default width means a window between 641 and 752px — the case where the topic list still takes a column and the input was left with as little as 213px — and also a wider window whose sidebar has been dragged wide. On a handset (640px and below) it is always the layout.
 
 **Closing idle agents.** An agent process stays up after its turn until the daemon's idle
 timeout reclaims it (the dim blue dot). **Close idle (N)** in the **Manage** menu at the bottom

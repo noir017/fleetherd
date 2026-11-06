@@ -913,6 +913,25 @@ button:disabled{opacity:.5;cursor:default}
 /* Recording: red and counting, so it cannot be mistaken for idle while the microphone is open. */
 #mic.rec{color:#f87171;border-color:#f87171;font-variant-numeric:tabular-nums}
 #input{flex:1;resize:none;max-height:40vh;max-height:40dvh;padding:8px 10px;background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:4px;font:inherit;overflow-y:auto}
+/* Whether the composer has room for one row is the composer's question, not the window's: at
+   641px the sidebar is still a 240px column, so the composer is 369px while the window calls
+   itself a desktop. The three buttons that are always there (attach 35px, mic 40px, Send 57px)
+   and the three gaps between the four items take 156px of it, leaving the input 213px; Stop,
+   which only appears mid-turn, takes one more button and gap. A 1024px window with both panels
+   docked has a 512px composer, so no viewport breakpoint can tell the two apart. Measured in
+   Chromium at 641, 753, 1024 and 1440 on 2026-11-06. */
+#composer{container-type:inline-size}
+/* Below 480px of composer the one-row layout leaves the input under 325px, so it takes a row of
+   its own, exactly as the phone layout does — that block keeps its own copy of these rules for a
+   window narrow enough to have lost the sidebar (640px there is a 616px composer, wider than
+   this, and the two rows are the layout a phone shipped with). */
+@container (max-width:480px){
+  #row{flex-wrap:wrap}
+  #input{width:100%;flex:0 0 100%}
+  #row button[type="submit"]{margin-left:auto}
+  #row #stop-turn:not([hidden]){margin-left:auto}
+  #row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}
+}
 #input:focus,#login input:focus{outline:none;border-color:#3d3d3d}
 #note{color:var(--dim);font-size:12px;padding:0 16px 8px;max-width:860px;width:100%;margin:0 auto}
 /* The agent's live status, above the composer: what the footer says once per reply, kept current
@@ -1889,7 +1908,11 @@ const SCRIPT = `
     schedTabTasksN.textContent = tCount;
     schedTabSessionsN.textContent = String(sList.length);
     schedTabReviewsN.textContent = reviewData ? String(reviewData.reviews.length) : '';
-    schedTabScheduledN.textContent = sList.length > 0 ? (tCount ? tCount + ' · ' + sList.length : String(sList.length)) : tCount;
+    // No spaces around the separator: at the panel's narrowest width (220px) the tab is 100px
+    // and "Scheduled 2 · 1" plus the alert dot needs a little more than that, which pushed 1.5px
+    // of the dot past the tab's clip edge. The two spaces cost 6.7px; without them the dot ends
+    // 2.3px inside. Measured in Chromium, 2026-11-06.
+    schedTabScheduledN.textContent = sList.length > 0 ? (tCount ? tCount + '·' + sList.length : String(sList.length)) : tCount;
   }
 
   /**
