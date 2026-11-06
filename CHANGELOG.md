@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.43.0] - 2026-11-06
+
 ### Changed
 
 - **Skills are switched on and off, and between resident and library, from the list.** The web UI's
