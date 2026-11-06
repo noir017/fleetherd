@@ -142,7 +142,14 @@ export interface HistorySessionRow {
   kind: string;
   startedAt: string;
   lastAt: string;
-  messages: number;
+  /**
+   * How many rows the conversation holds — counted only by the reads that print it (`list`, `read`,
+   * `reviewSessions`). Every other lookup leaves it out: the count walks every row of the
+   * conversation, and the review sweep looks up each stored conversation once a minute for its
+   * `lastAt` alone (300 lookups on a 100k-row library: 17 ms a sweep with the count, 10 without,
+   * measured 2026-11-07).
+   */
+  messages?: number;
 }
 
 export interface HistoryHit {
@@ -343,11 +350,20 @@ const DEFAULT_LIST_DAYS = 7;
 const READ_ALL_LIMIT = 500;
 
 /**
- * How many rows a folding read scans before folding. The 500-row bound counts FOLDED rows, so SQL
- * cannot apply it; this bounds the scan instead. The longest conversation on 2026-11-06 had 3,196
- * rows, almost all of them tool calls.
+ * How many rows a folding read scans at most. The 500-row bound counts FOLDED rows, so SQL cannot
+ * apply it; this bounds the scan instead. The longest conversation on 2026-11-06 had 3,196 rows,
+ * almost all of them tool calls.
  */
 const READ_FOLD_SCAN = 20_000;
+
+/**
+ * The first batch of a folding read (foldingScan): at least this many rows, or this many per folded
+ * row it needs. Tool rows were 94% of what was recorded 11-04..06, runs of ~30 calls between a prompt
+ * and a reply, which is about eleven rows per folded row; sixteen leaves room for longer runs, so the
+ * common read is one statement.
+ */
+const FOLD_FIRST_BATCH = 200;
+const FOLD_ROWS_PER_ROW = 16;
 
 /** How much of a tool row a folding read takes: its first line is all it shows. */
 const TOOL_HEAD_CHARS = 300;
@@ -397,6 +413,31 @@ function iso(ts: number): string {
 function likePattern(term: string): string {
   return `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
+
+/**
+ * An order a read walks one conversation's messages in (aliased `m`), and how to say "strictly
+ * after this row" in it — what lets a folding read fetch its next batch from where the previous one
+ * ended (foldingScan). Every order is total, ties broken by id, so "after" never skips or repeats a
+ * row; the row-value comparisons are ranges on `messages_session (session_id, ts, id)`.
+ */
+interface ReadOrder {
+  by: string;
+  after: string;
+  key: (row: Record<string, unknown>) => number[];
+}
+
+/** A `--since` read: the cursor is an id, so is the order (see readFiltered). */
+const BY_ID: ReadOrder = { by: 'm.id', after: 'm.id > ?', key: (row) => [Number(row.id)] };
+const NEWEST_FIRST: ReadOrder = {
+  by: 'm.ts DESC, m.id DESC',
+  after: '(m.ts, m.id) < (?, ?)',
+  key: (row) => [Number(row.ts), Number(row.id)],
+};
+const OLDEST_FIRST: ReadOrder = {
+  by: 'm.ts, m.id',
+  after: '(m.ts, m.id) > (?, ?)',
+  key: (row) => [Number(row.ts), Number(row.id)],
+};
 
 /**
  * The library. Construct once at startup; absent or unopenable degrades to a store whose
@@ -512,6 +553,11 @@ export class HistoryStore {
     db.exec('CREATE INDEX IF NOT EXISTS messages_session_turn ON messages(session_id, turn)');
     // Partial: only tool rows written since calls were kept have one, and every lookup names one.
     db.exec('CREATE INDEX IF NOT EXISTS messages_call ON messages(session_id, call) WHERE call IS NOT NULL');
+    // `list` orders by it with a LIMIT. Without the index SQLite sorts every session in range, and a
+    // sorter holds whole result rows — so the per-session COUNT(*) ran for every one of them, not
+    // for the thirty returned (4.3 ms against 0.8 on 340 sessions / 100k rows, measured 2026-11-07).
+    // An existing file builds it once on open; it is a few thousand rows.
+    db.exec('CREATE INDEX IF NOT EXISTS sessions_last ON sessions(last_at)');
   }
 
   /**
@@ -523,11 +569,19 @@ export class HistoryStore {
    * that knows the previous process is gone.
    *
    * Its end time is a LOWER BOUND: the newest message it managed to write, else its start.
+   *
+   * The subquery names the session as well as the turn, though a turn's rows are always its own
+   * session's (both ids come from the same conversation key): no index starts with `turn`, so
+   * `turn = turns.id` alone scanned every message in the file once per interrupted turn — 80–120 ms
+   * at startup for five turns in 100k rows, against under 1 ms by session (measured 2026-11-07).
    */
   private closeInterruptedTurns(): void {
     this.db?.exec(`
       UPDATE turns SET outcome = 'restart',
-        ended_at = COALESCE((SELECT MAX(ts) FROM messages WHERE messages.turn = turns.id), started_at)
+        ended_at = COALESCE(
+          (SELECT MAX(ts) FROM messages WHERE messages.session_id = turns.session_id AND messages.turn = turns.id),
+          started_at
+        )
       WHERE outcome IS NULL
     `);
   }
@@ -766,7 +820,8 @@ export class HistoryStore {
    * been — same rows, same fields — because `sessions read <id>` must not change under anyone.
    */
   read(sessionRef: string, opts: HistoryReadOptions = {}): HistoryReadResult {
-    const session = this.findSession(sessionRef);
+    // Counted: the result's session is what `sessions read` prints, count included.
+    const session = this.findSession(sessionRef, true);
     if (!session) throw new Error(`no conversation "${sessionRef}"; \`talkcode sessions list\` shows the ids`);
     if (opts.around !== undefined) {
       if (hasReadFilter(opts)) {
@@ -810,18 +865,19 @@ export class HistoryStore {
 
   /**
    * The whole conversation, oldest first, bounded by rows and characters, with each run of tool
-   * calls folded into one line (see foldToolRuns) — the 500-row bound counts the folded rows.
+   * calls folded into one line (see ToolRunFolder) — the 500-row bound counts the folded rows.
    */
   private readAll(session: HistorySessionRow): HistoryReadResult {
-    const db = this.requireDb();
-    const rows = db
-      .prepare(
-        `SELECT id, ts, role, kind, ${foldTextColumn()} AS text, turn AS turn_ref FROM messages
-         WHERE session_id = ? ORDER BY ts, id LIMIT ?`
-      )
-      .all(session.id, READ_FOLD_SCAN + 1) as Array<Record<string, unknown>>;
-    const scanned = rows.length > READ_FOLD_SCAN;
-    const folded = foldToolRuns(scanned ? rows.slice(0, READ_FOLD_SCAN) : rows);
+    const { rows: folded, scanned } = this.foldingScan(
+      {
+        select: `SELECT m.id AS id, m.ts AS ts, m.role AS role, m.kind AS kind, ${foldTextColumn('m.')} AS text,
+                 m.turn AS turn_ref FROM messages m`,
+        where: ['m.session_id = ?'],
+        params: [session.id],
+        order: OLDEST_FIRST,
+      },
+      READ_ALL_LIMIT
+    );
     const more = scanned || folded.length > READ_ALL_LIMIT;
     const picked = folded.slice(0, READ_ALL_LIMIT);
     const { messages, dropped } = capRead(picked.map(messageRow));
@@ -898,7 +954,7 @@ export class HistoryStore {
       tail !== undefined || limit !== undefined || opts.turn !== undefined || opts.turns !== undefined;
     // A since read must be in the cursor's own coordinate system (see above); everything else
     // keeps the order it has always had.
-    const order = opts.since !== undefined ? 'm.id' : newestFirst ? 'm.ts DESC, m.id DESC' : 'm.ts, m.id';
+    const order = opts.since !== undefined ? BY_ID : newestFirst ? NEWEST_FIRST : OLDEST_FIRST;
     const fold = foldsTools(opts);
     const { messages, more, dropped, resumeFrom: last, folded } = this.selectFiltered(where, params, {
       cap: tail ?? limit,
@@ -918,28 +974,33 @@ export class HistoryStore {
   /**
    * Run the filtered query, fold its tool runs when the read does (foldsTools), and cut it from
    * the end the filter is about (see readFiltered). A folding read cannot let SQL apply the row
-   * bound — the bound counts folded rows — so it scans up to READ_FOLD_SCAN and bounds after.
+   * bound — the bound counts folded rows — so it reads until it has enough folded rows (foldingScan)
+   * and bounds after.
    */
   private selectFiltered(
     where: string[],
     params: Array<string | number>,
-    how: { cap: number | undefined; newestFirst: boolean; order: string; fold: boolean }
+    how: { cap: number | undefined; newestFirst: boolean; order: ReadOrder; fold: boolean }
   ): { messages: HistoryReadMessage[]; more: boolean; dropped: number; resumeFrom?: number; folded: boolean } {
-    const db = this.requireDb();
     const { cap, newestFirst, order, fold } = how;
     const bound = cap ?? READ_ALL_LIMIT + 1;
-    const sql = `
+    const select = `
       SELECT m.id AS id, m.ts AS ts, m.role AS role, m.kind AS kind,
              ${fold ? foldTextColumn('m.') : 'm.text'} AS text,
              m.turn AS turn_ref, t.seq AS turn_seq, t.outcome AS turn_outcome, t.agent AS turn_agent
       FROM messages m
-      LEFT JOIN turns t ON t.id = m.turn
-      WHERE ${where.join(' AND ')}
-      ORDER BY ${order}
-      LIMIT ?`;
-    let rows = db.prepare(sql).all(...params, fold ? READ_FOLD_SCAN + 1 : bound) as Array<Record<string, unknown>>;
-    const scanned = fold && rows.length > READ_FOLD_SCAN;
-    if (fold) rows = foldToolRuns(scanned ? rows.slice(0, READ_FOLD_SCAN) : rows).slice(0, bound);
+      LEFT JOIN turns t ON t.id = m.turn`;
+    let rows: Array<Record<string, unknown>>;
+    let scanned = false;
+    if (fold) {
+      const scan = this.foldingScan({ select, where, params, order }, bound);
+      rows = scan.rows.slice(0, bound);
+      scanned = scan.scanned;
+    } else {
+      rows = this.requireDb()
+        .prepare(`${select} WHERE ${where.join(' AND ')} ORDER BY ${order.by} LIMIT ?`)
+        .all(...params, bound) as Array<Record<string, unknown>>;
+    }
     // A cap the caller asked for (`--tail`, `--limit`) is exactly how many rows it wanted, so
     // reaching it is not a cut worth a note. Only the default 500-row bound is reported.
     const more = cap === undefined && (scanned || rows.length > READ_ALL_LIMIT);
@@ -956,6 +1017,52 @@ export class HistoryStore {
       ...(lastRow ? { resumeFrom: Number(lastRow.last_id ?? lastRow.id) } : {}),
       folded: anyFolded(keptRows.map((k) => k.row)),
     };
+  }
+
+  /**
+   * The folded rows of a folding read: enough of them for a read bounded at `want`, read in growing
+   * batches rather than all READ_FOLD_SCAN rows at once.
+   *
+   * Why batches: the bound counts folded rows, so SQL cannot apply it, and scanning the whole cap
+   * meant `task-read`'s default ten rows read 20,001 rows of a long topic — 44 ms on a 10k-row
+   * conversation, against 1.8 ms this way (measured 2026-11-07). The scan stops once it holds MORE
+   * than `want` folded rows: the run the last batch ended in may go on past it, but a run is closed
+   * by the row after it, so every folded row before the last is final and the first `want` are
+   * exactly what the whole scan would have folded. A batch that comes back short is the whole
+   * selection; READ_FOLD_SCAN still bounds the total, and `scanned` says it was reached.
+   *
+   * Each batch starts strictly after the last row of the one before, in the read's own order
+   * (ReadOrder.after), not at an OFFSET: SQLite implements OFFSET by stepping through every row it
+   * skips, join and all, so each batch would walk every row of the batches before it again.
+   */
+  private foldingScan(
+    query: { select: string; where: string[]; params: Array<string | number>; order: ReadOrder },
+    want: number
+  ): { rows: Array<Record<string, unknown>>; scanned: boolean } {
+    const db = this.requireDb();
+    const { select, where, params, order } = query;
+    const sql = (resume: boolean): string =>
+      `${select} WHERE ${[...where, ...(resume ? [order.after] : [])].join(' AND ')} ORDER BY ${order.by} LIMIT ?`;
+    const first = db.prepare(sql(false));
+    let next: ReturnType<Database['prepare']> | undefined;
+    // Folded as the rows arrive, not once per batch over everything read so far: folding a run sorts
+    // it, and a long run would be sorted again for every batch it spans.
+    const folder = new ToolRunFolder();
+    let read = 0;
+    let last: Record<string, unknown> | undefined;
+    let batch = Math.max(FOLD_FIRST_BATCH, want * FOLD_ROWS_PER_ROW);
+    for (;;) {
+      // One row past the cap, only to learn that the cap was reached; it is not folded.
+      const take = Math.min(batch, READ_FOLD_SCAN + 1 - read);
+      const got = (
+        last ? (next ??= db.prepare(sql(true))).all(...params, ...order.key(last), take) : first.all(...params, take)
+      ) as Array<Record<string, unknown>>;
+      for (const row of got) if (read++ < READ_FOLD_SCAN) folder.add(row);
+      last = got[got.length - 1] ?? last;
+      const scanned = read > READ_FOLD_SCAN;
+      if (got.length < take || scanned || folder.count > want) return { rows: folder.finish(), scanned };
+      batch *= 4;
+    }
   }
 
   /** The WHERE a filtered read selects, and its parameters. Split out to keep readFiltered short. */
@@ -1369,16 +1476,14 @@ export class HistoryStore {
     db.prepare('INSERT INTO messages_fts (rowid, body) VALUES (?, ?)').run(id, indexText(msg.text));
   }
 
-  private findSession(ref: string): HistorySessionRow | undefined {
+  /** One conversation by its id (`42`, `#42`) or its key; `counted` adds its row count (see `messages`). */
+  private findSession(ref: string, counted = false): HistorySessionRow | undefined {
     const db = this.requireDb();
     const id = Number(ref.replace(/^#/, ''));
-    const row = Number.isInteger(id)
-      ? (db.prepare('SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS messages FROM sessions s WHERE s.id = ?').get(id) as
-          | Record<string, unknown>
-          | undefined)
-      : (db.prepare('SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS messages FROM sessions s WHERE s.key = ?').get(ref) as
-          | Record<string, unknown>
-          | undefined);
+    const count = counted ? ', (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS messages' : '';
+    const row = db
+      .prepare(`SELECT s.*${count} FROM sessions s WHERE ${Number.isInteger(id) ? 's.id' : 's.key'} = ?`)
+      .get(Number.isInteger(id) ? id : ref) as Record<string, unknown> | undefined;
     return row ? sessionRow(row) : undefined;
   }
 }
@@ -1424,7 +1529,8 @@ function foldTextColumn(alias = ''): string {
 }
 
 /**
- * Fold each run of consecutive tool rows into one row, in whichever order the rows came.
+ * Folds each run of consecutive tool rows into one row, in whichever order the rows come, one row at
+ * a time — so a folding read can stop fetching once it has enough (foldingScan).
  *
  * Why the default read folds: a conversation's tool calls outnumber everything else in it — 94% of
  * the rows recorded 11-04 to 11-06 — so an unfolded read of a working session is a page of commands
@@ -1434,27 +1540,42 @@ function foldTextColumn(alias = ''): string {
  * becomes `[37 tool calls: Bash ×20, Edit ×12, Write ×5]`, carrying the run's oldest id (what
  * `--around` takes) and, as `last_id`, its newest (what a `--since` read resumes after). Every
  * folded row is marked `folded_run`, so a read says it folded only when it returns one.
+ *
+ * Each row is looked at once, with as few property reads as the rule needs: a row from `node:sqlite`
+ * is slow to read a property of (~70 ns), and a version that tested every row twice — once to count,
+ * once to fold — spent 10 ms more on a 15k-call run than the single scan it replaced.
  */
-function foldToolRuns(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  const out: Array<Record<string, unknown>> = [];
-  let run: Array<Record<string, unknown>> = [];
-  const flush = (): void => {
-    if (run.length === 0) return;
-    out.push(foldedRun(run));
-    run = [];
-  };
-  for (const row of rows) {
-    if (row.role !== 'tool') {
-      flush();
-      out.push(row);
-      continue;
-    }
-    const prev = run[run.length - 1];
-    if (prev && (prev.turn_ref !== row.turn_ref || prev.kind !== row.kind)) flush();
-    run.push(row);
+class ToolRunFolder {
+  readonly rows: Array<Record<string, unknown>> = [];
+  private run: Array<Record<string, unknown>> = [];
+
+  /** Folded rows so far, the run still open included. */
+  get count(): number {
+    return this.rows.length + (this.run.length > 0 ? 1 : 0);
   }
-  flush();
-  return out;
+
+  add(row: Record<string, unknown>): void {
+    if (row.role !== 'tool') {
+      this.flush();
+      this.rows.push(row);
+      return;
+    }
+    const prev = this.run[this.run.length - 1];
+    if (prev && (prev.turn_ref !== row.turn_ref || prev.kind !== row.kind)) this.flush();
+    this.run.push(row);
+  }
+
+  /** Close the open run and hand back every folded row. */
+  finish(): Array<Record<string, unknown>> {
+    this.flush();
+    return this.rows;
+  }
+
+  private flush(): void {
+    if (this.run.length === 0) return;
+    this.rows.push(foldedRun(this.run));
+    this.run = [];
+  }
 }
 
 /** Whether any row a read is returning is a folded run — the only time FOLD_NOTE is said. */
@@ -1592,7 +1713,7 @@ function sessionRow(row: Record<string, unknown>): HistorySessionRow {
     kind: String(row.kind ?? 'normal'),
     startedAt: iso(Number(row.started_at)),
     lastAt: iso(Number(row.last_at)),
-    messages: Number(row.messages ?? 0),
+    ...(row.messages !== undefined ? { messages: Number(row.messages) } : {}),
   };
 }
 
