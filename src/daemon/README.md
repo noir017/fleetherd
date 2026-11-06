@@ -1103,7 +1103,10 @@ each was dropped. What `agy acp` 1.5.1 does its own way is in `agy-acp.ts`, each
   calls: input plus cache reads is the context only for a turn that ran no tool, and only that is
   reported, over `agy-meters.ts`'s window table or `contextWindow`.
 - **Quota** has no ACP channel: `createAgyQuotaMeter` runs `agy -p=/usage` (`agy-cli.ts`) beside the
-  turn, at most once a minute per account, and the turn's end waits up to 5 s for it.
+  turn, at most once a minute per account. It is reported whenever it lands, even after the turn,
+  and nothing waits for it: quota feeds the conversation's status strip, not the turn's footer. (A
+  5 s wait at the turn's end, which dropped a later reading, lost the quota on the first turn after
+  a restart on a remote host, measured 2026-11-06.)
 - **Tool labels.** Calls of kind `other` are titled `Run <tool>`; `agyAcpToolLabel` reads the tool
   from there (`invoke_subagent` → Task, `mcp_chat_send_file` → `send_file`). agy also sends a `name`
   field, but the SDK's validation strips it.

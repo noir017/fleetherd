@@ -125,7 +125,15 @@ afterEach(() => {
   live = undefined;
 });
 
-function rig(opts: { model?: string; stored?: string; contextWindow?: number } = {}): {
+function rig(
+  opts: {
+    model?: string;
+    stored?: string;
+    contextWindow?: number;
+    /** Hold every `agy -p=/usage` until this settles — a one-shot slower than the turn. */
+    quotaGate?: Promise<void>;
+  } = {}
+): {
   session: AgentSession;
   log: () => Array<{ method: string; params: Record<string, unknown> }>;
   writes: () => string[];
@@ -171,6 +179,7 @@ function rig(opts: { model?: string; stored?: string; contextWindow?: number } =
   let runs = 0;
   const cli: AgyCliRunner = async (name) => {
     runs++;
+    await opts.quotaGate;
     return name === 'usage' ? { ok: true, output: QUOTA_OUTPUT } : { ok: false, error: `unexpected /${name}` };
   };
   const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, cli).getOrCreate('conv#1', 'agy');
@@ -285,6 +294,31 @@ describe('agy over ACP: a turn', () => {
     const r = record();
     await turn(session, 'tool', r);
     expect(r.tools.map((t) => t.name)).toEqual(['Task', 'send_file']);
+  });
+
+  it('does not hold the turn for a slow quota reading, and reports it when it lands', async () => {
+    // On a remote host the one-shot runs over the link beside the reloading agy (3.3-4.0 s), and a
+    // short first turn after a restart used to end without it — the strip then had no quota.
+    let release!: () => void;
+    const { session } = rig({ quotaGate: new Promise<void>((r) => (release = r)) });
+    const r = record();
+    await turn(session, 'plain', r);
+    expect(r.text()).toBe('hi');
+    expect(r.quota).toEqual([]);
+    release();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(r.quota.at(-1)?.map((p) => p.id)).toEqual(['3p-weekly', 'gemini-weekly']);
+  });
+
+  it('reports nothing into a conversation that has let the session go', async () => {
+    let release!: () => void;
+    const { session } = rig({ quotaGate: new Promise<void>((r) => (release = r)) });
+    const r = record();
+    await turn(session, 'plain', r);
+    session.dispose(); // a /new, a /cd or a rebind, before the reading came back
+    release();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(r.quota).toEqual([]);
   });
 
   it('asks for the quota at most once a minute', async () => {
