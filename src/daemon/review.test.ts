@@ -19,7 +19,7 @@ import {
   type ReviewRunner,
 } from './review.js';
 import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, REVIEW_RETRY_MS, ReviewStateStore } from './review-state.js';
-import { buildReviewPrompt, parseReviewOutput, usedSkillNames } from './review-prompt.js';
+import { buildReviewPrompt, parseReviewOutput, usedSkillNames, writtenSkillFiles } from './review-prompt.js';
 import { createSkill, listSkills, readSkillFiles, showSkill } from './skills-store.js';
 
 /**
@@ -95,7 +95,15 @@ interface Harness {
   calls: Array<{ agent: string; model: string | undefined; prompt: string }>;
 }
 
-function harness(opts: { candidates?: ReviewCandidate[]; output?: string | (() => Promise<string>); run?: ReviewRunner; cfg?: Config } = {}): Harness {
+function harness(
+  opts: {
+    candidates?: ReviewCandidate[];
+    output?: string | (() => Promise<string>);
+    run?: ReviewRunner;
+    cfg?: Config;
+    standing?: () => string | undefined;
+  } = {}
+): Harness {
   const notifications: Harness['notifications'] = [];
   const logs: string[] = [];
   const calls: Harness['calls'] = [];
@@ -119,6 +127,7 @@ function harness(opts: { candidates?: ReviewCandidate[]; output?: string | (() =
     skillsDir: dir,
     run,
     log: (m) => logs.push(m),
+    ...(opts.standing ? { standing: opts.standing } : {}),
   });
   return { service, state, notifications, logs, calls };
 }
@@ -922,6 +931,36 @@ describe('the agy invocation', () => {
   });
 });
 
+describe('what a review is given', () => {
+  it('reads the conversation without its tool calls, names the skill files it wrote, and the standing rules', async () => {
+    const id = seed('telegram:chat:1', 3);
+    const at = now - 3_600_000 - 5_000;
+    history.message(id, { ts: at, role: 'tool', kind: 'normal', text: 'Bash: ls -la' });
+    history.message(id, { ts: at + 1, role: 'tool', kind: 'normal', text: 'Write: /w/agent-skills/skills/vlt/SKILL.md' });
+    const h = harness({ standing: () => '1. 用中文。' });
+    await h.service.sweep();
+    expect(h.calls).toHaveLength(1);
+    const prompt = h.calls[0]!.prompt;
+    expect(prompt).not.toContain('工具：');
+    expect(prompt).toContain('- /w/agent-skills/skills/vlt/SKILL.md');
+    expect(prompt).toContain('用户已有的要求\n1. 用中文。');
+    expect(prompt).toContain('用户：第 3 句');
+  });
+
+  it('goes on without the standing rules when they cannot be read, and says why in the log', async () => {
+    seed('telegram:chat:1', 3);
+    const h = harness({
+      standing: () => {
+        throw new Error('EACCES: permission denied');
+      },
+    });
+    await h.service.sweep();
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]!.prompt).not.toContain('用户已有的要求');
+    expect(h.logs.some((l) => l.includes('could not read the standing instructions: EACCES'))).toBe(true);
+  });
+});
+
 describe('review prompt', () => {
   it('carries the rules, the catalog, the used skill text and the conversation', () => {
     const prompt = buildReviewPrompt({
@@ -937,12 +976,57 @@ describe('review prompt', () => {
     expect(prompt).toContain('- deploy-check（abc123）：部署前检查');
     expect(prompt).toContain('### deploy-check（abc123）\n先跑测试。');
     expect(prompt).toContain('其他文件：references/api.md');
-    expect(prompt).toContain('省略了最早的 2 条');
+    expect(prompt).toContain('不含工具调用，省略了较早的 2 条');
     expect(prompt).toContain('用户：部署一下');
     expect(prompt).toContain('工具：Bash: git status');
     expect(prompt).toContain('不要调用任何工具');
     expect(prompt.startsWith('这是一次自动复盘')).toBe(true);
     expect(prompt).toContain('不要请求确认，不要等待批准，不要先给方案');
+    // Neither optional section appears when there is nothing to put in it.
+    expect(prompt).not.toContain('已经写过的技能文件');
+    expect(prompt).not.toContain('用户已有的要求');
+  });
+
+  it('names the skill files the conversation wrote, and the rules the person already has', () => {
+    const prompt = buildReviewPrompt({
+      title: 'vlt',
+      messages: [{ at: '2026-11-06T08:00:00.000Z', role: 'user', text: '整理成 skill' }],
+      dropped: 0,
+      catalog: [],
+      used: [],
+      written: ['/w/agent-skills/skills/vlt/SKILL.md'],
+      standing: '1. 用中文，结论先行。\n',
+    });
+    expect(prompt).toContain('这段对话里已经写过的技能文件（同一件事不要再新建技能）\n- /w/agent-skills/skills/vlt/SKILL.md');
+    expect(prompt).toContain('用户已有的要求\n1. 用中文，结论先行。\n');
+    expect(prompt).toContain('「用户已有的要求」里有的不要再写');
+    // The conversation stays last.
+    expect(prompt.endsWith('用户：整理成 skill')).toBe(true);
+  });
+});
+
+describe('writtenSkillFiles', () => {
+  it('takes the paths a write-type call named under any skills directory', () => {
+    expect(
+      writtenSkillFiles([
+        'Write: /w/agent-skills/skills/vlt/SKILL.md\n{"content":"x"}',
+        'Edit: /w/agent-skills/skills/vlt/SKILL.md',
+        'reviewer · edit_file: /h/.talkcode/skills/mail/references/api.md',
+        'Read: /h/.talkcode/skills/email-reader/SKILL.md',
+        'Bash: cat /h/.claude/skills/vlt/SKILL.md',
+        'Write: /tmp/notes.md',
+      ])
+    ).toEqual(['/w/agent-skills/skills/vlt/SKILL.md', '/h/.talkcode/skills/mail/references/api.md']);
+  });
+
+  it('reads a path out of a JSON preview, and does not take a directory named *-skills for one', () => {
+    expect(
+      writtenSkillFiles([
+        'edit_file: {"Path":"/h/.gemini/config/skills/server-ops/references/a.md","Old":"x"}',
+        'Write: /w/quantlab-skills/work/trader/journal/2026-11-04.md',
+        'Write: /w/quantlab-skills/skills/trader/SKILL.md',
+      ])
+    ).toEqual(['/h/.gemini/config/skills/server-ops/references/a.md', '/w/quantlab-skills/skills/trader/SKILL.md']);
   });
 });
 

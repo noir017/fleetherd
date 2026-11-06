@@ -239,15 +239,58 @@ describe('HistoryStore', () => {
       store.close();
     });
 
-    it('keeps the newest messages when the budget is short and says how many it left out', () => {
+    it('keeps what the person said before what the agent said when the budget is short', () => {
       const { store } = tempStore();
       seeded(store);
       const window = store.reviewWindow('telegram#chat#1', 0, 6)!;
-      // "第二句" is 3 chars and is always kept (the newest row), "好的" would be 2 more — under the
-      // budget — and "第一句" would exceed it.
-      expect(window.messages.map((m) => m.text)).toEqual(['好的', '第二句']);
+      // Both of the person's messages (3 + 3) fill the budget; the agent's "好的" is what goes,
+      // although it is newer than "第一句".
+      expect(window.messages.map((m) => m.text)).toEqual(['第一句', '第二句']);
       expect(window.dropped).toBe(1);
       expect(window.lastMessageId).toBeGreaterThan(window.messages[0]!.id);
+      store.close();
+    });
+
+    it('leaves tool calls out, and hands over the ones that touched a skill', () => {
+      const { store } = tempStore();
+      const at = Date.UTC(2026, 10, 6, 9, 0);
+      const id = store.session({ key: 'web#main#vlt', platform: 'web', title: 'vlt', kind: 'normal', at })!;
+      const add = (i: number, role: 'user' | 'agent' | 'tool', text: string): void =>
+        store.message(id, { ts: at + i, role, kind: 'normal', text });
+      add(0, 'user', '整理成 skill');
+      add(1, 'tool', 'Bash: ls');
+      add(2, 'tool', 'Write: /w/agent-skills/skills/vlt/SKILL.md\n{"file_path":"/w/agent-skills/skills/vlt/SKILL.md"}');
+      add(3, 'tool', 'Read: /home/u/.talkcode/skills/email-reader/SKILL.md');
+      add(4, 'agent', '写好了');
+      const window = store.reviewWindow('web#main#vlt', 0, 10_000)!;
+      expect(window.messages.map((m) => m.role)).toEqual(['user', 'agent']);
+      expect(window.dropped).toBe(0);
+      expect(window.skillCalls).toEqual([
+        'Write: /w/agent-skills/skills/vlt/SKILL.md\n{"file_path":"/w/agent-skills/skills/vlt/SKILL.md"}',
+        'Read: /home/u/.talkcode/skills/email-reader/SKILL.md',
+      ]);
+      store.close();
+    });
+
+    it('drops the oldest replies first, and cuts one oversized message to its head and tail', () => {
+      const { store } = tempStore();
+      const at = Date.UTC(2026, 10, 6, 10, 0);
+      const id = store.session({ key: 'web#main#long', platform: 'web', title: 'long', kind: 'normal', at })!;
+      const add = (i: number, role: 'user' | 'agent', text: string): void =>
+        store.message(id, { ts: at + i, role, kind: 'normal', text });
+      add(0, 'user', '问');
+      add(1, 'agent', 'a'.repeat(5_000));
+      add(2, 'agent', 'b'.repeat(5_000));
+      add(3, 'user', `开头${'x'.repeat(20_000)}结尾`);
+      const window = store.reviewWindow('web#main#long', 0, 14_000)!;
+      // 1 + ~8k for the person, then the newer reply (5k) fits and the older one does not.
+      expect(window.messages.map((m) => m.text[0])).toEqual(['问', 'b', '开']);
+      const pasted = window.messages[2]!.text;
+      expect(pasted.startsWith('开头')).toBe(true);
+      expect(pasted.endsWith('结尾')).toBe(true);
+      expect(pasted).toMatch(/\[… \d+ characters cut …\]/);
+      expect(pasted.length).toBeLessThan(8_100);
+      expect(window.dropped).toBe(1);
       store.close();
     });
 

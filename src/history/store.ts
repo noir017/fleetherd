@@ -321,14 +321,19 @@ export interface HistorySearchOptions {
 /** What one review reads: a tail of a conversation plus the two facts its trigger decides on. */
 export interface ReviewWindow {
   session: HistorySessionRow;
-  /** Oldest first, at most `maxChars` characters in total (the newest row is always kept). */
+  /**
+   * What the person and the agent said, oldest first, at most `maxChars` characters in total (the
+   * newest row is always kept). No tool calls: see `reviewWindow`.
+   */
   messages: Array<{ id: number; at: string; role: string; kind: string; text: string }>;
   /** The person's own messages in the span, before any character cut. */
   userMessages: number;
   /** The newest message in the conversation — where the next review starts. */
   lastMessageId: number;
-  /** How many older messages the character budget left out. */
+  /** How many of the person's and the agent's messages the character budget left out. */
   dropped: number;
+  /** The span's tool calls that named a skill path or the Skill tool, oldest first — whole rows. */
+  skillCalls: string[];
 }
 
 const DEFAULT_SEARCH_LIMIT = 10;
@@ -366,6 +371,23 @@ export const READ_CHAR_BUDGET = 200_000;
  * for months): the newest few hundred are what a reviewer can still act on.
  */
 const REVIEW_WINDOW_ROWS = 500;
+
+/**
+ * How much of one message a review gets. Most are far shorter; this is for the pasted log or the
+ * long report, which would otherwise spend a fifth of the budget on itself. Head and tail are kept,
+ * because a reply's conclusion is at its end and a paste's question is usually at its start.
+ */
+const REVIEW_MESSAGE_CHARS = 8_000;
+
+/** How many skill-touching calls one review is given. They are signals, not a log. */
+const REVIEW_SKILL_CALLS = 200;
+
+function clipForReview(text: string): string {
+  if (text.length <= REVIEW_MESSAGE_CHARS) return text;
+  const head = text.slice(0, 6_000);
+  const tail = text.slice(-2_000);
+  return `${head}\n[… ${text.length - 8_000} characters cut …]\n${tail}`;
+}
 
 function iso(ts: number): string {
   return new Date(ts).toISOString();
@@ -1102,64 +1124,79 @@ export class HistoryStore {
   }
 
   /**
-   * What a review reads of one conversation: the rows after the last review's watermark, cut to a
-   * character budget from the newest end, plus the two facts the trigger needs — how many messages
-   * the person sent in that span, and the id a review starts after next time.
+   * What a review reads of one conversation: what the person and the agent said after the last
+   * review's watermark, cut to a character budget, plus the facts the trigger needs — how many
+   * messages the person sent in that span, and the id a review starts after next time — and the
+   * tool calls that touched a skill.
+   *
+   * Tool calls are not in `messages`. Measured over 42 reviews on 2026-11-06, they were 76% of what
+   * the reviewer was given and the person's own words 0.6%: the budget filled newest-first with
+   * calls, and only 262 of the 577 messages the person sent in those spans reached the reviewer —
+   * five reviews saw none. What the agent did is in its replies (every fact behind the five skills
+   * those reviews created appeared there too), so the window is the conversation without them; the
+   * calls that read or wrote a skill come separately, as `skillCalls`, because the prompt needs
+   * those two facts and nothing else of the calls.
+   *
+   * Within the budget the person comes first: every message they sent is kept (each cut at
+   * REVIEW_MESSAGE_CHARS), then the agent's replies newest-first in what is left, so a long
+   * conversation loses its oldest replies rather than what the person asked or corrected.
    *
    * Scheduled turns and sub-agent turns are left out: they share a topic with a person's
    * conversation but are not what the person said. `review` rows are excluded for the same reason a
    * review is never reviewed. `background` output is kept — the agent said it in this conversation.
-   *
-   * The window is a TAIL, not a head: when a conversation is longer than the budget, the newest
-   * messages are the ones a review can still act on, and `dropped` says how many were left out so
-   * the prompt can say so rather than presenting a partial log as whole.
    */
   reviewWindow(key: string, afterId: number, maxChars: number): ReviewWindow | undefined {
     const db = this.requireDb();
     const session = this.findSession(key);
     if (!session) return undefined;
     const excluded = "kind NOT IN ('schedule', 'subagent', 'review')";
-    const total = Number(
-      (
-        db
-          .prepare(`SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND id > ? AND ${excluded}`)
-          .get(session.id, afterId) as { n: number | bigint }
-      ).n
-    );
+    const said = `${excluded} AND role != 'tool'`;
+    const count = (sql: string): number =>
+      Number((db.prepare(sql).get(session.id, afterId) as { n: number | bigint }).n);
+    const total = count(`SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND id > ? AND ${said}`);
     const lastRow = db.prepare('SELECT MAX(id) AS id FROM messages WHERE session_id = ?').get(session.id) as
       | { id: number | bigint | null }
       | undefined;
-    const userMessages = Number(
-      (
-        db
-          .prepare(
-            "SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND id > ? AND role = 'user' AND kind = 'normal'"
-          )
-          .get(session.id, afterId) as { n: number | bigint }
-      ).n
+    const userMessages = count(
+      "SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND id > ? AND role = 'user' AND kind = 'normal'"
     );
-    // Newest first, so a long conversation is cut from its oldest end rather than its newest.
     const rows = db
       .prepare(
         `SELECT id, ts, role, kind, text FROM messages
-         WHERE session_id = ? AND id > ? AND ${excluded}
+         WHERE session_id = ? AND id > ? AND ${said}
          ORDER BY ts DESC, id DESC LIMIT ?`
       )
       .all(session.id, afterId, REVIEW_WINDOW_ROWS) as Array<Record<string, unknown>>;
-    const newestFirst = rows.map(messageRow);
-    const kept: typeof newestFirst = [];
+    const newestFirst = rows.map(messageRow).map((m) => ({ ...m, text: clipForReview(m.text) }));
+    const kept = new Set<number>();
     let chars = 0;
-    for (const message of newestFirst) {
-      if (kept.length > 0 && chars + message.text.length > maxChars) break;
-      kept.push(message);
-      chars += message.text.length;
+    // The person's messages first, then the agent's, each newest-first; the newest row is always
+    // kept, so a single oversized answer is still something to review.
+    for (const role of ['user', 'agent']) {
+      for (const message of newestFirst) {
+        if (message.role !== role) continue;
+        if (kept.size > 0 && chars + message.text.length > maxChars) break;
+        kept.add(message.id);
+        chars += message.text.length;
+      }
     }
+    const skillCalls = (
+      db
+        .prepare(
+          `SELECT text FROM messages
+           WHERE session_id = ? AND id > ? AND ${excluded} AND role = 'tool'
+             AND (text LIKE '%skills/%' OR text LIKE '%Skill%' OR text LIKE '%"skill"%')
+           ORDER BY id LIMIT ?`
+        )
+        .all(session.id, afterId, REVIEW_SKILL_CALLS) as Array<{ text: string }>
+    ).map((r) => String(r.text));
     return {
       session,
-      messages: kept.reverse(),
+      messages: newestFirst.filter((m) => kept.has(m.id)).reverse(),
       userMessages,
       lastMessageId: Number(lastRow?.id ?? afterId),
-      dropped: total - kept.length,
+      dropped: total - kept.size,
+      skillCalls,
     };
   }
 

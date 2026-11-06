@@ -133,6 +133,7 @@ import { startSkillSweep } from './skill-lifecycle.js';
 import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
 import { ReviewStateStore } from './review-state.js';
 import { buildReviewPanel } from './review-panel.js';
+import { commonInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
   archiveSkill,
@@ -1015,6 +1016,7 @@ export class Daemon {
         clock,
         candidates: () => this.reviewCandidates(),
         notify: (lane, text) => this.notifyReview(lane, text),
+        standing: () => commonInstructions(),
       });
     }
     // Before anything can start an agent: an agent with `host:` reaches its machine through this.

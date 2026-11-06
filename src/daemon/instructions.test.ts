@@ -8,6 +8,7 @@ import type { RemoteHost } from '../remote/host.js';
 import {
   INSTRUCTIONS_MAX_BYTES,
   applyInstructions,
+  commonInstructions,
   composeInstructions,
   instructionsHome,
   ownedDir,
@@ -101,6 +102,21 @@ describe('composeInstructions', () => {
   it('throws on a file it cannot read, so that never reads as "nothing to deliver"', () => {
     fs.mkdirSync(path.join(dir, 'common.md'));
     expect(() => composeInstructions(dir, 'codex')).toThrow();
+  });
+});
+
+describe('commonInstructions', () => {
+  it('is the common layer alone, trimmed, or nothing', () => {
+    expect(commonInstructions(path.join(home, 'nowhere'))).toBeUndefined();
+    fs.writeFileSync(path.join(dir, 'claude.md'), 'Only for Claude.');
+    expect(commonInstructions(dir)).toBeUndefined();
+    fs.writeFileSync(path.join(dir, 'common.md'), '\n1. Answer in Chinese.\n\n');
+    expect(commonInstructions(dir)).toBe('1. Answer in Chinese.');
+  });
+
+  it('throws on a file it cannot read, for the review to log', () => {
+    fs.mkdirSync(path.join(dir, 'common.md'));
+    expect(() => commonInstructions(dir)).toThrow();
   });
 });
 
