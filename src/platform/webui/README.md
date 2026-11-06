@@ -437,8 +437,9 @@ purpose: `page.dom.test.ts` checks that the rows are identical either way and th
 **The sidebar footer is one row, two menus**: ⚙ Menu and Manage (one row since 2.20.0, split
 in two when the three buttons stopped fitting).
 Menu holds All settings, Notifications, Low attention and Skills — things set once per device or
-visited rarely. Manage holds Close idle and Clear all topics, and carries the idle count on its own
-face so the number is still seen without opening anything. The two menus are the same box, opened
+visited rarely. Manage holds Close idle and carries the idle count on its own
+face so the number is still seen without opening anything (with no idle agents, it shows a disabled
+No idle agents line; Clear all topics is an icon button beside Topics in the header). The two menus are the same box, opened
 upward over the list, one at a time, and dismissed by a click outside either (the drawer's backdrop
 included) or Escape, which also gives the focus back to the button that opened it (`setMenu`). The
 footer is a size container: at the narrowest sidebar (180px) both words drop and the row
@@ -1516,7 +1517,7 @@ inferred old record, and all three empty states. The two side panels are driven 
 there (`one panel component on both edges`):
 both close with the same ×, both go inert while shut, Escape puts away the right and then the
 left, each keeps its own width and clears it on a double-click, and the footer's two menus are
-checked by the items they hold and what each item does — All settings, Skills, Close idle, Clear.
+checked by the items they hold and what each item does — All settings, Skills, Close idle.
 
 Four things about it that are not obvious:
 

@@ -80,9 +80,9 @@ send the command, so a draft in the composer is left where it is.
 timeout reclaims it (the dim blue dot). **Close idle (N)** in the **Manage** menu at the bottom
 of the topic list ends all of them at once: it lists the topics it is about to close, asks, and
 then says which were closed. The count is on Manage's own face, so you see it without opening
-anything. Each conversation is kept, and the next message in a topic starts its agent again where
+anything (with no idle agents, Manage shows a disabled "No idle agents" line instead). Each conversation is kept, and the next message in a topic starts its agent again where
 it left off. A topic that starts working in the meantime is left running, and starred topics are
-closed like the rest. **Clear all topics** is in the same menu.
+closed like the rest. **Clear all topics** is an icon button beside Topics in the sidebar header.
 
 **Side tasks.** The clock at the right of the chat header opens a panel with two tabs at its
 foot: **Scheduled** and **Reviews**. Inside **Scheduled**, two sub-tabs under the header separate
@@ -136,7 +136,7 @@ topic's dot stays bright blue but holds still, and unread counts turn grey. A qu
 you (its amber dot still pulses), a failed turn and a reply you have not read still move to the
 top in green, so they are the only things that stand out. The setting is kept in this browser
 only. **All settings** (the page above), Notifications and **Skills** are in the same menu;
-**Close idle** and **Clear all topics** are in **Manage** beside it.
+**Close idle** is in **Manage** beside it, and **Clear all topics** is an icon button beside Topics in the sidebar header.
 
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here
 a row carries the whole command — up to 2000 characters — where a chat app gets the
