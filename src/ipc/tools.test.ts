@@ -61,7 +61,7 @@ describe('toolInputSchema', () => {
 
   it('gives schedule its closed sets and every add option', () => {
     const p = props('schedule');
-    expect(p.action!.enum).toEqual(['add', 'list', 'show', 'pause', 'resume', 'run', 'rm']);
+    expect(p.action!.enum).toEqual(['add', 'list', 'show', 'edit', 'pause', 'resume', 'run', 'rm']);
     expect(p.session!.enum).toEqual(['fixed', 'new', 'daily']);
     for (const key of ['cron', 'at', 'tz', 'prompt', 'bash', 'agent', 'model', 'name', 'cwd', 'timeout', 'channel']) {
       expect(p[key], key).toBeDefined();
@@ -110,6 +110,22 @@ describe('toolAction', () => {
   it('maps the positional id for the management actions', () => {
     expect(toolAction(tool('schedule'), { action: 'pause', id: 'k3x9' })).toEqual({ kind: 'schedule-op', id: 'k3x9', op: 'pause' });
     expect(toolAction(tool('schedule'), { action: 'list' })).toEqual({ kind: 'schedule-list' });
+  });
+
+  it('builds an edit with the task id and only the fields given', () => {
+    const action = toolAction(tool('schedule'), { action: 'edit', id: 'k3x9', agent: 'oc', timeout: '5m' });
+    expect(action).toMatchObject({ kind: 'schedule-edit', id: 'k3x9', agent: 'oc' });
+    // --timeout is a bash-only field, so the tool parses it the way the shell does; the daemon is
+    // what refuses it for a prompt task, exactly as it does for add.
+    expect((action as { timeoutMs?: number }).timeoutMs).toBe(300_000);
+    expect(toolAction(tool('schedule'), { action: 'edit', id: 'k3x9', name: 'renamed' })).toMatchObject({
+      kind: 'schedule-edit',
+      id: 'k3x9',
+      name: 'renamed',
+    });
+    expect(() => toolAction(tool('schedule'), { action: 'edit', id: 'k3x9', session: 'new', name: 'x' })).toThrow(
+      /--session cannot be changed by edit/
+    );
   });
 
   it('treats empty strings and null as absent, the way models fill optional parameters', () => {

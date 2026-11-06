@@ -652,6 +652,107 @@ describe('schedule over IPC', () => {
 });
 
 /**
+ * `schedule edit`: the same task, some fields changed. What is asserted is what a delete-and-add
+ * would have lost (the id and the history), and that a refusal writes nothing at all.
+ */
+describe('schedule edit over IPC', () => {
+  const saved = (r: Awaited<ReturnType<typeof rig>>): Array<Record<string, unknown>> =>
+    (JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as { tasks: Array<Record<string, unknown>> }).tasks;
+
+  it('changes only the fields given, keeps the id and history, and posts the updated card', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'morning brief', session: 'new', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+
+    r.sent.length = 0;
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, agent: 'oc', prompt: 'evening brief' });
+    expect(resp.ok).toBe(true);
+    const after = (resp as { data: { task: ScheduleTaskView } }).data.task;
+    expect(after).toMatchObject({ id: task.id, name: 'brief', runs: 'oc · new session each run', prompt: 'evening brief', count: 1 });
+    expect(after.last).toMatch(/^ok /); // the run before the edit is still the task's last
+
+    await settle();
+    const card = r.sent.find((s) => s.text.includes('Scheduled task updated'))!;
+    expect(card.text).toContain(`#${task.id}`);
+    expect(card.text).toContain('oc · new session each run');
+    expect(card.text).toContain('evening brief');
+
+    const [stored] = saved(r);
+    expect(stored).toMatchObject({ id: task.id, name: 'brief', runs: 1, run: { agent: 'oc', prompt: 'evening brief', session: 'new' } });
+  });
+
+  it('refuses an invalid change and leaves the task exactly as it was', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc', name: 'brief' });
+    const before = JSON.stringify(saved(r));
+
+    const unknownAgent = await r.call({ kind: 'schedule-edit', id: task.id, agent: 'zz' });
+    expect((unknownAgent as { error: string }).error).toMatch(/unknown agent "zz"/);
+    const unknownModel = await r.call({ kind: 'schedule-edit', id: task.id, model: 'nope' });
+    expect((unknownModel as { error: string }).error).toMatch(/unknown model "nope" for agent "cc"; choose one of: base-model, fast-model, runtime-fail/);
+    const badCron = await r.call({ kind: 'schedule-edit', id: task.id, cron: '0 8 * * * *' });
+    expect((badCron as { error: string }).error).toMatch(/not a 5-field cron/);
+
+    expect(JSON.stringify(saved(r))).toBe(before);
+  });
+
+  it('recomputes the next run from the edit under the new time rule', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', at: '+1h', prompt: 'brief', session: 'new' });
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, at: '+2h' });
+    const after = (resp as { data: { task: ScheduleTaskView } }).data.task;
+    expect(after.next).not.toBe(task.next);
+    expect(Date.parse(after.next.replace(' ', 'T'))).toBeGreaterThan(Date.parse(task.next.replace(' ', 'T')));
+  });
+
+  it('a daily task whose agent changes opens a new topic for the rest of the day', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    const first = r.turns.at(-1)!.conversation;
+
+    await r.call({ kind: 'schedule-edit', id: task.id, agent: 'oc' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.web.threads).toHaveLength(2);
+    expect(r.web.threads[1]).toMatch(/^\[oc\] ⏰ brief · \d{4}-\d{2}-\d{2}$/);
+    expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new2', agent: 'oc' });
+    expect(r.turns.at(-1)!.conversation).not.toBe(first);
+  });
+
+  it('a daily task that only changes its name keeps today\'s topic', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    const first = r.turns.at(-1)!.conversation;
+
+    await r.call({ kind: 'schedule-edit', id: task.id, name: 'the brief' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.web.threads).toHaveLength(1);
+    expect(r.turns.at(-1)!.conversation).toBe(first);
+  });
+
+  it('refuses while a run of that task is in flight', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', bash: 'sleep 1' });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, name: 'renamed' });
+    expect(resp).toMatchObject({ ok: false, error: `#${task.id} is running right now; edit it once that run finishes` });
+    await settle(1_200);
+  });
+});
+
+/**
  * `/setting` → ⏰ Scheduled tasks. One message throughout: the entry button hands the settings menu
  * over, and every level after is an edit of it. Deleting takes two taps.
  */

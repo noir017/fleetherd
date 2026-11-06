@@ -100,6 +100,16 @@ export class Scheduler {
     this.look();
   }
 
+  /**
+   * Replace a task after an edit. Same id and history; the timer is re-armed so the new time rule
+   * takes effect at once rather than at the old task's next planned run.
+   */
+  update(task: ScheduleTask): void {
+    this.store.put(task);
+    console.log(`[schedule] #${task.id} "${task.name}" updated`);
+    this.look();
+  }
+
   remove(id: string): ScheduleTask | undefined {
     const task = this.store.get(id);
     if (!task) return undefined;

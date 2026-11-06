@@ -6,6 +6,7 @@ import {
   bashResultText,
   bashStatus,
   buildTask,
+  editTask,
   formatDay,
   formatInZone,
   nextRunOf,
@@ -13,6 +14,7 @@ import {
   taskCardText,
   taskExpiredText,
   taskView,
+  type EditTaskInput,
   type NewTaskInput,
   type ScheduleDaySession,
   type ScheduleTask,
@@ -110,6 +112,51 @@ export class ScheduleService {
     }
     this.scheduler.add(built.task);
     this.card(caller, built.task, 'registered');
+    return taskView(built.task, this.clock.now(), { detail: true, here: caller });
+  }
+
+  /**
+   * `schedule edit`. Every rule is `buildTask`'s (core/schedule.ts editTask merges the task with
+   * what was given and runs it through the same builder), so a change `schedule add` would refuse
+   * is refused here in the same words, and nothing is written until it passes — including the
+   * model list, which is read only after the shape is valid.
+   */
+  async edit(id: string, input: EditTaskInput, caller: ConversationId): Promise<ScheduleTaskView> {
+    const task = this.scheduler.get(id);
+    if (!task) throw new Error(`no scheduled task #${id}; \`talkcode schedule list\` shows them all`);
+    // The run in flight is using the values as they were when it started, and a daily run writes
+    // its day's topic back when it opens one — both would race the edit. Editing is quick to retry;
+    // a run is not.
+    if (this.scheduler.isRunning(id)) throw new Error(`#${id} is running right now; edit it once that run finishes`);
+
+    const fixed = task.run.kind === 'agent' && task.run.session === 'fixed' ? task.conversation : undefined;
+    const bound = fixed !== undefined ? this.registry.boundAgentOf(fixed) : undefined;
+    const built = editTask(task, input, {
+      now: this.clock.now(),
+      id: task.id,
+      // The task's own zone is the default an edit means by "8 o'clock", not the gateway's.
+      defaultTz: task.when.tz,
+      agents: this.config.agents.map((a) => a.id),
+      // Deliberately without a cwd or agent of the caller's: an edit keeps what it does not name.
+      from: {
+        key: task.createdBy.conversation,
+        platform: task.createdBy.platform,
+        agent: task.run.kind === 'agent' ? task.run.agent : this.config.routing.default,
+        ...(task.run.kind === 'bash' && task.run.host !== undefined ? { host: task.run.host } : {}),
+      },
+      target: { platform: task.target.platform, address: targetAddress(task) },
+      // The target cannot be changed by an edit, so the platform check `add` makes has already
+      // passed for this task: a platform that is down must not make its tasks uneditable.
+      canOpenTopic: true,
+      ...(fixed !== undefined ? { targetConversation: { key: fixed, ...(bound !== undefined ? { agent: bound } : {}) } } : {}),
+    });
+    if (!built.ok) throw new Error(built.error);
+    if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
+      const why = await this.registry.scheduledModelProblem(built.task.run.agent, built.task.run.model, caller);
+      if (why) throw new Error(why);
+    }
+    this.scheduler.update(built.task);
+    this.card(caller, built.task, 'updated');
     return taskView(built.task, this.clock.now(), { detail: true, here: caller });
   }
 

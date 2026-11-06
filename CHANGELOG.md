@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A scheduled task can be changed in place instead of deleted and rebuilt.** `talkcode schedule
+  edit <id>` takes the fields `add` does — `--agent`, `--cwd`, `--model`, `--cron` / `--at` /
+  `--tz`, `--name`, `--prompt`, and `--bash` / `--timeout` for a bash task — and keeps what made
+  the task worth keeping: its id, its run count, its last result and its state. The merged task
+  goes through the same `buildTask` as `add`, so every refusal is the one `add` gives, word for
+  word, and nothing is written until it passes. The next run is computed from the edit under the
+  new time rule, so moving a daily 8 o'clock to 9 at ten in the morning waits for tomorrow rather
+  than making a catch-up run that never existed. What a task *is* still cannot change: the type
+  (prompt ↔ bash), the session and the output target are refused, naming `rm` + `add`. A daily
+  task whose agent or directory changed leaves the topic it opened today as it is and opens a new
+  one for the rest of the day, because a topic keeps its agent and its directory.
+  [→](docs/scheduled-tasks.md)
+
 ## [2.43.0] - 2026-11-06
 
 ### Changed

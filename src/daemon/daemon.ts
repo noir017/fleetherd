@@ -230,6 +230,7 @@ const GATEWAY_QUERY_KINDS = {
   'voice-log': true,
   'list-channels': true,
   'schedule-add': true,
+  'schedule-edit': true,
   'schedule-list': true,
   'schedule-op': true,
   'reload-config': true,
@@ -1421,8 +1422,8 @@ export class Daemon {
    * The reverse commands that ask the GATEWAY something rather than act on a chat: they never touch
    * the adapter handleReverse resolved, and read the caller's conversation only to scope or mark
    * their answer. Split out so the chat-action switch stays about chat actions. Async for
-   * `schedule-add` alone, which waits on the agent's model list — every scratch slot it needs is
-   * read before that await, exactly as the synchronous ones read theirs.
+   * `schedule-add` and `schedule-edit` alone, which wait on the agent's model list — every scratch
+   * slot they need is read before that await, exactly as the synchronous ones read theirs.
    *
    * `address` is only read by `schedule-add`, where it is the task's target: the `--channel` the
    * agent named, else its own lane (resolveAddress already chose). The platform comes the same way.
@@ -1448,18 +1449,11 @@ export class Daemon {
           limit: action.limit ?? DEFAULT_CHANNEL_LIMIT,
           currentKey: id,
         });
-      case 'schedule-add': {
-        const schedules = this.requireSchedules();
-        if (!id) throw new Error('cannot tell which conversation this came from (conversation expired?)');
-        const platform = this.lastResolvedPlatform ?? this.registry.platformFor(id);
-        if (!platform) throw new Error('cannot resolve the platform for this conversation');
-        const { kind: _kind, channelId: _channel, ...input } = action;
-        return { task: await schedules.add(input, id, { platform, address }) };
-      }
+      case 'schedule-add':
+      case 'schedule-edit':
       case 'schedule-list':
-        return this.requireSchedules().list(id, action.id);
       case 'schedule-op':
-        return { task: this.requireSchedules().op(action.id, action.op, id) };
+        return this.handleScheduleQuery(action, address, id);
       case 'reload-config':
         // A file that did not load is an error to the CLI (non-zero exit), not a printed result.
         return this.reloadAll().then((reload) => {
@@ -1495,6 +1489,38 @@ export class Daemon {
         const _exhaustive: never = action;
         throw new Error(`unknown gateway query: ${JSON.stringify(_exhaustive)}`);
       }
+    }
+  }
+
+  /**
+   * The four `schedule` arms, split out of handleGatewayQuery for the same reason the skills ones
+   * are: the switch stays under the complexity bound as the catalog grows. `id` is the CALLER's
+   * conversation; a task's own id is `action.id`, and only add/edit wait on anything (the agent's
+   * model list).
+   */
+  private async handleScheduleQuery(
+    action: Extract<GatewayQuery, { kind: 'schedule-add' | 'schedule-edit' | 'schedule-list' | 'schedule-op' }>,
+    address: ConversationAddress,
+    caller: ConversationId | undefined
+  ): Promise<unknown> {
+    const schedules = this.requireSchedules();
+    switch (action.kind) {
+      case 'schedule-add': {
+        if (!caller) throw new Error('cannot tell which conversation this came from (conversation expired?)');
+        const platform = this.lastResolvedPlatform ?? this.registry.platformFor(caller);
+        if (!platform) throw new Error('cannot resolve the platform for this conversation');
+        const { kind: _kind, channelId: _channel, ...input } = action;
+        return { task: await schedules.add(input, caller, { platform, address }) };
+      }
+      case 'schedule-edit': {
+        if (!caller) throw new Error('cannot tell which conversation this came from (conversation expired?)');
+        const { kind: _kind, id: taskId, ...input } = action;
+        return { task: await schedules.edit(taskId, input, caller) };
+      }
+      case 'schedule-list':
+        return schedules.list(caller, action.id);
+      case 'schedule-op':
+        return { task: schedules.op(action.id, action.op, caller) };
     }
   }
 

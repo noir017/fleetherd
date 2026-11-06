@@ -211,6 +211,23 @@ describe('schedule <action> [id]', () => {
     expect(schedule(positionals)).toEqual(want);
   });
 
+  it('builds an edit from its id and options, with no session or channel of its own', () => {
+    expect(schedule(['edit', '#a1b2c3'], { agent: 'oc', cwd: '/srv/app', timeout: undefined })).toEqual({
+      kind: 'schedule-edit',
+      id: 'a1b2c3',
+      name: undefined,
+      cron: undefined,
+      at: undefined,
+      tz: undefined,
+      prompt: undefined,
+      bash: undefined,
+      agent: 'oc',
+      cwd: '/srv/app',
+      model: undefined,
+      timeoutMs: undefined,
+    });
+  });
+
   it.each([
     [['pause'], {}, /needs a task id/],
     [['frobnicate'], {}, /unknown schedule action "frobnicate"/],
@@ -218,6 +235,12 @@ describe('schedule <action> [id]', () => {
     [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add`/],
     [['add', 'x'], { cron: '0 8 * * *' }, /takes no id/],
     [['add'], { session: 'forever' }, /--session must be fixed, new or daily/],
+    [['edit'], {}, /needs a task id/],
+    [['edit', 'a1b2c3'], {}, /needs something to change/],
+    [['edit', 'a1b2c3'], { session: 'new' }, /--session cannot be changed by edit.*rm <id>.*add a new one/],
+    [['edit', 'a1b2c3'], { channel: 'tg:1' }, /--channel cannot be changed by edit.*rm <id>.*add a new one/],
+    [['edit', 'a1b2c3'], { prompt: 'x', bash: 'y' }, /at most one of --prompt/],
+    [['edit', 'a1b2c3'], { cron: '0 8 * * *', at: '+1h' }, /at most one of --cron/],
   ])('refuses %j %j', (positionals, opts, why) => {
     expect(() => schedule(positionals, opts)).toThrow(why);
   });
@@ -332,7 +355,7 @@ describe('sessions <action> [arg]', () => {
 
 describe('isBridgedCommand', () => {
   it('lets a remote agent run reverse commands, the tools server and help — nothing else', () => {
-    for (const ok of [['send-message', 'hi'], ['send-file', 'x'], ['schedule', 'list'], ['mcp'], ['help'], ['--help']]) {
+    for (const ok of [['send-message', 'hi'], ['send-file', 'x'], ['schedule', 'list'], ['schedule', 'edit', 'a1b2c3', '--name', 'x'], ['mcp'], ['help'], ['--help']]) {
       expect(isBridgedCommand(ok)).toBe(true);
     }
     for (const no of [[], ['start'], ['setup'], ['doctor'], ['--migrate-config']]) {
