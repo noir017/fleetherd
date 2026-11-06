@@ -39,9 +39,15 @@ library from reaching into the conversation registry.
   | `detail` | why it failed, the whole message the turn was thrown with (bounded at 200k characters); empty otherwise. This is what `task-read --turn <n>` reads when an update card cuts an error — the card names the turn |
 
 - `messages` — one row per prompt (`user`), reply (`agent`) or tool call (`tool`), each with
-  the kind of the turn that produced it and `turn` = `turns.id`. A tool row is one line:
-  `Bash: git status`. `turn` is NULL on rows imported or written before turns existed; they
-  read as "unknown", never as a guessed turn.
+  the kind of the turn that produced it and `turn` = `turns.id`. A tool row is its line
+  (`Bash: git status`) and, when they say more, the call's whole arguments as JSON under it
+  (`record.ts` toolText, cut at 100k with a note); the output is not kept. `call` is the harness's
+  `toolCallId`: a second write with the same call in the same conversation and turn rewrites that
+  row (text and index) instead of adding one, keeping the time the call started. A harness that
+  streams arguments re-emits the start on every change (`agent-acp.ts` upgradeToolRow), and before
+  this every emission was a row — one CodeBuddy Write was twelve copies. `turn` and `call` are NULL
+  on rows imported or written before they existed; a NULL turn reads as "unknown", never as a
+  guessed turn.
 - `messages_fts` — FTS5 over `tokenize.indexText(text)`, rowid = `messages.id`, `unicode61`.
 - `imported` — one row per web UI transcript file already folded in. This is what makes the
   import idempotent; the transcript files themselves are rewritten every few seconds and must
@@ -79,14 +85,14 @@ library from reaching into the conversation registry.
   `restart` — being one process per config directory is what makes that read unambiguous — and
   leaves its end time at the newest message it wrote.
 
-The `messages.turn` column is added by `migrate()` with `ALTER TABLE`, without a default and
-without a back-fill. `turns` is created empty by the same `CREATE TABLE IF NOT EXISTS` block, so
+The `messages.turn` and `messages.call` columns are added by `migrate()` with `ALTER TABLE`,
+without a default and without a back-fill (`call` with a partial index on `(session_id, call)`). `turns` is created empty by the same `CREATE TABLE IF NOT EXISTS` block, so
 an upgraded file opens without a rewrite and its old rows stay unknown.
 
 ## Reading part of a conversation
 
-`read(session, opts)` has three shapes: no filter (the whole conversation, unchanged), `around`
-(the old window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n,
+`read(session, opts)` has three shapes: no filter (the whole conversation), `around` (the old
+window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n,
 capped at 100 with a note only when the cap really dropped turns), `since` (message id,
 exclusive), `grep` (text, this conversation only), `tail` (newest n tool lines, only with
 `role: 'tool'`) and `limit` (the newest n rows, any role — `task-read`'s default 10). They combine
@@ -118,6 +124,18 @@ imported later has new ids and old timestamps, so ordering by (ts, id) while res
 repeats rows on one page and skips them on the next. A role/grep read drops later rows like the
 unfiltered read. Both bounds (500 rows, 200k characters) are reported, never silent.
 
+**Folding.** A read that does not choose rows by `role` or `grep` — the unfiltered one and every
+turn/since/limit read — turns each run of consecutive tool rows into one row (`foldToolRuns`): a
+single call becomes its first line, a longer run `[37 tool calls: Bash ×20, Edit ×12]`. Tool rows
+were 94% of what was recorded on 11-04..06, so an unfolded read was a page of commands and the
+500-row bound was spent before the conversation got going. A run breaks at any other row and where
+the turn or kind changes. The folded row carries the run's oldest id (`--around` lands on it) and,
+internally, its newest (`last_id`, where a `--since` read resumes, so a page never ends inside a
+run). Folding cannot let SQL apply the row bound, which counts folded rows, so a folding read scans
+up to 20k rows with only the head of each tool row and bounds afterwards. `FOLD_NOTE` is said only
+when a returned row is folded. `role: 'tool'`, `grep` and `around` are not folded: they ask for the
+calls, a match inside one, or a window.
+
 WAL, `synchronous = NORMAL`. The file, and its `-wal`/`-shm` companions, are chmod'd `0600`:
 this is the same kind of text the harnesses' own session files hold.
 
@@ -137,10 +155,15 @@ this module only in the prefixed form. The comment there is the full reason.
 ## What a review reads
 
 `sessionOf(key)` is one conversation's row without its messages, and `reviewWindow(key, afterId,
-maxChars)` is the tail a review is given: rows after the watermark, cut from the oldest end to a
-character budget, with the count of the person's own messages and the newest id (where the next
-review starts). Scheduled and sub-agent rows are left out — they share a topic with a person's
-conversation but are not what the person said — and `background` output is kept. The two methods
+maxChars)` is what a review is given: what the person and the agent said after the watermark — no
+tool rows — with every message of the person kept first, then the agent's replies newest-first to
+the character budget, each message cut to its head and tail at 8k; plus the count of the person's
+own messages, the newest id (where the next review starts), and `skillCalls`, the span's tool rows
+that name a skills path or the Skill tool, which the review reads for the skills used and written.
+Tool rows were 76% of what 42 reviews were given and the person's words 0.6%; replayed without
+them, every message the person sent reached the reviewer. Scheduled and sub-agent rows are left
+out — they share a topic with a person's conversation but are not what the person said — and
+`background` output is kept. The two methods
 exist here, rather than as ad-hoc SQL in the daemon, so the "three things since last time" rule is
 tested against a real database.
 
@@ -155,14 +178,17 @@ an agent asked for and must be told about.
 
 `ORDER BY (kind = 'schedule'), bm25(...), ts DESC` — scheduled output after everything else
 (the trap Hermes hit: an every-minute task's high-frequency words push real conversations out
-of the top), then relevance, then newest. `review` rows are excluded, for the review sessions
-that will write here later.
+of the top), then relevance, then newest. `review` rows are excluded, and so are tool rows unless
+`tools` asks for them (`sessions search --tools`): at 94% of the rows, they buried every word the
+person and the agent used under the commands that happened to contain it.
 
 ## Tests
 
 `tokenize.test.ts` pins the split (two-character words, one-character fallback, English,
-mixed). `store.test.ts` pins search in each of those, the scheduled ordering, read windows, read
-filters and their truncation notes, the turns table (old-file migration, every trigger and
+mixed). `record.test.ts` pins a tool row's text. `store.test.ts` pins search in each of those
+(tool rows only with `tools`), the scheduled ordering, read windows, read filters and their
+truncation notes, one row per call and the `call` migration, folding in every read shape, the
+review window's order and its skill calls, the turns table (old-file migration, every trigger and
 outcome, `restart` on reopen, turn selection), list, `0600`, and a write that fails without
 throwing. `import-webui.test.ts` pins the roles, tool lines, kinds and idempotency.
 `daemon/history-record.test.ts` pins what a turn records — including background output as its own

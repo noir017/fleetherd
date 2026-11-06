@@ -149,8 +149,12 @@ conversation whose agent can never be reclaimed (reclaim off, or a harness that 
 session) is reviewed with its process still up. Scheduled tasks, sub-agents and reviews themselves
 are never reviewed.
 
-The reviewer gets the conversation (capped), the skill list with versions, and the full text of the
-skills that conversation used. It has no tools: it runs in an empty temporary directory with every
+The reviewer gets the conversation without its tool calls — every message you sent, then the
+agent's replies newest first up to the cap — the skill list with versions, the full text of the
+skills that conversation used, the skill files the conversation's own agent wrote (so it does not
+create a second copy of a skill you just had written), and `common.md` from your
+[instructions for every agent](instructions.md) (so it does not suggest a preference you already
+set). It has no tools: it runs in an empty temporary directory with every
 tool denied, so it cannot read or write anything. It answers with a JSON list of `create`, `patch`
 and `write-file` changes, each with a reason, plus any preferences it noticed. The gateway applies
 them through the same rules as `talkcode skills` — a patch must carry the version the reviewer was
@@ -183,7 +187,11 @@ because each conversation's watermark already stops it being reviewed twice. Rev
 the conversation library as `review` sessions, which search and `list` leave out.
 
 **Where the results are.** The web UI's side panel has a **Reviews** tab: every review, including
-the ones that changed nothing and posted no line. A row is the reviewed conversation, when, and
+the ones that changed nothing and posted no line. Above them, **Suggested preferences** gathers the
+preference suggestions no one has dealt with: one entry per wording, with how many reviews made it
+and which conversations they came from. None of them is in force anywhere — ask an agent to add the
+ones you want to your instructions, and **Dismiss** the rest (or the ones you added); a dismissed
+suggestion does not come back. A row is the reviewed conversation, when, and
 what happened — a skill created or updated, only preference suggestions, a change the store
 refused, nothing found, or a failed run. Opening it shows each change with the reviewer's reason,
 whether it actually took effect (and the store's sentence when it did not), the preference
