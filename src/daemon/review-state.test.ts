@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { REVIEW_RETRY_MS, ReviewStateStore } from './review-state.js';
+import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, REVIEW_RETRY_MS, ReviewStateStore } from './review-state.js';
 
 let dir: string;
 let file: string;
@@ -50,11 +50,72 @@ describe('ReviewStateStore', () => {
 
   it('counts consecutive failures on a batch and resets them on a review', () => {
     const s = store();
-    expect(s.failed('a', 'agy exited 1', T0)).toBe(1);
-    expect(s.failed('a', 'agy exited 1', T0)).toBe(2);
+    expect(s.failed('a', 'agy exited 1', T0)).toEqual({ attempts: 1, counted: true });
+    expect(s.failed('a', 'agy exited 1', T0).attempts).toBe(2);
     s.reviewed('a', 42, T0);
     expect(s.markOf('a')?.attempts).toBeUndefined();
-    expect(s.failed('a', 'agy exited 1', T0)).toBe(1);
+    expect(s.failed('a', 'agy exited 1', T0).attempts).toBe(1);
+  });
+
+  it('does not count a capacity failure and waits an hour instead of six', () => {
+    const s = store();
+    expect(s.failed('a', 'UNAVAILABLE (503): No capacity available', T0, 'capacity')).toEqual({
+      attempts: 0,
+      counted: false,
+    });
+    const mark = s.markOf('a');
+    expect(mark).toMatchObject({ messageId: 0, attempts: 0, capacity: true, capacityAttempts: 1 });
+    expect(Date.parse(mark!.retryAt!)).toBe(T0 + REVIEW_CAPACITY_RETRY_MS);
+    expect(s.ready('a', T0 + REVIEW_CAPACITY_RETRY_MS - 1)).toBe(false);
+    expect(s.ready('a', T0 + REVIEW_CAPACITY_RETRY_MS)).toBe(true);
+  });
+
+  it('keeps the counted attempts across a capacity failure and clears its flag on a real one', () => {
+    const s = store();
+    expect(s.failed('a', 'agy exited 1', T0).attempts).toBe(1);
+    s.failed('a', 'No capacity available', T0 + 1, 'capacity');
+    expect(s.markOf('a')?.attempts).toBe(1);
+    expect(s.markOf('a')?.capacity).toBe(true);
+    expect(s.markOf('a')?.capacityAttempts).toBe(1);
+
+    // The next ordinary failure is attempt 2, not a fresh start: the capacity wait was not an
+    // attempt, so the batch's real count is unchanged. A non-capacity failure also ends the streak.
+    expect(s.failed('a', 'agy exited 1', T0 + 2)).toEqual({ attempts: 2, counted: true });
+    expect(s.markOf('a')?.capacity).toBeUndefined();
+    expect(s.markOf('a')?.capacityAttempts).toBeUndefined();
+  });
+
+  it('counts capacity failures once the streak passes the cap', () => {
+    const s = store();
+    for (let i = 1; i <= REVIEW_CAPACITY_MAX_ATTEMPTS; i++) {
+      expect(s.failed('a', 'No capacity available', T0, 'capacity')).toEqual({ attempts: 0, counted: false });
+      expect(s.markOf('a')?.capacityAttempts).toBe(i);
+    }
+
+    // One past the cap: recorded as an ordinary failure, six-hour wait, and no longer flagged —
+    // this is the backstop for a fault that keeps looking like a capacity drought.
+    expect(s.failed('a', 'No capacity available', T0, 'capacity')).toEqual({ attempts: 1, counted: true });
+    const mark = s.markOf('a');
+    expect(mark).toMatchObject({ attempts: 1, capacityAttempts: REVIEW_CAPACITY_MAX_ATTEMPTS + 1 });
+    expect(mark?.capacity).toBeUndefined();
+    expect(Date.parse(mark!.retryAt!)).toBe(T0 + REVIEW_RETRY_MS);
+
+    // And the next one counts too, rather than restarting the streak.
+    expect(s.failed('a', 'No capacity available', T0, 'capacity')).toEqual({ attempts: 2, counted: true });
+  });
+
+  it('reads a mark written before capacity failures were distinguished', () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        conversations: { a: { messageId: 42, at: new Date(T0).toISOString(), attempts: 2, error: 'agy exited 1' } },
+      })
+    );
+    const mark = store().markOf('a');
+    expect(mark).toMatchObject({ messageId: 42, attempts: 2 });
+    // Absent is the old behaviour and the safe reading: an ordinary failure, six-hour wait.
+    expect(mark?.capacity).toBeUndefined();
   });
 
   it('gives up on a batch by moving the watermark and clearing the retry', () => {

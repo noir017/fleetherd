@@ -32,6 +32,22 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **An automatic review no longer loses the batch when the model has no capacity.** 6 of 26 reviews
+  on 11-05/06 failed as `agy on awsfree2 timed out after 5 min`, and every one was Google queueing
+  `gemini-3.8-flash-high`: the request hangs for 2–4.5 minutes, answers `UNAVAILABLE (503): No
+  capacity available for model gemini-3.8-flash-high`, and agy retries it itself after 4 s — the
+  five-minute cap killed agy before those retries could finish. A review now gets 30 minutes
+  (successful ones took 37–251 s), and a failure that says the provider has no capacity — `No
+  capacity available`, or `UNAVAILABLE` with a `503` — is not counted as an attempt: it waits an
+  hour instead of six and the batch stays. So is a run that reaches the 30-minute limit: agy
+  retries a 503 on its own and has no give-up limit (1.5.1 was still retrying after attempt 5), so
+  a kill can leave no output at all. Failures that happen at once — no such host, a spawn error,
+  ssh refused — stay ordinary and counted. After twelve capacity failures in a row — about 18
+  hours, each an hour's wait plus up to 30 minutes — they count like any other, so the
+  three-attempt limit still catches a permanent fault. Other failures keep the six-hour back-off
+  and the three-attempt limit. A conversation waiting on capacity goes behind fresh work, and a
+  sweep stops starting reviews after 40 minutes — the one already running may take up to 30 more.
+  [→](docs/skills.md#auto-review)
 - **Side tasks keeps its amber alert dot whole at the panel's narrowest width.** At 220px the
   outer Scheduled tab is 100px wide, and "Scheduled 2 · 1" with the alert dot beside it needed a
   little more: 1.5px of the dot was cut off by the tab's own clipping. The task and session counts

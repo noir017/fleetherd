@@ -162,14 +162,25 @@ When something changed, one line appears in the conversation that was reviewed:
 📝 复盘：更新技能 `deploy-check`（回滚 `talkcode skills revert deploy-check 0000000000172-abc123`）。偏好建议：回答先给结论
 ```
 
-No change, no line. One review runs at a time. A conversation this feature has never seen is
-reviewed only when its newest message is under 24 hours old — so turning this on for the first
-time reads the recent tail, not months of history; once it has a record (reviewed or failed), its
-watermark and the retry schedule decide. A failed review waits six hours before it is tried again,
-and the same batch of messages gets at most three attempts; after the third failure the review
-gives up, moves past that batch, and waits for three new messages. There is no daily cap, because
-each conversation's watermark already stops it being reviewed twice. Reviews are filed in the
-conversation library as `review` sessions, which search and `list` leave out.
+No change, no line. One review runs at a time, and one gets up to 30 minutes: a provider that
+queues a request for minutes, or that agy is already retrying, is waited out rather than cut off.
+A conversation this feature has never seen is reviewed only when its newest message is under 24
+hours old — so turning this on for the first time reads the recent tail, not months of history;
+once it has a record (reviewed or failed), its watermark and the retry schedule decide. A failed
+review waits six hours before it is tried again, and the same batch of messages gets at most three
+attempts; after the third failure the review gives up, moves past that batch, and waits for three
+new messages. The exception is the provider having no capacity for the model — `No capacity
+available`, or `UNAVAILABLE` with a `503`, in what agy answered — or a run that reaches the
+30-minute limit: agy retries a 503 itself, has no give-up limit, and can still be waiting when the
+review is killed, leaving nothing to read. That is not counted as an attempt and is retried in an
+hour. A failure that fails at once — no such host, a spawn failure, ssh refused — never reaches the
+limit and stays an ordinary, counted failure. The exemption stops after twelve capacity failures in a
+row (about 18 hours: each is an hour's wait plus up to 30 minutes); from then on they count, and
+the batch can be given up on like any other. A conversation waiting on capacity goes behind fresh
+ones, and a sweep stops starting new reviews after 40 minutes — the one already running may take
+up to 30 more — so a run of starved batches cannot make one pass endless. There is no daily cap,
+because each conversation's watermark already stops it being reviewed twice. Reviews are filed in
+the conversation library as `review` sessions, which search and `list` leave out.
 
 **Where the results are.** The web UI's side panel has a **Reviews** tab: every review, including
 the ones that changed nothing and posted no line. A row is the reviewed conversation, when, and
