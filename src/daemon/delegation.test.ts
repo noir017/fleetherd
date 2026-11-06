@@ -316,6 +316,8 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     expect(opened[0]!.header).toBe('**↳ From [Release](?t=aaaaaaaa)**');
     const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 2'))!;
     expect(said.text).toContain('- [part](?t=c1000000) — cc');
+    // The confirmed card's answer is a dispatch: the web UI marks it as a hand-off.
+    expect(said.kind).toBe('dispatch');
   });
 
   it('opens nothing when the card is cancelled', async () => {
@@ -405,6 +407,7 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     await settle();
     const said = r.posted.find((p) => p.to === P && p.text.startsWith('Started 1'))!;
     expect(said.text).toMatch(/Could not start 1:\n- 2\. cx: no directory nowhere/);
+    expect(said.kind).toBe('dispatch');
     const prompt = r.calls.find(([c]) => c === 'prompt')![1] as { prompt: string; user: string };
     expect(prompt.prompt).toMatch(/^\[sub-agent updates\] 1 of 2 could not be started/);
     expect(prompt.user).toBe(UPDATE_SENDER);

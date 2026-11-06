@@ -678,6 +678,13 @@ export interface PlatformAdapter {
  */
 export type MessageKind = 'tools' | 'dispatch' | 'report';
 
+/**
+ * `MessageKind`'s values at runtime, for code that has to recognise a kind it was handed as data —
+ * a transcript file read back from disk. `satisfies` pins every entry to the type, so a typo or a
+ * renamed kind fails to compile rather than silently matching nothing.
+ */
+export const MESSAGE_KINDS = ['tools', 'dispatch', 'report'] as const satisfies readonly MessageKind[];
+
 export interface SendOptions {
   kind?: MessageKind;
 }

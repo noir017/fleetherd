@@ -186,17 +186,21 @@ describe('webui adapter: outbound', () => {
     await a.sendButtons(address, 'wants to start a sub-agent', [{ id: 'ask:r:0', label: 'Start it' }], undefined, {
       kind: 'dispatch',
     });
+    // Buttons and a line-based kind together: still rows, so the page never shows a "Show all"
+    // over a body that has no `.tl` to open.
+    await a.sendButtons(address, '🔔 a (cc) — done.', [{ id: 'ask:r:1', label: 'OK' }], undefined, { kind: 'report' });
     await a.stop();
 
     const at = path.join(dir, 'webui-transcripts-webui', `${address.thread ?? ''}.json`);
     const written = JSON.parse(fs.readFileSync(at, 'utf8')) as Kept[];
-    expect(written.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch']);
+    expect(written.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch', 'report']);
     // A dispatch is prose (the card, or the task text) and stays markdown; a report is rows.
     expect(written[0]?.msg.html).not.toContain('class="tl"');
     expect(written[1]?.msg.html).toContain('<div class="tools"><div class="tl">');
+    expect(written[3]?.msg.html).toContain('<div class="tools"><div class="tl">');
     // And the transcript store carries the kinds across a restart, which is what a reload paints.
     const restored = diskTranscriptStore(path.dirname(at)).load().get(address.thread ?? '') ?? [];
-    expect(restored.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch']);
+    expect(restored.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch', 'report']);
   });
 
   it('quotes the message a reply answers', async () => {

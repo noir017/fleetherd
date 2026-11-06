@@ -28,7 +28,7 @@ import path from 'node:path';
 import { configDir } from '../../config/load.js';
 import type { ConversationAddress } from '../../core/conversation.js';
 import type { MessageRef, SettingsScreen, SlashCommandSpec } from '../../types.js';
-import type { MessageKind, PlatformAdapter, SendOptions } from '../adapter.js';
+import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
 import { renderWebMarkdown } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
 import { readableKind } from './reading.js';
@@ -339,9 +339,12 @@ function parseKept(value: unknown): Kept | null {
   };
 }
 
-/** A `kind` this build knows, or nothing: an older file may hold a value from a future one. */
+/**
+ * A `kind` this build knows, or nothing: an older file may hold a value from a future one. The
+ * list lives beside `MessageKind` in adapter.ts, so this cannot carry a second copy of the union.
+ */
 function keptKind(kind: unknown): MessageKind | undefined {
-  return kind === 'tools' || kind === 'dispatch' || kind === 'report' ? kind : undefined;
+  return (MESSAGE_KINDS as readonly unknown[]).includes(kind) ? (kind as MessageKind) : undefined;
 }
 
 type Outbound = Pick<
@@ -460,7 +463,9 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
           topic,
           {
             own: false,
-            html: renderWebMarkdown(text),
+            // The same rule as a plain send: a report sent with buttons is still line-based, and
+            // rendering it as markdown would leave the page a "Show all" with nothing to open.
+            html: webMessageHtml(kind, text),
             buttons,
             ...(screen ? { settings: screen } : {}),
             ...(kind ? { kind } : {}),
