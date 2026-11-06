@@ -71,12 +71,24 @@ import { remoteHosts } from './remote-hosts.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
+import { AGY_COMMAND, type AgyCliRunner } from './agy-cli.js';
+import {
+  agyAcpToolLabel,
+  agySplitModel,
+  agyTurnWatch,
+  agyWindow,
+  createAgyQuotaMeter,
+  forgetsModelOnLoad,
+  type AgyQuotaMeter,
+  type AgyTurnWatch,
+} from './agy-acp.js';
+import { markActivePools } from './agy-statusline.js';
 
 /**
  * AgentFactory's ACP (Agent Client Protocol) implementation on the official @agentclientprotocol/sdk.
  *
  * talkcode daemon = ACP "client/host". Each (conversationId, agentId) spawns a resident ACP agent child
- * (claude-agent-acp / gemini --experimental-acp / any custom), translating ACP session/update stream
+ * (claude-agent-acp / codex-acp / opencode acp / agy acp / any custom), translating ACP session/update stream
  * notifications back to the existing AgentStreamHandlers, reusing all outbound rendering (StreamBuffer / ToolRenderer).
  *
  * Mapping:
@@ -250,18 +262,30 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
       // refine already guarantees command exists.
       return { command: def.command!, args: [...def.args] };
     case 'agy':
-      // Unreachable: agy has no ACP mode, so agent-factory routes it to the agent-agy runtime and
-      // this function is never called for it. Kept as an explicit arm so the switch stays exhaustive
-      // (a future preset then fails to compile here rather than falling through silently).
-      throw new Error('internal: harness "agy" is served by agent-agy.ts, not the ACP runtime');
+      // agy's own ACP server, since 1.5 (`agy acp --help`). None of the flags the stream-json launch
+      // needed (agent-agy.ts buildAgyArgs) carries over, each re-measured on 1.5.1 (2026-11-06):
+      // there is no print-mode timeout to lift; permissions arrive as `session/request_permission`
+      // and are answered like any harness's (approved under `permissions: auto`, put to the user
+      // under `ask` — `--dangerously-skip-permissions` would take that choice away); and a file the
+      // agent writes in an untrusted cwd lands in the cwd, so `--add-dir` has nothing to fix. The
+      // same command on a remote host: agy is a single binary on PATH there too.
+      return { command: AGY_COMMAND, args: ['acp', ...def.args] };
   }
 }
 
 // ───────────────────────────────── factory / session ─────────────────────────────────
 
-export function createAcpAgentFactory(cfg: Config, socketPath: string, store?: ConversationStore): AgentFactory {
+export function createAcpAgentFactory(
+  cfg: Config,
+  socketPath: string,
+  store?: ConversationStore,
+  /** How agy's one-shot `agy -p=/usage` is run — injectable so the tests never start a real agy. */
+  agyCli?: AgyCliRunner
+): AgentFactory {
   const sessions = new Map<string, AgentSession>();
   const turnTimeoutMs = cfg.session.turnTimeoutMs;
+  // One reading per agy account for the whole runtime, whichever conversation asked (agy-acp.ts).
+  const agyQuota = createAgyQuotaMeter(agyCli);
 
   return {
     getOrCreate(sessionId: string, agentId: string): AgentSession {
@@ -269,7 +293,7 @@ export function createAcpAgentFactory(cfg: Config, socketPath: string, store?: C
       if (!s) {
         const def = findAgent(cfg, agentId);
         if (!def) throw new Error(`unknown agent id: ${agentId} (check the routing and agents config)`);
-        s = createAcpSession(def, socketPath, sessionId, turnTimeoutMs, store);
+        s = createAcpSession(def, socketPath, sessionId, turnTimeoutMs, store, def.harness === 'agy' ? agyQuota : undefined);
         sessions.set(sessionId, s);
       }
       return s;
@@ -425,6 +449,36 @@ const HARNESS_LOG_POLL_MS = 60_000;
  * enough that a harness reporting cost on every snapshot does not fragment one report into many.
  */
 const FOLLOW_UP_SEAL_GRACE_MS = 1_500;
+
+/**
+ * How long a finished agy turn waits for the quota refresh started beside it before its footer is
+ * built without it. `agy -p=/usage` took ~3.7s on 1.5.1; most turns outlast it, and the bound is for
+ * a one-shot stuck on the network. The same figure as the stream-json runtime's SIDE_QUERY_SETTLE_MS.
+ */
+const AGY_QUOTA_SETTLE_MS = 5_000;
+
+/** A turn's view of agy's quota refresh (see agyQuotaForTurn). */
+interface AgyTurnQuota {
+  /** Resolves when the refresh lands, or after AGY_QUOTA_SETTLE_MS, whichever is first. */
+  settled(): Promise<void>;
+  /** The turn is over: stop reporting into its handlers. */
+  close(): void;
+}
+
+/** Wait for `p`, but no longer than `ms`. Never rejects. */
+async function settleWithin(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    p.then(
+      () => undefined,
+      () => undefined
+    ),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+}
 
 /**
  * Whether a `usage_update` is the one the harness emits with a completed result, as opposed to a
@@ -767,7 +821,9 @@ function createAcpSession(
   /** The conversation this agent instance serves (store key half; the other half is def.id). */
   conversationId: string,
   turnTimeoutMs: number,
-  store?: ConversationStore
+  store?: ConversationStore,
+  /** agy's quota pools, which no ACP message carries (agy-acp.ts). Only for an agy agent. */
+  agyQuota?: AgyQuotaMeter
 ): AgentSession {
   /**
    * The directory this session's child runs in. Resolved per SPAWN, not once per session, so a
@@ -1194,8 +1250,13 @@ function createAcpSession(
    * liveConfigOptions. The one call behind all three places that need it — session/load, session/new
    * and a runtime `/model` — so none of them can forget the write-back.
    */
-  async function reapplyEffort(ctx: Pick<ClientContext, 'request'>, sessionId: string): Promise<void> {
-    const after = await applyEffortPreference(ctx, sessionId, def, liveConfigOptions, effortPreference);
+  async function reapplyEffort(
+    ctx: Pick<ClientContext, 'request'>,
+    sessionId: string,
+    /** A level to apply when the conversation chose none — agy's, out of a model id (agySplitModel). */
+    fallback?: string
+  ): Promise<void> {
+    const after = await applyEffortPreference(ctx, sessionId, def, liveConfigOptions, effortPreference ?? fallback);
     if (after) liveConfigOptions = after;
   }
 
@@ -1216,14 +1277,23 @@ function createAcpSession(
     sessionId: string,
     model: string | undefined
   ): Promise<void> {
+    // An agy model named the way `agy models` spells it (`gemini-3.8-flash-high`) is two choices
+    // under `agy acp`: the model, and its thinking level (agySplitModel).
+    const split = def.harness === 'agy' && model ? agySplitModel(model, liveConfigOptions) : undefined;
     // _meta.model is a hint some harnesses ignore (verified: opencode reports its own default
     // regardless), so enforce the choice through the protocol's own setter.
-    const afterModel = await applyModelPreference(ctx, sessionId, def, liveConfigOptions, model);
+    const afterModel = await applyModelPreference(ctx, sessionId, def, liveConfigOptions, split?.model ?? model);
     if (afterModel) {
       liveConfigOptions = afterModel;
       liveModel = liveModelName(afterModel) ?? liveModel;
     }
-    await reapplyEffort(ctx, sessionId);
+    await reapplyEffort(ctx, sessionId, split?.effort);
+  }
+
+  /** The model to enforce on a reloaded session: the person's choice, or — where the harness forgets
+   * it on a reload (agy) — the configured one too. */
+  function modelAfterLoad(): string | undefined {
+    return modelPreference ?? (forgetsModelOnLoad(def) ? def.model : undefined);
   }
 
   /**
@@ -1426,9 +1496,10 @@ function createAcpSession(
           console.log(`[acp] resumed persisted session for "${def.id}" (${persistedId})`);
           // claude-agent-acp and codex-acp reload at their DEFAULT level, not the one this session
           // was left on — so a `/effort` choice made before an idle reclaim is put back here or lost.
-          // The model chosen here goes back first, for the same reason (see reapplyPreferences).
+          // The model chosen here goes back first, for the same reason (see reapplyPreferences); and
+          // where the harness reloads on its default MODEL too (agy), so does the configured one.
           // Cannot throw (best-effort by design), so it cannot send a good load down the catch below.
-          await reapplyPreferences(ctx, persistedId, modelPreference);
+          await reapplyPreferences(ctx, persistedId, modelAfterLoad());
         } catch (err) {
           // Stored id no longer loadable (history pruned, cwd moved, harness downgraded): start fresh.
           resumed.dispose();
@@ -1513,7 +1584,7 @@ function createAcpSession(
       // initialize or session/new refused: still a startup that did not happen. Classified rather
       // than rethrown bare so hooks.turnFailed can tell it from a turn the provider failed.
       if (err instanceof TurnFailure) throw err;
-      throw new TurnFailure(err instanceof Error ? err.message : String(err), 'startup');
+      throw new TurnFailure(`${err instanceof Error ? err.message : String(err)}${startupHint(def)}`, 'startup');
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -1530,7 +1601,7 @@ function createAcpSession(
    * `configOptions` write-back and the same context-window override — an out-of-turn reply that
    * rendered tools differently from an in-turn one would be a bug nobody would think to look for.
    */
-  function newTranslationState(handlers: AgentStreamHandlers): TurnState {
+  function newTranslationState(handlers: AgentStreamHandlers, inTurn: boolean): TurnState {
     /** Notice keys already sent from this turn or burst (see failureNoticeKey). */
     const announced = new Set<string>();
     return {
@@ -1549,6 +1620,7 @@ function createAcpSession(
       // Local override for a harness that under-reports the window (e.g. claude-opus-5 → 200k fallback).
       contextWindow: def.contextWindow,
       subagents: subagentNames,
+      agy: def.harness === 'agy' ? agyTurnWatch(def.id, (text) => handlers.onNotice?.(text), inTurn) : undefined,
     };
   }
 
@@ -1593,7 +1665,7 @@ function createAcpSession(
     if (!followUpSink) return undefined;
     if (!followUpState) {
       const handlers = followUpSink.handlers();
-      followUpState = { state: newTranslationState(handlers), sink: followUpSink };
+      followUpState = { state: newTranslationState(handlers, false), sink: followUpSink };
       // The same up-front report runTurn makes, for the same reason: the model and effort are
       // known from session/new and are never re-sent unless they change, so a burst that is not
       // told them has no way to learn them. Its footer then fell back to config, which for the
@@ -1870,6 +1942,67 @@ function createAcpSession(
     });
   }
 
+  /** Log lines this session has already written once (see settleAgyTurn). */
+  const loggedOnce = new Set<string>();
+  function logOnce(key: string, line: string): void {
+    if (loggedOnce.has(key)) return;
+    loggedOnce.add(key);
+    console.log(line);
+  }
+
+  /** The model the session's selector is on, by id — what agy's window table is keyed on. */
+  function currentModelValue(): string | undefined {
+    const opt = liveConfigOptions?.find((o) => o.id === MODEL_CONFIG_ID);
+    return opt?.type === 'select' && typeof opt.currentValue === 'string' ? opt.currentValue : liveModel;
+  }
+
+  /**
+   * agy's quota for one turn (agy-acp.ts createAgyQuotaMeter): the last reading reported at once,
+   * and a refresh started beside the turn, reported when it lands — until the turn is closed, after
+   * which its footer has been built and a late reading has nowhere to go. A no-op for any other
+   * harness.
+   */
+  function agyQuotaForTurn(handlers: AgentStreamHandlers): AgyTurnQuota {
+    const meter = agyQuota;
+    if (!meter) return { settled: () => Promise.resolve(), close: () => {} };
+    let open = true;
+    const report = (): void => {
+      const pools = meter.read(def);
+      if (open && pools) handlers.onQuota?.(markActivePools(pools, liveModel));
+    };
+    report();
+    const pending = meter.refresh(def, cwd).then(report, () => {});
+    return {
+      settled: () => settleWithin(pending, AGY_QUOTA_SETTLE_MS),
+      close: () => {
+        open = false;
+      },
+    };
+  }
+
+  /**
+   * The end of an agy turn that came back `end_turn`: fail it on agy's own word, or report the
+   * context its usage can vouch for (agy-acp.ts AgyTurnWatch), then give the quota refresh its
+   * bounded chance to make this turn's footer. Nothing for any other harness.
+   */
+  async function settleAgyTurn(state: TurnState, response: PromptResponse, quota: AgyTurnQuota): Promise<void> {
+    const watch = state.agy;
+    // A stopped turn has nothing to settle, and must not sit out the quota wait before it stops.
+    if (!watch || aborting || response.stopReason === 'cancelled') return;
+    const handlers = state.handlers;
+    const outcome = watch.settle(response.usage);
+    if (outcome.failure) throw outcome.failure;
+    if (outcome.contextTokens !== undefined) {
+      const model = currentModelValue();
+      const size = agyWindow(def, model);
+      if (size) handlers.onUsage?.({ used: outcome.contextTokens, size });
+      else logOnce(`window:${model}`, `[acp] ${conversationId}: no known context window for agy's ${model}, so its footer shows no context numbers (see daemon/agy-meters.ts)`);
+    } else if (outcome.noContext === 'tools') {
+      logOnce('tools', `[acp] ${conversationId}: agy reports usage once per turn, summed over its model calls, so a turn that ran tools gets no context numbers (see daemon/agy-acp.ts)`);
+    }
+    await quota.settled();
+  }
+
   /**
    * Watch one turn for the sign that its prompt was folded into an autonomous cycle and answered
    * there — the claude-agent-acp bug described at FOLDED_PROMPT_GRACE_MS, where the prompt's own
@@ -2014,7 +2147,7 @@ function createAcpSession(
         throw err;
       }
 
-      const state = newTranslationState(handlers);
+      const state = newTranslationState(handlers, true);
 
       // Report the live model up front, from the session/new response captured at startup. Doing it
       // here rather than inside ensureStarted keeps it per-turn: handlers belong to this turn, and a
@@ -2025,6 +2158,8 @@ function createAcpSession(
       // preference to fall back on, so the list is the whole of what is known about it.
       const effort = liveEffortName(liveConfigOptions);
       if (effort) handlers.onEffort?.(effort);
+      // agy's quota, which no ACP message carries: the last reading now, a fresh one beside the turn.
+      const quota = agyQuotaForTurn(handlers);
 
       // Silence watchdog: one timer, re-armed by the pump on every update it hands to this turn, so
       // it bounds SILENCE rather than turn length. A hung agent — alive but never sending `stop` nor
@@ -2220,6 +2355,8 @@ function createAcpSession(
         // the tools are flushed, exactly as a rejection was, so the two read the same downstream.
         const failure = readSessionFailure(response._meta);
         if (failure?.severity === 'error') throw new TurnFailure(describeSessionFailure(failure), failureReasonOf(failure));
+        // agy's equivalent arrives as text, and its usage only here (agy-acp.ts AgyTurnWatch).
+        await settleAgyTurn(state, response, quota);
         flushPendingTools(state);
       } catch (err) {
         if (aborting) return; // intentional abort is not an error
@@ -2241,6 +2378,7 @@ function createAcpSession(
         logWatch.stop();
         unwatchLink();
         fold.stop();
+        quota.close();
         turnState = undefined;
         onTurnUpdate = undefined;
         endTurnWait = undefined;
@@ -2409,6 +2547,17 @@ function createAcpSession(
       dispose();
     },
   };
+}
+
+/**
+ * What to add to a startup failure the harness gave no reason for. An agy older than 1.5 has no
+ * `acp` subcommand — it takes the word as a stray prompt argument and exits — which reaches here as
+ * a closed connection, so the way out is named.
+ */
+function startupHint(def: AgentDef): string {
+  return def.harness === 'agy'
+    ? ' (`agy acp` needs agy 1.5 or later — check `agy --version` there, or keep this agent on the stream-json runtime with `env: { TALKCODE_AGY_RUNTIME: stream-json }`)'
+    : '';
 }
 
 /**
@@ -2637,6 +2786,12 @@ export interface TurnState {
    * Optional so the pure translation tests can omit it; without it every subagent is unnamed.
    */
   subagents?: Map<string, string>;
+  /**
+   * agy only: what its text and tools come to, for a harness that writes its own diagnostics into
+   * the message stream and reports usage once per turn (agy-acp.ts AgyTurnWatch). Its presence also
+   * means a `Run <tool>` title names agy's own tool, which labels the bubble (agyAcpToolLabel).
+   */
+  agy?: AgyTurnWatch;
 }
 
 /**
@@ -2660,6 +2815,8 @@ interface ToolRec {
   parent?: string;
   /** This call is an Agent/Task call: it starts a subagent, whose tools will name it as `parent`. */
   spawns?: boolean;
+  /** The bubble's name when the harness's own tool name says more than `kind` (agy's; see TurnState.agy). */
+  label?: string;
 }
 
 /**
@@ -2687,12 +2844,8 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
     // tool_call and tool_call_update are handled identically: merge this tool's latest fields into the
     // ledger, then render based on status / rawInput readiness. Generic across all ACP agents.
     case 'tool_call':
-      if (u.toolCallId)
-        ingestTool(st, u.toolCallId, { title: u.title, kind: u.kind, rawInput: u.rawInput, status: u.status }, u._meta);
-      break;
     case 'tool_call_update':
-      if (u.toolCallId)
-        ingestTool(st, u.toolCallId, { title: u.title, kind: u.kind, rawInput: u.rawInput, status: u.status }, u._meta);
+      if (u.toolCallId) ingestTool(st, u.toolCallId, toolFields(u), u._meta);
       break;
 
     // Agent reports its available-commands list: normalize to AgentCommand[] for the upper layer,
@@ -2746,6 +2899,18 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
   }
 }
 
+/** The fields of a tool call (or of an update to one) the ledger keeps. */
+function toolFields(u: Extract<SessionUpdate, { sessionUpdate: 'tool_call' | 'tool_call_update' }>): ToolFields {
+  return { title: u.title, kind: u.kind, rawInput: u.rawInput, status: u.status };
+}
+
+interface ToolFields {
+  title?: string | null;
+  kind?: string | null;
+  rawInput?: unknown;
+  status?: string | null;
+}
+
 /**
  * Forward a text chunk into the reply body. Extracted from translateUpdate to keep that switch's
  * complexity within the lint budget.
@@ -2753,6 +2918,8 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
 function ingestText(u: Extract<SessionUpdate, { sessionUpdate: 'agent_message_chunk' }>, st: TurnState): void {
   const text = u.content.type === 'text' ? u.content.text : undefined;
   if (typeof text !== 'string' || text.length === 0) return;
+  // agy's own diagnostic ("⚠ API error (attempt 1) …"), said as a notice rather than as the agent.
+  if (st.agy?.text(text)) return;
   // The body is the main agent's words. A subagent's text does not reach a client like this one
   // (see claudeAttribution), but the adapter's streaming path stamps it rather than filtering it, so
   // should it ever arrive it is kept out of the reply instead of being read as the answer.
@@ -2789,21 +2956,18 @@ function ingestUsage(st: TurnState, used: unknown, size: unknown, cost: unknown)
 }
 
 /** Merge a tool's latest fields, then trigger start / finish per readiness. */
-function ingestTool(
-  st: TurnState,
-  id: string,
-  f: { title?: string | null; kind?: string | null; rawInput?: unknown; status?: string | null },
-  meta?: unknown
-): void {
+function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): void {
   let rec = st.toolLedger.get(id);
   if (!rec) {
     rec = { index: st.toolIndexSeq++, startAt: nowMs(), started: false, finished: false };
     st.toolLedger.set(id, rec);
+    st.agy?.tool();
   }
   // Overwrite only with real values (update's title/kind may be null = unchanged).
   if (typeof f.title === 'string') rec.title = f.title;
   if (typeof f.kind === 'string') rec.kind = f.kind;
   if (f.rawInput !== undefined) rec.rawInput = f.rawInput;
+  if (st.agy) rec.label = agyAcpToolLabel(rec.title, rec.kind) ?? rec.label;
 
   // Read before maybeStartTool below, which is where the bubble is drawn: it has to know whose it is.
   const { parent, spawnsSubagent } = claudeAttribution(meta);
@@ -2910,7 +3074,7 @@ function maybeStartTool(st: TurnState, id: string, force: boolean): void {
 function toolStartEvent(st: TurnState, rec: ToolRec): ToolEvent {
   return {
     // name uses the short ACP kind (aligns with emojiMap); command/path detail only in the truncated preview.
-    name: toolLabel(rec.kind, rec.title),
+    name: rec.label ?? toolLabel(rec.kind, rec.title),
     inputPreview:
       (rec.spawns && subagentDescription(rec)) || buildInputPreview(rec.rawInput) || stripCode(rec.title),
     input: rec.rawInput,
@@ -2953,7 +3117,7 @@ function finishTool(st: TurnState, id: string, ok: boolean): void {
   if (!rec.started) maybeStartTool(st, id, true);
   rec.finished = true;
   st.handlers.onToolFinish({
-    name: toolLabel(rec.kind, rec.title), // same name as onToolStart, so findLine's index fallback stays consistent
+    name: rec.label ?? toolLabel(rec.kind, rec.title), // same name as onToolStart, so findLine's index fallback stays consistent
     index: rec.index,
     ok,
     durationMs: nowMs() - rec.startAt,

@@ -36,7 +36,7 @@ whose agent process was reclaimed while idle, which resumes where it left off.
 
 Moving **starts a fresh session** in the new directory, and the menu says so
 before you tap. That is not a policy choice: a session is pinned to the directory
-it was created in (ACP takes `cwd` at `session/new`, agy at spawn), so the move
+it was created in (ACP takes `cwd` at `session/new`), so the move
 cannot reach a process that is already running. Tapping the directory you are
 already in (marked ●) costs nothing. The choice is recorded per conversation, so
 it survives a restart and a `/new`, and applies to every agent that answers there.

@@ -44,7 +44,7 @@ it. Do not duplicate that content here.
 | `src/config/` | Config schema, loading, `${VAR}` expansion, v0→v1 migration | [README](src/config/README.md) |
 | `src/core/` | Platform-agnostic pure logic: conversation identity, gating, merging, streaming, tool bubbles, footer, attachments, command vocabulary | [README](src/core/README.md) |
 | `src/platform/` | IM adapters: the profile seam, 8 Satori platform profiles, per-dialect markdown renderers, and `webui/` — a browser page the daemon serves, implementing `PlatformAdapter` directly | [README](src/platform/README.md) |
-| `src/daemon/` | The running system: routing, conversations, turn orchestration, agent runtimes (ACP + agy) | [README](src/daemon/README.md) |
+| `src/daemon/` | The running system: routing, conversations, turn orchestration, agent runtimes (ACP, plus agy's stream-json fallback) | [README](src/daemon/README.md) |
 | `src/ipc/` | Reverse-command protocol over a unix socket (agent → daemon → chat) | [README](src/ipc/README.md) |
 | `src/history/` | The conversation library: every turn in `<configDir>/history.db`, searchable by keyword (Han bigrams in JS, BM25), plus the web UI transcript import | [README](src/history/README.md) |
 | `src/remote/` | The gateway's side of agents on other machines: one reliable link per host over ssh | [README](src/remote/README.md) |
@@ -296,7 +296,8 @@ Do not weaken these without saying so explicitly in the PR:
   the list of things `satori-core.ts` was doing for you.
 - **An agent harness** → an arm in `AgentDefSchema.harness` + `resolveHarness` in
   `daemon/agent-acp.ts` if it speaks ACP, or a sibling runtime implementing
-  `AgentFactory` if it does not (as `agent-agy.ts` does).
+  `AgentFactory` if it does not (as `agent-agy.ts` did for agy before `agy acp`; it is kept as a
+  fallback until every host has run the ACP runtime).
   See [src/daemon/README.md](src/daemon/README.md).
 - **A reverse command** → an arm in the `IpcAction` union + an entry in
   `REVERSE_COMMANDS`, whose required `topic` puts it on an `talkcode help` page; CLI

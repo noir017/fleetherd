@@ -7,7 +7,7 @@ English | [简体中文](zh-CN/agents.md)
 | `claude` | bundled [claude-agent-acp](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp) | none | `claude /login` or `ANTHROPIC_API_KEY` |
 | `codex` | `codex-acp` | [@agentclientprotocol/codex-acp](https://www.npmjs.com/package/@agentclientprotocol/codex-acp) (`npm i -g`) | Codex CLI's login |
 | `opencode` | `opencode acp` | OpenCode CLI | OpenCode's login |
-| `agy` | `agy --input-format stream-json` | Antigravity CLI | `agy` Google sign-in (OS keyring) |
+| `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` Google sign-in (OS keyring) |
 | `custom` | your `command` + `args` | any ACP executable | your agent's |
 
 Each agent takes `cwd`, `env`, `args`, a best-effort `model`, a
@@ -118,54 +118,69 @@ agents:
 - A platform without buttons (DingTalk, WeCom) cannot ask, so requests there are declined, again
   with the agent told why.
 - Only agents that ask are affected. Codex (mode `agent`) and OpenCode ran a file-writing command
-  without asking when measured; `agy` cannot be set to `ask`.
+  without asking when measured; `agy` asks before commands, not before writing in its working
+  directory, and cannot be set to `ask` on its [stream-json fallback](#falling-back-to-stream-json).
 
 ## Antigravity (`agy`)
 
-`agy` is the only preset that does not speak ACP — it has no ACP mode — so it is
-driven over its own documented
-[headless stream-json protocol](https://antigravity.google/docs/cli/headless/)
-instead. Streaming, tool bubbles, multi-turn context, post-restart resume, skills,
-`/model`, `/context` and `/usage` all work as they do on the ACP harnesses. What
-differs is how the last three are obtained, because agy publishes each somewhere
-other than its session:
+`agy` runs as `agy acp`, the ACP server agy ships since 1.5, so streaming, tool bubbles,
+[permission requests](#permission-requests), multi-turn context, post-restart resume, `/model`,
+`/effort`, `/stop`, skills and the two [native tools](agent-actions.md) work as on the other ACP
+harnesses. What differs:
 
-- **Its own slash commands run as separate processes.** In stream-json mode a
-  CLI-answered slash (`/model`, `/usage`, `/credits`, …) aborts the whole session,
-  so the daemon answers those eleven names with a one-shot `agy -p=/<name>` and
-  never forwards them. Everything else — above all your **skills** — reaches the
-  session and expands normally.
-- **Context usage comes from agy's stream, quota and the default model from its CLI.**
-  On agy 1.4.7 and later each model step reports its token count, which the footer
-  shows against the model's window. agy never says how big that window is, so the
-  daemon knows it only for the models it was measured on (Gemini, Claude Sonnet/Opus
-  4.6, GPT-OSS 120B); any other model shows no context numbers. The quota pools and,
-  when no model is configured, agy's default model are fetched with `agy -p=/usage`
-  and `agy -p=/model` alongside the turn — the quota at most once a minute, in whole
-  percentages.
-- **On an agy older than 1.4.7, all three come from its status line** instead: on
-  startup the daemon backs `~/.gemini/antigravity-cli/settings.json` up once and
-  points its `statusLine` at the daemon's own shim, which passes the numbers back
-  over a pipe and still draws a status line for your terminal. agy 1.4.7 stopped
-  running the status line in headless mode, but the daemon still installs the shim,
-  for older versions and for your own interactive agy. Set
-  `TALKCODE_NO_AGY_STATUSLINE=1` to leave the setting alone.
+- **Its own slash commands run as separate processes.** `/usage`, `/credits` and the rest of what
+  `agy -p /help` lists are answered by agy's CLI, not its session — sent as a message, agy hands
+  them to the model as a question. The daemon answers those names with a one-shot
+  `agy -p=/<name>` instead.
+- **Models are named as `agy acp` names them.** `/model` offers `gemini-3.8-flash`, with its
+  thinking level under `/effort` (Gemini only). A model written the older way, as `agy models`
+  lists it (`gemini-3.8-flash-high`), still works in `model:` and in a conversation's earlier
+  choice: it is split into the model and the level. agy forgets the model when a session is
+  reloaded, so the daemon sets it again after every reload.
+- **Context numbers only after a turn without tools.** agy reports token usage once per turn,
+  summed over every model call in it: for a turn of one call that is the context, for a turn that
+  ran tools it is not, and the footer then shows none. agy never says how big the window is, so the
+  daemon knows it only for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS
+  120B), or from the agent's `contextWindow`.
+- **Quota comes from its CLI**: `agy -p=/usage`, run alongside a turn at most once a minute, in
+  whole percentages.
+- **agy's own warnings are notices, not reply text.** A retry ("API error (attempt 1) …") is said
+  once, as a notice. A turn that ended on a warning — a spent quota, retries run out, an overloaded
+  server — fails with it, so `hooks.turnFailed` sees it (as `provider`).
+- **A message sent mid-turn waits for the turn to end**: `agy acp` offers no way to join one.
 - **Skills** are read from `<cwd>/.agents/skills`, `~/.agents/skills`,
   `~/.gemini/antigravity-cli/skills`, `~/.gemini/skills` and
   `~/.gemini/config/skills`, so `/skills` lists them and `/<name> <request>` runs one.
-- **`/new` starts a new conversation**, as with every harness. Stopping a
-  turn (`/stop`) restarts the child and resumes the same conversation, so context survives.
-- **A message sent mid-turn waits for the turn to end**: agy's stream-json input runs
-  each message as a turn of its own, with no way to join one already running.
-- **A picture you send reaches it as a path.** The stream-json input carries text only, so
-  where the ACP harnesses are shown the picture itself, agy is told where it was saved.
+- **The status line.** On startup the daemon backs `~/.gemini/antigravity-cli/settings.json` up
+  once and points its `statusLine` at the daemon's own shim, which draws a status line for your own
+  interactive agy (and reports usage on an agy older than 1.4.7 under the fallback below). Set
+  `TALKCODE_NO_AGY_STATUSLINE=1` to leave the setting alone.
 
-Any of the daemon's default flags can be overridden through `args` (they are
-appended after the defaults, and agy's flag parsing is last-wins).
+`args` are passed after `agy acp` (see `agy acp --help`).
+
+### Falling back to stream-json
+
+Until the ACP runtime has run on every host, the previous one is still there: agy driven over its
+own [headless stream-json protocol](https://antigravity.google/docs/cli/headless/). Put an agent
+back on it through its `env` — in config.yaml, or in a host's `pod.yaml` — and `/reload`:
+
+```yaml
+agents:
+  - id: agy
+    harness: agy
+    env:
+      TALKCODE_AGY_RUNTIME: stream-json
+```
+
+The conversation carries over in both directions: both runtimes resume the same agy conversation.
+On stream-json, `permissions: ask` is refused, there is no `/effort`, a `/stop` restarts the child,
+context comes from each model step, and pictures go by path only. Its flags (`--model`,
+`--conversation`, `--dangerously-skip-permissions`, …) come first and `args` after them; agy's flag
+parsing is last-wins.
 
 > [!NOTE]
 > Google's FAQ states that accessing Antigravity with third-party tools violates
 > its Terms of Service and may lead to account suspension. This harness only
-> calls agy's own official headless interface and never handles your credentials
+> calls agy's own official interfaces (`agy acp`, or its headless mode on the fallback) and never handles your credentials
 > (sign-in stays entirely inside `agy`), but the daemon is still a non-Google
 > client driving your account — decide accordingly.

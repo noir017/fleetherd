@@ -22,11 +22,13 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `paced-adapter.ts` | Wraps every `PlatformAdapter` in the shared per-chat write budget |
 | `agent.ts` | `AgentFactory` / `AgentSession` / `AgentStreamHandlers` interfaces. Dependency-free. |
 | `agent-factory.ts` | Dispatch: which runtime serves which agent |
-| `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, custom). Also answers `session/request_permission`: approve under `permissions: auto`, ask through the turn's (or a background burst's) `onPermission` under `ask` — see answerPermission / permissionResponse for why an unanswered request goes back as an error |
+| `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under `permissions: auto`, ask through the turn's (or a background burst's) `onPermission` under `ask` — see answerPermission / permissionResponse for why an unanswered request goes back as an error |
 | `session-failure.ts` | claude-agent-acp's typed failure records: the capability that asks for them, and reading one off the wire |
 | `acp-steering.ts` | How an ACP harness takes a message into a running turn (a second prompt, `_session/steering`, or not at all), read off `initialize` |
-| `agent-agy.ts` | Antigravity CLI runtime — its own stream-json protocol |
-| `agy-meters.ts` | Where agy 1.4.7+ reports context, model and quota, now that `-p` runs no status line: per-step stream `usage`, a measured window table, and the `/model` / `/usage` one-shots |
+| `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, per-turn usage, the quota one-shot, tool labels |
+| `agy-cli.ts` | agy as a one-shot CLI (`agy models`, `agy -p=/<command>`), here or on a host — used by both agy runtimes and by chat commands |
+| `agent-agy.ts` | agy's stream-json runtime: the FALLBACK since `agy acp`, for an agent whose env sets `TALKCODE_AGY_RUNTIME: stream-json`. Goes once every host has run the ACP one |
+| `agy-meters.ts` | The context-window table both agy runtimes use; and, for the stream-json fallback, per-step stream `usage` and the `/model` / `/usage` one-shots |
 | `agy-statusline.ts` | How an agy older than 1.4.7 reports the same three: a shim installed into its `statusLine` setting, reporting back over fd 3. Still installed, for that and for the operator's own TUI |
 | `status-board.ts` | Each conversation's live agent status, pushed (deduped, throttled) to a platform that can show one — the web UI's strip |
 | `claude-transcript.ts` | claude's prompt-cache expiry, read off Claude Code's own transcript (headless Claude Code runs no status line) |
@@ -274,7 +276,9 @@ Keying sessions by `(conversation, agent)` is what stops claude from ever being 
 opencode's session id — and what once made `/oc` → `/cc` → `/oc` *resume* opencode's thread,
 before topics stopped switching agents (above). The harness keeps the actual history on its own disk; this only
 remembers *which* of its sessions belongs where, so a restarted daemon can `session/load`
-it (ACP) or pass `--conversation` (agy) rather than starting blank.
+it (ACP — agy included) or pass `--conversation` (agy's stream-json fallback) rather than starting
+blank. An agy conversation id is the same in both, so moving an agent between agy's runtimes keeps
+its conversations.
 
 A missing or corrupt file degrades to empty (bindings lost, agent histories untouched).
 `/stop` is the narrow sibling of `/new` and touches none of this: it cancels the running
@@ -346,7 +350,7 @@ stops the child of a conversation nothing is happening in.
 
 **Reclaim is the restart path, applied one conversation at a time.** A daemon restart
 already kills every child and resumes each conversation from the session id in
-`conversations.json` — ACP `session/load`, agy `--conversation`. This does that to one
+`conversations.json` — ACP `session/load`, agy's fallback `--conversation`. This does that to one
 idle conversation deliberately, to get its memory back. Nothing that identifies the
 conversation is touched: state, binding, reverse-command token and stored session ids all
 stay, and `AgentSession.dispose()` is called rather than `AgentFactory.dispose()` so the
@@ -374,7 +378,8 @@ resident and said so once, not once a minute.
 
 Verified resumable on the three harnesses in use: `claude` (claude-agent-acp advertises
 `loadSession: true`), `opencode` 1.18.18 (same, plus `sessionCapabilities.resume`), and
-`agy` (`--conversation=<id>`, recorded as soon as its `init` event names one).
+`agy` (`agy acp` 1.5.1 advertises `loadSession`; its stream-json fallback replays
+`--conversation=<id>`, recorded as soon as its `init` event names one).
 
 ### Automatic review
 
@@ -422,8 +427,8 @@ starts a model.
 **The prompt goes on stdin, not in argv.** Linux caps one argument at 128 KB (`MAX_ARG_STRLEN`),
 and the conversation window alone is 40k characters — ~120 KB of Chinese — before eight used
 skills at 20 KB each. Measured: a 360 KB `-p=` fails with "Argument list too long", and a 231 KB
-review prompt through stdin answers normally. So the run is driven the way the resident runtime
-drives agy: `--input-format=stream-json --output-format=stream-json -p=`, one NDJSON
+review prompt through stdin answers normally. So the run is driven the way agy's stream-json
+runtime drives it: `--input-format=stream-json --output-format=stream-json -p=`, one NDJSON
 `{"event":"user","message":{"content":…}}` frame on stdin, the answer read off the `result` event
 (and the `agent_response` deltas before it). Remote reuses `RemoteHost.run`'s body as the child's
 stdin, so the temporary directory stays empty.
@@ -772,11 +777,11 @@ Each harness reports a different subset, and an absent field is shown as nothing
 
 | Field | Source |
 |---|---|
-| model, effort | `onModel` / `onEffort` (ACP config options; agy's `init`, else `agy -p=/model` or, before 1.4.7, its status line) |
-| context | `onUsage` — ACP `usage_update`; agy's stream `usage` (1.4.7+) or status line |
+| model, effort | `onModel` / `onEffort` (ACP config options; on agy's stream-json fallback its `init`, else `agy -p=/model` or, before 1.4.7, its status line) |
+| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage`, only after a turn of one model call (`agy-acp.ts`); on its fallback the stream's per-step `usage` (1.4.7+) or status line |
 | cost | `onUsage.cost` — claude and opencode; kept across the mid-stream snapshots that carry none |
 | cache expiry | claude only: `claude-transcript.ts`, read once a moment after each model cycle ends |
-| quota | agy only: `agy -p=/usage` (1.4.7+) or its status line, via `onQuota` |
+| quota | agy only: `agy -p=/usage` (1.4.7+, either runtime) or, on the fallback, its status line, via `onQuota` |
 
 **Why the cache expiry comes off a transcript.** Headless Claude Code runs no status line at all
 (probed on 2.1.291: zero invocations in a whole turn), so the `prompt_cache` its TUI status line is
@@ -796,8 +801,9 @@ renewing on every call.
                 createAgentFactory  (agent-factory.ts — dispatch by harness)
                     ┌─────┴─────┐
               agent-acp.ts   agent-agy.ts
-        claude/codex/opencode/     agy
-          gemini/custom
+        claude/codex/opencode/   agy, only with
+         gemini/agy/custom       TALKCODE_AGY_RUNTIME:
+                                 stream-json (fallback)
 ```
 
 Everything above this boundary — `ConversationRegistry`, `TurnRunner`, `StreamBuffer`,
@@ -986,9 +992,10 @@ Nothing reads "is a turn running" off an address; the merger's phase is the auth
 That last one widens the reverse-command token from turn-scoped to conversation-scoped; the cost is
 spelled out at `resolveAddress`.
 
-The agy runtime already had a persistent stdout reader but no such sink; it has never been observed
-to emit anything after `result`, so it **logs** an out-of-turn event instead of dropping it
-silently. If that log line ever appears, the assumption is wrong and agy needs the same wiring.
+agy runs on this runtime now, so it has the same sink. Its stream-json fallback had a persistent
+stdout reader but no sink; it **logs** an out-of-turn event instead of dropping it silently. (Over
+ACP, agy 1.5.1 was not seen to send anything out of a turn either: a subagent it started stayed
+quiet for the minute after the turn ended.)
 
 #### Starting a session without running a turn
 
@@ -1023,8 +1030,8 @@ probed 2026-10-10 with a message sent six seconds into a thirty-second foregroun
 | `steer` | codex (codex-acp 2.2.1, codex 0.160.1) | `_session/steering` → app-server `turn/steer` | read before the next model request; same result; one `end_turn` |
 | `none` | opencode 2.0.26 | nothing | a second `session/prompt` is rejected (-32603) and the message lost — so it is never sent |
 
-agy is not ACP and offers nothing comparable over stream-json (a second message runs as the next
-turn), so `agent-agy.ts` has no `steer` and everything queues.
+`agy acp` 1.5.1 declares neither, so it is `none` and everything queues; its stream-json fallback
+has no `steer` at all (a second message runs as the next turn).
 
 Two things in `runTurn` exist for `prompt` mode:
 
@@ -1073,14 +1080,50 @@ otherwise undo the user's choice (opencode 2.0.14 keeps it, and then the re-appl
 nothing, since an unchanged value is not re-sent). The order is model first, then effort,
 because the levels on offer are the model's.
 
-### `agent-agy.ts` — the Antigravity runtime
+### agy over ACP (`agy-acp.ts`)
 
-Read the file header before touching this. `agy` **does not speak ACP** — it has no ACP
-mode at all. A community adapter (`agy-acp`) exists but drives agy through a PTY, reads
-its internal SQLite/protobuf records, and **deadlocks permanently on the turn following
-any tool call** — fatal for a chat gateway, where the bot would go silent forever after
-its first real task. So this runtime speaks agy's own documented headless stream-json
-protocol directly.
+Since 2026-11-06 `harness: agy` launches `agy acp` (agy 1.5+) and is served by `agent-acp.ts` like
+any ACP harness: sessions, `session/load`, the `model` and `thought_level` selectors, permission
+requests (so `permissions: ask` works), `session/cancel` for `/stop`, pictures as image blocks and
+the native tools over MCP. No launch flag carries over from stream-json — `resolveHarness` says why
+each was dropped. What `agy acp` 1.5.1 does its own way is in `agy-acp.ts`, each measured with
+`project-scripts/talkcode-agy-acp/` and recorded in the file header:
+
+- **Model ids.** The selector offers `gemini-3.8-flash` with a separate `thought_level`; configs and
+  stored choices say `gemini-3.8-flash-high` (`agy models`). `agySplitModel` turns the second into
+  the first plus a level, in `reapplyPreferences`.
+- **A reload forgets the model.** `session/load` and `session/resume` answer on agy's default, so for
+  agy the configured model is re-applied after a load too (`forgetsModelOnLoad`), not only the
+  person's `/model` choice.
+- **Warnings are message chunks** (`"\n⚠ API error (attempt 1) …\n"`, `"\n⚠ You have exhausted your
+  quota on this model.\n"`). `AgyTurnWatch` (on `TurnState.agy`) keeps them out of the reply: a retry
+  becomes a notice at once, a turn whose last output was a warning fails with it (`provider`), any
+  other is said as recovered at the end.
+- **Usage comes once per turn**, in the `session/prompt` response, summed over the turn's model
+  calls: input plus cache reads is the context only for a turn that ran no tool, and only that is
+  reported, over `agy-meters.ts`'s window table or `contextWindow`.
+- **Quota** has no ACP channel: `createAgyQuotaMeter` runs `agy -p=/usage` (`agy-cli.ts`) beside the
+  turn, at most once a minute per account, and the turn's end waits up to 5 s for it.
+- **Tool labels.** Calls of kind `other` are titled `Run <tool>`; `agyAcpToolLabel` reads the tool
+  from there (`invoke_subagent` → Task, `mcp_chat_send_file` → `send_file`). agy also sends a `name`
+  field, but the SDK's validation strips it.
+
+`/usage` and the other CLI-answered names still go to one-shots (`agy-cli.ts`): `agy acp` survives
+them but hands them to the model as a question. An agy conversation id is the same in both runtimes,
+so an agent moved between them resumes its conversations.
+
+### `agent-agy.ts` — agy's stream-json fallback
+
+Serves an agy agent only when its `env` sets `TALKCODE_AGY_RUNTIME: stream-json` (`agyRuntime` in
+`config/schema.ts`, read by `agent-factory.ts`), so a host where `agy acp` misbehaves can be put back
+by config. It goes once every host has run the ACP runtime; nothing but `agent-factory.ts` imports
+it. What follows is how it works.
+
+Read the file header before touching this. Before 1.5, `agy` had no ACP mode. A community adapter
+(`agy-acp`) drove agy through a PTY, read its internal SQLite/protobuf records, and **deadlocked
+permanently on the turn following any tool call** — fatal for a chat gateway, where the bot would go
+silent forever after its first real task. So this runtime speaks agy's own documented headless
+stream-json protocol directly.
 
 Protocol mapping (verified empirically against agy 1.1.22):
 
@@ -1201,14 +1244,16 @@ log are read there. The `/cd` menu code is synchronous, so a remote listing is r
 ### What a session is given: the user's words, two tools, a skill
 
 Neither runtime adds text of its own to a turn. `promptBlocks` sends the user's text as the only
-text block on every turn; agy gets the same string. Until 1.40 a `<system-reminder>` went in front of
+text block on every turn; agy's stream-json fallback gets the same string. Until 1.40 a `<system-reminder>` went in front of
 each session's first turn — see [`src/ipc/README.md`](../ipc/README.md#how-it-got-here) for its
 history and why it went.
 
 The user's pictures go in as ACP `image` blocks ahead of that text, on a harness whose `initialize`
 claims `promptCapabilities.image` (asked per harness, kept across a rebuilt child like
-`loadSession`); the text still names each by its saved path. A harness that does not claim it, and
-agy, get the text alone and a log line saying the pictures stayed paths. Which pictures qualify is
+`loadSession`); the text still names each by its saved path. `agy acp` claims it; a model there that
+cannot see (GPT-OSS) answers that it cannot, without failing the turn (probed 2026-11-06). A harness
+that does not claim it, and agy's stream-json fallback, get the text alone and a log line saying the
+pictures stayed paths. Which pictures qualify is
 core's call (`attachment-ingest.ts` `pickImages`); `turn-runner.ts` only base64s them, for a turn and
 for a message joined into one. Verified 2026-10-19 on cc and cx, both fresh and mid-turn: two
 screenshots read with zero tool calls. A picture whose pixels do not decode does not wedge the
@@ -1234,9 +1279,11 @@ What replaced it:
   directory exists; a real directory by that name is the operator's and is left alone.
   `TALKCODE_NO_SKILL_LINK=1` turns it off — set it on a test daemon run from a checkout, or
   it repoints the live daemon's link at the checkout until the live one next spawns an agent.
-- **agy has no tools.** It does not speak ACP, and its MCP servers live in a global config
-  (`agy mcp add`) the gateway will not edit — an entry there would appear in the operator's own
-  interactive agy too. It gets the skill, whose CLI covers the same two commands.
+- **agy gets the tools over ACP** like the others — `agy acp` takes stdio MCP servers in
+  `session/new` and names them `mcp_chat_send_file` (probed 2026-11-06). Its stream-json fallback
+  has no tools: there agy's MCP servers live only in a global config (`agy mcp add`) the gateway will
+  not edit — an entry there would appear in the operator's own interactive agy too — and the skill's
+  CLI covers the same two commands.
 
 ### `session/load` replay must not reach the chat
 
@@ -1379,7 +1426,7 @@ caps `callback_data` at 64 bytes and a longer id degrades to a lossy hash. On re
 timeout the buttons are stripped and the message annotated. On 1 h timeout, the resident agent
 child process is automatically reclaimed to free system resources (either immediately if idle, or as
 soon as the turn settles). When the user later responds, the session is resumed seamlessly via
-ACP `session/load` or agy `--conversation`. On shutdown every pending ask is resolved `null` so no
+ACP `session/load` or, on agy's fallback, `--conversation`. On shutdown every pending ask is resolved `null` so no
 caller hangs forever. While pending, an ask also holds its conversation against idle reclaim
 (`hasPendingWork`) until the ask timeout fires.
 
@@ -1557,7 +1604,9 @@ back to whatever PATH offers.
 ## Tests
 
 Eighteen test files. `agent-acp.test.ts` and `agent-agy.test.ts` cover protocol
-translation; `routing.test.ts`, `command-routing.test.ts`, `session-control.test.ts`,
+translation; `agent-acp-agy.test.ts` drives the ACP runtime against a fake `agy acp` built from the
+1.5.1 probes, `agy-acp.test.ts` its pure parts, and `agent-factory.test.ts` which runtime an agy
+agent lands on; `routing.test.ts`, `command-routing.test.ts`, `session-control.test.ts`,
 `session-reclaim.test.ts`,
 `conversation-store.test.ts`, `conversation-token-registry.test.ts`,
 `multi-platform.test.ts`, `slash-register.test.ts`, `ask-button.test.ts`,

@@ -7,7 +7,7 @@ import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import type { HistoryReviewChange, HistoryReviewRecord, HistoryStore, HistorySessionRow, ReviewWindow } from '../history/store.js';
 import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
-import { AGY_COMMAND } from './agent-agy.js';
+import { AGY_COMMAND } from './agy-cli.js';
 import type { ReviewFacts } from './conversation.js';
 import { remoteHosts } from './remote-hosts.js';
 import { buildReviewPrompt, parseReviewOutput, usedSkillNames, type PromptSkill, type PromptSkillText, type ReviewChange } from './review-prompt.js';

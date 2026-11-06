@@ -140,6 +140,7 @@ describe('the text answers', () => {
     expect(codex).toContain('newer codex-cli');
     expect(codex).toContain('model_reasoning_effort');
     expect(effortNoSelectorText('opencode', 'opencode/mimo-v2.6-flash-free')).toContain('reasoning variants');
+    expect(effortNoSelectorText('agy', 'GPT-OSS 120B (Medium)')).toContain('only for its Gemini models');
     expect(effortNoSelectorText('claude', undefined)).toContain('the current model');
   });
 

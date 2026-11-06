@@ -213,7 +213,7 @@ agents:
 - 如果主机上的 systemd-logind 会在用户登出时结束其进程（`KillUserProcesses=yes`），最后一个 ssh 连接关闭时
   小服务也会被结束。在那台机器上执行 `loginctl enable-linger <用户>`。
 - 主机 shell 配置里设置的 `CLAUDE_CONFIG_DIR` 网关看不到。用到的话请写在智能体的 `env` 里，否则这个智能体的页脚没有缓存倒计时。
-- 低于 1.4.7 的 `agy` 在远程主机上不显示上下文数字。
+- 走 stream-json 回退方式、且低于 1.4.7 的 `agy` 在远程主机上不显示上下文数字。
 
 ## 安全
 

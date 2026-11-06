@@ -3,13 +3,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, resolveSocketPath, configPath, readRawConfigIfExists, saveConfig } from '../config/load.js';
-import { ConfigSchema, accessUnrestricted, platformInstances, type Config, type HostDef } from '../config/schema.js';
+import { ConfigSchema, accessUnrestricted, platformInstances, type Config, type HostDef, agyRuntime } from '../config/schema.js';
 import { spawnSync } from 'node:child_process';
 import { sshArgs } from '../remote/binaries.js';
 import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/remote-hosts.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
 import { resolveClaudeAdapterEntry } from '../daemon/agent-acp.js';
-import { AGY_COMMAND } from '../daemon/agent-agy.js';
+import { AGY_COMMAND } from '../daemon/agy-cli.js';
 import { claudeProjectsDir } from '../daemon/claude-transcript.js';
 import { remoteAgentEnv } from '../daemon/agent-common.js';
 import { hostProbeScript, readHostProbe, type HostProbe } from '../daemon/host-probe.js';
@@ -484,11 +484,12 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
     },
     {
       /**
-       * Only meaningful for agy, and skipped entirely without one. It answers the one question an
-       * operator cannot answer by looking: the footer's context numbers arrive through agy's
-       * `statusLine` setting (see daemon/agy-statusline.ts), so a setting that points elsewhere is
-       * the whole explanation for "why does /context say nothing on agy" — and pointing elsewhere
-       * is a supported choice, hence a warning rather than a failure.
+       * Only meaningful for agy on its stream-json fallback, and skipped entirely without one. It
+       * answers the one question an operator cannot answer by looking: on an agy older than 1.4.7
+       * the footer's context numbers arrive through agy's `statusLine` setting (see
+       * daemon/agy-statusline.ts), so a setting that points elsewhere is the whole explanation for
+       * "why does /context say nothing on agy" — and pointing elsewhere is a supported choice, hence
+       * a warning rather than a failure. Over `agy acp` the status line plays no part in it.
        */
       name: 'agy status line wired for context usage',
       run: async () => {
@@ -497,9 +498,11 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
         // (createAgyAgentFactory), and on a host agy reports context through its stream (1.4.7+).
         // Checking a remote agent's home on THIS disk warned about a file nothing would ever read.
         const allAgy = cfg.agents.filter((a) => a.harness === 'agy');
-        const agyAgents = allAgy.filter((a) => !a.host);
+        const local = allAgy.filter((a) => !a.host);
+        const agyAgents = local.filter((a) => agyRuntime(a) === 'stream-json');
         if (allAgy.length === 0) return { ok: true, detail: 'no agy agent configured' };
-        if (agyAgents.length === 0) return { ok: true, detail: 'every agy agent runs on a host (context comes from its stream there)' };
+        if (local.length === 0) return { ok: true, detail: 'every agy agent runs on a host (context comes from its stream there)' };
+        if (agyAgents.length === 0) return { ok: true, detail: 'every agy agent here runs as `agy acp`, which reports usage itself' };
         if (process.env.TALKCODE_NO_AGY_STATUSLINE) {
           return { ok: true, level: 'warn', detail: 'TALKCODE_NO_AGY_STATUSLINE is set — agy will report no context usage' };
         }

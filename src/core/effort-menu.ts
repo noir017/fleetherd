@@ -151,6 +151,8 @@ export function effortSummaryText(selector: EffortSelector): string {
  *   newer codex-cli or a catalogued model, and the level meanwhile comes from config.toml.
  * - **opencode** offers levels only for a model with reasoning variants (none on
  *   `opencode/mimo-v2.6-flash-free`; switching to an Anthropic model adds them).
+ * - **agy** (`agy acp` 1.5.1) offers a `thought_level` for Gemini and none for GPT-OSS or the
+ *   Claude models; its stream-json fallback offers none for any model.
  * - anything else gets the generic sentence, with no advice it cannot back up.
  */
 export function effortNoSelectorText(harness: Harness | undefined, model: string | undefined): string {
@@ -167,6 +169,12 @@ export function effortNoSelectorText(harness: Harness | undefined, model: string
     return (
       `OpenCode offers no effort levels for ${on} — it has them only for models with reasoning ` +
       'variants. `/model` can switch to one that does.'
+    );
+  }
+  if (harness === 'agy') {
+    return (
+      `agy offers no thinking level for ${on} — it has one only for its Gemini models. ` +
+      '`/model` can switch to one that does.'
     );
   }
   return `This agent offers no effort levels for ${on}.`;

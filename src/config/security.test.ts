@@ -36,7 +36,14 @@ describe('AgentDefSchema permissions', () => {
     expect(c.agents[0]!.permissions).toBe('ask');
   });
 
-  it('refuses ask for agy, which has no request to put to anyone', () => {
-    expect(() => cfg({ agents: [{ id: 'default', harness: 'agy', permissions: 'ask' }] })).toThrow(/not available for agy/);
+  it('takes ask for agy over ACP, which sends session/request_permission like any ACP harness', () => {
+    const c = cfg({ agents: [{ id: 'default', harness: 'agy', permissions: 'ask' }] });
+    expect(c.agents[0]!.permissions).toBe('ask');
+  });
+
+  it('refuses ask for agy on the stream-json fallback, which has no request to put to anyone', () => {
+    expect(() =>
+      cfg({ agents: [{ id: 'default', harness: 'agy', permissions: 'ask', env: { TALKCODE_AGY_RUNTIME: 'stream-json' } }] })
+    ).toThrow(/not available for agy on the stream-json runtime/);
   });
 });

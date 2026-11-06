@@ -27,6 +27,7 @@ function config(access?: string[]): Config {
       { id: 'oc', harness: 'opencode' },
       { id: 'cx', harness: 'codex' },
       { id: 'ag', harness: 'agy' },
+      { id: 'gm', harness: 'gemini' },
     ],
     routing: { default: 'cc' },
     ...(access ? { access: { allowFrom: access } } : {}),
@@ -212,9 +213,10 @@ describe('a model with no levels', () => {
 });
 
 describe('harnesses without a level', () => {
-  it('agy gets an explicit "not supported", and the session is never written to', async () => {
+  // agy had none before `agy acp` (2026-11-06), which offers `thought_level` on its Gemini models.
+  it('gemini gets an explicit "not supported", and the session is never written to', async () => {
     const r = rig();
-    await r.send('/agy');
+    await r.send('/gm');
     await r.send('/effort high');
     expect(r.prompts).toEqual([]);
     expect(r.setEffortCalls).toEqual([]);

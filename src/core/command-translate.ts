@@ -132,11 +132,12 @@ interface GenericCommand {
    * `agents[].env.ANTHROPIC_MODEL`, which is where this deployment pins its model anyway.
    *
    * A LIST rather than a flag, and populated only from what was probed live. `agy` is why that
-   * distinction earns its keep: it speaks no ACP, so for a long time it could claim none of these,
-   * and each entry it has since gained came from finding the channel agy actually publishes on —
-   * `agy models` for the selector, `agy -p=/usage` for the quota, its `statusLine` command for the
-   * context window. An honest "not supported" beats an answer that never arrives, and the way out
-   * of one is evidence, not optimism.
+   * distinction earns its keep: until 1.5 it spoke no ACP, so for a long time it could claim none of
+   * these, and each entry it has since gained came from finding the channel agy actually publishes
+   * on — `agy models` for the selector, `agy -p=/usage` for the quota, its `statusLine` command for
+   * the context window, and since `agy acp` (2026-11-06) the session's own config options. An honest
+   * "not supported" beats an answer that never arrives, and the way out of one is evidence, not
+   * optimism.
    */
   local?: Harness[];
   /**
@@ -228,10 +229,10 @@ const GENERIC_COMMANDS: Record<string, GenericCommand> = {
     // that model makes it report. The local answer is still right for the harness; the empty case is
     // a model-config gap, which is why describeContext names the fix instead of saying "not yet".
     //
-    // agy arrives at the same place by a different road: it reports no usage over its protocol at
-    // all, but it does hand a context snapshot to whatever `statusLine` command its settings name,
-    // in headless mode as well as the TUI (verified on 1.2.0). The daemon installs a shim there and
-    // reads the numbers back at the end of each turn — see daemon/agy-statusline.ts.
+    // agy arrives at the same place by a different road: `agy acp` sends no `usage_update`, only a
+    // per-turn sum in the prompt response, which is the context for a turn of one model call and
+    // nothing for a turn that ran tools (daemon/agy-acp.ts); the window comes from a table of the
+    // ones measured. Its stream-json fallback reads per-step usage, or an old agy's status line.
     //
     // codex answers locally for the same reason opencode does, and unconditionally: probed on
     // codex-acp 1.12.0, a turn emits `usage_update {used, size}` with a real window (258400 for
@@ -253,8 +254,10 @@ const GENERIC_COMMANDS: Record<string, GenericCommand> = {
     // `agents[].model`). So the gateway can both show and change it without a slash command —
     // and, where the platform allows, offer the list as a menu instead of a name to type.
     //
-    // agy: stream-json has no in-process switch, but `agy models` provides the selector list, and
-    // setModel uses kill-and-respawn with --model and --conversation (resuming history).
+    // agy: `agy acp` reports the `model` select like the others (bare ids — `gemini-3.8-flash`, with
+    // its level in `thought_level`; daemon/agy-acp.ts agySplitModel reads the older
+    // `gemini-3.8-flash-high` spelling). Its stream-json fallback has no in-process switch: `agy
+    // models` provides the list, and setModel respawns with --model and --conversation.
     //
     // codex: session/new reports both a `models` block and a `model` configOption, switched the
     // same way. Its selector is two-level in a way the others are not, and the two levels disagree
@@ -280,22 +283,23 @@ const GENERIC_COMMANDS: Record<string, GenericCommand> = {
     // option under category `thought_level` (ids `effort`, `reasoning_effort`, `effort`), and
     // `session/set_config_option` switched it on all three.
     native: {},
-    // Only where that was probed. agy has no such setting (`agy -p=/effort` answers "not
-    // adjustable") and folds it into the model name instead, so `/model` is its answer; dsh and
-    // gemini have never been seen to offer a `thought_level` option. All three get the explicit
-    // "not supported" — and on agy that also keeps `/effort` out of HARNESS_CLI_ANSWERED's path,
-    // where it would have been run as a one-shot process only to print "not adjustable".
-    local: ['claude', 'codex', 'opencode'],
+    // Only where that was probed. `agy acp` 1.5.1 offers a `thought_level` select (low/medium/high)
+    // for Gemini and none for GPT-OSS or Claude, so the menu follows the model; its stream-json
+    // fallback has none at all (`agy -p=/effort` answers "not adjustable") and says so. Being local
+    // also keeps `/effort` out of HARNESS_CLI_ANSWERED's one-shot path. dsh and gemini have never
+    // been seen to offer the option and get the explicit "not supported".
+    local: ['claude', 'codex', 'opencode', 'agy'],
   },
   usage: {
     description: 'Show token usage and limits',
     // codex spells it `status` — "Display session configuration and token usage", a superset of
     // what was asked for rather than a near-miss, so it is worth the translation.
     native: { claude: 'usage', codex: 'status' },
-    // agy's CLI answers /usage itself, which is precisely why it cannot be forwarded: reaching the
-    // resident session it would kill it (see HARNESS_CLI_ANSWERED). The gateway runs it as its own
-    // one-shot process instead. Probed on 1.2.0 — four tab-separated columns of pool, metric,
-    // remaining percentage and reset timestamp, answered from local state with no model invoked.
+    // agy's CLI answers /usage itself, so forwarding it gets the CLI's answer nowhere: a stream-json
+    // session dies of it, and `agy acp` hands it to the model as a question (see
+    // HARNESS_CLI_ANSWERED). The gateway runs it as its own one-shot process instead. Probed on
+    // 1.2.0 — four tab-separated columns of pool, metric, remaining percentage and reset timestamp,
+    // answered from local state with no model invoked; unchanged on 1.5.1.
     local: ['agy'],
     // claude and codex forward it, so a busy conversation gets the gateway's snapshot instead.
     // agy never needed this: its answer is already a separate process that touches no session.
@@ -336,8 +340,8 @@ const GENERIC_COMMANDS: Record<string, GenericCommand> = {
     //   claude    Claude Code offers a skill as a slash command, so `/super` is one
     //   codex     codex-acp passes an unknown slash on as text; codex read ~/.agents/skills/super
     //   opencode  loaded it with its own `skill` tool
-    //   agy       launched with --disable-slash-commands, so the slash is text; read from
-    //             ~/.gemini/config/skills (the probe of agent-agy.ts had found such a slash harmless)
+    //   agy       the slash reached it as text; read from ~/.gemini/config/skills (probed on the
+    //             stream-json runtime; `agy acp` lists the same directory's skills as commands)
     // gemini and dsh are absent because skill-link.ts places no skills for them: nothing would tell
     // them what `/super` means, and an honest "not supported" beats a turn spent guessing.
     native: { claude: 'super', codex: 'super', opencode: 'super', agy: 'super' },
@@ -359,11 +363,13 @@ const GENERIC_COMMANDS: Record<string, GenericCommand> = {
  *
  * ── Why `picker` is a separate flag ───────────────────────────────────────────
  * Registering a command and having a command list to show are different questions, and
- * `agy` is the case that proves it: it reports no command list at all and is launched with
- * `--disable-slash-commands` (a CLI-answered slash kills the session — see daemon/agent-agy.ts),
- * so a bare `/agy` could only ever answer "no command list yet". It still earns a registered
- * command, because switching a conversation to agy is the useful half. With one flag per
- * concern, a bare `/agy` acks the binding while a bare `/oc` opens opencode's own menu.
+ * `agy` is the case that proves it: its stream-json runtime reports no command list at all, so a
+ * bare `/agy` could only ever answer "no command list yet". It still earns a registered command,
+ * because switching a conversation to agy is the useful half. With one flag per concern, a bare
+ * `/agy` acks the binding while a bare `/oc` opens opencode's own menu. `agy acp` does report a
+ * list (its built-ins — `goal`, `compact`, `schedule`, … — and the skills it found); turning the
+ * picker on waits until forwarding those from a menu has been tried, and until the stream-json
+ * fallback, which would promise a list it never sends, is gone.
  *
  * `custom` is deliberately absent: the harness name carries no meaning to a reader, and a
  * user-supplied executable advertises no stable command set to name.
@@ -509,21 +515,23 @@ export function isSessionQuery(name: string): boolean {
 /**
  * Slash names a harness's own CLI intercepts and answers BEFORE the model ever sees them.
  *
- * These are not commands the gateway lacks a translation for — they are commands that must never
- * be written into a resident session at all, because the CLI answering one ends the session. On
- * agy, a `/model` sent into the stream-json session answers "…is answered by the CLI itself and is
- * unavailable with --input-format stream-json", sets `status:ERROR`, and EXITS with code 2: the
- * conversation's child dies and every later turn in that message goes with it. Verified on agy
- * 1.2.0 (2026-09-17); the same probe confirmed that a skill slash and an unrecognized slash are
- * both harmless, which is why this is an exact list and not "anything starting with /".
+ * These are not commands the gateway lacks a translation for — they are commands only the CLI can
+ * answer, so writing one into the session gets no answer. On the stream-json runtime it is worse:
+ * a `/model` sent into the session answers "…is answered by the CLI itself and is unavailable with
+ * --input-format stream-json", sets `status:ERROR`, and EXITS with code 2 — the conversation's child
+ * dies and every later turn in that message goes with it (verified on agy 1.2.0, 2026-09-17; the
+ * same probe confirmed that a skill slash and an unrecognized slash are both harmless, which is why
+ * this is an exact list and not "anything starting with /"). `agy acp` survives one, but hands it
+ * to the model as an ordinary question (1.5.1, 2026-11-06: `/usage` got "which kind of usage
+ * information are you looking for?"), so the one-shot is still the only real answer.
  *
- * The list is what `agy -p /help` prints, which is also how to re-derive it:
+ * The list is what `agy -p /help` prints, which is also how to re-derive it (1.5.1 added `/plugin`):
  *
- *   /agents /changelog /config /credits /effort /help /hooks /model /permissions /skills /usage
+ *   /agents /changelog /config /credits /effort /help /hooks /model /permissions /plugin /skills /usage
  *
  * A STATIC copy of a list the CLI can produce is a deliberate compromise, and the risk is worth
- * naming: if agy adds a twelfth command, a user who types it loses their session until this list
- * catches up. Discovering it at runtime was the alternative and it buys a worse trade — the check
+ * naming: if agy adds another command, a user who types it on the stream-json runtime loses their
+ * session until this list catches up. Discovering it at runtime was the alternative and it buys a worse trade — the check
  * has to answer synchronously while routing a message, so a discovered list would either block the
  * first message on a subprocess or be empty for the first seconds after a restart, which is exactly
  * when a daemon is most likely to be handed a command.
@@ -542,6 +550,7 @@ const HARNESS_CLI_ANSWERED: Partial<Record<Harness, readonly string[]>> = {
     'hooks',
     'model',
     'permissions',
+    'plugin',
     'skills',
     'usage',
   ],
