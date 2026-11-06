@@ -6865,7 +6865,9 @@ describe('webui page: the skills page', () => {
 
     expect(h.el('skills').hidden).toBe(false);
     expect(h.el('skills-title').textContent).toBe('Skills');
-    expect(h.el('skills-list').textContent).toContain('Active');
+    const sw = h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]')!;
+    expect(sw.getAttribute('aria-checked')).toBe('true');
+    expect(sw.textContent).toBe('On');
     expect(h.el('skills-list').textContent).toContain('pinned');
     expect(h.el('skills-list').textContent).toContain('last used');
     expect(h.el('skills-list').textContent).toContain('3 uses');
@@ -6879,10 +6881,53 @@ describe('webui page: the skills page', () => {
     await until('the skill list', () => h.el('skills-list').textContent!.includes('server-ops'));
 
     const card = (name: string): Element => h.doc.querySelector(`[data-skill="${name}"]`)!;
-    expect(card('server-ops').querySelector('.skill-tier')!.textContent).toBe('resident');
+    const pressed = (name: string): string | null | undefined =>
+      card(name).querySelector('[data-sop="tier"][aria-pressed="true"]')?.textContent;
+    expect(card('server-ops').closest('[data-group]')!.getAttribute('data-group')).toBe('resident');
+    expect(pressed('server-ops')).toBe('Resident');
     expect(card('server-ops').querySelector('.skill-cat')!.textContent).toBe('运维');
     expect(card('server-ops').querySelector('.skill-warn')!.textContent).toMatch(/130 characters/);
-    expect(card('deploy-check').querySelector('.skill-tier')).toBeNull();
+    expect(card('deploy-check').closest('[data-group]')!.getAttribute('data-group')).toBe('library');
+    expect(pressed('deploy-check')).toBe('Library');
+  });
+
+  it('groups the list into resident, library and off, each with its count', async () => {
+    const h = await open({
+      replies: {
+        'api/skills': list([
+          entry({ name: 'a-lib' }),
+          entry({ name: 'b-res', resident: true }),
+          entry({ name: 'c-off', status: 'archived', resident: true }),
+          entry({ name: 'd-lib', status: 'expired' }),
+        ]),
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('a-lib'));
+
+    const groups = [...h.doc.querySelectorAll('#skills-list [data-group]')].map((g) => ({
+      key: g.getAttribute('data-group'),
+      head: g.querySelector('.skill-section')!.textContent,
+      rows: [...g.querySelectorAll('[data-skill]')].map((r) => r.getAttribute('data-skill')),
+    }));
+    expect(groups).toEqual([
+      { key: 'resident', head: 'Resident \u00b7 1', rows: ['b-res'] },
+      { key: 'library', head: 'Library \u00b7 2', rows: ['a-lib', 'd-lib'] },
+      { key: 'off', head: 'Off \u00b7 1', rows: ['c-off'] },
+    ]);
+    // An expired skill is still on — still delivered — and says why it may not stay that way.
+    const expired = h.doc.querySelector('[data-skill="d-lib"]')!;
+    expect(expired.querySelector('[data-sop="enabled"]')!.getAttribute('aria-checked')).toBe('true');
+    expect(expired.querySelector('.skill-state.expired')!.textContent).toBe('Expired');
+    // Off: the switch says so, and the tier is greyed rather than hidden — it is where the skill
+    // comes back to, and the store would refuse to move an archived one anyway.
+    const off = h.doc.querySelector('[data-skill="c-off"]')!;
+    expect(off.querySelector('[data-sop="enabled"]')!.getAttribute('aria-checked')).toBe('false');
+    expect(off.querySelector('[data-sop="enabled"]')!.textContent).toBe('Off');
+    const tiers = [...off.querySelectorAll<HTMLButtonElement>('[data-sop="tier"]')];
+    expect(tiers.map((b) => b.disabled)).toEqual([true, true]);
+    expect(off.querySelector('[data-sop="tier"][aria-pressed="true"]')!.textContent).toBe('Resident');
   });
 
   it('lists the searches that found nothing, and the hits nobody opened', async () => {
@@ -6912,11 +6957,79 @@ describe('webui page: the skills page', () => {
     (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
     await until('the detail', () => !h.el('skills-detail').hidden);
 
-    const btn = h.doc.querySelector('[data-sop="resident"]') as HTMLElement;
-    expect(btn.textContent).toBe('Make resident');
-    btn.click();
+    const tier = (r: '1' | '0'): HTMLElement => h.el('skills-detail').querySelector(`[data-sop="tier"][data-resident="${r}"]`) as HTMLElement;
+    expect(tier('0').getAttribute('aria-pressed')).toBe('true');
+    expect(h.el('skills-count').textContent).toBe('Library');
+    // The tier it is already in does nothing.
+    tier('0').click();
+    await tick();
+    expect(h.calls.some((c) => c.body?.action === 'resident')).toBe(false);
+
+    tier('1').click();
     await until('the tier op', () => h.calls.some((c) => c.body?.action === 'resident'));
     expect(h.calls.find((c) => c.body?.action === 'resident')?.body).toEqual({ action: 'resident', name: 'deploy-check', resident: true });
+    // The page reads the skill again rather than trusting the switch it drew.
+    await until('the re-read', () => h.calls.filter((c) => c.body?.action === 'show').length === 2);
+  });
+
+  it('moves a skill between resident and library from its row, without opening it', async () => {
+    const resident = entry({ resident: true });
+    const replies: Record<string, unknown> = { 'api/skills': list([resident]), 'api/skills/op': opReply([entry()]) };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    expect(h.doc.querySelector('[data-skill="deploy-check"]')!.closest('[data-group]')!.getAttribute('data-group')).toBe('resident');
+
+    (h.doc.querySelector('[data-skill="deploy-check"] [data-sop="tier"][data-resident="0"]') as HTMLElement).click();
+    await until('the tier op', () => h.calls.some((c) => c.body?.action === 'resident'));
+
+    expect(h.calls.find((c) => c.body?.action === 'resident')?.body).toEqual({ action: 'resident', name: 'deploy-check', resident: false });
+    expect(h.calls.some((c) => c.body?.action === 'show')).toBe(false);
+    // The answer's list is what is drawn — the row is now in the library — and the list stays up
+    // even though this answer happens to carry a detail too.
+    await until('the row in the library', () =>
+      h.doc.querySelector('[data-skill="deploy-check"]')?.closest('[data-group]')?.getAttribute('data-group') === 'library'
+    );
+    expect(h.el('skills-detail').hidden).toBe(true);
+    expect(h.el('skills-list').hidden).toBe(false);
+  });
+
+  it('shows the store\'s refusal in sight of the row, and leaves the row as it was', async () => {
+    const replies: Record<string, unknown> = {
+      'api/skills': list(),
+      'api/skills/op': {
+        ok: false,
+        error: "a resident skill's description is in every agent's context: at most 120 characters, this one is 134; shorten it and move the detail into the body",
+      },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    (h.doc.querySelector('[data-skill="deploy-check"] [data-sop="tier"][data-resident="1"]') as HTMLElement).click();
+    await until('the refusal', () => !h.el('skills-note').hidden);
+
+    expect(h.el('skills-note').textContent).toMatch(/this one is 134/);
+    expect(h.doc.querySelector('[data-skill="deploy-check"] [aria-pressed="true"]')!.textContent).toBe('Library');
+    // Sticky, so it is seen from wherever in the list the switch was tapped.
+    expect(renderPage('Chat', false)).toMatch(/#skills-note\{position:sticky;/);
+  });
+
+  it('opens a skill from its name, not from its switches', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    const row = h.doc.querySelector('[data-skill="deploy-check"]')!;
+    // The row is not a button itself — it holds buttons — and the name is the one that opens it.
+    expect(row.getAttribute('role')).toBeNull();
+    (row.querySelector('.skill-open') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+    expect(h.calls.find((c) => c.path === 'api/skills/op')?.body).toEqual({ action: 'show', name: 'deploy-check' });
   });
 
   it('says on the card why a hand-committed skill is not delivered', async () => {
@@ -7104,32 +7217,35 @@ describe('webui page: the skills page', () => {
     });
   });
 
-  it('deletes on the second tap, and the Delete is an archive', async () => {
+  it('turns a skill off from its row in one tap — an archive — and on again', async () => {
     const archived = entry({ status: 'archived' });
-    const replies = {
-      'api/skills': list(),
-      'api/skills/op': { ok: true, skills: [archived], detail: detail() },
-    };
+    const replies: Record<string, unknown> = { 'api/skills': list(), 'api/skills/op': { ok: true, skills: [archived] } };
     const h = await open({ replies });
     await h.emit(sync(A, [], [A]));
     await h.click('#skills-toggle');
     await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
-    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
-    await until('the detail', () => !h.el('skills-detail').hidden);
-    const del = (): HTMLElement => h.doc.querySelector('[data-sop="archive"]') as HTMLElement;
+    const sw = (): HTMLElement => h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]') as HTMLElement;
 
-    del().click();
-    await tick();
-    expect(h.calls.some((c) => c.body.action === 'archive')).toBe(false);
-    expect(del().textContent).toBe('Delete?');
+    sw().click();
+    await until('the archive', () => h.calls.some((c) => c.body?.action === 'archive'));
+    expect(h.calls.find((c) => c.body?.action === 'archive')?.body).toEqual({ action: 'archive', name: 'deploy-check' });
+    expect(h.calls.filter((c) => c.path === 'api/skills/op')).toHaveLength(1);
+    await until('the row under Off', () =>
+      h.doc.querySelector('[data-skill="deploy-check"]')?.closest('[data-group]')?.getAttribute('data-group') === 'off'
+    );
+    expect(sw().getAttribute('aria-checked')).toBe('false');
+    expect(h.el('skills-detail').hidden).toBe(true);
 
-    del().click();
-    await until('the archive', () => h.calls.some((c) => c.body.action === 'archive'));
-    expect(h.calls.find((c) => c.body.action === 'archive')?.body).toEqual({ action: 'archive', name: 'deploy-check' });
-    await until('the archived row', () => h.el('skills-list').textContent!.includes('Archived'));
+    replies['api/skills/op'] = { ok: true, skills: [entry()] };
+    sw().click();
+    await until('the restore', () => h.calls.some((c) => c.body?.action === 'restore'));
+    expect(h.calls.find((c) => c.body?.action === 'restore')?.body).toEqual({ action: 'restore', name: 'deploy-check' });
+    await until('the row back in the library', () =>
+      h.doc.querySelector('[data-skill="deploy-check"]')?.closest('[data-group]')?.getAttribute('data-group') === 'library'
+    );
   });
 
-  it('restores an archived skill from its detail', async () => {
+  it('turns an archived skill on from its page, and stays on the page', async () => {
     const archived = entry({ status: 'archived' });
     const replies = {
       'api/skills': list([archived]),
@@ -7138,13 +7254,17 @@ describe('webui page: the skills page', () => {
     const h = await open({ replies });
     await h.emit(sync(A, [], [A]));
     await h.click('#skills-toggle');
-    await until('the skill list', () => h.el('skills-list').textContent!.includes('Archived'));
-    (h.doc.querySelector('[data-skill="deploy-check"]') as HTMLElement).click();
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"] .skill-open') as HTMLElement).click();
     await until('the detail', () => !h.el('skills-detail').hidden);
+    expect(h.el('skills-count').textContent).toBe('Off');
+    expect(h.el('skills-detail').querySelector('[data-sop="archive"],[data-sop="restore"]')).toBeNull();
 
-    (h.doc.querySelector('[data-sop="restore"]') as HTMLElement).click();
-    await until('the restore', () => h.calls.some((c) => c.body.action === 'restore'));
-    expect(h.calls.find((c) => c.body.action === 'restore')?.body).toEqual({ action: 'restore', name: 'deploy-check' });
+    (h.el('skills-detail').querySelector('[data-sop="enabled"]') as HTMLElement).click();
+    await until('the restore', () => h.calls.some((c) => c.body?.action === 'restore'));
+    expect(h.calls.find((c) => c.body?.action === 'restore')?.body).toEqual({ action: 'restore', name: 'deploy-check' });
+    await until('the re-read', () => h.calls.filter((c) => c.body?.action === 'show').length === 2);
+    expect(h.el('skills-detail').hidden).toBe(false);
   });
 
   it('closes on Escape and on the backdrop, and comes back to the list', async () => {

@@ -511,7 +511,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #skills-new:hover{border-color:#3a3a3a;background:#2a2a2a}
 #skills-close{font-size:18px;padding:6px 10px}
 #skills-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
-#skills-note{margin:0 0 10px;font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
+/* Sticky, because the switches are on every row of a long list: a refusal (a description too long
+   for a resident skill) written above the first row would be out of sight of the row tapped. */
+#skills-note{position:sticky;top:-12px;z-index:1;margin:-12px -16px 10px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
 /* /setting as a page of its own, opened from the Menu or by typing the command, rather
    than a screen inserted into the transcript. A window over the conversation like the reader and
    the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
@@ -534,13 +536,33 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .skill-row{display:flex;align-items:center;gap:8px;min-width:0}
 .skill-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
 .skill-state{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;background:#262626;color:#9a9a9a}
-.skill-state.active{color:#4ade80;background:rgba(74,222,128,.12)}
 .skill-state.expired{color:#fbbf24;background:rgba(251,191,36,.12)}
-.skill-state.archived{color:#9ca3af;background:#262626}
 .skill-pin{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#fbbf24}
-.skill-tier{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#60a5fa}
 .skill-cat{flex:none;font-size:11px;color:var(--dim)}
 .skill-warn{font-size:11.5px;color:#fbbf24;overflow-wrap:anywhere;margin-top:2px}
+/* A list row: what the skill is on the left, its two switches on the right — on/off, and resident
+   or library — so neither needs the skill opened first. The rows are grouped by where they stand
+   (resident, library, off), which is what the two switches decide. */
+.skill-card{flex-direction:row;align-items:flex-start;gap:12px}
+.skill-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.skill-ctl{flex:none;display:flex;align-items:center;gap:10px}
+.skill-open{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;background:none;border:0;padding:0;color:inherit;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.skill-group-head{display:flex;align-items:baseline;flex-wrap:wrap;column-gap:8px;margin:14px 0 6px}
+.skill-group-head .skill-section{margin:0}
+.skill-group-hint{font-size:11.5px;color:var(--dim)}
+.skill-off .skill-main{opacity:.6}
+.skill-seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.skill-seg button{background:var(--field);border:0;color:var(--dim);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
+.skill-seg button+button{border-left:1px solid var(--line)}
+.skill-seg button:hover:not(:disabled){color:var(--fg);background:#2a2a2a}
+.skill-seg button[aria-pressed="true"]{background:rgba(96,165,250,.16);color:#bfdbfe;cursor:default}
+.skill-seg button:disabled{opacity:.45;cursor:default}
+.skill-switch{display:inline-flex;align-items:center;gap:6px;background:none;border:0;padding:4px 0;color:var(--dim);font:inherit;font-size:12px;cursor:pointer;min-width:58px}
+.skill-knob{position:relative;flex:none;width:30px;height:17px;border-radius:999px;background:#3a3a3a;transition:background .15s}
+.skill-knob::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#9a9a9a;transition:transform .15s,background .15s}
+.skill-switch[aria-checked="true"]{color:var(--fg)}
+.skill-switch[aria-checked="true"] .skill-knob{background:#16a34a}
+.skill-switch[aria-checked="true"] .skill-knob::after{transform:translateX(13px);background:#fff}
 .skill-searches{margin-top:14px}
 .skill-search{font-size:12px;padding:3px 0;overflow-wrap:anywhere}
 .skill-search small{color:var(--dim);margin-left:6px}
@@ -556,7 +578,6 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .skill-acts button:disabled{opacity:.45;cursor:default}
 .skill-acts button.danger{color:var(--dim);border-color:transparent;background:none}
 .skill-acts button.danger:hover:not(:disabled){color:#f87171;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12)}
-.skill-acts button.confirm{background:rgba(248,113,113,.16);border-color:#7f1d1d;color:#fca5a5}
 .skill-section{margin-top:16px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
 .skill-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .skill-file{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 9px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -1077,6 +1098,12 @@ button:disabled{opacity:.5;cursor:default}
   #skills-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   #skills-new{min-height:44px;padding:0 14px}
   .skill-acts button,.skill-file{min-height:44px;padding:0 12px}
+  /* The row's switches go under the text: beside it they would leave the description a third of
+     a phone's width. Full height, because they are what a thumb is here for. */
+  .skill-card{flex-wrap:wrap;row-gap:4px}
+  .skill-main{flex-basis:100%}
+  .skill-seg button,.skill-switch{min-height:44px}
+  .skill-seg button{padding:0 14px}
   .skill-text{min-height:40dvh;font-size:14px}
   /* The settings page, for the same reason and the same way: a 760px window shrunk into a phone
      is a column of rows behind a sliver of transcript nobody opened it to read. */
@@ -4945,16 +4972,50 @@ const SCRIPT = `
     return at ? schedAgo(at) : '';
   }
 
-  function skillState(s){
-    return s === 'archived' ? 'Archived' : (s === 'expired' ? 'Expired' : 'Active');
+  /** On is everything still under skills/ — active, or expired and not yet archived — and so still
+      delivered. Off is archived: the store's only way to stop delivering a skill without losing it. */
+  function skillOn(s){ return s.status !== 'archived'; }
+
+  /** Where a skill stands, in the words of the list's groups — which is what its two switches set. */
+  function skillGroupOf(s){ return !skillOn(s) ? 'off' : (s.resident ? 'resident' : 'library'); }
+  var SKILL_GROUPS = [
+    {key:'resident', title:'Resident', hint:'In every agent\\u2019s skill list, on every request'},
+    {key:'library', title:'Library', hint:'Delivered, but found only through a search'},
+    {key:'off', title:'Off', hint:'Archived: delivered to no agent, kept with its history'}
+  ];
+  function skillPlace(s){
+    var g = skillGroupOf(s);
+    for(var i=0;i<SKILL_GROUPS.length;i++) if(SKILL_GROUPS[i].key === g) return SKILL_GROUPS[i].title;
+    return '';
   }
 
+  var SKILL_EXPIRED_TITLE = 'Unused for a while: it is turned off (archived) unless an agent uses it or you pin it';
+
   function skillDetailMeta(s){
-    var parts = [skillState(s.status), 'v' + s.version, 'created ' + skillAgo(s.createdAt)];
+    var parts = ['v' + s.version, 'created ' + skillAgo(s.createdAt)];
+    if(s.status === 'expired') parts.unshift('expired');
     if(s.pinned) parts.push('pinned');
     parts.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt) : 'never used');
     parts.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
     return parts.join(' \\u00b7 ');
+  }
+
+  /** The two switches a row and a skill's page share: resident or library, and on or off. Off greys
+      the tier out rather than hiding it — the store moves only a skill that is on (setResident),
+      and the greyed choice still says where the skill comes back to when it is turned on. */
+  function skillControls(s){
+    var on = skillOn(s), dis = on ? '' : ' disabled';
+    var tier = function(resident, label, title){
+      return '<button type="button" data-sop="tier" data-resident="' + (resident ? '1' : '0') + '" aria-pressed="'
+        + (s.resident === resident ? 'true' : 'false') + '"' + dis + ' title="' + title + '">' + label + '</button>';
+    };
+    return '<span class="skill-seg" role="group" aria-label="Tier">'
+      + tier(true, 'Resident', 'In every agent\\u2019s skill list')
+      + tier(false, 'Library', 'Found through a search of the library')
+      + '</span>'
+      + '<button type="button" class="skill-switch" role="switch" data-sop="enabled" aria-checked="' + (on ? 'true' : 'false') + '" title="'
+      + (on ? 'On: delivered to agents. Turn it off to archive it' : 'Off: archived. Turn it on to deliver it again') + '">'
+      + '<span class="skill-knob"></span>' + (on ? 'On' : 'Off') + '</button>';
   }
 
   function skillCard(s){
@@ -4962,12 +5023,12 @@ const SCRIPT = `
     if(s.pinned) meta.push('pinned');
     meta.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt) : 'never used');
     meta.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
-    var h = '<div class="skill-item" data-skill="' + text(s.name) + '" role="button" tabindex="0">';
-    h += '<div class="skill-row"><span class="skill-name">' + text(s.name) + '</span>';
-    h += '<span class="skill-state ' + text(s.status) + '">' + text(skillState(s.status)) + '</span>';
+    // The row opens the skill, but is not itself a button: it holds the switches, and a button
+    // inside a button is two controls a screen reader announces as one. The name is the button.
+    var h = '<div class="skill-item skill-card' + (skillOn(s) ? '' : ' skill-off') + '" data-skill="' + text(s.name) + '">';
+    h += '<div class="skill-main"><div class="skill-row"><button type="button" class="skill-open" title="Open">' + text(s.name) + '</button>';
+    if(s.status === 'expired') h += '<span class="skill-state expired" title="' + SKILL_EXPIRED_TITLE + '">Expired</span>';
     if(s.pinned) h += '<span class="skill-pin">pinned</span>';
-    // Resident: in every agent's skill list. The rest is the library, found through the skills tool.
-    if(s.resident) h += '<span class="skill-tier">resident</span>';
     if(s.category) h += '<span class="skill-cat">' + text(s.category) + '</span>';
     h += '</div>';
     h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
@@ -4976,7 +5037,24 @@ const SCRIPT = `
     // A skill someone committed by hand that breaks the store's rules is listed but not delivered;
     // the store's own sentence says why, so the person who pushed it can fix it here.
     if(s.problem) h += '<div class="skill-problem">Not delivered: ' + text(s.problem) + '</div>';
-    h += '</div>';
+    h += '</div><div class="skill-ctl">' + skillControls(s) + '</div></div>';
+    return h;
+  }
+
+  function skillGroupsHtml(){
+    var h = '<div class="skill-group-hint">Agents pick up a change when they next start; a library search sees it at once.</div>';
+    for(var g=0; g<SKILL_GROUPS.length; g++){
+      var grp = SKILL_GROUPS[g], rows = '', n = 0;
+      for(var i=0;i<skillList.length;i++){
+        if(skillGroupOf(skillList[i]) !== grp.key) continue;
+        rows += skillCard(skillList[i]);
+        n++;
+      }
+      if(!n) continue;
+      h += '<div class="skill-group" data-group="' + grp.key + '"><div class="skill-group-head">'
+        + '<span class="skill-section">' + text(grp.title) + ' \\u00b7 ' + n + '</span>'
+        + '<span class="skill-group-hint">' + text(grp.hint) + '</span></div>' + rows + '</div>';
+    }
     return h;
   }
 
@@ -5001,7 +5079,7 @@ const SCRIPT = `
     var h = '';
     if(!skillsEnabled) h = '<div class="skills-empty">Skills are not enabled in this daemon.</div>';
     else if(!skillList.length) h = '<div class="skills-empty">No managed skills yet. An agent can create one when you ask it to remember a procedure, or press New.</div>';
-    else for(var i=0;i<skillList.length;i++) h += skillCard(skillList[i]);
+    else h = skillGroupsHtml();
     h += skillSearchesHtml();
     if(skillNewMode) h = skillNewForm() + h;
     skillsListEl.innerHTML = h;
@@ -5053,16 +5131,11 @@ const SCRIPT = `
     skillsBack.hidden = false;
     skillsNewBtn.hidden = true;
     skillsTitle.textContent = s.name;
-    skillsCount.textContent = skillState(s.status);
+    skillsCount.textContent = skillPlace(s);
     var h = '<div class="skill-head"><span class="skill-name">' + text(s.name) + '</span>';
     h += '<div class="skill-acts">';
     h += '<button type="button" data-sop="pin">' + (s.pinned ? 'Unpin' : 'Pin') + '</button>';
-    // Whether every agent sees this skill in its list. Only here: an agent cannot make that call.
-    if(s.status !== 'archived') h += '<button type="button" data-sop="resident">' + (s.resident ? 'Move to library' : 'Make resident') + '</button>';
-    h += s.status === 'archived'
-      ? '<button type="button" data-sop="restore">Restore</button>'
-      : '<button type="button" class="danger" data-sop="archive">Delete</button>';
-    h += '</div></div>';
+    h += '</div><div class="skill-ctl">' + skillControls(s) + '</div></div>';
     h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
     h += '<div class="skill-meta">' + text(skillDetailMeta(s)) + '</div>';
     h += '<div class="skill-section">Files</div><div class="skill-files">';
@@ -5193,34 +5266,28 @@ const SCRIPT = `
     skillOp({action:'remove-file', name:name, file:path}, function(){ openSkill(name, 'SKILL.md'); });
   }
 
-  /** Two taps, like the scheduled panel's Delete: a phone mis-tap on a button that archives a
-      skill is easy, and any repaint or four seconds puts it back. */
-  function skillConfirm(btn, fn){
-    if(btn.getAttribute('data-confirm') === '1'){ fn(); return; }
-    var old = btn.textContent;
-    btn.setAttribute('data-confirm', '1');
-    btn.classList.add('confirm');
-    btn.classList.remove('danger');
-    btn.textContent = 'Delete?';
-    setTimeout(function(){
-      if(btn.getAttribute('data-confirm') === '1'){
-        btn.removeAttribute('data-confirm');
-        btn.classList.remove('confirm');
-        btn.classList.add('danger');
-        btn.textContent = old;
-      }
-    }, 4000);
-  }
-
-  function archiveUi(btn){
-    if(!skillSel) return;
-    var name = skillSel.skill.name;
-    skillConfirm(btn, function(){
-      skillOp({action:'archive', name:name}, function(){
-        skillSel = null;
-        renderSkillsList();
-      });
-    });
+  /** A row's switch, or the open skill's. One tap and no confirmation, where Delete used to take
+      two: the same tap undoes either, and off is an archive — every file and the history kept. The
+      skill comes from the row the switch sits in, or from the page; a row answers with the list
+      redrawn, the page with the skill read again. */
+  function skillSwitch(btn, op){
+    var row = btn.closest('[data-skill]'), s = null;
+    if(row){
+      var name = row.getAttribute('data-skill');
+      for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) s = skillList[i];
+    } else if(skillSel) s = skillSel.skill;
+    if(!s) return;
+    var body;
+    if(op === 'enabled') body = {action: skillOn(s) ? 'archive' : 'restore', name:s.name};
+    else {
+      var resident = btn.getAttribute('data-resident') === '1';
+      if(!skillOn(s) || resident === s.resident) return;
+      body = {action:'resident', name:s.name, resident:resident};
+    }
+    var skillName = s.name;
+    skillOp(body, row
+      ? function(){ skillSel = null; renderSkillsList(); }
+      : function(){ openSkill(skillName); });
   }
 
   function openSkills(){
@@ -5294,20 +5361,10 @@ const SCRIPT = `
         return;
       }
       if(op === 'remove-file'){ removeFileUi(); return; }
-      if(op === 'archive'){ archiveUi(opBtn); return; }
-      if(op === 'restore' && skillSel){
-        var restoreName = skillSel.skill.name;
-        skillOp({action:'restore', name:restoreName}, function(){ openSkill(restoreName); });
-        return;
-      }
+      if(op === 'enabled' || op === 'tier'){ skillSwitch(opBtn, op); return; }
       if(op === 'pin' && skillSel){
         var pinName = skillSel.skill.name, pinned = !skillSel.skill.pinned;
         skillOp({action:'pin', name:pinName, pinned:pinned}, function(){ openSkill(pinName); });
-        return;
-      }
-      if(op === 'resident' && skillSel){
-        var tierName = skillSel.skill.name, resident = !skillSel.skill.resident;
-        skillOp({action:'resident', name:tierName, resident:resident}, function(){ openSkill(tierName); });
         return;
       }
       return;
@@ -5323,16 +5380,6 @@ const SCRIPT = `
       var cardName = card.getAttribute('data-skill');
       if(cardName) openSkill(cardName);
     }
-  });
-
-  skillsBody.addEventListener('keydown', function(e){
-    if(e.key !== 'Enter' && e.key !== ' ') return;
-    if(e.target.closest && e.target.closest('button,input,textarea')) return;
-    var card = e.target.closest ? e.target.closest('[data-skill]') : null;
-    if(!card) return;
-    e.preventDefault();
-    var name = card.getAttribute('data-skill');
-    if(name) openSkill(name);
   });
 
   // Grow to fit, and let the max-height in the stylesheet decide where to stop — it is stated
@@ -6154,7 +6201,7 @@ __GATE__
   <!-- The gateway's managed skills, as a window over the transcript. One node with two views
        inside it — the list and the open skill — because a skill is edited in place and going
        back is one tap, not a second window. Every write goes to api/skills/op; the store
-       behind it is the one the talkcode skills command uses, and its Delete is an archive. -->
+       behind it is the one the talkcode skills command uses, and turning a skill off is an archive. -->
   <div id="skills" hidden role="dialog" aria-modal="true" aria-labelledby="skills-title">
     <div id="skills-box">
       <div id="skills-bar">

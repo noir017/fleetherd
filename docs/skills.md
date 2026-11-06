@@ -110,7 +110,7 @@ metadata:
 - **Resident** skills are linked into every harness's skill directory, so every agent sees their
   name and description on every request. That is why the description is held to **120
   characters** — written as "Use when …" — and why only a person makes a skill resident: the web
-  UI's **Make resident** / **Move to library**, or a commit. A `patch` from an agent or from the
+  UI's **Resident** / **Library** switch, or a commit. A `patch` from an agent or from the
   review that changes `talkcode-resident` is refused.
 - **Library** skills are everything else. They are delivered to every host like a resident one but
   linked nowhere, so they cost no context until an agent looks one up with the `skills` tool. A
@@ -149,9 +149,20 @@ for a skill worth writing. They are kept in `<config dir>/skills-queries.jsonl`.
 
 ## From the web UI
 
-**Skills** in the web UI's **⚙ Menu** at the foot of the topic list. It lists every managed skill with its
-status, whether it is resident and pinned, its category, and when it was last used — then the
-searches that found nothing — and opens one for editing:
+**Skills** in the web UI's **⚙ Menu** at the foot of the topic list. It lists every managed skill in
+three groups — **Resident**, **Library** and **Off** — with whether it is pinned, its category, and
+when it was last used, then the searches that found nothing. Every row carries two switches, so
+neither needs the skill opened:
+
+- **Resident** / **Library** puts a skill in every agent's list or takes it out to the library; a
+  description over 120 characters is refused until it is shortened. An off skill's tier is greyed
+  out: it comes back where it was.
+- **On** / **Off** turns a skill off, which is `archive` — the skill moves into `archive/` whole and
+  is delivered to no agent — and on again, which is `restore`. One tap, because the same tap undoes
+  it. Nothing in the gateway hard-deletes a skill, and the page has no such operation.
+
+Agents pick up either change when they next start; a library search sees it at once. The name
+opens the skill for editing, with the same two switches beside **Pin**:
 
 - **New** creates a skill from a name, a one-line description and an optional body.
 - **Edit** changes `SKILL.md` or any file under `references/`, `templates/` or `scripts/`;
@@ -159,13 +170,9 @@ searches that found nothing — and opens one for editing:
   read-before-write rule as `patch` applies, and a refusal says the current version.
 - **History** lists every commit that touched the skill; **Restore this version** is `revert`, and
   is itself recorded as a new change.
-- **Make resident** / **Move to library** puts a skill in every agent's list or takes it out; a
-  description over 120 characters is refused until it is shortened.
-- **Delete** is `archive` — the skill moves into `archive/` whole and can be restored from the
-  same page. Nothing in the gateway hard-deletes a skill, and the page has no such operation.
 
 It is the same store and the same rules as `talkcode skills`, because every write goes through
-`skills-store.ts`. Archiving from the page also tells the conversation that created the skill,
+`skills-store.ts`. Turning a skill off from the page also tells the conversation that created it,
 exactly as archiving from a chat does. A commit someone made by hand shows its author, and can be
 restored too.
 
