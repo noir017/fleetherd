@@ -1097,13 +1097,15 @@ button:disabled{opacity:.5;cursor:default}
   #skills-bar{padding:0 4px 0 12px;min-height:49px}
   #skills-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   #skills-new{min-height:44px;padding:0 14px}
-  .skill-acts button,.skill-file{min-height:44px;padding:0 12px}
+  /* The page's own buttons at an ordinary height, not the bar's 44px: with two controls in every
+     row of the list, 44px read as a page of slabs (2026-11-06). 32px is still a fair thumb target. */
+  .skill-acts button,.skill-file{min-height:32px;padding:0 12px}
   /* The row's switches go under the text: beside it they would leave the description a third of
-     a phone's width. Full height, because they are what a thumb is here for. */
-  .skill-card{flex-wrap:wrap;row-gap:4px}
+     a phone's width. */
+  .skill-card{flex-wrap:wrap;row-gap:6px}
   .skill-main{flex-basis:100%}
-  .skill-seg button,.skill-switch{min-height:44px}
-  .skill-seg button{padding:0 14px}
+  .skill-seg button{min-height:32px;padding:0 12px}
+  .skill-switch{min-height:32px}
   .skill-text{min-height:40dvh;font-size:14px}
   /* The settings page, for the same reason and the same way: a 760px window shrunk into a phone
      is a column of rows behind a sliver of transcript nobody opened it to read. */

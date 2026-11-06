@@ -4247,6 +4247,15 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(css).toContain('#input{max-height:30dvh}');
   });
 
+  it('gives the skills page ordinary 32px buttons on a phone, not 44px slabs, and wraps a row\'s switches under it', () => {
+    const css = narrowBlock();
+    expect(css).toContain('.skill-acts button,.skill-file{min-height:32px;');
+    expect(css).toContain('.skill-seg button{min-height:32px;');
+    expect(css).toContain('.skill-switch{min-height:32px}');
+    expect(css).not.toMatch(/\.skill-[a-z-]+( button)?(,[^{]*)?\{min-height:44px/);
+    expect(css).toContain('.skill-main{flex-basis:100%}');
+  });
+
   it('keeps fields at 16px so Safari does not zoom in and stay there', () => {
     expect(narrowBlock()).toContain('#input,#secret{font-size:16px}');
   });
