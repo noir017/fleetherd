@@ -299,8 +299,8 @@ above the composer (`#model-pop`) of what the topic's agent offers, the one in u
 agent's configured default marked, filtered as it is typed into. Decisions in it:
 
 - **It is `/model`, not a second way to set a model.** `GET api/models?t=` is
-  `ConversationRegistry.modelPickerForRef`, which does `/model`'s warm-up (refreshModels, then
-  warmModelSelector) — a cold agent is started, which is why the list says it is asking — and
+  `ConversationRegistry.modelPickerForRef`, which does `/model`'s warm-up (warmModelSelector) — a
+  cold agent is started, which is why the list says it is asking — and
   `POST api/models` is `chooseModelForRef`, which is `applyModelChoice`: checked against the list
   the agent offers now, written as the conversation's `modelOverride`. So a typed `/model` afterwards
   names the same model, and config.yaml is untouched; the defaults are the settings page's.

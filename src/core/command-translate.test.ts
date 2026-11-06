@@ -257,11 +257,12 @@ describe('agentCommandSpecs', () => {
 
 describe('translateCommand — agy', () => {
   it('reports unsupported generic commands as unsupported rather than forwarding them', () => {
-    // agy answers /compact itself and doing so aborts its stream-json session, so the daemon
-    // must reject the generic name instead of passing it through to the agent.
+    // agy is not in /compact's `native` map: `agy acp` advertises a `compact` built-in, but the
+    // gateway has no measured translation to it, so it refuses the generic name rather than
+    // forwarding it as text.
     expect(translateCommand('compact', 'agy')).toEqual({ kind: 'unsupported' });
-    // /model via kill-and-respawn with --model and --conversation; /context from the snapshot agy
-    // hands its statusLine command; /usage from a one-shot `agy -p=/usage`.
+    // /model and /context come from the ACP session (a config option and the turn's usage), and
+    // /usage from a one-shot `agy -p=/usage`.
     expect(translateCommand('model', 'agy')).toEqual({ kind: 'local' });
     expect(translateCommand('context', 'agy')).toEqual({ kind: 'local' });
     expect(translateCommand('usage', 'agy')).toEqual({ kind: 'local' });

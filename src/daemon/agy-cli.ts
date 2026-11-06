@@ -26,8 +26,8 @@ export const AGY_COMMAND = 'agy';
 /**
  * How long a one-shot `agy -p /<command>` may take before it is given up on.
  *
- * Generous because the floor is a cold CLI start (~5s observed for `agy models`), and the ceiling
- * only has to be short enough that a user does not think the gateway ignored them.
+ * Generous because the floor is a cold CLI start (a `/usage` one-shot took ~3.5s on 1.4.7), and
+ * the ceiling only has to be short enough that a user does not think the gateway ignored them.
  */
 const CLI_COMMAND_TIMEOUT_MS = 60_000;
 

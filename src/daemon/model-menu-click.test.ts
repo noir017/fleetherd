@@ -75,8 +75,6 @@ function rig(opts: RigOptions = {}) {
   }> = [];
   const setModelCalls: string[] = [];
   const sessions = new Map<string, AgentSession>();
-  /** What the harness's list becomes when re-asked; unset means re-asking changes nothing. */
-  const onRefresh: { fn?: () => void; calls: number } = { calls: 0 };
 
   /** Mutable so a test can rebuild the harness's list under an open menu. */
   const selector: { value: ModelSelector | undefined } = {
@@ -93,10 +91,6 @@ function rig(opts: RigOptions = {}) {
           abort: () => {},
           dispose: () => {},
           modelSelector: () => selector.value,
-          refreshModels: async () => {
-            onRefresh.calls++;
-            onRefresh.fn?.();
-          },
           setModel: async (value: string) => {
             setModelCalls.push(value);
             return value;
@@ -185,7 +179,7 @@ function rig(opts: RigOptions = {}) {
   }).registry;
 
   return {
-    send, click, replies, menu, pickIds, navIds, selector, onRefresh,
+    send, click, replies, menu, pickIds, navIds, selector,
     sent, buttonSends, buttonEdits, setModelCalls,
     cfg, agents, platform, registry,
   };
@@ -250,38 +244,16 @@ describe('opening the menu', () => {
   });
 });
 
-describe('a list that grew while the daemon ran', () => {
-  // agy's list is fetched outside the session and is served by Google, so it changes under a
-  // running daemon: Opus 5.5 appeared on 2026-10-03 and a daemon from 09-29 never offered it.
+describe('a list the session changed while it ran', () => {
+  // `config_option_update` rewrites the live selector under a running conversation; `/model` reads
+  // it as it stands, not a copy taken when the session started.
   const OPUS = { value: 'claude-opus-5-5-medium', name: 'Claude Opus 5.5 (Medium)' };
-  function grown() {
+
+  it('shows a model the harness added since the session started', async () => {
     const r = rig();
-    r.onRefresh.fn = () => {
-      r.selector.value = { current: 'opencode/big-pickle', options: [OPUS, ...OPTIONS] };
-    };
-    return r;
-  }
-
-  it('the menu shows a model the harness added since the daemon started', async () => {
-    const r = grown();
+    r.selector.value = { current: 'opencode/big-pickle', options: [OPUS, ...OPTIONS] };
     await r.send('/model');
-    expect(r.onRefresh.calls).toBe(1);
     expect(r.menu().buttons.some((b) => b.label.includes('Opus 5.5'))).toBe(true);
-  });
-
-  it('`/model <query>` matches against the re-asked list', async () => {
-    const r = grown();
-    await r.send('/model opus-5-5');
-    expect(r.setModelCalls).toEqual(['claude-opus-5-5-medium']);
-  });
-
-  it('a click on that menu does not re-ask — the /model that opened it just did', async () => {
-    const r = grown();
-    await r.send('/model');
-    const pick = r.menu().buttons.find((b) => b.label.includes('Opus 5.5'))!;
-    await r.click(pick.id);
-    expect(r.setModelCalls).toEqual(['claude-opus-5-5-medium']);
-    expect(r.onRefresh.calls).toBe(1);
   });
 });
 
@@ -437,8 +409,6 @@ describe('the model switch a platform draws (useModelPicker)', () => {
     expect(list).toMatchObject({ ok: true, agent: 'oc', current: 'opencode/big-pickle' });
     if (!list.ok) throw new Error('no list');
     expect(list.options.map((o) => o.value)).toEqual(OPTIONS.map((o) => o.value));
-    // Re-asked, as /model re-asks: a list served outside the session may have grown.
-    expect(r.onRefresh.calls).toBe(1);
   });
 
   it('switches the way /model does, and the override is the one /model reads', async () => {

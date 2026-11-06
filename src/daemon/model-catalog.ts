@@ -8,11 +8,11 @@ import type { AgentFactory } from './agent.js';
  * any agent's default model can be set from any conversation.
  *
  * ── Why this exists ───────────────────────────────────────────────────────────
- * A model list is not in the config. Under ACP it arrives with `session/new` (agy's comes from
- * `agy models`), so it exists only where a session of that agent is live — and a conversation has
- * at most one. The settings screen used to offer a list for the agent answering the conversation it
- * was opened in, and only once that agent had replied; every other agent's row was a page saying
- * "type a name" (2026-11-05). This answers for any agent, in this order:
+ * A model list is not in the config. Under ACP it arrives with `session/new`, so it exists only
+ * where a session of that agent is live — and a conversation has at most one. The settings screen
+ * used to offer a list for the agent answering the conversation it was opened in, and only once
+ * that agent had replied; every other agent's row was a page saying "type a name" (2026-11-05).
+ * This answers for any agent, in this order:
  *
  *  1. a live session of that agent in ANY conversation — the freshest list there is;
  *  2. what an earlier answer said;
@@ -95,17 +95,13 @@ export class ModelCatalog {
     return p;
   }
 
-  /**
-   * Start a session of the agent under an id no conversation has, read its selector, dispose it.
-   * agy's list is a separate call (refreshModels) that needs no session, so that is tried first.
-   */
+  /** Start a session of the agent under an id no conversation has, read its selector, dispose it. */
   private async probe(def: AgentDef): Promise<AgentModelList> {
     const sid = `models:${def.id}`;
     const started = Date.now();
     let session;
     try {
       session = this.deps.agents.getOrCreate(sid, def.id);
-      await session.refreshModels?.();
       let selector = session.modelSelector?.();
       if (!selector && session.ensureSession) {
         await withTimeout(session.ensureSession(this.deps.tokenFor(sid)), PROBE_TIMEOUT_MS);

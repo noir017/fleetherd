@@ -119,7 +119,7 @@ Daemon → gateway:
 | frame | fields | |
 |---|---|---|
 | `spawned` | `id pid` | |
-| `out` | `id fd` + body | fd 1, 2, or 3 (agy's status line) |
+| `out` | `id fd` + body | fd 1 or 2 |
 | `exit` | `id code` or `signal`, or `error` | `error` = it never started (e.g. not on PATH) |
 | `rpc-ok` / `rpc-err` | `rid res` (+ body) / `rid error` | |
 | `cli-open` | `cid argv cwd token env` | an agent ran `talkcode …` (or its harness started `talkcode mcp`) |

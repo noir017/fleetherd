@@ -174,9 +174,9 @@ Notes:
 - `harness: claude` with no API key reuses the machine's `claude /login` session.
 - `harness: agy` (Google Antigravity CLI) runs as `agy acp`, agy's own ACP server (agy 1.5
   or later). Needs `agy` on PATH (`agy install`) and one interactive sign-in; headless runs
-  never prompt. Its own CLI-answered slash commands (`/model`, `/usage`, …) are run by the
-  gateway as one-shot processes rather than sent to the session. `args` are appended after
-  `agy acp`.
+  never prompt. `/model` and `/effort` are answered by the gateway from the session's own
+  config options; the names agy's CLI owns (`/usage`, `/credits`, …) run as one-shot processes
+  rather than being sent to the session. `args` are appended after `agy acp`.
 - `permissions: auto` (the default) approves every tool request the agent asks about, so it
   runs with full tool access and the only gate is `access.allowFrom`. `permissions: ask` puts
   each request to the user as buttons in the chat; one nobody answers within an hour is

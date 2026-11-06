@@ -10,9 +10,8 @@ import (
 )
 
 // Agent processes: started on the gateway's `spawn`, fed its `stdin`, and reported back as `out`
-// (fd 1, 2 and, for agy's status line, 3), `spawned` and `exit` frames — the same events a local
-// child_process gives the gateway, so its runtimes do not need to know which side of ssh a child
-// is on.
+// (fd 1 and 2), `spawned` and `exit` frames — the same events a local child_process gives the
+// gateway, so its runtime does not need to know which side of ssh a child is on.
 
 const (
 	pipeChunk = 32 << 10

@@ -2625,9 +2625,8 @@ export class ConversationRegistry {
    *
    * Two different routes arrive here and they mean the same thing: `/usage`, which the generic
    * vocabulary marks `local` for agy, and any other name in HARNESS_CLI_ANSWERED, which would
-   * otherwise pass through to the agent. Both must stay out of the session — writing one into agy's
-   * stream-json stdin ends the process and the conversation with it, and `agy acp` hands it to the
-   * model as a question it can only guess at.
+   * otherwise pass through to the agent. Both must stay out of the session — `agy acp` hands such a
+   * name to the model as a question it can only guess at.
    *
    * No turn runs and no model is invoked: these commands are answered by the CLI from local state,
    * so the cost is one short-lived process. The conversation's directory is passed through because
@@ -2814,11 +2813,6 @@ ${formatTokens(left)} left before compaction — ${name}`;
     // indistinguishable from a dropped command — so say something is happening, best-effort.
     const typing = this.platforms.get(msg.conversation.platform);
     void typing?.startTyping?.(addressOf(msg.conversation)).catch(() => undefined);
-    // Re-ask before reading: a list the harness serves outside the session (agy's) can have grown
-    // since the daemon started, and `/model` is precisely the question "what is on offer now". Only
-    // here — a click on the menu this opens re-checks against the list fetched here, and paying a
-    // second CLI start (~1.5s) per click would buy nothing.
-    await this.agents.getOrCreate(key, state.agentId).refreshModels?.();
     const warm = await this.warmModelSelector(key, state.agentId);
     void typing?.stopTyping?.(addressOf(msg.conversation)).catch(() => undefined);
     if (warm.error) return modelStartFailedText(warm.error);
@@ -3203,8 +3197,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * What the conversation at an ADDRESS can switch its model to — the list handed to a platform
    * that draws a switch (`PlatformAdapter.useModelPicker`, the web UI's status line).
    *
-   * The same warm-up `/model` does (warmModelSelector, refreshModels first for agy): the child the
-   * next message would start is started now, because a model list exists only on a live session.
+   * The same warm-up `/model` does (warmModelSelector): the child the next message would start is
+   * started now, because a model list exists only on a live session.
    * A conversation this daemon has not seen yet is bound to the agent its first message would
    * reach — the binding, else the route's default — as that message would have bound it.
    */
@@ -3213,7 +3207,6 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const agentId =
       this.conversations.get(id)?.agentId ?? this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
     const state = this.ensureState(id, ref.platform, agentId, { opener: 'the model switch' });
-    await this.agents.getOrCreate(id, state.agentId).refreshModels?.();
     const warm = await this.warmModelSelector(id, state.agentId);
     if (warm.error) return { ok: false, agent: state.agentId, reason: 'error', text: modelStartFailedText(warm.error) };
     if (!warm.selector || warm.selector.options.length === 0) {
@@ -3813,7 +3806,6 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const key = same ? from : `__schedule-model__#${agentId}#${++this.modelProbeSeq}`;
     const session = this.agents.getOrCreate(key, agentId);
     try {
-      await session.refreshModels?.();
       let selector = session.modelSelector?.();
       if (!selector && session.ensureSession) {
         try {

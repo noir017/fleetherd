@@ -281,21 +281,6 @@ export interface AgentSession {
    */
   ensureSession?(sessionToken: string): Promise<void>;
   /**
-   * Re-ask the harness which models it offers, ahead of a `/model` that is about to show them.
-   *
-   * For a runtime whose list is NOT part of the live session. An ACP selector arrives with
-   * `session/new` and is kept current by `config_option_update`, so it has nothing to refresh and
-   * omits this. agy's list comes from a separate `agy models` call that is cached per factory, and
-   * that list is served by Google, not baked into the binary: on 2026-10-03 the same agy 1.2.13
-   * binary listed `claude-opus-5-5-*`, while a daemon started on 2026-09-29 still offered only the
-   * list it fetched at startup. Without a refresh, the only way to see a new model was to restart
-   * the daemon.
-   *
-   * Never rejects, and a failed or empty answer keeps the previous list: a `/model` that briefly
-   * cannot reach the harness should still show what it knew, not report "no model selector".
-   */
-  refreshModels?(): Promise<void>;
-  /**
    * Switch the live session's model, returning the name the harness reports afterwards.
    *
    * Applies to the RUNNING session (ACP `session/set_config_option`), and is remembered so a later

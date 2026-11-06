@@ -134,10 +134,9 @@ interface GenericCommand {
    * A LIST rather than a flag, and populated only from what was probed live. `agy` is why that
    * distinction earns its keep: until 1.5 it spoke no ACP, so for a long time it could claim none of
    * these, and each entry it has since gained came from finding the channel agy actually publishes
-   * on — `agy models` for the selector, `agy -p=/usage` for the quota, and since `agy acp`
-   * (2026-11-06) the session's own config options. An honest
-   * "not supported" beats an answer that never arrives, and the way out of one is evidence, not
-   * optimism.
+   * on — `agy -p=/usage` for the quota, and the session's own config options for the model and its
+   * level since `agy acp` (2026-11-06). An honest "not supported" beats an answer that never
+   * arrives, and the way out of one is evidence, not optimism.
    */
   local?: Harness[];
   /**
