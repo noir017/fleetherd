@@ -134,3 +134,43 @@ describe('fragmentToTelegramHtml (forum-topic path)', () => {
     expect(fragmentToTelegramHtml(renderTelegramMarkdown('a<b'))).toBe('a&lt;b');
   });
 });
+
+/**
+ * Pinned from the per-character scan, before parseInline learned to copy plain runs whole and to
+ * skip a `[` no link can start at (2026-11-07). The point is that those changed only the speed:
+ * some of these outputs are quirks of the parser (`***c***`, a code span inside bold), and they are
+ * here because they must not move, not because they are right.
+ */
+describe('parseInline output is unchanged by the fast paths', () => {
+  const CASES: Array<[string, string]> = [
+    ["plain words, then `code`, a [link](https://x.y/a?b=1&c=2), **bold**, __bold__, *it*, _it_, ~~gone~~ — and 中文 🙂", "plain words, then <code>code</code>, a <a href=\"https://x.y/a?b=1&amp;c=2\">link</a>, <b>bold</b>, <b>bold</b>, <i>it</i>, <i>it</i>, <s>gone</s> — and 中文 🙂"],
+    ["file_name_here and (_x_) and a_b_ and x__y__ and __z__ and _a_b", "file_name_here and (<i>x</i>) and a_b_ and x__y__ and <b>z</b> and _a_b"],
+    ["[not a link] and [also](not closed and **open and ~~open and `open", "[not a link] and [also](not closed and **open and ~~open and `open"],
+    ["[[[[[a](https://x) ]] [b] [c](d)", "<a href=\"https://x\">[[[[a</a> ]] [b] <a href=\"d\">c</a>"],
+    ["*a* **b** ***c*** ****d**** *e **f** g*", "<i>a</i> <b>b</b> <b>*c</b><i> </i><b>*d</b><b> *e </b>f*<i> g</i>"],
+    ["trailing delimiters: * _ ~ ` [ ](", "trailing delimiters: * _ ~ ` [ ]("],
+    ["中文**加粗**中文_斜体_中文~~删~~中文`码`中文", "中文<b>加粗</b>中文<i>斜体</i>中文<s>删</s>中文<code>码</code>中文"],
+    ["5 * 3 * 2 and a * b and a*b*c", "5 <i> 3 </i> 2 and a <i> b and a</i>b*c"],
+    ["see https://example.com/a_b*c, xhttps://no, http://ok. and [t](javascript:x) h h ht htt http https:/ https://", "see https://example.com/a_b*c, xhttps://no, http://ok. and <a href=\"javascript:x\">t</a> h h ht htt http https:/ https://"],
+    ["[a]b](c) [a](b c) [](x) [x]() [x] (y)", "[a]b](c) [a](b c) [](x) [x]() [x] (y)"],
+    ["<b> & \"q\" 's' &amp; <script>", "&lt;b&gt; &amp; \"q\" 's' &amp;amp; &lt;script&gt;"],
+    ["😀*😀*😀_😀_😀~~😀~~😀`😀`😀[😀](u)", "😀<i>😀</i>😀<i>😀</i>😀<s>😀</s>😀<code>😀</code>😀<a href=\"u\">😀</a>"],
+    ["``double `tick` code`` and ```triple``` and `` unclosed", "`<code>double </code>tick<code> code</code><code> and </code>`<code>triple</code>`<code> and </code>` unclosed"],
+    ["**bold `code **not bold** inside` still bold**", "<b>bold `code </b>not bold<b> inside` still bold</b>"],
+  ];
+
+  it.each(CASES)('case %#', (input, expected) => {
+    expect(s(parseInline(input))).toBe(expected);
+  });
+
+  it('keeps a line of unmatched [ literal, without rescanning it from every [', () => {
+    // Each `[` used to re-read the rest of the line for its `]`: 20 000 took 0.8 s and these
+    // 100 000 about 20 s, against a few milliseconds now. Measured, because the test timeout cannot
+    // be the assertion: it never interrupts a synchronous test. The bound leaves a loaded machine
+    // two orders of magnitude.
+    const line = '['.repeat(100_000);
+    const t0 = performance.now();
+    expect(s(parseInline(line))).toBe(line);
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+});

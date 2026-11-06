@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { renderWebMarkdown, renderWebToolLines, escapeHtml } from './web-markdown.js';
+import { renderWebMarkdown, renderWebToolLines, escapeHtml, inline } from './web-markdown.js';
 import { formatDuration } from '../core/tool-renderer.js';
 
 /**
@@ -284,5 +284,56 @@ describe('renderWebMarkdown: links to another topic', () => {
       expect(html, url).not.toContain('<a');
       expect(html, url).toContain('x');
     }
+  });
+});
+
+/**
+ * Pinned from the per-character scan, before inline learned to copy plain runs whole and to skip a
+ * `[` no link can start at (2026-11-07). The point is that those changed only the speed: some of
+ * these outputs are quirks of the scanner (`****d****`, `[](x)` losing its brackets), and they are
+ * here because they must not move, not because they are right.
+ */
+describe('inline output is unchanged by the fast paths', () => {
+  const CASES: Array<[string, string]> = [
+    ["plain words, then `code`, a [link](https://x.y/a?b=1&c=2), **bold**, __bold__, *it*, _it_, ~~gone~~ — and 中文 🙂", "plain words, then <code>code</code>, a <a href=\"https://x.y/a?b=1&amp;c=2\" target=\"_blank\" rel=\"noopener noreferrer\">link</a>, <strong>bold</strong>, <strong>bold</strong>, <em>it</em>, <em>it</em>, <del>gone</del> — and 中文 🙂"],
+    ["file_name_here and (_x_) and a_b_ and x__y__ and __z__ and _a_b", "file_name_here and (<em>x</em>) and a_b_ and x__y__ and <strong>z</strong> and <em>a</em>b"],
+    ["[not a link] and [also](not closed and **open and ~~open and `open", "[not a link] and [also](not closed and **open and ~~open and `open"],
+    ["[[[[[a](https://x) ]] [b] [c](d)", "<a href=\"https://x\" target=\"_blank\" rel=\"noopener noreferrer\">[[[[a</a> ]] [b] c"],
+    ["*a* **b** ***c*** ****d**** *e **f** g*", "<em>a</em> <strong>b</strong> <strong>*c</strong>* *<strong>*d</strong>** <em>e </em><em>f</em>* g*"],
+    ["trailing delimiters: * _ ~ ` [ ](", "trailing delimiters: * _ ~ ` [ ]("],
+    ["中文**加粗**中文_斜体_中文~~删~~中文`码`中文", "中文<strong>加粗</strong>中文<em>斜体</em>中文<del>删</del>中文<code>码</code>中文"],
+    ["5 * 3 * 2 and a * b and a*b*c", "5 * 3 * 2 and a * b and a<em>b</em>c"],
+    ["see https://example.com/a_b*c, xhttps://no, http://ok. and [t](javascript:x) h h ht htt http https:/ https://", "see <a href=\"https://example.com/a_b*c\" target=\"_blank\" rel=\"noopener noreferrer\">https://example.com/a_b*c</a>, xhttps://no, <a href=\"http://ok\" target=\"_blank\" rel=\"noopener noreferrer\">http://ok</a>. and t h h ht htt http https:/ https://"],
+    ["[a]b](c) [a](b c) [](x) [x]() [x] (y)", "[a]b](c) [a](b c)  x [x] (y)"],
+    ["<b> & \"q\" 's' &amp; <script>", "&lt;b&gt; &amp; &quot;q&quot; &#39;s&#39; &amp;amp; &lt;script&gt;"],
+    ["😀*😀*😀_😀_😀~~😀~~😀`😀`😀[😀](u)", "😀<em>😀</em>😀<em>😀</em>😀<del>😀</del>😀<code>😀</code>😀😀"],
+    ["``double `tick` code`` and ```triple``` and `` unclosed", "<code>double `tick` code</code> and <code>triple</code> and `` unclosed"],
+    ["**bold `code **not bold** inside` still bold**", "<strong>bold `code </strong>not bold** inside` still bold**"],
+  ];
+
+  it.each(CASES)('case %#', (input, expected) => {
+    expect(inline(escapeHtml(input))).toBe(expected);
+  });
+
+  // A paragraph reaches inline() whole, newlines included, so a link and its `]` can be lines apart.
+  const BLOCKS: Array<[string, string]> = [
+    ["line one [x\nline two](https://a) and *em\nacross* lines, see http://h.example/x_y\nhttps://next.line", "<p>line one <a href=\"https://a\" target=\"_blank\" rel=\"noopener noreferrer\">x<br>line two</a> and <em>em<br>across</em> lines, see <a href=\"http://h.example/x_y\" target=\"_blank\" rel=\"noopener noreferrer\">http://h.example/x_y</a><br><a href=\"https://next.line\" target=\"_blank\" rel=\"noopener noreferrer\">https://next.line</a></p>"],
+    ["[open\n[no close here\n\nnew para [a](https://b) [c]\n(d) [e](https://f)", "<p>[open<br>[no close here</p><p>new para <a href=\"https://b\" target=\"_blank\" rel=\"noopener noreferrer\">a</a> [c]<br>(d) <a href=\"https://f\" target=\"_blank\" rel=\"noopener noreferrer\">e</a></p>"],
+    ["# head *i* [l](https://l)\n\n| a | *b* |\n|---|---|\n| [x](https://x) | `y` |\n\n- item **b** [\n- item ]( no", "<h1>head <em>i</em> <a href=\"https://l\" target=\"_blank\" rel=\"noopener noreferrer\">l</a></h1><table><thead><tr><th>a</th><th><em>b</em></th></tr></thead><tbody><tr><td><a href=\"https://x\" target=\"_blank\" rel=\"noopener noreferrer\">x</a></td><td><code>y</code></td></tr></tbody></table><ul><li>item <strong>b</strong> [</li><li>item ]( no</li></ul>"],
+  ];
+
+  it.each(BLOCKS)('block %#', (input, expected) => {
+    expect(renderWebMarkdown(input)).toBe(expected);
+  });
+
+  it('keeps a paragraph of unmatched [ literal, without rescanning it from every [', () => {
+    // Each `[` used to re-read the rest of the paragraph for its `]`: 20 000 took 0.8 s and these
+    // 100 000 about 20 s, against a few milliseconds now. Measured, because the test timeout cannot
+    // be the assertion: it never interrupts a synchronous test. The bound leaves a loaded machine
+    // two orders of magnitude.
+    const line = '['.repeat(100_000);
+    const t0 = performance.now();
+    expect(inline(line)).toBe(line);
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });

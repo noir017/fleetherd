@@ -55,6 +55,29 @@ function isLeftBoundary(ch: string | undefined): boolean {
 }
 
 /**
+ * The characters an inline rule can start with: every rule in parseInline begins with one of them.
+ * Same set as telegram-markdown.ts.
+ */
+const DELIMITER_RE = /[`[*_~]/;
+
+/**
+ * Where the plain text starting at `from` ends: the next delimiter (DELIMITER_RE), or the end of `s`.
+ * parseInline copies that run in one step rather than one character at a time; telegram-markdown.ts
+ * plainRunEnd says why. A rule that starts with any other character has to be added to
+ * DELIMITER_RE, or it will only ever be tried right after a delimiter.
+ */
+function plainRunEnd(s: string, from: number): number {
+  const at = s.slice(from).search(DELIMITER_RE);
+  return at < 0 ? s.length : from + at;
+}
+
+/** Index of the first `]` after position `i` of `s`, or `s.length` when there is none. */
+function closingBracket(s: string, i: number): number {
+  const at = s.indexOf(']', i + 1);
+  return at < 0 ? s.length : at;
+}
+
+/**
  * Parse inline markdown within a single logical line into a mrkdwn string.
  *
  * Left-to-right scan, first-match-wins, by priority: inline code → link → bold-italic → bold →
@@ -66,6 +89,9 @@ function isLeftBoundary(ch: string | undefined): boolean {
  * (`*`, `_`, `~`, `` ` ``, and the `<url|...>` link wrapper) are written RAW and never escaped —
  * notably the link URL keeps its `&` (Slack parses the `<...>` link form before entity-decoding, so
  * escaping the URL's `&` would break the link).
+ *
+ * The rules are tried only where one can start, at a DELIMITER_RE character; the text between is
+ * copied whole (plainRunEnd). A new rule's first character goes into DELIMITER_RE.
  */
 export function parseInline(s: string): string {
   let out = '';
@@ -77,7 +103,21 @@ export function parseInline(s: string): string {
       buf = '';
     }
   };
+  // A link's text runs to the first `]` after its `[`, so unless that `]` is followed by `(` no
+  // link starts at this `[` — nor at any other before that `]`. Remembering where it is keeps a
+  // line of unmatched `[` linear: finding it again from every `[` took 0.8 s for 20 000 of them.
+  let close = -1;
+  const linkMayStart = (at: number): boolean => {
+    if (close <= at) close = closingBracket(s, at);
+    return s[close + 1] === '(';
+  };
   while (i < s.length) {
+    const end = plainRunEnd(s, i);
+    if (end > i) {
+      buf += s.slice(i, end);
+      i = end;
+      continue;
+    }
     const rest = s.slice(i);
     const prev = s[i - 1];
     let m: RegExpExecArray | null;
@@ -93,7 +133,7 @@ export function parseInline(s: string): string {
     // 2) link [text](url) → <url|text>. The URL is emitted raw (no escaping — see above); the label
     //    is escaped but NOT re-parsed for markdown (matches hermes; Slack link labels with nested
     //    mrkdwn are unreliable, so we keep the label literal).
-    if ((m = /^\[([^\]]+)\]\((\S+?)\)/.exec(rest))) {
+    if (s[i] === '[' && linkMayStart(i) && (m = /^\[([^\]]+)\]\((\S+?)\)/.exec(rest))) {
       flush();
       out += '<' + m[2]! + '|' + escapeText(m[1]!) + '>';
       i += m[0].length;
