@@ -14,7 +14,7 @@ All notable changes to this project are documented here. The format is based on
   bold, `--model` beside it. The old rows led with the topic, leaving `cbc@uniagent` in the middle of
   a line of ids. A lone part is already named by the first line, so its row leaves the name out; the
   machine is not repeated when the agent's own name ends in `@<host>`; and "started by" is dropped
-  when the asker is that agent itself. The topic link, machine and directory all stay. The
+  when the asker is among the names. The topic link, machine and directory all stay. The
   confirmation card keeps its own shape — numbered items that quote the task and link nothing,
   because no topic exists yet — and only moves the model next to the name. [→](docs/sub-agents.md)
 
@@ -24,10 +24,10 @@ All notable changes to this project are documented here. The format is based on
   to `channels`, which lists the newest 200 topics; a topic with no turn yet has no last-turn
   timestamp, sorts last, and on a busy deployment is cut from that list — so the record card, the
   answer to Start, `tasks`, `task-status`, both stop notices and the `↳ From` header all fell back to
-  the conversation id. The lookup now reads the store's recorded title first, which `openTask`
-  writes before the first turn, and only then `channels`. `openTask` also answers the lane title it
-  actually gave the topic, so a `--title` with a newline or leading `[a]` groups cannot put one name
-  on the card and another on the topic.
+  the conversation id. The lookup now reads the store's recorded title first — `openTask` writes it
+  when a `--title` is given, the namer after the first turn — and only then `channels`. `openTask`
+  also answers the lane title it actually gave the topic, so a `--title` with a newline or leading
+  `[a]` groups cannot put one name on the card and another on the topic.
 
 ## [2.40.0] - 2026-11-06
 

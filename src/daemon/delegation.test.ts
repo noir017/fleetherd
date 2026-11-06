@@ -340,8 +340,9 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     ]);
     expect(opened[0]!.header).toBe('**↳ From [Release](?t=aaaaaaaa)**');
     // The answer to Start is the record card's layout: names first, in bold, one row per part.
-    const said = r.posted.find((p) => p.to === P && p.text.includes('2 sub-agents started by'))!;
-    expect(said.text.split('\n')[0]).toBe('**cc, cx** — 2 sub-agents started by cc, each in a topic of its own under this one:');
+    const said = r.posted.find((p) => p.to === P && p.text.includes('2 sub-agents'))!;
+    // The asker is one of the names, so "started by cc" is left off.
+    expect(said.text.split('\n')[0]).toBe('**cc, cx** — 2 sub-agents, each in a topic of its own under this one:');
     expect(said.text).toContain('- **cc** @ near · [part](?t=c1000000) · web:main/c1000000');
     expect(said.text).toContain('- **cx** @ near · [part](?t=c2000000) · web:main/c2000000');
     // The confirmed card's answer is a dispatch: the web UI marks it as a hand-off.
@@ -597,7 +598,7 @@ describe('Delegation: with confirmation off', () => {
     await settle();
     const card = recordCard(r)!;
     expect(card.text.split('\n')[0]).toBe(
-      '**cc, oc2** — 3 sub-agents started by cc, each in a topic of its own under this one:'
+      '**cc, oc2** — 3 sub-agents, each in a topic of its own under this one:'
     );
     // One row per part, in the order they were proposed; two went to the same agent.
     const rows = card.text.split('\n').filter((l) => l.startsWith('- '));
@@ -615,7 +616,7 @@ describe('Delegation: with confirmation off', () => {
     r.d.personSpoke(P);
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
-    const cards = r.posted.filter((p) => p.to === P && p.text.includes('2 sub-agents started by'));
+    const cards = r.posted.filter((p) => p.to === P && p.text.includes('2 sub-agents'));
     expect(cards).toHaveLength(1);
     expect(cards[0]!.text).toContain('**cc** @ near');
     expect(cards[0]!.text).toContain('**cx** @ near');

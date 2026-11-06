@@ -1412,8 +1412,9 @@ function startedSection(asker: string, opened: OpenedTask[]): string[] {
   if (!opened.length) return [];
   const names = [...new Set(opened.map((o) => o.agent))].join(', ');
   const many = opened.length !== 1;
-  // "started by cc" under a line that already opens with cc reads as a stutter.
-  const by = names === asker ? '' : ` started by ${asker}`;
+  // "started by cc" under a line that already names cc reads as a stutter — in a batch that mixed
+  // agents, the asker is still one of the names.
+  const by = opened.some((o) => o.agent === asker) ? '' : ` started by ${asker}`;
   const head = `**${names}** — ${many ? `${opened.length} sub-agents` : 'a sub-agent'}${by}, ${
     many ? 'each in a topic of its own' : 'in a topic of its own'
   } under this one:`;
