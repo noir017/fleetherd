@@ -6722,6 +6722,7 @@ describe('webui page: the Reviews tab', () => {
     opts: {
       topicsStatus?: number;
       topicsReply?: Record<string, unknown>;
+      held?: Record<string, Promise<void>>;
     } = {}
   ): Promise<Harness> => {
     const h = await open({
@@ -6731,6 +6732,7 @@ describe('webui page: the Reviews tab', () => {
         'api/topics': opts.topicsReply ?? { topic: { id: 'd4e5f6a7', title: '', lastAt: at } },
       },
       ...(opts.topicsStatus ? { status: { 'api/topics': opts.topicsStatus } } : {}),
+      ...(opts.held ? { held: opts.held } : {}),
     });
     await h.emit(sync(A, [], [A]));
     await h.click('#schedules-toggle');
@@ -6810,6 +6812,88 @@ describe('webui page: the Reviews tab', () => {
     expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 2');
     expect((h.doc.querySelector('.rev-adopt') as HTMLButtonElement).disabled).toBe(false);
     expect(h.calls.map((c) => c.path)).not.toContain('api/send');
+  });
+
+  it('dismisses when the echo arrives before the send is acknowledged', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const h = await reviewing({ held: { 'api/send': gate } });
+
+    (h.doc.querySelector('.rev-adopt') as HTMLElement).click();
+    await until('the draft', () => Boolean((h.el('input') as HTMLTextAreaElement).value));
+    await until('the list refreshed', () => h.calls.filter((c) => c.path === 'api/reviews').length === 2);
+    await tick();
+    await h.click('#composer button[type="submit"]');
+    const nonce = h.calls.find((c) => c.path === 'api/send')?.body.nonce as string;
+
+    // The daemon emits the echo before it answers the POST. claim() is what takes the message
+    // out of unsent, so the dismissal has to be settled there — by the 2xx there is no record.
+    await h.emit({ t: 'msg', msg: { ...message('w1', '<div class="raw">a draft</div>', true), nonce } });
+    await until('the dismissal', () => h.calls.some((c) => c.path === 'api/reviews/op'));
+
+    release();
+    await tick();
+    await tick();
+    expect(h.calls.filter((c) => c.path === 'api/reviews/op')).toHaveLength(1);
+    expect(h.calls.find((c) => c.path === 'api/reviews/op')?.body).toEqual({
+      action: 'dismiss',
+      text: SUGGESTION,
+    });
+  });
+
+  it('does not dismiss after a reload, which forgets what the draft was for', async () => {
+    const h = await reviewing();
+    const fresh = 'd4e5f6a7';
+    (h.doc.querySelector('.rev-adopt') as HTMLElement).click();
+    await until('the draft', () => Boolean((h.el('input') as HTMLTextAreaElement).value));
+
+    // The topic, the draft and the pending list all survive a reload; the link between the draft
+    // and the suggestion is this page's memory, so it does not. The suggestion must stay.
+    const again = await open({
+      url: h.window.location.href,
+      idb: h.idb,
+      storage: { aa_drafts: h.window.localStorage.getItem('aa_drafts')! },
+      replies: {
+        'api/reviews': reply([review()], { pending: pendingList() }),
+        'api/reviews/op': reply([review()], { pending: [pendingList()[1]] }),
+      },
+    });
+    await again.emit(sync(fresh, [], [A, fresh]));
+    expect((again.el('input') as HTMLTextAreaElement).value).toContain(`"${SUGGESTION}"`);
+
+    await again.click('#composer button[type="submit"]');
+    await until('the send', () => again.calls.some((c) => c.path === 'api/send'));
+    await tick();
+    expect(again.calls.map((c) => c.path)).not.toContain('api/reviews/op');
+
+    await again.click('#schedules-toggle');
+    await again.click('#sched-tab-reviews');
+    await until('the pending list', () => Boolean(again.doc.querySelector('.rev-pending')));
+    expect(again.doc.querySelectorAll('.rev-pitem')).toHaveLength(2);
+  });
+
+  it('does not let a list fetched before a dismissal put the suggestion back', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const held: Record<string, Promise<void>> = {};
+    const h = await reviewing({ held });
+    await h.emit(sync(A, [], [A, B]));
+
+    // A refresh starts (the stream of a topic switched to asks for the list) and is held. Its
+    // answer still carries both suggestions, because it was fetched before the dismissal.
+    held['api/reviews'] = gate;
+    await h.click(`[data-topic="${B}"]`);
+    await until('the held refresh', () => h.calls.filter((c) => c.path === 'api/reviews').length === 2);
+
+    (h.doc.querySelector('.rev-dismiss') as HTMLElement).click();
+    await until('the dismissal', () => h.calls.some((c) => c.path === 'api/reviews/op'));
+    await until('one suggestion left', () => h.doc.querySelectorAll('.rev-pitem').length === 1);
+
+    release();
+    await tick();
+    await tick();
+    expect(h.doc.querySelectorAll('.rev-pitem')).toHaveLength(1);
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 1');
   });
 
   it('opens a review for its changes, reasons, undo command and preferences', async () => {

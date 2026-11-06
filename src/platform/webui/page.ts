@@ -2386,8 +2386,7 @@ const SCRIPT = `
 
   revList.addEventListener('keydown', function(e){
     if(e.key !== 'Enter' && e.key !== ' ') return;
-    // A control inside the row handles its own keys; the row must not open behind it.
-    if(e.target.closest && e.target.closest('[data-rev-topic],[data-rev-adopt],[data-rev-dismiss]')) return;
+    if(e.target.closest && e.target.closest('[data-rev-topic]')) return;
     var row = e.target.closest ? e.target.closest('[data-rev]') : null;
     if(!row) return;
     e.preventDefault();
@@ -6193,7 +6192,12 @@ const SCRIPT = `
     if(!m.nonce) return;
     var pk = 'p:' + m.nonce;
     delete outbox[m.nonce];
+    // The echo can beat the 2xx: the daemon emits it before it answers the POST. The message has
+    // gone out either way, so an Adopt's suggestion is settled here too — by the time setLocal
+    // hears the 2xx there is no unsent record left for it to ask.
+    var r = unsent[m.nonce];
     dropUnsent(m.nonce);
+    if(r) settleAdopted(r.t, r.x);
     if(!els[pk]) return;
     var key = (m.g || epoch) + ':' + m.id;
     if(els[key]){ els[pk].remove(); }
