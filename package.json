@@ -1,6 +1,6 @@
 {
   "name": "talkcode",
-  "version": "2.46.1",
+  "version": "2.46.2",
   "license": "MIT",
   "comments": {
     "pinnedDeps": "@satorijs/adapter-slack and @satorijs/core are pinned to exact versions: the Slack profile relies on their undocumented internal behavior (see the header comment in src/platform/profiles/slack.ts). Before upgrading either, you must manually regress Slack button/slash reception—no CI covers this path.",

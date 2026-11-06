@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.46.2] - 2026-11-07
+
 ### Fixed
 
 - **agy shows its context again after a turn that ran tools, and while one runs.** Since 2.40.0
