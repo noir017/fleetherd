@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`contextBudget` moves where agy compacts.** agy compacts where Google tells it to, per model, with
+  the model list it fetches at startup — at 256k for Gemini 3.8 Flash, a model with a 1M window — and
+  nothing on the machine overrode that: agy's settings, `AGY_CLI_AUTO_COMPACT_OVERRIDE` and a binary
+  with its own clamp patched out all still compacted at 256k (measured on agy 1.5.2). An agy agent
+  with `contextBudget: 900000` now runs behind a relay that agy reaches through `CLOUD_CODE_URL`: it
+  forwards every request as it is and rewrites only that model list, so each model whose window can
+  hold the budget compacts there. The footer and `/context` then count against that budget, which is
+  where the conversation will actually be compacted. A 600k Gemini 3.8 Flash context was confirmed to
+  work. See [agents](docs/agents.md#antigravity-agy).
+- **Relays, a general way to stand between an agent and its API.** The mechanism under
+  `contextBudget` knows nothing of agy: a loopback listener that forwards an agent's traffic and hands
+  the responses on named paths to a transform in the gateway. For an agent on a remote host it runs
+  inside talkcode-remote, so the model calls never leave that machine and only the named responses
+  cross the link (`rpc relay`, `relay-req` / `relay-res` — see `remote/README.md`). That is the first
+  listening socket talkcode-remote opens: on 127.0.0.1 only, to the upstream the gateway named, adding
+  nothing to what it forwards (AGENTS.md, security invariant 5).
+
 ## [2.47.0] - 2026-11-07
 
 A pass over what a gateway running for weeks, with dozens of topics streaming at once on two cores,

@@ -64,6 +64,10 @@ export interface FrameHeader {
   // reverse commands
   cid?: string;
   token?: string;
+  // relays (remote/relay.go)
+  upstream?: string;
+  paths?: string[];
+  xid?: string;
 }
 
 export interface Frame {

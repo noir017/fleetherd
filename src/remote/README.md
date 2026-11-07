@@ -14,7 +14,7 @@ skill); the runtimes reach a host through `daemon/agent-common.ts`.
 | `frame.ts` | The frame codec, incremental decoder. |
 | `link.ts` | `ReliableLink`: sequence, keep, acknowledge, resend — the mirror of `remote/link.go`. Survives every reconnect. |
 | `connection.ts` | `HostConnection`: the ssh process, bootstrap and upload, handshake, heartbeat, reconnect with back-off, and the `up`/`down`/`reset` events. |
-| `host.ts` | `RemoteHost` (processes, operations, the shim bridge) and `RemoteChild`, a process shaped like the parts of `ChildProcess` the runtimes use. |
+| `host.ts` | `RemoteHost` (processes, operations, the shim bridge, relays and the transforms that answer them) and `RemoteChild`, a process shaped like the parts of `ChildProcess` the runtimes use. |
 | `binaries.ts` | Where the builds are (`dist/remote-bin/`), their version names, and the pinned ssh argv. |
 
 ## Invariants

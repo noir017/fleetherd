@@ -20,7 +20,9 @@ the filesystem and command work locally, and carries everything over ONE connect
 deliberately dumb: it knows how to start processes, move bytes and touch files, and nothing about
 ACP, agy, reverse commands or MCP. Those stay in TypeScript, defined once. In particular the
 `talkcode` command on a host is this binary under that name, and all it does is hand its argv,
-stdin and turn token back to the gateway, which runs its own CLI with them (`shim.go`).
+stdin and turn token back to the gateway, which runs its own CLI with them (`shim.go`). A relay
+(`relay.go`) is dumb the same way: it forwards an agent's API calls on the host and shows the
+gateway the responses it named; what to change in them is decided over there.
 
 ## Processes on a host
 
@@ -28,6 +30,7 @@ stdin and turn token back to the gateway, which runs its own CLI with them (`shi
 ssh ──► sh -c '<bootstrap>' ──► talkcode-remote attach ──unix socket──► talkcode-remote daemon
          (picks the build)       (one per connection)                    (one per gateway+version)
                                                                            ├─ agent processes
+                                                                           ├─ relays (127.0.0.1, when asked)
                                                                            └─ socket for the shim
 ```
 
@@ -112,6 +115,7 @@ Gateway → daemon:
 | `rpc-cancel` | `rid` | cancel it (kills a `run`'s process group) |
 | `cli-out` | `cid fd` + body | output for a shim |
 | `cli-exit` | `cid code` | a shim's command finished |
+| `relay-res` | `xid error` + body | what a relay serves for that response: the body; the original when the body is empty or there is an `error` |
 | `shutdown` | | stop everything and exit |
 
 Daemon → gateway:
@@ -125,6 +129,7 @@ Daemon → gateway:
 | `cli-open` | `cid argv cwd token env` | an agent ran `talkcode …` (or its harness started `talkcode mcp`) |
 | `cli-in` / `cli-in-end` | `cid` (+ body) | the shim's stdin |
 | `cli-gone` | `cid` | the shim went away before `cli-exit` |
+| `relay-req` | `id xid path` + body | a relay's response on a path the gateway named, uncompressed; served unchanged if no `relay-res` comes within 15 s |
 
 ## Operations (`rpc`)
 
@@ -142,6 +147,7 @@ Paths may start with `~/`, resolved against the host's home.
 | `removeLink` | `path owned` | `{outcome, detail}` — the symlink removed only if it points inside `owned` (`removed`), else `kept` / `absent` |
 | `removePath` | `path owned` | `{removed, path}` — one file or directory tree removed only if `path` is strictly inside `owned`; the parent is resolved through symlinks first, and the path itself is not followed |
 | `listFiles` | `path` | `{files: [relative, …]}` — every non-directory entry, slash-separated, without following symlinks |
+| `relay` | `id upstream paths` | `{url}` — a loopback HTTP relay to `upstream` (https, or http to loopback) that forwards everything as it is, streams included, except responses on `paths`, which go to the gateway first (`relay-req`). The same spec under the same id returns the same relay; a different one replaces it. Closed with everything else a gateway started |
 | `run` | `argv` or `bash`, `cwd env unset timeoutMs merge max`, optional body | `{code, signal, timedOut, cancelled, truncated, spawnError, stderr}` + body (the output's end). A non-empty request body is the child's stdin, then closed — a prompt too long for one argv entry (Linux caps it at 128 KB) travels that way |
 
 ## Testing

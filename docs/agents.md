@@ -153,7 +153,27 @@ harnesses. What differs:
   agent's machine, at the end of the turn and every few seconds while it runs; if that file cannot
   be read, such a turn shows none. agy never says how big the window is, so the
   daemon knows it only for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS
-  120B), or from the agent's `contextWindow`.
+  120B), or from the agent's `contextWindow` — or, with a `contextBudget`, shows the context against
+  the point where agy compacts.
+- **Where it compacts can be moved: `contextBudget`.** agy compacts where Google tells it to, per
+  model, with the model list it fetches when it starts: at 256k for Gemini 3.8 Flash, whose window
+  is 1M, and at 160k for Claude 4.6. Nothing on the machine overrides that — not agy's settings, not
+  `AGY_CLI_AUTO_COMPACT_OVERRIDE`. With `contextBudget: 900000` the daemon starts agy behind a
+  *relay*: a listener on 127.0.0.1 of the agent's machine, which agy is pointed at through
+  `CLOUD_CODE_URL`. It forwards every request as it is, the streamed model calls included, and
+  changes one thing: in that model list, each model whose window can hold the budget (its window
+  less its output reserve) is told to compact there; the others keep Google's figure. An agent that
+  sets its own `CLOUD_CODE_URL` in `env` keeps it — the relay forwards there. If the relay cannot be
+  opened the agent starts without one, on Google's figure, and the log says why. Measured on agy
+  1.5.2 (2026-11-07); a Gemini 3.8 Flash context of 600k was confirmed to work. Every model call
+  then carries a longer context, so quota runs out sooner.
+
+  ```yaml
+  agents:
+    - id: ag
+      harness: agy
+      contextBudget: 900000
+  ```
 - **Quota comes from its CLI**: `agy -p=/usage`, run alongside a turn at most once a minute, in
   whole percentages.
 - **agy's own warnings are notices, not reply text.** A retry ("API error (attempt 1) …") is said
@@ -171,4 +191,6 @@ harnesses. What differs:
 > its Terms of Service and may lead to account suspension. This harness only
 > calls agy's own official interface (`agy acp`) and never handles your credentials
 > (sign-in stays entirely inside `agy`), but the daemon is still a non-Google
-> client driving your account — decide accordingly.
+> client driving your account — decide accordingly. A `contextBudget` goes
+> further: its relay carries agy's requests, sign-in token included (forwarded,
+> never read or kept), and changes what Google's server tells agy.

@@ -90,6 +90,8 @@ func (d *daemon) op(ctx context.Context, h *Header, body []byte) (any, []byte, e
 		return opSweepSkillLinks(path)
 	case "run":
 		return d.opRun(ctx, h, body)
+	case "relay":
+		return d.opRelay(h)
 	}
 	return nil, nil, fmt.Errorf("unknown operation %q", h.Op)
 }

@@ -84,6 +84,11 @@ type Header struct {
 	// reverse commands (the `talkcode` shim)
 	Cid   string `json:"cid,omitempty"`
 	Token string `json:"token,omitempty"`
+
+	// relays (relay.go)
+	Upstream string   `json:"upstream,omitempty"`
+	Paths    []string `json:"paths,omitempty"`
+	Xid      string   `json:"xid,omitempty"`
 }
 
 func intPtr(v int) *int { return &v }

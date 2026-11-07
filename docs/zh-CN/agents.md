@@ -131,7 +131,23 @@ agents:
   记录（`~/.gemini/antigravity-cli/brain/<会话>/.system_generated/logs/transcript.jsonl`），取最后一次
   调用的数，一轮结束时读一次，进行中每隔几秒读一次；读不到这个文件时，这样的一轮不显示。agy 从不告诉窗口有多大，
   所以守护进程只认得实测过的模型（Gemini、Claude Sonnet/Opus 4.6、GPT-OSS 120B），或者用智能体的
-  `contextWindow`。
+  `contextWindow`；配了 `contextBudget` 时，按 agy 的压缩点显示。
+- **压缩点可以挪：`contextBudget`。** agy 在哪儿压缩由 Google 按模型决定，随它启动时拉取的模型列表
+  下发：Gemini 3.8 Flash 窗口 1M，却在 256k 压缩；Claude 4.6 在 160k。本机上没有任何办法改它——agy 的
+  设置、`AGY_CLI_AUTO_COMPACT_OVERRIDE` 都不行。写上 `contextBudget: 900000`，守护进程会让 agy 走一个
+  *中继*：智能体所在机器 127.0.0.1 上的一个监听端口，通过 `CLOUD_CODE_URL` 指给 agy。它把所有请求原样
+  转发，包括流式的模型调用，只改一处：模型列表里，窗口（减去输出预留）装得下这个预算的模型，压缩点改成
+  这个值，其余模型保持 Google 给的。智能体在 `env` 里自己设了 `CLOUD_CODE_URL` 的，照样生效——中继转发
+  到那里。中继打不开时，智能体不带中继启动，按 Google 的值压缩，日志里写明原因。在 agy 1.5.2 上实测
+  （2026-11-07），已确认 Gemini 3.8 Flash 上下文到 600k 可用。代价是每次模型调用带的上下文更长，额度
+  用得更快。
+
+  ```yaml
+  agents:
+    - id: ag
+      harness: agy
+      contextBudget: 900000
+  ```
 - **额度来自它的 CLI**：`agy -p=/usage`，与一轮同时进行，最多每分钟一次，精度是整数百分比。
 - **agy 自己的警告是通知，不进回复正文。** 重试（「API error (attempt 1) …」）只提示一次；以警告收尾
   的一轮——额度用完、重试耗尽、服务器过载——按失败处理，`hooks.turnFailed` 能看到（归为 `provider`）。
@@ -146,4 +162,6 @@ agents:
 > Google 的 FAQ 声明：用第三方工具访问 Antigravity 违反其服务条款，可能导致
 > 账号封禁。本 harness 只调用 agy 官方自带的接口（`agy acp`），且完全不接触你的
 > 凭据（登录全程在 `agy` 内部完成），但守护进程终究是一个非 Google 客户端在
-> 驱动你的账号——请自行判断。
+> 驱动你的账号——请自行判断。`contextBudget` 走得更远：它的中继会经手 agy 的
+> 请求，包括登录 token（只转发，不读取、不保存），并且改动了 Google 服务端
+> 告诉 agy 的内容。
