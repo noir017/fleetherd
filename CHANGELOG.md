@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.47.1] - 2026-11-07
+
 ### Fixed
 
 - **The log no longer calls a skill archived when a person only moved it to the library.** On a
