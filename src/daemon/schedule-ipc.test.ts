@@ -35,15 +35,19 @@ const parsed = parseConfig({
 });
 const cfg = { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
 
-/** The shared config plus a machine one agent runs on — for the cross-host `--cwd` rule. */
+/**
+ * The shared config plus a machine one agent runs on — for the cross-host directory rule. Each
+ * agent names its own root, so a conversation's default directory is known (and nothing is made
+ * under the real home).
+ */
 const cfgHosts = (() => {
   const p = parseConfig({
     platforms: { tg: { type: 'telegram', token: 't' }, web: { type: 'webui', token: 'w' } },
     hosts: { box: { ssh: 'u@box.example' } },
     agents: [
-      { id: 'cc', harness: 'claude' },
-      { id: 'oc', harness: 'opencode' },
-      { id: 'remote', harness: 'claude', host: 'box' },
+      { id: 'cc', harness: 'claude', cwd: '/srv/gw' },
+      { id: 'oc', harness: 'opencode', cwd: '/srv/gw-oc' },
+      { id: 'remote', harness: 'claude', host: 'box', cwd: '/srv/box' },
     ],
     routing: { default: 'cc' },
   });
@@ -166,6 +170,8 @@ async function rig(
   const socket = path.join(dir, 'd.sock');
   const sent: Sent[] = [];
   const tokens: string[] = [];
+  /** Each conversation's latest turn token, so a test can run a command from one in particular. */
+  const tokenOf = new Map<string, string>();
   const turns: Array<{ conversation: string; agent: string; prompt: string }> = [];
   const models: Array<{ conversation: string; model: string }> = [];
   const ensured: string[] = [];
@@ -186,6 +192,7 @@ async function rig(
           conversationId,
           runTurn: async (input: { prompt: string; sessionToken: string }) => {
             tokens.push(input.sessionToken);
+            tokenOf.set(conversationId, input.sessionToken);
             turns.push({ conversation: conversationId, agent: agentId, prompt: input.prompt });
           },
           ...(agentId === 'nosel'
@@ -254,6 +261,12 @@ async function rig(
     await settle();
   };
   const call = async (action: IpcAction) => callDaemon(socket, action, tokens[0]!);
+  /** A reverse command from the agent of one conversation (its key, e.g. `web#main#t1`). */
+  const callFrom = async (conversation: string, action: IpcAction) => {
+    const token = tokenOf.get(conversation);
+    if (!token) throw new Error(`no turn has run in ${conversation} yet`);
+    return callDaemon(socket, action, token);
+  };
   /** Tap a button on the last menu by its label. */
   const tap = async (label: string | RegExp): Promise<void> => {
     const menu = menus.at(-1)!;
@@ -270,17 +283,45 @@ async function rig(
     const i = daemons.indexOf(daemon);
     if (i >= 0) daemons.splice(i, 1);
   };
-  return { dir, sent, turns, models, ensured, disposed, tg, web, menus, inbound, call, tap, targets, stop, openProbe };
+  return { dir, sent, turns, models, ensured, disposed, tg, web, menus, inbound, call, callFrom, tap, targets, stop, openProbe };
 }
 
 const settle = (ms = 60): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const WEB = { platform: 'web', channel: 'main', thread: 't1', kind: 'direct' as const, user: 'u1' };
+const WEB_KEY = 'web#main#t1';
+/** A topic answered by `remote`, the agent on `box` in cfgHosts. */
+const BOX = { ...WEB, thread: 'tb' };
+const BOX_KEY = 'web#main#tb';
+
+/** Bind BOX to `remote` and run a turn there, so its agent has a token to call back with. */
+async function onBox(r: Awaited<ReturnType<typeof rig>>): Promise<void> {
+  await r.inbound(BOX, '/agent remote');
+  await r.inbound(BOX, 'hello');
+  if (r.turns.at(-1)?.conversation !== BOX_KEY || r.turns.at(-1)?.agent !== 'remote') throw new Error('BOX is not answered by remote');
+}
 
 async function added(r: Awaited<ReturnType<typeof rig>>, action: Extract<IpcAction, { kind: 'schedule-add' }>): Promise<ScheduleTaskView> {
   const resp = await r.call(action);
   if (!resp.ok) throw new Error(resp.error);
   return (resp.data as { task: ScheduleTaskView }).task;
 }
+
+async function addedFrom(
+  r: Awaited<ReturnType<typeof rig>>,
+  conversation: string,
+  action: Extract<IpcAction, { kind: 'schedule-add' }>
+): Promise<ScheduleTaskView> {
+  const resp = await r.callFrom(conversation, action);
+  if (!resp.ok) throw new Error(resp.error);
+  return (resp.data as { task: ScheduleTaskView }).task;
+}
+
+/** The tasks as written to disk — what a refusal must leave untouched. */
+const saved = (r: Awaited<ReturnType<typeof rig>>): Array<Record<string, unknown>> => {
+  const file = path.join(r.dir, 'schedules.json');
+  if (!fs.existsSync(file)) return [];
+  return (JSON.parse(fs.readFileSync(file, 'utf8')) as { tasks: Array<Record<string, unknown>> }).tasks;
+};
 
 describe('schedule over IPC', () => {
   it('registers a task and posts the gateway\'s own card where the user is talking', async () => {
@@ -302,6 +343,39 @@ describe('schedule over IPC', () => {
     const resp = await r.call({ kind: 'schedule-add', cron: '*/30 * * * *', prompt: 'x', agent: 'oc' });
     expect(resp.ok).toBe(false);
     expect((resp as { error: string }).error).toMatch(/answered by cc.*--session new to run oc/);
+  });
+
+  it('refuses a task for an agent on another machine that would start in a directory from here', async () => {
+    const r = await rig(undefined, undefined, { config: cfgHosts });
+    await r.inbound(WEB, 'hello');
+    await onBox(r);
+    r.sent.length = 0;
+
+    // No --cwd: the default is this conversation's directory, a path on the gateway's machine.
+    const byDefault = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote' });
+    expect((byDefault as { error: string }).error).toBe(
+      "this task runs on box, but would start in /srv/gw, this conversation's directory on this machine; " +
+        "run the add from a conversation there, whose own directory — or a --cwd given there — is that machine's"
+    );
+    // A --cwd typed here is this machine's too, the same rule edit applies.
+    const given = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', agent: 'remote', cwd: '/srv/app' });
+    expect((given as { error: string }).error).toBe('--cwd /srv/app is a path on this machine, but this task runs on box; run the add from a conversation there');
+    // Nothing was stored, and no card claimed it was.
+    expect(saved(r)).toEqual([]);
+    expect(r.sent.some((s) => s.text.includes('Scheduled task registered'))).toBe(false);
+
+    // Doing what it says succeeds: from box, with its own directory or a --cwd given there.
+    await addedFrom(r, BOX_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote' });
+    await addedFrom(r, BOX_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', agent: 'remote', cwd: '/srv/app' });
+    // Unchanged: an agent on the same machine, and a bash task, which runs where it was registered.
+    await addedFrom(r, WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'oc' });
+    await addedFrom(r, BOX_KEY, { kind: 'schedule-add', cron: '0 8 * * *', bash: 'make backup' });
+    expect(saved(r).map((t) => t['run'])).toEqual([
+      expect.objectContaining({ agent: 'remote', cwd: '/srv/box' }),
+      expect.objectContaining({ agent: 'remote', cwd: '/srv/app' }),
+      expect.objectContaining({ agent: 'oc', cwd: '/srv/gw' }),
+      expect.objectContaining({ kind: 'bash', host: 'box', cwd: '/srv/box' }),
+    ]);
   });
 
   it('bash: runs the command and posts exit code and output to the target', async () => {
@@ -680,9 +754,6 @@ describe('schedule over IPC', () => {
  * would have lost (the id and the history), and that a refusal writes nothing at all.
  */
 describe('schedule edit over IPC', () => {
-  const saved = (r: Awaited<ReturnType<typeof rig>>): Array<Record<string, unknown>> =>
-    (JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as { tasks: Array<Record<string, unknown>> }).tasks;
-
   it('changes only the fields given, keeps the id and history, and posts the updated card', async () => {
     const r = await rig();
     await r.inbound(WEB, 'hello');
@@ -832,17 +903,73 @@ describe('schedule edit over IPC', () => {
     expect((other as { error: string }).error).toMatch(/answered by cc.*--session new to run oc/);
   });
 
-  it('refuses a --cwd edit when the task runs on another machine', async () => {
+  it('refuses a --cwd edit when the task runs on another machine, and takes it from a conversation there', async () => {
     const r = await rig(undefined, undefined, { config: cfgHosts });
     await r.inbound(WEB, 'hello');
-    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote' });
-    const resp = await r.call({ kind: 'schedule-edit', id: task.id, cwd: '/srv/app' });
+    await onBox(r);
+    const task = await addedFrom(r, BOX_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote' });
+    const resp = await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: task.id, cwd: '/srv/app' });
     expect((resp as { error: string }).error).toMatch(
       /--cwd \/srv\/app is a path on this machine, but this task runs on box; .*run the edit from a conversation there/
     );
     // Everything else still edits.
-    const ok = await r.call({ kind: 'schedule-edit', id: task.id, name: 'renamed' });
+    const ok = await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: task.id, name: 'renamed' });
     expect(ok.ok).toBe(true);
+    // And the way out works: the same --cwd, from a conversation on box.
+    const there = await r.callFrom(BOX_KEY, { kind: 'schedule-edit', id: task.id, cwd: '/srv/app' });
+    expect(there.ok).toBe(true);
+    expect(saved(r)[0]).toMatchObject({ run: { agent: 'remote', cwd: '/srv/app' } });
+  });
+
+  it('refuses moving a task to an agent on another machine while it keeps a directory from here', async () => {
+    const r = await rig(undefined, undefined, { config: cfgHosts });
+    await r.inbound(WEB, 'hello');
+    await onBox(r);
+    const task = await addedFrom(r, WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
+    expect(saved(r)[0]).toMatchObject({ run: { agent: 'cc', cwd: '/srv/gw' } });
+    const before = JSON.stringify(saved(r));
+
+    const moved = await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: task.id, agent: 'remote' });
+    expect((moved as { error: string }).error).toBe(
+      "this task runs on box after this edit, but keeps its directory /srv/gw, a path on this machine; run the edit from a conversation there, with a --cwd on that machine"
+    );
+    // From box without --cwd, the same edit says what is still missing, from where it is read.
+    const fromBox = await r.callFrom(BOX_KEY, { kind: 'schedule-edit', id: task.id, agent: 'remote' });
+    expect((fromBox as { error: string }).error).toBe(
+      "this task runs on this machine after this edit, but keeps its directory /srv/gw, a path on the gateway's machine; give the edit a --cwd on this machine as well"
+    );
+    expect(JSON.stringify(saved(r))).toBe(before);
+
+    // Doing what it says succeeds.
+    const ok = await r.callFrom(BOX_KEY, { kind: 'schedule-edit', id: task.id, agent: 'remote', cwd: '/srv/box/app' });
+    expect(ok.ok).toBe(true);
+    expect(saved(r)[0]).toMatchObject({ id: task.id, run: { agent: 'remote', cwd: '/srv/box/app' } });
+    // Back to the gateway, the other way round: refused from box, taken from here with a --cwd.
+    expect((await r.callFrom(BOX_KEY, { kind: 'schedule-edit', id: task.id, agent: 'cc' })).ok).toBe(false);
+    expect((await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: task.id, agent: 'cc', cwd: '/srv/gw/app' })).ok).toBe(true);
+    // An agent on the same machine keeps the directory, as before.
+    expect((await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: task.id, agent: 'oc' })).ok).toBe(true);
+    expect(saved(r)[0]).toMatchObject({ run: { agent: 'oc', cwd: '/srv/gw/app' } });
+  });
+
+  it('a task with no directory moves to another machine as before', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-'));
+    new ScheduleStore(path.join(dir, 'schedules.json')).put({
+      id: 'n0d1',
+      name: 'brief',
+      when: { cron: '0 8 * * *', tz: 'UTC' },
+      run: { kind: 'agent', agent: 'cc', prompt: 'brief', session: 'new' },
+      target: { platform: 'web', channel: 'main', thread: 't1' },
+      state: 'active',
+      createdAt: Date.now(),
+      createdBy: { conversation: WEB_KEY, platform: 'web' },
+      runs: 0,
+    });
+    const r = await rig(dir, undefined, { config: cfgHosts });
+    await r.inbound(WEB, 'hello');
+    const resp = await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: 'n0d1', agent: 'remote' });
+    expect(resp.ok).toBe(true);
+    expect(saved(r)[0]!['run']).toEqual({ kind: 'agent', agent: 'remote', prompt: 'brief', session: 'new' });
   });
 
   it('refuses a --cwd edit on a bash task that runs on another machine', async () => {

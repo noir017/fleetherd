@@ -51,9 +51,17 @@ firing at once. What a task *is* cannot change: prompt ↔ bash, its session and
 (`--channel`) are refused, and the way to have a different task is `rm` + `add`. A daily task
 whose agent or directory changes cannot go on in the topic it already opened today — a topic keeps
 its agent and its directory — so the next run opens a new topic for the rest of the day, and the
-earlier one is left as it is. A `--cwd` is a path on the machine you edit from: when the task runs
-on another machine, the edit is refused rather than storing a directory that means something else
-there — edit it from a conversation on that machine.
+earlier one is left as it is.
+
+A task's directory is a path on one machine, and the task has to run on that machine. A `--cwd` is
+a path on the machine you type the command on, and without one `add` takes your conversation's
+directory. So when the task runs on another machine — an agent on a [remote host](remote-hosts.md)
+— the command is refused rather than storing a directory that means something else there: an `add`
+for that agent, an edit giving it a `--cwd`, and an edit moving a task to it with `--agent` while
+the task keeps a directory from the old machine. Run the command from a conversation on that
+machine instead (moving a task, add a `--cwd` there). A task with no directory is not affected, and
+neither is a bash task: it runs on the machine of the agent that registered it, where its directory
+came from.
 
 On the web UI, the clock at the right of the chat header opens the **⏰ Side tasks** panel of its
 own: the bottom has **Scheduled** and **Reviews** tabs. Under **Scheduled**, the **Tasks** sub-tab

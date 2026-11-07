@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A scheduled task no longer stores a directory from one machine to run on another.** `schedule
+  add --agent <an agent on a remote host>` without `--cwd` took the registering conversation's
+  directory — a path on the machine it was typed on — and `schedule edit --agent` moving a task to
+  such an agent kept the old machine's directory; either run then started where that path names a
+  different place, or nothing. Both are now refused, as a `--cwd` typed on another machine already
+  was for `edit` (and now is for `add`), and every refusal names what works: the command from a
+  conversation on the task's machine, adding a `--cwd` there when moving a task. A task without a
+  directory, a bash task (it runs where it was registered) and anything on one machine behave as
+  before.
+  [→](docs/scheduled-tasks.md)
+
 ## [2.47.0] - 2026-11-07
 
 A pass over what a gateway running for weeks, with dozens of topics streaming at once on two cores,

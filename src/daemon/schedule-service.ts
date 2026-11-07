@@ -91,7 +91,7 @@ export class ScheduleService {
       agent: this.registry.boundAgentOf(caller) ?? this.config.routing.default,
       ...optional('cwd', this.registry.workdirOf(caller)),
     };
-    const host = findAgent(this.config, from.agent)?.host;
+    const host = this.hostOfCaller(caller);
     if (host) Object.assign(from, { host });
     const targetConversation = this.registry.conversationAt(target.platform, target.address);
     const built = buildTask(input, {
@@ -105,6 +105,8 @@ export class ScheduleService {
       ...(targetConversation ? { targetConversation } : {}),
     });
     if (!built.ok) throw new Error(built.error);
+    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'add' }, input.cwd);
+    if (cwdProblem) throw new Error(cwdProblem);
     if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
       // The list is the agent's own (`/model` shows the same one), so a typo is refused HERE,
       // while the registering agent can still retry in this turn with a name that exists.
@@ -132,7 +134,7 @@ export class ScheduleService {
 
     const built = editTask(task, input, this.editContext(task));
     if (!built.ok) throw new Error(built.error);
-    const cwdProblem = this.cwdHostProblem(built.task, input.cwd, caller);
+    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'edit', before: task }, input.cwd);
     if (cwdProblem) throw new Error(cwdProblem);
     if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
       const why = await this.registry.scheduledModelProblem(built.task.run.agent, built.task.run.model, caller);
@@ -199,21 +201,58 @@ export class ScheduleService {
   }
 
   /**
-   * A `--cwd` is a directory on the machine the edit was typed on: the CLI resolved a relative
-   * path there, and an absolute one is still that machine's. When the task runs somewhere else the
-   * path names a different place (or nothing), so the edit is refused instead of stored. `add`
-   * takes the directory as the registering machine sees it for the same reason; a path on the
-   * task's machine is set by editing from a conversation there.
+   * A task's directory is a path on one machine, and the task has to run on that machine: anywhere
+   * else the same path names a different place, or nothing. A task whose directory belongs to one
+   * machine and whose runs happen on another is refused, not stored. Where the directory belongs:
+   *
+   * - a `--cwd`, to the machine the command was typed on — the CLI resolved a relative path there,
+   *   and an absolute one is still that machine's;
+   * - the one `add` takes by default, to the registering conversation's machine, whose directory it
+   *   is — so `add --agent <an agent on another host>` would hand that agent a path from here;
+   * - the one an edit keeps, to the machine the task ran on before the edit — `--agent` moving the
+   *   task to another host leaves its directory behind.
+   *
+   * Every refusal sends the command to the one place where both a `--cwd` and the default directory
+   * are the task's machine's: a conversation on that machine. A task with no directory (a fixed
+   * session) has nothing to check. A bash task never trips this: it runs where the registering agent
+   * does, which is where its directory came from, and edit cannot move it (`--agent` is refused).
    */
-  private cwdHostProblem(task: ScheduleTask, cwd: string | undefined, caller: ConversationId): string | undefined {
-    if (cwd === undefined) return undefined;
+  private cwdHostProblem(
+    task: ScheduleTask,
+    caller: ConversationId,
+    how: { verb: 'add' } | { verb: 'edit'; before: ScheduleTask },
+    given: string | undefined
+  ): string | undefined {
+    const dir = task.run.cwd;
+    if (dir === undefined) return undefined;
+    const callerHost = this.hostOfCaller(caller);
     const taskHost = this.hostOfTask(task);
-    const callerHost = findAgent(this.config, this.registry.boundAgentOf(caller) ?? this.config.routing.default)?.host;
-    if (taskHost === callerHost) return undefined;
+    const dirHost = given !== undefined || how.verb === 'add' ? callerHost : this.hostOfTask(how.before);
+    if (dirHost === taskHost) return undefined;
+    // Named from the reader's side: the agent reading this may itself be on a host, where "this
+    // machine" for the gateway's would point at the wrong one.
+    const name = (host: string | undefined): string => (host === callerHost ? 'this machine' : (host ?? "the gateway's machine"));
+    const runs = `this task runs on ${name(taskHost)}`;
+    if (given !== undefined) {
+      return `--cwd ${given} is a path on ${name(dirHost)}, but ${runs}; run the ${how.verb} from a conversation there`;
+    }
+    if (how.verb === 'add') {
+      return (
+        `${runs}, but would start in ${dir}, this conversation's directory on ${name(dirHost)}; ` +
+        "run the add from a conversation there, whose own directory — or a --cwd given there — is that machine's"
+      );
+    }
     return (
-      `--cwd ${cwd} is a path on ${callerHost ?? 'this machine'}, but this task runs on ${taskHost ?? 'this machine'}; ` +
-      'run the edit from a conversation there, or `rm` it and add it again with a path that machine can use'
+      `${runs} after this edit, but keeps its directory ${dir}, a path on ${name(dirHost)}; ` +
+      (callerHost === taskHost
+        ? 'give the edit a --cwd on this machine as well'
+        : 'run the edit from a conversation there, with a --cwd on that machine')
     );
+  }
+
+  /** The host the caller's agent runs on, which is where its `talkcode` command ran. Undefined = here. */
+  private hostOfCaller(caller: ConversationId): string | undefined {
+    return findAgent(this.config, this.registry.boundAgentOf(caller) ?? this.config.routing.default)?.host;
   }
 
   /** The host a task's runs happen on: a bash task's own host, else its agent's. Undefined = here. */
