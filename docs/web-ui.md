@@ -56,7 +56,12 @@ one; the agent can open one itself with
 title is the directory the topic works in, led by the machine when its agent runs on a
 [remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. Drag its right
 edge to make it wider or narrower — the width is kept in this browser — and double-click the edge
-for the default. On a narrow screen it becomes a drawer. The × in its header closes it at any
+for the default. On a narrow screen it becomes a drawer. Above the list, a search field and
+**Filter** narrow it: the search matches the title, the agent tag, the directory name, its full
+path and the machine, word by word, and the filters narrow by state, star, agent and host —
+several values in one group widen the result, values in different groups narrow it. A parent
+stays on screen dimmed when a sub-agent under it matches, and **Showing N of M** with **Clear**
+says what survived. The keyword and the filters are kept in this browser. The × in its header closes it at any
 width, and the same × closes the task panel on the right: the two are one component, with the
 same header and footer rows, the same slide and the same dimmed backdrop.
 

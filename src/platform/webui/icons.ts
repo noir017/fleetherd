@@ -49,6 +49,16 @@ const PATHS = {
     '<path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/>' +
     '<path d="M14 3v5h5M8.5 12.5h7M8.5 16.5h5"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',
+  // The filter bar's own row, and the row actions the lists put beside it.
+  filter: '<path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/>',
+  sort: '<path d="M8 20V4M4.5 7.5 8 4l3.5 3.5M16 4v16M12.5 16.5 16 20l3.5-3.5"/>',
+  arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  arrowDown: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+  more: '<circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+  power: '<path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/>',
+  trash: '<path d="M4 6.5h16M9.5 6.5v-2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2M6 6.5l.9 12.6a1.5 1.5 0 0 0 1.5 1.4h7.2a1.5 1.5 0 0 0 1.5-1.4L18 6.5M10 10.5v6M14 10.5v6"/>',
+  tag: '<path d="M3.5 4.5v7.3l9 9a1.5 1.5 0 0 0 2.1 0l6.2-6.2a1.5 1.5 0 0 0 0-2.1l-9-9H4.5a1 1 0 0 0-1 1z"/><circle cx="8" cy="8" r="1.6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
   searchWeb:
     '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M4 10.5h13"/>' +
     '<path d="M10.5 4c1.7 1.8 2.5 4 2.5 6.5S12.2 15.2 10.5 17c-1.7-1.8-2.5-4-2.5-6.5S8.8 5.8 10.5 4z"/>',

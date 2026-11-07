@@ -1438,6 +1438,213 @@ function onTop(log: HTMLElement): { text: string | null | undefined; hidden: num
   return { text: row?.querySelector('.b')?.textContent, hidden: log.scrollTop % ROW };
 }
 
+describe('webui page: the topic filter bar', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const C = 'c3d4e5f6';
+  const P = 'd4e5f6a7';
+  const K = 'e5f6a7b8';
+  const H = 'f6a7b8c9';
+  const N = 'b8c9d0e1';
+  /** One topic per state, an agent on a host, and a child whose title is the only thing matching. */
+  const fleet = (): Array<Record<string, unknown>> => [
+    { id: A, title: '[cc] parse the config', lastAt: 1000, msgCount: 0, live: true },
+    {
+      id: B,
+      title: '[cbc] parser tests',
+      lastAt: 999,
+      msgCount: 0,
+      running: true,
+      live: true,
+      dir: { name: 'uniagent', path: '/srv/uniagent', host: 'devbox' },
+    },
+    { id: C, title: '[cc] release notes', lastAt: 998, msgCount: 0, starred: true },
+    { id: P, title: '[cc] split the refactor', lastAt: 997, msgCount: 0, live: true },
+    { id: K, title: '[cbc] parser part one', lastAt: 996, msgCount: 0, parent: P, live: true },
+    {
+      id: H,
+      title: '[ag] deploy',
+      lastAt: 995,
+      msgCount: 0,
+      live: true,
+      dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
+    },
+    { id: N, title: '[ag] fix the flaky test', lastAt: 994, msgCount: 0, stage: 'answer', live: true },
+  ];
+  const ids = (h: Harness): string[] =>
+    Array.from(h.doc.querySelectorAll('#topics [data-topic]')).map((n) => n.getAttribute('data-topic') ?? '');
+  const type = async (h: Harness, s: string): Promise<void> => {
+    const q = h.doc.querySelector('.fb-q') as HTMLInputElement;
+    q.value = s;
+    q.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    await tick();
+  };
+  const openPanel = async (h: Harness): Promise<void> => {
+    await h.click('.fb-filter');
+  };
+  const toggle = async (h: Harness, group: string, value: string): Promise<void> => {
+    await h.click(`.fb-chip[data-fb-group="${group}"][data-fb-value="${value}"]`);
+  };
+  const withFleet = async (h: Harness): Promise<void> => {
+    await h.emit(sync(A, [], [A], { topics: fleet() }));
+  };
+
+  it('searches title, agent, directory, path and host, with every word required and no case', async () => {
+    const h = await open();
+    await withFleet(h);
+    expect(ids(h)).toHaveLength(6); // seven topics, one folded under its parent
+
+    await type(h, 'config');
+    expect(ids(h)).toEqual([A]);
+    await type(h, 'CONFIG');
+    expect(ids(h)).toEqual([A]);
+    // Two words, both hit the one title.
+    await type(h, 'parse config');
+    expect(ids(h)).toEqual([A]);
+    // One word from a title, one from another topic's title: no topic carries both.
+    await type(h, 'config parser');
+    expect(ids(h)).toEqual([]);
+
+    // The bracketed agent is searchable, and so is everything the second line shows.
+    await type(h, 'cbc');
+    expect(new Set(ids(h))).toEqual(new Set([P, K, B]));
+    await type(h, 'devbox');
+    expect(ids(h)).toEqual([B]);
+    await type(h, 'srv/uniagent');
+    expect(ids(h)).toEqual([B]);
+    await type(h, 'workspace');
+    expect(ids(h)).toEqual([H]);
+  });
+
+  it('keeps a matched child under its parent, dimmed, and opens the fold only for the result', async () => {
+    const h = await open();
+    await withFleet(h);
+    // Folded by default: the child is not in the list.
+    expect(ids(h)).not.toContain(K);
+
+    await type(h, 'parser part');
+    expect(ids(h)).toEqual([P, K]);
+    const parent = h.doc.querySelector(`[data-topic="${P}"]`)!;
+    const child = h.doc.querySelector(`[data-topic="${K}"]`)!;
+    expect(parent.classList.contains('ctx')).toBe(true);
+    expect(child.classList.contains('ctx')).toBe(false);
+    // The parent's own fold control is not on the filtered row: it could not close what the
+    // search opened anyway.
+    expect(parent.querySelector('[data-fold]')).toBeNull();
+
+    await type(h, '');
+    expect(ids(h)).not.toContain(K);
+    // The temporary expansion was not written down as an operator's choice.
+    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') || '{}')).toEqual({});
+  });
+
+  it('unions the values of one group and intersects across groups', async () => {
+    const h = await open();
+    await withFleet(h);
+    await openPanel(h);
+
+    await toggle(h, 'agent', 'cc');
+    expect(new Set(ids(h))).toEqual(new Set([A, P, C]));
+    await toggle(h, 'agent', 'cbc');
+    expect(new Set(ids(h))).toEqual(new Set([A, P, K, C, B]));
+
+    // The two agents are a union; a host narrows the same rows to an intersection.
+    await toggle(h, 'host', 'devbox');
+    expect(ids(h)).toEqual([B]);
+    // The two hosts union; the agent selection still intersects, and neither agent is on uniagent.
+    await toggle(h, 'host', 'uniagent');
+    expect(ids(h)).toEqual([B]);
+    await toggle(h, 'agent', 'cc');
+    await toggle(h, 'agent', 'cbc');
+    expect(new Set(ids(h))).toEqual(new Set([B, H]));
+  });
+
+  it('counts every option from the topics it has, and says what survived', async () => {
+    const h = await open();
+    await withFleet(h);
+    await openPanel(h);
+
+    const chips = Array.from(h.doc.querySelectorAll('.fb-chip'));
+    const count = (group: string, value: string): string | undefined =>
+      chips
+        .find((c) => c.getAttribute('data-fb-group') === group && c.getAttribute('data-fb-value') === value)
+        ?.querySelector('.fb-count')?.textContent ?? undefined;
+    expect(count('state', 'needs')).toBe('1');
+    expect(count('state', 'running')).toBe('1');
+    expect(count('state', 'idle')).toBe('4');
+    expect(count('state', 'none')).toBe('1');
+    expect(count('agent', 'cc')).toBe('3');
+    expect(count('agent', 'cbc')).toBe('2');
+    expect(count('agent', 'ag')).toBe('2');
+    expect(count('host', '__local')).toBe('5');
+    expect(count('host', 'devbox')).toBe('1');
+    expect(count('host', 'uniagent')).toBe('1');
+
+    await type(h, 'parser');
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 2 of 7');
+    expect((h.doc.querySelector('.fb-sum') as HTMLElement).hidden).toBe(false);
+    // The matched rows, not the parent kept for context, are what the line counts.
+  });
+
+  it('drops a selected value the caller no longer offers, and says so by showing everything', async () => {
+    const h = await open();
+    await withFleet(h);
+    await openPanel(h);
+    await toggle(h, 'agent', 'cc');
+    expect(new Set(ids(h))).toEqual(new Set([A, P, C]));
+
+    // A list where no cc topic survives — the chip that selected it is gone too, and the filter
+    // cannot keep hiding rows for a value nobody can see any more.
+    await h.emit({ t: 'topics', topics: [fleet()[1]!] });
+    expect(ids(h)).toEqual([B]);
+    expect(h.doc.querySelector('.fb-chip[data-fb-value="cc"]')).toBeNull();
+    expect((h.doc.querySelector('.fb-sum') as HTMLElement).hidden).toBe(true);
+  });
+
+  it('restores the keyword, the selection and an open panel after a reload', async () => {
+    const h = await open();
+    await withFleet(h);
+    await openPanel(h);
+    await type(h, 'parser');
+    await toggle(h, 'agent', 'cbc');
+
+    const saved = h.window.localStorage.getItem('aa_topic_filter');
+    expect(saved).toBeTruthy();
+    const again = await open({ storage: { aa_topic_filter: saved! } });
+    await withFleet(again);
+
+    expect((again.doc.querySelector('.fb-q') as HTMLInputElement).value).toBe('parser');
+    expect((again.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(false);
+    expect(again.doc.querySelector('.fb-chip[data-fb-value="cbc"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(ids(again)).toEqual([B, P, K]);
+  });
+
+  it('clears from the summary and from an empty result, and Escape empties the field', async () => {
+    const h = await open();
+    await withFleet(h);
+
+    await type(h, 'parser');
+    await h.click('.fb-sum .fb-clear');
+    expect((h.doc.querySelector('.fb-q') as HTMLInputElement).value).toBe('');
+    expect(ids(h)).toHaveLength(6);
+
+    await type(h, 'no such topic');
+    expect(ids(h)).toEqual([]);
+    expect(h.doc.querySelector('.topics-empty')?.textContent).toContain('No matching topics');
+    await h.click('.topics-empty .fb-clear');
+    expect(ids(h)).toHaveLength(6);
+
+    await type(h, 'parser');
+    const q = h.doc.querySelector('.fb-q') as HTMLInputElement;
+    q.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick();
+    expect(q.value).toBe('');
+    expect(ids(h)).toHaveLength(6);
+    // The same keystroke must not also put the whole sidebar away behind the field.
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(false);
+  });
+});
+
 describe('webui page: a full topic list, and the topics worth keeping', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
