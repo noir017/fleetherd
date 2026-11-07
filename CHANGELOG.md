@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI draws its own icons instead of emoji.** A glyph is drawn by whatever font the
+  reader's system has, so the page looked different on every machine, colour emoji ignored its
+  palette, and a symbol a font lacks showed as an empty box. Tool bubbles (📖 💻 🔍 …, the ✓ / ✗ and
+  a sub-agent's ↳), the lifecycle reactions (👀 ✅ ❌), menu marks (● ☑ ☐ ⌂) and page arrows, and
+  the page's own controls (☰, the gear, the star, a fold's arrow, the microphone, `>_`) are now
+  hand-drawn SVG in the text's colour, on its baseline. Only the web UI changes: every other
+  platform gets the same text as before, and an emoji an operator configured that has no icon is
+  still shown as itself.
+
 ## [2.47.1] - 2026-11-07
 
 ### Fixed

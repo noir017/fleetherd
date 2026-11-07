@@ -33,6 +33,7 @@ import { IDBFactory } from 'fake-indexeddb';
 
 import { renderPage } from './page.js';
 import { renderWebToolLines } from '../web-markdown.js';
+import { webMessageHtml } from './room.js';
 
 /** One `fetch` the page made, in the shape the assertions care about. */
 interface Call {
@@ -244,6 +245,20 @@ function sync(
 
 function message(id: string, html: string, own = false): Record<string, unknown> {
   return { id, html, at: 1758240000000, own };
+}
+
+/**
+ * What an element shows, with each icon (icons.ts, `ic-<name>`) read as `[name]` — an SVG has no
+ * text, so textContent alone would say a starred topic and an unstarred one look the same.
+ */
+function face(el: Element | null | undefined): string {
+  if (!el) return '';
+  const copy = el.cloneNode(true) as Element;
+  copy.querySelectorAll('svg.ic').forEach((svg) => {
+    const name = Array.from(svg.classList).find((c) => c.startsWith('ic-'))?.slice(3) ?? '?';
+    svg.replaceWith(`[${name}]`);
+  });
+  return copy.textContent ?? '';
 }
 
 /**
@@ -546,6 +561,42 @@ describe('webui page: rendering', () => {
     expect(h.el('topic-title').textContent).toBe('Topic a1b2c3d4');
     // Written into the URL, so the reload after it lands in the same room.
     expect(h.window.location.search).toBe('?t=a1b2c3d4');
+  });
+
+  it('draws the lifecycle reactions as icons, and one it has no icon for as itself', async () => {
+    const h = await open();
+    await h.emit(
+      sync('a1b2c3d4', [
+        { ...message('m1', '<p>done</p>', true), reactions: ['👀', '✅', '🎉'] },
+        { ...message('m2', '<p>failed</p>', true), reactions: ['❌'] },
+      ], ['a1b2c3d4'])
+    );
+
+    const meta = Array.from(h.doc.querySelectorAll('#log .t'));
+    expect(face(meta[0])).toMatch(/ {2}\[eye\] \[done\] 🎉$/);
+    expect(face(meta[1])).toMatch(/ {2}\[failed\]$/);
+    // Coloured as the emoji were: done green, failed red; seen stays the dim of the line.
+    expect(meta[0]?.querySelector('.ic-done')?.classList.contains('tone-ok')).toBe(true);
+    expect(meta[1]?.querySelector('.ic-failed')?.classList.contains('tone-err')).toBe(true);
+    expect(meta[0]?.querySelector('.ic-eye')?.getAttribute('class')).toBe('ic ic-eye');
+  });
+
+  it('draws its own controls as icons, leaving no emoji in the page around the conversation', async () => {
+    const h = await open({ terminal: true });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4', 'b2c3d4e5']));
+
+    expect(face(h.el('expand-sidebar'))).toBe('[menu]');
+    expect(face(h.el('term-toggle'))).toBe('[terminal]');
+    expect(face(h.el('skills-back'))).toBe('[chevronLeft]');
+    expect(face(h.el('opts-toggle').querySelector('.opts-gear'))).toBe('[gear]');
+    // A control is still named for whoever cannot see it.
+    expect(h.el('expand-sidebar').getAttribute('aria-label')).toBe('Show topics');
+    expect(h.el('term-toggle').getAttribute('aria-label')).toBe('Terminal');
+    // Nothing the page draws itself is an emoji any more (the script and stylesheet hold the
+    // glyphs they translate, so they are left out of what is read).
+    const shown = h.doc.body.cloneNode(true) as HTMLElement;
+    shown.querySelectorAll('script,style').forEach((n) => n.remove());
+    expect(shown.textContent).not.toMatch(/[\p{Extended_Pictographic}☰★☆▸▾■✓‹›]/u);
   });
 
   it('shows an operator message as typed, numbers and line breaks intact', async () => {
@@ -1425,6 +1476,9 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     // Drawn at once rather than on the broadcast, so a tap on a slow link does not look ignored.
     expect(order(h)).toEqual([C, A, B]);
     expect(h.doc.querySelector(`[data-star="${C}"]`)?.getAttribute('aria-pressed')).toBe('true');
+    // One star icon either way: the stylesheet fills it on .on, as ★ and ☆ were told apart.
+    expect([C, A].map((id) => face(h.doc.querySelector(`[data-star="${id}"]`)))).toEqual(['[star]', '[star]']);
+    expect(h.doc.querySelector(`[data-star="${C}"]`)?.classList.contains('on')).toBe(true);
     // A star leads its peers inside its state; it is not a group of its own, so no divider.
     expect(h.doc.querySelector('#topics .after-needs')).toBeNull();
     // Starring is not a reason to switch to it.
@@ -2066,8 +2120,7 @@ describe('webui page: menus', () => {
       { id: 'wdp:r:1', label: 'Next ▶' },
     ],
   });
-  const cells = (h: Harness, sel: string): string[] =>
-    Array.from(h.doc.querySelectorAll(sel)).map((b) => b.textContent ?? '');
+  const cells = (h: Harness, sel: string): string[] => Array.from(h.doc.querySelectorAll(sel)).map(face);
 
   it('puts the choices in the grid and the page controls on a row of their own under them', async () => {
     const h = await open();
@@ -2075,8 +2128,8 @@ describe('webui page: menus', () => {
 
     // Direct children of .btns are the choices; the controls are inside .nav, after them. Paging
     // used to sit in the middle of the list as two more things to pick.
-    expect(cells(h, '.btns > button')).toEqual(['⌂ workspace', '● talkcode', 'uniagent', '项目报告归档']);
-    expect(cells(h, '.btns > .nav > button')).toEqual(['◀ Prev', 'Next ▶']);
+    expect(cells(h, '.btns > button')).toEqual(['[home] workspace', '[dot] talkcode', 'uniagent', '项目报告归档']);
+    expect(cells(h, '.btns > .nav > button')).toEqual(['[chevronLeft] Prev', 'Next [chevronRight]']);
     expect(h.doc.querySelector('.btns > :last-child')?.className).toBe('nav');
   });
 
@@ -2094,10 +2147,10 @@ describe('webui page: menus', () => {
     await h.emit(sync('a1b2c3d4', [menu()], ['a1b2c3d4']));
 
     const lit = h.doc.querySelectorAll('.btns button.on');
-    expect(Array.from(lit).map((b) => b.textContent)).toEqual(['● talkcode']);
+    expect(Array.from(lit).map(face)).toEqual(['[dot] talkcode']);
     // The mark is its own element so it can be coloured — and the root's ⌂ is a mark, not a choice.
-    expect(lit[0]?.querySelector('.mk')?.textContent).toBe('●');
-    expect(h.doc.querySelector('button[data-btn="wdr:r:0"] .mk')?.textContent).toBe('⌂');
+    expect(face(lit[0]?.querySelector('.mk'))).toBe('[dot]');
+    expect(face(h.doc.querySelector('button[data-btn="wdr:r:0"] .mk'))).toBe('[home]');
     expect(h.doc.querySelector('button[data-btn="wdr:r:0"]')?.classList.contains('on')).toBe(false);
   });
 
@@ -2112,6 +2165,10 @@ describe('webui page: menus', () => {
 
     expect(h.doc.querySelector('button[data-btn="ask:r:0"]')?.classList.contains('on')).toBe(true);
     expect(h.doc.querySelector('button[data-btn="ask:r:1"]')?.classList.contains('on')).toBe(false);
+    // The mark is a 1em icon where its glyph was counted as one column: the menu asks for the
+    // difference on top of its widest label, or "☑ APAC" wraps its icon onto a line of its own.
+    expect(h.doc.querySelector<HTMLElement>('.btns')?.style.getPropertyValue('--cw')).toBe('4ch');
+    expect(h.doc.querySelector<HTMLElement>('.btns')?.style.getPropertyValue('--mk')).toBe('1');
   });
 
   it('a page control still posts its own id', async () => {
@@ -2379,7 +2436,7 @@ describe('webui page: the settings page', () => {
     // The scheduled tasks are a way elsewhere: a row and a chevron, no value.
     const link = body.querySelector('button.set-open[data-btn="sco:r:0"]');
     expect(link?.querySelector('.set-v')).toBeNull();
-    expect(link?.querySelector('.set-chev')).not.toBeNull();
+    expect(face(link?.querySelector('.set-chev'))).toBe('[chevronRight]');
     // One column of sections: no grid of rows left over from the two-column layout.
     expect(body.querySelector('.set-rows')).toBeNull();
   });
@@ -2510,12 +2567,12 @@ describe('webui page: the settings page', () => {
     const current = h.doc.querySelector('#settings-body .set-opt.on');
     expect(current?.getAttribute('data-btn')).toBe('stv:r:1');
     expect(current?.getAttribute('aria-current')).toBe('true');
-    expect(current?.querySelector('.set-check')?.textContent).toBe('✓');
+    expect(face(current?.querySelector('.set-check'))).toBe('[check]');
     expect(current?.querySelector('.set-opt-label')?.textContent).toBe('15m');
 
     const off = h.doc.querySelector('#settings-body button[data-btn="stv:r:0"]');
     expect(off?.classList.contains('on')).toBe(false);
-    expect(off?.querySelector('.set-check')?.textContent).toBe('');
+    expect(face(off?.querySelector('.set-check'))).toBe('');
     expect(off?.querySelector('.set-opt-detail')?.textContent).toBe('never reclaim');
 
     expect(h.doc.querySelector('#settings-body .set-head h3')?.textContent).toBe('Idle reclaim');
@@ -3017,7 +3074,7 @@ describe('webui page: sending', () => {
     await h.emit({ t: 'msg', msg: { ...ticked, buttons: [{ id: 'ask:r:0', label: '☑ EU' }] } });
     const button = h.doc.querySelector<HTMLButtonElement>('button[data-btn="ask:r:0"]');
     expect(button?.disabled).toBe(false);
-    expect(button?.textContent).toBe('☑ EU');
+    expect(face(button)).toBe('[boxOn] EU');
   });
 
   it('sends with a nonce and clears the composer', async () => {
@@ -4665,11 +4722,13 @@ describe('webui page: recording a voice message', () => {
   it('records, and sends the recording on its own the moment it stops', async () => {
     const h = await recording({ types: ['audio/webm;codecs=opus'] });
     expect(h.el('mic').hidden).toBe(false);
+    expect(face(h.el('mic'))).toBe('[mic]');
     await h.click('#mic');
     await tick();
     expect(h.recorders).toHaveLength(1);
     expect(h.recorders[0]!.mimeType).toBe('audio/webm;codecs=opus');
     expect(h.el('mic').classList.contains('rec')).toBe(true);
+    expect(face(h.el('mic'))).toBe('[stop] 0:00');
 
     h.recorders[0]!.feed('pretend-opus');
     await h.click('#mic');
@@ -4683,6 +4742,7 @@ describe('webui page: recording a voice message', () => {
     expect(atob(body.files[0]!.data)).toBe('pretend-opus');
     expect(h.recorders[0]!.tracksStopped()).toBe(true); // the microphone is let go
     expect(h.el('mic').classList.contains('rec')).toBe(false);
+    expect(face(h.el('mic'))).toBe('[mic]');
   });
 
   it('leaves a half-typed draft in the composer, unsent', async () => {
@@ -5093,7 +5153,7 @@ describe('webui page: tool bubbles fold and open', () => {
 
   /** A tool bubble in the shape `index.ts` posts one: the server's own line markup, and the kind. */
   function bubble(id: string, lines: string[]): Record<string, unknown> {
-    return { ...message(id, renderWebToolLines(lines.join('\n'))), kind: 'tools' };
+    return { ...message(id, webMessageHtml('tools', lines.join('\n'))), kind: 'tools' };
   }
 
   const rows = (h: Harness): HTMLElement[] => Array.from(h.doc.querySelectorAll<HTMLElement>('#log .tl'));
@@ -5155,7 +5215,22 @@ describe('webui page: tool bubbles fold and open', () => {
 
     await h.emit({ t: 'msg', msg: bubble('m1', [`💻 Bash: "${CMD}" ✓ 1.2s`, '📖 Read: "a.md"']) });
     expect(openRows(h)).toEqual([true, false]);
-    expect(rows(h)[0]?.textContent).toContain('✓ 1.2s');
+    expect(face(rows(h)[0])).toContain('[check] 1.2s');
+  });
+
+  it('draws the tool, a sub-agent and the finish mark as icons, and an emoji it has none for as itself', async () => {
+    const h = await open();
+    await h.emit(
+      sync(T, [bubble('m1', [`💻 Bash: "${CMD}" ✓ 1.2s`, '↳ fix tests · ✏️ Edit: "a.ts" ✗ 832ms', '↳ 🦀 Cargo: "build"'])], [T])
+    );
+
+    expect(rows(h).map(face)).toEqual([
+      `[terminal] Bash: "${CMD}" [check] 1.2s`,
+      '[subagent] fix tests · [pencil] Edit: "a.ts" [cross] 832ms',
+      '[subagent] 🦀 Cargo: "build"',
+    ]);
+    // The finish mark is still the part that stays in view when the command folds.
+    expect(face(rows(h)[1]?.querySelector('.tl-s'))).toBe(' [cross] 832ms');
   });
 
   it('a click that ends a selection leaves the row as it was', async () => {
@@ -5369,18 +5444,18 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     await h.emit({ t: 'topics', topics: list({ [B]: { parent: D }, [C]: { parent: B }, [D]: { starred: true } }) });
     // Folded on first sight: the column lists conversations, not the working detail behind one.
     expect(rows(h)).toEqual([D, A]);
-    expect(h.doc.querySelector(`#topics [data-fold="${D}"]`)?.textContent).toBe('▸ 1');
+    expect(face(h.doc.querySelector(`#topics [data-fold="${D}"]`))).toBe('[chevronRight] 1');
     await h.click(`#topics [data-fold="${D}"]`);
     // Opening one level does not open the next.
     expect(rows(h)).toEqual([D, B, A]);
-    expect(h.doc.querySelector(`#topics [data-fold="${B}"]`)?.textContent).toBe('▸ 1');
+    expect(face(h.doc.querySelector(`#topics [data-fold="${B}"]`))).toBe('[chevronRight] 1');
     await h.click(`#topics [data-fold="${B}"]`);
     expect(rows(h)).toEqual([D, B, C, A]);
     const row = (id: string): Element => h.doc.querySelector(`#topics [data-topic="${id}"]`)!;
     expect(row(D).className).not.toMatch(/\bsub\b/);
     expect(row(B).className).toMatch(/\bsub d1\b/);
     expect(row(C).className).toMatch(/\bsub d2\b/);
-    expect(row(D).querySelector('[data-fold]')?.textContent).toBe('▾ 1');
+    expect(face(row(D).querySelector('[data-fold]'))).toBe('[chevronDown] 1');
     expect(row(A).querySelector('[data-fold]')).toBeNull();
     // A child is a topic like any other: it can be starred and deleted.
     expect(row(B).querySelector('[data-del]')).not.toBeNull();
@@ -5394,7 +5469,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     // Folded on first sight, and the pill takes the colour of what it hides.
     expect(rows(h)).toEqual([D, A]);
     const pill = h.doc.querySelector(`#topics [data-fold="${D}"]`)!;
-    expect(pill.textContent).toBe('▸ 2');
+    expect(face(pill)).toBe('[chevronRight] 2');
     expect(pill.className).toContain('running');
     expect(pill.getAttribute('aria-expanded')).toBe('false');
     // Opening is the operator's choice, and it is kept as one.
@@ -5412,7 +5487,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     await h.emit(sync(C, [], [C]));
     await h.emit({ t: 'topics', topics: list({ [C]: { parent: D } }) });
     expect(rows(h)).toEqual([A, B, D, C]);
-    expect(h.doc.querySelector(`#topics [data-fold="${D}"]`)?.textContent).toBe('▾ 1');
+    expect(face(h.doc.querySelector(`#topics [data-fold="${D}"]`))).toBe('[chevronDown] 1');
   });
 
   it('draws a topic whose sub-agents work as running, not idle', async () => {
@@ -5668,7 +5743,7 @@ describe('webui page: the sidebar footer, and low attention', () => {
     // The footer itself holds two buttons and nothing else — the two menus are its children.
     const buttons = Array.from(h.el('sidebar-footer').children).filter((e) => e.tagName === 'BUTTON');
     expect(buttons.map((b) => b.id)).toEqual(['opts-toggle', 'manage-toggle']);
-    expect(h.el('opts-toggle').querySelector('.opts-gear')?.textContent).toContain('⚙');
+    expect(face(h.el('opts-toggle').querySelector('.opts-gear'))).toBe('[gear]');
     expect(h.el('manage-toggle').querySelector('.opts-gear svg')).not.toBeNull();
     expect(h.el('manage-toggle').querySelector('.opts-gear svg')?.getAttribute('viewBox')).toBe('0 0 24 24');
     expect(menuOpen(h)).toBe(false);

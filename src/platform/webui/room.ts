@@ -79,6 +79,7 @@ import type {
 } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
+import { toolGlyph } from './icons.js';
 import type { ClickRequest, ReviewOpRequest, SendRequest, WebEvent, WebMessage } from './protocol.js';
 import type { TerminalSessions } from './terminal-sessions.js';
 import { MAX_TOPICS, TopicStore, type Topic } from './topics.js';
@@ -203,7 +204,9 @@ interface Stored {
  * bubble's kind is given once and both ends must render the same way.
  */
 export function webMessageHtml(kind: MessageKind | undefined, text: string): string {
-  return kind === 'tools' || kind === 'report' ? renderWebToolLines(text) : renderWebMarkdown(text);
+  // Only a tool bubble's glyphs become icons: a report's lines are sub-agent updates, not tools.
+  if (kind === 'tools') return renderWebToolLines(text, toolGlyph);
+  return kind === 'report' ? renderWebToolLines(text) : renderWebMarkdown(text);
 }
 
 /**

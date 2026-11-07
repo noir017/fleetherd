@@ -54,6 +54,7 @@ naming it, and they are all of them:
 | `reading.ts` | Which files the page can read in place, and the HTML it is given for one. Pure. |
 | `page.ts` | The whole page (HTML + CSS + JS) as a module-level string |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is one |
+| `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |
 | `webpush.ts` | Web Push, server half: the VAPID key, the subscribed devices, RFC 8291 encryption, the endpoint allowlist |
 | `sw.ts` | The service worker (`sw.js`) as a string: shows a push, opens the topic when it is tapped — and nothing else |
 | [`../web-markdown.ts`](../web-markdown.ts) | Markdown → escaped HTML; lives with the other converters |
@@ -657,7 +658,9 @@ This page can fold a line itself, so it asks for more of it and does the cutting
   the XSS boundary) instead of markdown: one `.tl` per line, the command in `.tl-c` and the
   finish mark in `.tl-s`. Markdown would merge the lines into one paragraph and read `*.ts` or
   `a_b_c` in a command as emphasis. The mark is parsed back off the line end so that a fold cuts
-  the command and never the ✓ — the one part that says the tool is done.
+  the command and never the ✓ — the one part that says the tool is done. `room.ts` hands it
+  `toolGlyph` (`icons.ts`) for a tool bubble, which draws the head emoji, a sub-agent's `↳` and
+  the ✓ / ✗ as [icons](#icons); a sub-agent report goes through it without, its `🔔` left as text.
 - **The page** keeps which lines are open per message key, in script state rather than as a class
   on the element: a bubble is edited at every tool start and finish, and each edit rewrites its
   markup, so a class would snap shut at the next ✓. `foldLines` stamps the state into the markup
@@ -1611,3 +1614,28 @@ the test that names it. Its real-browser half was checked on 2026-10-24 in Chrom
 real server behind a proxy that played the four failures (an Access 302 to another origin, a send
 swallowed, an answer lost, the browser offline); the same run against the code before it lost the
 draft and put the restored failure at the top.
+
+## Icons
+
+Nothing on this page is an emoji or a symbol glyph any more: every mark the page draws itself is a
+hand-drawn inline SVG from `icons.ts` — 24×24, unfilled, stroked in `currentColor`, sized to 1em
+by `.ic` so it takes the size of the glyph it replaced. A glyph is drawn by whatever font the
+reader's system has: the page looked different on every machine, colour emoji ignored the
+palette, and a symbol a font lacks is an empty box (why the power button was an SVG first).
+
+The text that reaches every platform is unchanged — a chat message cannot carry an SVG, so core
+and the daemon still write `✅`, `☑ EU`, `💻 Bash: …`. The swap happens where this page shows it:
+
+- **Tool bubbles**, on the server: `renderWebToolLines(text, toolGlyph)`, so the markup is tested
+  in TypeScript like the rest of the converter.
+- **Menu marks** (`●` `☑` `☐` `⌂`), **page arrows** (`◀ Prev`, `Next ▶`, `‹`) and **lifecycle
+  reactions** (`👀` `✅` `❌`), in the script: `clientIcons()` is written into it as `IC`, keyed
+  by the glyph core and config write. A mark is a 1em icon where `labelWidth` counted one column,
+  so a menu with marks adds the difference (`--mk`, `1em - 1ch`) to its column width.
+- **The page's own controls** (☰, the gear, the star, a fold's arrow, ✓ in a list, the microphone
+  and its stop square, `>_`), straight in the markup.
+
+A glyph with no icon stays the text it is: an operator who sets `tools.emojiMap` or
+`inbound.reactions` to other emoji sees those emoji. `icons.test.ts` fails if a default in
+`config/schema.ts` gains a value with no icon. Copying a tool line copies its text without the
+emoji, since an SVG has none; the conversation library keeps the text as it was sent.

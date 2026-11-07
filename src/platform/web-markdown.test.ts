@@ -271,6 +271,42 @@ describe('web-markdown: a tool bubble', () => {
   it('drops blank lines rather than drawing empty rows', () => {
     expect(renderWebToolLines('\n💻 Bash: "ls"\n\n')).toBe(`<div class="tools">${tl('💻 Bash: &quot;ls&quot;')}</div>`);
   });
+
+  describe('with a glyph swap (the web UI icons)', () => {
+    /** Marks what was swapped, so a test sees exactly which glyphs were asked about. */
+    const glyph = (g: string): string | undefined => (g === '🦀' ? undefined : `<i>${g}</i>`);
+
+    it('swaps the head emoji and the finish mark, and escapes the rest as before', () => {
+      expect(renderWebToolLines('💻 Bash: "a <b>" ✓ 5ms', glyph)).toBe(
+        `<div class="tools">${tl('<i>💻</i> Bash: &quot;a &lt;b&gt;&quot;', ' <i>✓</i> 5ms')}</div>`
+      );
+    });
+
+    it("finds the emoji after a sub-agent's ↳ and its name, and takes no ` · ` in the preview for a name", () => {
+      expect(renderWebToolLines('↳ fix tests · ✏️ Edit: "a.ts"\n↳ 📖 Read: "x · y.md"', glyph)).toBe(
+        '<div class="tools">' +
+          tl('<i>↳</i> fix tests · <i>✏️</i> Edit: &quot;a.ts&quot;') +
+          tl('<i>↳</i> <i>📖</i> Read: &quot;x · y.md&quot;') +
+          '</div>'
+      );
+    });
+
+    it('leaves a glyph the swap has nothing for as the text it is, and a line with no emoji alone', () => {
+      expect(renderWebToolLines('↳ 🦀 Cargo: "build"\n↳ * Custom: "x"\nplain: "✓ 5ms"', glyph)).toBe(
+        '<div class="tools">' +
+          tl('<i>↳</i> 🦀 Cargo: &quot;build&quot;') +
+          tl('<i>↳</i> * Custom: &quot;x&quot;') +
+          tl('plain: &quot;✓ 5ms&quot;') +
+          '</div>'
+      );
+    });
+
+    it('a name cannot smuggle markup through the swap', () => {
+      const html = renderWebToolLines('↳ <img src=x> · 💻 Bash: "ls"', glyph);
+      expect(html).not.toContain('<img');
+      expect(html).toContain('<i>↳</i> &lt;img src=x&gt; · <i>💻</i> Bash');
+    });
+  });
 });
 
 describe('renderWebMarkdown: links to another topic', () => {
