@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.48.0] - 2026-11-07
+
 ### Added
 
 - **`contextBudget` moves where agy compacts.** agy compacts where Google tells it to, per model, with
