@@ -1731,12 +1731,59 @@ describe('webui page: the topic filter bar', () => {
     expect(h.doc.querySelector('.fb-chip[data-fb-value="cbc"]')?.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('says Clear all topics clears the whole list while a filter is on', async () => {
+  it('says Clear all topics applies to the whole list while a filter is on', async () => {
     const h = await open({ confirm: true });
     await withFleet(h);
     await type(h, 'parser');
     await h.click('#clear-topics');
-    expect(h.confirms[0]).toContain('This clears every topic, not only the ones shown.');
+    expect(h.confirms[0]).toContain('This applies to every topic, not only the ones shown.');
+  });
+
+  it('lets Escape reach a running recording instead of swallowing it', async () => {
+    const h = await open({ mic: { types: ['audio/webm;codecs=opus'] } });
+    await withFleet(h);
+    await h.click('#mic');
+    await tick();
+    expect(h.el('mic').classList.contains('rec')).toBe(true);
+    await openPanel(h);
+
+    // Escape is pressed with the focus inside the bar. A recording owns that keystroke: it has
+    // to be discarded, and the bar must not fold its panel and stop the event on the way.
+    const btn = h.doc.querySelector('.fb-filter') as HTMLElement;
+    btn.focus();
+    btn.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick();
+    await tick();
+
+    expect(h.el('mic').classList.contains('rec')).toBe(false);
+    expect(h.recorders[0]!.tracksStopped()).toBe(true);
+    expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('lets Escape close a model list that is open over the filter bar', async () => {
+    const list = { ok: true, agent: 'cc', current: 'm1', options: [{ value: 'm1', name: 'One' }] };
+    const h = await open({ replies: { [`api/models?t=${A}`]: list } });
+    await withFleet(h);
+    await h.emit({ t: 'status', status: { agent: 'cc', model: 'm1' } });
+    await openPanel(h);
+    // The model list is opened from the status strip, then the panel from the bar without a
+    // bubbling click: a real outside click would put one of them away first, so this is the
+    // keyboard order — the popup over a panel the person already had open.
+    const chip = h.doc.querySelector('#status .st-model') as HTMLElement;
+    chip.dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    await tick();
+    expect(h.el('model-pop').hidden).toBe(false);
+    const btn = h.doc.querySelector('.fb-filter') as HTMLElement;
+    btn.dispatchEvent(new h.window.MouseEvent('click', { bubbles: false }));
+    await tick();
+    expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(false);
+
+    btn.focus();
+    btn.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick();
+
+    expect(h.el('model-pop').hidden).toBe(true);
+    expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(false);
   });
 });
 
@@ -4664,6 +4711,20 @@ describe('webui page: the narrow-screen stylesheet', () => {
     // The phone block keeps its own copy: at 640px the sidebar is a drawer and the composer is
     // 616px, wider than this query's threshold, and two rows are the layout a phone shipped with.
     expect(narrowBlock()).toContain('#row{flex-wrap:wrap}');
+  });
+
+  it('moves the filter bar sort pair to its own line in a narrow panel', () => {
+    // The scheduled panel is 240–320px at every window size, so the bar's own width is what
+    // decides this — a viewport query never could. Same shape as the composer's container rule.
+    const html = renderPage('Chat', false);
+    expect(html).toMatch(/\.filterbar\{[^}]*container-type:inline-size/);
+    const css = blockAt('@container (max-width:360px){');
+    expect(css).toContain('.fb-row{flex-wrap:wrap}');
+    expect(css).toContain('.fb-tools{flex-basis:100%;justify-content:flex-end}');
+    // It stands on its own, outside the phone block: a wide window with a narrow panel needs it.
+    expect(narrowBlock()).not.toContain('@container');
+    // The sort select is a field too; Safari zooms the page in under 16px and stays there.
+    expect(narrowBlock()).toContain('.fb-sort select{font-size:16px;max-width:140px}');
   });
 
   it('structures the composer with input first and buttons grouped for two-row mobile flow', () => {

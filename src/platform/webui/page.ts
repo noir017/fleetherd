@@ -3930,7 +3930,10 @@ const SCRIPT = `
    *   sort?: {options: [{value, label}], value?, dir?: 'asc' | 'desc'},
    *   onChange: (state) => void
    * }
-   * setGroups(null) means "not loaded yet": nothing is offered and nothing is pruned.
+   * setGroups(null) is for the first frame only, before the caller's data has arrived: it offers
+   * nothing and prunes nothing. A refresh is not this — keep the last options by passing them
+   * again (or leave them alone until the new ones are in hand), because a reload that lands
+   * empty would prune a selection exactly as a genuinely empty list would.
    * Returns {el, state, active, setGroups, setCounts, clear, destroy}. el is appended by the
    * caller; destroy removes the document listener and the node.
    */
@@ -4180,9 +4183,11 @@ const SCRIPT = `
     document.addEventListener('click', onDocClick);
 
     /**
-     * Replace the option lists. null means "the caller has not loaded its data yet" — an empty
-     * array here would be read as "every value is gone", and a saved selection would be pruned
-     * by a list that had not arrived (the scheduled panel's first frame is exactly this).
+     * Replace the option lists. null is only for the first frame, before the caller's data has
+     * arrived: an empty array here would be read as "every value is gone", and a saved selection
+     * would be pruned by a list that had not arrived (the scheduled panel's first frame is
+     * exactly this). Not a refresh signal: while reloading, pass the options still on screen
+     * again rather than null, or the same pruning waits one step later.
      */
     function setGroups(next){
       if(next == null) return;
@@ -5185,7 +5190,7 @@ const SCRIPT = `
     onChange: function(){ paintTopics(); }
   });
   $('topics-filter').appendChild(topicFilter.el);
-  // Until the first list arrives there is nothing to offer; null says "not loaded", so a
+  // The first frame, before the first list arrives: null says "nothing to offer yet", so a
   // selection restored from storage is not pruned as if its option had gone.
   topicFilter.setGroups(null);
 
@@ -5335,7 +5340,7 @@ const SCRIPT = `
     if(stars && !gone){ alert('Every topic is starred, so there is nothing to clear. Unstar one first.'); return; }
     // The button clears the whole list, not the filtered rows — say that where a search or a
     // filter is on screen, or it reads as "clear these three".
-    var scope = topicFilter && topicFilter.active() ? ' This clears every topic, not only the ones shown.' : '';
+    var scope = topicFilter && topicFilter.active() ? ' This applies to every topic, not only the ones shown.' : '';
     if(!confirm(stars
       ? 'Delete '+gone+' topic'+(gone===1?'':'s')+'? The '+stars+' starred one'+(stars===1?' is':'s are')+' kept.'+scope+' This cannot be undone.'
       : 'Delete all ' + topics.length + ' topics?'+scope+' This cannot be undone.')) return;
@@ -6563,11 +6568,13 @@ const SCRIPT = `
     else if(!recStarting && topic) startRec();
   });
   // Escape throws a recording away — unless it is an IME cancelling its candidate list, which is
-  // a different Escape and must not also cost the recording.
+  // a different Escape and must not also cost the recording. Captured, and stopped there: while a
+  // recording is running Escape belongs to it, not to whatever the focus is on — the filter bar's
+  // own handler would otherwise fold its panel and swallow the keystroke.
   document.addEventListener('keydown', function(e){
     if(e.isComposing) return;
-    if(e.key === 'Escape' && rec) stopRec(false);
-  });
+    if(e.key === 'Escape' && rec){ stopRec(false); e.stopPropagation(); }
+  }, true);
 
   function suggest(){
     var v=input.value;
