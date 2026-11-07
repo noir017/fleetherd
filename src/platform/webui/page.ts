@@ -147,6 +147,68 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .tone-err{color:#f87171}
 .panel-head .add{font-size:15px;font-weight:600}
 
+/* ── The filter bar ───────────────────────────────────────────────────────────
+   One component for every list that grows a search box (the topic sidebar first,
+   the scheduled panel's task list next): a row of search + Filter + optional sort,
+   a panel of chip groups that folds under it, and the "Showing N of M" line while
+   either is in use. It sits between the header and the scrolling list, so it costs
+   the column one row rather than scrolling out of reach with the rows it filters.
+
+   The search field is 12.5px on a desktop and 16px under 640px: Safari zooms the
+   whole page in on a focused field under 16px and does not zoom back out, the same
+   rule the composer follows. */
+#topics-filter{flex:0 0 auto}
+.filterbar{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid var(--line);container-type:inline-size}
+.fb-row{display:flex;align-items:center;gap:5px;min-width:0}
+.fb-search{flex:1;min-width:0;display:flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 7px;background:var(--field);border:1px solid transparent;border-radius:5px}
+.fb-search:focus-within{border-color:#3d3d3d}
+.fb-search .ic{width:12px;height:12px;color:var(--dim)}
+.fb-q{flex:1;min-width:0;height:100%;padding:0;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:12.5px}
+.fb-q::placeholder{color:#6b7683}
+.fb-qclear{display:inline-flex;align-items:center;justify-content:center;background:none;border:0;color:var(--dim);cursor:pointer;padding:2px;border-radius:3px;line-height:1}
+.fb-qclear:hover{color:var(--fg);background:#2a2a2a}
+.fb-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 7px;background:none;border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap}
+.fb-btn:hover{color:var(--fg);border-color:#555}
+.fb-btn[aria-expanded="true"],.fb-btn.on{color:var(--fg);background:var(--field)}
+.fb-btn .ic{width:12px;height:12px}
+/* A selection is a state, not a label: the dot on Filter says one exists with the
+   panel shut. Same blue as a running row, the only other "something is on" mark. */
+.fb-filter{position:relative}
+.fb-dot{position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:#38bdf8}
+.fb-tools{display:flex;align-items:center;gap:5px;flex:none;margin-left:auto}
+/* The panel this bar next goes into is 240–320px, where search + Filter + a sort field on one
+   line leaves the search a sliver. Under 360px of bar the sort pair moves to a line of its own,
+   right-aligned under Filter; the search keeps the whole first line. */
+@container (max-width:360px){
+  .fb-row{flex-wrap:wrap}
+  .fb-tools{flex-basis:100%;justify-content:flex-end}
+}
+.fb-sort{display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 6px;border:1px solid var(--line);border-radius:5px;color:var(--dim);min-width:0}
+.fb-sort:focus-within{border-color:#555;color:var(--fg)}
+.fb-sort .ic{width:12px;height:12px;flex:none}
+.fb-sort select{appearance:none;background:none;border:0;outline:0;color:inherit;font:inherit;font-size:12px;line-height:1;padding:0;max-width:88px;cursor:pointer}
+.fb-sort option{background:#1e1e1e;color:var(--fg)}
+.fb-dir{padding:0;width:28px;flex:none}
+.fb-sum{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);line-height:1.4}
+.fb-sum .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:11px;cursor:pointer;padding:1px 3px;border-radius:3px}
+.fb-sum .fb-clear:hover{text-decoration:underline}
+.fb-panel{display:flex;flex-direction:column;gap:7px;max-height:min(42vh,320px);overflow-y:auto;border-top:1px solid var(--line);padding-top:7px}
+.fb-group{display:flex;flex-direction:column;gap:4px}
+.fb-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.fb-chips{display:flex;flex-wrap:wrap;gap:4px}
+.fb-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;background:none;border:1px solid var(--line);border-radius:11px;color:var(--dim);font:inherit;font-size:11.5px;line-height:1.5;cursor:pointer;white-space:nowrap}
+.fb-chip:hover{color:var(--fg);border-color:#555}
+.fb-chip.on{color:#fff;background:#24455a;border-color:#3a6f93}
+.fb-chip .ic{width:10px;height:10px}
+.fb-count{opacity:.65;font-size:10px}
+/* A row kept only because a topic under it matched is context, not a result: it is
+   drawn so the hierarchy still reads, and dimmed so the matches themselves stand out. */
+#topics .topic-item.ctx{opacity:.5}
+/* What the list says instead of rows when a search or a filter matches nothing. */
+.topics-empty{display:flex;align-items:center;gap:8px;padding:14px 4px;color:var(--dim);font-size:12px}
+.topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
+.topics-empty .fb-clear:hover{text-decoration:underline}
+
 #topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding:8px}
 /* The row's colour is a variable because the hover buttons' fade (.topic-acts) has to end in exactly
    it: a fade into any other colour shows as a band across the title. #171717 is #sidebar's own. */
@@ -1086,6 +1148,17 @@ button:disabled{opacity:.5;cursor:default}
   #app.sb-open #backdrop{display:block}
   #sidebar>.panel-resize{display:none}
   #topics .topic-item{padding:10px 9px}
+  /* The filter bar in the drawer: the same finger-sized field as the composer, and a
+     16px search box — the rule is the zoom, not the look. */
+  .filterbar{padding:8px 10px}
+  .fb-search{height:36px}
+  .fb-q{font-size:16px}
+  .fb-btn,.fb-sort{height:36px}
+  .fb-sort select{font-size:16px;max-width:140px}
+  .fb-dir{width:36px}
+  .fb-chip{min-height:32px;padding:4px 10px}
+  .fb-sum{font-size:12px}
+  .fb-sum .fb-clear,.topics-empty .fb-clear{min-height:32px;font-size:12px}
   /* The header and the footer row are finger targets here: 12px text in 7px of padding is a
      30px target, and the × is the only way out of a panel that covers the chat. 49px rather
      than 42 so a 44px box fits without the bar growing twice. */
@@ -3642,6 +3715,33 @@ const SCRIPT = `
     }
     var open={}, up=byId[topic], hops=0;
     while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
+    // The bar's state, read once: which topics match, and which are drawn only as the ancestor of
+    // one that does. A matching sub-agent's parent has to stay above it — drawn as a root, the
+    // child would read as a conversation of its own — and is dimmed so the match still stands out.
+    var fs = topicFilter ? topicFilter.state() : null;
+    var keep=null, faded={}, matched=visible.length, words=[], filtering=false;
+    if(fs){
+      var anySel=false;
+      for(var gk in fs.sel) if(fs.sel[gk] && fs.sel[gk].length){ anySel=true; break; }
+      if(fs.q.trim() || anySel){
+        filtering=true;
+        words=fs.q.trim().toLowerCase().split(/\\s+/);
+        keep={}; matched=0;
+        var hits=[];
+        for(i=0;i<visible.length;i++){
+          if(topicMatch(visible[i], words, fs.sel)){ keep[visible[i].id]=1; hits.push(visible[i].id); }
+        }
+        matched=hits.length;
+        for(i=0;i<hits.length;i++){
+          var anc=byId[hits[i]], n=0;
+          while(anc && anc.parent && byId[anc.parent] && n++<32){
+            anc=byId[anc.parent];
+            if(keep[anc.id]===1) break;
+            if(!keep[anc.id]){ keep[anc.id]=2; faded[anc.id]=true; }
+          }
+        }
+      }
+    }
     var rows=[], seen={}, dividers={};
     function state(t, depth){
       var ch=kids[t.id]||[], s='';
@@ -3657,37 +3757,65 @@ const SCRIPT = `
     function walk(t, depth){
       if(seen[t.id]) return;
       seen[t.id]=true;
-      var ch=kids[t.id]||[];
-      var shut=ch.length>0 && folded[t.id]!==false && !open[t.id];
-      rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
+      var all=kids[t.id]||[], ch=all;
+      if(keep){
+        ch=[];
+        for(var c=0;c<all.length;c++) if(keep[all[c].id]) ch.push(all[c]);
+      }
+      // A search or a filter opens every parent on the way to a match, without writing that to
+      // the folded map: folding is how the whole list is browsed, not a property of a result.
+      var shut=!keep && ch.length>0 && folded[t.id]!==false && !open[t.id];
+      rows.push({t:t, depth:depth, kids:keep?0:ch.length, shut:shut, under:shut?state(t, 0):'', dim:Boolean(keep && faded[t.id])});
       if(shut) return;
       for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
     }
-    // What needs the person first (needsYou), most pressing first, each with the topics it opened.
-    var pinned=visible.filter(needsYou).sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
-    for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
+    // What needs the person first (needsYou), most pressing first, each with the topics it
+    // opened. Not while filtering: a result is read as a tree under its parent, and pulling a
+    // matching child out to the top would cut it from the row that says what it belongs to.
+    if(!keep){
+      var pinned=visible.filter(needsYou).sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+      for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
+    }
     var afterPinned=rows.length;
+    // The rank a filtered root is ordered by: its own when it matched, otherwise the best of the
+    // matches under it, so a hit is not buried under the state of a parent kept only for context.
+    function bestRank(t, depth){
+      if(!keep) return stateRank(t);
+      var best = keep[t.id]===1 ? stateRank(t) : 9;
+      var ch = kids[t.id] || [];
+      for(var k=0;k<ch.length && depth<32;k++){
+        if(!keep[ch[k].id]) continue;
+        var r=bestRank(ch[k], depth+1);
+        if(r<best) best=r;
+      }
+      return best;
+    }
+    var candidates = keep ? roots.filter(function(r){ return Boolean(keep[r.id]); }) : roots;
     // Then everything else in the order the list is read: working, a resident agent with nothing
     // to do, and no agent at all (the decision group is already drawn above). The daemon's order —
     // most recently active first — holds inside a state, and a starred row leads its unstarred
     // peers there: a star is a promise not to forget a topic, not a claim on the top of the column.
-    var ordered=roots.slice().sort(function(a,b){
-      var ra=stateRank(a), rb=stateRank(b), d=ra-rb;
+    var ordered=candidates.slice().sort(function(a,b){
+      var ra=bestRank(a, 0), rb=bestRank(b, 0), d=ra-rb;
       if(d) return d;
       if(ra===0) d=NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage];
       return d || (b.starred?1:0)-(a.starred?1:0);
     });
     for(i=0;i<ordered.length;i++) walk(ordered[i], 0);
     for(i=0;i<visible.length;i++){
-      // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
-      var hidden=false, a=visible[i], n=0;
-      while(a && a.parent && byId[a.parent] && n++<32){ if(seen[a.parent] && folded[a.parent]!==false && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
+      if(keep && !keep[visible[i].id]) continue;
+      // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen. A filtered
+      // list has no folded parents (walk opened them), so every kept row is reachable.
+      var hidden=false, a=visible[i], n2=0;
+      if(!keep){
+        while(a && a.parent && byId[a.parent] && n2++<32){ if(seen[a.parent] && folded[a.parent]!==false && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
+      }
       if(!seen[visible[i].id] && !hidden) walk(visible[i], 0);
     }
-    if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
+    if(afterPinned && afterPinned<rows.length && !keep) dividers[afterPinned]=true;
     var stars=0;
     for(i=0;i<roots.length;i++) if(roots[i].starred) stars++;
-    return {rows:rows, dividers:dividers, stars:stars};
+    return {rows:rows, dividers:dividers, stars:stars, matched:keep?matched:visible.length, total:visible.length, filtering:filtering};
   }
 
   /** Whether a topic this one opened, or one of theirs, is working or asking. */
@@ -3776,10 +3904,425 @@ const SCRIPT = `
     return {tag:'['+tag+']', rest:rest};
   }
 
+  // The topic list's bar, built with the rest of the page. paintTopics keeps its option lists and
+  // counts in step; the rows are filtered from the same state in topicRows.
+  var topicFilter = null;
+
+  /**
+   * The filter bar a list uses when it has outgrown a plain column: one row of search + Filter
+   * (+ an optional sort), a panel of chip groups under it, and a "Showing N of M" line while
+   * either is in use.
+   *
+   * The component owns the state and the widgets, not the data. groups are the options the
+   * caller has right now, and onChange is the caller's cue to re-filter and re-paint its own
+   * rows; it then reports how many survived with setCounts(shown, total), because only the
+   * caller knows that. setGroups is how a live list keeps the chips honest — agents and hosts
+   * appear and disappear — and a selected value that is no longer offered is dropped, so a chip
+   * cannot filter the list to nothing for a reason the panel no longer shows.
+   *
+   * The keyword, the selected values, the sort field and its direction, and whether the panel is
+   * open are persisted under key; a reload lands on the same view. The option lists and the
+   * counts are not: they describe the data, which the caller re-states on every paint.
+   *
+   * opts: {
+   *   key, placeholder,
+   *   groups: [{id, label, options: [{value, label, icon?, count?}]}],
+   *   sort?: {options: [{value, label}], value?, dir?: 'asc' | 'desc'},
+   *   onChange: (state) => void
+   * }
+   * setGroups(null) is for the first frame only, before the caller's data has arrived: it offers
+   * nothing and prunes nothing. A refresh is not this — keep the last options by passing them
+   * again (or leave them alone until the new ones are in hand), because a reload that lands
+   * empty would prune a selection exactly as a genuinely empty list would.
+   * Returns {el, state, active, setGroups, setCounts, clear, destroy}. el is appended by the
+   * caller; destroy removes the document listener and the node.
+   */
+  function makeFilterBar(opts){
+    var key = opts.key;
+    var groups = opts.groups || [];
+    var sortDef = opts.sort || null;
+    var counts = null;
+    var st = {q:'', sel:{}, sort:'', dir:'', open:false};
+    try {
+      var saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if(saved && typeof saved === 'object'){
+        if(typeof saved.q === 'string') st.q = saved.q;
+        if(saved.sel && typeof saved.sel === 'object' && !Array.isArray(saved.sel)){
+          var keys0 = Object.keys(saved.sel);
+          for(var k0=0;k0<keys0.length;k0++){
+            var sv = saved.sel[keys0[k0]];
+            if(!Array.isArray(sv)) continue;
+            var vals = [];
+            for(var v0=0;v0<sv.length;v0++) if(typeof sv[v0] === 'string') vals.push(sv[v0]);
+            if(vals.length) st.sel[keys0[k0]] = vals;
+          }
+        }
+        if(typeof saved.sort === 'string') st.sort = saved.sort;
+        if(saved.dir === 'asc' || saved.dir === 'desc') st.dir = saved.dir;
+        st.open = saved.open === true;
+      }
+    } catch(x){}
+    if(sortDef){
+      var offered = [];
+      for(var s0=0;s0<sortDef.options.length;s0++) offered.push(sortDef.options[s0].value);
+      if(offered.indexOf(st.sort) < 0){
+        st.sort = sortDef.value && offered.indexOf(sortDef.value) >= 0 ? sortDef.value : (offered[0] || '');
+      }
+      if(!st.dir) st.dir = sortDef.dir === 'desc' ? 'desc' : 'asc';
+    } else { st.sort = ''; st.dir = ''; }
+
+    var root = document.createElement('div');
+    root.className = 'filterbar';
+    var html = '<div class="fb-row">'
+      + '<div class="fb-search">' + IC.icon.search
+      + '<input class="fb-q" type="text" autocomplete="off" spellcheck="false"'
+      + ' placeholder="' + text(opts.placeholder || 'Search') + '" aria-label="' + text(opts.placeholder || 'Search') + '">'
+      + '<button type="button" class="fb-qclear" title="Clear search" aria-label="Clear search" hidden>' + IC.icon.cross + '</button>'
+      + '</div>'
+      + '<button type="button" class="fb-filter fb-btn" aria-expanded="false" title="Filter">'
+      + IC.icon.filter + '<span>Filter</span><span class="fb-dot" hidden></span></button>';
+    if(sortDef){
+      html += '<span class="fb-tools"><span class="fb-sort" title="Sort">' + IC.icon.sort
+        + '<select class="fb-sortsel" aria-label="Sort"></select></span>'
+        + '<button type="button" class="fb-dir fb-btn" aria-label="Ascending" title="Ascending"></button></span>';
+    }
+    html += '</div>'
+      + '<div class="fb-sum" hidden><span class="fb-sumtext"></span><button type="button" class="fb-clear">Clear</button></div>'
+      + '<div class="fb-panel" hidden></div>';
+    root.innerHTML = html;
+
+    var q = root.querySelector('.fb-q');
+    var qClear = root.querySelector('.fb-qclear');
+    var fBtn = root.querySelector('.fb-filter');
+    var dot = root.querySelector('.fb-dot');
+    var panel = root.querySelector('.fb-panel');
+    var sum = root.querySelector('.fb-sum');
+    var sumText = root.querySelector('.fb-sumtext');
+    var clearBtn = root.querySelector('.fb-clear');
+    var sortSel = root.querySelector('.fb-sortsel');
+    var dirBtn = root.querySelector('.fb-dir');
+
+    function hasSel(){
+      for(var i=0;i<groups.length;i++){
+        var v = st.sel[groups[i].id];
+        if(v && v.length) return true;
+      }
+      return false;
+    }
+    function active(){ return st.q.trim() !== '' || hasSel(); }
+    function save(){ try { localStorage.setItem(key, JSON.stringify(st)); } catch(x){} }
+
+    function state(){
+      var sel = {};
+      for(var i=0;i<groups.length;i++){
+        var id = groups[i].id, v = st.sel[id];
+        if(v && v.length) sel[id] = v.slice();
+      }
+      return {q:st.q, sel:sel, sort:st.sort, dir:st.dir, open:st.open};
+    }
+
+    /** Drop selections whose group or value the caller no longer offers. */
+    function prune(){
+      var changed = false, keys = Object.keys(st.sel);
+      for(var i=0;i<keys.length;i++){
+        var id = keys[i], group = null;
+        for(var g=0;g<groups.length;g++) if(groups[g].id === id){ group = groups[g]; break; }
+        if(!group){ delete st.sel[id]; changed = true; continue; }
+        var kept = [], v = st.sel[id];
+        for(var k=0;k<v.length;k++){
+          var found = false;
+          for(var o=0;o<group.options.length;o++) if(group.options[o].value === v[k]){ found = true; break; }
+          if(found) kept.push(v[k]); else changed = true;
+        }
+        if(kept.length) st.sel[id] = kept; else { delete st.sel[id]; changed = true; }
+      }
+      return changed;
+    }
+
+    var panelSig = '';
+
+    function paintChips(){
+      var chips = panel.querySelectorAll('[data-fb-value]');
+      for(var i=0;i<chips.length;i++){
+        var c = chips[i], id = c.getAttribute('data-fb-group'), v = c.getAttribute('data-fb-value');
+        var on = (st.sel[id] || []).indexOf(v) >= 0;
+        c.classList.toggle('on', on);
+        c.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    }
+
+    /** Only the numbers move between paints, so they are written in place rather than rebuilt. */
+    function paintCounts(){
+      var chips = panel.querySelectorAll('[data-fb-value]');
+      for(var i=0;i<chips.length;i++){
+        var c = chips[i], id = c.getAttribute('data-fb-group'), v = c.getAttribute('data-fb-value'), o = null;
+        for(var g=0;g<groups.length;g++) if(groups[g].id === id){
+          for(var k=0;k<groups[g].options.length;k++) if(groups[g].options[k].value === v) o = groups[g].options[k];
+          break;
+        }
+        var n = c.querySelector('.fb-count');
+        if(o && n && typeof o.count === 'number') n.textContent = String(o.count);
+      }
+    }
+
+    function paintPanel(){
+      // Counts move with every message; the chips themselves only when an agent or host appears
+      // or goes. Rebuilding on a count would replace the chip mid-click and lose its event path.
+      var shape = [];
+      for(var i=0;i<groups.length;i++){
+        var g = groups[i], row = [g.id, g.label];
+        for(var k=0;k<g.options.length;k++){
+          var o = g.options[k];
+          row.push([o.value, o.label, o.icon || '', typeof o.count === 'number' ? 1 : 0]);
+        }
+        shape.push(row);
+      }
+      var sig = JSON.stringify(shape);
+      if(sig === panelSig){ paintCounts(); paintChips(); return; }
+      panelSig = sig;
+      var h = '';
+      for(i=0;i<groups.length;i++){
+        var gg = groups[i];
+        h += '<div class="fb-group"><div class="fb-label">' + text(gg.label) + '</div><div class="fb-chips">';
+        for(k=0;k<gg.options.length;k++){
+          var oo = gg.options[k];
+          h += '<button type="button" class="fb-chip" data-fb-group="' + text(gg.id) + '" data-fb-value="' + text(oo.value) + '"'
+            + ' aria-pressed="false" title="' + text(oo.label) + '">'
+            + (oo.icon && IC.icon[oo.icon] ? IC.icon[oo.icon] : '')
+            + '<span>' + text(oo.label) + '</span>'
+            + (typeof oo.count === 'number' ? '<span class="fb-count">' + oo.count + '</span>' : '')
+            + '</button>';
+        }
+        h += '</div></div>';
+      }
+      panel.innerHTML = h;
+      paintChips();
+    }
+
+    function paintSummary(){
+      if(!active() || !counts){ sum.hidden = true; return; }
+      sum.hidden = false;
+      sumText.textContent = 'Showing ' + counts.shown + ' of ' + counts.total;
+    }
+
+    function paintChrome(){
+      qClear.hidden = !st.q;
+      dot.hidden = !hasSel();
+      fBtn.classList.toggle('on', hasSel());
+      fBtn.setAttribute('aria-expanded', st.open ? 'true' : 'false');
+      panel.hidden = !st.open;
+      if(st.q && q.value !== st.q) q.value = st.q;
+      paintSummary();
+    }
+
+    function emit(){
+      save();
+      paintChrome();
+      if(opts.onChange) opts.onChange(state());
+    }
+
+    function paintDir(){
+      if(!dirBtn) return;
+      var up = st.dir !== 'desc';
+      dirBtn.innerHTML = up ? IC.icon.arrowUp : IC.icon.arrowDown;
+      dirBtn.title = up ? 'Ascending' : 'Descending';
+      dirBtn.setAttribute('aria-label', dirBtn.title);
+    }
+
+    function clear(){
+      st.q = ''; st.sel = {}; q.value = '';
+      emit();
+    }
+
+    q.addEventListener('input', function(){ st.q = q.value; emit(); });
+    qClear.addEventListener('click', function(){ q.value = ''; st.q = ''; emit(); q.focus(); });
+    // Escape is handled on the whole bar, not just the field: with the keyboard on Filter or a
+    // chip, Escape has to put the panel away — and in either case the keystroke must not bubble
+    // to the page-wide handler, which would close the whole sidebar drawer behind the panel.
+    // An IME uses Escape to cancel its candidate list; that Escape belongs to the composition.
+    root.addEventListener('keydown', function(e){
+      if(e.isComposing) return;
+      if(e.key !== 'Escape') return;
+      if(st.q && e.target === q){
+        q.value = ''; st.q = ''; emit(); e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      if(st.open){
+        st.open = false; save(); paintChrome();
+        // The chip that had focus is hidden with the panel; leave the keyboard on the control
+        // that opens it rather than nowhere.
+        if(e.target !== fBtn) fBtn.focus();
+        e.preventDefault(); e.stopPropagation();
+      }
+    });
+    fBtn.addEventListener('click', function(){ st.open = !st.open; save(); paintChrome(); });
+    clearBtn.addEventListener('click', clear);
+    if(sortSel) sortSel.addEventListener('change', function(){ st.sort = sortSel.value; emit(); });
+    if(dirBtn) dirBtn.addEventListener('click', function(){ st.dir = st.dir === 'desc' ? 'asc' : 'desc'; paintDir(); emit(); });
+    panel.addEventListener('click', function(e){
+      var chip = e.target.closest ? e.target.closest('[data-fb-value]') : null;
+      if(!chip) return;
+      var id = chip.getAttribute('data-fb-group'), val = chip.getAttribute('data-fb-value');
+      if(!id || !val) return;
+      var arr = st.sel[id] || (st.sel[id] = []);
+      var at = arr.indexOf(val);
+      if(at >= 0) arr.splice(at, 1); else arr.push(val);
+      if(!arr.length) delete st.sel[id];
+      emit();
+    });
+    // A panel left open over the list is furniture while it filters; a click anywhere else is
+    // the person moving on, so it folds away like the footer menus do.
+    function onDocClick(e){
+      if(!st.open) return;
+      // The path, not contains(): a chip's own click repaints the panel in place (setGroups), so
+      // by the time the event reaches here its target can be a node that is no longer in root.
+      var path = e.composedPath ? e.composedPath() : [];
+      if(path.indexOf(root) >= 0 || root.contains(e.target)) return;
+      st.open = false; save(); paintChrome();
+    }
+    document.addEventListener('click', onDocClick);
+
+    /**
+     * Replace the option lists. null is only for the first frame, before the caller's data has
+     * arrived: an empty array here would be read as "every value is gone", and a saved selection
+     * would be pruned by a list that had not arrived (the scheduled panel's first frame is
+     * exactly this). Not a refresh signal: while reloading, pass the options still on screen
+     * again rather than null, or the same pruning waits one step later.
+     */
+    function setGroups(next){
+      if(next == null) return;
+      groups = next;
+      if(prune()) save();
+      paintPanel();
+      paintChrome();
+    }
+    function setCounts(shown, total){
+      counts = {shown: Math.max(0, shown | 0), total: Math.max(0, total | 0)};
+      paintSummary();
+    }
+
+    /**
+     * Let the caller take the bar down. It must be mounted outside any container the caller
+     * redraws with innerHTML — the keyword's caret, the panel's open state and the chip nodes
+     * live in this DOM, and replacing the container under them loses all three. destroy()
+     * removes the document listener and the node; a caller whose own redraw already removed the
+     * node can ignore it.
+     */
+    function destroy(){
+      document.removeEventListener('click', onDocClick);
+      if(root.parentNode) root.parentNode.removeChild(root);
+    }
+
+    // No prune yet: the caller supplies the live option lists with setGroups on its first paint,
+    // and pruning against the empty list here would drop a selection restored from storage.
+    paintPanel();
+    paintChrome();
+    if(sortDef){
+      var optsHtml = '';
+      for(var s1=0;s1<sortDef.options.length;s1++){
+        var so = sortDef.options[s1];
+        optsHtml += '<option value="' + text(so.value) + '">' + text(so.label) + '</option>';
+      }
+      sortSel.innerHTML = optsHtml;
+      sortSel.value = st.sort;
+      paintDir();
+    }
+
+    return {el:root, state:state, active:active, setGroups:setGroups, setCounts:setCounts, clear:clear, destroy:destroy};
+  }
+
+  /**
+   * The topic list's filter groups, rebuilt from the topics in hand on every paint: agents and
+   * hosts come and go, and a chip whose value is gone would filter the list to nothing with no
+   * way to see why. Scheduled runs are left out for the same reason topicRows leaves them out —
+   * they are not rows in this list.
+   */
+  function topicFilterGroups(){
+    var stateOpts = [
+      {value:'needs', label:'Needs you', count:0},
+      {value:'running', label:'Running', count:0},
+      {value:'idle', label:'Idle', count:0},
+      {value:'none', label:'No agent', count:0}
+    ];
+    var starredOpts = [
+      {value:'starred', label:'Starred', icon:'star', count:0},
+      {value:'plain', label:'Unstarred', count:0}
+    ];
+    var agents = {}, agentOrder = [], hosts = {}, hostOrder = [], total = 0, i;
+    for(i=0;i<topics.length;i++){
+      var t = topics[i];
+      if(t.scheduled) continue;
+      total++;
+      stateOpts[stateRank(t)].count++;
+      if(t.starred) starredOpts[0].count++; else starredOpts[1].count++;
+      var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
+      if(named.tag){
+        var agent = named.tag.slice(1, -1);
+        if(agents[agent] === undefined){ agents[agent] = 0; agentOrder.push(agent); }
+        agents[agent]++;
+      }
+      var host = t.dir && t.dir.host ? t.dir.host : '__local';
+      if(hosts[host] === undefined){ hosts[host] = 0; hostOrder.push(host); }
+      hosts[host]++;
+    }
+    agentOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
+    hostOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
+    var agentOpts = [], hostOpts = [];
+    for(i=0;i<agentOrder.length;i++){
+      // No tag icon here: a tag means a task label in the scheduled list this bar also serves.
+      agentOpts.push({value:agentOrder[i], label:agentOrder[i], count:agents[agentOrder[i]]});
+    }
+    for(i=0;i<hostOrder.length;i++){
+      var hv = hostOrder[i];
+      hostOpts.push({value:hv, label:hv === '__local' ? 'Local' : hv, icon:'globe', count:hosts[hv]});
+    }
+    var groups = [
+      {id:'state', label:'State', options:stateOpts},
+      {id:'starred', label:'Starred', options:starredOpts}
+    ];
+    if(agentOpts.length) groups.push({id:'agent', label:'Agent', options:agentOpts});
+    groups.push({id:'host', label:'Host', options:hostOpts});
+    return {groups:groups, total:total};
+  }
+
+  /**
+   * Whether a topic survives the bar. Inside a group the selected values are a union (either
+   * agent), across groups an intersection (that agent, on that host). The keyword is split on
+   * whitespace and every word has to hit somewhere — title, agent tag, directory name, full path
+   * or host — so "cbc parse" finds the parser topic of the cbc agent in either order.
+   */
+  function topicMatch(t, words, sel){
+    var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
+    if(words.length){
+      var hay = (t.title || '') + ' ' + named.tag;
+      if(t.dir) hay += ' ' + (t.dir.name || '') + ' ' + (t.dir.path || '') + ' ' + (t.dir.host || '');
+      hay = hay.toLowerCase();
+      for(var w=0;w<words.length;w++) if(hay.indexOf(words[w]) < 0) return false;
+    }
+    var v = sel.state;
+    if(v && v.length){
+      var rank = stateRank(t);
+      var key = rank === 0 ? 'needs' : rank === 1 ? 'running' : rank === 2 ? 'idle' : 'none';
+      if(v.indexOf(key) < 0) return false;
+    }
+    v = sel.starred;
+    if(v && v.length && v.indexOf(t.starred ? 'starred' : 'plain') < 0) return false;
+    v = sel.agent;
+    if(v && v.length && v.indexOf(named.tag ? named.tag.slice(1, -1) : '') < 0) return false;
+    v = sel.host;
+    if(v && v.length && v.indexOf(t.dir && t.dir.host ? t.dir.host : '__local') < 0) return false;
+    return true;
+  }
+
   function paintTopics(){
     var h='';
     var cur=null;
+    // Before the rows, so a selected agent or host that has just disappeared is dropped from the
+    // bar's state first and the list below is filtered by what the panel actually shows.
+    var fg = topicFilterGroups();
+    if(topicFilter) topicFilter.setGroups(fg.groups);
     var painted=topicRows();
+    if(topicFilter) topicFilter.setCounts(painted.matched, painted.total);
     // The topic on screen may be a scheduled run, which topicRows leaves out of the list. The
     // header, Stop/power and the read marks still belong to it, so find it in the full list —
     // and seed a mark for every topic, hidden ones included, or the Sessions tab would count a
@@ -3805,6 +4348,7 @@ const SCRIPT = `
       var cls='topic-item '+(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
         +(t.starred?' starred':'')+(painted.dividers[i]?' after-needs':'')
         +(row.depth?' sub d'+Math.min(row.depth,3):'')
+        +(row.dim?' ctx':'')
         +(needsYou(t)?' needs':'');
       var isFailed=t.stage==='failed';
       // A sub-agent's finished turn is news for the agent that opened it, not for the person
@@ -3855,6 +4399,12 @@ const SCRIPT = `
          + '</div>';
     }
     bar.innerHTML=h;
+    // A filtered list with nothing left says so where the rows would be, rather than looking like
+    // a topic list that failed to load. Clear is the way back without hunting for the field.
+    if(!h && painted.filtering){
+      bar.innerHTML='<div class="topics-empty"><span>No matching topics</span>'
+        + '<button type="button" class="fb-clear" data-filter-clear="1">Clear</button></div>';
+    }
     // Says what it will do: with stars in the list it no longer clears all of them.
     var clearLabel = stars ? 'Clear unstarred topics' : 'Clear all topics';
     clearBtn.title = clearLabel;
@@ -4629,7 +5179,29 @@ const SCRIPT = `
     };
   }
 
+  /**
+   * The topic list's filter bar (makeFilterBar above). It only says what the options are and
+   * re-paints the list when one changes; the keyword and the chips are applied in topicRows.
+   */
+  topicFilter = makeFilterBar({
+    key: 'aa_topic_filter',
+    placeholder: 'Search topics',
+    groups: [],
+    onChange: function(){ paintTopics(); }
+  });
+  $('topics-filter').appendChild(topicFilter.el);
+  // The first frame, before the first list arrives: null says "nothing to offer yet", so a
+  // selection restored from storage is not pruned as if its option had gone.
+  topicFilter.setGroups(null);
+
   bar.addEventListener('click', function(e){
+    // The empty state's Clear. The summary line's own Clear is a listener on the bar itself.
+    var fc = e.target.closest ? e.target.closest('[data-filter-clear]') : null;
+    if(fc){
+      e.stopPropagation();
+      if(topicFilter) topicFilter.clear();
+      return;
+    }
     var del = e.target.closest ? e.target.closest('[data-del]') : null;
     if(del){
       e.stopPropagation();
@@ -4766,9 +5338,12 @@ const SCRIPT = `
     var stars = topics.filter(function(t){ return t.starred; }).length;
     var gone = topics.length - stars;
     if(stars && !gone){ alert('Every topic is starred, so there is nothing to clear. Unstar one first.'); return; }
+    // The button clears the whole list, not the filtered rows — say that where a search or a
+    // filter is on screen, or it reads as "clear these three".
+    var scope = topicFilter && topicFilter.active() ? ' This applies to every topic, not only the ones shown.' : '';
     if(!confirm(stars
-      ? 'Delete '+gone+' topic'+(gone===1?'':'s')+'? The '+stars+' starred one'+(stars===1?' is':'s are')+' kept. This cannot be undone.'
-      : 'Delete all ' + topics.length + ' topics? This cannot be undone.')) return;
+      ? 'Delete '+gone+' topic'+(gone===1?'':'s')+'? The '+stars+' starred one'+(stars===1?' is':'s are')+' kept.'+scope+' This cannot be undone.'
+      : 'Delete all ' + topics.length + ' topics?'+scope+' This cannot be undone.')) return;
     post('api/topics/clear',{},1).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if(!d || !d.topic) return;
       // What the daemon kept: the starred topics and the fresh one. Read from its answer rather
@@ -5993,11 +6568,13 @@ const SCRIPT = `
     else if(!recStarting && topic) startRec();
   });
   // Escape throws a recording away — unless it is an IME cancelling its candidate list, which is
-  // a different Escape and must not also cost the recording.
+  // a different Escape and must not also cost the recording. Captured, and stopped there: while a
+  // recording is running Escape belongs to it, not to whatever the focus is on — the filter bar's
+  // own handler would otherwise fold its panel and swallow the keystroke.
   document.addEventListener('keydown', function(e){
     if(e.isComposing) return;
-    if(e.key === 'Escape' && rec) stopRec(false);
-  });
+    if(e.key === 'Escape' && rec){ stopRec(false); e.stopPropagation(); }
+  }, true);
 
   function suggest(){
     var v=input.value;
@@ -6443,6 +7020,9 @@ __GATE__
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
       <button type="button" class="btn-icon panel-close" id="collapse-sidebar" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
+    <!-- The topic list's search and filters. Built by makeFilterBar in the script; an empty host
+         here so the markup and the component stay separate. -->
+    <div id="topics-filter"></div>
     <div id="topics"></div>
     <!-- Two menus, one row. Menu holds what is set once per device or visited rarely; Manage
          holds Close idle, with the idle count on its face so the number is still seen without
