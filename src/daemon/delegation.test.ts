@@ -1223,6 +1223,55 @@ describe('Delegation: ending a topic and the topics under it', () => {
     ]);
   });
 
+  it('ends only the confirmed topics, so one opened since the confirmation survives', () => {
+    const r = rig();
+    const [c1, c2, c3] = ['web#main#c1000000', 'web#main#c2000000', 'web#main#c3000000'];
+    for (const k of [c1, c2, c3]) {
+      r.parents.set(k, P);
+      r.bound.set(k, 'cc');
+    }
+    r.bound.set(P, 'cc');
+    r.busy.add(c1);
+
+    // The dialog listed the parent and one child; the other child was not shown (it appeared
+    // after the dialog was drawn) and is therefore not in the request.
+    const results = r.d.endTopic(P, new Set(['aaaaaaaa', 'c2000000']));
+
+    expect(r.calls.filter(([what]) => what === 'kill').map(([, k]) => k)).toEqual([c2, P]);
+    expect(results).toEqual([
+      { topic: 'aaaaaaaa', outcome: 'ended' },
+      { topic: 'c2000000', outcome: 'ended' },
+    ]);
+  });
+
+  it('keeps a live parent’s card when only the child’s topic is ended', async () => {
+    const r = rig();
+    const child = 'web#main#c1000000';
+    await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    // The child finished normally and the person had written there: a card is gathered for P,
+    // carrying what they said, and CARD_DELAY_MS has not passed yet.
+    r.activity.set(child, { outcome: { kind: 'done', at: 5, line: 'Done: all green.' } });
+    r.replies.set(child, 'Done: all green, 12 tests.');
+    r.d.personWrote(child, { text: 'check the parser too', attachments: [] });
+    r.d.childChanged(child);
+
+    // The person ends the CHILD's topic from its row menu. P is not in that subtree, so the card
+    // waiting for P is none of this kill's business.
+    expect(r.d.endTopic(child)).toEqual([{ topic: 'c1000000', outcome: 'ended' }]);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+
+    const prompt = r.calls.find(([what]) => what === 'prompt')?.[1] as { key: string; prompt: string } | undefined;
+    expect(prompt?.key).toBe(P);
+    expect(prompt?.prompt).toContain('the person wrote to it directly');
+    expect(prompt?.prompt).toContain('check the parser too');
+    expect(prompt?.prompt).toContain('Done: all green, 12 tests.');
+  });
+
   it('drops a card already gathered, so ending the parent cannot wake it again', async () => {
     const r = rig();
     const child = 'web#main#c1000000';

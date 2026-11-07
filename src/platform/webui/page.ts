@@ -5333,6 +5333,15 @@ const SCRIPT = `
     else next=at<0 ? items.length-1 : (at+items.length-1)%items.length;
     items[next].focus();
   });
+  // Tab — or any other way the focus leaves — puts the menu away, and the ⋯ stops saying it is
+  // open. A move onto the ⋯ itself is left to its own click, which toggles: closing here would
+  // make the second tap close and reopen in one gesture.
+  topicMenu.addEventListener('focusout', function(e){
+    if(topicMenu.hidden) return;
+    var to=e.relatedTarget;
+    if(to && (topicMenu.contains(to) || (topicMenuBtn && topicMenuBtn.contains(to)))) return;
+    closeTopicMenu(false);
+  });
   // A click anywhere else puts it away. The ⋯ itself is excluded: its own handler toggles, and
   // closing it here too would make the second tap open and close in the same gesture.
   document.addEventListener('click', function(e){
@@ -5565,22 +5574,35 @@ const SCRIPT = `
     idleGo.disabled=true;
     var mine=++idleSeq, ending=idleMode==='end';
     var url=ending?'api/topics/kill':'api/topics/close-idle';
-    var body=ending?{topic:idleTopic}:{topics:idleIds};
+    // The root names the subtree; the list is what the person actually saw. The daemon ends only
+    // their intersection, so a sub-agent opened since the dialog was drawn survives.
+    var body=ending?{topic:idleTopic, topics:idleIds}:{topics:idleIds};
     post(url,body,0).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if(mine!==idleSeq) return;
       if(!d) return idleFailed('The daemon refused the request.');
       var rows=idleList.querySelectorAll('li'), i, n=0, k=0;
       if(ending){
-        var ended={}, results=d.results || [];
-        for(i=0;i<results.length;i++) if(results[i].outcome==='ended') ended[results[i].topic]=1;
+        // Three outcomes, three sentences: ended; there was no process (the page's dot was a
+        // snapshot); the runtime cannot resume, so the process was left alone. A row the daemon
+        // did not answer for was not in the confirmed list any more — say it was left running
+        // rather than invent a reason.
+        var seen={}, results=d.results || [], gone=0, stuck=0, left=0;
+        for(i=0;i<results.length;i++) seen[results[i].topic]=results[i].outcome;
         for(i=0;i<rows.length;i++){
-          var eout=rows[i].querySelector('.idle-out'), eok=ended[rows[i].getAttribute('data-idle')];
-          eout.textContent = eok ? 'ended' : 'left running';
-          eout.className = 'idle-out' + (eok ? '' : ' kept');
-          if(eok) n++; else k++;
+          var id=rows[i].getAttribute('data-idle'), how=seen[id];
+          var eout=rows[i].querySelector('.idle-out');
+          var word = how==='ended' ? 'ended' : how==='no-child' ? 'no process' : how==='unresumable' ? 'cannot resume' : 'left running';
+          eout.textContent=word;
+          eout.className='idle-out'+(how==='ended' ? '' : ' kept');
+          if(how==='ended') n++;
+          else if(how==='no-child') gone++;
+          else if(how==='unresumable') stuck++;
+          else left++;
         }
         idleTitle.textContent='Ended '+n+' agent'+(n===1?'':'s')
-          + (k ? '; '+k+' left running — unable to resume' : '');
+          + (gone ? '; '+gone+' had no process' : '')
+          + (stuck ? '; '+stuck+' left running — cannot resume' : '')
+          + (left ? '; '+left+' left running' : '');
       } else {
         var closed={};
         for(i=0;i<d.closed.length;i++) closed[d.closed[i]]=1;

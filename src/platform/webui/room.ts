@@ -379,7 +379,7 @@ export class WebRoom {
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise, but broader: ends a topic's agent and every agent under it. See `killTopic`. */
-  private topicKill: ((ref: ConversationRef) => TopicKillResult[]) | null = null;
+  private topicKill: ((ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]) | null = null;
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
   private catalog: ((ref: ConversationRef) => AgentCatalog | undefined) | null = null;
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
@@ -844,13 +844,14 @@ export class WebRoom {
   }
 
   /** Accept the daemon's way of ending a topic's agent and every agent under it — see `killTopic`. */
-  useTopicKill(kill: (ref: ConversationRef) => TopicKillResult[]): void {
+  useTopicKill(kill: (ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]): void {
     this.topicKill = kill;
   }
 
   /**
-   * End the agent process behind `topicId` and every sub-agent topic under it — the row menu's
-   * "End agent". The subtree is the daemon's to walk (`useTopicKill`, Delegation.endTopic), not
+   * End the agent process behind `topicId` and the topics under it that the person was shown —
+   * the row menu's "End agent". `confirmed` is that list, and only its intersection with the
+   * subtree is ended; the walk itself is the daemon's (`useTopicKill`, Delegation.endTopic), not
    * this module's: the topics here are the page's list, and `Topic.parent` is a copy of a
    * relation the platform owns.
    *
@@ -859,12 +860,12 @@ export class WebRoom {
    * is what `/kill` does. A topic the store no longer holds answers no rows, and one whose
    * daemon offered no hook answers `no-child` rather than pretending something was ended.
    */
-  killTopic(topicId: string): { results: TopicKillResult[] } {
+  killTopic(topicId: string, confirmed: readonly string[]): { results: TopicKillResult[] } {
     if (!this.topics.has(topicId)) return { results: [] };
     if (!this.topicKill) return { results: [{ topic: topicId, outcome: 'no-child' }] };
     let results: TopicKillResult[] = [];
     try {
-      results = this.topicKill(this.conversation(topicId));
+      results = this.topicKill(this.conversation(topicId), new Set(confirmed));
     } catch (e) {
       console.warn(`[webui] could not end the agents under topic ${topicId}:`, e instanceof Error ? e.message : e);
       return { results: [{ topic: topicId, outcome: 'no-child' }] };

@@ -786,14 +786,15 @@ async function closeIdle({ req, res }: Req, ctx: Ctx): Promise<void> {
 }
 
 /**
- * End the agent process behind one topic and every sub-agent topic under it, answering what
- * became of each. The subtree is the daemon's (`WebRoom.killTopic` → `Delegation.endTopic`); the
- * page only names the topic the person confirmed, never the list of descendants.
+ * End the agent processes behind the topics the person confirmed, among the subtree of `topic`,
+ * answering what became of each. The walk is the daemon's (`WebRoom.killTopic` →
+ * `Delegation.endTopic`); the page sends the list the dialog showed, and a sub-agent opened after
+ * that is not ended because it is not in it.
  */
 async function killTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, KillTopicRequestSchema);
   if (!parsed) return;
-  send(req, res, 200, ctx.room.killTopic(parsed.topic));
+  send(req, res, 200, ctx.room.killTopic(parsed.topic, parsed.topics));
 }
 
 /**

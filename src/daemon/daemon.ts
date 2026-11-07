@@ -1176,22 +1176,23 @@ export class Daemon {
    * a killed child had queued.
    */
   private wireTopicKill(adapter: PlatformAdapter): void {
-    adapter.useTopicKill?.((ref) => this.killTopicTree(ref));
+    adapter.useTopicKill?.((ref, confirmed) => this.killTopicTree(ref, confirmed));
   }
 
   /**
-   * The conversation at an address and every sub-agent topic under it, with each agent process
-   * ended — what the web UI's row menu asks for (`PlatformAdapter.useTopicKill`). Resolving the
-   * address is all this adds: `Delegation.endTopic` owns the walk, the silencing and the order.
+   * The conversation at an address and the sub-agent topics under it, with the agent processes in
+   * `confirmed` ended — what the web UI's row menu asks for (`PlatformAdapter.useTopicKill`).
+   * Resolving the address is all this adds: `Delegation.endTopic` owns the walk, the intersection,
+   * the silencing and the order.
    */
-  private killTopicTree(ref: ConversationRef): TopicKillResult[] {
+  private killTopicTree(ref: ConversationRef, confirmed: ReadonlySet<string>): TopicKillResult[] {
     const conversation = this.registry.conversationAt(ref.platform, {
       channel: ref.channel,
       ...(ref.thread !== undefined ? { thread: ref.thread } : {}),
     });
     if (!conversation) return [];
-    console.log(`[reclaim] ${conversation.key}: ending every agent under this topic from the web UI`);
-    return this.delegation.endTopic(conversation.key);
+    console.log(`[reclaim] ${conversation.key}: ending ${confirmed.size} confirmed agent(s) under this topic from the web UI`);
+    return this.delegation.endTopic(conversation.key, confirmed);
   }
 
   /**

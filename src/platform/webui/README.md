@@ -228,12 +228,16 @@ is one element at the body, `position:fixed` from the button's rect — not insi
 a running agent rebuilds that list with `innerHTML` on every message and a menu in it would vanish
 mid-tap. `paintTopics` re-finds the button after a repaint and closes the menu only if its topic is
 gone. `role=menu`/`menuitem`, arrow keys/Home/End move between items, Escape closes and returns the
-focus, and a click anywhere else closes it. **End agent** ends the process behind the topic and
+focus, Tab (any move of the focus out) closes it, and a click anywhere else closes it.
+**End agent** ends the process behind the topic and
 every topic under it (`useTopicKill` → `Delegation.endTopic`, `/kill`'s rules, not the idle
 sweeper's), and the item says how many sub-agent processes it reaches. It is disabled when none of
 them has a process, with the reason on its title. The confirmation is `openIdle`'s dialog — the
-same list and per-topic result — and names every topic it will end, marking a running turn
-`running — will be interrupted`. The header's power button is unchanged: it ends this topic only.
+same list and per-topic result — and the request carries that list: the daemon walks the subtree
+from its own parent record but ends only the intersection, so a sub-agent opened while the dialog
+was open is left alone and every row says what became of it (`ended`, `no process`, `cannot
+resume`). A running turn is marked `running — will be interrupted`. The header's power button is
+unchanged: it ends this topic only.
 
 **The dot on each row is about the agent, not about the turn.** Four states, and two of them
 exist because "a turn is running" turned out to be a bad proxy for both of the things a person

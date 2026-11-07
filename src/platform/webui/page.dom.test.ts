@@ -4821,6 +4821,27 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     expect(h.doc.querySelector(`[data-more="${B}"]`)?.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('closes when the focus leaves it — Tab — and keeps the ⋯ in step', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: fleet() });
+    await h.click(`#topics [data-fold="${A}"]`);
+    await rowMenu(h, B);
+    const menu = h.el('topic-menu');
+    const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    const leave = (to: Element): void => {
+      menu.dispatchEvent(new h.window.FocusEvent('focusout', { bubbles: true, relatedTarget: to }));
+    };
+
+    // A move between the menu's own items is not leaving.
+    leave(items[2]!);
+    expect(menu.hidden).toBe(false);
+    // Tab to the composer: the menu is gone and the button no longer claims it is open.
+    leave(h.el('input'));
+    expect(menu.hidden).toBe(true);
+    expect(h.doc.querySelector(`[data-more="${B}"]`)?.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('moves between its items with the arrow keys, Home and End, skipping a disabled item', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
@@ -4878,8 +4899,8 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
         'api/topics/kill': {
           results: [
             { topic: A, outcome: 'ended' },
-            { topic: B, outcome: 'ended' },
-            { topic: C, outcome: 'no-child' },
+            { topic: B, outcome: 'no-child' },
+            { topic: C, outcome: 'unresumable' },
           ],
         },
       },
@@ -4907,14 +4928,18 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
 
     await h.click('#idle-go');
     await until('the answers', () => h.el('idle-cancel').textContent === 'Done');
-    // One id, the root: the subtree is the daemon's walk, not a list the page sends.
-    expect(h.calls.find((c) => c.path === 'api/topics/kill')?.body).toEqual({ topic: A });
+    // The root names the subtree; the list is what the dialog showed, and the daemon ends only
+    // their intersection — a sub-agent opened since is not in it.
+    expect(h.calls.find((c) => c.path === 'api/topics/kill')?.body).toEqual({ topic: A, topics: [A, B, C] });
+    // no process is not "cannot resume": the first had none, the second cannot be resumed.
     expect(Array.from(h.doc.querySelectorAll('#idle-list .idle-out')).map((o) => o.textContent)).toEqual([
       'ended',
-      'ended',
-      'left running',
+      'no process',
+      'cannot resume',
     ]);
-    expect(h.el('idle-title').textContent).toBe('Ended 2 agents; 1 left running — unable to resume');
+    expect(h.el('idle-title').textContent).toBe(
+      'Ended 1 agent; 1 had no process; 1 left running — cannot resume'
+    );
     expect(h.el('idle-go').hidden).toBe(true);
   });
 

@@ -1710,9 +1710,9 @@ describe('WebRoom: closing idle agents', () => {
 describe('WebRoom: ending a topic and the topics under it', () => {
   it('hands the one topic to the daemon and answers what became of each', () => {
     const { room, topic, seen } = attached();
-    const asked: string[] = [];
-    room.useTopicKill((ref) => {
-      asked.push(ref.thread ?? '');
+    const asked: Array<{ topic: string; confirmed: string[] }> = [];
+    room.useTopicKill((ref, confirmed) => {
+      asked.push({ topic: ref.thread ?? '', confirmed: [...confirmed].sort() });
       return [
         { topic: ref.thread ?? '', outcome: 'ended' },
         { topic: 'b2c3d4e5', outcome: 'ended' },
@@ -1721,10 +1721,10 @@ describe('WebRoom: ending a topic and the topics under it', () => {
     });
     seen.length = 0;
 
-    const res = room.killTopic(topic);
+    const res = room.killTopic(topic, [topic, 'b2c3d4e5', 'c3d4e5f6']);
 
-    // One id, not a list: the subtree is the platform's parent record on the daemon's side.
-    expect(asked).toEqual([topic]);
+    // The root names the subtree; the confirmed list travels with it, and the daemon intersects.
+    expect(asked).toEqual([{ topic, confirmed: [topic, 'b2c3d4e5', 'c3d4e5f6'].sort() }]);
     expect(res.results).toEqual([
       { topic, outcome: 'ended' },
       { topic: 'b2c3d4e5', outcome: 'ended' },
@@ -1736,9 +1736,9 @@ describe('WebRoom: ending a topic and the topics under it', () => {
 
   it('answers no rows for a topic it does not hold, and no-child when no daemon offered a hook', () => {
     const { room, topic } = attached();
-    expect(room.killTopic('ffffffff')).toEqual({ results: [] });
+    expect(room.killTopic('ffffffff', ['ffffffff'])).toEqual({ results: [] });
     // Nothing was ended, and the page says "left running" rather than "ended".
-    expect(room.killTopic(topic)).toEqual({ results: [{ topic, outcome: 'no-child' }] });
+    expect(room.killTopic(topic, [topic])).toEqual({ results: [{ topic, outcome: 'no-child' }] });
   });
 
   it('answers no-child, and keeps the room alive, when the daemon throws', () => {
@@ -1746,7 +1746,7 @@ describe('WebRoom: ending a topic and the topics under it', () => {
     room.useTopicKill(() => {
       throw new Error('the registry is gone');
     });
-    expect(room.killTopic(topic)).toEqual({ results: [{ topic, outcome: 'no-child' }] });
+    expect(room.killTopic(topic, [topic])).toEqual({ results: [{ topic, outcome: 'no-child' }] });
   });
 });
 

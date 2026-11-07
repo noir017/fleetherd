@@ -573,17 +573,22 @@ export interface PlatformAdapter {
    *
    * The broader sibling of `useIdleReclaim`, and deliberately not built on it: this one is allowed
    * to stop a turn, which is what `/kill` does, so it goes through `killConversation` rather than
-   * the idle sweeper's gates. The person confirmed each topic they are about to end, and the
-   * conversation of every one is kept — the next message there resumes it where it left off.
+   * the idle sweeper's gates. The conversation of every topic is kept — the next message there
+   * resumes it where it left off.
    *
-   * Answers one row per topic it walked, root first, so the page can say what became of each
-   * rather than a count. An address that names nothing answers no rows; the daemon's walk is the
-   * platform's own `childrenOf` (`Delegation.endTopic`), never a list the page assembled.
+   * `confirmed` is the list the person was shown in the confirmation, and only its intersection
+   * with the subtree walked now is ended. That is what makes "the person confirmed each topic" true
+   * when a sub-agent appeared while the dialog was open: the newcomer is not in the list, so it is
+   * not touched. The walk is still the platform's own `childrenOf` (`Delegation.endTopic`), never a
+   * list the page assembled.
+   *
+   * Answers one row per topic it acted on, root first, so the page can say what became of each
+   * rather than a count. An address that names nothing answers no rows.
    *
    * Optional and web-UI-only for the reason the seams above are: a chat app has no topic list to
    * hang a per-row menu on, and `/kill` plus `/stop` are its two commands.
    */
-  useTopicKill?(kill: (ref: ConversationRef) => TopicKillResult[]): void;
+  useTopicKill?(kill: (ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]): void;
 
   /**
    * Hand the platform a way to ask which agents the conversation at one of its addresses could still
