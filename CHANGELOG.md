@@ -5,9 +5,9 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-What two days of the automatic review on a live gateway showed: it ran reliably, but most of what
-it produced went unread or unused, and the changes it made to a person's skills were right in fact
-and wrong in shape.
+Mostly the automatic review, after two days of it on a live gateway: it ran reliably, but most of
+what it produced went unread or unused, the changes it made to a person's skills were right in fact
+and wrong in shape, and only an agy agent could run it.
 
 ### Added
 
