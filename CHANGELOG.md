@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.51.1] - 2026-11-07
+
 ### Changed
 
 - **A sub-task carries what the coordinator already found.** `/super` and `talkcode help tasks`
