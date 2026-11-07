@@ -596,21 +596,39 @@ export const ConfigSchema = z
     /**
      * Automatic review of idle conversations (docs/skills.md#auto-review).
      *
-     * Off unless `agent` names one, because a review spends the reviewer's quota on every
+     * Off unless the block names a reviewer, because a review spends the reviewer's quota on every
      * conversation that goes quiet and writes into a skill library every agent reads. The
-     * deployment decision is which agent reviews (and, when that agent's own model is not the
-     * right one for the job, which model it uses); when a review runs and how much it sees are
-     * constants in `daemon/review.ts`, and there is no daily cap.
+     * deployment decision is who reviews; when a review runs and how much it sees are constants in
+     * `daemon/review.ts`, and there is no daily cap.
      *
-     * The agent must be an `agy` one: a review is one `agy -p` process on the machine that agent
-     * runs on, in an empty directory, with every tool denied. It never touches a file itself —
-     * the gateway applies what it returns through the same rules as `talkcode skills`.
+     * The reviewer is one of two things, never both (checked below):
+     *  - `agent` — any agent, on any host: one throwaway session on that agent's machine, in an
+     *    empty directory, with no MCP servers, every permission request refused, and the tool
+     *    switches the gateway knows for that harness (daemon/review-run.ts acpReviewLaunch; agy is
+     *    still one `agy -p` with every permission class denied). `model` overrides the agent's own.
+     *    `args` are appended to the command for a review only, and only where the gateway knows no
+     *    switch of its own (`custom`, `gemini`, `dsh`) — the operator's way to turn that harness's
+     *    tools off.
+     *  - `api` — an OpenAI-compatible `/chat/completions` endpoint: one request, no tools at all.
+     *    `url` is the base up to and including the version segment (`http://newapi:3000/v1`), like
+     *    `title.llm.baseUrl`; `${VAR}` in `url` and `key` is expanded at load like any field.
+     * Either way the reviewer never touches a file itself — the gateway applies what it returns
+     * through the same rules as `talkcode skills`.
      */
     review: z
       .object({
-        agent: z.string().min(1),
-        /** Passed as `agy --model`; defaults to the agent's own `model`. */
+        agent: z.string().min(1).optional(),
+        api: z
+          .object({
+            url: z.string().min(1),
+            key: z.string().min(1),
+            model: z.string().min(1),
+          })
+          .optional(),
+        /** The model for an `agent` reviewer; defaults to the agent's own `model`. Not with `api`. */
         model: z.string().min(1).optional(),
+        /** Extra arguments for a `custom` / `gemini` / `dsh` reviewer's command, for reviews only. */
+        args: z.array(z.string()).optional(),
       })
       .optional(),
 
@@ -908,22 +926,7 @@ export const ConfigSchema = z
       }
     });
     const platformIds = new Set(Object.keys(cfg.platforms));
-    if (cfg.review) {
-      const reviewer = cfg.agents.find((a) => a.id === cfg.review!.agent);
-      if (!reviewer) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['review', 'agent'],
-          message: `review.agent references a non-existent agent id "${cfg.review.agent}" (available: ${[...ids].join(', ')})`,
-        });
-      } else if (reviewer.harness !== 'agy') {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['review', 'agent'],
-          message: `review.agent "${reviewer.id}" is a ${reviewer.harness} agent; a review runs \`agy -p\`, so it must name an agy agent`,
-        });
-      }
-    }
+    if (cfg.review) checkReview(cfg.review, cfg.agents, ctx);
     cfg.routing.pipeline.forEach((rule, i) => {
       if (!ids.has(rule.use.agent)) {
         ctx.addIssue({
@@ -980,6 +983,48 @@ export const ConfigSchema = z
 
 /** The slim, file-backed config (what setup writes and saveConfig serializes). */
 export type UserConfig = z.infer<typeof ConfigSchema>;
+
+/**
+ * Harnesses the gateway has no tool switch for, so `review.args` is the only way to turn their
+ * tools off for a review. Every other harness gets the gateway's own switches
+ * (daemon/review-run.ts acpReviewLaunch), and an `args` there would be a second, conflicting say.
+ */
+export const REVIEW_ARGS_HARNESSES: ReadonlySet<AgentDef['harness']> = new Set(['custom', 'gemini', 'dsh']);
+
+/** `review:` against the agents it can name: one reviewer, and only the fields that reviewer reads. */
+function checkReview(
+  review: NonNullable<UserConfig['review']>,
+  agents: ReadonlyArray<{ id: string; harness: AgentDef['harness'] }>,
+  ctx: z.RefinementCtx
+): void {
+  const issue = (path: string[], message: string): void =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['review', ...path], message });
+  if (review.agent !== undefined && review.api !== undefined) {
+    issue([], 'review names both an agent and an api; keep one of them');
+    return;
+  }
+  if (review.api) {
+    // The endpoint carries its own model; a second one beside it would leave unclear which is sent.
+    if (review.model !== undefined) issue(['model'], 'review.model is for an agent reviewer; with review.api, set review.api.model');
+    if (review.args !== undefined) issue(['args'], 'review.args is for an agent reviewer; an api reviewer has no command');
+    return;
+  }
+  if (review.agent === undefined) {
+    issue([], 'review needs a reviewer: review.agent (an agent id) or review.api ({url, key, model})');
+    return;
+  }
+  const reviewer = agents.find((a) => a.id === review.agent);
+  if (!reviewer) {
+    issue(['agent'], `review.agent references a non-existent agent id "${review.agent}" (available: ${agents.map((a) => a.id).join(', ')})`);
+    return;
+  }
+  if (review.args !== undefined && !REVIEW_ARGS_HARNESSES.has(reviewer.harness)) {
+    issue(
+      ['args'],
+      `review.args is for a custom, gemini or dsh reviewer; "${reviewer.id}" is ${reviewer.harness}, whose tools the gateway turns off itself`
+    );
+  }
+}
 
 /** Full runtime config: user fields + the frozen experience defaults. */
 export type Config = Omit<UserConfig, 'session' | 'stream'> &

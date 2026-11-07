@@ -970,24 +970,66 @@ describe('auto review', () => {
     return resolved.row;
   };
 
-  it('offers off and the agy agents only — a non-agy agent cannot review', () => {
+  it('offers off and every agent — any harness can review', () => {
     const r = reviewRow('review.agent');
     expect(settingOptions(r, reviewCfg, reviewCtx).map((o) => [o.raw, o.title])).toEqual([
       ['off', 'off'],
+      ['cc', undefined],
       ['ag', undefined],
       ['ag2', undefined],
     ]);
-    const refused = parseSettingValue(r, 'cc', reviewCfg, reviewCtx);
-    expect(refused.kind).toBe('invalid');
-    if (refused.kind === 'invalid') {
-      expect(refused.reason).toContain('claude');
-      expect(refused.reason).toContain('agy -p');
-    }
-    // An unknown id names the agy agents there are, rather than the whole roster.
+    expect(parseSettingValue(r, 'cc', reviewCfg, reviewCtx)).toMatchObject({ kind: 'value', value: 'cc' });
+    // An unknown id names the agents there are.
     const unknown = parseSettingValue(r, 'nope', reviewCfg, reviewCtx);
     if (unknown.kind !== 'invalid') throw new Error('expected a refusal');
-    expect(unknown.reason).toContain('ag, ag2');
-    expect(unknown.reason).not.toContain('cc');
+    expect(unknown.reason).toContain('cc, ag, ag2');
+  });
+
+  const apiCfg: Config = parseConfig({
+    platforms: { tg: { type: 'telegram', token: 't' } },
+    agents: [
+      { id: 'cc', harness: 'claude' },
+      { id: 'cur', harness: 'custom', command: 'x' },
+    ],
+    routing: { default: 'cc' },
+    review: { api: { url: 'http://newapi:3000/v1', key: 'k', model: 'gemini-3.8-flash' } },
+  });
+
+  it('shows an endpoint reviewer, and says naming an agent replaces it', () => {
+    const values = new Map(settingsRows(apiCfg).map((r) => [settingKeyOf(r), r]));
+    expect(values.get('review.agent')?.value).toBe('api · gemini-3.8-flash');
+    expect(values.get('review.model')?.value).toBe('gemini-3.8-flash (review.api)');
+    const r = reviewRow('review.agent', apiCfg);
+    const parsed = parseSettingValue(r, 'cc', apiCfg, reviewCtx);
+    expect(parsed).toMatchObject({ kind: 'value', value: 'cc', note: expect.stringContaining('review.api') });
+    expect(parseSettingValue(r, 'off', apiCfg, reviewCtx)).toMatchObject({ value: undefined, note: expect.stringContaining('endpoint') });
+    expect(readSettingValue(r, apiCfg)).toBe('review.api');
+  });
+
+  it('leaves an endpoint’s model to config.yaml', () => {
+    const r = reviewRow('review.model', apiCfg);
+    expect(settingOptions(r, apiCfg, reviewCtx)).toEqual([]);
+    const parsed = parseSettingValue(r, 'gemini-3.8-pro', apiCfg, reviewCtx);
+    expect(parsed.kind).toBe('invalid');
+    if (parsed.kind === 'invalid') expect(parsed.reason).toContain('review.api.model');
+    expect(settingTypedOnlyHint(r, apiCfg, reviewCtx)).toContain('review.api.model');
+  });
+
+  it('says review.args go when the new reviewer would not read them', () => {
+    const withArgs: Config = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [
+        { id: 'cc', harness: 'claude' },
+        { id: 'cur', harness: 'custom', command: 'x' },
+        { id: 'cur2', harness: 'custom', command: 'y' },
+      ],
+      routing: { default: 'cc' },
+      review: { agent: 'cur', args: ['--mode', 'ask'] },
+    });
+    const r = reviewRow('review.agent', withArgs);
+    expect(parseSettingValue(r, 'cc', withArgs, reviewCtx)).toMatchObject({ note: expect.stringContaining('review.args') });
+    const kept = parseSettingValue(r, 'cur2', withArgs, reviewCtx);
+    expect(kept.kind === 'value' ? kept.note : 'refused').toBeUndefined();
   });
 
   it('turns off by deleting the whole block, and says the model goes with it', () => {

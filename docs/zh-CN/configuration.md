@@ -25,7 +25,7 @@ agents:                       # 至少一个；路由按 id 选取
   - id: codex
     harness: codex
   - id: ag
-    harness: agy               # 也可以让它来复盘对话（见下文）
+    harness: agy               # 也用它来复盘闲置对话（见下文）
   - id: claude-devbox
     harness: claude
     host: devbox              # 跑在另一台机器上，见远程主机
@@ -52,8 +52,8 @@ session:
 access:
   allowFrom: ["discord-main:123456"]   # <实例id>:userId；留空 = 任何人
 
-review:                       # 可选；不指定 agy 智能体就是关闭
-  agent: ag                   # 由这个智能体所在机器上的一次 agy -p 复盘闲置对话
+review:                       # 可选；不指定复盘者就是关闭
+  agent: ag                   # 任意智能体；或者 api: {url, key, model} 用 OpenAI 兼容接口
   model: gemini-3.8-flash-high
 
 skills:                       # 可选；自管技能共用的 git 仓库

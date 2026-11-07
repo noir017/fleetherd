@@ -286,13 +286,30 @@ Do not weaken these without saying so explicitly in the PR:
    plus two of its own. It writes through the same `createSkill` / `patchSkill` / `writeSkillFile`
    calls — never a file edit — so every validation, version check and history entry above applies
    unchanged; a change that fails one is dropped and logged, never retried around it. And the
-   reviewer has no tools at all: one `agy -p` in an empty temporary directory with
-   `--settings` denying every permission class (`AGY_NO_TOOLS`), never
-   `--dangerously-skip-permissions`. That combination is load-bearing, not decoration, and both
-   halves were measured on agy 1.5.0 (2026-11-04): print mode without the flag still auto-approves
-   file writes, and `deny: ["*"]` denies NOTHING — `"*"` names a permission class literally. The
-   deny list must name every class; a tool in a class it does not name is not refused. Do not
-   relax either half, and keep the list complete when the CLI gains a class.
+   reviewer itself cannot write: whoever reviews (`review.agent`, any agent; or `review.api`, an
+   endpoint), its answer is text the gateway applies. What holds the reviewer, by route
+   (`daemon/review-run.ts`, measured 2026-11-07; decided by the operator the same day):
+   - **Tools off wherever the harness can turn them off.** An endpoint has none. claude runs with
+     `_meta.claudeCode.options` `{tools: [], settingSources: [], strictMcpConfig: true}`; opencode
+     with inline config `{"permission":"deny"}`; codex with its shell features off
+     (`shell_tool`, `unified_exec`), which also takes away every read. agy stays on `agy -p` with
+     `--settings` denying every permission class (`AGY_NO_TOOLS`), never
+     `--dangerously-skip-permissions`: print mode without the flag still auto-approves file writes,
+     `deny: ["*"]` denies NOTHING (`"*"` names a class literally, agy 1.5.0), and `agy acp` reads no
+     settings at all (1.5.2) — so the list must name every class, and must grow when the CLI gains
+     one. A `custom`, `gemini` or `dsh` reviewer has no switch the gateway knows; `review.args` is
+     the operator's way to give it one.
+   - **What cannot be turned off, writes and commands are held by refusal.** Every review runs as
+     a session of its own in an empty temporary directory, with no MCP servers, and every
+     `session/request_permission` is refused — never approved, never put to anyone. That is what
+     stops codex's apply_patch (mode `read-only` makes it ask; the refusal cancels the turn, which
+     is then a failed review). It holds only for a harness that asks: opencode and codex in full
+     access ask for nothing, which is why their switches above are not optional.
+   - **Reading outside that directory is accepted** where a harness keeps a read tool the gateway
+     cannot remove. The reviewer is already given the conversation and every skill it needs; what
+     it could read beyond that is the operator's machine, read by an agent the operator configured.
+   Do not add a reviewer route that writes, approve a review's permission request, or drop a switch
+   a harness honours.
 
    **The third writer is whoever can push to `skills.repo`** (`daemon/skills-repo.ts`,
    `docs/skills.md#the-repository`, since 2.42.0). With a shared repository configured, a person's

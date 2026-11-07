@@ -17,7 +17,7 @@ and restarting, which stops every resident agent.
 | live streaming | `stream.enabled` | `on`, `off` (default `off`) | immediately — the next reply |
 | confirm voice transcripts | `voice.confirm` | `on`, `off` (default `on`; only with a `voice:` block) | immediately — the next voice message |
 | clean up voice transcripts | `voice.cleanup` | `on`, `off` (default `on`; only with a `voice:` block) | immediately — the next voice message |
-| auto review | `review.agent` | `off`, or an `agy` agent id | immediately — the next sweep, within a minute |
+| auto review | `review.agent` | `off`, or an agent id | immediately — the next sweep, within a minute |
 | review model | `review.model` | the reviewer's reported models, any name, or `-` to follow the reviewer's own | immediately — the next review |
 
 ```
@@ -71,11 +71,13 @@ starts with, from highest: its `/model` → `podModels` → pod.yaml → the har
 default.
 
 **Auto review** is set here too. `/setting review.agent ag@uniagent` turns it on,
-`/setting review.agent off` turns it off, and the row offers only `agy` agents: a
-review is one `agy -p` with every tool denied, so any other harness is refused
-rather than saved to fail at the next sweep. `/setting review.model` gives reviews
-a model of their own; left unset, reviews use the reviewer's own model, which the
-row says as *agent's own*. The list offered is that reviewer's, and when it cannot
+`/setting review.agent off` turns it off, and the row offers every agent: what a
+reviewer may do is decided by the review, not the agent — its tools are switched off
+where the harness allows it and every permission it asks for is refused. Naming an
+agent replaces a `review.api` endpoint, which is set in config.yaml only, beside its
+key. `/setting review.model` gives reviews a model of their own; left unset, reviews
+use the reviewer's own model, which the row says as *agent's own*; with an endpoint,
+its model is `review.api.model` and the row only shows it. The list offered is that reviewer's, and when it cannot
 be obtained the name is taken as typed. Both fields are read from the live config
 at the start of every sweep, so a change lands within a minute — no restart. The
 reviewer is checked against the agents config.yaml and each host's pod.yaml

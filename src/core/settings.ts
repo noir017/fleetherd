@@ -1,5 +1,5 @@
 import type { Config, SessionScope } from '../config/schema.js';
-import { agentDisplayName, findAgent } from '../config/schema.js';
+import { agentDisplayName, findAgent, REVIEW_ARGS_HARNESSES } from '../config/schema.js';
 import type {
   SettingsScreen,
   SettingsScreenControl,
@@ -48,12 +48,14 @@ import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.
  * reviews a quiet conversation — and, when its own model is the wrong trade for the job, which
  * model reviews use — is a judgement about cost and quality, not deployment plumbing. Leaving it
  * to a file edit meant the feature could only be turned on by someone with a shell, on the machine
- * that runs the daemon. Two things make it safe enough for chat. The reviewer must be an `agy`
- * agent, because a review is one `agy -p` with every tool denied (AGENTS.md invariant 8) — so the
- * rows offer only agy agents, and a typed claude/opencode id is refused with the reason rather than
- * saved to fail at the next sweep. And the sweep re-reads `review` from the live Config at the start
- * of every pass (daemon/review.ts `reviewer()`), so a change lands on the next sweep, within a
- * minute, without restarting anything.
+ * that runs the daemon. Two things make it safe enough for chat. Any agent can review, because
+ * what a reviewer may do is the gateway's to decide, not the agent's: its tools are switched off
+ * where the harness allows it and every permission it asks for is refused (AGENTS.md invariant 8,
+ * daemon/review-run.ts) — so the row offers every agent. And the sweep re-reads `review` from the
+ * live Config at the start of every pass (daemon/review.ts `reviewer()`), so a change lands on the
+ * next sweep, within a minute, without restarting anything. The other kind of reviewer,
+ * `review.api`, carries a URL and a key and stays in config.yaml: picking an agent here replaces
+ * it, but nothing here writes one.
  */
 
 /** The settings this gateway can write. Everything else is refused by name. */
@@ -356,14 +358,16 @@ const MODEL_UNSET = '(harness default)';
  */
 const REVIEW_MODEL_UNSET = "agent's own";
 
-/** The reviewer's row value: off, the agent, never a stale id dressed up as a name. */
+/** The reviewer's row value: off, the agent, the endpoint — never a stale id dressed up as a name. */
 function reviewAgentValue(cfg: Config): string {
-  return cfg.review ? agentLabel(cfg, cfg.review.agent) : 'off';
+  if (cfg.review?.api) return `api · ${cfg.review.api.model}`;
+  return cfg.review?.agent ? agentLabel(cfg, cfg.review.agent) : 'off';
 }
 
 /** The review model's row value, with the inherited case said rather than left blank. */
 function reviewModelValue(cfg: Config): string {
   if (!cfg.review) return 'off';
+  if (cfg.review.api) return `${cfg.review.api.model} (review.api)`;
   return cfg.review.model ?? REVIEW_MODEL_UNSET;
 }
 
@@ -498,14 +502,16 @@ export function settingDescription(row: SettingRow): string {
       );
     case 'review.agent':
       return (
-        'Which `agy` agent reviews conversations that go quiet and writes what it learns into the ' +
-        'skill library. A review is one `agy -p` with every tool denied, so only an `agy` agent can ' +
-        'be named; `off` turns auto review off. The next sweep reads the new value — within a minute.'
+        'Which agent reviews conversations that go quiet and writes what it learns into the skill ' +
+        'library. Any agent can: a review runs on its machine with its tools switched off where the ' +
+        'harness allows it and every permission refused. `off` turns auto review off; naming an agent ' +
+        'replaces a `review.api` endpoint. The next sweep reads the new value — within a minute.'
       );
     case 'review.model':
       return (
-        'The model reviews run with (`agy --model`). Unset follows the reviewer’s own model; pick one ' +
-        'here to give reviews a different model from the agent’s. A change lands on the next sweep.'
+        'The model reviews run with. Unset follows the reviewer’s own model; pick one here to give ' +
+        'reviews a different model from the agent’s. A `review.api` endpoint names its own model in ' +
+        'config.yaml. A change lands on the next sweep.'
       );
     default: {
       const _exhaustive: never = row.id;
@@ -606,7 +612,7 @@ function settingGroupNote(row: SettingRow): string | undefined {
     return 'What each agent starts a new session with. A change applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only.';
   }
   if (row.id === 'review.agent') {
-    return 'An `agy` agent reads a conversation that has gone quiet and writes what it learned into the skill library. Only `agy` agents can do this: reviews run with every tool denied.';
+    return 'An agent reads a conversation that has gone quiet and writes what it learned into the skill library. The review runs with its tools switched off and every permission refused.';
   }
   return undefined;
 }
@@ -634,7 +640,7 @@ function settingHint(row: SettingRow): string | undefined {
     case 'cleanup':
       return 'Also write a voice message up as the message you meant, and send that version.';
     case 'review.agent':
-      return 'Have an `agy` agent review a quiet conversation and write what it learned into the skill library. Off by default.';
+      return 'Have an agent review a quiet conversation and write what it learned into the skill library. Off by default.';
     case 'review.model':
       return 'The model reviews run with. Unset follows the reviewer’s own model.';
     default: {
@@ -770,8 +776,7 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
         ...(readSettingValue(row, cfg) !== undefined ? [{ raw: '-', label: clearedModelLabel(row) }] : []),
       ];
     case 'review.agent': {
-      // Only agy agents: a review is `agy -p` with every tool denied (AGENTS.md invariant 8).
-      // Offering the others and refusing the tap would be a menu that lists what it will not write.
+      // Every agent: the review's switches and refusals are the gateway's (daemon/review-run.ts).
       const off = {
         raw: 'off',
         label: 'off — no automatic reviews',
@@ -780,13 +785,12 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
       };
       return [
         off,
-        ...cfg.agents
-          .filter((a) => a.harness === 'agy')
-          .map((a) => ({ raw: a.id, label: agentLabel(cfg, a.id) })),
+        ...cfg.agents.map((a) => ({ raw: a.id, label: agentLabel(cfg, a.id) })),
       ];
     }
     case 'review.model': {
-      if (!cfg.review) return [];
+      // An endpoint's model is in config.yaml beside its URL; there is no list to offer for it.
+      if (!cfg.review?.agent) return [];
       return [
         ...modelList(row, cfg, ctx).map((m) => {
           const name = m.name.trim();
@@ -918,7 +922,7 @@ function clearedModelLabel(row: SettingRow): string {
 
 /** What a review model falls back to: the reviewer's own model, named so the choice is explicit. */
 function clearedReviewModelLabel(cfg: Config): string {
-  return cfg.review ? `follow ${cfg.review.agent} (its own model)` : REVIEW_MODEL_UNSET;
+  return cfg.review?.agent ? `follow ${cfg.review.agent} (its own model)` : REVIEW_MODEL_UNSET;
 }
 
 /**
@@ -1058,57 +1062,68 @@ function parseModelName(
 }
 
 /**
- * The reviewer: `off`, or an agy agent. Refused rather than coerced for anything else — a review
- * is `agy -p` with every tool denied (AGENTS.md invariant 8), and a claude/opencode id here would
- * be a config the schema rejects, written by a chat command that claimed it worked.
+ * The reviewer: `off`, or any agent. What it gives up is said in the note — a review model or an
+ * endpoint set before, extra arguments the new reviewer would not read — because the writer drops
+ * them with this value (daemon/settings-store.ts reviewCompanions), not silently.
  */
 function parseReviewAgentValue(input: string, cfg: Config): ParsedSettingValue {
   if (REVIEW_OFF.has(input.toLowerCase())) {
+    const gone = [cfg.review?.model ? 'review model' : '', cfg.review?.api ? '`review.api` endpoint' : '']
+      .filter(Boolean)
+      .join(' and ');
     return {
       kind: 'value',
       value: undefined,
       display: 'off',
-      ...(cfg.review?.model ? { note: 'The review model set here is removed with it.' } : {}),
+      ...(gone ? { note: `The ${gone} set here ${gone.includes(' and ') ? 'are' : 'is'} removed with it.` } : {}),
     };
   }
   const match = cfg.agents.find((a) => a.id.toLowerCase() === input.toLowerCase());
   if (!match) {
-    const agy = cfg.agents.filter((a) => a.harness === 'agy').map((a) => a.id);
     return {
       kind: 'invalid',
-      reason: agy.length
-        ? `No agy agent named \`${input}\`. agy agents here: ${agy.join(', ')}.`
-        : 'This deployment has no agy agent, so auto review cannot be turned on here.',
+      reason: `No agent named \`${input}\`. Configured: ${cfg.agents.map((a) => a.id).join(', ')}.`,
     };
   }
-  if (match.harness !== 'agy') {
-    return {
-      kind: 'invalid',
-      reason: `\`${match.id}\` is a ${match.harness} agent. A review is one \`agy -p\` with every tool denied, so only an agy agent can review.`,
-    };
-  }
-  return { kind: 'value', value: match.id, display: agentLabel(cfg, match.id) };
+  const notes = [
+    cfg.review?.api ? `Reviews went to the \`review.api\` endpoint (${cfg.review.api.model}); that is removed, a review has one reviewer.` : '',
+    cfg.review?.args && !REVIEW_ARGS_HARNESSES.has(match.harness)
+      ? `\`review.args\` is removed: it is for a custom, gemini or dsh reviewer, and ${match.id} is ${match.harness}.`
+      : '',
+  ].filter(Boolean);
+  return {
+    kind: 'value',
+    value: match.id,
+    display: agentLabel(cfg, match.id),
+    ...(notes.length ? { note: notes.join(' ') } : {}),
+  };
 }
 
-/** A review model: only meaningful with a reviewer, and following it until one is named. */
+/** Why the review model is not set here when reviews go to an endpoint. */
+const REVIEW_API_MODEL =
+  'Reviews go to the `review.api` endpoint, whose model is `review.api.model` in config.yaml, beside its URL and key.';
+
+/** A review model: only meaningful with an agent reviewer, and following it until one is named. */
 function parseReviewModelValue(
   input: string,
   row: SettingRow,
   cfg: Config,
   ctx: SettingsContext
 ): ParsedSettingValue {
-  if (!cfg.review) {
+  if (cfg.review?.api) return { kind: 'invalid', reason: REVIEW_API_MODEL };
+  const reviewer = cfg.review?.agent;
+  if (!reviewer) {
     return {
       kind: 'invalid',
-      reason: 'Turn auto review on first: `/setting review.agent <agy agent>`.',
+      reason: 'Turn auto review on first: `/setting review.agent <agent>`.',
     };
   }
   return parseModelName(
     input,
     modelList(row, cfg, ctx),
-    cfg.review.agent,
+    reviewer,
     clearedReviewModelLabel(cfg),
-    `${cfg.review.agent} did not offer its model list here — saved as typed, so check it is a name \`agy --model\` accepts.`
+    `${reviewer} did not offer its model list here — saved as typed, so check it is a name that agent accepts.`
   );
 }
 
@@ -1199,6 +1214,15 @@ function parseBooleanValue(input: string): ParsedSettingValue {
 }
 
 /**
+ * The stored reviewer. An endpoint is a reviewer too: reading it as unset would answer "already
+ * off" to `off` and keep it. Its path, not an id, so no agent's id can be mistaken for it.
+ */
+function storedReviewer(cfg: Config): string | undefined {
+  if (cfg.review?.agent) return cfg.review.agent;
+  return cfg.review?.api ? 'review.api' : undefined;
+}
+
+/**
  * The value currently stored for a row, in the form a patch would write — as opposed to
  * `SettingRow.value`, which is formatted for a human. The writer compares against this to answer
  * "already that" without touching the file.
@@ -1225,7 +1249,7 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
     case 'cleanup':
       return cfg.voice?.cleanup;
     case 'review.agent':
-      return cfg.review?.agent;
+      return storedReviewer(cfg);
     case 'review.model':
       return cfg.review?.model;
     default: {
@@ -1346,9 +1370,10 @@ export function settingTypedOnlyHint(
 ): string | undefined {
   if (row.id === 'model') return modelListHint(row, cfg, ctx);
   if (row.id === 'review.model') {
+    if (cfg.review?.api) return REVIEW_API_MODEL;
     return cfg.review
       ? modelListHint(row, cfg, ctx)
-      : 'Turn auto review on first: `/setting review.agent <agy agent>`.';
+      : 'Turn auto review on first: `/setting review.agent <agent>`.';
   }
   return settingOptions(row, cfg, ctx).length > 0 ? undefined : 'Type a value instead.';
 }

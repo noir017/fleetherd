@@ -119,6 +119,8 @@ interface RigOptions {
   slowModels?: boolean;
   /** Turn auto review on for this agent in the file and the injected config. */
   reviewAgent?: string;
+  /** Send reviews to an endpoint instead (`review.api`, its key a `${VAR}` in the file). */
+  reviewApi?: boolean;
   /**
    * A host whose pod declares `oc` (so the agent is `oc@box`), with this model in its pod.yaml —
    * written to the file and pods.json and read back the way the daemon reads them. `agy` adds a
@@ -148,6 +150,20 @@ function writePod(pod: { model?: string; gateway?: string; agy?: boolean }): voi
       },
     })
   );
+}
+
+/**
+ * The `review:` block a rig starts with: appended to the file, and returned as the running config
+ * holds it (the endpoint's key expanded, as loadConfig would).
+ */
+function writeReview(opts: RigOptions): { review?: Record<string, unknown> } {
+  if (opts.reviewAgent) {
+    fs.appendFileSync(file, `review:\n  agent: ${opts.reviewAgent}\n`);
+    return { review: { agent: opts.reviewAgent } };
+  }
+  if (!opts.reviewApi) return {};
+  fs.appendFileSync(file, 'review:\n  api:\n    url: http://newapi:3000/v1\n    key: ${NEWAPI_API_KEY}\n    model: gemini-3.8-flash\n');
+  return { review: { api: { url: 'http://newapi:3000/v1', key: 'key-from-env', model: 'gemini-3.8-flash' } } };
 }
 
 function rig(opts: RigOptions = {}) {
@@ -244,7 +260,7 @@ function rig(opts: RigOptions = {}) {
       text().replace('\nrouting:', '\n  - id: ag\n    harness: agy\nrouting:')
     );
   }
-  if (opts.reviewAgent) fs.appendFileSync(file, `review:\n  agent: ${opts.reviewAgent}\n`);
+  const review = writeReview(opts);
   const parsed = opts.pod ? loadConfig() : parseConfig({
     version: 1,
     platforms: { tg: { type: 'telegram', token: 'tok-from-env' } },
@@ -256,7 +272,7 @@ function rig(opts: RigOptions = {}) {
     routing: { default: 'oc' },
     session: { idleTimeoutMs: opts.idleTimeoutMs ?? 3_600_000 },
     ...(opts.access ? { access: { allowFrom: opts.access } } : {}),
-    ...(opts.reviewAgent ? { review: { agent: opts.reviewAgent } } : {}),
+    ...review,
     ...(opts.voice
       ? { voice: { transcriber: { baseUrl: 'http://newapi:3000/v1beta', apiKey: 'k', model: 'gemini-3-flash' } } }
       : {}),
@@ -1027,13 +1043,40 @@ describe('auto review', () => {
     expect(loadConfig().review?.agent).toBe('ag');
   });
 
-  it('refuses a non-agy agent by name, and writes nothing', async () => {
+  it('takes an agent of any harness: the review switches its tools off itself', async () => {
     const r = textRig({ agy: true });
-    const before = text();
     await r.send('/setting review.agent cc');
-    expect(r.replies().at(-1)).toContain('claude agent');
-    expect(r.replies().at(-1)).toContain('agy -p');
+    expect(r.replies().at(-1)).toContain('Auto review → cc');
+    expect(onDisk()['review']).toEqual({ agent: 'cc' });
+    expect(loadConfig().review?.agent).toBe('cc');
+  });
+
+  it('an agent replaces an endpoint, in the file too, and the key is never written out', async () => {
+    const r = textRig({ reviewApi: true });
+    expect(r.cfg.review?.api?.model).toBe('gemini-3.8-flash');
+    await r.send('/setting review.agent cc');
+    expect(r.replies().at(-1)).toContain('review.api');
+    expect(onDisk()['review']).toEqual({ agent: 'cc' });
+    expect(r.cfg.review).toEqual({ agent: 'cc' });
+    expect(text()).not.toContain('key-from-env');
+    expect(loadConfig().review).toEqual({ agent: 'cc' });
+  });
+
+  it('shows an endpoint as the reviewer, and leaves its model to config.yaml', async () => {
+    const r = textRig({ reviewApi: true });
+    const before = text();
+    await r.send('/setting review.model gemini-3.8-pro');
+    expect(r.replies().at(-1)).toContain('review.api.model');
     expect(text()).toBe(before);
+    await r.send('/setting');
+    expect(r.replies().at(-1)).toContain('api · gemini-3.8-flash');
+  });
+
+  it('turning off removes an endpoint, key and all', async () => {
+    const r = textRig({ reviewApi: true });
+    await r.send('/setting review.agent off');
+    expect(r.replies().at(-1)).toContain('endpoint');
+    expect(onDisk()['review']).toBeUndefined();
     expect(r.cfg.review).toBeUndefined();
   });
 
@@ -1069,17 +1112,17 @@ describe('auto review', () => {
     expect(text()).toBe(before);
   });
 
-  it('offers only off and the agy agents on the screen, and writes the tapped one', async () => {
+  it('offers off and every agent on the screen, and writes the tapped one', async () => {
     const r = rig({ agy: true, caps: { settingsScreen: true } });
     await r.send('/setting');
     const list = r.menu().screen;
     if (list?.level !== 'list') throw new Error('no list screen');
     const reviewer = list.rows.find((x) => x.label === 'Auto review');
     if (reviewer?.control.kind !== 'choice') throw new Error('reviewer is not a choice');
-    expect(reviewer.control.options.map((o) => o.label)).toEqual(['off', 'ag · agy']);
+    expect(reviewer.control.options.map((o) => o.label.split(' ')[0])).toEqual(['off', 'oc', 'cc', 'ag']);
     const model = list.rows.find((x) => x.label === 'Review model');
     expect(model?.control).toEqual({ kind: 'list' });
-    await r.click(reviewer.control.options[1]!.buttonId);
+    await r.click(reviewer.control.options[3]!.buttonId);
     expect(onDisk()['review']).toEqual({ agent: 'ag' });
     expect(r.cfg.review?.agent).toBe('ag');
   });
@@ -1098,14 +1141,12 @@ describe('auto review against the files', () => {
     expect(r.cfg.review).toBeUndefined();
   });
 
-  it('refuses a reviewer the file now declares as another harness', async () => {
+  it('takes a reviewer whatever harness the file now declares it as', async () => {
     const r = textRig({ agy: true });
     fs.writeFileSync(file, text().replace('  - id: ag\n    harness: agy\n', '  - id: ag\n    harness: claude\n'));
-    const before = text();
     await r.send('/setting review.agent ag');
-    expect(r.replies().at(-1)).toContain('claude agent in the file');
-    expect(text()).toBe(before);
-    expect(r.cfg.review).toBeUndefined();
+    expect(onDisk()['review']).toEqual({ agent: 'ag' });
+    expect(loadConfig().review?.agent).toBe('ag');
   });
 
   it('accepts a pod reviewer the files still declare', async () => {

@@ -1,15 +1,6 @@
-import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import type { AgentDef, Config } from '../config/schema.js';
-import { findAgent } from '../config/schema.js';
+import type { Config } from '../config/schema.js';
 import type { HistoryReviewChange, HistoryReviewRecord, HistoryStore, HistorySessionRow, ReviewWindow } from '../history/store.js';
-import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
-import { AGY_COMMAND } from './agy-cli.js';
 import type { ReviewFacts } from './conversation.js';
-import { remoteHosts } from './remote-hosts.js';
 import {
   buildReviewPrompt,
   parseReviewOutput,
@@ -22,6 +13,7 @@ import {
   type ReviewChange,
 } from './review-prompt.js';
 import { classifyReview, recordedChange, undoOf, type AppliedChange } from './review-result.js';
+import { isCapacityFailure, reviewerOf, runReview, type Reviewer, type ReviewRun } from './review-run.js';
 import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, type ReviewStateStore } from './review-state.js';
 import {
   SKILL_FILE,
@@ -39,6 +31,18 @@ import {
   type SkillSource,
 } from './skills-store.js';
 
+// The reviewer's routes moved to review-run.ts; these stay importable from here.
+export {
+  AGY_NO_TOOLS,
+  REVIEW_TIMEOUT_MS,
+  agyReviewAnswer,
+  isCapacityFailure,
+  reviewAgyArgs,
+  reviewAgyInput,
+  type Reviewer,
+  type ReviewRun,
+} from './review-run.js';
+
 /**
  * Automatic review of quiet conversations (`docs/skills.md#auto-review`).
  *
@@ -53,21 +57,14 @@ import {
  * reclaim that never comes would mean never reviewing them).
  *
  * ── What the reviewer is ────────────────────────────────────────────────────────────────────────
- * One `agy -p` on the machine the configured reviewer agent runs on, in an empty temporary
- * directory, with every permission class denied (`AGY_NO_TOOLS`). Three measurements on agy 1.5.0
- * (2026-11-04) shaped this, and the first two contradict what the plan assumed:
- *  - print mode WITHOUT `--dangerously-skip-permissions` still auto-approves file writes (its
- *    default is accept-edits); a prompt that asked for a file created it;
- *  - `deny: ["*"]` denies NOTHING — the rule names a permission class literally, so `"*"` is a
- *    class that does not exist. The explicit list is what refuses `write_file`, `command`,
- *    `read_file` and `mcp` (measured: each reported "Matches user-configured deny rule", and the
- *    directory stayed empty);
- *  - the prompt cannot ride in argv: Linux caps one argument at 128 KB (`MAX_ARG_STRLEN`), and a
- *    360 KB `-p=` fails with "Argument list too long". It goes on stdin as one NDJSON user
- *    message instead (`reviewAgyInput`), in the stream-json shape agy's headless protocol defines.
- * The agent's own CLI still keeps its conversation state under `~/.gemini`, as any CLI does; that
- * is not a tool call. A tool added in a permission class not in that list would not be denied, so
- * the list is part of the security contract — see AGENTS.md invariant 8.
+ * `review.agent` — any agent, on its own machine — or `review.api`, an OpenAI-compatible endpoint
+ * (review-run.ts, which has the routes and the measurements behind each harness's switches). Every
+ * route gets the whole review in one prompt and answers once; none can write: an endpoint has no
+ * tools, agy runs `agy -p` with every permission class denied, and any other agent runs one session
+ * of its own in an empty temporary directory, with no MCP servers, every permission request
+ * refused and its tools switched off where the harness allows it. What a harness cannot switch off
+ * may read outside that directory; writes and commands still need a permission nobody gives —
+ * AGENTS.md invariant 8.
  *
  * The prompt also says, in its first line, that nobody will answer and no approval is coming: on
  * this host agy reads the operator's global `~/.gemini/config/AGENTS.md`, whose standing rule is
@@ -127,61 +124,12 @@ const WRITTEN_CHARS = 20_000;
 const MAX_WRITTEN_FILES = 20;
 
 /**
- * One review's wall clock. A review reads, thinks and prints one JSON object — but it can also
- * spend a long time waiting on the provider.
- *
- * Thirty minutes, not five, measured on 2026-11-05/06: of 26 reviews, the 6 failures were all
- * `agy on awsfree2 timed out after 5 min`, and every one was Google queueing
- * `gemini-3.8-flash-high` — the request hangs for 2–4.5 minutes, then answers `UNAVAILABLE (503):
- * No capacity available for model gemini-3.8-flash-high`. agy 1.5.1 retries that itself after 4 s
- * (`attempt 1 failed … retrying in 4s`; a recovery after attempt 3 was seen on 11-04), so the old
- * five-minute cap killed agy before its own retry loop could finish. Successful reviews took
- * 37–251 s regardless of prompt size, so 30 minutes is about six worst-case queue waits — enough
- * for a 10–20 minute drought with room to spare. A review has no deadline; holding the single lane
- * longer is cheaper than losing the batch.
- *
- * The timeout is treated as capacity even though it proves nothing about the cause. Measured on
- * 11-06 in agy 1.5.1 (cli-20261106_110242.log): it retried past `attempt 5 failed … retrying in
- * 18.9s`, and no give-up limit was found in the binary, so a capacity queue can keep it running
- * past any cap — and a kill leaves no result event or stderr to read. Calling every timeout an
- * ordinary failure would bring back exactly the six lost batches this change is for. A permanently
- * hung agy is bounded by the twelve-in-a-row capacity limit instead: those timeouts stop being
- * exempt, count, and the batch is given up on after three more. Errors that fail at once — no such
- * host, a spawn failure, ssh refused — never reach the timeout and stay ordinary failures.
- */
-export const REVIEW_TIMEOUT_MS = 30 * 60_000;
-
-/**
  * How long one sweep may keep starting reviews. A pass that has already spent this long stops
  * starting new ones and leaves the rest to the next minute's tick, so a run of capacity-starved
  * batches cannot make one pass last for hours. It bounds *starting*, not the pass: the review
  * already running finishes, so a pass takes at most 40 minutes plus its last review's 30.
  */
 export const REVIEW_PASS_BUDGET_MS = 40 * 60_000;
-
-/**
- * Every permission class the CLI knows, denied. `"*"` is NOT a wildcard here — measured on agy
- * 1.5.0, `deny: ["*"]` matched nothing and `write_file` still wrote a file — so each class is
- * named. The reviewer reads nothing and writes nothing: everything it needs is in the prompt.
- *
- * An unknown class in this list is ignored by the CLI (it logs "ignoring invalid deny entry"), so
- * adding one costs nothing; a NEW tool class in a future agy is not covered, which is why the
- * security note in AGENTS.md calls this list part of the contract.
- */
-export const AGY_NO_TOOLS = JSON.stringify({
-  permissions: {
-    deny: [
-      'write_file(*)',
-      'read_file(*)',
-      'list_dir(*)',
-      'search(*)',
-      'command(*)',
-      'url(*)',
-      'browser(*)',
-      'mcp(*)',
-    ],
-  },
-});
 
 export interface ReviewLane {
   platform: string;
@@ -206,40 +154,8 @@ export interface ReviewCandidate {
   unresumable: boolean;
 }
 
-export type ReviewRun =
-  | { ok: true; output: string }
-  | {
-      ok: false;
-      error: string;
-      /**
-       * The provider had no capacity for the model, or the run hit the review timeout. The caller
-       * then retries without counting the attempt, up to the consecutive-capacity limit.
-       */
-      capacity?: boolean;
-    };
-
-/**
- * Whether a run that finished said the provider had no capacity for this model.
- *
- * Narrow on purpose. This failure alone skips the attempt count, so a false positive turns any
- * permanent fault into an endless retry and defeats the three-attempt limit. The evidence agy
- * actually produces is `UNAVAILABLE (code 503): No capacity available for model <id> on the
- * server` (measured 11-04/11-06, in the result event or on stderr); it is matched either as
- * `no capacity available` or as `UNAVAILABLE` and a standalone `503` in the same text. A bare
- * `503` (a port, an id), `resource temporarily unavailable`, `Connection timed out`, or any other
- * error is not evidence.
- *
- * A timeout is handled separately, by the runner's own `capacity` flag, not by this match: a
- * killed run has no output to read and no cause to name. See REVIEW_TIMEOUT_MS for why it is
- * still treated as capacity and what bounds that.
- */
-export function isCapacityFailure(error: string): boolean {
-  if (/no capacity available/i.test(error)) return true;
-  return /\bunavailable\b/i.test(error) && /\b503\b/.test(error);
-}
-
-/** One `agy -p`, injected so tests never start a model. */
-export type ReviewRunner = (def: AgentDef, model: string | undefined, prompt: string) => Promise<ReviewRun>;
+/** One review run (review-run.ts runReview), injected so tests never start a model. */
+export type ReviewRunner = (reviewer: Reviewer, prompt: string) => Promise<ReviewRun>;
 
 export interface ReviewDeps {
   config: Config;
@@ -304,10 +220,9 @@ export class ReviewService {
     this.timer = undefined;
   }
 
-  /** The configured reviewer, when `review.agent` names an agent this config still has. */
-  private reviewer(): AgentDef | undefined {
-    const id = this.deps.config.review?.agent;
-    return id ? findAgent(this.deps.config, id) : undefined;
+  /** The configured reviewer: `review.api`, or `review.agent` when it names an agent this config still has. */
+  private reviewer(): Reviewer | undefined {
+    return reviewerOf(this.deps.config);
   }
 
   /**
@@ -423,7 +338,7 @@ export class ReviewService {
     return message;
   }
 
-  private async runOne(candidate: ReviewCandidate, plan: Plan, reviewer: AgentDef, now: number): Promise<void> {
+  private async runOne(candidate: ReviewCandidate, plan: Plan, reviewer: Reviewer, now: number): Promise<void> {
     let prompt: string;
     try {
       prompt = this.promptFor(plan, candidate.key);
@@ -442,8 +357,7 @@ export class ReviewService {
       });
       return;
     }
-    const model = this.deps.config.review?.model ?? reviewer.model;
-    const result = await this.run(reviewer, model, prompt);
+    const result = await this.run(reviewer, prompt);
     if (!result.ok) {
       // Two sources: the runner's own `capacity` flag, which is how a timeout is marked (a killed
       // run has no output to read), and the text of a run that finished with a 503. An immediate
@@ -621,10 +535,10 @@ export class ReviewService {
     return { name, version: shown.version, description: '', content: shown.content, files };
   }
 
-  private async run(reviewer: AgentDef, model: string | undefined, prompt: string): Promise<ReviewRun> {
-    const runner = this.deps.run ?? runAgyReview;
+  private async run(reviewer: Reviewer, prompt: string): Promise<ReviewRun> {
+    const runner = this.deps.run ?? runReview;
     try {
-      return await runner(reviewer, model, prompt);
+      return await runner(reviewer, prompt);
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -635,7 +549,7 @@ export class ReviewService {
    * version that moved, a file outside the three directories — that change is dropped and logged,
    * and the next one is still tried.
    */
-  private apply(candidate: ReviewCandidate, changes: ReviewChange[], reviewer: AgentDef): AppliedResult {
+  private apply(candidate: ReviewCandidate, changes: ReviewChange[], reviewer: Reviewer): AppliedResult {
     const out: AppliedResult = { applied: [], refused: [] };
     const dir = this.deps.skillsDir;
     const source = {
@@ -669,7 +583,7 @@ export class ReviewService {
     plan: Plan,
     prompt: string,
     output: string,
-    reviewer: AgentDef,
+    reviewer: Reviewer,
     candidate: ReviewCandidate,
     now: number
   ): number | undefined {
@@ -679,7 +593,7 @@ export class ReviewService {
         platform: candidate.lane?.platform ?? '',
         title: `复盘：${plan.session.title || candidate.key}`,
         agent: reviewer.id,
-        host: reviewer.host ?? '',
+        host: reviewer.host,
         kind: 'review',
         at: now,
       });
@@ -983,185 +897,4 @@ function newestHistoryId(name: string, dir: string | undefined): string | undefi
 
 function addressOfLane(lane: ReviewLane): { channel: string; thread?: string } {
   return lane.thread ? { channel: lane.channel, thread: lane.thread } : { channel: lane.channel };
-}
-
-/**
- * The argv for one review. The prompt is NOT here: a single argv entry is capped at 128 KB
- * (`MAX_ARG_STRLEN`), and a long Chinese conversation (40k characters is ~120 KB) plus the skills
- * it used blows through that — measured: a 360 KB `-p=` fails with "Argument list too long".
- * Instead agy runs in its headless print mode, stream-json in and out: one NDJSON user message on
- * stdin, the answer on stdout. This is the one place the daemon still speaks that protocol — the
- * reviewer has to be a one-shot process with no tools, not a session.
- */
-export function reviewAgyArgs(model: string | undefined): string[] {
-  return [
-    ...(model ? [`--model=${model}`] : []),
-    `--settings=${AGY_NO_TOOLS}`,
-    '--disable-slash-commands',
-    '--input-format=stream-json',
-    '--output-format=stream-json',
-    // No prompt after `-p=`: stream-json reads stdin, which is closed after the one message.
-    '-p=',
-  ];
-}
-
-/** The one NDJSON frame agy expects from stdin in that mode. */
-export function reviewAgyInput(prompt: string): string {
-  return `${JSON.stringify({ event: 'user', message: { content: prompt } })}\n`;
-}
-
-interface AgyReviewEvent {
-  event?: string;
-  step_update?: { step_type?: string; text_delta?: string };
-  result?: { status?: string; response?: string; error?: string };
-}
-
-/**
- * What agy answered, read off its event stream.
- *
- * The text comes from the `agent_response` deltas, as the resident runtime reads it; `result.response`
- * is the fallback for a version that only fills the final frame. A non-SUCCESS result with no text
- * is a failure — except `ERROR` after a reply, which the runtime also believes, because some
- * providers report a failure after the answer has already streamed.
- */
-export function agyReviewAnswer(stdout: string): ReviewRun {
-  const { streamed, result } = scanAgyEvents(stdout);
-  if (!result) return { ok: false, error: 'agy ended without a result event' };
-  const answer = (streamed.trim() ? streamed : result.response ?? '').trim();
-  const status = result.status ?? 'SUCCESS';
-  if (status !== 'SUCCESS' && !(status === 'ERROR' && answer)) {
-    return { ok: false, error: `agy ended with status ${status}${result.error ? `: ${result.error}` : ''}` };
-  }
-  if (!answer) return { ok: false, error: 'agy produced no answer' };
-  return { ok: true, output: answer };
-}
-
-/** The two things the answer is built from: the streamed text, and the final frame. */
-function scanAgyEvents(stdout: string): { streamed: string; result: AgyReviewEvent['result'] } {
-  let streamed = '';
-  let result: AgyReviewEvent['result'];
-  for (const line of stdout.split('\n')) {
-    const text = line.trim();
-    if (!text.startsWith('{')) continue; // a banner or log line on stdout: not our protocol
-    let msg: AgyReviewEvent;
-    try {
-      msg = JSON.parse(text) as AgyReviewEvent;
-    } catch {
-      continue;
-    }
-    if (msg.event === 'step_update' && msg.step_update?.step_type === 'agent_response') {
-      streamed += msg.step_update.text_delta ?? '';
-    } else if (msg.event === 'result') {
-      result = msg.result ?? {};
-    }
-  }
-  return { streamed, result };
-}
-
-/**
- * One review run: `agy -p` in an empty directory on the reviewer's machine, with every tool
- * denied and the prompt on stdin. Remote uses the gateway's existing ssh link (`RemoteHost.run`,
- * whose body is the child's stdin); local spawns the CLI directly. The directory is removed
- * afterwards either way — it exists only so the reviewer has no workspace to read and nothing of
- * the operator's within reach.
- */
-export async function runAgyReview(def: AgentDef, model: string | undefined, prompt: string): Promise<ReviewRun> {
-  const argv = reviewAgyArgs(model);
-  const input = reviewAgyInput(prompt);
-  const host = remoteHosts.hostFor(def);
-  // An agent with `host:` whose host is not registered (yet) must not be run HERE: in a
-  // gateway-only container that is a machine with no agy, and on any other it is the wrong account
-  // and the wrong quota.
-  if (def.host && !host) return { ok: false, error: `host "${def.host}" is not registered` };
-  if (!host) return runAgyReviewLocal(def, argv, input);
-  const welcome = await host.ready();
-  const root = path.posix.join(welcome.home, '.talkcode', 'reviews');
-  const dir = path.posix.join(root, `r${Date.now().toString(36)}${randomBytes(3).toString('hex')}`);
-  try {
-    await host.mkdirp(dir, 0o700);
-    const r = await host.run({
-      argv: [AGY_COMMAND, ...argv],
-      cwd: dir,
-      env: remoteAgentEnv(def),
-      stdin: input,
-      timeoutMs: REVIEW_TIMEOUT_MS,
-      max: 1 << 20,
-    });
-    if (r.spawnError) return { ok: false, error: `agy on ${host.id}: ${r.spawnError}` };
-    // A timeout is capacity by the runner's own judgement, not by text: a killed run usually
-    // leaves nothing to match. Errors that fail at once (spawn, ssh) never reach this branch and
-    // stay ordinary failures, so they still count toward the three-attempt limit.
-    if (r.timedOut) {
-      return { ok: false, error: `agy on ${host.id} timed out after ${REVIEW_TIMEOUT_MS / 60_000} min`, capacity: true };
-    }
-    if (r.code !== 0) {
-      const error = `agy on ${host.id} exited ${r.code ?? r.signal}${r.stderr ? `: ${r.stderr}` : ''}`;
-      // Both streams, as in the local runner: the 503 may be in a result event on stdout while
-      // stderr holds only the exit reason.
-      const captured = `${r.output.toString('utf8')}\n${r.stderr ?? ''}`;
-      return isCapacityFailure(captured) ? { ok: false, error, capacity: true } : { ok: false, error };
-    }
-    return agyReviewAnswer(r.output.toString('utf8'));
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  } finally {
-    await host.removePath(dir, root).catch((e: Error) => console.warn(`[review] could not remove ${dir} on ${host.id}: ${e.message}`));
-  }
-}
-
-/** How much of agy's stdout is kept while it runs. The answer is one JSON object; this is slack. */
-const REVIEW_OUTPUT_MAX = 4 << 20;
-const REVIEW_STDERR_MAX = 8 << 10;
-
-async function runAgyReviewLocal(def: AgentDef, argv: string[], input: string): Promise<ReviewRun> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-review-'));
-  try {
-    return await new Promise<ReviewRun>((resolve) => {
-      const child = spawn(AGY_COMMAND, argv, { cwd: dir, env: buildHarnessEnv(def), stdio: ['pipe', 'pipe', 'pipe'] });
-      let out = '';
-      let err = '';
-      let settled = false;
-      const finish = (result: ReviewRun): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(result);
-      };
-      // Classified from the full stderr and stdout, before the error sentence keeps only 500
-      // characters of it. agy's retry lines go to its own CLI log, not these streams, but a 503 in
-      // a result event or a final error does arrive here. The timeout branch below does not use
-      // this: a killed run is capacity whether or not it wrote anything.
-      const failed = (error: string): ReviewRun => {
-        const capacity = isCapacityFailure(`${err}\n${out}`);
-        return capacity ? { ok: false, error, capacity } : { ok: false, error };
-      };
-      const timer = setTimeout(() => {
-        child.kill('SIGKILL');
-        finish({ ok: false, error: `agy did not finish within ${REVIEW_TIMEOUT_MS / 60_000} min`, capacity: true });
-      }, REVIEW_TIMEOUT_MS);
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', (chunk: string) => {
-        out += chunk;
-        if (out.length > REVIEW_OUTPUT_MAX) out = out.slice(-REVIEW_OUTPUT_MAX);
-      });
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk: string) => {
-        err += chunk;
-        if (err.length > REVIEW_STDERR_MAX) err = err.slice(-REVIEW_STDERR_MAX);
-      });
-      child.on('error', (e) => finish({ ok: false, error: `agy: ${e.message}` }));
-      child.on('close', (code) => {
-        if (code !== 0) {
-          finish(failed(`agy exited ${code ?? 'by signal'}${err.trim() ? `: ${err.trim().slice(0, 500)}` : ''}`));
-          return;
-        }
-        finish(agyReviewAnswer(out));
-      });
-      // agy can exit before reading all of stdin; that is a close, not a crash.
-      child.stdin.on('error', () => {});
-      child.stdin.end(input);
-    });
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 }

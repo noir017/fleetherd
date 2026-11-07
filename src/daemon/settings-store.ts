@@ -1,4 +1,4 @@
-import { ConfigSchema, findAgent, type Config, type SessionScope } from '../config/schema.js';
+import { ConfigSchema, findAgent, REVIEW_ARGS_HARNESSES, type Config, type SessionScope } from '../config/schema.js';
 import { configDir, configPath, readRawConfigIfExists, saveConfigPatch } from '../config/load.js';
 import { readPods, mergePodAgents } from '../config/pods.js';
 import { POD_FILE } from './pods.js';
@@ -101,7 +101,10 @@ export class SettingsStore {
     const path = target.path;
 
     try {
-      saveConfigPatch([emptied(path, parsed.value, this.config) ?? { path, value: parsed.value }]);
+      saveConfigPatch([
+        emptied(path, parsed.value, this.config) ?? { path, value: parsed.value },
+        ...reviewCompanions(row, parsed.value, this.config),
+      ]);
     } catch (e) {
       return { kind: 'failed', row, reason: e instanceof Error ? e.message : String(e) };
     }
@@ -180,8 +183,7 @@ export class SettingsStore {
    * config was the only thing checked, and it can be ahead of the file. The rewrite of pods.json
    * before a reload's second read is the case that makes this more than a hand-edit: pods.json is
    * already the new one, the running config still holds the agent, and a write here would name an
-   * agent no host declares any more. Being agy is checked from the same merged view, because the
-   * schema's rule is about the agent the file defines, not the one the daemon remembers.
+   * agent no host declares any more.
    */
   private staleReviewAgent(
     row: SettingRow,
@@ -190,14 +192,9 @@ export class SettingsStore {
     if (row.id !== 'review.agent' || typeof value !== 'string') return undefined;
     const merged = mergePodAgents(readRawConfigIfExists() ?? {}, readPods(configDir())).raw;
     const agents = Array.isArray(merged['agents']) ? (merged['agents'] as unknown[]) : [];
-    const def = agents.find(
-      (a) => typeof a === 'object' && a !== null && (a as { id?: unknown }).id === value
-    ) as { harness?: unknown } | undefined;
+    const def = agents.find((a) => typeof a === 'object' && a !== null && (a as { id?: unknown }).id === value);
     if (!def) {
       return `no \`agents:\` entry with id "${value}" in ${configPath()} or any host's pod.yaml — the files have changed since the daemon started; /reload, then pick again`;
-    }
-    if (def.harness !== 'agy') {
-      return `\`${value}\` is a ${String(def.harness)} agent in the file; a review runs \`agy -p\` with every tool denied, so it must be an agy agent`;
     }
     return undefined;
   }
@@ -247,14 +244,23 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
       // Live, for the same reason: read when each voice note's transcription request is built.
       if (cfg.voice) cfg.voice.cleanup = Boolean(value);
       return;
-    case 'review.agent':
-      // Live: ReviewService.reviewer() re-reads `review.agent` at the start of every sweep (every
+    case 'review.agent': {
+      // Live: ReviewService.reviewer() re-reads `review` at the start of every sweep (every
       // minute), and the sweep in flight re-reads it before each candidate — so this lands on the
-      // next pass, not on a restart. Off deletes the whole block because the schema requires an
-      // agent whenever `review:` exists (the patch's `emptied` does the same to the file).
-      if (value === undefined) delete cfg.review;
-      else cfg.review = { ...cfg.review, agent: String(value) };
+      // next pass, not on a restart. Off deletes the whole block because the schema requires a
+      // reviewer whenever `review:` exists (the patch's `emptied` does the same to the file). An
+      // agent replaces an endpoint, and sheds the args only another kind of harness reads — the
+      // same two keys reviewCompanions deletes from the file.
+      if (value === undefined) {
+        delete cfg.review;
+        return;
+      }
+      const next = { ...cfg.review, agent: String(value) };
+      delete next.api;
+      if (!reviewTakesArgs(cfg, String(value))) delete next.args;
+      cfg.review = next;
       return;
+    }
     case 'review.model':
       // Live for the same reason: runOne reads `review.model` per review, so a review that starts
       // after this write uses it. parseSettingValue refuses this when no reviewer is set, so the
@@ -307,6 +313,31 @@ function applyModel(cfg: Config, row: SettingRow, value: string | number | boole
     return;
   }
   if (def) def.model = value === undefined ? undefined : String(value);
+}
+
+/**
+ * What else a `review.agent` write removes from the file, as patches beside its own: a review has
+ * one reviewer, so naming an agent drops a `review.api` endpoint, and `review.args` goes when the
+ * new reviewer is a harness that does not read them (the schema refuses them there). Without these
+ * the candidate check would pass in memory and the file would keep both — a config the next start
+ * refuses. Empty for every other write.
+ */
+function reviewCompanions(
+  row: SettingRow,
+  value: unknown,
+  cfg: Config
+): Array<{ path: Array<string | number>; value: undefined }> {
+  if (row.id !== 'review.agent' || typeof value !== 'string' || !cfg.review) return [];
+  return [
+    ...(cfg.review.api ? [{ path: ['review', 'api'], value: undefined }] : []),
+    ...(cfg.review.args && !reviewTakesArgs(cfg, value) ? [{ path: ['review', 'args'], value: undefined }] : []),
+  ];
+}
+
+/** Whether this agent, as a reviewer, reads `review.args` (config/schema.ts REVIEW_ARGS_HARNESSES). */
+function reviewTakesArgs(cfg: Config, agentId: string): boolean {
+  const def = findAgent(cfg, agentId);
+  return def !== undefined && REVIEW_ARGS_HARNESSES.has(def.harness);
 }
 
 /**

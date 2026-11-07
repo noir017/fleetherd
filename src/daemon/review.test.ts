@@ -111,8 +111,8 @@ function harness(
   const output = opts.output ?? '{"changes":[],"preferences":[]}';
   const run: ReviewRunner =
     opts.run ??
-    (async (def, model, prompt) => {
-      calls.push({ agent: def.id, model, prompt });
+    (async (reviewer, prompt) => {
+      calls.push({ agent: reviewer.id, model: reviewer.model, prompt });
       return { ok: true, output: typeof output === 'function' ? await output() : output };
     });
   const state = new ReviewStateStore(path.join(dir, 'reviews.json'), (m) => logs.push(m));
@@ -599,6 +599,35 @@ describe('ReviewService', () => {
     expect(history.search('读下面的对话记录')).toHaveLength(0);
   });
 
+  it('sends the review to an endpoint, filed and signed as api:<model>', async () => {
+    seed('telegram:chat:1', 3);
+    const seen: Array<{ kind: string; id: string; model: string | undefined }> = [];
+    const output = JSON.stringify({
+      changes: [{ action: 'create', name: 'deploy-check', category: '运维', description: 'When deploying', body: '步骤。', reason: '对话里验证过' }],
+      preferences: [],
+    });
+    const h = harness({
+      cfg: config({ review: { api: { url: 'http://newapi:3000/v1', key: 'k', model: 'gemini-3.8-flash' } } }),
+      run: async (reviewer) => {
+        seen.push({ kind: reviewer.kind, id: reviewer.id, model: reviewer.model });
+        return { ok: true, output };
+      },
+    });
+    expect(h.service.enabled()).toBe(true);
+    await h.service.sweep();
+    expect(seen).toEqual([{ kind: 'api', id: 'api:gemini-3.8-flash', model: 'gemini-3.8-flash' }]);
+    const review = history.sessionOf(`review:telegram:chat:1:${now}`);
+    expect(review).toMatchObject({ kind: 'review', agent: 'api:gemini-3.8-flash', host: '' });
+    expect(listSkills(dir).map((s) => s.name)).toContain('deploy-check');
+  });
+
+  it('hands any agent to the runner, with review.model over its own', async () => {
+    seed('telegram:chat:1', 3);
+    const h = harness({ cfg: config({ review: { agent: 'cc', model: 'sonnet' } }) });
+    await h.service.sweep();
+    expect(h.calls).toEqual([expect.objectContaining({ agent: 'cc', model: 'sonnet' })]);
+  });
+
   it('records what each change became, with the command that undoes it', async () => {
     seed('telegram:chat:1', 3);
     const output = JSON.stringify({
@@ -929,7 +958,7 @@ describe('a review with no capacity', () => {
     const order: string[] = [];
     const runner =
       (fail: boolean): ReviewRunner =>
-      async (_def, _model, prompt) => {
+      async (_reviewer, prompt) => {
         order.push(prompt.includes('telegram:chat:1') ? 'chat:1' : 'chat:2');
         return fail
           ? { ok: false, error: 'UNAVAILABLE (503): No capacity available' }
@@ -958,7 +987,7 @@ describe('a review with no capacity', () => {
     const started: string[] = [];
     const h = harness({
       candidates: [candidate({ key: 'telegram:chat:1' }), candidate({ key: 'telegram:chat:2' })],
-      run: async (_def, _model, prompt) => {
+      run: async (_reviewer, prompt) => {
         started.push(prompt.includes('telegram:chat:1') ? 'chat:1' : 'chat:2');
         now += REVIEW_PASS_BUDGET_MS;
         return { ok: true, output: '{"changes":[],"preferences":[]}' };

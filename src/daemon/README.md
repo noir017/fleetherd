@@ -16,6 +16,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `routing.ts` | Pure: inbound → which agent (and whether the user *asked* for it) + which scope |
 | `conversation.ts` | `ConversationRegistry` — per-conversation state, agent binding, access + gating, command translation |
 | `settings-store.ts` | The write half of `/setting`: validate, patch config.yaml, apply to the live `Config` |
+| `review-run.ts` | Who runs an automatic review and how: `review.api` (one `/chat/completions` request), an agy agent (`agy -p` with every class denied), or any other agent (one ACP session of its own, its tools switched off, every permission refused) |
 | `model-catalog.ts` | Any agent's model list for the settings screen: from a live session, from what was learned, or from a session brought up just to ask |
 | `config-reload.ts` | `/reload` and `talkcode reload`: diff the re-read config against the live one, copy it in place, and say what changed. Which sections apply live and which need a restart is decided in its `RELOAD_KIND`; what happens to running agent processes is `ConversationRegistry.respawnAgents` |
 | `turn-runner.ts` | One turn end to end: prompt, streaming, tools, footer, errors |
@@ -383,9 +384,11 @@ Verified resumable on the three harnesses in use: `claude` (claude-agent-acp adv
 
 ### Automatic review
 
-`review.ts` reads a quiet conversation and, if it has anything to teach, has an `agy -p` propose
+`review.ts` reads a quiet conversation and, if it has anything to teach, has a reviewer propose
 changes to the managed skills; the gateway applies them through skills-store's own rules
-(`docs/skills.md#auto-review`). Off unless `review.agent` names an agy agent.
+(`docs/skills.md#auto-review`). Off unless `review` names a reviewer: an agent (`review.agent`) or
+an endpoint (`review.api`). `review.ts` decides when and what; `review-run.ts` how the prompt gets
+there and the answer back.
 
 **The trigger is reclaim's own moment, expressed as a sweep.** `eligible` is the whole rule:
 quiet for an hour, no turn running, no pending `ask`, and either the child is gone or it can
@@ -430,15 +433,35 @@ The review already running is never cut short, so a pass can last 70 minutes.
 One known limit: `host.run` has no gateway-side deadline, only the host-side `timeoutMs`, so an ssh
 link that drops mid-review leaves `sweep` busy until the host's timeout fires. Not addressed here.
 
-**The reviewer cannot touch anything.** One `agy -p` on the agent's machine, in an empty directory
-that is removed afterwards, with every permission class denied (`AGY_NO_TOOLS`). Measured on agy
-1.5.0 (2026-11-04), and both halves contradict the plan: print mode WITHOUT
-`--dangerously-skip-permissions` still auto-approves file writes, and `deny: ["*"]` denies
-NOTHING (`"*"` names a permission class literally). The explicit list refuses `write_file`,
-`command`, `read_file` and `mcp` — each reported "Matches user-configured deny rule" — and the
-same prompt wrote nothing. A tool in a class not in that list would not be denied; the list is
-part of the security contract (AGENTS.md invariant 8). `runAgyReview` is injectable so no test
-starts a model.
+**The reviewer cannot write.** Three routes (`review-run.ts` runReview), each measured on
+2026-11-07 with a prompt asking it to read a file outside its directory, write one and run a
+command (project-scripts/talkcode-review-tools):
+
+- `review.api`: one `POST <url>/chat/completions`, the prompt as one user message. No tools exist.
+  A non-2xx is a failure carrying the body; a timeout is capacity, as on every route.
+- an agy agent: one `agy -p` on the agent's machine, in an empty directory removed afterwards,
+  with every permission class denied (`AGY_NO_TOOLS`). Measured on agy 1.5.0 (2026-11-04), and
+  both halves contradict the plan: print mode WITHOUT `--dangerously-skip-permissions` still
+  auto-approves file writes, and `deny: ["*"]` denies NOTHING (`"*"` names a permission class
+  literally). The explicit list refuses `write_file`, `command`, `read_file` and `mcp`. Not
+  `agy acp`: on 1.5.2 it has no `--settings` and loads no CLI settings at all, and its read and
+  write tools ask nobody.
+- any other agent: one ACP session of its own (`runAcpReview`), spawned like a conversation's —
+  here, or through `RemoteHost.spawn` on its host — but in an empty directory under the host's
+  `~/.talkcode/reviews`, with `mcpServers: []`, no talkcode token in its environment, and a client
+  that advertises no fs, terminal or elicitation and refuses every `session/request_permission`
+  (`refusePermission`). `acpReviewLaunch` adds the harness's own switches: claude
+  `_meta.claudeCode.options {tools: [], settingSources: [], strictMcpConfig: true}`; opencode
+  `OPENCODE_CONFIG_CONTENT {"permission":"deny"}`; codex `CODEX_CONFIG` with `shell_tool` and
+  `unified_exec` off, and `INITIAL_AGENT_MODE=read-only` so its one remaining tool, apply_patch,
+  has to ask — and the refusal cancels the turn, which `driveAcpReview` reports as a failure
+  naming what was refused. `custom`, `gemini` and `dsh` get `review.args` and nothing else. The
+  session never touches the registry or the library, so it is not a topic and never a candidate.
+
+What a harness cannot switch off may still read outside the directory; writes and commands are
+held by the refusal. That is the security contract (AGENTS.md invariant 8). The runner is
+injectable (`ReviewDeps.run`) so no test starts a model; `review-run.test.ts` drives the ACP route
+against a fake agent and the api route against a stubbed `fetch`.
 
 **The prompt goes on stdin, not in argv.** Linux caps one argument at 128 KB (`MAX_ARG_STRLEN`),
 and the conversation window alone is 40k characters — ~120 KB of Chinese — before eight used

@@ -16,7 +16,7 @@
 | 流式输出 | `stream.enabled` | `on`、`off`（默认 `off`） | 立即 —— 下一条回复生效 |
 | 确认语音识别结果 | `voice.confirm` | `on`、`off`（默认 `on`；仅在配了 `voice:` 时出现） | 立即 —— 下一条语音生效 |
 | 整理语音识别结果 | `voice.cleanup` | `on`、`off`（默认 `on`；仅在配了 `voice:` 时出现） | 立即 —— 下一条语音生效 |
-| 自动复盘 | `review.agent` | `off`，或某个 `agy` 智能体的 id | 立即 —— 下一轮扫描，一分钟内 |
+| 自动复盘 | `review.agent` | `off`，或某个智能体的 id | 立即 —— 下一轮扫描，一分钟内 |
 | 复盘模型 | `review.model` | 复盘者上报的模型、任意名字，或 `-` 跟随复盘者自己的模型 | 立即 —— 下一次复盘 |
 
 ```
@@ -61,9 +61,10 @@ config.yaml 的 `podModels`，优先于主机 pod.yaml 里的 `model:`；那一�
 harness 默认。
 
 **自动复盘**也在这里设置。`/setting review.agent ag@uniagent` 打开它，`/setting review.agent off`
-关掉；这一行只列出 `agy` 智能体 —— 一次复盘就是一次 `agy -p`，所有工具都被拒绝，所以其他 harness
-的 id 会被直接拒绝，而不是写进文件、等下一轮扫描时才失败。`/setting review.model` 给复盘单独指定
-模型；不设就是跟随复盘者自己的模型，行上显示 *agent's own*。列表来自这个复盘者，拿不到列表时按你
+关掉；这一行列出所有智能体 —— 复盘者能做什么由复盘决定、不由智能体决定：能关的工具都关掉，提出的
+每个权限请求都拒绝。选了智能体会替换掉 `review.api`，而 `review.api` 只能在 config.yaml 里和密钥
+一起写。`/setting review.model` 给复盘单独指定模型；不设就是跟随复盘者自己的模型，行上显示
+*agent's own*；用接口复盘时模型是 `review.api.model`，这一行只做展示。列表来自这个复盘者，拿不到列表时按你
 输入的名字保存。这两项都在每轮扫描开始时从运行中的配置读取，所以改完一分钟内生效，不用重启。复盘者
 会按 config.yaml 和各主机 pod.yaml 里实际声明的智能体核对，而不只看运行中的配置——`/reload`
 失败后残留的旧行会被拒绝，不会写进一份下次启动加载不了的文件。详见
