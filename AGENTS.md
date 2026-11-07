@@ -160,6 +160,12 @@ of its own shipped in 2.18.0 and was removed the same day: see delegation.ts for
 **Best-effort side effects don't break turns.** Reactions, headers, receipts, and menu
 edits are `void`-and-`catch`: a failure is logged and the turn continues.
 
+**Icons are inline SVG from `platform/webui/icons.ts`, never emoji.** An emoji is a font glyph:
+it renders differently on every platform, cannot take `currentColor` or the text size, and where
+the font lacks it the button is an empty box. `icons.ts` holds every icon the page shows — 24×24,
+stroked in `currentColor` — and a new one goes into its `PATHS` rather than inline in `page.ts`;
+text-only affordances like the terminal's `>_` stay text.
+
 ## Testing
 
 Vitest, colocated: `foo.ts` is tested by `foo.test.ts` in the same directory. ~3730
