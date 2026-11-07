@@ -83,6 +83,15 @@ const AgentDefFields = z
      * Unset = trust the harness's number.
      */
     contextWindow: z.number().int().positive().optional(),
+    /**
+     * Where the agent compacts its context, in tokens — for a harness whose own compaction point the
+     * operator cannot otherwise reach. Only `agy` today: Google hands it one per model with its model
+     * list (256k for Gemini 3.8 Flash, whose window is 1M), and nothing on the machine overrides it,
+     * so the gateway puts agy behind a relay that rewrites that list (daemon/agy-relay.ts). Applied to
+     * every model that can hold it — its window less its output reserve — and the rest keep Google's.
+     * Unset = no relay, the harness's own.
+     */
+    contextBudget: z.number().int().min(64_000).max(2_000_000).optional(),
     /** Env vars injected into the subprocess (credentials etc.); supports ${VAR} expansion. */
     env: z.record(z.string()).default({}),
     /**
@@ -165,13 +174,18 @@ const AgentDefFields = z
   });
 
 /** The cross-field rules every agent definition obeys, wherever it was written. */
-function agentRules<O extends { harness: string; command?: string }, I>(
+function agentRules<O extends { harness: string; command?: string; contextBudget?: number }, I>(
   schema: z.ZodType<O, z.ZodTypeDef, I>
 ) {
-  return schema.refine((a) => a.harness !== 'custom' || (a.command !== undefined && a.command.length > 0), {
-    message: 'command is required when harness=custom',
-    path: ['command'],
-  });
+  return schema
+    .refine((a) => a.harness !== 'custom' || (a.command !== undefined && a.command.length > 0), {
+      message: 'command is required when harness=custom',
+      path: ['command'],
+    })
+    .refine((a) => a.contextBudget === undefined || a.harness === 'agy', {
+      message: 'contextBudget is supported for harness agy only (see docs/agents.md)',
+      path: ['contextBudget'],
+    });
 }
 
 export const AgentDefSchema = agentRules(AgentDefFields);

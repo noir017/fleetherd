@@ -1,5 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -331,5 +333,27 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
     await waitFor(() => !pidAlive(w1.pid) && !pidAlive(child.pid!));
     expect(existsSync(join(home, '.talkcode/remote/test-v1'))).toBe(false);
     expect(existsSync(join(home, '.talkcode/remote/test-v2/talkcode-remote'))).toBe(true);
+  }, 30_000);
+
+  it('relays an agent\'s API calls on the host, showing the gateway only the paths it named', async () => {
+    const upstream = createServer((req, res) => res.end(req.url === '/models' ? '{"limit":"256000"}' : `forwarded ${req.url}`));
+    await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', r));
+    try {
+      const host = makeHost(newHome());
+      const shown: string[] = [];
+      const url = await host.relay('agy.it', `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, ['/models'], (path, body) => {
+        shown.push(path);
+        return Buffer.from(body.toString().replace('256000', '900000'));
+      });
+      expect(await (await fetch(`${url}/models`)).text()).toBe('{"limit":"900000"}');
+      expect(await (await fetch(`${url}/other?x=1`)).text()).toBe('forwarded /other?x=1');
+      expect(shown).toEqual(['/models']);
+      // Asked again at the next spawn: the same relay.
+      expect(await host.relay('agy.it', `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, ['/models'], () => undefined)).toBe(url);
+      // The newest transform answers.
+      expect(await (await fetch(`${url}/models`)).text()).toBe('{"limit":"256000"}');
+    } finally {
+      upstream.close();
+    }
   }, 30_000);
 });

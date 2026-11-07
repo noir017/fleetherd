@@ -218,4 +218,6 @@ agents:
 
 `~/.config/talkcode/ssh/` 里的密钥能在它被授权的每台主机上打开 shell。这和那台主机上的智能体能替
 `access.allowFrom` 里任何人做的事是一回事，所以按你本来就必须做的那样保护好网关即可。小服务不开任何网络端口：
-它只走 ssh，以及 `~/.talkcode/remote/run/` 下一个仅属主可访问的 socket。
+它只走 ssh，以及 `~/.talkcode/remote/run/` 下一个仅属主可访问的 socket。唯一的例外是配了
+[`contextBudget`](agents.md#antigravityagy) 的 agy 智能体的中继：127.0.0.1 上的一个监听端口，把这个智能体的
+API 调用转发到它本来就要去的地方。

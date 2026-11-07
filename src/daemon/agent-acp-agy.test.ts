@@ -1,4 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -67,7 +69,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   fs.appendFileSync(LOG, JSON.stringify({ method: msg.method, params: msg.params }) + '\\n');
   const sid = msg.params && msg.params.sessionId;
   if (msg.method === 'initialize') {
-    return reply(msg.id, { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true } }, authMethods: [] });
+    const ok = () => reply(msg.id, { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true } }, authMethods: [] });
+    // Like agy at startup: its model list, from wherever CLOUD_CODE_URL points (agy-relay.ts).
+    if (!process.env.CLOUD_CODE_URL) return ok();
+    return fetch(process.env.CLOUD_CODE_URL + '/v1internal:fetchAvailableModels', { method: 'POST', body: '{}' })
+      .then((r) => r.text())
+      .then((body) => fs.appendFileSync(LOG, JSON.stringify({ method: 'models', params: { url: process.env.CLOUD_CODE_URL, body } }) + '\\n'))
+      .then(ok, ok);
   }
   if (msg.method === 'session/new') return reply(msg.id, { sessionId: 'agy-session-1', configOptions: options() });
   // agy 1.5.1: a reload comes back on the default model, whatever the session was on.
@@ -160,6 +168,9 @@ function rig(
     model?: string;
     stored?: string;
     contextWindow?: number;
+    contextBudget?: number;
+    /** The agent's own CLOUD_CODE_URL — what its relay forwards to. */
+    cloudCodeUrl?: string;
     /** Hold every `agy -p=/usage` until this settles — a one-shot slower than the turn. */
     quotaGate?: Promise<void>;
   } = {}
@@ -188,9 +199,10 @@ function rig(
         harness: 'agy',
         args: [logPath],
         cwd: dir,
-        env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home },
+        env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, ...(opts.cloudCodeUrl ? { CLOUD_CODE_URL: opts.cloudCodeUrl } : {}) },
         ...(opts.model ? { model: opts.model } : {}),
         ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}),
+        ...(opts.contextBudget ? { contextBudget: opts.contextBudget } : {}),
       },
     ],
     routing: { default: 'agy', pipeline: [] },
@@ -309,6 +321,36 @@ describe('agy over ACP: a turn', () => {
     const r = record();
     await turn(session, 'plain', r);
     expect(r.usage).toEqual([{ used: 5926, size: 200_000 }]);
+  });
+
+  it('behind its relay, gets the budget it was given, and reports its context against that', async () => {
+    // Google's model list as agy 1.5.2 gets it, cut to one model (agy-relay.test.ts has more).
+    const list = {
+      models: {
+        'gemini-3.8-flash-high': {
+          displayName: 'Gemini 3.8 Flash (High)',
+          maxTokens: 1_048_576,
+          maxOutputTokens: 65_536,
+          modelExperiments: { experiments: { CASCADE_USE_EXPERIMENT_CHECKPOINTER: { stringValue: '{\n    "max_token_limit": "256000"\n}' } } },
+        },
+      },
+    };
+    const upstream = createServer((_req, res) => res.end(JSON.stringify(list)));
+    await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', r));
+    try {
+      const direct = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+      const { session, log } = rig({ contextBudget: 700_000, cloudCodeUrl: direct });
+      const r = record();
+      await turn(session, 'plain', r);
+      const seen = log().find((x) => x.method === 'models')!.params;
+      // agy was pointed at the relay, which forwarded to the agent's own CLOUD_CODE_URL.
+      expect(String(seen.url)).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      expect(seen.url).not.toBe(direct);
+      expect(String(seen.body)).toContain('\\"max_token_limit\\": \\"700000\\"');
+      expect(r.usage).toEqual([{ used: 230 + 5696, size: 700_000 }]);
+    } finally {
+      upstream.close();
+    }
   });
 
   it('reads the context of a turn that ran tools off its transcript, not the summed usage', async () => {

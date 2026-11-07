@@ -64,6 +64,9 @@ type daemon struct {
 	rpcs       map[string]context.CancelFunc
 	clis       map[string]*cliConn
 	nextCid    uint64
+	relays     map[string]*relay
+	relayWaits map[string]chan relayAnswer
+	nextXid    uint64
 	linkConn   net.Conn
 	detachedAt time.Time
 
@@ -130,6 +133,7 @@ func startDaemon(ns, version string) (*daemon, error) {
 		ns: ns, version: version, instance: randomID(), sockPath: sock, binDir: binDirFor(version),
 		link: newLink(), env: &shellEnv{capture: captureEnv}, ln: ln,
 		procs: map[string]*proc{}, rpcs: map[string]context.CancelFunc{}, clis: map[string]*cliConn{},
+		relays: map[string]*relay{}, relayWaits: map[string]chan relayAnswer{},
 		detachedAt: time.Now(), quit: make(chan struct{}),
 	}
 	logf("daemon %s (version %s, ns %s) listening on %s", d.instance, version, ns, sock)
@@ -329,6 +333,8 @@ func (d *daemon) dispatch(gen uint64, h *Header, body []byte) {
 		}
 	case "cli-out", "cli-exit":
 		d.toCli(h, body)
+	case "relay-res":
+		d.answerRelay(h, body)
 	case "shutdown":
 		go d.shutdown("the gateway asked")
 	default:
@@ -370,6 +376,7 @@ func (d *daemon) resetAll(epoch, why string) {
 	for _, c := range clis {
 		c.conn.Close()
 	}
+	d.closeRelays()
 }
 
 // ── the `talkcode` shim ───────────────────────────────────────────────────────────────────────

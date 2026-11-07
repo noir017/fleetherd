@@ -27,6 +27,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, per-turn usage, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
+| `agy-relay.ts` | agy behind a relay, for `contextBudget`: rewrites the compaction point in the model list Google sends it, and remembers what each model was told for the footer |
+| `relay.ts` | Relays: a loopback forwarder between an agent and its API that lets a harness's transform replace the responses on paths it names. Here for a local agent; on a host through talkcode-remote (`remote/relay.go`), which hands those responses back over the link. Which harness uses one, and for what, is `harnessRelay` |
 | `agy-transcript.ts` | agy's context after a turn that ran tools, read off agy's own transcript here or on a host (its prompt usage is a sum over the turn's calls) |
 | `status-board.ts` | Each conversation's live agent status, pushed (deduped, throttled) to a platform that can show one — the web UI's strip |
 | `claude-transcript.ts` | claude's prompt-cache expiry, read off Claude Code's own transcript (headless Claude Code runs no status line) |
@@ -859,7 +861,7 @@ Each harness reports a different subset, and an absent field is shown as nothing
 | Field | Source |
 |---|---|
 | model, effort | `onModel` / `onEffort` — ACP config options, `agy acp` included |
-| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`) |
+| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`), shown against the compaction budget its relay gave it when it has one (`agy-relay.ts`) |
 | cost | `onUsage.cost` — claude and opencode; kept across the mid-stream snapshots that carry none |
 | cache expiry | claude only: `claude-transcript.ts`, read once a moment after each model cycle ends |
 | quota | agy only: `agy -p=/usage`, via `onQuota` |

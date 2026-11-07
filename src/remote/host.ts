@@ -86,6 +86,12 @@ export interface CliSession {
  */
 export type CliBridge = (req: CliRequest, io: CliIO) => CliSession;
 
+/**
+ * What a relay does with a response it was asked to show the gateway (remote/relay.go): the body to
+ * serve instead, or undefined to serve it as it came.
+ */
+export type RelayTransform = (path: string, body: Buffer) => Buffer | undefined | Promise<Buffer | undefined>;
+
 export interface RemoteHostOptions {
   id: string;
   ns: string;
@@ -107,6 +113,8 @@ export class RemoteHost extends EventEmitter {
   private readonly children = new Map<string, RemoteChild>();
   private readonly rpcs = new Map<string, PendingRpc>();
   private readonly clis = new Map<string, CliSession>();
+  /** The transform each relay id answers its `relay-req` frames with (see relay()). */
+  private readonly relayTransforms = new Map<string, RelayTransform>();
   /** New processes and requests waiting for a connection to go out on (see whenUp). */
   private readonly unsent: Array<() => void> = [];
   private seq = 0;
@@ -375,6 +383,37 @@ export class RemoteHost extends EventEmitter {
     return { ...(res as Omit<RunResult, 'output'>), code: (res.code as number | null | undefined) ?? null, output: body };
   }
 
+  /**
+   * A loopback relay on the host to `upstream` (remote/relay.go), for an agent whose endpoint an
+   * environment variable can point at it; answers with the URL to put there. Responses on `paths`
+   * come here first and are served as `transform` says; everything else is forwarded on the host and
+   * never crosses the link. Asking again with the same id and spec returns the same relay, so this is
+   * called at every spawn rather than remembered — a restarted daemon has none until asked.
+   */
+  async relay(id: string, upstream: string, paths: readonly string[], transform: RelayTransform): Promise<string> {
+    this.relayTransforms.set(id, transform);
+    const { res } = await this.rpc('relay', { id, upstream, paths: [...paths] });
+    const url = res.url;
+    if (typeof url !== 'string' || !url) throw new Error(`relay on host "${this.id}" answered without a URL`);
+    return url;
+  }
+
+  /**
+   * A response a relay was asked to show us. Always answered, so the agent waiting on it is never
+   * held for the relay's whole wait: a body to serve instead, an empty one to serve the original, or
+   * the error that stopped the transform (served as the original too, and logged on the host).
+   */
+  private async answerRelay(h: FrameHeader, body: Buffer): Promise<void> {
+    const xid = h.xid ?? '';
+    const transform = this.relayTransforms.get(h.id ?? '');
+    try {
+      const out = transform ? await transform(h.path ?? '', body) : undefined;
+      this.conn.send({ t: 'relay-res', xid }, out);
+    } catch (e) {
+      this.conn.send({ t: 'relay-res', xid, error: (e as Error).message || String(e) });
+    }
+  }
+
   // ── frames from the host ────────────────────────────────────────────────────────────────────
 
   /** Every frame type the host sends, and what becomes of it. */
@@ -394,6 +433,7 @@ export class RemoteHost extends EventEmitter {
       this.conn.release();
       s.kill();
     },
+    'relay-req': (h, body) => void this.answerRelay(h, body),
   };
 
   private onFrame(h: FrameHeader, body: Buffer): void {

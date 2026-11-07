@@ -5,6 +5,7 @@ import { TurnFailure } from './agent.js';
 import { truncateToolName } from './agent-common.js';
 import { runAgyCliCommand, runAgyCliFor, type AgyCliRunner } from './agy-cli.js';
 import { agyContextWindow, parseAgyUsagePools } from './agy-meters.js';
+import { agyBudget } from './agy-relay.js';
 import { agentHome } from './skills-scan.js';
 
 /**
@@ -227,9 +228,13 @@ function contextTokensOf(usage: unknown): number | undefined {
   return input + (n(u.cachedReadTokens) ?? 0);
 }
 
-/** The window to show agy's context against: the configured one, else the measured table's. */
-export function agyWindow(def: Pick<AgentDef, 'contextWindow'>, model: string | undefined): number | undefined {
-  return def.contextWindow ?? agyContextWindow(model);
+/**
+ * What to show agy's context against: the configured window; else, behind a relay, the compaction
+ * budget agy was given for this model (agy-relay.ts) — the `/context` line reads "left before
+ * compaction", and that is where it compacts; else the measured window table's.
+ */
+export function agyWindow(def: AgentDef, model: string | undefined): number | undefined {
+  return def.contextWindow ?? agyBudget(def, model) ?? agyContextWindow(model);
 }
 
 // ───────────────────────── tool labels ─────────────────────────

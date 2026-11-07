@@ -85,6 +85,7 @@ import {
 } from './agy-acp.js';
 import { markActivePools } from './agy-meters.js';
 import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
+import { relayEnv } from './relay.js';
 
 /**
  * AgentFactory's ACP (Agent Client Protocol) implementation on the official @agentclientprotocol/sdk.
@@ -1357,16 +1358,18 @@ function createAcpSession(
     command: string,
     args: string[],
     sessionToken: string,
-    place: { host: RemoteHost; welcome: Welcome } | undefined
+    place: { host: RemoteHost; welcome: Welcome } | undefined,
+    /** Points the harness at its relay, when it has one (relay.ts) — over its own env, which it chains to. */
+    relay: Record<string, string>
   ): { child: AgentChild; mcpServers: () => McpServer[] } {
     if (!place) {
       return {
-        child: spawn(command, args, { cwd, env: buildAgentEnv(def, sessionToken, socketPath) }),
+        child: spawn(command, args, { cwd, env: { ...buildAgentEnv(def, sessionToken, socketPath), ...relay } }),
         mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd),
       };
     }
     return {
-      child: place.host.spawn(command, args, { cwd, env: remoteAgentEnv(def, sessionToken) }),
+      child: place.host.spawn(command, args, { cwd, env: { ...remoteAgentEnv(def, sessionToken), ...relay } }),
       mcpServers: () => remoteMcpServers(sessionToken, place.host.paths(place.welcome), cwd),
     };
   }
@@ -1423,7 +1426,7 @@ function createAcpSession(
     }
 
     const { command, args } = resolveHarness(def, place !== undefined);
-    const { child, mcpServers } = spawnChild(command, args, sessionToken, place);
+    const { child, mcpServers } = spawnChild(command, args, sessionToken, place, await relayEnv(def, place?.host));
     const spawnError = adoptChild(child);
 
     const stream = ndJsonStream(
