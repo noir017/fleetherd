@@ -158,7 +158,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    whole page in on a focused field under 16px and does not zoom back out, the same
    rule the composer follows. */
 #topics-filter{flex:0 0 auto}
-.filterbar{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
+.filterbar{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid var(--line);container-type:inline-size}
 .fb-row{display:flex;align-items:center;gap:5px;min-width:0}
 .fb-search{flex:1;min-width:0;display:flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 7px;background:var(--field);border:1px solid transparent;border-radius:5px}
 .fb-search:focus-within{border-color:#3d3d3d}
@@ -175,6 +175,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    panel shut. Same blue as a running row, the only other "something is on" mark. */
 .fb-filter{position:relative}
 .fb-dot{position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:#38bdf8}
+.fb-tools{display:flex;align-items:center;gap:5px;flex:none;margin-left:auto}
+/* The panel this bar next goes into is 240–320px, where search + Filter + a sort field on one
+   line leaves the search a sliver. Under 360px of bar the sort pair moves to a line of its own,
+   right-aligned under Filter; the search keeps the whole first line. */
+@container (max-width:360px){
+  .fb-row{flex-wrap:wrap}
+  .fb-tools{flex-basis:100%;justify-content:flex-end}
+}
 .fb-sort{display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 6px;border:1px solid var(--line);border-radius:5px;color:var(--dim);min-width:0}
 .fb-sort:focus-within{border-color:#555;color:var(--fg)}
 .fb-sort .ic{width:12px;height:12px;flex:none}
@@ -1146,6 +1154,7 @@ button:disabled{opacity:.5;cursor:default}
   .fb-search{height:36px}
   .fb-q{font-size:16px}
   .fb-btn,.fb-sort{height:36px}
+  .fb-sort select{font-size:16px;max-width:140px}
   .fb-dir{width:36px}
   .fb-chip{min-height:32px;padding:4px 10px}
   .fb-sum{font-size:12px}
@@ -3921,7 +3930,9 @@ const SCRIPT = `
    *   sort?: {options: [{value, label}], value?, dir?: 'asc' | 'desc'},
    *   onChange: (state) => void
    * }
-   * Returns {el, state, active, setGroups, setCounts, clear}. el is appended by the caller.
+   * setGroups(null) means "not loaded yet": nothing is offered and nothing is pruned.
+   * Returns {el, state, active, setGroups, setCounts, clear, destroy}. el is appended by the
+   * caller; destroy removes the document listener and the node.
    */
   function makeFilterBar(opts){
     var key = opts.key;
@@ -3968,9 +3979,9 @@ const SCRIPT = `
       + '<button type="button" class="fb-filter fb-btn" aria-expanded="false" title="Filter">'
       + IC.icon.filter + '<span>Filter</span><span class="fb-dot" hidden></span></button>';
     if(sortDef){
-      html += '<span class="fb-sort" title="Sort">' + IC.icon.sort
+      html += '<span class="fb-tools"><span class="fb-sort" title="Sort">' + IC.icon.sort
         + '<select class="fb-sortsel" aria-label="Sort"></select></span>'
-        + '<button type="button" class="fb-dir fb-btn" aria-label="Ascending" title="Ascending"></button>';
+        + '<button type="button" class="fb-dir fb-btn" aria-label="Ascending" title="Ascending"></button></span>';
     }
     html += '</div>'
       + '<div class="fb-sum" hidden><span class="fb-sumtext"></span><button type="button" class="fb-clear">Clear</button></div>'
@@ -4122,14 +4133,23 @@ const SCRIPT = `
 
     q.addEventListener('input', function(){ st.q = q.value; emit(); });
     qClear.addEventListener('click', function(){ q.value = ''; st.q = ''; emit(); q.focus(); });
-    // Escape belongs to the field while it holds anything, and to the panel while that is open.
-    // Stopped here so the same keystroke does not also put the sidebar drawer away behind it.
-    q.addEventListener('keydown', function(e){
+    // Escape is handled on the whole bar, not just the field: with the keyboard on Filter or a
+    // chip, Escape has to put the panel away — and in either case the keystroke must not bubble
+    // to the page-wide handler, which would close the whole sidebar drawer behind the panel.
+    // An IME uses Escape to cancel its candidate list; that Escape belongs to the composition.
+    root.addEventListener('keydown', function(e){
+      if(e.isComposing) return;
       if(e.key !== 'Escape') return;
-      if(st.q){
+      if(st.q && e.target === q){
         q.value = ''; st.q = ''; emit(); e.preventDefault(); e.stopPropagation();
-      } else if(st.open){
-        st.open = false; save(); paintChrome(); e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      if(st.open){
+        st.open = false; save(); paintChrome();
+        // The chip that had focus is hidden with the panel; leave the keyboard on the control
+        // that opens it rather than nowhere.
+        if(e.target !== fBtn) fBtn.focus();
+        e.preventDefault(); e.stopPropagation();
       }
     });
     fBtn.addEventListener('click', function(){ st.open = !st.open; save(); paintChrome(); });
@@ -4149,17 +4169,24 @@ const SCRIPT = `
     });
     // A panel left open over the list is furniture while it filters; a click anywhere else is
     // the person moving on, so it folds away like the footer menus do.
-    document.addEventListener('click', function(e){
+    function onDocClick(e){
       if(!st.open) return;
       // The path, not contains(): a chip's own click repaints the panel in place (setGroups), so
       // by the time the event reaches here its target can be a node that is no longer in root.
       var path = e.composedPath ? e.composedPath() : [];
       if(path.indexOf(root) >= 0 || root.contains(e.target)) return;
       st.open = false; save(); paintChrome();
-    });
+    }
+    document.addEventListener('click', onDocClick);
 
+    /**
+     * Replace the option lists. null means "the caller has not loaded its data yet" — an empty
+     * array here would be read as "every value is gone", and a saved selection would be pruned
+     * by a list that had not arrived (the scheduled panel's first frame is exactly this).
+     */
     function setGroups(next){
-      groups = next || [];
+      if(next == null) return;
+      groups = next;
       if(prune()) save();
       paintPanel();
       paintChrome();
@@ -4167,6 +4194,18 @@ const SCRIPT = `
     function setCounts(shown, total){
       counts = {shown: Math.max(0, shown | 0), total: Math.max(0, total | 0)};
       paintSummary();
+    }
+
+    /**
+     * Let the caller take the bar down. It must be mounted outside any container the caller
+     * redraws with innerHTML — the keyword's caret, the panel's open state and the chip nodes
+     * live in this DOM, and replacing the container under them loses all three. destroy()
+     * removes the document listener and the node; a caller whose own redraw already removed the
+     * node can ignore it.
+     */
+    function destroy(){
+      document.removeEventListener('click', onDocClick);
+      if(root.parentNode) root.parentNode.removeChild(root);
     }
 
     // No prune yet: the caller supplies the live option lists with setGroups on its first paint,
@@ -4184,7 +4223,7 @@ const SCRIPT = `
       paintDir();
     }
 
-    return {el:root, state:state, active:active, setGroups:setGroups, setCounts:setCounts, clear:clear};
+    return {el:root, state:state, active:active, setGroups:setGroups, setCounts:setCounts, clear:clear, destroy:destroy};
   }
 
   /**
@@ -4225,7 +4264,8 @@ const SCRIPT = `
     hostOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
     var agentOpts = [], hostOpts = [];
     for(i=0;i<agentOrder.length;i++){
-      agentOpts.push({value:agentOrder[i], label:agentOrder[i], icon:'tag', count:agents[agentOrder[i]]});
+      // No tag icon here: a tag means a task label in the scheduled list this bar also serves.
+      agentOpts.push({value:agentOrder[i], label:agentOrder[i], count:agents[agentOrder[i]]});
     }
     for(i=0;i<hostOrder.length;i++){
       var hv = hostOrder[i];
@@ -5145,6 +5185,9 @@ const SCRIPT = `
     onChange: function(){ paintTopics(); }
   });
   $('topics-filter').appendChild(topicFilter.el);
+  // Until the first list arrives there is nothing to offer; null says "not loaded", so a
+  // selection restored from storage is not pruned as if its option had gone.
+  topicFilter.setGroups(null);
 
   bar.addEventListener('click', function(e){
     // The empty state's Clear. The summary line's own Clear is a listener on the bar itself.
@@ -5290,9 +5333,12 @@ const SCRIPT = `
     var stars = topics.filter(function(t){ return t.starred; }).length;
     var gone = topics.length - stars;
     if(stars && !gone){ alert('Every topic is starred, so there is nothing to clear. Unstar one first.'); return; }
+    // The button clears the whole list, not the filtered rows — say that where a search or a
+    // filter is on screen, or it reads as "clear these three".
+    var scope = topicFilter && topicFilter.active() ? ' This clears every topic, not only the ones shown.' : '';
     if(!confirm(stars
-      ? 'Delete '+gone+' topic'+(gone===1?'':'s')+'? The '+stars+' starred one'+(stars===1?' is':'s are')+' kept. This cannot be undone.'
-      : 'Delete all ' + topics.length + ' topics? This cannot be undone.')) return;
+      ? 'Delete '+gone+' topic'+(gone===1?'':'s')+'? The '+stars+' starred one'+(stars===1?' is':'s are')+' kept.'+scope+' This cannot be undone.'
+      : 'Delete all ' + topics.length + ' topics?'+scope+' This cannot be undone.')) return;
     post('api/topics/clear',{},1).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if(!d || !d.topic) return;
       // What the daemon kept: the starred topics and the fresh one. Read from its answer rather

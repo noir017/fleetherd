@@ -1643,6 +1643,101 @@ describe('webui page: the topic filter bar', () => {
     // The same keystroke must not also put the whole sidebar away behind the field.
     expect(h.el('sidebar').classList.contains('collapsed')).toBe(false);
   });
+
+  it('keeps the caret and the open panel through a repaint the sync causes', async () => {
+    const h = await open();
+    await withFleet(h);
+    await openPanel(h);
+    const q = h.doc.querySelector('.fb-q') as HTMLInputElement;
+    q.value = 'par';
+    q.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    await tick();
+    q.focus();
+    q.setSelectionRange(2, 2);
+
+    // A full sync rebuilds the sidebar underneath a focused field. Nothing in the bar may be
+    // replaced or re-valued: the caret is where the person left it and the panel stays open.
+    await h.emit(sync(A, [message('m1', '<p>while typing</p>')], [A], { topics: fleet() }));
+
+    expect(h.doc.activeElement).toBe(q);
+    expect(q.selectionStart).toBe(2);
+    expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('keeps the open topic header, Stop and power while its own row is filtered away', async () => {
+    const h = await open({
+      url: 'http://localhost:8787/?t=' + A,
+      storage: { aa_topic_filter: JSON.stringify({ q: 'parser part', sel: {}, sort: '', dir: '', open: false }) },
+    });
+    const list = fleet().map((t) => (t.id === A ? { ...t, running: true, msgCount: 3 } : t.id === B ? { ...t, msgCount: 5 } : t));
+    await h.emit(sync(A, [message('m1', '<p>a</p>'), message('m2', '<p>b</p>'), message('m3', '<p>c</p>')], [A], { topics: list }));
+
+    // The topic on screen matches nothing, so it has no row; its header is drawn from the list,
+    // not from the rows that survived.
+    expect(ids(h)).not.toContain(A);
+    expect(h.el('topic-title').textContent).toBe('[cc] parse the config');
+    expect(h.el('stop-turn').hidden).toBe(false);
+    expect(h.el('kill-agent').hidden).toBe(false);
+
+    // B never had a row while the filter was on, but its read mark was still seeded; coming back
+    // to the whole list must not badge its entire history.
+    await type(h, '');
+    expect(h.doc.querySelector(`[data-topic="${B}"] .topic-badge`)).toBeNull();
+  });
+
+  it('closes only the panel when Escape is pressed on a chip', async () => {
+    const h = await open();
+    await withFleet(h);
+    await openPanel(h);
+    await toggle(h, 'state', 'idle');
+    const chip = h.doc.querySelector('.fb-chip[data-fb-value="idle"]') as HTMLElement;
+    chip.focus();
+    chip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick();
+
+    expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(true);
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(false);
+    // The chip is still on: Escape put the panel away, it did not clear the filter.
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    expect(h.doc.activeElement).toBe(h.doc.querySelector('.fb-filter'));
+  });
+
+  it('leaves scheduled runs out of the filter counts and the match total', async () => {
+    const h = await open();
+    const list = fleet().concat([{ id: 'd0e1f2a3', title: '[zz] nightly', scheduled: true, msgCount: 0, live: true }]);
+    await h.emit(sync(A, [], [A], { topics: list }));
+    await openPanel(h);
+
+    expect(h.doc.querySelector('.fb-chip[data-fb-value="zz"]')).toBeNull();
+    const count = (v: string): string | undefined =>
+      h.doc.querySelector(`.fb-chip[data-fb-group="state"][data-fb-value="${v}"] .fb-count`)?.textContent ?? undefined;
+    expect([count('needs'), count('running'), count('idle'), count('none')]).toEqual(['1', '1', '4', '1']);
+
+    await type(h, 'parser');
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 2 of 7');
+  });
+
+  it('does not prune a restored selection before the first list has arrived', async () => {
+    const stored = JSON.stringify({ q: 'parser', sel: { agent: ['cbc'] }, sort: '', dir: '', open: false });
+    const h = await open({ storage: { aa_topic_filter: stored } });
+
+    // The panel's first frame is Loading: setGroups(null) says so, and a selection restored from
+    // storage must survive it exactly as written.
+    expect(h.doc.querySelector('.fb-chip[data-fb-value="cbc"]')).toBeNull();
+    expect(h.window.localStorage.getItem('aa_topic_filter')).toBe(stored);
+    expect((h.doc.querySelector('.fb-q') as HTMLInputElement).value).toBe('parser');
+
+    await withFleet(h);
+    expect(h.doc.querySelector('.fb-chip[data-fb-value="cbc"]')?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('says Clear all topics clears the whole list while a filter is on', async () => {
+    const h = await open({ confirm: true });
+    await withFleet(h);
+    await type(h, 'parser');
+    await h.click('#clear-topics');
+    expect(h.confirms[0]).toContain('This clears every topic, not only the ones shown.');
+  });
 });
 
 describe('webui page: a full topic list, and the topics worth keeping', () => {
