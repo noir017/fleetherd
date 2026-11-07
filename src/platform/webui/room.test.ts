@@ -20,6 +20,7 @@ import {
   type WebuiInstance,
 } from './room.js';
 import { MAX_TOPICS, TopicStore } from './topics.js';
+import { icon } from './icons.js';
 import { hasTopic } from './index.js';
 import type { InboundMessage } from '../../types.js';
 import type { WebEvent, WebMessage } from './protocol.js';
@@ -990,7 +991,8 @@ describe('WebRoom: outbound basics', () => {
   it('keeps a tool bubble a tool bubble through its edits', () => {
     // The kind arrives on the send only (SendOptions), and a bubble's whole life after that is
     // edits — another line, another ✓. Re-rendered as markdown on the first of them, the lines
-    // would merge into one paragraph and the page would have nothing left to fold.
+    // would merge into one paragraph and the page would have nothing left to fold. Its glyphs are
+    // the web UI's icons; a report's lines (below) are not tools and keep theirs.
     vi.useFakeTimers();
     const { room, topic, seen } = attached();
     const msg = room.post(topic, { own: false, html: '', kind: 'tools' }, '');
@@ -1003,8 +1005,8 @@ describe('WebRoom: outbound basics', () => {
         kind: 'tools',
         html:
           '<div class="tools">' +
-          '<div class="tl"><span class="tl-c">💻 Bash: &quot;ls *.ts&quot;</span><span class="tl-s"> ✓ 5ms</span></div>' +
-          '<div class="tl"><span class="tl-c">📖 Read: &quot;a_b_c.md&quot;</span></div>' +
+          `<div class="tl"><span class="tl-c">${icon('terminal')} Bash: &quot;ls *.ts&quot;</span><span class="tl-s"> ${icon('check')} 5ms</span></div>` +
+          `<div class="tl"><span class="tl-c">${icon('book')} Read: &quot;a_b_c.md&quot;</span></div>` +
           '</div>',
       },
     });

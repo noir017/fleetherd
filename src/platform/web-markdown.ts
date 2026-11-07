@@ -71,7 +71,34 @@ export function renderWebMarkdown(src: string): string {
  * the 40-character server cut this replaced never hid it. Parsed back out of the text because the
  * text is all an adapter is given; if the format ever drifts, a line just folds whole, as before.
  */
-const TOOL_STATUS_RE = / [✓✗] (?:\d+ms|\d+\.\d+s)$/;
+const TOOL_STATUS_RE = / ([✓✗]) (\d+ms|\d+\.\d+s)$/;
+
+/**
+ * The head of a tool line: the tool's emoji, after ToolRenderer.ownerPrefix's `↳ ` or
+ * `↳ {sub-agent} · ` when the tool is a sub-agent's. The owner part is tried shortest first, so a
+ * ` · ` inside the preview is never taken for the end of a name.
+ */
+const TOOL_HEAD_RE = /^(?:(↳) ((?:.*? · )??))?(\p{Extended_Pictographic}️?)(?= |$)/u;
+
+/**
+ * A glyph a tool line carries, as the markup to show instead (the web UI's icons), or undefined
+ * to leave it as text. Asked about the head's emoji, `↳`, and the finish mark's ✓ / ✗.
+ */
+export type ToolGlyph = (glyph: string) => string | undefined;
+
+/** The escaped line body, with its head's glyphs swapped where `glyph` has something for them. */
+function toolBodyHtml(body: string, glyph: ToolGlyph | undefined): string {
+  if (!glyph) return escapeHtml(body);
+  const as = (g: string): string => glyph(g) ?? escapeHtml(g);
+  const head = TOOL_HEAD_RE.exec(body);
+  if (head) {
+    const owner = head[1] !== undefined ? `${as(head[1])} ${escapeHtml(head[2] ?? '')}` : '';
+    return owner + as(head[3] ?? '') + escapeHtml(body.slice(head[0].length));
+  }
+  // A sub-agent's line whose emoji is not one (an operator's own emojiMap value): the ↳ still is.
+  if (body.startsWith('↳ ')) return as('↳') + escapeHtml(body.slice(1));
+  return escapeHtml(body);
+}
 
 /**
  * A tool-progress bubble (`core/tool-renderer.ts`): one `<div class="tl">` per tool line, which
@@ -86,8 +113,11 @@ const TOOL_STATUS_RE = / [✓✗] (?:\d+ms|\d+\.\d+s)$/;
  * carries, and goes through the same fence taker the replies use, so it renders identically.
  *
  * Stream safety is free here: nothing spans lines except the fence, which already renders open.
+ *
+ * `glyph`, when given, swaps the line's head emoji, its `↳` and its ✓ / ✗ for icons; without it
+ * every line is the escaped text, as a sub-agent report (whose `🔔` lines are not tools) wants.
  */
-export function renderWebToolLines(src: string): string {
+export function renderWebToolLines(src: string, glyph?: ToolGlyph): string {
   const lines = src.split('\n');
   const out: string[] = [];
   let i = 0;
@@ -100,8 +130,9 @@ export function renderWebToolLines(src: string): string {
     const line = lines[i] ?? '';
     const status = TOOL_STATUS_RE.exec(line);
     const body = status ? line.slice(0, status.index) : line;
-    const mark = status ? `<span class="tl-s">${escapeHtml(status[0])}</span>` : '';
-    out.push(`<div class="tl"><span class="tl-c">${escapeHtml(body)}</span>${mark}</div>`);
+    const done = status ? (glyph?.(status[1] ?? '') ?? escapeHtml(status[1] ?? '')) : '';
+    const mark = status ? `<span class="tl-s"> ${done} ${escapeHtml(status[2] ?? '')}</span>` : '';
+    out.push(`<div class="tl"><span class="tl-c">${toolBodyHtml(body, glyph)}</span>${mark}</div>`);
     i += 1;
   }
   return `<div class="tools">${out.join('')}</div>`;

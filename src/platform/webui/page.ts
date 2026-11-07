@@ -31,6 +31,7 @@
  * CDN, no favicon request. The whole document is what the daemon serves.
  */
 import { escapeHtml } from '../web-markdown.js';
+import { clientIcons, icon } from './icons.js';
 
 /**
  * Fill in the configured title, whether the terminal pane exists, and whether a session can be
@@ -136,6 +137,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .panel-title-text{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .btn-icon{background:none;border:0;padding:4px 7px;color:var(--dim);font:inherit;font-size:13px;cursor:pointer;border-radius:4px;line-height:1}
 .btn-icon:hover{color:var(--fg);background:var(--field)}
+/* Every icon (icons.ts) is 1em square, so it takes the size of the glyph it replaced, and sits
+   on the text's baseline the way that glyph did. */
+.ic{width:1em;height:1em;vertical-align:-.14em;flex:none}
+/* A chevron is a thin mark centred in its box, so on the shared baseline it read as riding high
+   beside lowercase words ("‹ Prev", "› 2"); a little lower, it sits on the line's middle. */
+.ic-chevronLeft,.ic-chevronRight,.ic-chevronDown{vertical-align:-.2em}
+.tone-ok{color:#4ade80}
+.tone-err{color:#f87171}
 .panel-head .add{font-size:15px;font-weight:600}
 
 #topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding:8px}
@@ -201,6 +210,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #topics .topic-item:hover .topic-star,#topics .topic-item:focus-within .topic-star{opacity:1}
 .topic-star:hover{color:#fbbf24;background:rgba(251,191,36,.12)}
 .topic-star.on,#topics .topic-item .topic-star.on{opacity:1;color:#fbbf24}
+/* One star for both states: filled when on, outlined when off, as ★ and ☆ were. */
+.topic-star.on .ic{fill:currentColor}
 @media(hover:none){.topic-star{opacity:.45}}
 /* The star and the × in one box, so they can leave the row's layout together.
    On a pointer device they are invisible until hovered — but opacity:0 hides a box without removing
@@ -339,6 +350,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    coming back instant and what keeps the switcher's marker lit. So visibility is a class, never
    a teardown. */
 #term-toggle{margin-left:0}
+/* The size of its neighbours' icons (the power button, the clock), which are 14px SVGs. */
+#term-toggle .ic{width:14px;height:14px}
 #term-toggle.on{color:#4ade80}
 #term{display:none;flex:1;min-height:0;background:#000;flex-direction:column}
 #chat.term #log,#chat.term #typing,#chat.term #note,#chat.term #bar{display:none}
@@ -779,7 +792,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    two-button question keeps two cells' width instead of being stretched across the bubble. 22px is
    a cell's padding and border, which --cw (the label alone) does not count. A label that does wrap
    is balanced, or a model id breaks at its last hyphen and leaves one character on a line. */
-.btns{--gap:4px;margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(calc(var(--cw,8ch) + 22px),calc(50% - var(--gap))),1fr));gap:var(--gap);font-size:13px}
+.btns{--gap:4px;margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(calc(var(--cw,8ch) + var(--mk,0) * (1em - 1ch) + 22px),calc(50% - var(--gap))),1fr));gap:var(--gap);font-size:13px}
 .btns button{min-width:0;padding:5px 10px;border-radius:5px;text-align:left;line-height:1.35;overflow-wrap:anywhere;text-wrap:balance;transition:background .12s,border-color .12s}
 .btns button:not(.on):hover:not(:disabled){background:#202020}
 /* The current choice, in the blue of the operator's own messages: it is the one they made. */
@@ -1100,6 +1113,8 @@ button:disabled{opacity:.5;cursor:default}
      stays visible behind it. Only the header and the targets grow for a finger. */
   #schedules-toggle{min-width:44px;height:44px}
   #schedules-toggle svg{width:18px;height:18px}
+  #term-toggle{min-width:44px;height:44px}
+  #term-toggle .ic{width:18px;height:18px}
   .sched-acts button{min-height:44px;padding:0 14px}
   .sched-subtab{min-height:44px}
   .rev-open{min-height:44px;padding:0 14px}
@@ -1268,6 +1283,9 @@ const SCRIPT = `
   // Whether this daemon serves a terminal at all, and whether it was given a way to END one (a
   // configured terminal.endCommand). Without that, the window has no close button rather than a
   // close button that cannot work.
+  // The icons (icons.ts): every one by name, and the menu marks and lifecycle reactions the page
+  // draws as icons, keyed by the glyph core and config write. Anything not in a table stays text.
+  var IC = ${clientIcons()};
   var TERM_OK = __TERM__;
   var TERM_END = __TERM_END__;
   // Whether the shared secret is still a way in. False means the gate above has no field and
@@ -2686,8 +2704,8 @@ const SCRIPT = `
     // all. A control that cannot act is worse than no control.
     if(!hist && m.buttons && m.buttons.length) h += menu(m);
     if(stuck(m)) h += failedActions(m);
-    var meta = clock(m.at) + (m.reactions && m.reactions.length ? '  '+m.reactions.join(' ') : '');
-    h += '<div class="t">'+text(meta)+(folded ? allToggle(key) : '')+'</div>';
+    var meta = text(clock(m.at)) + (m.reactions && m.reactions.length ? '  '+m.reactions.map(reactionMark).join(' ') : '');
+    h += '<div class="t">'+meta+(folded ? allToggle(key) : '')+'</div>';
     // Write nothing when nothing changed. A sync re-paints every message it carries, and most of
     // them are messages already on screen unchanged — rewriting innerHTML for those would drop
     // the caret out of a selection, restart any <img> decode, and undo the enabled state of a
@@ -2717,19 +2735,35 @@ const SCRIPT = `
    * match is drawn differently and still posts exactly its own id.
    */
   var MARK = /^([●☑☐⌂]) /, NAV = /^[◀‹]|[▶›]$/;
+  /** A nav button's label with its arrow drawn as a chevron: "◀ Back", "Next ▶", "‹", "‹ machines". */
+  function navLabel(label){
+    var back = /^[◀‹] ?/.exec(label), on = / ?[▶›]$/.exec(label);
+    if(back) return IC.icon.chevronLeft + (label.length > back[0].length ? ' '+text(label.slice(back[0].length)) : '');
+    if(on) return (on.index ? text(label.slice(0, on.index))+' ' : '') + IC.icon.chevronRight;
+    return text(label);
+  }
+  /** A lifecycle reaction as its icon; one the page has none for (a configured emoji) as itself. */
+  function reactionMark(e){
+    return IC.reaction[String(e).replace(/\\uFE0F/g, '')] || text(e);
+  }
   function menu(m){
-    var items = '', nav = '', widest = 0, msg = text(m.id);
+    var items = '', nav = '', widest = 0, marked = false, msg = text(m.id);
     for(var i=0;i<m.buttons.length;i++){
       var b = m.buttons[i], label = String(b.label == null ? '' : b.label), mk = MARK.exec(label);
       var tag = '<button type="button" data-msg="'+msg+'" data-btn="'+text(b.id)+'"';
-      if(NAV.test(label)){ nav += tag+'>'+text(label)+'</button>'; continue; }
+      if(NAV.test(label)){ nav += tag+'>'+navLabel(label)+'</button>'; continue; }
       widest = Math.max(widest, labelWidth(label));
+      if(mk) marked = true;
       var on = mk && (mk[1] === '●' || mk[1] === '☑');
       items += tag + (on ? ' class="on"' : '') + '>'
-        + (mk ? '<span class="mk">'+mk[1]+'</span> '+text(label.slice(2)) : text(label)) + '</button>';
+        + (mk ? '<span class="mk">'+(IC.mark[mk[1]] || text(mk[1]))+'</span> '+text(label.slice(2)) : text(label)) + '</button>';
     }
     // 40 is core's label budget (truncateLabel); a longer one would be a column no row can hold.
-    return '<div class="btns" style="--cw:'+Math.min(widest, 40)+'ch">' + items
+    // A mark is drawn as a 1em icon where labelWidth counted its glyph as one column, so a menu
+    // with marks asks for the difference (--mk, in the stylesheet): without it "☑ APAC" was a
+    // hair too wide for its column and the icon wrapped onto a line of its own. Only the
+    // difference — a whole column more took the /cd menu on a phone from three columns to two.
+    return '<div class="btns" style="--cw:'+Math.min(widest, 40)+'ch'+(marked ? ';--mk:1' : '')+'">' + items
       + (nav ? '<div class="nav">'+nav+'</div>' : '') + '</div>';
   }
 
@@ -2812,7 +2846,7 @@ const SCRIPT = `
         + (r.valueNote ? '<span class="set-vnote">'+text(r.valueNote)+'</span>' : '') + '</span>';
     }
     return '<button type="button" class="set-item set-open" data-fk="r'+i+'" data-btn="'+text(r.buttonId)+'">'
-      + settingsText(r) + value + '<span class="set-chev" aria-hidden="true">\\u203a</span></button>';
+      + settingsText(r) + value + '<span class="set-chev" aria-hidden="true">'+IC.icon.chevronRight+'</span></button>';
   }
 
   function settingsChoice(r, opts, i){
@@ -2841,7 +2875,7 @@ const SCRIPT = `
 
   function settingsValues(s){
     var h = '', hd = s.head, n = s.nav || {};
-    if(n.back) h += '<button type="button" class="set-back" data-fk="back" data-btn="'+text(n.back)+'">\\u2039 All settings</button>';
+    if(n.back) h += '<button type="button" class="set-back" data-fk="back" data-btn="'+text(n.back)+'">'+IC.icon.chevronLeft+' All settings</button>';
     if(hd){
       h += '<div class="set-head"><h3><span>'+text(hd.label)+'</span>'
         + (hd.target ? '<span class="set-tgt">'+text(hd.target)+'</span>' : '')
@@ -2870,9 +2904,9 @@ const SCRIPT = `
     }
     if(n.pageCount > 1){
       h += '<div class="set-nav">'
-        + (n.prev ? '<button type="button" data-fk="prev" data-btn="'+text(n.prev)+'">\\u2039 Prev</button>' : '')
+        + (n.prev ? '<button type="button" data-fk="prev" data-btn="'+text(n.prev)+'">'+IC.icon.chevronLeft+' Prev</button>' : '')
         + '<span class="set-page">'+text(n.page)+' / '+text(n.pageCount)+'</span>'
-        + (n.next ? '<button type="button" data-fk="next" data-btn="'+text(n.next)+'">Next \\u203a</button>' : '')
+        + (n.next ? '<button type="button" data-fk="next" data-btn="'+text(n.next)+'">Next '+IC.icon.chevronRight+'</button>' : '')
         + '</div>';
     }
     return h;
@@ -2881,7 +2915,7 @@ const SCRIPT = `
   function settingsOption(o, i){
     return '<button type="button" class="set-opt'+(o.current ? ' on' : '')+'" data-fk="o'+i+'" data-btn="'+text(o.buttonId)+'"'
       + (o.current ? ' aria-current="true"' : '')+' data-q="'+text(String(o.label+' '+(o.detail || '')).toLowerCase())+'">'
-      + '<span class="set-check" aria-hidden="true">'+(o.current ? '\\u2713' : '')+'</span>'
+      + '<span class="set-check" aria-hidden="true">'+(o.current ? IC.icon.check : '')+'</span>'
       + '<span class="set-opt-main"><span class="set-opt-label">'+text(o.label)+'</span>'
       + (o.detail ? '<span class="set-opt-detail">'+text(o.detail)+'</span>' : '')
       + '</span></button>';
@@ -3800,12 +3834,12 @@ const SCRIPT = `
       var star='<button type="button" class="btn-icon topic-star'+(t.starred?' on':'')+'" data-star="'+text(t.id)+'"'
          + ' aria-pressed="'+(t.starred?'true':'false')+'"'
          + ' title="'+(t.starred?'Unstar':'Star: never removed to make room, and kept by Clear')+'">'
-         + (t.starred?'★':'☆')+'</button>';
+         + IC.icon.star+'</button>';
       // Its own button, like the star: folding a parent is not a reason to switch to it.
       var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
          + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
          + ' title="'+(row.shut?'Show':'Hide')+' the '+row.kids+' topic'+(row.kids>1?'s':'')+' its agent opened">'
-         + (row.shut?'▸':'▾')+' '+row.kids+'</button>':'';
+         + (row.shut?IC.icon.chevronRight:IC.icon.chevronDown)+' '+row.kids+'</button>':'';
       h += '<div class="'+cls+'" data-topic="'+text(t.id)+'" role="button" tabindex="0"'+says+'>'
          + '<span class="'+dotCls+'"></span>'
          + '<span class="topic-main">'
@@ -4372,7 +4406,7 @@ const SCRIPT = `
       var name = o.name && o.name !== o.value ? o.name : '';
       h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(o.value)+'"'
         + ' data-q="'+text((o.value+' '+name).toLowerCase())+'">'
-        + '<span class="mp-check" aria-hidden="true">'+(on ? '\u2713' : '')+'</span>'
+        + '<span class="mp-check" aria-hidden="true">'+(on ? IC.icon.check : '')+'</span>'
         + '<span class="mp-main"><span class="mp-v">'+text(o.value)+'</span>'+(name ? '<span class="mp-n">'+text(name)+'</span>' : '')+'</span>'
         + (def ? '<span class="mp-tag" title="What this agent starts a new session with (Settings)">default</span>' : '')
         + '</button>';
@@ -5902,9 +5936,9 @@ const SCRIPT = `
     return '';
   }
   function micLabel(){
-    if(!rec){ micBtn.innerHTML='&#127908;'; micBtn.classList.remove('rec'); micBtn.title='Record a voice message'; return; }
+    if(!rec){ micBtn.innerHTML=IC.icon.mic; micBtn.classList.remove('rec'); micBtn.title='Record a voice message'; return; }
     var s=Math.floor((Date.now()-rec.started)/1000);
-    micBtn.textContent='\\u25A0 '+Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);
+    micBtn.innerHTML=IC.icon.stop+' '+Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);
     micBtn.classList.add('rec');
     micBtn.title='Stop and send the recording (Esc discards it)';
   }
@@ -6414,7 +6448,7 @@ __GATE__
          holds Close idle, with the idle count on its face so the number is still seen without
          opening anything. Both open upward with the same box and the same dismissal (setMenu). -->
     <div id="sidebar-footer" class="panel-foot">
-      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">⚙&#xFE0E;</span><span class="opts-word"> Menu</span></button>
+      <button type="button" id="opts-toggle" aria-expanded="false" aria-controls="opts-menu" title="Menu"><span class="opts-gear">${icon('gear')}</span><span class="opts-word"> Menu</span></button>
       <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage-menu" title="Close idle agents"><span class="opts-gear"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></span><span class="opts-word"> Manage</span><span class="foot-count" id="idle-count"></span></button>
       <div id="opts-menu" class="panel-menu" hidden>
         <!-- The gateway's own settings: agents, models, idle reclaim, scope. A page rather than a
@@ -6459,7 +6493,7 @@ __GATE__
   <div id="skills" hidden role="dialog" aria-modal="true" aria-labelledby="skills-title">
     <div id="skills-box">
       <div id="skills-bar">
-        <button type="button" class="btn-icon" id="skills-back" title="Back to all skills" aria-label="Back" hidden>&lsaquo;</button>
+        <button type="button" class="btn-icon" id="skills-back" title="Back to all skills" aria-label="Back" hidden>${icon('chevronLeft')}</button>
         <span id="skills-title">Skills</span>
         <span id="skills-count"></span>
         <button type="button" id="skills-new" title="Create a skill">New</button>
@@ -6503,7 +6537,7 @@ __GATE__
   </div>
   <section id="chat">
     <div id="chat-header">
-      <button type="button" class="btn-icon" id="expand-sidebar" title="Show topics" hidden>☰</button>
+      <button type="button" class="btn-icon" id="expand-sidebar" title="Show topics" aria-label="Show topics" hidden>${icon('menu')}</button>
       <span id="topic-title" class="chat-title"></span>
       <!-- /kill, one tap away. Beside the title rather than beside Send because it is about the
            topic — the process behind it — and not about the message being written; shown only
@@ -6518,7 +6552,7 @@ __GATE__
       <span id="topic-status" class="chat-status"></span>
       <!-- Present in the markup but hidden unless the daemon serves a terminal, so the script
            has one thing to reveal rather than one thing to build. -->
-      <button type="button" class="btn-icon" id="term-toggle" title="Terminal" hidden>&gt;_</button>
+      <button type="button" class="btn-icon" id="term-toggle" title="Terminal" aria-label="Terminal" hidden>${icon('terminal')}</button>
       <!-- Always present, unlike the terminal's: the task panel is the only place on this page
            where scheduled tasks are managed. A clock rather than an emoji for the same reason
            the power button is an SVG — it has to sit on the header's text baseline. -->
@@ -6562,7 +6596,7 @@ __GATE__
           <!-- A voice message: tap to record, tap again to send it on its own. Hidden where the
                browser cannot record (no MediaRecorder, or an insecure origin, where
                navigator.mediaDevices does not exist at all). -->
-          <button type="button" id="mic" title="Record a voice message" hidden>&#127908;</button>
+          <button type="button" id="mic" title="Record a voice message" aria-label="Record a voice message" hidden>${icon('mic')}</button>
           <!-- /stop, while there is a turn to stop. Beside Send because that is where the eye
                already is while a reply streams in, and separate from it because the composer
                still sends mid-turn (into the running turn, or queued behind it) — neither of
