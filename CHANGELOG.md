@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A question about a delegated investigation is answered by the part that ran it.** The
+  coordinator used to answer from its own reading of the job, even while the sub-agent held the
+  evidence — close enough to sound right and wrong in the details. It now sends the question to
+  that part with `task-send` and uses its answer, and looks for itself only when no part covers it.
+
 ## [2.50.0] - 2026-11-07
 
 ### Added

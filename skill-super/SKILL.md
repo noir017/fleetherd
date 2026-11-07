@@ -66,6 +66,9 @@ Updates arrive as messages beginning `[sub-agent updates]`, with how many are st
 - **Finished**: read its reply — the conclusion and the evidence it names. If it changed code,
   propose its review now, with `task-new`; do not read the diff or run the tests yourself. If it is
   wrong or incomplete, `talkcode task-send <topic> "<what to fix>"`.
+- **A question a part was sent to investigate**: do not answer it from your own impression, while
+  it runs or after it reports — `task-send` it the question and use its answer. Only when no part
+  covers the question do you investigate yourself.
 - **A fix after a review** goes back to the same reviewer, for the fix alone. Skip that second
   look when the fix is small and comes with a test that fails without it.
 - **A question about what your task meant**: answer it with `task-send`.
