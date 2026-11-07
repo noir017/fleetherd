@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.51.2] - 2026-11-07
+
 ### Fixed
 
 - **Sub-agents start in batches, so a large card no longer times out every part.** Confirming
