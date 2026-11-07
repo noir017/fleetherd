@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sub-agents start in batches, so a large card no longer times out every part.** Confirming
+  thirteen parts used to spawn thirteen agent processes at once; on a 2-core host each cbc child
+  costs about 4.5 CPU-seconds and 500MB before it answers, the machine went into swap, and every
+  part failed with `startup timed out (30000ms)` before any work began. Cold starts are now capped
+  at four per machine (this one, or a remote host's), and a queued start waits without its own
+  30-second budget running.
+
 ## [2.51.1] - 2026-11-07
 
 ### Changed

@@ -278,6 +278,51 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
 
 // ───────────────────────────────── factory / session ─────────────────────────────────
 
+/**
+ * How many agent processes may be cold-starting at once on one machine.
+ *
+ * Starting one is the most expensive thing this runtime does: a cbc child needs about 4.5
+ * CPU-seconds and 500MB of RSS before it answers `initialize` (measured 2026-11-07 on a 2-core
+ * host). Thirteen sub-agents confirmed together therefore put that machine into swap, took 60–90s
+ * each, and every one missed START_TIMEOUT_MS — the card reported 13 startup timeouts and none of
+ * the work ran. The limit is per machine (`local`, or a remote host's id) because that is where
+ * the cost is paid. A queued start waits here, before startSession's timeout timer begins, so the
+ * queue is not charged to it.
+ */
+const START_CONCURRENCY = 4;
+
+/** A plain counting semaphore — twelve lines, so no dependency. */
+class StartupSlots {
+  private free: number;
+  private readonly waiting: Array<() => void> = [];
+  constructor(count: number) {
+    this.free = count;
+  }
+  async acquire(): Promise<void> {
+    if (this.free > 0) {
+      this.free -= 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiting.push(resolve));
+  }
+  release(): void {
+    const next = this.waiting.shift();
+    if (next) next();
+    else this.free += 1;
+  }
+}
+
+/** The slot set for one machine: `local`, or a remote host's id. */
+const startupSlots = new Map<string, StartupSlots>();
+function startupSlot(host: string): StartupSlots {
+  let slots = startupSlots.get(host);
+  if (!slots) {
+    slots = new StartupSlots(START_CONCURRENCY);
+    startupSlots.set(host, slots);
+  }
+  return slots;
+}
+
 export function createAcpAgentFactory(
   cfg: Config,
   socketPath: string,
@@ -1331,7 +1376,17 @@ function createAcpSession(
    */
   async function ensureStarted(sessionToken: string): Promise<void> {
     if (active) return;
-    starting ??= startSession(sessionToken).finally(() => {
+    starting ??= (async () => {
+      // One cold start per machine slot; the wait happens before startSession's 30s timer starts
+      // (see START_CONCURRENCY), so queueing cannot eat a start's own budget.
+      const slot = startupSlot(remoteHosts.hostFor(def)?.id ?? 'local');
+      await slot.acquire();
+      try {
+        await startSession(sessionToken);
+      } finally {
+        slot.release();
+      }
+    })().finally(() => {
       starting = undefined;
     });
     await starting;

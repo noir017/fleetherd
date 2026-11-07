@@ -29,8 +29,10 @@ in parallel, and come back with one report — so you follow one topic instead o
    it counts as done: once its change is in, the agent proposes a review part — another agent, the
    same checkout, told to read the diff and run the tests that cover it. The whole suite runs once,
    before merging, not in every part and every review.
-3. Each part gets a topic of its own, nested under this one, and they all run at once. The first
-   message in each says which topic it came from.
+3. Each part gets a topic of its own, nested under this one, and they run at once — up to four
+   cold starts per machine, the rest waiting their turn. Starting a harness process costs several
+   CPU-seconds and a few hundred MB before it answers, so a large card started together used to
+   time out every part. The first message in each says which topic it came from.
 4. When a sub-agent finishes, fails or asks something, the agent that started it is told. A folded
    🔔 line in its topic shows exactly what it was told. The notice quotes what the sub-agent said
    in full when it fits the card's budget — the reply, the question or the error, line breaks kept —
