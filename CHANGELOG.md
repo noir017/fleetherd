@@ -5,6 +5,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Search and filter the topic list.** With sub-agents, a web UI sidebar holds dozens of topics,
+  and finding one meant scrolling past the rest. A search box above the list now matches a topic's
+  title, agent, directory and host; Filter opens chips for its state (needs you, running, idle, no
+  agent), the star, the agent and the host. A sub-agent's topic that matches is drawn under the
+  topics above it, dimmed, so the tree still reads. The choice is kept per browser. Clear still
+  clears every topic, not only the ones shown, and says so while a filter is on.
+  [→](docs/web-ui.md)
+- **Tags on scheduled tasks, and a filter and sort for the Tasks list.** The side panel listed
+  every task in one fixed order. A task can now carry up to five tags — `talkcode schedule add`
+  or `edit --tag ci,report`, the `schedule` tool's `tag`, or `+ tag` on its card in the web UI —
+  and the Tasks list can be searched, filtered by status and tag, and sorted by status (the old
+  order, still the default), next run, last run or creation. A tag is letters of any script,
+  digits and `- _ . /`; a hand-edited `schedules.json` with a bad one loses that tag, not the task.
+  [→](docs/scheduled-tasks.md)
+
+### Changed
+
+- **A topic row's star and × are one ⋯ menu, which can also end the agents.** The menu holds
+  Star, End agent and Delete. End agent ends the topic's agent and those of every sub-agent topic
+  under it that has one — after a confirmation listing them, and only those listed: a topic
+  opened after the list was shown is left alone. Each conversation is kept, as with `/kill`. Ending
+  them does not start the agent above again: a finished sub-agent's report still waiting to be
+  sent is dropped only when the topic it was going to is being ended too. The power button beside
+  the title still ends only the topic on screen.
+  [→](docs/web-ui.md)
+
 ## [2.49.0] - 2026-11-07
 
 Mostly the automatic review, after two days of it on a live gateway: it ran reliably, but most of
