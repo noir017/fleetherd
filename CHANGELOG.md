@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The log no longer calls a skill archived when a person only moved it to the library.** On a
+  remote host every take-back was logged as `(archived)`, so two active library skills showed up
+  as archived. Each line now names its real reason: `(archived)` or `(in the library now)`.
+
 ## [2.47.0] - 2026-11-07
 
 A pass over what a gateway running for weeks, with dozens of topics streaming at once on two cores,

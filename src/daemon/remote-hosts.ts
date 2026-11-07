@@ -312,7 +312,7 @@ export class RemoteHosts {
       const linkKey = `${key}@${d}`;
       if (this.managedLinks.get(linkKey) === 'absent') continue;
       try {
-        await this.unlinkManaged(host, d, name, owned);
+        await this.unlinkManaged(host, d, name, owned, 'in the library now');
         this.managedLinks.set(linkKey, 'absent');
       } catch (e) {
         console.warn(`[skills] ${host.id}: could not take back "${name}" from ${d}:`, e instanceof Error ? e.message : e);
@@ -327,7 +327,7 @@ export class RemoteHosts {
       if (this.managedArchived.has(key)) continue;
       try {
         for (const d of allSkillDirs(home)) {
-          await this.unlinkManaged(host, d, name, owned);
+          await this.unlinkManaged(host, d, name, owned, 'archived');
           this.managedLinks.set(`${key}@${d}`, 'absent');
         }
         await host.removePath(`${owned}/${name}`, owned);
@@ -358,10 +358,14 @@ export class RemoteHosts {
     return r.outcome;
   }
 
-  /** Take one archived skill's link out of one directory, only if it is ours. */
-  private async unlinkManaged(host: RemoteHost, dir: string, name: string, owned: string): Promise<void> {
+  /**
+   * Take one skill's link out of one directory, only if it is ours. `why` comes from the caller,
+   * the one place that knows: the log said "archived" for every take-back, and named two active
+   * skills a person had moved to the library archived.
+   */
+  private async unlinkManaged(host: RemoteHost, dir: string, name: string, owned: string, why: 'archived' | 'in the library now'): Promise<void> {
     const r = await host.removeLink(`${dir}/${name}`, owned);
-    if (r.outcome === 'removed') console.log(`[skills] ${host.id}: took back ${r.link} (archived)`);
+    if (r.outcome === 'removed') console.log(`[skills] ${host.id}: took back ${r.link} (${why})`);
     else if (r.outcome === 'kept') console.warn(`[skills] ${host.id}: ${r.link} is ${r.detail ?? 'not ours'} — leaving it alone`);
   }
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
@@ -176,6 +176,17 @@ describe('placeManagedSkills on a remote host', () => {
     }
   }
 
+  /** The take-back lines logged while `run` runs. */
+  const takeBacks = async (run: () => Promise<void>): Promise<string[]> => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await run();
+      return log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('took back'));
+    } finally {
+      log.mockRestore();
+    }
+  };
+
   const welcome = (instance: string): Welcome => ({
     version: '2.30.0',
     instance,
@@ -252,8 +263,11 @@ describe('placeManagedSkills on a remote host', () => {
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
     expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.talkcode/skills/deploy-check');
     setResident('deploy-check', false, dir, T0 + 2);
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    const logged = await takeBacks(() => hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir));
     expect(host.links.has('/home/u/.claude/skills/deploy-check')).toBe(false);
+    // Still active, so the log must not call it archived.
+    expect(logged).toContain('[skills] h1: took back /home/u/.claude/skills/deploy-check (in the library now)');
+    expect(logged.filter((l) => l.includes('archived'))).toEqual([]);
     expect(host.writes.filter((w) => w.endsWith('deploy-check/SKILL.md'))).toHaveLength(2);
     // Remembered: a second spawn asks the host nothing more about it.
     const removed = host.removed.length;
@@ -266,7 +280,9 @@ describe('placeManagedSkills on a remote host', () => {
     const hosts = new RemoteHosts();
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
     archiveSkill('deploy-check', dir, T0 + 2);
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    const logged = await takeBacks(() => hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir));
+    expect(logged).toContain('[skills] h1: took back /home/u/.claude/skills/deploy-check (archived)');
+    expect(logged.filter((l) => l.includes('library'))).toEqual([]);
     expect(host.removed).toContain('/home/u/.claude/skills/deploy-check');
     expect(host.removed).toContain('/home/u/.agents/skills/deploy-check');
     expect(host.removedPaths).toContainEqual({ path: '/home/u/.talkcode/skills/deploy-check', owned: '/home/u/.talkcode/skills' });
