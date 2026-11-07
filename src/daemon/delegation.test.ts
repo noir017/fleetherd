@@ -1234,8 +1234,9 @@ describe('Delegation: ending a topic and the topics under it', () => {
     r.busy.add(c1);
 
     // The dialog listed the parent and one child; the other child was not shown (it appeared
-    // after the dialog was drawn) and is therefore not in the request.
-    const results = r.d.endTopic(P, new Set(['aaaaaaaa', 'c2000000']));
+    // after the dialog was drawn) and is therefore not in the request. An id outside this tree
+    // can be in the list too (a row that moved since the page drew it) and is just as ignored.
+    const results = r.d.endTopic(P, new Set(['aaaaaaaa', 'c2000000', 'ffffffff']));
 
     expect(r.calls.filter(([what]) => what === 'kill').map(([, k]) => k)).toEqual([c2, P]);
     expect(results).toEqual([

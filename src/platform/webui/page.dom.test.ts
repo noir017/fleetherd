@@ -4842,6 +4842,26 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     expect(h.doc.querySelector(`[data-more="${B}"]`)?.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('leaves a tap that blurs it with no next focus to the click — iOS Safari', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: fleet() });
+    await rowMenu(h, D);
+    const menu = h.el('topic-menu');
+    const star = menu.querySelector<HTMLElement>('[data-tm="star"]')!;
+
+    // iOS Safari does not focus a button on tap: pointerdown, then a focusout with no
+    // relatedTarget, and only then the click. Closing on that blur would eat the tap.
+    star.dispatchEvent(new h.window.Event('pointerdown', { bubbles: true }));
+    menu.dispatchEvent(new h.window.FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+    expect(menu.hidden).toBe(false);
+
+    star.click();
+    await tick();
+    expect(h.calls.find((c) => c.path === 'api/topics/star')?.body).toEqual({ topic: D, starred: true });
+    expect(menu.hidden).toBe(true);
+  });
+
   it('moves between its items with the arrow keys, Home and End, skipping a disabled item', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));

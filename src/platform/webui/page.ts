@@ -5335,11 +5335,14 @@ const SCRIPT = `
   });
   // Tab — or any other way the focus leaves — puts the menu away, and the ⋯ stops saying it is
   // open. A move onto the ⋯ itself is left to its own click, which toggles: closing here would
-  // make the second tap close and reopen in one gesture.
+  // make the second tap close and reopen in one gesture. A focusout with NO relatedTarget is
+  // left to the document click below: iOS Safari does not focus a button on tap, so it reports
+  // one before the click that the tap is about to deliver, and closing here would swallow the
+  // action the person just hit.
   topicMenu.addEventListener('focusout', function(e){
     if(topicMenu.hidden) return;
     var to=e.relatedTarget;
-    if(to && (topicMenu.contains(to) || (topicMenuBtn && topicMenuBtn.contains(to)))) return;
+    if(!to || topicMenu.contains(to) || (topicMenuBtn && topicMenuBtn.contains(to))) return;
     closeTopicMenu(false);
   });
   // A click anywhere else puts it away. The ⋯ itself is excluded: its own handler toggles, and

@@ -229,9 +229,9 @@ a running agent rebuilds that list with `innerHTML` on every message and a menu 
 mid-tap. `paintTopics` re-finds the button after a repaint and closes the menu only if its topic is
 gone. `role=menu`/`menuitem`, arrow keys/Home/End move between items, Escape closes and returns the
 focus, Tab (any move of the focus out) closes it, and a click anywhere else closes it.
-**End agent** ends the process behind the topic and
-every topic under it (`useTopicKill` → `Delegation.endTopic`, `/kill`'s rules, not the idle
-sweeper's), and the item says how many sub-agent processes it reaches. It is disabled when none of
+**End agent** ends the process behind the topic and the sub-agent topics the confirmation lists
+under it (`useTopicKill` → `Delegation.endTopic`, `/kill`'s rules, not the idle sweeper's), and
+the item says how many sub-agent processes it reaches. It is disabled when none of
 them has a process, with the reason on its title. The confirmation is `openIdle`'s dialog — the
 same list and per-topic result — and the request carries that list: the daemon walks the subtree
 from its own parent record but ends only the intersection, so a sub-agent opened while the dialog
