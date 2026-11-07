@@ -2574,6 +2574,13 @@ const SCRIPT = `
 
   /** Draw the rows that survive the bar, and tell the bar how many did. */
   function paintSchedTasks(){
+    // Before the first answer there is nothing to draw, and an empty result would read as "no
+    // tasks" — the one thing the panel must not say while it is still loading.
+    if(schedTasks === null){
+      schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
+      if(schedFilter) schedFilter.setCounts(0, 0);
+      return;
+    }
     var fs = schedFilter ? schedFilter.state() : {q:'', sel:{}, sort:'status', dir:'asc'};
     var words = fs.q.trim() ? fs.q.trim().toLowerCase().split(/\\s+/) : [];
     var rows = [], total = schedTasks ? schedTasks.length : 0;
