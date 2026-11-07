@@ -183,10 +183,13 @@ export function toolAction(tool: NativeTool, args: unknown): IpcAction {
     throw new Error(`${tool.name}: unknown parameter(s) ${unknown.join(', ')}; accepted: ${[...known].join(', ')}`);
   }
 
+  // An empty tag clears a set only where tags can be set; on any other action the model's habit
+  // of filling every optional parameter with "" must not turn into a refusal.
+  const action = typeof given.action === 'string' ? given.action : '';
   const value = (name: string): string | undefined => {
     const v = given[name];
     if (v === undefined || v === null) return undefined;
-    if (v === '' && name !== 'tag') return undefined;
+    if (v === '' && !(name === 'tag' && (action === 'add' || action === 'edit'))) return undefined;
     if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') {
       throw new Error(`${tool.name}: ${name} must be a string`);
     }

@@ -128,6 +128,17 @@ describe('ScheduleStore', () => {
     expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/duplicate/);
   });
 
+  it('keeps a task whose tags field is one string, and drops non-strings from a list', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const run = { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' };
+    const wrapped = new ScheduleStore(fileWith([{ ...base, tags: 'ci', run }]));
+    expect(wrapped.get('a1b2c3')!.tags).toEqual(['ci']);
+
+    const mixed = new ScheduleStore(fileWith([{ ...base, tags: ['ci', 1, null, 'ops'], run }]));
+    expect(mixed.get('a1b2c3')!.tags).toEqual(['ci', 'ops']);
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/not a string/);
+  });
+
   it('keeps the first five tags of a file that has more, and warns about the rest', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const store = new ScheduleStore(

@@ -113,6 +113,22 @@ describe('toolAction', () => {
     });
   });
 
+  it('ignores an empty tag on an action that cannot set tags, rather than refusing it', () => {
+    // Models fill every optional parameter; an empty tag on list/pause/rm is not a request to
+    // clear anything and used to be ignored, as any other empty option is.
+    expect(toolAction(tool('schedule'), { action: 'list', tag: '' })).toEqual({ kind: 'schedule-list' });
+    expect(toolAction(tool('schedule'), { action: 'pause', id: 'k3x9', tag: '' })).toEqual({
+      kind: 'schedule-op',
+      id: 'k3x9',
+      op: 'pause',
+    });
+    expect(toolAction(tool('schedule'), { action: 'rm', id: 'k3x9', tag: '' })).toEqual({
+      kind: 'schedule-op',
+      id: 'k3x9',
+      op: 'remove',
+    });
+  });
+
   it('passes a model through as the shell command would', () => {
     const action = toolAction(tool('schedule'), { action: 'add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'fast-model' });
     expect(action).toMatchObject({ kind: 'schedule-add', session: 'daily', model: 'fast-model' });
