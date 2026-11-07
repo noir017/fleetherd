@@ -157,20 +157,28 @@ export function composeInstructions(dir: string, name: string): Composed {
 }
 
 /**
- * `common.md` alone — what every agent is told — for the automatic review, which must not suggest
- * a preference the person has already written there. Undefined when there is none; any read error
- * other than a missing file is thrown, for the caller to log.
+ * What agents are told, for the automatic review, which must not suggest a preference the person
+ * has already written: `common.md`, then each harness's own file under a line saying who gets it.
+ * Every file, not `common.md` alone, since 2026-11-07 — a rule kept in `claude.md` reaches the
+ * agent that does most of the work, and the review suggested such rules back. Undefined when there
+ * is none; any read error other than a missing directory is thrown, for the caller to log.
  */
-export function commonInstructions(dir: string = instructionsDir()): string | undefined {
-  let text: string;
+export function standingInstructions(dir: string = instructionsDir()): string | undefined {
+  let names: string[];
   try {
-    text = fs.readFileSync(path.join(dir, 'common.md'), 'utf8');
+    names = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw e;
   }
-  const trimmed = text.trim();
-  return trimmed ? trimmed.slice(0, INSTRUCTIONS_MAX_BYTES) : undefined;
+  const ordered = [...names.filter((f) => f === 'common.md'), ...names.filter((f) => f !== 'common.md').sort()];
+  const parts: string[] = [];
+  for (const file of ordered) {
+    const text = fs.readFileSync(path.join(dir, file), 'utf8').trim();
+    if (!text) continue;
+    parts.push(file === 'common.md' ? text : `（下面这段只给 ${file.slice(0, -'.md'.length)}）\n${text}`);
+  }
+  return parts.length ? parts.join('\n\n').slice(0, INSTRUCTIONS_MAX_BYTES) : undefined;
 }
 
 export type InstructionsOutcome =

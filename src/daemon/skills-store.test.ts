@@ -8,6 +8,7 @@ import {
   activeSkillFiles,
   archiveSkill,
   archivedSkillNames,
+  conversationSkillFiles,
   createSkill,
   listSkills,
   listSkillFiles,
@@ -94,6 +95,16 @@ describe('create and show', () => {
     expect(showSkill('deploy-check', undefined, dir)).toMatchObject({ name: 'deploy-check', file: 'SKILL.md', content: md });
     const usage = JSON.parse(fs.readFileSync(path.join(dir, 'skills-usage.json'), 'utf8')) as { skills: Record<string, { source: unknown }> };
     expect(usage.skills['deploy-check']!.source).toEqual(source);
+  });
+
+  it('files a skill under the category it is created with, and refuses one that is not a short label', () => {
+    createSkill({ name: 'agy-config', description: 'Use when configuring agy', category: ' 运维 ', now: T0 }, dir);
+    const md = fs.readFileSync(path.join(skillDir('agy-config', dir), 'SKILL.md'), 'utf8');
+    expect(md).toBe('---\nname: agy-config\ndescription: "Use when configuring agy"\nmetadata:\n  talkcode-category: "运维"\n---\n\n');
+    expect(listSkills(dir).find((s) => s.name === 'agy-config')).toMatchObject({ category: '运维', resident: false });
+    expect(() => createSkill({ name: 'b-skill', description: 'd', category: 'a, b', now: T0 }, dir)).toThrow(/may not contain/);
+    expect(() => createSkill({ name: 'c-skill', description: 'd', category: 'x'.repeat(21), now: T0 }, dir)).toThrow(/too long/);
+    expect(() => createSkill({ name: 'd-skill', description: 'd', category: '  ', now: T0 }, dir)).toThrow(/empty/);
   });
 
   it('refuses a duplicate name and points at the archived copy when there is one', () => {
@@ -276,6 +287,34 @@ describe('a skill changed by hand in the repository', () => {
     create();
     byHand('skills/hand-made/SKILL.md', '---\nname: hand-made\ndescription: Use when by hand\n---\n', 'feat: hand-made');
     expect(pinSkill('hand-made', true, dir)).toMatchObject({ name: 'hand-made', pinned: true, status: 'active' });
+  });
+});
+
+describe('conversationSkillFiles', () => {
+  const by = (conversation: string) => ({ kind: 'agent' as const, agent: 'cc', conversation });
+
+  it('is the files one conversation\'s commits changed since a time, newest first, still there', () => {
+    create('server-ops');
+    create('mail');
+    writeSkillFile({ name: 'server-ops', file: 'references/old.md', content: 'before the window', now: T0 + 1_000, by: by('telegram#1') }, dir);
+    writeSkillFile({ name: 'server-ops', file: 'references/grant.md', content: 'a', now: T0 + 10_000, by: by('telegram#1') }, dir);
+    writeSkillFile({ name: 'mail', file: 'references/api.md', content: 'b', now: T0 + 11_000, by: by('telegram#1') }, dir);
+    writeSkillFile({ name: 'mail', file: 'references/gone.md', content: 'c', now: T0 + 12_000, by: by('telegram#1') }, dir);
+    removeSkillFile({ name: 'mail', file: 'references/gone.md', now: T0 + 13_000 }, dir);
+    // `telegram#12` starts with `telegram#1`: --grep would match it, the trailer comparison does not.
+    writeSkillFile({ name: 'mail', file: 'references/other.md', content: 'd', now: T0 + 14_000, by: by('telegram#12') }, dir);
+    expect(conversationSkillFiles('telegram#1', T0 + 5_000, dir)).toEqual([
+      { name: 'mail', file: 'references/api.md' },
+      { name: 'server-ops', file: 'references/grant.md' },
+    ]);
+  });
+
+  it('leaves out an archived skill, and is empty with no repository', () => {
+    expect(conversationSkillFiles('telegram#1', 0, dir)).toEqual([]);
+    create('server-ops');
+    writeSkillFile({ name: 'server-ops', file: 'references/a.md', content: 'a', now: T0 + 1_000, by: by('telegram#1') }, dir);
+    archiveSkill('server-ops', dir, T0 + 2_000);
+    expect(conversationSkillFiles('telegram#1', 0, dir)).toEqual([]);
   });
 });
 

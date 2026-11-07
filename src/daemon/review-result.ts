@@ -59,15 +59,35 @@ export function inferOutcome(changes: HistoryReviewChange[], preferences: string
   return 'nothing';
 }
 
+/**
+ * How one of the reviewer's changes is recorded and shown. An `edit` is filed as what it amounts
+ * to — SKILL.md updated, or a file written — so the Reviews tab and the history keep three verbs,
+ * and a review from before `edit` existed reads the same as one after.
+ */
+export function recordedAction(change: ReviewChange): Pick<HistoryReviewChange, 'action' | 'file'> {
+  switch (change.action) {
+    case 'edit':
+      return change.file === 'SKILL.md' ? { action: 'patch' } : { action: 'write-file', file: change.file };
+    case 'write-file':
+      return { action: 'write-file', file: change.file };
+    case 'create':
+    case 'patch':
+      return { action: change.action };
+    default: {
+      const _exhaustive: never = change;
+      return _exhaustive;
+    }
+  }
+}
+
 /** One change as the result record keeps it, with what became of it. */
 export function recordedChange(
   change: ReviewChange,
   outcome: { applied: AppliedChange } | { refused: string }
 ): HistoryReviewChange {
   const base: HistoryReviewChange = {
-    action: change.action,
+    ...recordedAction(change),
     name: change.name,
-    ...(change.action === 'write-file' ? { file: change.file } : {}),
     ...(change.reason ? { reason: change.reason } : {}),
   };
   if ('applied' in outcome) {

@@ -73,15 +73,23 @@ describe('search', () => {
 });
 
 describe('categories', () => {
-  it('counts every skill by category, the uncategorized last', () => {
+  it('counts every skill by category, the uncategorized last, and names the library ones', () => {
+    // server-ops is resident: counted, but not named — it is in the agent's own list already.
     expect(library.categories()).toEqual({
       total: 3,
       library: 2,
       categories: [
-        { name: '运维', count: 1 },
-        { name: 'other', count: 2 },
+        { name: '运维', count: 1, library: ['agy-only'] },
+        { name: 'other', count: 2, library: ['deploy-check'] },
       ],
     });
+  });
+
+  it('names only the library skills that reach the asking agent', () => {
+    expect(library.categories(codex).categories).toEqual([
+      { name: '运维', count: 1, library: [] },
+      { name: 'other', count: 2, library: ['deploy-check'] },
+    ]);
   });
 });
 

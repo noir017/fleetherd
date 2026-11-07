@@ -451,19 +451,31 @@ mode: `--input-format=stream-json --output-format=stream-json -p=`, one NDJSON
 (and the `agent_response` deltas before it). Remote reuses `RemoteHost.run`'s body as the child's
 stdin, so the temporary directory stays empty.
 
-**What the prompt holds.** The rules, the skill catalog, the text of the skills the conversation
-used, the skill files its own agent wrote (`writtenSkillFiles`, from the write-type calls in
-`reviewWindow`'s `skillCalls`), `instructions/common.md` (`standing`, read per review through
-`commonInstructions`; unreadable is logged and the review goes on without it), and last the
-conversation — without tool calls (see `history/README.md#what-a-review-reads`). The written files
-are named because on 2026-11-06 a review created `vlt` an hour after the person had the agent write
-that very skill in another library; the calls that showed it were not in the window. The standing
-rules are there because two of the first thirteen suggestions were already in them.
+**What the prompt holds.** The rules, the skill catalog and the categories in use, the text of
+the skills the conversation used, the skill files the conversation wrote with what they hold now
+(`ReviewService.writtenFiles`: the skills repository's commits whose `Talkcode-Conversation` trailer
+names it — `conversationSkillFiles` — plus `writtenSkillFiles`, the write-type calls in
+`reviewWindow`'s `skillCalls`; quoted up to 8 000 characters a file and 20 000 in all), every file
+in `instructions/` (`standing`, read per review through `standingInstructions`; unreadable is
+logged and the review goes on without it), and last the conversation — without tool calls (see
+`history/README.md#what-a-review-reads`). The written files are there because on 2026-11-06 a
+review created `vlt` an hour after the person had the agent write that very skill in another
+library, and on 2026-11-07 one added a rule to server-ops' `SKILL.md`, twice, that the agent had
+written into a reference with `talkcode skills write-file` — a Bash call the tool-row scan cannot
+read, and a name it would not have quoted anyway. The standing rules are there because two of the
+first thirteen suggestions were already in them; every file rather than `common.md`, because the
+review suggested `claude.md`'s rules back too.
 
 **Who writes.** Only the gateway, one change at a time through `createSkill` / `patchSkill` /
-`writeSkillFile`. A change the store refuses — a taken name, a file outside the three
+`writeSkillFile` (`applyChange`). The reviewer's `edit` is exact replacements, each of whose
+originals must occur exactly once in the version it was shown (`applyEdits`); the gateway computes
+the new file and writes it through `patchSkill` or `writeSkillFile`. `patch` — the whole `SKILL.md`
+retyped — is no longer offered and is refused if it comes anyway: on 2026-11-06 it took 18 000
+characters to add two lines to server-ops, and changed an unrelated word on the way. `write-file`
+is for a new file only. A change the store refuses — a taken name, a file outside the three
 directories, a version that moved while the reviewer was thinking — is dropped and logged; the
-rest of the answer still applies. The reviewer's own output and the prompt are filed in the
+rest of the answer still applies. An `edit` is recorded as the `patch` or `write-file` it amounts
+to (`recordedAction`), so the Reviews tab keeps its three verbs. The reviewer's own output and the prompt are filed in the
 library as a `review` session, which search and `list` leave out (`history/store.ts`).
 
 **What the person sees.** One line, and only when something changed: the skills, the `revert`

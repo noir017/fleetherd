@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decode } from '@toon-format/toon';
 import type { IpcAction, IpcResponse } from '../ipc/protocol.js';
-import { MCP_PROTOCOL_VERSIONS, handleMcpMessage, type JsonRpcResponse, type McpDeps } from './mcp.js';
+import { LIBRARY_NAMES_MAX, MCP_PROTOCOL_VERSIONS, handleMcpMessage, libraryLine, type JsonRpcResponse, type McpDeps } from './mcp.js';
 
 /**
  * The MCP server as a harness drives it: one JSON-RPC message in, one answer (or none) out. The
@@ -65,6 +65,24 @@ describe('tools/list', () => {
     const skills = (r.tools as { name: string; description: string }[]).find((t) => t.name === 'skills')!;
     expect(skills.description).toMatch(/In the library: 运维 6, other 3\.$/);
     expect(d.sent).toEqual([{ kind: 'skills', action: 'categories' }]);
+  });
+
+  it('names the library skills by category when the daemon sends names', async () => {
+    const d = deps({
+      ok: true,
+      data: {
+        total: 6,
+        library: 4,
+        categories: [
+          { name: '运维', count: 3, library: ['easytier-edge-join'] },
+          { name: '开发', count: 1, library: [] },
+          { name: 'other', count: 2, library: ['antigravity-config', 'email-reader'] },
+        ],
+      },
+    });
+    const r = await result(req('tools/list'), d);
+    const skills = (r.tools as { name: string; description: string }[]).find((t) => t.name === 'skills')!;
+    expect(skills.description).toMatch(/In the library: 运维: easytier-edge-join; other: antigravity-config, email-reader\.$/);
   });
 
   it('keeps the description as written when the daemon cannot say', async () => {
@@ -135,5 +153,22 @@ describe('the rest of JSON-RPC', () => {
   it('refuses a message that is not a JSON-RPC 2.0 request', async () => {
     expect((await handleMcpMessage('hello', deps()))!.error!.code).toBe(-32600);
     expect((await handleMcpMessage({ jsonrpc: '1.0', id: 1, method: 'ping' }, deps()))!.error!.code).toBe(-32600);
+  });
+});
+
+describe('libraryLine', () => {
+  const named = (n: number) => ({
+    total: n,
+    library: n,
+    categories: [{ name: 'other', count: n, library: Array.from({ length: n }, (_, i) => `s-${i}`) }],
+  });
+
+  it('goes back to counts past the name limit, so a large library does not grow the tool', () => {
+    expect(libraryLine(named(LIBRARY_NAMES_MAX))).toMatch(/^In the library: other: s-0, s-1, /);
+    expect(libraryLine(named(LIBRARY_NAMES_MAX + 1))).toBe(`In the library: other ${LIBRARY_NAMES_MAX + 1}.`);
+  });
+
+  it('says nothing when no library skill reaches this agent', () => {
+    expect(libraryLine({ total: 2, library: 1, categories: [{ name: '运维', count: 2, library: [] }] })).toBe('');
   });
 });

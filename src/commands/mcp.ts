@@ -108,11 +108,18 @@ async function dispatch(method: string, params: unknown, deps: McpDeps): Promise
 }
 
 /**
- * The tools, with the `skills` tool's description ending in what the library holds — its
- * categories and how many skills each has. That line is what tells a model the library is worth a
- * search before it starts on something: a description alone says a library exists, not that it
- * has six skills about operations. Asked of the daemon once per session (a harness lists tools at
- * start); a daemon that does not answer in time leaves the description as written.
+ * The tools, with the `skills` tool's description ending in what the library holds — the names of
+ * its skills by category, or how many each category has once there are too many names. That line
+ * is what tells a model the library is worth a look before it starts on something: a description
+ * alone says a library exists, not that it has a skill about the CLI it is about to configure.
+ * Asked of the daemon once per session (a harness lists tools at start); a daemon that does not
+ * answer in time leaves the description as written.
+ *
+ * Names, not counts, since 2026-11-07: with only `In the library: 协作 3, other 4.` the four skills
+ * the review had written in two days were read twice in all, and an agent spent a turn on agy's
+ * context accounting with `antigravity-config` in the library, never searching for it — six
+ * searches in 19 hours, across every conversation. A name costs a few tokens on every request;
+ * past LIBRARY_NAMES_MAX the line goes back to counts, so a large library does not grow the tool.
  */
 async function listTools(deps: McpDeps): Promise<Array<{ name: string; description: string; inputSchema: unknown }>> {
   let library = '';
@@ -132,10 +139,32 @@ async function listTools(deps: McpDeps): Promise<Array<{ name: string; descripti
   }));
 }
 
-/** `In the library: 运维 6, 开发 2, other 3.` from the daemon's `skills categories` answer. */
+/** How many library skills the `skills` tool's description names before it falls back to counts. */
+export const LIBRARY_NAMES_MAX = 40;
+
+/**
+ * From the daemon's `skills categories` answer: `In the library: 协作: grilling, siyuan-notes;
+ * other: email-reader.` — the library skills that reach this agent, by category — or
+ * `In the library: 运维 6, 开发 2, other 3.` past LIBRARY_NAMES_MAX names, or from a daemon that
+ * does not send names. Empty when the library has nothing for this agent.
+ */
 export function libraryLine(result: unknown): string {
-  const r = result as { library?: number; categories?: Array<{ name: string; count: number }> } | undefined;
+  const r = result as { library?: number; categories?: Array<{ name: string; count: number; library?: unknown }> } | undefined;
   if (!r?.library || !Array.isArray(r.categories) || r.categories.length === 0) return '';
+  const named = r.categories.map((c) => ({
+    name: c.name,
+    skills: Array.isArray(c.library) ? c.library.filter((n): n is string => typeof n === 'string') : undefined,
+  }));
+  if (named.every((c) => c.skills !== undefined)) {
+    const total = named.reduce((n, c) => n + c.skills!.length, 0);
+    if (total === 0) return '';
+    if (total <= LIBRARY_NAMES_MAX) {
+      return `In the library: ${named
+        .filter((c) => c.skills!.length > 0)
+        .map((c) => `${c.name}: ${c.skills!.join(', ')}`)
+        .join('; ')}.`;
+    }
+  }
   return `In the library: ${r.categories.map((c) => `${c.name} ${c.count}`).join(', ')}.`;
 }
 

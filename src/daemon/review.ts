@@ -13,23 +13,30 @@ import { remoteHosts } from './remote-hosts.js';
 import {
   buildReviewPrompt,
   parseReviewOutput,
+  skillFileOfPath,
   usedSkillNames,
   writtenSkillFiles,
   type PromptSkill,
   type PromptSkillText,
+  type PromptWrittenFile,
   type ReviewChange,
 } from './review-prompt.js';
 import { classifyReview, recordedChange, undoOf, type AppliedChange } from './review-result.js';
 import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, type ReviewStateStore } from './review-state.js';
 import {
+  SKILL_FILE,
   activeSkillNames,
+  conversationSkillFiles,
   createSkill,
   listSkills,
   patchSkill,
   readSkillFiles,
   showSkill,
   skillHistory,
+  validateFilePath,
   writeSkillFile,
+  type SkillChangeBy,
+  type SkillSource,
 } from './skills-store.js';
 
 /**
@@ -113,6 +120,11 @@ export const REVIEW_CONVERSATION_CHARS = 40_000;
 
 /** How many used skills are quoted in full. The rest stay in the catalog. */
 const MAX_USED_SKILLS = 8;
+
+/** How much of one file the conversation wrote is quoted, and of all of them together, in characters. */
+const WRITTEN_FILE_CHARS = 8_000;
+const WRITTEN_CHARS = 20_000;
+const MAX_WRITTEN_FILES = 20;
 
 /**
  * One review's wall clock. A review reads, thinks and prints one JSON object — but it can also
@@ -502,9 +514,9 @@ export class ReviewService {
     // review is not reading, and an earlier review already saw them.
     const since = Date.parse(plan.window.messages[0]?.at ?? '') || 0;
     const searchedFor = this.deps.searchMisses?.(key, since) ?? [];
-    const catalog = listSkills(dir)
-      .filter((s) => s.status !== 'archived')
-      .map((s): PromptSkill => ({ name: s.name, version: s.version, description: s.description }));
+    const active = listSkills(dir).filter((s) => s.status !== 'archived');
+    const catalog = active.map((s): PromptSkill => ({ name: s.name, version: s.version, description: s.description }));
+    const categories = [...new Set(active.map((s) => s.category).filter((c): c is string => !!c))].sort();
     // The calls are not in the conversation the reviewer reads (see HistoryStore.reviewWindow);
     // the ones that touched a skill are what says which skills were used and which were written.
     const calls = plan.window.skillCalls;
@@ -519,16 +531,71 @@ export class ReviewService {
         this.log(`[review] could not read "${name}" for the prompt: ${e instanceof Error ? e.message : e}`);
       }
     }
+    const written = this.writtenFiles(key, since, calls, used);
     return buildReviewPrompt({
       title: plan.session.title,
       messages: plan.window.messages.map((m) => ({ at: m.at, role: m.role, text: m.text })),
       dropped: plan.window.dropped,
       catalog,
       used,
-      written: writtenSkillFiles(calls),
+      ...(written.length ? { written } : {}),
+      ...(categories.length ? { categories } : {}),
       ...this.standing(),
       ...(searchedFor.length ? { searchedFor } : {}),
     });
+  }
+
+  /**
+   * The skill files this conversation wrote, with what they hold now. Two sources, because there
+   * are two ways to write one: the skills repository's commits that name this conversation (an
+   * agent's `talkcode skills create|patch|write-file`, an earlier review of it), and the file-writing
+   * tool calls whose path is under some `skills/<name>/` (an agent editing a checkout of the
+   * repository, or another library). A path that names one of the gateway's skills is quoted from
+   * the store; any other is named only. Quoting stops at WRITTEN_FILE_CHARS a file and
+   * WRITTEN_CHARS in all, past which a file is named with the reason.
+   */
+  private writtenFiles(key: string, since: number, calls: string[], used: PromptSkillText[]): PromptWrittenFile[] {
+    const dir = this.deps.skillsDir;
+    let committed: Array<{ name: string; file: string }> = [];
+    try {
+      committed = conversationSkillFiles(key, since, dir);
+    } catch (e) {
+      // Best-effort like `standing`: without it the review only risks writing a thing twice.
+      this.log(`[review] could not read what ${key} wrote to the skills: ${e instanceof Error ? e.message : e}`);
+    }
+    const known = new Set(activeSkillNames(dir));
+    const fromCalls = writtenSkillFiles(calls).map((p) => skillFileOfPath(p, known) ?? p);
+    const out: PromptWrittenFile[] = [];
+    const seen = new Set<string>();
+    let left = WRITTEN_CHARS;
+    for (const entry of [...committed, ...fromCalls]) {
+      if (typeof entry === 'string') {
+        if (!seen.has(entry)) out.push({ path: entry });
+        seen.add(entry);
+        continue;
+      }
+      const path = `${entry.name}/${entry.file}`;
+      if (seen.has(path)) continue;
+      seen.add(path);
+      if (entry.file === 'SKILL.md' && used.some((u) => u.name === entry.name)) {
+        out.push({ path, note: '全文见上' });
+        continue;
+      }
+      let content: string;
+      try {
+        content = showSkill(entry.name, entry.file, dir).content;
+      } catch {
+        out.push({ path });
+        continue;
+      }
+      if (content.length > WRITTEN_FILE_CHARS || content.length > left) {
+        out.push({ path, note: '太长，没有附上' });
+        continue;
+      }
+      left -= content.length;
+      out.push({ path, content });
+    }
+    return out.slice(0, MAX_WRITTEN_FILES);
   }
 
   /**
@@ -582,22 +649,7 @@ export class ReviewService {
     const by = { kind: 'review' as const, agent: reviewer.id, conversation: candidate.key };
     for (const change of changes) {
       try {
-        if (change.action === 'create') {
-          createSkill({ name: change.name, description: change.description, body: change.body, source, note: change.reason, by }, dir);
-          out.applied.push({ change, result: { name: change.name, action: 'created' } });
-        } else if (change.action === 'patch') {
-          patchSkill({ name: change.name, version: change.version, content: change.content, note: change.reason, by }, dir);
-          out.applied.push({
-            change,
-            result: { name: change.name, action: 'patched', revertId: newestHistoryId(change.name, dir) },
-          });
-        } else {
-          writeSkillFile({ name: change.name, file: change.file, content: change.content, note: change.reason, by }, dir);
-          out.applied.push({
-            change,
-            result: { name: change.name, action: 'file', file: change.file, revertId: newestHistoryId(change.name, dir) },
-          });
-        }
+        out.applied.push({ change, result: applyChange(change, { source, by }, dir) });
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
         out.refused.push({ change, error });
@@ -685,6 +737,136 @@ export class ReviewService {
   private log(message: string): void {
     (this.deps.log ?? ((m) => console.log(m)))(message);
   }
+}
+
+/** Who a review's writes are from, as the store records them. */
+interface ReviewAuthor {
+  source: SkillSource;
+  by: SkillChangeBy;
+}
+
+/**
+ * One change through the store's own functions — never a file edit (AGENTS.md invariant 8). Throws
+ * the store's sentence, or this one's, when it is not applied.
+ */
+function applyChange(change: ReviewChange, who: ReviewAuthor, dir: string | undefined): AppliedChange {
+  const { source, by } = who;
+  switch (change.action) {
+    case 'create':
+      createSkill(
+        {
+          name: change.name,
+          description: change.description,
+          body: change.body,
+          ...(change.category ? { category: change.category } : {}),
+          source,
+          note: change.reason,
+          by,
+        },
+        dir
+      );
+      return { name: change.name, action: 'created' };
+    case 'patch':
+      // Not offered any more (review-prompt.ts PatchChange): retyping a whole SKILL.md is how a
+      // review changes words it never meant to. Refused with the reason, not quietly applied.
+      throw new Error('patch is not offered to the review; an edit replaces only the text it changes');
+    case 'edit': {
+      const file = change.file === SKILL_FILE ? SKILL_FILE : validateFilePath(change.file);
+      const shown = showSkill(change.name, file, dir);
+      if (shown.version !== change.version) {
+        throw new Error(`version mismatch: "${change.name}" is at ${shown.version}, not ${change.version}`);
+      }
+      const content = applyEdits(shown.content, change.edits);
+      if (file === SKILL_FILE) patchSkill({ name: change.name, version: change.version, content, note: change.reason, by }, dir);
+      else writeSkillFile({ name: change.name, file, content, note: change.reason, by }, dir);
+      const revertId = newestHistoryId(change.name, dir);
+      return file === SKILL_FILE
+        ? { name: change.name, action: 'patched', revertId }
+        : { name: change.name, action: 'file', file, revertId };
+    }
+    case 'write-file': {
+      // A new file only: replacing one the reviewer may never have been shown is the whole-file
+      // rewrite `edit` exists to avoid.
+      const file = validateFilePath(change.file);
+      if (readSkillFiles(change.name, dir).has(file)) {
+        throw new Error(`${file} already exists in "${change.name}"; the review changes an existing file with edit`);
+      }
+      writeSkillFile({ name: change.name, file, content: change.content, note: change.reason, by }, dir);
+      return { name: change.name, action: 'file', file, revertId: newestHistoryId(change.name, dir) };
+    }
+    default: {
+      const _exhaustive: never = change;
+      throw new Error(`unknown change ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+}
+
+/**
+ * `text` with each edit applied in turn. An `old` must occur exactly once in the text as it stands
+ * when its turn comes, so a replacement lands where the reviewer meant it or nowhere: a miss or a
+ * second match throws, naming the edit, and nothing is written.
+ */
+export function applyEdits(text: string, edits: ReadonlyArray<{ old: string; new: string }>): string {
+  let out = text;
+  edits.forEach((edit, i) => {
+    out = applyEdit(out, edit, i + 1);
+  });
+  if (out === text) throw new Error('the edits change nothing');
+  return out;
+}
+
+function applyEdit(text: string, edit: { old: string; new: string }, n: number): string {
+  const at = text.indexOf(edit.old);
+  if (at >= 0) {
+    if (text.indexOf(edit.old, at + 1) >= 0) throw new Error(`edit ${n}: its old text occurs more than once; quote more of it`);
+    return text.slice(0, at) + edit.new + text.slice(at + edit.old.length);
+  }
+  const loose = escapeTolerantMatch(text, edit.old, n);
+  if (!loose) throw new Error(`edit ${n}: its old text is not in the file; it must be copied exactly`);
+  return text.slice(0, loose.start) + carriedNew(edit, text, loose) + text.slice(loose.start + loose.map[edit.old.length]!);
+}
+
+/**
+ * Where `old` occurs if a newline or tab in it may stand for the two characters `\n` / `\t` in the
+ * file — exactly once, or undefined. Measured on the first real `edit` (2026-11-07, gemini 3.8
+ * flash): the reviewer quoted vlt's `tr -d '\n'` without doubling the backslash in its JSON, so the
+ * parsed `old` held a newline where the file has a backslash and an `n`, and a correct change to
+ * the right line was refused. A JSON string cannot say which was meant; the file can. `map[i]` is
+ * the offset in the match that `old[i]` begins at, `map[old.length]` the match's length.
+ */
+function escapeTolerantMatch(text: string, old: string, n: number): { start: number; map: number[] } | undefined {
+  if (!/[\n\t]/.test(old)) return undefined;
+  const source = [...old]
+    .map((ch) => (ch === '\n' ? '(?:\\n|\\\\n)' : ch === '\t' ? '(?:\\t|\\\\t)' : ch.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&')))
+    .join('');
+  const matches = [...text.matchAll(new RegExp(source, 'g'))];
+  if (matches.length === 0) return undefined;
+  if (matches.length > 1) throw new Error(`edit ${n}: its old text occurs more than once; quote more of it`);
+  const start = matches[0]!.index;
+  const map: number[] = [];
+  let j = start;
+  for (let i = 0; i < old.length; i++) {
+    map.push(j - start);
+    j += old[i] === text[j] ? 1 : 2;
+  }
+  map.push(j - start);
+  return { start, map };
+}
+
+/**
+ * The replacement for an escape-tolerant match: what `new` shares with `old` at its start and end
+ * is taken from the file as it is — the usual edit keeps the quoted line and adds one beside it —
+ * and only what the reviewer actually wrote between them is its own text.
+ */
+function carriedNew(edit: { old: string; new: string }, text: string, m: { start: number; map: number[] }): string {
+  const { old, new: next } = edit;
+  let p = 0;
+  while (p < old.length && p < next.length && old[p] === next[p]) p++;
+  let s = 0;
+  while (s < old.length - p && s < next.length - p && old[old.length - 1 - s] === next[next.length - 1 - s]) s++;
+  const head = text.slice(m.start, m.start + m.map[p]!);
+  const tail = text.slice(m.start + m.map[old.length - s]!, m.start + m.map[old.length]!);
+  return head + next.slice(p, next.length - s) + tail;
 }
 
 /** Conversation kinds a review never looks at: its own, a scheduled task's, a sub-agent's. */

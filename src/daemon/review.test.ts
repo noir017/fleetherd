@@ -9,6 +9,7 @@ import {
   REVIEW_PASS_BUDGET_MS,
   ReviewService,
   agyReviewAnswer,
+  applyEdits,
   eligible,
   isCapacityFailure,
   noticeLine,
@@ -19,8 +20,8 @@ import {
   type ReviewRunner,
 } from './review.js';
 import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, REVIEW_RETRY_MS, ReviewStateStore } from './review-state.js';
-import { buildReviewPrompt, parseReviewOutput, usedSkillNames, writtenSkillFiles } from './review-prompt.js';
-import { createSkill, listSkills, readSkillFiles, showSkill } from './skills-store.js';
+import { buildReviewPrompt, parseReviewOutput, skillFileOfPath, usedSkillNames, writtenSkillFiles } from './review-prompt.js';
+import { createSkill, listSkills, readSkillFiles, showSkill, writeSkillFile } from './skills-store.js';
 
 /**
  * The review service, driven with a controlled clock and an injected runner — no model is ever
@@ -442,31 +443,118 @@ describe('ReviewService', () => {
     });
   });
 
-  it('patches only from the version the reviewer was given', async () => {
+  it('edits only from the version the reviewer was given', async () => {
     seed('telegram:chat:1', 3);
-    createSkill({ name: 'deploy-check', description: '部署前检查', body: '旧正文。' }, dir);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '旧正文。\n第二行。' }, dir);
     const version = showSkill('deploy-check', undefined, dir).version;
     const good = JSON.stringify({
-      changes: [{ action: 'patch', name: 'deploy-check', version, content: SKILL_MD('deploy-check'), reason: '补一条' }],
+      changes: [
+        { action: 'edit', name: 'deploy-check', version, edits: [{ old: '旧正文。', new: '旧正文。\n新规则。' }], reason: '补一条' },
+      ],
     });
     const h = harness({ output: good });
     await h.service.sweep();
-    expect(readSkillFiles('deploy-check', dir).get('SKILL.md')!.toString()).toContain('步骤。');
+    // Only the replaced text changed; the rest of the file is byte for byte what it was.
+    expect(readSkillFiles('deploy-check', dir).get('SKILL.md')!.toString()).toBe(
+      '---\nname: deploy-check\ndescription: "部署前检查"\n---\n\n旧正文。\n新规则。\n第二行。\n'
+    );
     expect(h.notifications[0]!.text).toContain('talkcode skills revert deploy-check');
 
-    // The next review is handed a stale version (the skill moved underneath it): the patch is
+    // The next review is handed a stale version (the skill moved underneath it): the edit is
     // dropped, the conversation is still marked reviewed, and nothing is posted.
     history.message(history.sessionOf('telegram:chat:1')!.id, { ts: now + 10, role: 'user', kind: 'normal', text: 'x' });
     history.message(history.sessionOf('telegram:chat:1')!.id, { ts: now + 11, role: 'user', kind: 'normal', text: 'y' });
     history.message(history.sessionOf('telegram:chat:1')!.id, { ts: now + 12, role: 'user', kind: 'normal', text: 'z' });
     const stale = JSON.stringify({
-      changes: [{ action: 'patch', name: 'deploy-check', version: 'deadbeef0000', content: SKILL_MD('deploy-check'), reason: '旧版本' }],
+      changes: [{ action: 'edit', name: 'deploy-check', version, edits: [{ old: '第二行。', new: '改过。' }], reason: '旧版本' }],
     });
     const second = harness({ output: stale });
     await second.service.sweep();
     expect(second.calls).toHaveLength(1);
     expect(second.logs.some((l) => l.includes('version mismatch'))).toBe(true);
     expect(second.notifications).toHaveLength(0);
+    expect(readSkillFiles('deploy-check', dir).get('SKILL.md')!.toString()).toContain('第二行。');
+  });
+
+  it('edits a reference file and records it as a file written', async () => {
+    seed('telegram:chat:1', 3);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '见 references/api.md' }, dir);
+    writeSkillFile({ name: 'deploy-check', file: 'references/api.md', content: '# API\n- GET /a\n' }, dir);
+    const version = showSkill('deploy-check', undefined, dir).version;
+    const output = JSON.stringify({
+      changes: [
+        {
+          action: 'edit',
+          name: 'deploy-check',
+          version,
+          file: 'references/api.md',
+          edits: [{ old: '- GET /a\n', new: '- GET /a\n- POST /b\n' }],
+          reason: '补接口',
+        },
+      ],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+    expect(readSkillFiles('deploy-check', dir).get('references/api.md')!.toString()).toBe('# API\n- GET /a\n- POST /b\n');
+    const [row] = history.reviewSessions();
+    expect(row!.record!.changes[0]).toMatchObject({ action: 'write-file', file: 'references/api.md', applied: true });
+    expect(row!.record!.changes[0]!.revertId).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it('refuses an edit whose old text is not in the file, or not once', async () => {
+    seed('telegram:chat:1', 3);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '甲。\n甲。\n乙。' }, dir);
+    const version = showSkill('deploy-check', undefined, dir).version;
+    const output = JSON.stringify({
+      changes: [
+        { action: 'edit', name: 'deploy-check', version, edits: [{ old: '丙。', new: 'x' }] },
+        { action: 'edit', name: 'deploy-check', version, edits: [{ old: '甲。', new: 'x' }] },
+      ],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+    const [row] = history.reviewSessions();
+    expect(row!.record!.outcome).toBe('refused');
+    expect(row!.record!.changes.map((c) => c.error)).toEqual([
+      expect.stringContaining('not in the file'),
+      expect.stringContaining('more than once'),
+    ]);
+    expect(showSkill('deploy-check', undefined, dir).version).toBe(version);
+  });
+
+  it('refuses a whole-file patch, and a write-file over a file that exists', async () => {
+    seed('telegram:chat:1', 3);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '旧正文。' }, dir);
+    writeSkillFile({ name: 'deploy-check', file: 'references/api.md', content: '# API\n' }, dir);
+    const version = showSkill('deploy-check', undefined, dir).version;
+    const output = JSON.stringify({
+      changes: [
+        { action: 'patch', name: 'deploy-check', version, content: SKILL_MD('deploy-check'), reason: '整篇重写' },
+        { action: 'write-file', name: 'deploy-check', file: 'references/api.md', content: '覆盖', reason: '覆盖' },
+        { action: 'write-file', name: 'deploy-check', file: 'references/new.md', content: '新文件', reason: '新建' },
+      ],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+    const [row] = history.reviewSessions();
+    // Applied changes are recorded first, then the refused ones.
+    expect(row!.record!.changes.map((c) => [c.action, c.file ?? '', c.applied, c.error ?? ''])).toEqual([
+      ['write-file', 'references/new.md', true, ''],
+      ['patch', '', false, expect.stringContaining('patch is not offered')],
+      ['write-file', 'references/api.md', false, expect.stringContaining('already exists')],
+    ]);
+    expect(readSkillFiles('deploy-check', dir).get('SKILL.md')!.toString()).toContain('旧正文。');
+    expect(readSkillFiles('deploy-check', dir).get('references/api.md')!.toString()).toBe('# API\n');
+  });
+
+  it('files a new skill under the category the reviewer chose', async () => {
+    seed('telegram:chat:1', 3);
+    const output = JSON.stringify({
+      changes: [{ action: 'create', name: 'agy-config', category: '运维', description: '配置 agy 时用', body: '步骤。' }],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+    expect(listSkills(dir).find((s) => s.name === 'agy-config')?.category).toBe('运维');
   });
 
   it('drops one malformed change and applies the rest', async () => {
@@ -548,7 +636,7 @@ describe('ReviewService', () => {
     createSkill({ name: 'deploy-check', description: '部署前检查', body: '旧正文。' }, dir);
     const output = JSON.stringify({
       changes: [
-        { action: 'patch', name: 'deploy-check', version: 'deadbeef0000', content: SKILL_MD('deploy-check'), reason: '旧版本' },
+        { action: 'edit', name: 'deploy-check', version: 'deadbeef0000', edits: [{ old: '旧正文。', new: '新' }], reason: '旧版本' },
       ],
     });
     const h = harness({ output });
@@ -556,6 +644,7 @@ describe('ReviewService', () => {
 
     const [row] = history.reviewSessions();
     expect(row!.record!.outcome).toBe('refused');
+    // An edit of SKILL.md is recorded as what it amounts to: SKILL.md updated.
     expect(row!.record!.changes[0]).toMatchObject({ action: 'patch', name: 'deploy-check', applied: false });
     expect(row!.record!.changes[0]!.error).toContain('version mismatch');
   });
@@ -947,6 +1036,55 @@ describe('what a review is given', () => {
     expect(prompt).toContain('用户：第 3 句');
   });
 
+  it('quotes what the conversation already wrote through talkcode skills, from the repository', async () => {
+    // The 2026-11-07 case: the agent wrote a reference with `talkcode skills write-file` (a Bash
+    // call the tool-row scan cannot read), and the review, not shown it, wrote the rule again.
+    const start = now - 2 * 3_600_000;
+    seed('telegram:chat:1', 3, 'normal', start);
+    createSkill({ name: 'server-ops', description: '运维', body: '见 references/grant.md', now: start - 86_400_000 }, dir);
+    writeSkillFile(
+      { name: 'server-ops', file: 'references/grant.md', content: '证书 30 分钟，长任务放后台。', now: start + 500,
+        by: { kind: 'agent', agent: 'cc', conversation: 'telegram:chat:1' } },
+      dir
+    );
+    // Another conversation's write, and one from before this window, are not this conversation's.
+    writeSkillFile(
+      { name: 'server-ops', file: 'references/other.md', content: '别的对话', now: start + 600,
+        by: { kind: 'agent', agent: 'cc', conversation: 'telegram:chat:12' } },
+      dir
+    );
+    const h = harness();
+    await h.service.sweep();
+    const prompt = h.calls[0]!.prompt;
+    expect(prompt).toContain('这段对话里已经写过的技能文件（下面是现在的内容，已经写进去的不要再写）\n#### server-ops/references/grant.md\n证书 30 分钟，长任务放后台。');
+    expect(prompt).not.toContain('references/other.md\n');
+    expect(prompt).not.toContain('别的对话');
+  });
+
+  it('quotes a file written in a checkout of the repository, and says why a long one is not quoted', async () => {
+    const id = seed('telegram:chat:1', 3);
+    createSkill({ name: 'vlt', description: '密码', body: '正文' }, dir);
+    writeSkillFile({ name: 'vlt', file: 'references/long.md', content: 'x'.repeat(9_000) }, dir);
+    writeSkillFile({ name: 'vlt', file: 'references/short.md', content: '短的' }, dir);
+    const at = now - 3_600_000 - 5_000;
+    history.message(id, { ts: at, role: 'tool', kind: 'normal', text: 'Write: /w/agent-skills/skills/vlt/references/short.md' });
+    history.message(id, { ts: at + 1, role: 'tool', kind: 'normal', text: 'Edit: /w/agent-skills/skills/vlt/references/long.md' });
+    const h = harness();
+    await h.service.sweep();
+    const prompt = h.calls[0]!.prompt;
+    expect(prompt).toContain('#### vlt/references/short.md\n短的');
+    expect(prompt).toContain('- vlt/references/long.md（太长，没有附上）');
+  });
+
+  it('offers the categories the library uses for a new skill', async () => {
+    seed('telegram:chat:1', 3);
+    createSkill({ name: 'server-ops', description: '运维', category: '运维' }, dir);
+    createSkill({ name: 'notes', description: '笔记', category: '协作' }, dir);
+    const h = harness();
+    await h.service.sweep();
+    expect(h.calls[0]!.prompt).toContain('create 的 category 从这些里选：协作、运维；');
+  });
+
   it('goes on without the standing rules when they cannot be read, and says why in the log', async () => {
     seed('telegram:chat:1', 3);
     const h = harness({
@@ -983,8 +1121,16 @@ describe('review prompt', () => {
     expect(prompt.startsWith('这是一次自动复盘')).toBe(true);
     expect(prompt).toContain('不要请求确认，不要等待批准，不要先给方案');
     // Neither optional section appears when there is nothing to put in it.
-    expect(prompt).not.toContain('已经写过的技能文件');
+    expect(prompt).not.toContain('这段对话里已经写过的技能文件');
     expect(prompt).not.toContain('用户已有的要求');
+    // The rules that came out of the 2026-11-07 audit, and the edit that replaced the whole-file patch.
+    expect(prompt).toContain('只记这段对话里做成并验证过的结论');
+    expect(prompt).toContain('同一件事只写一处');
+    expect(prompt).toContain('{"action":"edit"');
+    expect(prompt).not.toContain('{"action":"patch"');
+    expect(prompt).toContain('agent 提出、用户只是同意的不写');
+    // With no categories in the library, a create is given a few to start from.
+    expect(prompt).toContain('create 的 category 从这些里选：运维、开发、协作；');
     // Nothing searched for: no section for it.
     expect(prompt).not.toContain('搜过、没找到');
   });
@@ -996,12 +1142,18 @@ describe('review prompt', () => {
       dropped: 0,
       catalog: [],
       used: [],
-      written: ['/w/agent-skills/skills/vlt/SKILL.md'],
+      written: [
+        { path: '/w/agent-skills/skills/vlt/SKILL.md' },
+        { path: 'vlt/references/a.md', content: '已有的规则\n' },
+        { path: 'vlt/SKILL.md', note: '全文见上' },
+      ],
       standing: '1. 用中文，结论先行。\n',
     });
-    expect(prompt).toContain('这段对话里已经写过的技能文件（同一件事不要再新建技能）\n- /w/agent-skills/skills/vlt/SKILL.md');
+    expect(prompt).toContain(
+      '这段对话里已经写过的技能文件（下面是现在的内容，已经写进去的不要再写）\n- /w/agent-skills/skills/vlt/SKILL.md\n#### vlt/references/a.md\n已有的规则\n- vlt/SKILL.md（全文见上）'
+    );
     expect(prompt).toContain('用户已有的要求\n1. 用中文，结论先行。\n');
-    expect(prompt).toContain('「用户已有的要求」里有的不要再写');
+    expect(prompt).toContain('「用户已有的要求」里已经有的不写');
     // The conversation stays last.
     expect(prompt.endsWith('用户：整理成 skill')).toBe(true);
   });
@@ -1046,6 +1198,48 @@ describe('writtenSkillFiles', () => {
   });
 });
 
+describe('skillFileOfPath', () => {
+  it('maps a path under skills/<name>/ to one of the gateway skills, and nothing else', () => {
+    const known = new Set(['vlt']);
+    expect(skillFileOfPath('/w/agent-skills/skills/vlt/references/a.md', known)).toEqual({ name: 'vlt', file: 'references/a.md' });
+    expect(skillFileOfPath('/h/.talkcode/skills/vlt/SKILL.md', known)).toEqual({ name: 'vlt', file: 'SKILL.md' });
+    expect(skillFileOfPath('/w/other/skills/mail/SKILL.md', known)).toBeUndefined();
+  });
+});
+
+describe('applyEdits', () => {
+  it('replaces each old text in turn, where it occurs exactly once', () => {
+    expect(applyEdits('a\nb\nc\n', [{ old: 'b\n', new: 'b\nB\n' }, { old: 'c', new: 'C' }])).toBe('a\nb\nB\nC\n');
+  });
+
+  it('throws on a miss, a second match, or edits that change nothing', () => {
+    expect(() => applyEdits('a b', [{ old: 'z', new: 'y' }])).toThrow(/edit 1: .*not in the file/);
+    expect(() => applyEdits('a a', [{ old: 'a', new: 'y' }])).toThrow(/edit 1: .*more than once/);
+    // Overlapping matches are two matches too.
+    expect(() => applyEdits('aaa', [{ old: 'aa', new: 'b' }])).toThrow(/more than once/);
+    expect(() => applyEdits('a b', [{ old: 'a', new: 'a' }])).toThrow(/change nothing/);
+    // The second edit is judged against the text the first one left.
+    expect(() => applyEdits('a b', [{ old: 'a', new: 'b' }, { old: 'b', new: 'c' }])).toThrow(/edit 2: .*more than once/);
+  });
+
+  it('takes a newline the reviewer wrote for a `\\n` in the file, when that matches exactly once', () => {
+    // The first real edit (2026-11-07): vlt's `tr -d '\n'` quoted without doubling the backslash.
+    const file = "- 写完核对：`tr -d '\\n' | wc -c`。\n- 下一条。\n";
+    const quoted = "- 写完核对：`tr -d '\n' | wc -c`。";
+    expect(applyEdits(file, [{ old: quoted, new: `${quoted}\n- 新规则。` }])).toBe(
+      "- 写完核对：`tr -d '\\n' | wc -c`。\n- 新规则。\n- 下一条。\n"
+    );
+    // A replacement that keeps the quoted line at its end keeps it as the file has it, too.
+    expect(applyEdits(file, [{ old: quoted, new: `- 先说明。\n${quoted}` }])).toBe(
+      "- 先说明。\n- 写完核对：`tr -d '\\n' | wc -c`。\n- 下一条。\n"
+    );
+    // Two places it could mean is no place.
+    expect(() => applyEdits("x '\\n' y; x '\\n' y", [{ old: "x '\n' y", new: 'z' }])).toThrow(/more than once/);
+    // An exact match is always preferred, even beside an escaped one.
+    expect(applyEdits("a '\\n' b\na '\n' b", [{ old: "a '\n' b", new: 'c' }])).toBe("a '\\n' b\nc");
+  });
+});
+
 describe('parseReviewOutput', () => {
   it('reads a fenced object with text around it', () => {
     const r = parseReviewOutput('好的，结果如下：\n```json\n{"changes":[],"preferences":["短一点"]}\n```\n完。');
@@ -1082,6 +1276,26 @@ describe('parseReviewOutput', () => {
   it('refuses a changes value that is not an array', () => {
     const r = parseReviewOutput('{"changes":"none"}');
     expect(r.ok).toBe(false);
+  });
+
+  it('reads an edit, SKILL.md unless it names a file, and refuses one with no edits', () => {
+    const r = parseReviewOutput(
+      JSON.stringify({
+        changes: [
+          { action: 'edit', name: 'a-b', version: 'v1', edits: [{ old: 'x', new: 'y' }] },
+          { action: 'edit', name: 'a-b', version: 'v1', file: 'references/r.md', edits: [{ old: 'x', new: '' }] },
+          { action: 'edit', name: 'a-b', version: 'v1', edits: [] },
+          { action: 'edit', name: 'a-b', version: 'v1', edits: [{ old: '', new: 'y' }] },
+        ],
+      })
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.parsed.output.changes).toMatchObject([
+      { action: 'edit', file: 'SKILL.md' },
+      { action: 'edit', file: 'references/r.md' },
+    ]);
+    expect(r.parsed.invalid).toHaveLength(2);
   });
 
   it('refuses prose with no JSON', () => {
