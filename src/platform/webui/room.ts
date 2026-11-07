@@ -56,6 +56,7 @@ import type {
   SettingsScreen,
   SlashCommandSpec,
   TopicActivity,
+  TopicKillResult,
   TopicStage,
 } from '../../types.js';
 import type {
@@ -377,6 +378,8 @@ export class WebRoom {
   private reviewPanel: ReviewPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
+  /** Likewise, but broader: ends a topic's agent and every agent under it. See `killTopic`. */
+  private topicKill: ((ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]) | null = null;
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
   private catalog: ((ref: ConversationRef) => AgentCatalog | undefined) | null = null;
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
@@ -838,6 +841,40 @@ export class WebRoom {
     // The dots go grey now rather than at the next liveness poll, up to 15 s later.
     if (closed.length) this.announceTopics();
     return { closed, kept };
+  }
+
+  /** Accept the daemon's way of ending a topic's agent and every agent under it — see `killTopic`. */
+  useTopicKill(kill: (ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]): void {
+    this.topicKill = kill;
+  }
+
+  /**
+   * End the agent process behind `topicId` and the topics under it that the person was shown —
+   * the row menu's "End agent". `confirmed` is that list, and only its intersection with the
+   * subtree is ended; the walk itself is the daemon's (`useTopicKill`, Delegation.endTopic), not
+   * this module's: the topics here are the page's list, and `Topic.parent` is a copy of a
+   * relation the platform owns.
+   *
+   * Deliberately not filtered like `closeIdle`: this control is confirmed against the very
+   * topics it names, and a turn still running in one of them is interrupted on purpose — that
+   * is what `/kill` does. A topic the store no longer holds answers no rows, and one whose
+   * daemon offered no hook answers `no-child` rather than pretending something was ended.
+   */
+  killTopic(topicId: string, confirmed: readonly string[]): { results: TopicKillResult[] } {
+    if (!this.topics.has(topicId)) return { results: [] };
+    if (!this.topicKill) return { results: [{ topic: topicId, outcome: 'no-child' }] };
+    let results: TopicKillResult[] = [];
+    try {
+      results = this.topicKill(this.conversation(topicId), new Set(confirmed));
+    } catch (e) {
+      console.warn(`[webui] could not end the agents under topic ${topicId}:`, e instanceof Error ? e.message : e);
+      return { results: [{ topic: topicId, outcome: 'no-child' }] };
+    }
+    const ended = results.filter((r) => r.outcome === 'ended').length;
+    console.log(`[webui] "${this.instance.id}": ended ${ended} agent(s) under topic ${topicId} from the row menu`);
+    // The dots go grey now rather than at the next liveness poll, up to 15 s later.
+    if (ended) this.announceTopics();
+    return { results };
   }
 
   /** `scheduled`, swallowing a failing lookup for the same reason `liveOf` does. */

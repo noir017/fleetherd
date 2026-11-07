@@ -1127,6 +1127,70 @@ describe('webui server: traffic', () => {
     });
   });
 
+  describe('ending a topic and the topics under it', () => {
+    it('ends through the daemon and answers each topic it walked', async () => {
+      const { base, room, topic } = await boot();
+      const cookie = await signIn(base);
+      const asked: Array<string | number> = [];
+      room.useTopicKill((ref, confirmed) => {
+        asked.push(ref.thread ?? '', confirmed.size);
+        return [
+          { topic: ref.thread ?? '', outcome: 'ended' },
+          { topic: 'b2c3d4e5', outcome: 'no-child' },
+        ];
+      });
+      const res = await fetch(`${base}/api/topics/kill`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ topic, topics: [topic] }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        results: [
+          { topic, outcome: 'ended' },
+          { topic: 'b2c3d4e5', outcome: 'no-child' },
+        ],
+      });
+      expect(asked).toEqual([topic, 1]);
+    });
+
+    it.each([
+      ['an id that is not a topic id', { topic: '../etc', topics: ['a1b2c3d4'] }],
+      ['a field it does not take', { topic: 'a1b2c3d4', topics: ['a1b2c3d4'], all: true }],
+      ['no topic at all', { topics: ['a1b2c3d4'] }],
+      ['no confirmed list', { topic: 'a1b2c3d4' }],
+      ['an empty confirmed list', { topic: 'a1b2c3d4', topics: [] }],
+    ])('refuses %s', async (_label, body) => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      let asked = 0;
+      room.useTopicKill(() => {
+        asked += 1;
+        return [];
+      });
+      const res = await fetch(`${base}/api/topics/kill`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+      expect(asked).toBe(0);
+    });
+
+    it('is behind the session, and refuses another origin', async () => {
+      const { base, topic } = await boot();
+      const body = JSON.stringify({ topic, topics: [topic] });
+      expect((await fetch(`${base}/api/topics/kill`, { method: 'POST', headers: JSON_HEADERS, body })).status).toBe(401);
+      const cookie = await signIn(base);
+      const res = await fetch(`${base}/api/topics/kill`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie, origin: 'https://evil.example' },
+        body,
+      });
+      expect(res.status).toBe(403);
+    });
+  });
+
   describe('scheduled tasks', () => {
     const task: SchedulePanelTask = {
       id: 'a1b2c3',

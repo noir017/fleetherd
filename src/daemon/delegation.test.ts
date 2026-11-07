@@ -216,6 +216,11 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
       calls.push(['stop', k]);
       return { outcome: busy.has(k) ? ('running' as const) : ('idle' as const), calledOff: 0, transcripts: 0 };
     },
+    killConversation: (k: string) => {
+      calls.push(['kill', k]);
+      if (!bound.has(k)) return 'no-child' as const;
+      return busy.has(k) ? ('running' as const) : ('idle' as const);
+    },
     runScheduledPrompt: async (o: unknown) => {
       calls.push(['prompt', o]);
       return { kind: 'ran' };
@@ -1188,6 +1193,120 @@ describe('Delegation: /stop in the topic that opened them', () => {
     expect(r.d.stopOpened('tg#1#2')).toBe(0);
     expect(r.d.stopOpened(P)).toBe(0);
     expect(r.calls).toEqual([]);
+  });
+});
+
+describe('Delegation: ending a topic and the topics under it', () => {
+  it('kills the whole tree children first, and answers root first', () => {
+    const r = rig();
+    const [c1, c2, c3] = ['web#main#c1000000', 'web#main#c2000000', 'web#main#c3000000'];
+    r.parents.set(c1, P);
+    r.parents.set(c2, c1);
+    r.parents.set(c3, P);
+    for (const k of [P, c1, c2, c3]) r.bound.set(k, 'cc');
+    r.busy.add(c1);
+    r.busy.add(c3);
+
+    const results = r.d.endTopic(P);
+
+    // Children before the parent: an interrupt of the parent's turn cannot race the children it
+    // was waiting on.
+    expect(r.calls.filter(([what]) => what === 'kill').map(([, k]) => k)).toEqual([c3, c2, c1, P]);
+    // The answer is root first, one row per topic the tree connects.
+    // Every StopOutcome reads `ended` to the page: it only needs "a process went, the
+    // conversation stayed"; the three are the daemon's business.
+    expect(results).toEqual([
+      { topic: 'aaaaaaaa', outcome: 'ended' },
+      { topic: 'c1000000', outcome: 'ended' },
+      { topic: 'c2000000', outcome: 'ended' },
+      { topic: 'c3000000', outcome: 'ended' },
+    ]);
+  });
+
+  it('ends only the confirmed topics, so one opened since the confirmation survives', () => {
+    const r = rig();
+    const [c1, c2, c3] = ['web#main#c1000000', 'web#main#c2000000', 'web#main#c3000000'];
+    for (const k of [c1, c2, c3]) {
+      r.parents.set(k, P);
+      r.bound.set(k, 'cc');
+    }
+    r.bound.set(P, 'cc');
+    r.busy.add(c1);
+
+    // The dialog listed the parent and one child; the other child was not shown (it appeared
+    // after the dialog was drawn) and is therefore not in the request. An id outside this tree
+    // can be in the list too (a row that moved since the page drew it) and is just as ignored.
+    const results = r.d.endTopic(P, new Set(['aaaaaaaa', 'c2000000', 'ffffffff']));
+
+    expect(r.calls.filter(([what]) => what === 'kill').map(([, k]) => k)).toEqual([c2, P]);
+    expect(results).toEqual([
+      { topic: 'aaaaaaaa', outcome: 'ended' },
+      { topic: 'c2000000', outcome: 'ended' },
+    ]);
+  });
+
+  it('keeps a live parent’s card when only the child’s topic is ended', async () => {
+    const r = rig();
+    const child = 'web#main#c1000000';
+    await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    // The child finished normally and the person had written there: a card is gathered for P,
+    // carrying what they said, and CARD_DELAY_MS has not passed yet.
+    r.activity.set(child, { outcome: { kind: 'done', at: 5, line: 'Done: all green.' } });
+    r.replies.set(child, 'Done: all green, 12 tests.');
+    r.d.personWrote(child, { text: 'check the parser too', attachments: [] });
+    r.d.childChanged(child);
+
+    // The person ends the CHILD's topic from its row menu. P is not in that subtree, so the card
+    // waiting for P is none of this kill's business.
+    expect(r.d.endTopic(child)).toEqual([{ topic: 'c1000000', outcome: 'ended' }]);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+
+    const prompt = r.calls.find(([what]) => what === 'prompt')?.[1] as { key: string; prompt: string } | undefined;
+    expect(prompt?.key).toBe(P);
+    expect(prompt?.prompt).toContain('the person wrote to it directly');
+    expect(prompt?.prompt).toContain('check the parser too');
+    expect(prompt?.prompt).toContain('Done: all green, 12 tests.');
+  });
+
+  it('drops a card already gathered, so ending the parent cannot wake it again', async () => {
+    const r = rig();
+    const child = 'web#main#c1000000';
+    await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    // The child's turn ends normally a moment before the person ends the parent: the card is
+    // gathered (CARD_DELAY_MS) but not yet sent. This is the one path that outlives a turn.
+    r.activity.set(child, { outcome: { kind: 'done', at: 5, line: 'Done: all green.' } });
+    r.replies.set(child, 'Done: all green, 12 tests.');
+    r.d.childChanged(child);
+    expect(r.calls.filter(([what]) => what === 'prompt')).toEqual([]);
+
+    // The person ends this topic and everything under it from the row menu.
+    const results = r.d.endTopic(P);
+    expect(results.map((x) => x.outcome)).toEqual(['ended', 'ended']);
+
+    // The gathered card must not run a turn in the parent that was just ended — nor must a late
+    // notification about the same child put one back.
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    r.d.childChanged(child);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    expect(r.calls.filter(([what]) => what === 'prompt')).toEqual([]);
+    // What the person writes there later is still news: this drops what was queued, not the
+    // relation. Their words re-mark the topic, so the next end is reported as usual.
+    r.d.personWrote(child, { text: 'one more thing', attachments: [] });
+    r.d.childChanged(child);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    expect(r.calls.filter(([what]) => what === 'prompt')).toHaveLength(1);
   });
 });
 

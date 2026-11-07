@@ -68,6 +68,8 @@ const PACING = {
   useReviewPanel: 'unpaced',
   // Ends an agent process on this machine; nothing is written to the chat.
   useIdleReclaim: 'unpaced',
+  // Ends a topic's agent and the agents under it; nothing is written to the chat.
+  useTopicKill: 'unpaced',
   // Registers a callback, read while drawing an empty topic; writes nothing to the chat.
   useAgentCatalog: 'unpaced',
   useModelPicker: 'unpaced',

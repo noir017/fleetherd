@@ -54,7 +54,13 @@ the machine is named on the line below — and hovering the title shows the whol
 one; the agent can open one itself with
 `talkcode create-thread`, and write into one with `--channel main/<topic id>`. Under each
 title is the directory the topic works in, led by the machine when its agent runs on a
-[remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. Drag its right
+[remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. At the end of
+each row a **⋯** button (on hover or keyboard focus; always shown on a touch screen) opens that
+topic's menu without switching to it: **Star**/**Unstar**, **End agent**, and **Delete topic**
+(red, with the same confirmation as before). **End agent** ends the process behind this topic and
+the sub-agent topics listed in the confirmation — the item reads **End agent + N sub-agents**
+when there are any — and the dialog marks a running turn as *running — will be interrupted*. Every conversation is kept, and the next message resumes it. A starred row shows a
+lit star at its end even when you are not hovering: a marker, not a button. Drag its right
 edge to make it wider or narrower — the width is kept in this browser — and double-click the edge
 for the default. On a narrow screen it becomes a drawer. Above the list, a search field and
 **Filter** narrow it: the search matches the title, the agent tag, the directory name, its full
@@ -330,5 +336,5 @@ topic comes back, in every browser, with everything that was said in it — incl
 finished after you put your phone down. The messages from before sit above a divider saying so,
 and the agent carries on below them with its context intact. (Before 2.13.0 only starred topics
 were kept this way; an unstarred topic from then shows what your browser had of it, or nothing.)
-A **starred** topic (☆ in the sidebar) is never removed to make room for a new one, and "Clear
+A **starred** topic (a lit star at the end of its row) is never removed to make room for a new one, and "Clear
 unstarred topics" leaves it alone.

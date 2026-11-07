@@ -132,6 +132,18 @@ export const ClearTopicsRequestSchema = z.object({}).strict();
  * own — bounded by the store's cap, since a topic cannot be listed that the store does not hold.
  */
 export const CloseIdleRequestSchema = z.object({ topics: z.array(TopicId).min(1).max(MAX_TOPICS) }).strict();
+/**
+ * End the agent process behind one topic and the sub-agent topics under it that the person was
+ * shown — the row menu's "End agent". `topic` is the row the menu was opened on and `topics` is
+ * the confirmation's list: the daemon walks `topic`'s subtree from its own record
+ * (`PlatformAdapter.childrenOf`) and ends only the intersection. That is what keeps a sub-agent
+ * opened while the dialog was open out of the kill, and it is why the list travels rather than
+ * being re-derived from the page. Bounded by the store's cap, as a topic cannot be listed that
+ * the store does not hold.
+ */
+export const KillTopicRequestSchema = z
+  .object({ topic: TopicId, topics: z.array(TopicId).min(1).max(MAX_TOPICS) })
+  .strict();
 
 /**
  * One action on one scheduled task.
@@ -240,6 +252,7 @@ export type PushSubscribeRequest = z.infer<typeof PushSubscribeSchema>;
 export type EndTerminalRequest = z.infer<typeof EndTerminalRequestSchema>;
 export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;
+export type KillTopicRequest = z.infer<typeof KillTopicRequestSchema>;
 export type ScheduleOpRequest = z.infer<typeof ScheduleOpRequestSchema>;
 export type ModelChooseRequest = z.infer<typeof ModelChooseRequestSchema>;
 export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;

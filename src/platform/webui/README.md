@@ -210,16 +210,34 @@ and the `/agent` menu call a machine the same thing; an agent on the gateway's o
 It is read off the agent's definition on every lookup rather than stored with the topic, for the
 directory's reason: a `/reload` that moves an agent moves where the topic's next turn runs.
 
-**A row's ☆ and × take no room until they show.** On a pointer device they appear only under the
-pointer, and until 2.11.1 they were merely `opacity:0` — still in the flex row, so every title in a
-240px column got 129px and stopped in front of a 59px strip of nothing (measured in Chromium).
-They now sit in one `.topic-acts` box that floats over the row's right end inside
+**A row's ⋯ takes no room until it shows.** On a pointer device it appears only under the
+pointer, and until 2.11.1 the row's buttons were merely `opacity:0` — still in the flex row, so
+every title in a 240px column got 129px and stopped in front of a 59px strip of nothing (measured
+in Chromium). They now sit in one `.topic-acts` box that floats over the row's right end inside
 `@media(hover:hover)`, on a fade into `--row-bg`, the row's own colour, which is why that colour
 is a variable. A starred row at rest keeps the box in the layout, because its lit star is content
-a title must not run under, and drops its × from it. Touch screens are untouched: no hover, so
-the buttons are always on screen and keep their room. `page.dom.test.ts` pins the rules as text,
-since jsdom has no layout; the widths above, and the title's 188px after, were measured in real
-Chromium on 2026-10-30, along with where a click on either button lands once the row is hovered.
+a title must not run under, and drops its ⋯ from it — the star is a non-interactive marker now.
+Touch screens are untouched: no hover, so the control is always on screen, dimmed, and keeps its
+room. `page.dom.test.ts` pins the rules as text, since jsdom has no layout; the widths above, and
+the title's 188px after, were measured in real Chromium on 2026-10-30, along with where a click
+on the button lands once the row is hovered.
+
+**The ⋯ opens one menu for the row: Star/Unstar, End agent, Delete topic** (2026-11-07). The two
+buttons it replaces could not grow a third, and Delete is too easy to hit at a row's tail. The menu
+is one element at the body, `position:fixed` from the button's rect — not inside `#topics`, because
+a running agent rebuilds that list with `innerHTML` on every message and a menu in it would vanish
+mid-tap. `paintTopics` re-finds the button after a repaint and closes the menu only if its topic is
+gone. `role=menu`/`menuitem`, arrow keys/Home/End move between items, Escape closes and returns the
+focus, Tab (any move of the focus out) closes it, and a click anywhere else closes it.
+**End agent** ends the process behind the topic and the sub-agent topics the confirmation lists
+under it (`useTopicKill` → `Delegation.endTopic`, `/kill`'s rules, not the idle sweeper's), and
+the item says how many sub-agent processes it reaches. It is disabled when none of
+them has a process, with the reason on its title. The confirmation is `openIdle`'s dialog — the
+same list and per-topic result — and the request carries that list: the daemon walks the subtree
+from its own parent record but ends only the intersection, so a sub-agent opened while the dialog
+was open is left alone and every row says what became of it (`ended`, `no process`, `cannot
+resume`). A running turn is marked `running — will be interrupted`. The header's power button is
+unchanged: it ends this topic only.
 
 **The dot on each row is about the agent, not about the turn.** Four states, and two of them
 exist because "a turn is running" turned out to be a bad proxy for both of the things a person

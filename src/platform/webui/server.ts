@@ -52,6 +52,7 @@ import {
   CreateTopicRequestSchema,
   ClearTopicsRequestSchema,
   CloseIdleRequestSchema,
+  KillTopicRequestSchema,
   DeleteTopicRequestSchema,
   EndTerminalRequestSchema,
   LoginRequestSchema,
@@ -349,6 +350,7 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/push/subscribe', run: pushSubscribe },
   { method: 'POST', path: '/api/push/unsubscribe', run: pushUnsubscribe },
   { method: 'POST', path: '/api/topics/close-idle', run: closeIdle },
+  { method: 'POST', path: '/api/topics/kill', run: killTopic },
   // The scheduled-task panel: the list, and one action on one task. Behind the same session as
   // everything else; the four verbs are validated in protocol.ts before they reach the daemon.
   { method: 'GET', path: '/api/schedules', run: scheduleList },
@@ -781,6 +783,18 @@ async function closeIdle({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, CloseIdleRequestSchema);
   if (!parsed) return;
   send(req, res, 200, ctx.room.closeIdle(parsed.topics));
+}
+
+/**
+ * End the agent processes behind the topics the person confirmed, among the subtree of `topic`,
+ * answering what became of each. The walk is the daemon's (`WebRoom.killTopic` →
+ * `Delegation.endTopic`); the page sends the list the dialog showed, and a sub-agent opened after
+ * that is not ended because it is not in it.
+ */
+async function killTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, KillTopicRequestSchema);
+  if (!parsed) return;
+  send(req, res, 200, ctx.room.killTopic(parsed.topic, parsed.topics));
 }
 
 /**

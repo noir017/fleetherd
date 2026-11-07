@@ -17,7 +17,7 @@ import type {
   TaskStatusResult,
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { AgentStatus, ConversationId, TopicActivity, TopicStage } from '../types.js';
+import type { AgentStatus, ConversationId, TopicActivity, TopicKillResult, TopicStage } from '../types.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { ConversationRegistry } from './conversation.js';
 import { UPDATE_SENDER, type PersonWords } from './turn-runner.js';
@@ -161,6 +161,7 @@ type Registry = Pick<
   | 'statusOf'
   | 'stopConversation'
   | 'stopWithPending'
+  | 'killConversation'
   | 'runScheduledPrompt'
   | 'workdirOf'
   | 'boundAgentOf'
@@ -208,6 +209,11 @@ interface Place {
   platformId: string;
   address: ConversationAddress;
   adapter: PlatformAdapter;
+}
+
+/** The id the platform's topic list knows a place by: its lane, or the channel when it has none. */
+function topicIdOf(p: Place): string {
+  return p.address.thread ?? p.address.channel;
 }
 
 /** One proposed sub-task. */
@@ -908,6 +914,103 @@ export class Delegation {
       stopped += this.stopOpened(c.key, seen);
     }
     return stopped;
+  }
+
+  /**
+   * End the agent process behind this conversation and every sub-agent topic under it — the web
+   * UI's "End agent" (`PlatformAdapter.useTopicKill`). `/kill` applied to a tree.
+   *
+   * The walk is `stopOpened`'s, for the same reason: the relation is the platform's record
+   * (`childrenOf`), and a topic acts only on the topics under it. Unlike `/stop`, which records a
+   * stop and leaves the process up, each conversation here goes through `killConversation`: a turn
+   * running there is interrupted, a question is called off, and the child process is disposed.
+   * The conversation itself is kept in every case.
+   *
+   * `only` is the list the person confirmed, and the kill is the INTERSECTION of it with the tree
+   * walked now. A sub-agent opened after the confirmation is not in it, so it is not ended; an id
+   * in it that the tree no longer holds is not ended either. Omit it to mean the whole tree (the
+   * direct path in tests); the daemon always passes the confirmed list.
+   *
+   * `ended` runs BEFORE the first kill, and that ordering is load-bearing. A turn interrupted here
+   * ends as 'stopped' and tells nobody (TurnOutcomes), but a turn that ended NORMALLY a moment
+   * earlier may still be waiting in `updates` for its card — and that card runs a turn in the
+   * parent this call is about to end, waking it again. Silencing first means a turn that ends
+   * during the kills already finds no mark that makes it news.
+   *
+   * Answers root first, one row per topic actually ended or refused. An address this process knows
+   * nothing about answers no rows, which the page reads as "nothing was done".
+   */
+  endTopic(key: ConversationId, only?: ReadonlySet<string>): TopicKillResult[] {
+    const here = this.place(key);
+    if (!here) return [];
+    const tree = this.treeOf(here);
+    const targets = only ? tree.places.filter((p) => only.has(topicIdOf(p))) : tree.places;
+    const ending = new Set(targets.map((p) => p.key));
+    // A child whose parent is also ending has nobody left to tell. A child whose parent survives —
+    // the topic being ended is itself a sub-agent, or it was not in the confirmed list — keeps its
+    // `owed`/`said`, so the live parent still gets its result. `updates` is cancelled per
+    // RECIPIENT: a card waiting for an ending conversation would only restart it.
+    const silenced = tree.places.filter((p) => {
+      const parent = tree.parentOf.get(p.key);
+      return parent !== undefined && ending.has(parent);
+    });
+    this.ended(ending, silenced.map((p) => p.key));
+    const results: TopicKillResult[] = [];
+    // Children before the parent: an interrupt of the parent's own turn cannot then race the
+    // children it was waiting on. The answer is put back in root-first order below.
+    for (const c of [...targets].reverse()) {
+      const outcome = this.deps.registry.killConversation(c.key);
+      results.push({
+        topic: topicIdOf(c),
+        outcome: outcome === 'no-child' || outcome === 'unresumable' ? outcome : 'ended',
+      });
+    }
+    return results.reverse();
+  }
+
+  /** `here` and every topic under it, depth first, each once, with who opened each one. */
+  private treeOf(here: Place): { places: Place[]; parentOf: Map<ConversationId, ConversationId> } {
+    const places: Place[] = [];
+    const parentOf = new Map<ConversationId, ConversationId>();
+    const seen = new Set<ConversationId>();
+    const walk = (p: Place, parent?: ConversationId): void => {
+      if (seen.has(p.key)) return;
+      seen.add(p.key);
+      places.push(p);
+      if (parent !== undefined) parentOf.set(p.key, parent);
+      for (const child of this.childrenOf(p)) walk(child, p.key);
+    };
+    walk(here);
+    return { places, parentOf };
+  }
+
+  /**
+   * A subset of these conversations is ending. `recipients` are the ones whose card would run a
+   * turn in a conversation that is going: their gathered card is cancelled outright. `ids` are the
+   * ones whose queued news has no reader left — a child of an ending conversation — and only their
+   * `owed`/`said` are dropped.
+   *
+   * A turn the person stops is already silent — TurnOutcomes records 'stopped' and calls nobody —
+   * but `updates` and `owed` outlive a turn: a card gathered for CARD_DELAY_MS, or a child marked
+   * as worth reporting when its next end comes. Firing after the recipient's process was ended
+   * would run a turn in it and bring it back, the one thing "End agent" must not do.
+   *
+   * Nothing is dropped for a conversation that survives: a sub-agent ended on its own still owes
+   * its live parent the result of a turn that ended normally, and `sendUpdates` re-checks the
+   * stage before it sends, so an interrupted turn is skipped there anyway. Not a permanent mute
+   * either: a person who writes in a topic later is re-marked by personWrote.
+   */
+  ended(recipients: ReadonlySet<ConversationId>, ids: Iterable<ConversationId>): void {
+    for (const id of ids) {
+      this.owed.delete(id);
+      this.said.delete(id);
+    }
+    for (const key of recipients) {
+      const u = this.updates.get(key);
+      if (!u) continue;
+      u.cancel();
+      this.updates.delete(key);
+    }
   }
 
   /** What a sub-agent's topic shows above what it is handed: whose words these are, linked. */

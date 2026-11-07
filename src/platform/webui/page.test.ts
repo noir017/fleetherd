@@ -180,9 +180,9 @@ describe('webui page', () => {
     expect(html).toContain('::-webkit-scrollbar-thumb');
   });
 
-  it('allows deleting topics with an inline delete button and confirmation', () => {
-    expect(html).toContain('topic-del');
-    expect(html).toContain('data-del=');
+  it('allows deleting topics from the row menu, with its confirmation', () => {
+    expect(html).toContain('topic-menu');
+    expect(html).toContain('data-tm="delete"');
     expect(html).toContain('api/topics/delete');
   });
 

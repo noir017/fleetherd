@@ -116,6 +116,7 @@ import type {
   ModelSelector,
   SettingsScreen,
   SlashCommandSpec,
+  TopicKillResult,
 } from '../types.js';
 import {
   addressOf,
@@ -1094,6 +1095,9 @@ export class Daemon {
       // …and one that lists those agents gets a way to end the idle ones (the web UI's "Close idle
       // agents"), within the idle sweeper's gates — see reclaimIdleForRef.
       adapter.useIdleReclaim?.((ref) => this.registry.reclaimIdleForRef(ref));
+      // …and one whose topic rows offer "End agent" gets a way to end that topic and every
+      // sub-agent topic under it (the web UI's row menu).
+      this.wireTopicKill(adapter);
       // …and one that can throw its own topics away (the web UI evicts past its cap) gets a way to
       // ask which of them a scheduled task still posts into. Not decoration, unlike the two above:
       // a task whose topic was evicted fails every run after it.
@@ -1161,6 +1165,34 @@ export class Daemon {
     // Graceful stop on SIGINT (Ctrl-C) / SIGTERM (kill / container stop); otherwise resident ACP
     // child processes are orphaned and the socket file lingers. Removed again in stop().
     this.installSignalHandlers();
+  }
+
+  /**
+   * Wire one adapter's row-menu kill seam. Its own method rather than a line in `run()` because
+   * that method sits at the complexity limit, and one more optional call tips it over.
+   *
+   * Through /kill's rules rather than the idle sweeper's, so a running turn is interrupted on
+   * purpose — `Delegation.endTopic` walks the platform's own parent record and silences the cards
+   * a killed child had queued.
+   */
+  private wireTopicKill(adapter: PlatformAdapter): void {
+    adapter.useTopicKill?.((ref, confirmed) => this.killTopicTree(ref, confirmed));
+  }
+
+  /**
+   * The conversation at an address and the sub-agent topics under it, with the agent processes in
+   * `confirmed` ended — what the web UI's row menu asks for (`PlatformAdapter.useTopicKill`).
+   * Resolving the address is all this adds: `Delegation.endTopic` owns the walk, the intersection,
+   * the silencing and the order.
+   */
+  private killTopicTree(ref: ConversationRef, confirmed: ReadonlySet<string>): TopicKillResult[] {
+    const conversation = this.registry.conversationAt(ref.platform, {
+      channel: ref.channel,
+      ...(ref.thread !== undefined ? { thread: ref.thread } : {}),
+    });
+    if (!conversation) return [];
+    console.log(`[reclaim] ${conversation.key}: ending ${confirmed.size} confirmed agent(s) under this topic from the web UI`);
+    return this.delegation.endTopic(conversation.key, confirmed);
   }
 
   /**

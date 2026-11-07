@@ -1707,6 +1707,49 @@ describe('WebRoom: closing idle agents', () => {
   });
 });
 
+describe('WebRoom: ending a topic and the topics under it', () => {
+  it('hands the one topic to the daemon and answers what became of each', () => {
+    const { room, topic, seen } = attached();
+    const asked: Array<{ topic: string; confirmed: string[] }> = [];
+    room.useTopicKill((ref, confirmed) => {
+      asked.push({ topic: ref.thread ?? '', confirmed: [...confirmed].sort() });
+      return [
+        { topic: ref.thread ?? '', outcome: 'ended' },
+        { topic: 'b2c3d4e5', outcome: 'ended' },
+        { topic: 'c3d4e5f6', outcome: 'no-child' },
+      ];
+    });
+    seen.length = 0;
+
+    const res = room.killTopic(topic, [topic, 'b2c3d4e5', 'c3d4e5f6']);
+
+    // The root names the subtree; the confirmed list travels with it, and the daemon intersects.
+    expect(asked).toEqual([{ topic, confirmed: [topic, 'b2c3d4e5', 'c3d4e5f6'].sort() }]);
+    expect(res.results).toEqual([
+      { topic, outcome: 'ended' },
+      { topic: 'b2c3d4e5', outcome: 'ended' },
+      { topic: 'c3d4e5f6', outcome: 'no-child' },
+    ]);
+    // The dots go grey now rather than at the next liveness poll.
+    expect(kinds(seen)).toContain('topics');
+  });
+
+  it('answers no rows for a topic it does not hold, and no-child when no daemon offered a hook', () => {
+    const { room, topic } = attached();
+    expect(room.killTopic('ffffffff', ['ffffffff'])).toEqual({ results: [] });
+    // Nothing was ended, and the page says "left running" rather than "ended".
+    expect(room.killTopic(topic, [topic])).toEqual({ results: [{ topic, outcome: 'no-child' }] });
+  });
+
+  it('answers no-child, and keeps the room alive, when the daemon throws', () => {
+    const { room, topic } = attached();
+    room.useTopicKill(() => {
+      throw new Error('the registry is gone');
+    });
+    expect(room.killTopic(topic, [topic])).toEqual({ results: [{ topic, outcome: 'no-child' }] });
+  });
+});
+
 describe('WebRoom: a full topic list makes room instead of refusing', () => {
   afterEach(() => vi.restoreAllMocks());
 
