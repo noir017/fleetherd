@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.50.0] - 2026-11-07
+
 ### Added
 
 - **Search and filter the topic list.** With sub-agents, a web UI sidebar holds dozens of topics,
