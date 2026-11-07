@@ -567,9 +567,14 @@ What each piece is shaped by, one line each:
   day's topic keeps its agent and its directory, so the next run opens a new topic for the rest of
   the day, and the earlier one is left as it is (like yesterday's). Editing a task whose run is in
   flight is refused — that run is using the old values and, for a daily task, would write the old
-  day's topic back over the edit. A `--cwd` is refused when the task's host is not the editing
-  conversation's (`hostOfTask`): the path was resolved on the machine the edit was typed on, and on
-  the task's machine it names a different place. Nothing is written until every check passes, and
+  day's topic back over the edit. A task whose directory belongs to one machine and whose runs
+  happen on another is refused by `add` and `edit` alike (`cwdHostProblem`, against `hostOfTask`):
+  a `--cwd` belongs to the machine the command was typed on (the CLI resolved it there), `add`'s
+  default to the registering conversation's, and the directory an edit keeps to the task's machine
+  before the edit — so `add --agent` / `edit --agent` naming an agent on another host is refused
+  while the task carries a directory from here. The fix every refusal names is the command from a
+  conversation on the task's machine, which passes the same check. Nothing is written until every
+  check passes, and
   the task is re-read after the one `await` (the model list): a run that finished meanwhile, or a
   delete, is reported rather than overwritten, and `Scheduler.update` refuses an id that is gone.
 - **A bash run is not an agent**: `bash -lc` in its own process group (killed whole on timeout — `a |
