@@ -103,7 +103,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '--channel is where output goes (ids from `talkcode channels`); default this conversation.',
       'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped.',
       '`add` and `show` print the task id; `list` shows every task with its next run and last result; pause / resume / run (run it now, once) / rm take the id.',
-      '--tag labels a task for the web UI\'s task list: one comma-separated list, at most 5 tags of up to 24 characters each, no spaces (they are trimmed and lowercased). edit replaces the whole set; --tag "" clears it.',
+      '--tag labels a task for the web UI\'s task list: one comma-separated list, at most 5 tags of up to 24 characters each. A tag is letters (Chinese included), digits and - _ . / — no spaces or commas; it is trimmed and lowercased. edit replaces the whole set; --tag "" clears it.',
       '`edit <id> [options]` changes a task in place: --agent, --cwd, --model, --cron / --at / --tz, --name, --tag, --prompt, and --bash / --timeout for a bash task. The id, the run count and the last result stay; the next run is recomputed from now under the new time rule, and the gateway posts the updated card. What a task IS cannot change: --session, prompt ↔ bash and --channel are refused — `rm` it and add a new one. A daily task whose agent or directory changes opens a new topic for the rest of today; the day\'s earlier topic is left as it is.',
       'Where you have a schedule tool, it is this same command.',
     ],
@@ -558,7 +558,10 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
   }
   if (action === 'edit') return buildScheduleEdit(p, opts);
   const stray = SCHEDULE_ADD_KEYS.find((k) => opts[k] !== undefined);
-  if (stray) throw new Error(`--${stray} only applies to \`schedule add\``);
+  if (stray) {
+    const where = stray === 'tag' ? '`schedule add` and `schedule edit`' : '`schedule add`';
+    throw new Error(`--${stray} only applies to ${where}`);
+  }
   if (str(opts.channel) !== undefined) throw new Error(`--channel only applies to \`schedule add\` (where output goes)`);
   const id = (): string => {
     const v = p[1]?.replace(/^#/, '');
@@ -960,7 +963,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '--agent <id>', description: "add/edit: who runs --prompt (default: this conversation's agent; edit keeps the task's)" },
       { flags: '--model <id>', description: "add/edit: model for a --session new or daily task (default: the agent's configured model)" },
       { flags: '--name <name>', description: 'add/edit: short name for lists and cards' },
-      { flags: '--tag <a,b>', description: 'add/edit: labels for the task list, comma-separated (max 5, 24 chars each); edit replaces the whole set, --tag "" clears it' },
+      { flags: '--tag <a,b>', description: 'add/edit: labels for the task list, comma-separated (max 5, 24 chars each, letters/digits/- _ . /); edit replaces the whole set, --tag "" clears it' },
       { flags: '--cwd <dir>', description: 'add/edit: working directory for --bash, --session new or --session daily' },
       { flags: '--timeout <duration>', description: 'add/edit: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
     ],

@@ -503,10 +503,17 @@ happens. Tapping a row opens the topic and leaves the panel where it is. A run h
 puts an amber dot on the clock (`#sched-alert`), on the Scheduled outer tab, and on the Sessions
 sub-tab, because it has no row in the switcher to show it there.
 
-A task card is four lines, in the order the questions come: the name (with a state word only when
-it is not the ordinary `active`), the schedule, the next run and the target, and the last run — red
-only when it did not end `ok`. The prompt or command, the run mode and the bookkeeping are behind a
-tap, so a column of tasks stays scannable.
+A task card leads with the name (with a state word only when it is not the ordinary `active`) and
+its tags when it has any, then the schedule, the next run and the target, and the last run — red
+only when it did not end `ok`. The prompt or command, the run mode, the tag editor and the
+bookkeeping are behind a tap, so a column of tasks stays scannable.
+
+Above the cards sits a `makeFilterBar` instance of its own, mounted outside `#schedules-list`
+because that list is redrawn with innerHTML on every poll. Its search covers the name, the prompt
+or command and the target; its groups are Status (Running, Active, Paused, Ended) and Tags (every
+tag in use, plus Untagged); its sort is Status, Next run, Last run or Created, either direction,
+with a row that has no value for the field kept last. The keyword, selection and sort persist in
+the browser. Only the Tasks sub-tab shows it — Sessions and Reviews do not.
 
 **Reviews** is the automatic review of quiet conversations (`daemon/review.ts`). A review that
 changed nothing posts no line in any chat, so this is the only place it can be read. Nothing on the
@@ -543,8 +550,9 @@ parses that with `parseReviewOutput`, marks the entry `inferred` and leaves ever
 absent: the row says *unknown* rather than guessing. That is why `HistoryReviewChange.applied` is
 three-state.
 
-**Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the four
-operations; the daemon builds it in `daemon/schedule-panel.ts` from `ScheduleService`, the same
+**Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the five
+operations (pause, resume, run, remove and `tags`); the daemon builds it in
+`daemon/schedule-panel.ts` from `ScheduleService`, the same
 service the agent's `schedule` commands and `/setting schedule` use. Two routes carry it:
 `GET api/schedules` and `POST api/schedules/op`, the latter validated by
 `ScheduleOpRequestSchema`. The task list pulls when the panel opens, after every action, and on a

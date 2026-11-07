@@ -3,6 +3,7 @@ import {
   bashResultText,
   buildTask,
   CATCH_UP_GRACE_MS,
+  cleanTags,
   decide,
   editTask,
   FIXED_SESSION_WINDOW_MS,
@@ -504,15 +505,37 @@ describe('task tags', () => {
     expect(normalizeTags([...five.slice(0, 4), 'a', 'e'])).toEqual({ ok: true, tags: five });
   });
 
-  it('caps a tag at 24 characters and refuses whitespace or a comma inside one', () => {
+  it('caps a tag at 24 characters and refuses anything outside letters, digits and - _ . /', () => {
     const long = 'x'.repeat(MAX_TAG_LENGTH);
     expect(normalizeTags([long])).toEqual({ ok: true, tags: [long] });
     expect(normalizeTags([`${long}y`]).ok).toBe(false);
     expect(normalizeTags(['two words'])).toEqual({
       ok: false,
-      error: 'tag "two words" cannot contain whitespace or commas',
+      error: 'tag "two words" may contain only letters, digits and - _ . /',
     });
     expect(normalizeTags(['a,b']).ok).toBe(false);
+    expect(normalizeTags(['`quote`']).ok).toBe(false);
+    // What the set is for: repo-ish names and Chinese both fit.
+    expect(normalizeTags(['release-2026', 'a_b.c/d', '发布'])).toEqual({
+      ok: true,
+      tags: ['release-2026', 'a_b.c/d', '发布'],
+    });
+  });
+
+  it('cleans a stored list: normalize what can be, drop the rest, keep five', () => {
+    const cleaned = cleanTags([' CI ', 'ci', '发布', 'two words', '`x`', 'a', 'b', 'c', 'd', 'e']);
+    // ` CI ` and `ci` are the same tag; the next invalid ones are dropped; then the five cap is
+    // reached, so later tags go too.
+    expect(cleaned.tags).toEqual(['ci', '发布', 'a', 'b', 'c']);
+    expect(cleaned.dropped.map((d) => d.tag)).toEqual(['ci', 'two words', '`x`', 'd', 'e']);
+    expect(cleaned.dropped.map((d) => d.reason)).toEqual([
+      'duplicate',
+      'tag "two words" may contain only letters, digits and - _ . /',
+      'tag "`x`" may contain only letters, digits and - _ . /',
+      `more than ${MAX_TASK_TAGS} tags`,
+      `more than ${MAX_TASK_TAGS} tags`,
+    ]);
+    expect(cleanTags(['', '  '])).toEqual({ tags: [], dropped: [] });
   });
 
   it('treats an empty list as no tags, which is what --tag "" clears with', () => {

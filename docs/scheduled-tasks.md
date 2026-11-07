@@ -54,9 +54,10 @@ its agent and its directory — so the next run opens a new topic for the rest o
 earlier one is left as it is.
 
 Label a task with `--tag ci,release` when it is registered, or with `talkcode schedule edit <id>
---tag …` later: up to five tags, each at most 24 characters, lowercased, with no spaces or commas.
-`edit` replaces the whole set, and `--tag ""` clears it. The tags are shown under the task's name
-and on the card posted for the change; the web UI's Tasks list filters by them.
+--tag …` later: up to five tags, each at most 24 characters, lowercased, made of letters (Chinese
+included), digits and `- _ . /`. `edit` replaces the whole set, and `--tag ""` clears it. The tags
+are shown under the task's name and on the card posted for the change; the web UI's Tasks list
+filters by them.
 
 A task's directory is a path on one machine, and the task has to run on that machine. A `--cwd` is
 a path on the machine you type the command on, and without one `add` takes your conversation's

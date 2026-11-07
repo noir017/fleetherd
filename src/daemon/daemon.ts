@@ -1098,8 +1098,8 @@ export class Daemon {
       // ask which of them a scheduled task still posts into. Not decoration, unlike the two above:
       // a task whose topic was evicted fails every run after it.
       adapter.useScheduleLookup?.((ref) => this.schedules?.targets(ref) ?? false);
-      // …and one that can draw the tasks themselves gets the list and the four operations (the
-      // web UI's side panel). Same service the agent's commands and `/setting schedule` use, so
+      // …and one that can draw the tasks themselves gets the list and the five operations — the
+      // four verbs plus the tag editor (the web UI's side panel). Same service the agent's commands and `/setting schedule` use, so
       // a change made in the panel is a change made everywhere.
       const panel = this.schedulePanel(id);
       if (panel) adapter.useSchedulePanel?.(panel);
@@ -1892,8 +1892,9 @@ export class Daemon {
   }
 
   /**
-   * The web UI's scheduled-task panel, bound to one platform instance: the list, and the four
-   * operations, both answered from the same service the agent's `schedule` commands and
+   * The web UI's scheduled-task panel, bound to one platform instance: the list and the five
+   * operations (pause, resume, run, remove and `tags`), both answered from the same service the
+   * agent's `schedule` commands and
    * `/setting schedule` use. `announce: false` because the panel is the acknowledgement — posting
    * a card into a conversation the operator may not be looking at would say it twice.
    *

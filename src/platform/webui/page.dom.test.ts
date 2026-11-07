@@ -7232,6 +7232,45 @@ describe('webui page: the task list filter', () => {
     expect(r.el('schedules-list').textContent).toContain('Morning CI');
   });
 
+  it('keeps a tag being typed and its caret through a poll repaint', async () => {
+    const replies = { 'api/schedules': listReply([task()]) };
+    // The 30s poll is shortened to 30ms, which is the repaint a person editing a tag would see.
+    const h = await open({ replies, shortenLong: true });
+    await openPanel(h);
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await tick();
+
+    const input = h.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    input.value = 'deploy';
+    input.focus();
+    input.setSelectionRange(3, 3);
+
+    await within('a poll repaint', 1000, () => !h.doc.contains(input));
+    const next = h.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    expect(next).not.toBe(input);
+    expect(next.value).toBe('deploy');
+    expect(h.doc.activeElement).toBe(next);
+    expect(next.selectionStart).toBe(3);
+  });
+
+  it('keeps Loading until the first answer arrives, even when the bar is used', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) }, held: { 'api/schedules': gate } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await until('the loading line', () => h.el('schedules-list').textContent!.includes('Loading'));
+
+    // A sort before the list has arrived must not paint "no scheduled tasks" over the wait.
+    await sortBy(h, 'created');
+    expect(h.el('schedules-list').textContent).toContain('Loading');
+
+    release();
+    await until('the tasks', () => h.el('schedules-list').textContent!.includes('Morning CI'));
+  });
+
   it('restores the keyword, the tags and the sort after a reload', async () => {
     const replies = { 'api/schedules': listReply(fleet()) };
     const h = await open({ replies });

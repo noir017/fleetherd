@@ -105,6 +105,12 @@ describe('toolAction', () => {
   it('passes --tag through as a list, the same as the shell command', () => {
     const action = toolAction(tool('schedule'), { action: 'add', cron: '0 8 * * *', prompt: 'brief', tag: 'ci, deploy' });
     expect(action).toMatchObject({ kind: 'schedule-add', tags: ['ci', 'deploy'] });
+    // An empty tag is not "absent" here: it is the command's way of clearing the set.
+    expect(toolAction(tool('schedule'), { action: 'edit', id: 'k3x9', tag: '' })).toMatchObject({
+      kind: 'schedule-edit',
+      id: 'k3x9',
+      tags: [],
+    });
   });
 
   it('passes a model through as the shell command would', () => {

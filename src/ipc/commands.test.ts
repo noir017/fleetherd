@@ -243,7 +243,7 @@ describe('schedule <action> [id]', () => {
 
   it.each([
     [['pause'], {}, /needs a task id/],
-    [['list'], { tag: 'ci' }, /--tag only applies to `schedule add`/],
+    [['list'], { tag: 'ci' }, /--tag only applies to `schedule add` and `schedule edit`/],
     [['frobnicate'], {}, /unknown schedule action "frobnicate"/],
     [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add`/],
     [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add`/],

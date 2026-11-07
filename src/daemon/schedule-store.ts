@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { normalizeTags, type ScheduleTask } from '../core/schedule.js';
+import { cleanTags, type ScheduleTask } from '../core/schedule.js';
 
 /**
  * Scheduled tasks on disk (`<configDir>/schedules.json`) — its own file, not a section of
@@ -53,10 +53,9 @@ const TaskSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9]{4,16}$/),
     name: z.string().min(1),
-    // Optional is the migration: every file written before tags existed has none. The bound is
-    // only a shape guard; normalizeTags below is the rule itself, so a hand-edited file cannot
-    // load a tag the panel would then show differently from what an edit would store.
-    tags: z.array(z.string().max(200)).max(50).optional(),
+    // Optional is the migration: every file written before tags existed has none. Shape only —
+    // a bad tag costs that tag, never the task (see the cleanup in the constructor).
+    tags: z.array(z.string()).optional(),
     when: WhenSchema,
     run: RunSchema,
     target: TargetSchema,
@@ -103,16 +102,6 @@ const TaskSchema = z
     if (t.run.kind === 'agent' && t.run.session === 'fixed' && t.run.model !== undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a fixed-session task cannot name a model' });
     }
-    // The stored tags must already be what the one rule (core/schedule.ts normalizeTags) produces:
-    // lowercase, unique, within the limits. A file that says otherwise is not silently rewritten.
-    if (t.tags !== undefined) {
-      const normalized = normalizeTags(t.tags);
-      if (!normalized.ok) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['tags'], message: normalized.error });
-      } else if (normalized.tags.length !== t.tags.length || normalized.tags.some((tag, i) => tag !== t.tags![i])) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['tags'], message: 'tags are not normalized (lowercase, unique, trimmed)' });
-      }
-    }
   });
 
 // Drift between the persisted shape and the domain type fails to compile.
@@ -141,7 +130,15 @@ export class ScheduleStore {
     for (const entry of entries) {
       const parsed = TaskSchema.safeParse(entry);
       if (parsed.success) {
-        this.tasks.set(parsed.data.id, parsed.data);
+        // Tags are labels, not the task: a hand-edited file may hold ones an edit would refuse,
+        // and dropping the whole entry would make it disappear for good on the next write. Each
+        // is normalized if it can be, dropped loudly if not, and the task stays.
+        const cleaned = cleanTags(parsed.data.tags ?? []);
+        for (const drop of cleaned.dropped) {
+          console.warn(`[schedule] #${parsed.data.id}: dropped tag ${JSON.stringify(drop.tag)} — ${drop.reason}`);
+        }
+        const { tags: _stored, ...rest } = parsed.data;
+        this.tasks.set(parsed.data.id, cleaned.tags.length ? { ...rest, tags: cleaned.tags } : rest);
       } else {
         const id = (entry as { id?: unknown } | null)?.id;
         const issue = parsed.error.issues[0];

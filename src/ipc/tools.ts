@@ -166,6 +166,8 @@ export function toolInputSchema(tool: NativeTool): Record<string, unknown> {
  *
  * An empty string or null counts as absent: models fill optional parameters with them, and treating
  * `cron: ""` on a `list` as "a cron was given" would refuse a call that asked for nothing wrong.
+ * `tag` is the exception — `schedule edit --tag ""` is how a task's tags are cleared, so that one
+ * empty value is passed through and becomes an empty list.
  */
 export function toolAction(tool: NativeTool, args: unknown): IpcAction {
   const spec = specOf(tool);
@@ -183,7 +185,8 @@ export function toolAction(tool: NativeTool, args: unknown): IpcAction {
 
   const value = (name: string): string | undefined => {
     const v = given[name];
-    if (v === undefined || v === null || v === '') return undefined;
+    if (v === undefined || v === null) return undefined;
+    if (v === '' && name !== 'tag') return undefined;
     if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') {
       throw new Error(`${tool.name}: ${name} must be a string`);
     }

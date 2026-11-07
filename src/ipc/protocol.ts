@@ -504,6 +504,8 @@ export interface ListChannelsResult {
 export interface ScheduleTaskView {
   id: string;
   name: string;
+  /** Comma-separated, as one TOON cell; empty when the task has none. */
+  tags: string;
   state: string;
   when: string;
   next: string;

@@ -1407,7 +1407,7 @@ const SCRIPT = `
   var schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
   // The task list's bar, and which cards are open across a repaint. The bar's own state is in
   // makeFilterBar; this is only the instance, and null until the DOM below is reached.
-  var schedFilter=null, schedOpen={};
+  var schedFilter=null, schedOpen={}, schedTagDraft={};
   // Which of the panel's lists is on screen: Scheduled vs Reviews, and Tasks vs Sessions inside Scheduled.
   // Persisted, because it is a preference about the workspace rather than about one visit.
   var schedTab='scheduled', schedSubtab='tasks';
@@ -2572,6 +2572,49 @@ const SCRIPT = `
     return h;
   }
 
+  /**
+   * The tag field a poll would otherwise erase. The list is redrawn with innerHTML, so a value
+   * being typed and the caret in it are read off the DOM before the redraw and put back after it,
+   * keyed by task id: a card can stay open while its row moves under a sort, and the field
+   * belongs to the task rather than to the node.
+   */
+  function captureSchedTagDraft(){
+    var inputs = schedList.querySelectorAll('[data-tag-input]');
+    for(var i=0;i<inputs.length;i++){
+      var input = inputs[i];
+      var item = input.closest ? input.closest('.sched-item') : null;
+      var id = item ? item.getAttribute('data-id') : '';
+      if(!id) continue;
+      var focused = document.activeElement === input;
+      if(input.value || focused){
+        schedTagDraft[id] = {
+          value: input.value,
+          start: input.selectionStart == null ? 0 : input.selectionStart,
+          end: input.selectionEnd == null ? 0 : input.selectionEnd,
+          focus: focused
+        };
+      } else {
+        delete schedTagDraft[id];
+      }
+    }
+  }
+
+  function restoreSchedTagDraft(){
+    var inputs = schedList.querySelectorAll('[data-tag-input]');
+    for(var i=0;i<inputs.length;i++){
+      var input = inputs[i];
+      var item = input.closest ? input.closest('.sched-item') : null;
+      var id = item ? item.getAttribute('data-id') : '';
+      var draft = id ? schedTagDraft[id] : null;
+      if(!draft) continue;
+      input.value = draft.value;
+      if(draft.focus){
+        input.focus();
+        try { input.setSelectionRange(draft.start, draft.end); } catch(x){}
+      }
+    }
+  }
+
   /** Draw the rows that survive the bar, and tell the bar how many did. */
   function paintSchedTasks(){
     // Before the first answer there is nothing to draw, and an empty result would read as "no
@@ -2581,6 +2624,7 @@ const SCRIPT = `
       if(schedFilter) schedFilter.setCounts(0, 0);
       return;
     }
+    captureSchedTagDraft();
     var fs = schedFilter ? schedFilter.state() : {q:'', sel:{}, sort:'status', dir:'asc'};
     var words = fs.q.trim() ? fs.q.trim().toLowerCase().split(/\\s+/) : [];
     var rows = [], total = schedTasks ? schedTasks.length : 0;
@@ -2599,6 +2643,7 @@ const SCRIPT = `
       for(i=0;i<rows.length;i++) h += schedCard(rows[i].t);
       schedList.innerHTML = h;
     }
+    restoreSchedTagDraft();
     if(schedFilter) schedFilter.setCounts(rows.length, total);
   }
 
@@ -2615,7 +2660,7 @@ const SCRIPT = `
    * is the acknowledgement, so no card is posted — the fresh list it answers with is what shows
    * the change.
    */
-  function schedOp(id, action, btn, tags){
+  function schedOp(id, action, btn, tags, clearDraft){
     if(schedBusy) return;
     schedBusy = true;
     if(btn) btn.disabled = true;
@@ -2629,8 +2674,17 @@ const SCRIPT = `
     }).then(function(r){
       return r.json().catch(function(){ return { ok:false, error:'HTTP ' + r.status }; });
     }).then(function(d){
-      if(d && d.ok && d.tasks) paintSchedulesList(d.tasks);
-      else showSchedNote((d && d.error) || 'That did not work.');
+      if(d && d.ok && d.tasks){
+        // A tag that was just sent is now a chip: emptying the field before the repaint keeps
+        // the draft restore from putting it back as text, and captures the focus for the next one.
+        if(clearDraft){
+          delete schedTagDraft[id];
+          var item = schedList.querySelector('.sched-item[data-id="' + id + '"]');
+          var field = item ? item.querySelector('[data-tag-input]') : null;
+          if(field) field.value = '';
+        }
+        paintSchedulesList(d.tasks);
+      } else showSchedNote((d && d.error) || 'That did not work.');
     }).catch(function(e){
       showSchedNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
     }).then(function(){
@@ -2816,7 +2870,7 @@ const SCRIPT = `
     var task = id ? schedTask(id) : null;
     var added = String(input.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
     if(!task || !added.length) return;
-    schedOp(id, 'tags', null, schedTags(task).concat(added));
+    schedOp(id, 'tags', null, schedTags(task).concat(added), true);
   });
 
   // A timer is not worth running behind a hidden tab; ask once on the way back instead.

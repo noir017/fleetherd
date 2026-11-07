@@ -105,24 +105,42 @@ describe('ScheduleStore', () => {
     expect(new ScheduleStore(file).get('a1b2c3')!.tags).toEqual(['ci', 'release']);
   });
 
-  it('drops a task whose file carries a tag the rule would refuse, and says why', () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('keeps a task whose file carries a tag the rule refuses, dropping only that tag', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const store = new ScheduleStore(
       fileWith([
-        { ...base, tags: ['Two Words'], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } },
+        { ...base, tags: ['ok', 'Two Words', '', 'x'.repeat(25)], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } },
       ])
     );
-    expect(store.list()).toEqual([]);
-    expect(error.mock.calls[0]!.join(' ')).toMatch(/tags/);
+    // The task is the thing worth keeping; the labels are not.
+    expect(store.get('a1b2c3')).toMatchObject({ name: 'brief', tags: ['ok'] });
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/Two Words/);
   });
 
-  it('drops a task whose file holds tags an edit would have normalized', () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('normalizes the tags a hand-edited file holds, and drops the duplicates', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const store = new ScheduleStore(
-      fileWith([{ ...base, tags: ['CI'], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } }])
+      fileWith([
+        { ...base, tags: ['CI', 'ci', ' Release '], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } },
+      ])
     );
-    expect(store.list()).toEqual([]);
-    expect(error.mock.calls[0]!.join(' ')).toMatch(/not normalized/);
+    expect(store.get('a1b2c3')!.tags).toEqual(['ci', 'release']);
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/duplicate/);
+  });
+
+  it('keeps the first five tags of a file that has more, and warns about the rest', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const store = new ScheduleStore(
+      fileWith([
+        {
+          ...base,
+          tags: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+          run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' },
+        },
+      ])
+    );
+    expect(store.get('a1b2c3')!.tags).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 
   it('round-trips a daily task through a reload', () => {
