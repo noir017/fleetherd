@@ -252,36 +252,47 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    an unrelated state that can be true alongside any of them.
    A prompt-shaped glyph says which of the two it is without a legend. */
 .topic-term{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:9.5px;line-height:1;color:#4ade80;border:1px solid rgba(74,222,128,.35);border-radius:3px;padding:2px 3px;margin-left:4px}
-.topic-del{opacity:0;background:none;border:0;color:var(--dim);font:inherit;font-size:16px;line-height:1;padding:2px 5px;cursor:pointer;border-radius:3px;margin-left:auto;flex-shrink:0;transition:opacity .15s,color .15s,background .15s}
-#topics .topic-item:hover .topic-del,#topics .topic-item:focus-within .topic-del{opacity:1}
-.topic-del:hover{color:#f87171;background:rgba(248,113,113,.15)}
-@media(hover:none){.topic-del{opacity:.7}}
-/* The star sits beside the × and behaves like it until it is ON: then it stays lit on every row,
-   because a starred row is the one thing in the list the operator asked to be able to find, and
-   a marker that only appears under the pointer finds nothing. Amber like the waiting dot, but
-   still — a star is a standing decision, not something happening. */
-.topic-star{opacity:0;background:none;border:0;color:var(--dim);font:inherit;font-size:13px;line-height:1;padding:3px 4px;cursor:pointer;border-radius:3px;flex-shrink:0;transition:opacity .15s,color .15s,background .15s}
-#topics .topic-item:hover .topic-star,#topics .topic-item:focus-within .topic-star{opacity:1}
-.topic-star:hover{color:#fbbf24;background:rgba(251,191,36,.12)}
-.topic-star.on,#topics .topic-item .topic-star.on{opacity:1;color:#fbbf24}
-/* One star for both states: filled when on, outlined when off, as ★ and ☆ were. */
-.topic-star.on .ic{fill:currentColor}
-@media(hover:none){.topic-star{opacity:.45}}
-/* The star and the × in one box, so they can leave the row's layout together.
-   On a pointer device they are invisible until hovered — but opacity:0 hides a box without removing
-   it, so they used to hold their place in the row anyway and every title stopped ~60px short of the
-   column's edge, in front of two buttons nobody could see (reported 2026-10-30). There they now
-   float over the row's right end, on a fade into the row's own colour that covers the title's tail
-   rather than reflowing it. Two cases keep them in the row: a touch screen, which has no hover and
-   shows them all the time, and a starred row at rest, whose lit star is content a title must not
-   run under — its × is dropped from the layout there instead of being kept as a gap. */
-.topic-acts{display:flex;align-items:center;gap:8px;flex-shrink:0}
+/* The row's one control: a ⋯ that opens the topic's menu (Star/Unstar, End agent, Delete). The
+   star and the × it replaced were two buttons competing for a 240px column's tail; the menu is
+   one target the pointer reveals, and the rest live inside it.
+   A starred row keeps a lit star at rest, as it always did: it is the one thing in the list the
+   operator asked to be able to find, and a marker that only appears under the pointer finds
+   nothing. That star is a MARKER now — not a button — because starring moved into the menu, and a
+   decorative glyph that looks pressable but is not would be worse than either. Amber like the
+   waiting dot, but still: a star is a standing decision, not something happening. */
+.topic-more{background:none;border:0;color:var(--dim);font:inherit;line-height:1;padding:1px 5px;cursor:pointer;border-radius:3px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;transition:color .15s,background .15s}
+.topic-more .ic{width:15px;height:15px}
+.topic-more:hover,.topic-more[aria-expanded="true"]{color:var(--fg);background:var(--field)}
+.topic-star-mark{display:inline-flex;align-items:center;justify-content:center;color:#fbbf24;flex-shrink:0;padding:0 2px}
+.topic-star-mark .ic{width:13px;height:13px;fill:currentColor}
+@media(hover:none){.topic-more{opacity:.55}}
+/* The ⋯ in a box, so it can leave the row's layout exactly as the two buttons did.
+   On a pointer device it is invisible until hovered — but opacity:0 hides a box without removing
+   it, so reserving room for it would stop every title ~40px short of the column's edge, in front
+   of a control nobody can see (reported 2026-10-30, fixed the same way for the ☆/× pair). There it
+   floats over the row's right end, on a fade into the row's own colour that covers the title's tail
+   rather than reflowing it. Two cases keep it in the row: a touch screen, which has no hover and
+   shows the control all the time, and a starred row at rest, whose lit star is content a title must
+   not run under — its ⋯ is dropped from the layout there instead of being kept as a gap. */
+.topic-acts{display:flex;align-items:center;gap:4px;flex-shrink:0}
 @media(hover:hover){
   .topic-acts{position:absolute;top:0;bottom:0;right:9px;padding-left:22px;background:linear-gradient(90deg,transparent,var(--row-bg) 18px);opacity:0;pointer-events:none;transition:opacity .15s}
   #topics .topic-item:hover .topic-acts,#topics .topic-item:focus-within .topic-acts{opacity:1;pointer-events:auto}
-  #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-acts{position:static;padding-left:0;background:none;opacity:1;pointer-events:auto}
-  #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-del{display:none}
+  #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-acts{position:static;padding-left:0;background:none;opacity:1;pointer-events:none}
+  #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-more{display:none}
 }
+/* One topic's menu, drawn at the body rather than inside #topics: the list is rebuilt with
+   innerHTML on every message a running agent posts, and a menu that lived in it would vanish
+   mid-tap. Fixed, so it can sit beside the button that opened it and stay there while the list
+   scrolls; above the sidebar's own z-index (20 on a phone) so it works inside the drawer. */
+#topic-menu{position:fixed;z-index:21;min-width:210px;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
+#topic-menu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
+#topic-menu button:hover:not(:disabled){background:var(--field)}
+#topic-menu button:disabled{color:var(--dim);cursor:default}
+#topic-menu .ic{width:14px;height:14px;flex:none}
+#topic-menu .tm-del{color:#f87171}
+#topic-menu .tm-del:hover{background:rgba(248,113,113,.12)}
+#topic-menu .tm-sep{border-top:1px solid var(--line);margin:4px 2px}
 /* Where the group that needs the person ends. A pseudo-element on the first row after it rather
    than a node of its own, so #topics holds rows and nothing else. */
 /* A topic another topic's agent opened (Topic.parent — daemon/delegation.ts), under the one that
@@ -378,6 +389,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .idle-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .idle-name,.idle-dir{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .idle-dir{color:var(--dim);font-size:12px}
+/* "running — will be interrupted": the one row in the End-agent confirmation whose turn dies now. */
+.idle-run{color:#fbbf24;font-size:12px}
 .idle-out{flex:none;font-size:12px;color:var(--dim)}
 .idle-out.kept{color:#fbbf24}
 .idle-acts{display:flex;justify-content:flex-end;gap:8px}
@@ -1301,6 +1314,7 @@ const SCRIPT = `
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
       clearBtn=$('clear-topics'), idleBtn=$('close-idle'), noIdleBtn=$('no-idle'), idleCount=$('idle-count'),
       notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
+      topicMenu=$('topic-menu'),
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
@@ -1326,6 +1340,9 @@ const SCRIPT = `
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent');
   var data={}, els={}, files=[], commands=[], stream=null, done=false;
+  // The row menu's topic and the button that opened it. The button is re-found after every repaint
+  // (paintTopics), because the row it lives in is replaced while the menu stays open.
+  var topicMenuFor=null, topicMenuBtn=null;
   // Last markup written per message, so a sync that re-sends an unchanged message touches no DOM.
   var sig={};
   // The tool-bubble lines a reader has opened, per message key. See lineOpen.
@@ -4328,12 +4345,15 @@ const SCRIPT = `
       var title='<span class="topic-title">'
          + (named.tag?'<span class="topic-tag"'+(named.full?' title="'+text(named.full)+'"':'')+'>'+text(named.tag)+'</span> ':'')
          + text(named.rest)+'</span>';
-      // aria-pressed rather than two different buttons: it is one control with a state, and the
-      // state is what a screen reader should announce.
-      var star='<button type="button" class="btn-icon topic-star'+(t.starred?' on':'')+'" data-star="'+text(t.id)+'"'
-         + ' aria-pressed="'+(t.starred?'true':'false')+'"'
-         + ' title="'+(t.starred?'Unstar':'Star: never removed to make room, and kept by Clear')+'">'
-         + IC.icon.star+'</button>';
+      // A lit star on a starred row is a marker, not a button: Star/Unstar lives in the menu now.
+      var starMark=t.starred
+        ? '<span class="topic-star-mark" title="Starred: never removed to make room, and kept by Clear" aria-hidden="true">'+IC.icon.star+'</span>'
+        : '';
+      // aria-expanded is read from the menu as well as written by it, so a repaint during a
+      // streaming reply cannot make the button under an open menu claim it is closed.
+      var more='<button type="button" class="btn-icon topic-more" data-more="'+text(t.id)+'"'
+         + ' aria-haspopup="menu" aria-expanded="'+(topicMenuFor===t.id?'true':'false')+'"'
+         + ' title="Topic actions" aria-label="Topic actions">'+IC.icon.more+'</button>';
       // Its own button, like the star: folding a parent is not a reason to switch to it.
       var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
          + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
@@ -4348,8 +4368,8 @@ const SCRIPT = `
          + term
          + badge
          + '<span class="topic-acts">'
-         + star
-         + '<button type="button" class="btn-icon topic-del" data-del="'+text(t.id)+'" title="Delete topic">×</button>'
+         + starMark
+         + more
          + '</span>'
          + '</div>';
     }
@@ -4359,6 +4379,15 @@ const SCRIPT = `
     if(!h && painted.filtering){
       bar.innerHTML='<div class="topics-empty"><span>No matching topics</span>'
         + '<button type="button" class="fb-clear" data-filter-clear="1">Clear</button></div>';
+    }
+    // The row menu lives at the body, so the innerHTML above cannot take it with it. Follow the
+    // button's replacement, and close the menu only if its topic is gone from the list.
+    if(topicMenuFor){
+      if(!topicById(topicMenuFor)) closeTopicMenu(false);
+      else {
+        var anchor=bar.querySelector('[data-more="'+topicMenuFor+'"]');
+        if(anchor){ topicMenuBtn=anchor; anchor.setAttribute('aria-expanded','true'); positionTopicMenu(anchor); }
+      }
     }
     // Says what it will do: with stars in the list it no longer clears all of them.
     var clearLabel = stars ? 'Clear unstarred topics' : 'Clear all topics';
@@ -5154,11 +5183,16 @@ const SCRIPT = `
       if(topicFilter) topicFilter.clear();
       return;
     }
-    var del = e.target.closest ? e.target.closest('[data-del]') : null;
-    if(del){
+    // The row's one control. Opening the menu is not opening the topic, like the star and the ×
+    // before it: the act is about the row, not about switching to it.
+    var more = e.target.closest ? e.target.closest('[data-more]') : null;
+    if(more){
       e.stopPropagation();
-      var delId = del.getAttribute('data-del');
-      if(delId) deleteTopic(delId);
+      var moreId = more.getAttribute('data-more');
+      if(moreId){
+        if(topicMenuFor===moreId && !topicMenu.hidden) closeTopicMenu(true);
+        else openTopicMenu(moreId, more);
+      }
       return;
     }
     var fold = e.target.closest ? e.target.closest('[data-fold]') : null;
@@ -5175,14 +5209,6 @@ const SCRIPT = `
       }
       return;
     }
-    // Before the row's own click, like the ×: starring a topic is not a reason to switch to it.
-    var star = e.target.closest ? e.target.closest('[data-star]') : null;
-    if(star){
-      e.stopPropagation();
-      var starId = star.getAttribute('data-star');
-      if(starId) starTopic(starId);
-      return;
-    }
     var b = e.target.closest ? e.target.closest('[data-topic]') : null;
     if(!b) return;
     var id = b.getAttribute('data-topic');
@@ -5193,7 +5219,7 @@ const SCRIPT = `
 
   bar.addEventListener('keydown', function(e){
     if(e.key==='Enter' || e.key===' '){
-      if(e.target.closest && e.target.closest('[data-del],[data-star],[data-fold]')) return;
+      if(e.target.closest && e.target.closest('[data-more],[data-fold]')) return;
       var b = e.target.closest ? e.target.closest('[data-topic]') : null;
       if(!b) return;
       e.preventDefault();
@@ -5202,6 +5228,121 @@ const SCRIPT = `
       switchTopic(id);
     }
   });
+
+  // ── A topic row's ⋯ menu ────────────────────────────────────────────────────
+  // Star/Unstar and Delete moved here from the row; End agent is new and only here. The menu is
+  // one box at the body, so the list's innerHTML repaint (every message a running agent posts)
+  // cannot take it away, and it is fixed so it stays beside the button that opened it.
+  function topicMenuItems(){
+    return Array.prototype.filter.call(topicMenu.querySelectorAll('[role="menuitem"]'), function(b){ return !b.disabled; });
+  }
+  /** Place the menu under its button, above it when the viewport runs out, inside both edges. */
+  function positionTopicMenu(btn){
+    if(!btn) return;
+    var r=btn.getBoundingClientRect();
+    var w=topicMenu.offsetWidth || 210, h=topicMenu.offsetHeight || 0;
+    var left=Math.max(8, Math.min(r.right-w, window.innerWidth-8-w));
+    var top=r.bottom+4;
+    if(top+h+8>window.innerHeight) top=Math.max(8, r.top-4-h);
+    topicMenu.style.left=left+'px';
+    topicMenu.style.top=top+'px';
+  }
+  /** The topic and every topic under it, in the list's order — the ones End agent reaches. */
+  function subtreeOf(id){
+    var out=[], seen={}, stack=[id];
+    while(stack.length){
+      var cur=stack.pop();
+      if(seen[cur]) continue;
+      seen[cur]=1;
+      var t=topicById(cur);
+      if(t) out.push(t);
+      var kids=[];
+      for(var i=0;i<topics.length;i++) if(topics[i].parent===cur) kids.push(topics[i].id);
+      for(var j=kids.length-1;j>=0;j--) stack.push(kids[j]);
+    }
+    return out;
+  }
+  function openTopicMenu(id, btn){
+    var t=topicById(id);
+    if(!t) return;
+    setMenu(null, false);
+    // The box moves to this row: the row it was on must stop saying its menu is open.
+    if(topicMenuBtn && topicMenuBtn!==btn) topicMenuBtn.setAttribute('aria-expanded','false');
+    // How many sub-agent topics under this one have a process to end. The label says what the
+    // item reaches, not what the row's dot says: a child that is resident and idle is still a
+    // process, and the confirmation lists exactly the ones with one.
+    var under=subtreeOf(id).slice(1);
+    var alive=0;
+    for(var i=0;i<under.length;i++) if(under[i].live) alive++;
+    var able=Boolean(t.live) || alive>0;
+    var tmStar=topicMenu.querySelector('[data-tm="star"]'),
+        tmEnd=topicMenu.querySelector('[data-tm="end"]'),
+        tmDel=topicMenu.querySelector('[data-tm="delete"]');
+    tmStar.innerHTML=IC.icon.star+'<span>'+(t.starred?'Unstar':'Star')+'</span>';
+    tmStar.title=t.starred
+      ? 'Stop keeping this topic through Clear and eviction'
+      : 'Keep this topic through Clear and eviction';
+    tmEnd.innerHTML=IC.icon.power+'<span>End agent'+(alive?' + '+alive+' sub-agent'+(alive===1?'':'s'):'')+'</span>';
+    tmEnd.disabled=!able;
+    // The reason, when there is nothing to end: a greyed item with no explanation asks.
+    tmEnd.title=able
+      ? 'End the agent process here'+(alive?' and in the '+alive+' topic'+(alive===1?'':'s')+' under it':'')
+        +' — the conversations are kept, and the next message resumes them'
+      : 'No agent process is running in this topic or the topics under it — there is nothing to end';
+    tmDel.innerHTML=IC.icon.trash+'<span>Delete topic</span>';
+    topicMenuFor=id;
+    topicMenuBtn=btn;
+    topicMenu.hidden=false;
+    btn.setAttribute('aria-expanded','true');
+    // Measured only once it is on screen; jsdom reports zeroes, hence the fallback width.
+    positionTopicMenu(btn);
+    var first=topicMenuItems()[0];
+    if(first) first.focus();
+  }
+  function closeTopicMenu(focusBack){
+    if(topicMenu.hidden) return;
+    var btn=topicMenuBtn;
+    topicMenu.hidden=true;
+    topicMenuFor=null;
+    topicMenuBtn=null;
+    if(btn) btn.setAttribute('aria-expanded','false');
+    if(focusBack && btn && btn.focus) btn.focus();
+  }
+  topicMenu.addEventListener('click', function(e){
+    var item=e.target.closest ? e.target.closest('[data-tm]') : null;
+    if(!item || item.disabled) return;
+    var id=topicMenuFor, what=item.getAttribute('data-tm');
+    if(!id) return;
+    closeTopicMenu(false);
+    if(what==='star') starTopic(id);
+    else if(what==='delete') deleteTopic(id);
+    else if(what==='end') openEnd(id);
+  });
+  // Arrow keys move between the enabled items, as role=menu promises. Tab leaves the menu like any
+  // other focus trip; Escape is the page-wide handler's, which also puts the focus back.
+  topicMenu.addEventListener('keydown', function(e){
+    if(e.key!=='ArrowDown' && e.key!=='ArrowUp' && e.key!=='Home' && e.key!=='End') return;
+    var items=topicMenuItems();
+    if(!items.length) return;
+    e.preventDefault();
+    var at=items.indexOf(document.activeElement);
+    var next;
+    if(e.key==='Home') next=0;
+    else if(e.key==='End') next=items.length-1;
+    else if(e.key==='ArrowDown') next=at<0 ? 0 : (at+1)%items.length;
+    else next=at<0 ? items.length-1 : (at+items.length-1)%items.length;
+    items[next].focus();
+  });
+  // A click anywhere else puts it away. The ⋯ itself is excluded: its own handler toggles, and
+  // closing it here too would make the second tap open and close in the same gesture.
+  document.addEventListener('click', function(e){
+    if(topicMenu.hidden) return;
+    if(topicMenu.contains(e.target) || (topicMenuBtn && topicMenuBtn.contains(e.target))) return;
+    closeTopicMenu(false);
+  });
+  // The list scrolls under the fixed menu; keep it beside its button rather than at a stale pixel.
+  bar.addEventListener('scroll', function(){ if(topicMenuFor) positionTopicMenu(topicMenuBtn); }, {passive:true});
+  window.addEventListener('resize', function(){ if(topicMenuFor) positionTopicMenu(topicMenuBtn); });
 
   /**
    * Open a new topic, as the + does.
@@ -5344,10 +5485,11 @@ const SCRIPT = `
    * topic list at the click — a topic that went idle while the dialog was open was not shown, and
    * nothing is closed that the operator did not see. idleSeq drops an answer for a dialog since closed.
    */
-  var idleIds=[], idleSeq=0;
+  var idleIds=[], idleSeq=0, idleMode='close', idleTopic=null;
   function openIdle(){
     var list=idleTopics();
     if(!list.length) return;
+    idleMode='close';
     idleIds=[];
     var h='';
     for(var i=0;i<list.length;i++){
@@ -5362,9 +5504,46 @@ const SCRIPT = `
     idleWhy.hidden=false;
     idleGo.hidden=false;
     idleGo.disabled=false;
+    idleGo.textContent='Close agents';
     idleCancel.textContent='Cancel';
     idleDialog.hidden=false;
     // Cancel, not Close: an Enter pressed out of habit should be the answer that changes nothing.
+    idleCancel.focus();
+  }
+  /**
+   * A row menu's "End agent", in the same dialog as Close idle because it is the same promise: a
+   * list of the agents that go, and the conversations that stay. The list is the topic the menu
+   * was opened on plus every topic under it with a process — what Delegation.endTopic will walk,
+   * in the list's order. A running turn is marked as the interruption it is.
+   *
+   * The request names the root, never the list: the daemon's walk is the platform's record, and a
+   * child that appeared while the dialog was open belongs to the topic the person confirmed.
+   */
+  function openEnd(id){
+    var list=subtreeOf(id).filter(function(t){ return Boolean(t.live); });
+    if(!list.length) return;
+    idleMode='end';
+    idleTopic=id;
+    idleIds=[];
+    var h='';
+    for(var i=0;i<list.length;i++){
+      var t=list[i];
+      idleIds.push(t.id);
+      var where=t.dir?(t.dir.host?t.dir.host+' · ':'')+t.dir.name:'';
+      var running=Boolean(t.running || t.asking);
+      h += '<li data-idle="'+text(t.id)+'"><span class="idle-main"><span class="idle-name">'+text(t.title || 'Untitled')+'</span>'
+         + (where?'<span class="idle-dir">'+text(where)+'</span>':'')
+         + (running?'<span class="idle-run">running — will be interrupted</span>':'')
+         + '</span><span class="idle-out"></span></li>';
+    }
+    idleList.innerHTML=h;
+    idleTitle.textContent='End '+list.length+' agent'+(list.length===1?'':'s')+'?';
+    idleWhy.hidden=false;
+    idleGo.hidden=false;
+    idleGo.disabled=false;
+    idleGo.textContent='End '+list.length+' agent'+(list.length===1?'':'s');
+    idleCancel.textContent='Cancel';
+    idleDialog.hidden=false;
     idleCancel.focus();
   }
   function closeIdle(){
@@ -5384,21 +5563,37 @@ const SCRIPT = `
    */
   function goIdle(){
     idleGo.disabled=true;
-    var mine=++idleSeq;
-    post('api/topics/close-idle',{topics:idleIds},0).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+    var mine=++idleSeq, ending=idleMode==='end';
+    var url=ending?'api/topics/kill':'api/topics/close-idle';
+    var body=ending?{topic:idleTopic}:{topics:idleIds};
+    post(url,body,0).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if(mine!==idleSeq) return;
       if(!d) return idleFailed('The daemon refused the request.');
-      var closed={}, i;
-      for(i=0;i<d.closed.length;i++) closed[d.closed[i]]=1;
-      var rows=idleList.querySelectorAll('li');
-      for(i=0;i<rows.length;i++){
-        var out=rows[i].querySelector('.idle-out'), ok=closed[rows[i].getAttribute('data-idle')];
-        out.textContent = ok ? 'closed' : 'left running';
-        out.className = 'idle-out' + (ok ? '' : ' kept');
+      var rows=idleList.querySelectorAll('li'), i, n=0, k=0;
+      if(ending){
+        var ended={}, results=d.results || [];
+        for(i=0;i<results.length;i++) if(results[i].outcome==='ended') ended[results[i].topic]=1;
+        for(i=0;i<rows.length;i++){
+          var eout=rows[i].querySelector('.idle-out'), eok=ended[rows[i].getAttribute('data-idle')];
+          eout.textContent = eok ? 'ended' : 'left running';
+          eout.className = 'idle-out' + (eok ? '' : ' kept');
+          if(eok) n++; else k++;
+        }
+        idleTitle.textContent='Ended '+n+' agent'+(n===1?'':'s')
+          + (k ? '; '+k+' left running — unable to resume' : '');
+      } else {
+        var closed={};
+        for(i=0;i<d.closed.length;i++) closed[d.closed[i]]=1;
+        for(i=0;i<rows.length;i++){
+          var out=rows[i].querySelector('.idle-out'), ok=closed[rows[i].getAttribute('data-idle')];
+          out.textContent = ok ? 'closed' : 'left running';
+          out.className = 'idle-out' + (ok ? '' : ' kept');
+        }
+        n=d.closed.length;
+        k=d.kept.length;
+        idleTitle.textContent='Closed '+n+' idle agent'+(n===1?'':'s')
+          + (k ? '; '+k+' left running — busy again, or unable to resume' : '');
       }
-      var n=d.closed.length, k=d.kept.length;
-      idleTitle.textContent='Closed '+n+' idle agent'+(n===1?'':'s')
-        + (k ? '; '+k+' left running — busy again, or unable to resume' : '');
       idleWhy.hidden=true;
       idleGo.hidden=true;
       idleCancel.textContent='Done';
@@ -5577,8 +5772,11 @@ const SCRIPT = `
     // Close the topmost thing first: Escape over a picture, the reader or a menu must not also
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
-    var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
+    var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !topicMenu.hidden
+      || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
     closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
+    // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
+    closeTopicMenu(true);
     if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
     var m = openMenu();
     if(m){ setMenu(null, false); m.btn.focus(); }
@@ -7049,8 +7247,18 @@ __GATE__
       <div id="settings-body"></div>
     </div>
   </div>
+  <!-- One topic's row menu, opened by its ⋯. At the body, not inside #topics: the list is rebuilt
+       with innerHTML whenever a message arrives, and a menu inside it would be wiped by an agent's
+       own streaming reply. Positioned from the button's rect by positionTopicMenu. -->
+  <div id="topic-menu" role="menu" aria-label="Topic actions" hidden>
+    <button type="button" role="menuitem" data-tm="star"></button>
+    <button type="button" role="menuitem" data-tm="end"></button>
+    <div class="tm-sep" role="separator"></div>
+    <button type="button" role="menuitem" data-tm="delete" class="tm-del"></button>
+  </div>
   <!-- "Close idle agents", confirmed against the list it will act on (openIdle), then showing what
-       happened to each. -->
+       happened to each. The row menu's "End agent" reuses it (openEnd): same box, same list, same
+       per-topic result; only the title, the endpoint and the button's words change. -->
   <div id="idle-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="idle-title">
     <div id="idle-box">
       <div id="idle-title"></div>

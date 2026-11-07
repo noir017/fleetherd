@@ -9,6 +9,7 @@ import type {
   SettingsScreen,
   SlashCommandSpec,
   TopicActivity,
+  TopicKillResult,
 } from '../types.js';
 
 /**
@@ -565,6 +566,24 @@ export interface PlatformAdapter {
    * lists its conversations, which no chat app does.
    */
   useIdleReclaim?(reclaim: (ref: ConversationRef) => boolean): void;
+
+  /**
+   * Hand the platform a way to end the agent process behind a conversation AND every sub-agent
+   * topic nested under it — the web UI's "End agent" in a topic row's menu.
+   *
+   * The broader sibling of `useIdleReclaim`, and deliberately not built on it: this one is allowed
+   * to stop a turn, which is what `/kill` does, so it goes through `killConversation` rather than
+   * the idle sweeper's gates. The person confirmed each topic they are about to end, and the
+   * conversation of every one is kept — the next message there resumes it where it left off.
+   *
+   * Answers one row per topic it walked, root first, so the page can say what became of each
+   * rather than a count. An address that names nothing answers no rows; the daemon's walk is the
+   * platform's own `childrenOf` (`Delegation.endTopic`), never a list the page assembled.
+   *
+   * Optional and web-UI-only for the reason the seams above are: a chat app has no topic list to
+   * hang a per-row menu on, and `/kill` plus `/stop` are its two commands.
+   */
+  useTopicKill?(kill: (ref: ConversationRef) => TopicKillResult[]): void;
 
   /**
    * Hand the platform a way to ask which agents the conversation at one of its addresses could still

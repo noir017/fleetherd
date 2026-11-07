@@ -675,3 +675,20 @@ export type SettingsScreen =
       nav: SettingsScreenNav;
       notice?: SettingsScreenNotice;
     };
+
+/**
+ * One topic in an "end this topic and everything under it" answer, from
+ * `PlatformAdapter.useTopicKill` (the web UI's row menu).
+ *
+ * `ended` covers every StopOutcome — a turn, a background burst or an idle child — because the
+ * page only needs to know whether a process was ended and the conversation kept. The other two
+ * are the refusals `/kill` already has: nothing was resident, or the runtime cannot resume a
+ * session, so ending it would silently start a fresh conversation.
+ */
+export type TopicKillOutcome = 'ended' | 'no-child' | 'unresumable';
+
+/** What became of one topic's agent process. `topic` is the platform's own id for it. */
+export interface TopicKillResult {
+  topic: string;
+  outcome: TopicKillOutcome;
+}

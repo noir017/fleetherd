@@ -675,6 +675,7 @@ function lifecycle(
   | 'useSkillsPanel'
   | 'useReviewPanel'
   | 'useIdleReclaim'
+  | 'useTopicKill'
   | 'useAgentCatalog'
   | 'useModelPicker'
   | 'registerCommands'
@@ -725,6 +726,11 @@ function lifecycle(
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".
      */
     useIdleReclaim: (reclaim) => room.useIdleReclaim(reclaim),
+    /**
+     * The broader half of the same seam: the row menu's "End agent" ends one topic and every topic
+     * its agent opened, mid-turn if that is what the person confirmed. See WebRoom.killTopic.
+     */
+    useTopicKill: (kill) => room.useTopicKill(kill),
     /**
      * The only implementor because a new topic here is a blank page, with room to lay out every
      * agent as one tap — where a chat app has a message box and the `/agent` menu's two levels.

@@ -17,7 +17,7 @@ import type {
   TaskStatusResult,
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { AgentStatus, ConversationId, TopicActivity, TopicStage } from '../types.js';
+import type { AgentStatus, ConversationId, TopicActivity, TopicKillResult, TopicStage } from '../types.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { ConversationRegistry } from './conversation.js';
 import { UPDATE_SENDER, type PersonWords } from './turn-runner.js';
@@ -161,6 +161,7 @@ type Registry = Pick<
   | 'statusOf'
   | 'stopConversation'
   | 'stopWithPending'
+  | 'killConversation'
   | 'runScheduledPrompt'
   | 'workdirOf'
   | 'boundAgentOf'
@@ -908,6 +909,84 @@ export class Delegation {
       stopped += this.stopOpened(c.key, seen);
     }
     return stopped;
+  }
+
+  /**
+   * End the agent process behind this conversation and every sub-agent topic under it — the web
+   * UI's "End agent" (`PlatformAdapter.useTopicKill`). `/kill` applied to a tree.
+   *
+   * The walk is `stopOpened`'s, for the same reason: the relation is the platform's record
+   * (`childrenOf`), and a topic acts only on the topics under it. Unlike `/stop`, which records a
+   * stop and leaves the process up, each conversation here goes through `killConversation`: a turn
+   * running there is interrupted, a question is called off, and the child process is disposed.
+   * The conversation itself is kept in every case.
+   *
+   * `ended` runs BEFORE the first kill, and that ordering is load-bearing. A turn interrupted here
+   * ends as 'stopped' and tells nobody (TurnOutcomes), but a turn that ended NORMALLY a moment
+   * earlier may still be waiting in `updates` for its card — and that card runs a turn in the
+   * parent this call is about to end, waking it again. Silencing first means a turn that ends
+   * during the kills already finds no mark that makes it news.
+   *
+   * Answers root first, one row per topic the platform's record connects. An address this process
+   * knows nothing about answers no rows, which the page reads as "nothing to end".
+   */
+  endTopic(key: ConversationId): TopicKillResult[] {
+    const here = this.place(key);
+    if (!here) return [];
+    const tree = this.treeOf(here);
+    this.ended(tree.map((p) => p.key));
+    const results: TopicKillResult[] = [];
+    // Children before the parent: an interrupt of the parent's own turn cannot then race the
+    // children it was waiting on. The answer is put back in root-first order below.
+    for (const c of [...tree].reverse()) {
+      const outcome = this.deps.registry.killConversation(c.key);
+      results.push({
+        topic: c.address.thread ?? c.address.channel,
+        outcome: outcome === 'no-child' || outcome === 'unresumable' ? outcome : 'ended',
+      });
+    }
+    return results.reverse();
+  }
+
+  /** `here` and every topic under it, depth first, each once. */
+  private treeOf(here: Place): Place[] {
+    const out: Place[] = [];
+    const seen = new Set<ConversationId>();
+    const walk = (p: Place): void => {
+      if (seen.has(p.key)) return;
+      seen.add(p.key);
+      out.push(p);
+      for (const child of this.childrenOf(p)) walk(child);
+    };
+    walk(here);
+    return out;
+  }
+
+  /**
+   * These conversations are ending; nothing they did is the news of the agent above them.
+   *
+   * A turn the person stops is already silent — TurnOutcomes records 'stopped' and calls nobody —
+   * but `updates` and `owed` outlive a turn: a card gathered for CARD_DELAY_MS, or a child marked
+   * as worth reporting when its next end comes. Firing after the parent's process was ended would
+   * run a turn in it and bring it back, the one thing "End agent" must not do. Dropping the ids
+   * from both, and cancelling a card left with nothing to say, keeps a kill a kill.
+   *
+   * Not a permanent mute: a person who writes in that topic later is still reported to its parent
+   * (personWrote re-marks it). This drops only what was queued when the topic was ended.
+   */
+  ended(ids: Iterable<ConversationId>): void {
+    const gone = new Set(ids);
+    for (const id of gone) {
+      this.owed.delete(id);
+      this.said.delete(id);
+    }
+    for (const [parent, u] of this.updates) {
+      for (const id of gone) u.children.delete(id);
+      if (u.children.size === 0) {
+        u.cancel();
+        this.updates.delete(parent);
+      }
+    }
   }
 
   /** What a sub-agent's topic shows above what it is handed: whose words these are, linked. */

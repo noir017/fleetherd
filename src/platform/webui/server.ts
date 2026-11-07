@@ -52,6 +52,7 @@ import {
   CreateTopicRequestSchema,
   ClearTopicsRequestSchema,
   CloseIdleRequestSchema,
+  KillTopicRequestSchema,
   DeleteTopicRequestSchema,
   EndTerminalRequestSchema,
   LoginRequestSchema,
@@ -349,6 +350,7 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/push/subscribe', run: pushSubscribe },
   { method: 'POST', path: '/api/push/unsubscribe', run: pushUnsubscribe },
   { method: 'POST', path: '/api/topics/close-idle', run: closeIdle },
+  { method: 'POST', path: '/api/topics/kill', run: killTopic },
   // The scheduled-task panel: the list, and one action on one task. Behind the same session as
   // everything else; the four verbs are validated in protocol.ts before they reach the daemon.
   { method: 'GET', path: '/api/schedules', run: scheduleList },
@@ -781,6 +783,17 @@ async function closeIdle({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, CloseIdleRequestSchema);
   if (!parsed) return;
   send(req, res, 200, ctx.room.closeIdle(parsed.topics));
+}
+
+/**
+ * End the agent process behind one topic and every sub-agent topic under it, answering what
+ * became of each. The subtree is the daemon's (`WebRoom.killTopic` → `Delegation.endTopic`); the
+ * page only names the topic the person confirmed, never the list of descendants.
+ */
+async function killTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, KillTopicRequestSchema);
+  if (!parsed) return;
+  send(req, res, 200, ctx.room.killTopic(parsed.topic));
 }
 
 /**

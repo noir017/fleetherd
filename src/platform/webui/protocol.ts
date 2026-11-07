@@ -132,6 +132,13 @@ export const ClearTopicsRequestSchema = z.object({}).strict();
  * own — bounded by the store's cap, since a topic cannot be listed that the store does not hold.
  */
 export const CloseIdleRequestSchema = z.object({ topics: z.array(TopicId).min(1).max(MAX_TOPICS) }).strict();
+/**
+ * End the agent process behind one topic and every sub-agent topic under it — the row menu's
+ * "End agent". One id rather than the page's list: the subtree is the daemon's record
+ * (`PlatformAdapter.childrenOf`), and a list from the page could name a topic that is no longer
+ * under the one that was confirmed.
+ */
+export const KillTopicRequestSchema = z.object({ topic: TopicId }).strict();
 
 /**
  * One action on one scheduled task.
@@ -235,6 +242,7 @@ export type PushSubscribeRequest = z.infer<typeof PushSubscribeSchema>;
 export type EndTerminalRequest = z.infer<typeof EndTerminalRequestSchema>;
 export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;
+export type KillTopicRequest = z.infer<typeof KillTopicRequestSchema>;
 export type ScheduleOpRequest = z.infer<typeof ScheduleOpRequestSchema>;
 export type ModelChooseRequest = z.infer<typeof ModelChooseRequestSchema>;
 export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;
