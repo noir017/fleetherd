@@ -43,7 +43,10 @@ directly.
   refused, with the list.
 - The text is everything the sub-agent will see — it has not read this conversation. Give it the
   goal, the constraints, and how it will know it is done (a test that passes, a command whose
-  output changes). Not the steps: it will read the code and choose them.
+  output changes).
+- Hand over what you already know: the files and lines involved, the cause if you found it, what
+  you ruled out, the approach if you and the person settled one. What you leave out it has to find
+  again. Leave out only the steps nobody has worked out yet: it will read the code and choose them.
 - Ask for the tests that cover the change, not the whole suite: that runs once, before merging.
   Run by every part and every review, it is most of the wait.
 - Ask for the reply you will read: the conclusion first, then the evidence, under 2,000 characters.

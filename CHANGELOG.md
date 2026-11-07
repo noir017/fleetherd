@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A sub-task carries what the coordinator already found.** `/super` and `talkcode help tasks`
+  asked for the goal, the constraints and how to tell it is done, and to leave the how to the
+  sub-agent. Coordinators read that as "leave out what you know": a task arrived as a goal and a
+  test, without the files, the cause or the dead ends its author had already worked through, and
+  the sub-agent spent its first turns finding them again. They now hand those over and leave out
+  only the steps nobody has worked out.
+
 ## [2.51.0] - 2026-11-07
 
 ### Changed
