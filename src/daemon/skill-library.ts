@@ -125,18 +125,29 @@ export class SkillLibrary {
     return { query, results, note: `no skill matched${cats ? `; the library has: ${cats}` : ''}` };
   }
 
-  /** How many skills, and per category (resident and library both), for the tool's description. */
-  categories(): { total: number; library: number; categories: Array<{ name: string; count: number }> } {
+  /**
+   * How many skills, and per category (resident and library both), for the tool's description.
+   * Each category also names its library skills — the ones not already in the agent's own skill
+   * list — that reach `asker`, when one is given: a name is what makes an agent look a skill up.
+   */
+  categories(asker?: LibraryAsker): {
+    total: number;
+    library: number;
+    categories: Array<{ name: string; count: number; library: string[] }>;
+  } {
     const { skills } = this.library();
-    const counts = new Map<string, number>();
+    const counts = new Map<string, { count: number; library: string[] }>();
     let library = 0;
     for (const s of skills.values()) {
       if (!s.meta.resident) library++;
       const c = s.meta.category ?? 'other';
-      counts.set(c, (counts.get(c) ?? 0) + 1);
+      const entry = counts.get(c) ?? { count: 0, library: [] };
+      entry.count++;
+      if (!s.meta.resident && (!asker || skillReaches(s.meta, asker.host, asker.harness))) entry.library.push(s.name);
+      counts.set(c, entry);
     }
     const categories = [...counts]
-      .map(([name, count]) => ({ name, count }))
+      .map(([name, e]) => ({ name, count: e.count, library: e.library.sort() }))
       // The uncategorized last whatever their number: "other 12" first would say nothing about the library.
       .sort((a, b) => Number(a.name === 'other') - Number(b.name === 'other') || b.count - a.count || a.name.localeCompare(b.name));
     return { total: skills.size, library, categories };

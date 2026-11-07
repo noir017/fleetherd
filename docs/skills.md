@@ -115,10 +115,13 @@ metadata:
 - **Library** skills are everything else. They are delivered to every host like a resident one but
   linked nowhere, so they cost no context until an agent looks one up with the `skills` tool. A
   skill an agent or the review creates starts here.
-- **Category** groups skills; the `skills` tool's description ends with how many each holds
-  (`In the library: 运维 6, 开发 2, other 3.`), which is what tells an agent the library is worth a
-  search. **Hosts** and **harnesses** (a host is a `hosts:` id, or `local`; a harness is `claude`,
-  `codex`, `opencode`, `agy` or `codebuddy`) keep a skill off the agents it would only mislead.
+- **Category** groups skills; the `skills` tool's description ends with the library skills that
+  reach that agent, by category (`In the library: 协作: grilling, siyuan-notes; other: email-reader.`),
+  which is what tells an agent there is something worth a `show` before it starts. Past 40 names it
+  says how many each category holds instead (`In the library: 运维 6, 开发 2, other 3.`), so a
+  large library does not grow every request. **Hosts** and **harnesses** (a host is a `hosts:` id,
+  or `local`; a harness is `claude`, `codex`, `opencode`, `agy` or `codebuddy`) keep a skill off
+  the agents it would only mislead.
 
 The values are quoted strings because the Agent Skills spec makes `metadata` a map of strings, so
 a harness that checks the spec lists the skill unchanged.
@@ -264,15 +267,26 @@ session) is reviewed with its process still up. Scheduled tasks, sub-agents and 
 are never reviewed.
 
 The reviewer gets the conversation without its tool calls — every message you sent, then the
-agent's replies newest first up to the cap — the skill list with versions, the full text of the
-skills that conversation used, the skill files the conversation's own agent wrote (so it does not
-create a second copy of a skill you just had written), and `common.md` from your
-[instructions for every agent](instructions.md) (so it does not suggest a preference you already
+agent's replies newest first up to the cap — the skill list with versions and the categories in
+use, the full text of the skills that conversation used, the skill files that conversation already
+wrote, with what they hold now (so it neither creates a second copy of a skill you just had written
+nor adds a rule the agent already put in a reference), and every file of your
+[instructions for agents](instructions.md) (so it does not suggest a preference you already
 set). It has no tools: it runs in an empty temporary directory with every
-tool denied, so it cannot read or write anything. It answers with a JSON list of `create`, `patch`
-and `write-file` changes, each with a reason, plus any preferences it noticed. The gateway applies
-them through the same rules as `talkcode skills` — a patch must carry the version the reviewer was
-given, and a change that fails is dropped and logged. The reviewer itself never touches a file.
+tool denied, so it cannot read or write anything. It answers with a JSON list of changes, each with
+a reason, plus any preferences it noticed:
+
+- `edit` — exact replacements in `SKILL.md` or one of its files: each quoted original must occur
+  exactly once, against the version the reviewer was given, or the change is refused. A review
+  never retypes a whole file.
+- `write-file` — a new reference, template or script; one that already exists is refused.
+- `create` — a new skill, in the library, under a category.
+
+It is told to record only what the conversation actually did and verified — not a plan nobody
+ran, a guess, or something later overturned — and to say each thing in one place. Preferences are
+held to what you said yourself and would want in any project. The gateway applies the changes
+through the same rules as `talkcode skills`, and a change that fails is dropped and logged. The
+reviewer itself never touches a file.
 
 When something changed, one line appears in the conversation that was reviewed:
 

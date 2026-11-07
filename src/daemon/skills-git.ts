@@ -262,6 +262,34 @@ function parseLogRecord(rec: string): LogEntry {
   };
 }
 
+/**
+ * The repository paths changed by commits whose `Talkcode-Conversation` trailer names exactly
+ * `conversation`, committed at or after `sinceMs`, newest first and each once. `--grep` only
+ * narrows: it matches a substring, and `telegram#1` is a prefix of `telegram#12`, so each hit's
+ * trailer is compared whole before its paths count.
+ */
+export function conversationCommitPaths(root: string, conversation: string, sinceMs: number): string[] {
+  if (!hasHead(root)) return [];
+  const needle = `${TRAILER_PREFIX}Conversation: ${conversation}`;
+  const log = gitSync(root, [
+    'log',
+    '-z',
+    `--since=@${Math.floor(sinceMs / 1000)}`,
+    '--fixed-strings',
+    `--grep=${needle}`,
+    '--format=%H%x1f%B',
+    'HEAD',
+  ]);
+  const out: string[] = [];
+  for (const rec of log.split('\0')) {
+    const [hash = '', body = ''] = rec.replace(/^\n+/, '').split('\x1f');
+    if (!hash || !body.split('\n').some((line) => line.trim() === needle)) continue;
+    const changed = gitSync(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--root', hash]);
+    for (const p of changed.split('\0')) if (p && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
 /** The full commit id `id` (a prefix) names, or undefined when it names none. */
 export function resolveCommit(root: string, id: string): string | undefined {
   if (!/^[0-9a-f]{7,40}$/.test(id)) return undefined;

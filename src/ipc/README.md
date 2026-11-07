@@ -97,7 +97,8 @@ agent can neither do without nor guess exists:
   harness's skill directory, so nothing tells an agent it exists; linking every skill instead puts
   every description in every request, which past a few dozen skills costs more than one tool. It
   offers only `search` and `show` — `NativeTool.options: []` keeps the command's write options out
-  of the schema — and its description ends with what the library holds (`In the library: 运维 6, …`),
+  of the schema — and its description ends with what the library holds for that agent — its
+  library skills' names by category, or counts past 40 names (`commands/mcp.ts` libraryLine) —
   asked of the daemon at `tools/list`. That line is a fact about the deployment, not instructions:
   the same rule as every other description here.
 

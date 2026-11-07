@@ -4,6 +4,7 @@ import path from 'node:path';
 import { configDir } from '../config/load.js';
 import {
   commitPaths,
+  conversationCommitPaths,
   filesAt,
   initRepo,
   isRepo,
@@ -452,9 +453,22 @@ export function withResident(content: string, resident: boolean): string {
   return `${match[1]}${next.join('\n')}${match[3]}${content.slice(match[0].length)}`;
 }
 
-function composeSkillMd(name: string, description: string, body: string): string {
-  const text = `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body.trim()}\n`;
+function composeSkillMd(name: string, description: string, body: string, category?: string): string {
+  const meta = category ? `metadata:\n  ${META_CATEGORY}: ${JSON.stringify(category)}\n` : '';
+  const text = `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n${meta}---\n\n${body.trim()}\n`;
   return body.trim() ? text : text.replace(/\n\n$/, '\n');
+}
+
+/** How long a category may be. It is a group's label in the `skills` tool's description, not a sentence. */
+export const CATEGORY_MAX = 20;
+
+/** A category as `create` takes it: one short line, or a message saying why not. */
+function validateCategory(raw: string): string {
+  const category = raw.replace(/\s+/g, ' ').trim();
+  if (!category) throw new Error('category is empty; leave it out, or name a group such as 运维');
+  if (category.length > CATEGORY_MAX) throw new Error(`category is too long (${category.length} > ${CATEGORY_MAX}): a short group name such as 运维`);
+  if (/["\\:,;]/.test(category)) throw new Error(`category "${category}" may not contain " \\ : , or ;`);
+  return category;
 }
 
 /** Refuse a `SKILL.md` a harness would not list, or one over the context budget. */
@@ -806,10 +820,33 @@ export function skillHistory(name: string, dir = configDir()): SkillHistoryEntry
   }));
 }
 
+/**
+ * The active skills' files that one conversation's commits changed since `sinceMs`, newest first:
+ * whatever an agent there wrote through `talkcode skills`, and what an earlier review of it wrote,
+ * since both name the conversation in a trailer. A file deleted since, or a skill archived since,
+ * is left out — there is nothing of it to show.
+ */
+export function conversationSkillFiles(conversation: string, sinceMs: number, dir = configDir()): Array<{ name: string; file: string }> {
+  const root = repoRoot(dir);
+  if (!isRepo(root)) return [];
+  const out: Array<{ name: string; file: string }> = [];
+  for (const p of conversationCommitPaths(root, conversation, sinceMs)) {
+    const parts = p.split('/');
+    if (parts[0] !== SKILLS_DIR || parts.length < 3 || !isSkillName(parts[1]!)) continue;
+    const name = parts[1]!;
+    const file = parts.slice(2).join('/');
+    if (!fs.existsSync(path.join(skillDir(name, dir), ...file.split('/')))) continue;
+    out.push({ name, file });
+  }
+  return out;
+}
+
 export interface CreateSkillInput {
   name: string;
   description: string;
   body?: string;
+  /** `talkcode-category`, the group the `skills` tool lists it under; uncategorized when absent. */
+  category?: string;
   source?: SkillSource;
   /** A line for the commit — the review's reason, when there is one. */
   note?: string;
@@ -829,7 +866,8 @@ export function createSkill(input: CreateSkillInput, dir = configDir()): SkillRe
   const description = input.description.replace(/\s+/g, ' ').trim();
   if (!description) throw new Error('create needs --description: one line on when to use the skill');
   if (description.length > 2000) throw new Error(`description is too long (${description.length} > 2000)`);
-  const content = composeSkillMd(name, description, input.body ?? '');
+  const category = input.category === undefined ? undefined : validateCategory(input.category);
+  const content = composeSkillMd(name, description, input.body ?? '', category);
   assertSkillMd(content, name);
   ensureRepo(dir);
   const now = input.now ?? Date.now();

@@ -34,6 +34,16 @@ export interface PromptMessage {
   text: string;
 }
 
+/** A skill file the conversation wrote, and what it holds now when the gateway can read it. */
+export interface PromptWrittenFile {
+  /** `<skill>/<file>` for one of the gateway's skills, else the path the write named. */
+  path: string;
+  /** The file as it is now. Absent for a path outside the library, or one too long to quote. */
+  content?: string;
+  /** Why there is no content, when there is a reason worth saying (`全文见上`, `太长，没有附上`). */
+  note?: string;
+}
+
 export interface PromptInput {
   title: string;
   /** What the person and the agent said — no tool calls (HistoryStore.reviewWindow). */
@@ -43,14 +53,19 @@ export interface PromptInput {
   catalog: PromptSkill[];
   used: PromptSkillText[];
   /**
-   * Skill files the conversation's own agent wrote (writtenSkillFiles). Named because the calls
-   * are not in the log: on 2026-11-06 a review created `vlt` in the gateway's library an hour after
-   * the person had asked the agent to write that very skill elsewhere, and did it.
+   * Skill files the conversation already wrote, with their text. Named because the calls are not
+   * in the log: on 2026-11-06 a review created `vlt` in the gateway's library an hour after the
+   * person had asked the agent to write that very skill elsewhere, and did it. Quoted since
+   * 2026-11-07: a review that day added a rule to server-ops' SKILL.md, twice, that the agent had
+   * already written into one of its references during the conversation — the name alone did not
+   * stop it, and a path from `talkcode skills write-file` was not recognised at all.
    */
-  written?: string[];
+  written?: PromptWrittenFile[];
+  /** The categories the library already uses, for a `create` to pick from. */
+  categories?: string[];
   /**
-   * The rules every agent already gets (`instructions/common.md`), so a preference the person set
-   * long ago is not suggested again. Absent when there is none.
+   * The rules agents already get (`instructions/`), so a preference the person set long ago is
+   * not suggested again. Absent when there is none.
    */
   standing?: string;
   /**
@@ -78,12 +93,10 @@ export function buildReviewPrompt(input: PromptInput): string {
   const dropped = input.dropped > 0 ? `，省略了较早的 ${input.dropped} 条` : '';
   const conversation = input.messages.map((m) => `${ROLE_LABEL[m.role] ?? m.role}：${m.text}`).join('\n');
   const written = input.written?.length
-    ? ['', '这段对话里已经写过的技能文件（同一件事不要再新建技能）', ...input.written.map((f) => `- ${f}`)]
+    ? ['', '这段对话里已经写过的技能文件（下面是现在的内容，已经写进去的不要再写）', ...input.written.map(renderWritten)]
     : [];
   const standing = input.standing?.trim() ? ['', '用户已有的要求', input.standing.trim()] : [];
-  const preferences = standing.length
-    ? 'preferences：用户在这段对话里表达、值得长期遵守的要求，每条一句话；「用户已有的要求」里有的不要再写；没有就空数组。'
-    : 'preferences：用户在这段对话里表达、值得长期遵守的要求，每条一句话；没有就空数组。';
+  const categories = input.categories?.length ? input.categories.join('、') : '运维、开发、协作';
   return [
     // The first two lines exist because agy reads the operator's global AGENTS.md, whose standing
     // rule is "propose first, wait for 开工". This run has nobody to ask, so it has to be told so
@@ -95,20 +108,31 @@ export function buildReviewPrompt(input: PromptInput): string {
     '',
     '规则',
     '- 先改这段对话里用到的技能；没有合适的，再改已有的同类技能；再补参考资料；最后才新建。',
+    // The next two are from 2026-11-07. A review wrote a plan the person had agreed to but nobody
+    // ran — later shown wrong in another conversation — into server-ops as a "must"; only a version
+    // race kept it out. Another wrote one rule into SKILL.md twice, beside a reference that had it.
+    '- 只记这段对话里做成并验证过的结论。只提了没执行的方案、没验证的推测、后来被推翻的说法，都不记。',
+    '- 同一件事只写一处：已经写过的技能文件和技能全文里有的不再写。细节放参考资料，SKILL.md 里最多留一句指过去。',
     '- 技能按任务类别命名：小写加连字符。不要用日期、报错、分支名、一次性的任务名。',
     '- 不删技能。不记一次性的事：这次的具体报错、临时路径、单个 PR 都不算。',
     '- 只写对下一次同类任务有用的规则，不要抄对话原文。',
     '- 没什么可改就返回空清单。',
-    '- patch 时 frontmatter 里的 metadata 原样保留：talkcode-resident 只有人能改，改了会被拒。',
+    '- 改已有的文件用 edit，不要整篇重写：old 从原文逐字照抄，在文件里只能出现一次；要加内容，就把插入点前后的一行放进 old，在 new 里接上新内容。原文里的反斜杠，在 JSON 里要写成两个。',
+    '- write-file 只用来建新文件。',
+    '- 不要动 frontmatter 里的 metadata：talkcode-resident 只有人能改，改了会被拒。',
     '- 不要调用任何工具，直接输出 JSON。',
     '',
     '输出',
     '{"changes":[…],"preferences":[…]}',
     'changes 里每一项是下面三种之一：',
-    '{"action":"create","name":"…","description":"一句话说明什么时候用","body":"SKILL.md 正文，不含 frontmatter","reason":"为什么"}',
-    '{"action":"patch","name":"…","version":"技能库里的版本号","content":"改后的完整 SKILL.md，含 frontmatter","reason":"为什么"}',
+    '{"action":"edit","name":"…","version":"技能库里的版本号","file":"SKILL.md 或 references/xxx.md","edits":[{"old":"原文里的一段","new":"改成什么"}],"reason":"为什么"}',
     '{"action":"write-file","name":"…","file":"references/xxx.md","content":"文件内容","reason":"为什么"}',
-    preferences,
+    '{"action":"create","name":"…","category":"分类","description":"一句话说明什么时候用","body":"SKILL.md 正文，不含 frontmatter","reason":"为什么"}',
+    `create 的 category 从这些里选：${categories}；都不合适才另起一个，两到四个字。`,
+    // Narrowed on 2026-11-07: the 26 suggestions of the first two days were all cleared from the
+    // Reviews tab, and only two ever reached the instructions. The rest were about one project,
+    // were an agent's idea the person had nodded at, or contradicted an earlier one.
+    `preferences：用户在这段对话里亲口提出、换到别的项目也该照做的工作方式要求，每条一句话。只和某个项目、某台机器或这一次任务有关的不写；agent 提出、用户只是同意的不写${standing.length ? '；「用户已有的要求」里已经有的不写' : ''}。没有就空数组。`,
     '',
     '技能库（名字、版本、简介）',
     catalog,
@@ -131,19 +155,50 @@ function renderUsedSkill(skill: PromptSkillText): string {
   return `### ${skill.name}（${skill.version}）\n${skill.content.trim()}${files}`;
 }
 
+function renderWritten(file: PromptWrittenFile): string {
+  if (file.content !== undefined) return `#### ${file.path}\n${file.content.trim()}`;
+  return `- ${file.path}${file.note ? `（${file.note}）` : ''}`;
+}
+
 const CreateChange = z.object({
   action: z.literal('create'),
   name: z.string().min(1),
   description: z.string().min(1),
   body: z.string().default(''),
+  category: z.string().optional(),
   reason: z.string().optional(),
 });
 
+/**
+ * Still parsed, never applied: an answer from before `edit` existed is read back by the Reviews
+ * tab, and a reviewer that answers with one anyway is refused with a sentence saying so (review.ts
+ * apply). A patch is the whole SKILL.md retyped — 18 000 characters to add two lines to server-ops'
+ * 27 KB, on 2026-11-06, with an unrelated word changed on the way.
+ */
 const PatchChange = z.object({
   action: z.literal('patch'),
   name: z.string().min(1),
   version: z.string().min(1),
   content: z.string().min(1),
+  reason: z.string().optional(),
+});
+
+/** How many replacements one `edit` may carry. */
+export const MAX_EDITS = 20;
+
+/**
+ * Exact replacements in one file of a skill, against the version the reviewer was shown. Each
+ * `old` has to occur exactly once, so an edit lands where the reviewer meant or not at all.
+ */
+const EditChange = z.object({
+  action: z.literal('edit'),
+  name: z.string().min(1),
+  version: z.string().min(1),
+  file: z.string().min(1).default('SKILL.md'),
+  edits: z
+    .array(z.object({ old: z.string().min(1), new: z.string() }))
+    .min(1)
+    .max(MAX_EDITS),
   reason: z.string().optional(),
 });
 
@@ -155,7 +210,7 @@ const WriteFileChange = z.object({
   reason: z.string().optional(),
 });
 
-const Change = z.discriminatedUnion('action', [CreateChange, PatchChange, WriteFileChange]);
+const Change = z.discriminatedUnion('action', [CreateChange, PatchChange, EditChange, WriteFileChange]);
 export type ReviewChange = z.infer<typeof Change>;
 
 export interface ReviewOutput {
@@ -301,4 +356,14 @@ export function writtenSkillFiles(calls: string[]): string[] {
     }
   }
   return out.slice(0, 20);
+}
+
+/**
+ * The gateway skill a written path is a file of — `…/skills/<name>/<file>` where `<name>` is in
+ * `known` — so the review can quote it from the store. Any other path is not one of its skills.
+ */
+export function skillFileOfPath(p: string, known: ReadonlySet<string>): { name: string; file: string } | undefined {
+  const m = /(?:^|\/)skills\/([a-z0-9][a-z0-9-]*)\/(.+)$/.exec(p);
+  if (!m || !known.has(m[1]!)) return undefined;
+  return { name: m[1]!, file: m[2]! };
 }

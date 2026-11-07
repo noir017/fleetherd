@@ -133,7 +133,7 @@ import { startSkillSweep } from './skill-lifecycle.js';
 import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
 import { ReviewStateStore } from './review-state.js';
 import { buildReviewPanel } from './review-panel.js';
-import { commonInstructions } from './instructions.js';
+import { standingInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
   archiveSkill,
@@ -1047,7 +1047,7 @@ export class Daemon {
         candidates: () => this.reviewCandidates(),
         notify: (lane, text) => this.notifyReview(lane, text),
         writeSkills: (fn) => this.skillsRepo.write(fn),
-        standing: () => commonInstructions(),
+        standing: () => standingInstructions(),
         searchMisses: (conversation, since) => this.skillLibrary.missesOf(conversation, since),
       });
     }
@@ -1696,7 +1696,7 @@ export class Daemon {
         if (!action.query) throw new Error('skills search needs what you are looking for');
         return this.skillLibrary.search(action.query, this.skillAsker(conversationId));
       case 'categories':
-        return this.skillLibrary.categories();
+        return this.skillLibrary.categories(this.skillAsker(conversationId));
       case 'show':
         return this.skillLibrary.show(name(), action.file, this.skillAsker(conversationId), action.again === true);
       case 'history':

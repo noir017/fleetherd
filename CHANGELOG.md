@@ -5,6 +5,44 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+What two days of the automatic review on a live gateway showed: it ran reliably, but most of what
+it produced went unread or unused, and the changes it made to a person's skills were right in fact
+and wrong in shape.
+
+### Changed
+
+- **The `skills` tool now names the library's skills, by category, instead of counting them.**
+  With only `In the library: 协作 3, other 4.` the four skills the review had written in two days
+  were read twice in all, and there were six searches in 19 hours — an agent spent a turn on agy's
+  context accounting with `antigravity-config` in the library, and never looked. The line is now
+  `In the library: 协作: grilling, siyuan-notes; other: antigravity-config, …`, only the library
+  skills that reach that agent; past 40 names it goes back to counts, so a large library does not
+  grow every request. A skill the review creates now carries a category too.
+  [→](docs/skills.md#resident-and-library)
+- **The review edits a file instead of retyping it.** A change to an existing `SKILL.md` or
+  reference is now a list of exact replacements, each of whose originals must occur exactly once
+  in the version the review was shown — or the change is refused. Retyping the whole `SKILL.md`
+  took 18 000 characters to add two lines to server-ops, and changed an unrelated word on the way;
+  that action is no longer offered, and is refused if it comes anyway. `write-file` from the
+  review now only creates a file, never replaces one.
+  [→](docs/skills.md#auto-review)
+- **The review is shown what the conversation already wrote, with its current text, and is told
+  to record only what was done.** It was given the names of skill files the agent wrote with an
+  editor, and missed the ones written through `talkcode skills` altogether — so it added a rule to
+  server-ops' `SKILL.md`, twice, that the agent had already put in one of its references. Those
+  writes are now found in the skills repository by the conversation that made them, and quoted.
+  It is also told not to record a plan nobody ran, a guess, or something later overturned: one
+  review proposed writing an agreed-but-never-executed plan into server-ops as a rule, after
+  another conversation had shown it would not work, and was stopped only by a version clash.
+  [→](docs/skills.md#auto-review)
+- **Fewer preference suggestions, and none you already have.** Of the 26 the review suggested in
+  two days, all were cleared from the Reviews tab and two ever reached the instructions. It now
+  suggests only what you said yourself and would want in any project — not something about one
+  project or one machine, not an agent's idea you agreed to — and is shown every file of your
+  instructions, not only `common.md`, so the rules kept for one kind of agent are not suggested
+  back either.
+  [→](docs/skills.md#auto-review)
+
 ## [2.47.1] - 2026-11-07
 
 ### Fixed

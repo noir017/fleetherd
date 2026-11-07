@@ -1,7 +1,7 @@
 import type { HistoryReviewChange, HistoryReviewRecord, HistoryReviewRow, HistorySessionRow, HistoryStore } from '../history/store.js';
 import type { ReviewPanel, ReviewPanelEntry, ReviewPanelList, ReviewPanelPreference } from '../platform/adapter.js';
 import { parseReviewOutput } from './review-prompt.js';
-import { inferOutcome, summaryOf, undoOf, type AppliedChange } from './review-result.js';
+import { inferOutcome, recordedAction, summaryOf, undoOf, type AppliedChange } from './review-result.js';
 import { preferenceKey } from './review-state.js';
 
 /**
@@ -126,9 +126,8 @@ function inferredEntry(row: HistoryReviewRow, history: HistoryStore, instance: s
   const parsed = raw ? parseReviewOutput(raw) : undefined;
   const changes: HistoryReviewChange[] = parsed?.ok
     ? parsed.parsed.output.changes.map((change) => ({
-        action: change.action,
+        ...recordedAction(change),
         name: change.name,
-        ...(change.action === 'write-file' ? { file: change.file } : {}),
         ...(change.reason ? { reason: change.reason } : {}),
       }))
     : [];
