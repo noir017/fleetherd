@@ -34,6 +34,8 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'fast-model' },
     { kind: 'schedule-add', at: '+30m', bash: 'du -sh /', timeoutMs: 60_000, cwd: '/tmp' },
     { kind: 'schedule-edit', id: 'a1b2c3', agent: 'oc', cwd: '/srv/app', cron: '0 9 * * *' },
+    { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'p', tags: ['ci', 'release'] },
+    { kind: 'schedule-edit', id: 'a1b2c3', tags: [] },
     { kind: 'schedule-list' },
     { kind: 'schedule-list', id: 'a1b2c3' },
     { kind: 'schedule-op', id: 'a1b2c3', op: 'remove' },
@@ -95,6 +97,7 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     // The schedule arms check shape only (buildTask owns the cross-field rules), but shape strictly.
     ['schedule-add unknown session', { token: TOKEN, action: { kind: 'schedule-add', cron: 'x', prompt: 'p', session: 'forever' } }],
     ['schedule-add extra field', { token: TOKEN, action: { kind: 'schedule-add', cron: 'x', prompt: 'p', shell: 'zsh' } }],
+    ['schedule-add tags not a list', { token: TOKEN, action: { kind: 'schedule-add', cron: 'x', prompt: 'p', tags: 'ci' } }],
     ['schedule-add empty prompt', { token: TOKEN, action: { kind: 'schedule-add', cron: 'x', prompt: '' } }],
     ['schedule-op unknown op', { token: TOKEN, action: { kind: 'schedule-op', id: 'a', op: 'explode' } }],
     ['schedule-op missing id', { token: TOKEN, action: { kind: 'schedule-op', op: 'remove' } }],

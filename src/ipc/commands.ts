@@ -103,7 +103,8 @@ export const HELP_TOPICS: HelpTopic[] = [
       '--channel is where output goes (ids from `talkcode channels`); default this conversation.',
       'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped.',
       '`add` and `show` print the task id; `list` shows every task with its next run and last result; pause / resume / run (run it now, once) / rm take the id.',
-      '`edit <id> [options]` changes a task in place: --agent, --cwd, --model, --cron / --at / --tz, --name, --prompt, and --bash / --timeout for a bash task. The id, the run count and the last result stay; the next run is recomputed from now under the new time rule, and the gateway posts the updated card. What a task IS cannot change: --session, prompt ↔ bash and --channel are refused — `rm` it and add a new one. A daily task whose agent or directory changes opens a new topic for the rest of today; the day\'s earlier topic is left as it is.',
+      '--tag labels a task for the web UI\'s task list: one comma-separated list, at most 5 tags of up to 24 characters each, no spaces (they are trimmed and lowercased). edit replaces the whole set; --tag "" clears it.',
+      '`edit <id> [options]` changes a task in place: --agent, --cwd, --model, --cron / --at / --tz, --name, --tag, --prompt, and --bash / --timeout for a bash task. The id, the run count and the last result stay; the next run is recomputed from now under the new time rule, and the gateway posts the updated card. What a task IS cannot change: --session, prompt ↔ bash and --channel are refused — `rm` it and add a new one. A daily task whose agent or directory changes opens a new topic for the rest of today; the day\'s earlier topic is left as it is.',
       'Where you have a schedule tool, it is this same command.',
     ],
   },
@@ -466,10 +467,19 @@ const durationArg = (value: string): number => {
 };
 
 /** `schedule add`'s own options, by commander's camel-cased key — refused on every other action. */
-const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'prompt', 'bash', 'agent', 'session', 'cwd', 'model', 'timeout'] as const;
+const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'session', 'cwd', 'model', 'timeout'] as const;
 
 /** What `schedule edit` may set: add's options minus `--session`, plus nothing of its own. */
-const SCHEDULE_EDIT_KEYS = ['cron', 'at', 'tz', 'name', 'prompt', 'bash', 'agent', 'cwd', 'model', 'timeout'] as const;
+const SCHEDULE_EDIT_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'cwd', 'model', 'timeout'] as const;
+
+/**
+ * `--tag a,b` → the raw pieces. Splitting only: the trim/lowercase/dedupe and the limits are
+ * core/schedule.ts's normalizeTags, which every surface (this command, the native tool, the web
+ * UI) reaches through one call. An empty string is a defined empty list, which edit reads as
+ * "clear the tags"; leaving the flag out is undefined, which keeps them.
+ */
+const tagList = (v: unknown): string[] | undefined =>
+  typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
 
 function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
   const session = str(opts.session);
@@ -480,6 +490,7 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
     kind: 'schedule-add',
     channelId: str(opts.channel),
     name: str(opts.name),
+    tags: tagList(opts.tag),
     cron: str(opts.cron),
     at: str(opts.at),
     tz: str(opts.tz),
@@ -518,6 +529,7 @@ function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcActio
     kind: 'schedule-edit',
     id: taskId,
     name: str(opts.name),
+    tags: tagList(opts.tag),
     cron: str(opts.cron),
     at: str(opts.at),
     tz: str(opts.tz),
@@ -531,7 +543,7 @@ function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcActio
   const changed = SCHEDULE_EDIT_KEYS.some((k) => opts[k] !== undefined);
   if (!changed) {
     throw new Error(
-      'schedule edit needs something to change: --agent, --cwd, --model, --cron, --at, --tz, --name, --prompt, --bash or --timeout'
+      'schedule edit needs something to change: --agent, --cwd, --model, --cron, --at, --tz, --name, --tag, --prompt, --bash or --timeout'
     );
   }
   return action;
@@ -948,6 +960,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '--agent <id>', description: "add/edit: who runs --prompt (default: this conversation's agent; edit keeps the task's)" },
       { flags: '--model <id>', description: "add/edit: model for a --session new or daily task (default: the agent's configured model)" },
       { flags: '--name <name>', description: 'add/edit: short name for lists and cards' },
+      { flags: '--tag <a,b>', description: 'add/edit: labels for the task list, comma-separated (max 5, 24 chars each); edit replaces the whole set, --tag "" clears it' },
       { flags: '--cwd <dir>', description: 'add/edit: working directory for --bash, --session new or --session daily' },
       { flags: '--timeout <duration>', description: 'add/edit: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
     ],

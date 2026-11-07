@@ -91,6 +91,40 @@ describe('ScheduleStore', () => {
     expect(error.mock.calls[0]!.join(' ')).toMatch(/fixed-session task cannot name a model/);
   });
 
+  it('loads a task written before tags existed, with no field added', () => {
+    const store = new ScheduleStore(
+      fileWith([{ ...base, run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } }])
+    );
+    expect(store.get('a1b2c3')!.tags).toBeUndefined();
+  });
+
+  it('round-trips tags through a reload', () => {
+    const file = fileWith([
+      { ...base, tags: ['ci', 'release'], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } },
+    ]);
+    expect(new ScheduleStore(file).get('a1b2c3')!.tags).toEqual(['ci', 'release']);
+  });
+
+  it('drops a task whose file carries a tag the rule would refuse, and says why', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new ScheduleStore(
+      fileWith([
+        { ...base, tags: ['Two Words'], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } },
+      ])
+    );
+    expect(store.list()).toEqual([]);
+    expect(error.mock.calls[0]!.join(' ')).toMatch(/tags/);
+  });
+
+  it('drops a task whose file holds tags an edit would have normalized', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new ScheduleStore(
+      fileWith([{ ...base, tags: ['CI'], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } }])
+    );
+    expect(store.list()).toEqual([]);
+    expect(error.mock.calls[0]!.join(' ')).toMatch(/not normalized/);
+  });
+
   it('round-trips a daily task through a reload', () => {
     const file = fileWith([{ ...base, run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'daily' } }]);
     const store = new ScheduleStore(file);

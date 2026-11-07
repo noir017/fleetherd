@@ -72,9 +72,10 @@ export const NATIVE_TOOLS: readonly NativeTool[] = [
       'Tasks that run later or repeatedly — a prompt an agent answers, or a bash command — kept ' +
       'outside this session, so they survive restarts and idle shutdowns, unlike a session\'s own ' +
       'scheduler. Output goes to this conversation unless channel names another. If the time, time ' +
-      'zone or destination is unclear, ask first. add needs cron or at, and prompt or bash; edit ' +
-      'changes fields of an existing task and keeps its id and history; show, pause, resume, run ' +
-      '(now, once) and rm take the id that add and list print.',
+      'zone or destination is unclear, ask first. add needs cron or at, and prompt or bash; tag ' +
+      'labels a task for the web UI task list (comma-separated, max 5); edit changes fields of an ' +
+      'existing task and keeps its id and history; show, pause, resume, run (now, once) and rm ' +
+      'take the id that add and list print.',
     positionals: {
       action: 'what to do',
       id: 'the task id, for show / edit / pause / resume / run / rm',

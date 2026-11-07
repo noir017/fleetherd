@@ -63,7 +63,7 @@ describe('toolInputSchema', () => {
     const p = props('schedule');
     expect(p.action!.enum).toEqual(['add', 'list', 'show', 'edit', 'pause', 'resume', 'run', 'rm']);
     expect(p.session!.enum).toEqual(['fixed', 'new', 'daily']);
-    for (const key of ['cron', 'at', 'tz', 'prompt', 'bash', 'agent', 'model', 'name', 'cwd', 'timeout', 'channel']) {
+    for (const key of ['cron', 'at', 'tz', 'prompt', 'bash', 'agent', 'model', 'name', 'tag', 'cwd', 'timeout', 'channel']) {
       expect(p[key], key).toBeDefined();
     }
     expect(toolInputSchema(tool('schedule')).required).toEqual(['action']);
@@ -100,6 +100,11 @@ describe('toolAction', () => {
   it('runs option parsers exactly as commander would (10m → ms)', () => {
     const action = toolAction(tool('schedule'), { action: 'add', at: '+30m', bash: 'backup.sh', timeout: '10m' });
     expect(action).toMatchObject({ kind: 'schedule-add', at: '+30m', bash: 'backup.sh', timeoutMs: 600_000 });
+  });
+
+  it('passes --tag through as a list, the same as the shell command', () => {
+    const action = toolAction(tool('schedule'), { action: 'add', cron: '0 8 * * *', prompt: 'brief', tag: 'ci, deploy' });
+    expect(action).toMatchObject({ kind: 'schedule-add', tags: ['ci', 'deploy'] });
   });
 
   it('passes a model through as the shell command would', () => {

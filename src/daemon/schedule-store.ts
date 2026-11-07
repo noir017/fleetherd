@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import type { ScheduleTask } from '../core/schedule.js';
+import { normalizeTags, type ScheduleTask } from '../core/schedule.js';
 
 /**
  * Scheduled tasks on disk (`<configDir>/schedules.json`) — its own file, not a section of
@@ -53,6 +53,10 @@ const TaskSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9]{4,16}$/),
     name: z.string().min(1),
+    // Optional is the migration: every file written before tags existed has none. The bound is
+    // only a shape guard; normalizeTags below is the rule itself, so a hand-edited file cannot
+    // load a tag the panel would then show differently from what an edit would store.
+    tags: z.array(z.string().max(200)).max(50).optional(),
     when: WhenSchema,
     run: RunSchema,
     target: TargetSchema,
@@ -98,6 +102,16 @@ const TaskSchema = z
     // for a person's own topic, where the model belongs to whoever is talking.
     if (t.run.kind === 'agent' && t.run.session === 'fixed' && t.run.model !== undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a fixed-session task cannot name a model' });
+    }
+    // The stored tags must already be what the one rule (core/schedule.ts normalizeTags) produces:
+    // lowercase, unique, within the limits. A file that says otherwise is not silently rewritten.
+    if (t.tags !== undefined) {
+      const normalized = normalizeTags(t.tags);
+      if (!normalized.ok) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['tags'], message: normalized.error });
+      } else if (normalized.tags.length !== t.tags.length || normalized.tags.some((tag, i) => tag !== t.tags![i])) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['tags'], message: 'tags are not normalized (lowercase, unique, trimmed)' });
+      }
     }
   });
 

@@ -1952,6 +1952,8 @@ describe('WebRoom: the scheduled-task panel', () => {
   const task: SchedulePanelTask = {
     id: 'a1b2c3',
     name: 'Morning CI',
+    tags: ['ci'],
+    createdAt: Date.UTC(2026, 10, 1, 0, 0, 0),
     state: 'active',
     when: '0 8 * * * (Asia/Shanghai)',
     next: '2026-11-05 08:00',
@@ -1989,6 +1991,21 @@ describe('WebRoom: the scheduled-task panel', () => {
     expect(room.schedules()).toEqual({ enabled: true, tasks: [task] });
     expect(room.scheduleOp('a1b2c3', 'pause')).toEqual({ ok: true, tasks: [{ ...task, state: 'paused' }] });
     expect(ops).toEqual(['a1b2c3:pause']);
+  });
+
+  it('forwards the whole tag set with the tags action', () => {
+    const { room } = attached();
+    const calls: Array<{ id: string; action: string; tags?: string[] }> = [];
+    room.useSchedulePanel({
+      list: () => [task],
+      op: (id, action, tags) => {
+        calls.push({ id, action, ...(tags !== undefined ? { tags } : {}) });
+        return { ok: true, tasks: [{ ...task, tags: ['ops'] }] };
+      },
+    });
+
+    expect(room.scheduleOp('a1b2c3', 'tags', ['ops'])).toEqual({ ok: true, tasks: [{ ...task, tags: ['ops'] }] });
+    expect(calls).toEqual([{ id: 'a1b2c3', action: 'tags', tags: ['ops'] }]);
   });
 });
 

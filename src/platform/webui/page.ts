@@ -469,6 +469,11 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-subtab .sched-count{margin-left:4px;font-weight:500;color:#6b7683}
 .sched-subtab.on .sched-count{color:#94a3b8}
 #schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
+/* The task list's bar sits between the sub-tabs and the scrolling body, outside #schedules-list:
+   that list is redrawn with innerHTML on every poll, and the bar's caret and panel live in the
+   DOM it would otherwise replace. Its own border-bottom would double the sub-nav's line. */
+#sched-filter{flex:0 0 auto}
+#sched-filter .filterbar{padding:8px;border-bottom:0}
 #schedules-list{display:flex;flex-direction:column;gap:6px}
 /* A scheduled run, as the Sessions tab draws it: one line per topic, because there can be many
    and the thing being scanned for is which one is still working or waiting. */
@@ -499,6 +504,21 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-item.running .sched-dot{box-shadow:0 0 6px rgba(56,189,248,.8);animation:pulse 1.5s infinite}
 #app.calm .sched-item.running .sched-dot{animation:none}
 .sched-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
+/* A task's labels, under its name: the same chip the filter panel's Tags group draws, so a tag
+   reads as one thing in both places. */
+.sched-tags{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.sched-tag{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:10.5px;color:#a8a8a8;background:#232323;line-height:1.55}
+.sched-tag .ic{width:9px;height:9px;flex:none;opacity:.8}
+.sched-tag>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sched-tag-x{display:inline-flex;align-items:center;background:none;border:0;color:inherit;cursor:pointer;padding:0 0 0 1px;line-height:1}
+.sched-tag-x:hover{color:#f87171}
+.sched-tag-x .ic{width:9px;height:9px;opacity:1}
+.sched-detail-tags{margin-top:8px}
+.sched-tag-edit{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:4px}
+.sched-tag-add{display:inline-flex;align-items:center;gap:3px;padding:0 6px;border:1px dashed #3a3a3a;border-radius:9px;color:var(--dim);line-height:1.55}
+.sched-tag-add .ic{width:9px;height:9px;flex:none}
+.sched-tag-add input{width:64px;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:10.5px;padding:0}
+.sched-tag-add:focus-within{border-color:#555;color:var(--fg)}
 /* A word only for the states that are not the ordinary one: an ACTIVE tag on every card is a
    line of text that tells nobody anything. */
 .sched-state{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;background:#262626}
@@ -531,6 +551,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-acts button.confirm{background:rgba(248,113,113,.16);border-color:#7f1d1d;color:#fca5a5}
 #schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
+.sched-none{display:flex;align-items:center;gap:8px}
+.sched-none .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
+.sched-none .fb-clear:hover{text-decoration:underline}
 /* ── The Reviews tab ─────────────────────────────────────────────────────────
    A review is a background event, not a control: one line per review, and the rest behind a tap. */
 #sched-reviews-list{display:flex;flex-direction:column;gap:6px}
@@ -1316,6 +1339,7 @@ const SCRIPT = `
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
       schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
+      schedFilterHost=$('sched-filter'),
       schedClose=$('schedules-close'), schedNote=$('schedules-note'),
       schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
       schedSubnav=$('sched-subnav'),
@@ -1381,6 +1405,9 @@ const SCRIPT = `
   // The side panel: whether it is showing, the last task list drawn, and its refresh timer.
   // See "The side panel" below.
   var schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
+  // The task list's bar, and which cards are open across a repaint. The bar's own state is in
+  // makeFilterBar; this is only the instance, and null until the DOM below is reached.
+  var schedFilter=null, schedOpen={};
   // Which of the panel's lists is on screen: Scheduled vs Reviews, and Tasks vs Sessions inside Scheduled.
   // Persisted, because it is a preference about the workspace rather than about one visit.
   var schedTab='scheduled', schedSubtab='tasks';
@@ -2239,6 +2266,9 @@ const SCRIPT = `
 
     schedSubnav.hidden = isReviews;
     revPane.hidden = !isReviews;
+    // The bar belongs to the Tasks list only: Sessions is a list of run topics and Reviews is a
+    // different kind of thing, and a search box over either would filter nothing it names.
+    schedFilterHost.hidden = isReviews || schedSubtab === 'sessions';
 
     if(!isReviews){
       var isSessions = schedSubtab === 'sessions';
@@ -2378,16 +2408,134 @@ const SCRIPT = `
     return '';
   }
 
+  /** Every tag on a task, or an empty list — the DTO always carries an array. */
+  function schedTags(t){
+    return t.tags && t.tags.length ? t.tags : [];
+  }
+
+  /** The task behind a card, for an action that starts in the card's own detail. */
+  function schedTask(id){
+    for(var i=0;i<schedTasks.length;i++) if(schedTasks[i].id === id) return schedTasks[i];
+    return null;
+  }
+
+  /**
+   * The four values the Status group filters by. Running is its own value rather than part of
+   * Active: a run in flight is the one thing on this list that is happening now, and the card
+   * already says so. Ended is expired and done together — both mean "will not run again", which is
+   * the question the filter answers.
+   */
+  function schedStatusKey(t){
+    if(t.running) return 'running';
+    if(t.state === 'paused') return 'paused';
+    if(t.state === 'active') return 'active';
+    return 'ended';
+  }
+
+  /**
+   * The bar's option lists, rebuilt from the tasks in hand: a tag that no task carries would
+   * filter the list to nothing with no chip left to explain why. Untagged is offered always, and
+   * its value is a string no tag can be — a tag cannot contain whitespace, so a leading space is
+   * outside the tag alphabet.
+   */
+  function schedFilterGroups(){
+    var counts={running:0, active:0, paused:0, ended:0}, tags={}, order=[], untagged=0, i;
+    for(i=0;i<schedTasks.length;i++){
+      var t=schedTasks[i], list=schedTags(t);
+      counts[schedStatusKey(t)]++;
+      if(!list.length) untagged++;
+      for(var k=0;k<list.length;k++){
+        if(tags[list[k]] === undefined){ tags[list[k]]=0; order.push(list[k]); }
+        tags[list[k]]++;
+      }
+    }
+    order.sort(function(a,b){ return a<b?-1:a>b?1:0; });
+    var tagOpts=[];
+    for(i=0;i<order.length;i++) tagOpts.push({value:order[i], label:order[i], icon:'tag', count:tags[order[i]]});
+    tagOpts.push({value:' untagged', label:'Untagged', icon:'tag', count:untagged});
+    return {groups:[
+      {id:'status', label:'Status', options:[
+        {value:'running', label:'Running', count:counts.running},
+        {value:'active', label:'Active', count:counts.active},
+        {value:'paused', label:'Paused', count:counts.paused},
+        {value:'ended', label:'Ended', count:counts.ended}
+      ]},
+      {id:'tags', label:'Tags', options:tagOpts}
+    ]};
+  }
+
+  /**
+   * Whether a task survives the bar. Inside a group the selected values are a union, across
+   * groups an intersection — the same reading as the topic list's bar. The keyword is split on
+   * whitespace and every word has to hit somewhere: the name, the prompt or command, or the
+   * target (a resolved topic title too — that is what "posts to …" says).
+   */
+  function schedMatch(t, words, sel){
+    if(words.length){
+      var hay = (t.name || '') + ' ' + (t.detail || '') + ' ' + (t.target || '') + ' ' + schedTarget(t);
+      hay = hay.toLowerCase();
+      for(var w=0;w<words.length;w++) if(hay.indexOf(words[w]) < 0) return false;
+    }
+    var v = sel.status;
+    if(v && v.length && v.indexOf(schedStatusKey(t)) < 0) return false;
+    v = sel.tags;
+    if(v && v.length){
+      var tags = schedTags(t), hit = false;
+      if(!tags.length) hit = v.indexOf(' untagged') >= 0;
+      else for(var i=0;i<tags.length;i++) if(v.indexOf(tags[i]) >= 0){ hit = true; break; }
+      if(!hit) return false;
+    }
+    return true;
+  }
+
+  /**
+   * The order the rows are drawn in. Status is the daemon's own order — next run first, then
+   * paused, then ended — and the direction reverses it. The other fields put rows with no value
+   * last in BOTH directions: "never run" is not an old date, and a task that will not run again
+   * has no next run to sort by; both belong at the bottom whichever way the column is read.
+   */
+  function schedSorted(rows, fs){
+    var sort = fs.sort || 'status', desc = fs.dir === 'desc', i;
+    if(sort === 'status'){
+      return rows.slice().sort(function(a,b){ return (a.i - b.i) * (desc ? -1 : 1); });
+    }
+    var key = sort === 'next'
+      ? function(r){ return r.t.nextAt; }
+      : sort === 'last'
+        ? function(r){ return r.t.last ? r.t.last.at : undefined; }
+        : function(r){ return r.t.createdAt; };
+    var valued=[], missing=[];
+    for(i=0;i<rows.length;i++) (key(rows[i]) === undefined ? missing : valued).push(rows[i]);
+    valued.sort(function(a,b){
+      var d = key(a) - key(b);
+      return d ? (desc ? -d : d) : a.i - b.i;
+    });
+    return valued.concat(missing);
+  }
+
+  /** A task's tags as chips under its name. */
+  function schedTagChips(t){
+    var tags = schedTags(t);
+    if(!tags.length) return '';
+    var h = '<div class="sched-tags">';
+    for(var i=0;i<tags.length;i++){
+      h += '<span class="sched-tag">' + IC.icon.tag + '<span>' + text(tags[i]) + '</span></span>';
+    }
+    return h + '</div>';
+  }
+
   /**
    * One task, in the order the questions come: what is it, when does it run, when next, where does
    * it post, how did last time go. The name and the schedule carry the weight; the countdown is
-   * the one live number; the rest is a quiet line under them. The prompt, the run mode and the
-   * bookkeeping stay behind the card, which is what clicking it is for.
+   * the one live number; the rest is a quiet line under them. The prompt, the run mode, the tags
+   * and the bookkeeping stay behind the card, which is what clicking it is for.
    */
   function schedCard(t){
     var state = t.state || 'active';
-    var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + '" data-id="' + text(t.id) + '">';
+    var open = schedOpen[t.id] === true;
+    var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + (open ? ' open' : '') + '" data-id="' + text(t.id) + '">';
     h += '<div class="sched-row"><span class="sched-dot"></span><span class="sched-name">' + text(t.name) + '</span>' + schedStateTag(t, state) + '</div>';
+    h += schedTagChips(t);
     h += '<div class="sched-when">' + text(t.when) + '</div>';
     var sub = '';
     if(t.running) sub += '<span class="sched-next">running now</span><span class="sched-sep">·</span>';
@@ -2399,9 +2547,18 @@ const SCRIPT = `
     h += '<div class="sched-sub">' + sub + '</div>';
     var last = schedLast(t);
     if(last) h += '<div class="sched-last' + (t.last.status !== 'ok' ? ' bad' : '') + '" title="' + text(t.last.atText) + '">' + text(last) + '</div>';
-    h += '<div class="sched-detail" hidden>';
+    h += '<div class="sched-detail"' + (open ? '' : ' hidden') + '>';
     h += '<div class="sched-detail-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div>';
     h += '<div class="sched-detail-body">' + text(t.detail) + '</div>';
+    h += '<div class="sched-detail-tags"><div class="sched-detail-label">Tags</div><div class="sched-tag-edit">';
+    var tags = schedTags(t);
+    for(var i=0;i<tags.length;i++){
+      h += '<span class="sched-tag">' + IC.icon.tag + '<span>' + text(tags[i]) + '</span>'
+        + '<button type="button" class="sched-tag-x" data-tag-del="' + text(tags[i]) + '" title="Remove ' + text(tags[i]) + '" aria-label="Remove ' + text(tags[i]) + '">' + IC.icon.cross + '</button></span>';
+    }
+    h += '<span class="sched-tag-add">' + IC.icon.plus
+      + '<input type="text" data-tag-input placeholder="tag" aria-label="Add a tag" autocomplete="off" spellcheck="false"></span>';
+    h += '</div></div>';
     var meta = t.run + ' · #' + t.id + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs');
     if(t.cwd) meta += ' · ' + t.cwd;
     if(t.expires) meta += ' · until ' + t.expires;
@@ -2415,29 +2572,52 @@ const SCRIPT = `
     return h;
   }
 
-  function paintSchedulesList(tasks){
-    schedTasks = tasks || [];
-    if(!schedTasks.length){
+  /** Draw the rows that survive the bar, and tell the bar how many did. */
+  function paintSchedTasks(){
+    var fs = schedFilter ? schedFilter.state() : {q:'', sel:{}, sort:'status', dir:'asc'};
+    var words = fs.q.trim() ? fs.q.trim().toLowerCase().split(/\\s+/) : [];
+    var rows = [], total = schedTasks ? schedTasks.length : 0;
+    for(var i=0;i<total;i++){
+      if(schedMatch(schedTasks[i], words, fs.sel)) rows.push({t:schedTasks[i], i:i});
+    }
+    rows = schedSorted(rows, fs);
+    if(!total){
       schedList.innerHTML = '<div class="sched-empty">' + (schedEnabled
         ? 'No scheduled tasks yet. Ask an agent in a topic — for example “every morning at 8, summarise the CI failures” — and it will be registered here.'
         : 'Scheduled tasks are not enabled in this daemon.') + '</div>';
+    } else if(!rows.length){
+      schedList.innerHTML = '<div class="sched-empty sched-none">No matching tasks<button type="button" class="fb-clear" data-sched-clear="1">Clear</button></div>';
     } else {
       var h = '';
-      for(var i=0;i<schedTasks.length;i++) h += schedCard(schedTasks[i]);
+      for(i=0;i<rows.length;i++) h += schedCard(rows[i].t);
       schedList.innerHTML = h;
     }
+    if(schedFilter) schedFilter.setCounts(rows.length, total);
+  }
+
+  function paintSchedulesList(tasks){
+    schedTasks = tasks || [];
+    if(schedFilter) schedFilter.setGroups(schedFilterGroups().groups);
+    paintSchedTasks();
     paintSchedCounts();
     paintSummary();
   }
 
-  function schedOp(id, action, btn){
+  /**
+   * tags is the whole new set for the "tags" action; every other action sends none. The panel
+   * is the acknowledgement, so no card is posted — the fresh list it answers with is what shows
+   * the change.
+   */
+  function schedOp(id, action, btn, tags){
     if(schedBusy) return;
     schedBusy = true;
     if(btn) btn.disabled = true;
+    schedNote.hidden = true;
+    var body = tags !== undefined ? {id:id, action:action, tags:tags} : {id:id, action:action};
     fetch('api/schedules/op', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({id:id, action:action}),
+      body:JSON.stringify(body),
       credentials:'same-origin'
     }).then(function(r){
       return r.json().catch(function(){ return { ok:false, error:'HTTP ' + r.status }; });
@@ -2452,6 +2632,35 @@ const SCRIPT = `
       armSched();
     });
   }
+
+  /**
+   * The task list's bar (makeFilterBar above). Same component as the topic list's, with a sort
+   * this list needs and that one does not. It only says what the options are and repaints the
+   * rows when a choice changes; schedMatch and schedSorted do the filtering and ordering.
+   *
+   * Mounted outside #schedules-list on purpose: that list is replaced with innerHTML on every
+   * poll, and the bar's caret, panel and chip nodes live in the DOM that would throw away.
+   */
+  schedFilter = makeFilterBar({
+    key:'aa_sched_filter',
+    placeholder:'Search tasks',
+    groups:[],
+    sort:{
+      options:[
+        {value:'status', label:'Status'},
+        {value:'next', label:'Next run'},
+        {value:'last', label:'Last run'},
+        {value:'created', label:'Created'}
+      ],
+      value:'status',
+      dir:'asc'
+    },
+    onChange:function(){ paintSchedTasks(); }
+  });
+  schedFilterHost.appendChild(schedFilter.el);
+  // Until the first list arrives there is nothing to offer; null says "not loaded", so a
+  // selection restored from storage is not pruned as if its tag had gone.
+  schedFilter.setGroups(null);
 
   schedToggle.addEventListener('click', function(){ setSchedules(!schedPane.isOpen()); });
   schedClose.addEventListener('click', function(){ setSchedules(false); });
@@ -2525,6 +2734,13 @@ const SCRIPT = `
   });
 
   schedList.addEventListener('click', function(e){
+    // The empty result's Clear. Before the card lookup: it lives inside #schedules-list.
+    var clearBtn = e.target.closest ? e.target.closest('[data-sched-clear]') : null;
+    if(clearBtn){
+      e.stopPropagation();
+      if(schedFilter) schedFilter.clear();
+      return;
+    }
     var opBtn = e.target.closest ? e.target.closest('[data-op]') : null;
     if(opBtn){
       e.stopPropagation();
@@ -2552,6 +2768,18 @@ const SCRIPT = `
       schedOp(id, op, opBtn);
       return;
     }
+    var tagDel = e.target.closest ? e.target.closest('[data-tag-del]') : null;
+    if(tagDel){
+      e.stopPropagation();
+      var tagItem = tagDel.closest ? tagDel.closest('.sched-item') : null;
+      var tagId = tagItem ? tagItem.getAttribute('data-id') : '';
+      var tag = tagDel.getAttribute('data-tag-del');
+      var tagged = tagId ? schedTask(tagId) : null;
+      if(tagged && tag) schedOp(tagId, 'tags', null, schedTags(tagged).filter(function(x){ return x !== tag; }));
+      return;
+    }
+    // The tag editor is inside the detail, and clicking its field is not a tap on the card.
+    if(e.target.closest && e.target.closest('.sched-tag-edit')) return;
     if(e.target.closest && e.target.closest('.sched-acts')) return;
     var card = e.target.closest ? e.target.closest('.sched-item') : null;
     if(!card) return;
@@ -2559,6 +2787,29 @@ const SCRIPT = `
     if(!detail) return;
     detail.hidden = !detail.hidden;
     card.classList.toggle('open', !detail.hidden);
+    // Remembered so a poll's repaint does not fold a card the person is reading.
+    var cardId = card.getAttribute('data-id');
+    if(cardId) schedOpen[cardId] = !detail.hidden;
+  });
+
+  /**
+   * The tag editor's one gesture: type a tag (or a comma-separated few) and press Enter. The
+   * whole set goes back, because that is what the operation replaces; core's normalizeTags
+   * trims, lowercases, dedupes and enforces the limits, and a refusal comes back as the panel's
+   * note like any other failed operation.
+   */
+  schedList.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' || e.isComposing) return;
+    var input = e.target.closest ? e.target.closest('[data-tag-input]') : null;
+    if(!input) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var item = input.closest ? input.closest('.sched-item') : null;
+    var id = item ? item.getAttribute('data-id') : '';
+    var task = id ? schedTask(id) : null;
+    var added = String(input.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+    if(!task || !added.length) return;
+    schedOp(id, 'tags', null, schedTags(task).concat(added));
   });
 
   // A timer is not worth running behind a hidden tab; ask once on the way back instead.
@@ -7202,6 +7453,9 @@ __GATE__
       <button type="button" class="sched-subtab on" id="sched-tab-tasks" role="tab" aria-selected="true" aria-controls="schedules-list">Tasks <span class="sched-count" id="sched-tab-tasks-n"></span></button>
       <button type="button" class="sched-subtab" id="sched-tab-sessions" role="tab" aria-selected="false" aria-controls="sched-sessions">Sessions <span class="sched-count" id="sched-tab-sessions-n"></span><span class="sched-tab-alert" id="sched-sessions-alert" hidden></span></button>
     </div>
+    <!-- The Tasks list's search, filters and sort. Built by makeFilterBar in the script, and
+         mounted outside #schedules-list: that list is redrawn with innerHTML on every poll. -->
+    <div id="sched-filter" hidden></div>
     <div id="schedules-body">
       <div id="schedules-note" hidden></div>
       <div id="schedules-list" role="tabpanel" aria-labelledby="sched-tab-tasks"></div>

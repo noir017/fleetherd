@@ -1131,6 +1131,8 @@ describe('webui server: traffic', () => {
     const task: SchedulePanelTask = {
       id: 'a1b2c3',
       name: 'Morning CI',
+      tags: ['ci'],
+      createdAt: Date.UTC(2026, 10, 1, 0, 0, 0),
       state: 'active',
       when: '0 8 * * * (Asia/Shanghai)',
       next: '2026-11-05 08:00',
@@ -1179,6 +1181,36 @@ describe('webui server: traffic', () => {
       expect(res.status).toBe(200);
       expect(calls).toEqual(['a1b2c3:pause']);
       expect(await res.json()).toEqual({ ok: true, tasks: [paused] });
+    });
+
+    it('carries a whole tag set through to the daemon, and requires it for the tags action', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const calls: Array<{ id: string; action: string; tags?: string[] }> = [];
+      room.useSchedulePanel({
+        list: () => [task],
+        op: (id, action, tags) => {
+          calls.push({ id, action, ...(tags !== undefined ? { tags } : {}) });
+          return { ok: true, tasks: [{ ...task, tags: ['ops', 'ci'] }] };
+        },
+      });
+
+      const res = await fetch(`${base}/api/schedules/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ id: 'a1b2c3', action: 'tags', tags: ['ops', 'ci'] }),
+      });
+      expect(res.status).toBe(200);
+      expect(calls).toEqual([{ id: 'a1b2c3', action: 'tags', tags: ['ops', 'ci'] }]);
+      expect((await res.json()).tasks[0].tags).toEqual(['ops', 'ci']);
+
+      const missing = await fetch(`${base}/api/schedules/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ id: 'a1b2c3', action: 'tags' }),
+      });
+      expect(missing.status).toBe(400);
+      expect(calls).toHaveLength(1);
     });
 
     it('hands back the service refusal, and refuses a body the page could not have sent', async () => {

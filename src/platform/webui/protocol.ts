@@ -145,12 +145,17 @@ export const CloseIdleRequestSchema = z.object({ topics: z.array(TopicId).min(1)
  * stays in the conversation with the agent, which is the one path that can be asked what a task
  * should do.
  */
-export const ScheduleOpRequestSchema = z
-  .object({
-    id: z.string().regex(/^[a-z0-9]{4,16}$/, 'not a task id'),
-    action: z.enum(['pause', 'resume', 'run', 'remove']),
-  })
-  .strict();
+const ScheduleTaskId = z.string().regex(/^[a-z0-9]{4,16}$/, 'not a task id');
+
+export const ScheduleOpRequestSchema = z.discriminatedUnion('action', [
+  z.object({ id: ScheduleTaskId, action: z.enum(['pause', 'resume', 'run', 'remove']) }).strict(),
+  // The tag editor sends the whole set. Its normalized form (trim/lowercase/dedupe, limits) is
+  // core/schedule.ts's normalizeTags, reached through ScheduleService.setTags — the same rule the
+  // CLI and the native tool use. Here only the shape: an array of strings, bounded.
+  z
+    .object({ id: ScheduleTaskId, action: z.literal('tags'), tags: z.array(z.string().max(200)).max(50) })
+    .strict(),
+]);
 
 /**
  * The status line's model switch: this topic, this model. The value is matched by the daemon

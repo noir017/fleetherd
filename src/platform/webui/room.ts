@@ -717,9 +717,9 @@ export class WebRoom {
   }
 
   /** Carry out one action on a task, with the fresh list when it worked. */
-  scheduleOp(id: string, action: SchedulePanelAction): SchedulePanelResult {
+  scheduleOp(id: string, action: SchedulePanelAction, tags?: string[]): SchedulePanelResult {
     if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
-    return this.schedulePanel.op(id, action);
+    return this.schedulePanel.op(id, action, tags);
   }
 
   /**

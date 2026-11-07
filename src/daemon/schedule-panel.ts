@@ -28,6 +28,8 @@ export function panelTask(task: ScheduleTask, now: number, running: boolean, ins
   return {
     id: task.id,
     name: task.name,
+    tags: task.tags ?? [],
+    createdAt: task.createdAt,
     state: task.state,
     when: describeWhen(task.when, true),
     ...(next !== undefined ? { nextAt: next, next: formatInZone(next, task.when.tz) } : {}),

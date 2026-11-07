@@ -1907,9 +1907,10 @@ export class Daemon {
       panelTasks(schedules.tasks(), schedules.now(), (id) => schedules.scheduler.isRunning(id), instance);
     return {
       list,
-      op: (id, action) => {
+      op: (id, action, tags) => {
         try {
-          schedules.op(id, action, undefined, false);
+          if (action === 'tags') schedules.setTags(id, tags ?? []);
+          else schedules.op(id, action, undefined, false);
           return { ok: true, tasks: list() };
         } catch (e) {
           return { ok: false, error: e instanceof Error ? e.message : String(e) };

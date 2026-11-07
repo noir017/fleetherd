@@ -8,7 +8,10 @@ import {
   FIXED_SESSION_WINDOW_MS,
   formatDay,
   formatInZone,
+  MAX_TAG_LENGTH,
+  MAX_TASK_TAGS,
   nextRunOf,
+  normalizeTags,
   parseAt,
   taskCardText,
   taskView,
@@ -482,5 +485,66 @@ describe('bashResultText', () => {
 
   it('says so when there was no output at all', () => {
     expect(bashResultText(t(), outcome({ tail: '  \n', bytes: 3 }), 600_000).text).toMatch(/\n\(no output\)$/);
+  });
+});
+
+describe('task tags', () => {
+  it('trims and lowercases every tag, drops duplicates, and keeps the order given', () => {
+    expect(normalizeTags([' CI ', 'ci', 'Deploy', 'deploy'])).toEqual({ ok: true, tags: ['ci', 'deploy'] });
+  });
+
+  it('takes exactly five tags and refuses a sixth, after dedupe', () => {
+    const five = ['a', 'b', 'c', 'd', 'e'];
+    expect(normalizeTags(five)).toEqual({ ok: true, tags: five });
+    expect(normalizeTags([...five, 'f'])).toEqual({
+      ok: false,
+      error: `a task takes at most ${MAX_TASK_TAGS} tags, got 6`,
+    });
+    // A duplicate does not use a slot: four distinct names plus a repeat is still four.
+    expect(normalizeTags([...five.slice(0, 4), 'a', 'e'])).toEqual({ ok: true, tags: five });
+  });
+
+  it('caps a tag at 24 characters and refuses whitespace or a comma inside one', () => {
+    const long = 'x'.repeat(MAX_TAG_LENGTH);
+    expect(normalizeTags([long])).toEqual({ ok: true, tags: [long] });
+    expect(normalizeTags([`${long}y`]).ok).toBe(false);
+    expect(normalizeTags(['two words'])).toEqual({
+      ok: false,
+      error: 'tag "two words" cannot contain whitespace or commas',
+    });
+    expect(normalizeTags(['a,b']).ok).toBe(false);
+  });
+
+  it('treats an empty list as no tags, which is what --tag "" clears with', () => {
+    expect(normalizeTags([])).toEqual({ ok: true, tags: [] });
+    expect(normalizeTags(['', '  '])).toEqual({ ok: true, tags: [] });
+  });
+
+  it('stores tags on a new task and leaves the field off when none were given', () => {
+    expect(built({ cron: '0 8 * * *', prompt: 'x', tags: ['ci', 'release'] }).tags).toEqual(['ci', 'release']);
+    expect(built({ cron: '0 8 * * *', prompt: 'x' }).tags).toBeUndefined();
+    expect(built({ cron: '0 8 * * *', prompt: 'x', tags: [] }).tags).toBeUndefined();
+  });
+
+  it('refuses a bad tag on add, naming the limit', () => {
+    expect(refusal({ cron: '0 8 * * *', prompt: 'x', tags: ['a', 'b', 'c', 'd', 'e', 'f'] })).toMatch(/at most 5 tags/);
+  });
+
+  it('edit replaces the whole set, and an empty list removes it', () => {
+    const t = built({ cron: '0 8 * * *', prompt: 'x', tags: ['ci', 'release'] });
+    const replaced = editTask(t, { tags: ['ops'] }, ctx());
+    expect(replaced.ok && replaced.task.tags).toEqual(['ops']);
+
+    const cleared = editTask(t, { tags: [] }, ctx());
+    expect(cleared.ok && cleared.task.tags).toBeUndefined();
+
+    // Not naming them keeps them, exactly like every other field.
+    const kept = editTask(t, { name: 'renamed' }, ctx());
+    expect(kept.ok && kept.task.tags).toEqual(['ci', 'release']);
+  });
+
+  it('writes the tags on the card posted for a change', () => {
+    const t = built({ cron: '0 8 * * *', prompt: 'x', tags: ['ci', 'release'] });
+    expect(taskCardText(t, 'registered', NOW)).toContain('• Tags: `ci`, `release`');
   });
 });

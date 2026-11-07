@@ -10,6 +10,7 @@ import {
   formatDay,
   formatInZone,
   nextRunOf,
+  normalizeTags,
   runNoticeText,
   taskCardText,
   taskExpiredText,
@@ -296,6 +297,24 @@ export class ScheduleService {
     if (typeof result === 'string') throw new Error(result);
     if (op !== 'run') say(result, op === 'pause' ? 'paused' : 'resumed');
     return taskView(result, now, { here: caller });
+  }
+
+  /**
+   * Replace a task's tags — the web UI's tag editor. No card is posted (the panel is the
+   * acknowledgement, as with its other operations) and the scheduler is not re-armed: a label
+   * does not change when the task runs. Expired and finished tasks can still be tagged, because
+   * the list keeps them and filtering it is what the tags are for.
+   */
+  setTags(id: string, tags: readonly string[]): ScheduleTaskView {
+    const task = this.scheduler.get(id);
+    if (!task) throw new Error(`no scheduled task #${id}`);
+    const normalized = normalizeTags(tags);
+    if (!normalized.ok) throw new Error(normalized.error);
+    const { tags: _old, ...rest } = task;
+    const next: ScheduleTask = normalized.tags.length ? { ...rest, tags: normalized.tags } : rest;
+    this.store.put(next);
+    console.log(`[schedule] #${id} tagged ${normalized.tags.join(', ') || '(none)'}`);
+    return taskView(next, this.clock.now());
   }
 
   /** One task by id, for the menu's re-read at every click. */

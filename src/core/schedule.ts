@@ -46,6 +46,38 @@ export const CATCH_UP_GRACE_MS = 3_600_000;
 export const DEFAULT_BASH_TIMEOUT_MS = 10 * 60_000;
 export const MAX_BASH_TIMEOUT_MS = 6 * 3_600_000;
 
+/** A task's labels: at most five, each at most this long, lowercase, no whitespace or comma. */
+export const MAX_TASK_TAGS = 5;
+export const MAX_TAG_LENGTH = 24;
+
+/**
+ * The one rule for a task's tags, wherever they come from — `schedule add/edit --tag`, a native
+ * tool call, or the web UI's tag editor. Trim and lowercase first, then drop duplicates, then
+ * check the limits: `--tag "CI, ci"` is one tag, not a refusal.
+ *
+ * A tag is a filter chip, so it has to be one word: whitespace would be split by the search box's
+ * own word matching, and a comma is the CLI's separator. Lowercase keeps `CI` and `ci` from being
+ * two chips in the panel.
+ */
+export function normalizeTags(input: readonly string[]): { ok: true; tags: string[] } | { ok: false; error: string } {
+  const tags: string[] = [];
+  for (const raw of input) {
+    const tag = raw.trim().toLowerCase();
+    if (!tag) continue;
+    if (tag.length > MAX_TAG_LENGTH) {
+      return { ok: false, error: `tag "${tag}" is longer than ${MAX_TAG_LENGTH} characters` };
+    }
+    if (/[\s,]/.test(tag)) {
+      return { ok: false, error: `tag "${tag}" cannot contain whitespace or commas` };
+    }
+    if (!tags.includes(tag)) tags.push(tag);
+  }
+  if (tags.length > MAX_TASK_TAGS) {
+    return { ok: false, error: `a task takes at most ${MAX_TASK_TAGS} tags, got ${tags.length}` };
+  }
+  return { ok: true, tags };
+}
+
 export type ScheduleWhen = { cron: string; tz: string } | { at: number; tz: string };
 
 export type ScheduleRun =
@@ -111,6 +143,8 @@ export interface ScheduleDaySession {
 export interface ScheduleTask {
   id: string;
   name: string;
+  /** Free labels for the task list's filter; absent on tasks written before tags existed. */
+  tags?: string[];
   when: ScheduleWhen;
   run: ScheduleRun;
   target: ScheduleTarget;
@@ -327,6 +361,7 @@ export function decide(task: ScheduleTask, now: number, graceMs = CATCH_UP_GRACE
 /** What `schedule add` carries, already structurally validated at the IPC boundary. */
 export interface NewTaskInput {
   name?: string;
+  tags?: string[];
   cron?: string;
   at?: string;
   tz?: string;
@@ -393,9 +428,12 @@ export function buildTask(input: NewTaskInput, ctx: NewTaskContext): Built {
   }
   const when = parseWhen(input, ctx);
   if ('error' in when) return fail(when.error);
+  const tags = taskTags(input);
+  if ('error' in tags) return fail(tags.error);
 
   const base: TaskBase = {
     id: ctx.id,
+    ...tags,
     when,
     target: {
       platform: ctx.target.platform,
@@ -419,6 +457,14 @@ export function buildTask(input: NewTaskInput, ctx: NewTaskContext): Built {
     case 'daily':
       return buildDailyTask(input, prompt, ctx, base);
   }
+}
+
+/** The tags to store, or the refusal — `{}` when none were given, so the field stays absent. */
+function taskTags(input: NewTaskInput): { tags?: string[] } | { error: string } {
+  if (input.tags === undefined) return {};
+  const normalized = normalizeTags(input.tags);
+  if (!normalized.ok) return { error: normalized.error };
+  return normalized.tags.length ? { tags: normalized.tags } : {};
 }
 
 function parseWhen(input: NewTaskInput, ctx: NewTaskContext): ScheduleWhen | { error: string } {
@@ -566,6 +612,8 @@ function firstRunCheck(task: ScheduleTask, now: number): Built {
  */
 export interface EditTaskInput {
   name?: string;
+  /** The whole group: `[]` clears every tag, undefined keeps the task's own. */
+  tags?: string[];
   cron?: string;
   at?: string;
   tz?: string;
@@ -689,6 +737,7 @@ function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
   const run = task.run;
   const common: NewTaskInput = {
     name: input.name ?? task.name,
+    ...(input.tags !== undefined ? { tags: input.tags } : task.tags !== undefined ? { tags: task.tags } : {}),
     ...mergedTime(task, input),
     tz: input.tz ?? task.when.tz,
     ...(input.cwd !== undefined ? { cwd: input.cwd } : run.cwd !== undefined ? { cwd: run.cwd } : {}),
@@ -806,6 +855,7 @@ export function taskCardText(task: ScheduleTask, verb: string, now: number): str
     `• Posts to: \`${targetId(task.target)}\``,
     `• ${task.run.kind === 'bash' ? 'Command' : 'Prompt'}: ${body(task)}`,
   ];
+  if (task.tags?.length) lines.push(`• Tags: ${task.tags.map((tag) => `\`${tag}\``).join(', ')}`);
   if (task.state !== 'active') lines.push(`• State: ${STATE_LABEL[task.state]}`);
   lines.push('`/setting schedule` lists, pauses and deletes tasks.');
   return lines.join('\n');
@@ -846,6 +896,7 @@ export function taskView(task: ScheduleTask, now: number, opts: { detail?: boole
   const view = {
     id: task.id,
     name: task.name,
+    tags: task.tags?.join(', ') ?? '',
     state: task.state,
     when: describeWhen(task.when, true),
     next: next !== undefined ? formatInZone(next, tz) : '',
