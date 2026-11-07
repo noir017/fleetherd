@@ -869,8 +869,8 @@ export class Daemon {
 
   /**
    * Automatic review of quiet conversations (daemon/review.ts). Present whenever the library is:
-   * the sweep itself is a no-op until `review.agent` names a reviewer, so a `/reload` that adds or
-   * removes one needs no re-wiring.
+   * the sweep itself is a no-op until `review` names a reviewer (an agent or an endpoint), so a
+   * `/reload` that adds or removes one needs no re-wiring.
    */
   private readonly reviews?: ReviewService;
 

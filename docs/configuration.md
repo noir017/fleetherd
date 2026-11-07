@@ -26,7 +26,7 @@ agents:                       # at least one; routing picks by id
   - id: codex
     harness: codex
   - id: ag
-    harness: agy               # also the one that can review conversations (see below)
+    harness: agy               # also reviews quiet conversations (see below)
   - id: claude-devbox
     harness: claude
     host: devbox              # runs on another machine — see Remote hosts
@@ -53,8 +53,8 @@ session:
 access:
   allowFrom: ["discord-main:123456"]   # <instanceId>:userId; empty = anyone
 
-review:                       # optional; off unless an agy agent is named
-  agent: ag                   # one agy -p on that agent's machine reviews a quiet conversation
+review:                       # optional; off unless a reviewer is named
+  agent: ag                   # any agent; or api: {url, key, model} for an OpenAI-compatible endpoint
   model: gemini-3.8-flash-high
 
 skills:                       # optional; the managed skills' shared git repository

@@ -242,21 +242,49 @@ into every agent's skills as well.
 ## Auto review
 
 A conversation that goes quiet can teach the library something: a step that was missing, a
-mistake the person corrected, a technique worth keeping. Turn it on by naming the agent that does
-the reviewing — it must be an `agy` agent, and a review is one `agy -p` on the machine that agent
-runs on:
+mistake the person corrected, a technique worth keeping. Turn it on by naming the reviewer — any
+agent, on any host:
 
 ```yaml
 review:
-  agent: ag@uniagent             # off unless this is set
+  agent: ag@uniagent             # off unless a reviewer is named
   model: gemini-3.8-flash-high   # optional; the agent's own model otherwise
 ```
 
-Both fields are also [settings from chat](settings.md): `/setting review.agent ag@uniagent`
-turns it on, `/setting review.agent off` turns it off, and `/setting review.model` chooses a
-model for reviews alone. The row offers only `agy` agents, because a review runs `agy -p` with
-every tool denied; a change is read at the start of the next sweep, within a minute, without a
-restart.
+or an OpenAI-compatible endpoint (newapi, CLIProxyAPI and the like), instead of an agent:
+
+```yaml
+review:
+  api:
+    url: http://newapi:3000/v1   # the base, up to and including the version; /chat/completions is added
+    key: ${NEWAPI_API_KEY}       # ${VAR} is expanded like anywhere in config.yaml
+    model: gemini-3.8-flash
+```
+
+The reviewer only answers; the gateway makes the changes. How each kind is kept from changing
+anything itself:
+
+| reviewer | how a review runs | what it can do there |
+|---|---|---|
+| `api` | one request, the review as one message | nothing — no tools exist |
+| `agy` | one `agy -p` with every permission class denied | nothing |
+| `claude` | a session with no built-in tools and none of your settings, skills or MCP servers | nothing |
+| `opencode` | a session with every permission denied | nothing |
+| `codex` | a session with its shell off, in read-only mode | no reads or commands; a write it tries is refused, which ends that review as a failed attempt |
+| `custom`, `gemini`, `dsh` | your command with `review.args` added | whatever `review.args` leaves it — a write or command that asks first is refused |
+
+An agent reviewer runs on that agent's machine, in an empty temporary directory removed
+afterwards, with no MCP servers, and every permission request is refused, never shown to anyone.
+A harness whose read tool cannot be turned off may still read a file outside that directory; that
+is accepted. `review.args` exists for the harnesses the gateway knows no switch for: it is added
+to the command for reviews only, and is refused for any other harness. A review is not a
+conversation: it opens no topic, and it is filed only as the `review` session described below.
+
+`review.agent` and `review.model` are also [settings from chat](settings.md):
+`/setting review.agent ag@uniagent` turns it on, `/setting review.agent off` turns it off, and
+`/setting review.model` chooses a model for reviews alone. The row offers every agent; naming one
+replaces a `review.api` endpoint, which itself is set only in config.yaml, beside its key. A
+change is read at the start of the next sweep, within a minute, without a restart.
 
 A review runs when a conversation has been idle for an hour, nothing is running there, and the
 person has sent at least three messages since the last review. In practice it fires the moment
@@ -272,9 +300,8 @@ use, the full text of the skills that conversation used, the skill files that co
 wrote, with what they hold now (so it neither creates a second copy of a skill you just had written
 nor adds a rule the agent already put in a reference), and every file of your
 [instructions for agents](instructions.md) (so it does not suggest a preference you already
-set). It has no tools: it runs in an empty temporary directory with every
-tool denied, so it cannot read or write anything. It answers with a JSON list of changes, each with
-a reason, plus any preferences it noticed:
+set). It answers with a JSON list of changes, each with a reason, plus any preferences it
+noticed:
 
 - `edit` — exact replacements in `SKILL.md` or one of its files: each quoted original must occur
   exactly once, against the version the reviewer was given, or the change is refused. A review
@@ -295,14 +322,15 @@ When something changed, one line appears in the conversation that was reviewed:
 ```
 
 No change, no line. One review runs at a time, and one gets up to 30 minutes: a provider that
-queues a request for minutes, or that agy is already retrying, is waited out rather than cut off.
+queues a request for minutes, or that the reviewer is already retrying, is waited out rather than
+cut off.
 A conversation this feature has never seen is reviewed only when its newest message is under 24
 hours old — so turning this on for the first time reads the recent tail, not months of history;
 once it has a record (reviewed or failed), its watermark and the retry schedule decide. A failed
 review waits six hours before it is tried again, and the same batch of messages gets at most three
 attempts; after the third failure the review gives up, moves past that batch, and waits for three
 new messages. The exception is the provider having no capacity for the model — `No capacity
-available`, or `UNAVAILABLE` with a `503`, in what agy answered — or a run that reaches the
+available`, or `UNAVAILABLE` with a `503`, in what the reviewer answered — or a run that reaches the
 30-minute limit: agy retries a 503 itself, has no give-up limit, and can still be waiting when the
 review is killed, leaving nothing to read. That is not counted as an attempt and is retried in an
 hour. A failure that fails at once — no such host, a spawn failure, ssh refused — never reaches the

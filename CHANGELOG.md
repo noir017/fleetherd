@@ -9,6 +9,22 @@ What two days of the automatic review on a live gateway showed: it ran reliably,
 it produced went unread or unused, and the changes it made to a person's skills were right in fact
 and wrong in shape.
 
+### Added
+
+- **Any agent can review, or an OpenAI-compatible endpoint.** The review was one `agy -p`, so it
+  could only use agy's models and agy's quota. `review.agent` now takes an agent of any harness on
+  any host, and `review.api: {url, key, model}` sends the review as one `/chat/completions`
+  request to newapi, CLIProxyAPI or anything else that speaks it. A reviewer still cannot change
+  anything itself: an endpoint has no tools; claude, opencode and codex run one session of their
+  own in an empty directory, with no MCP servers, every permission request refused, and their
+  tools switched off — claude with none at all, opencode with every permission denied, codex
+  without its shell; agy stays on `agy -p` with every class denied, because `agy acp` reads no
+  settings. Each switch was measured with a prompt asking the agent to read a file outside its
+  directory, write one and run a command. A codex review whose write is refused ends as a failed
+  attempt. A `custom` reviewer, whose switches the gateway cannot know, gets `review.args` added
+  to its command for reviews only. `/setting review.agent` now offers every agent.
+  [→](docs/skills.md#auto-review)
+
 ### Changed
 
 - **The web UI draws its own icons instead of emoji.** A glyph is drawn by whatever font the

@@ -736,7 +736,7 @@ export function dshModelDisplayValue(value: string): string {
  * proceeds on whatever the harness chose, which is strictly better than refusing to answer. The
  * mismatch stays visible in the footer either way.
  */
-async function applyModelPreference(
+export async function applyModelPreference(
   ctx: Pick<ClientContext, 'request'>,
   sessionId: string,
   def: AgentDef,

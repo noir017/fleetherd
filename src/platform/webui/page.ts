@@ -1913,7 +1913,7 @@ const SCRIPT = `
     if(!reviewData.reviews.length){
       revList.innerHTML = '<div class="sched-empty">' + (reviewData.running
         ? 'No reviews yet. A conversation is reviewed once it has been quiet for an hour, after three messages from you.'
-        : 'Automatic review is off. Name an agent under review.agent to turn it on; reviews recorded before then still appear here.') + '</div>';
+        : 'Automatic review is off. Name an agent under review.agent, or an endpoint under review.api, to turn it on; reviews recorded before then still appear here.') + '</div>';
       return;
     }
     var h = revPending(reviewData.pending || []);

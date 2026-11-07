@@ -54,11 +54,17 @@ reported (that one is `agents[].model`), and pod.yaml's strict schema has no suc
 `agents[].hooks.turnFailed` is user-side like `hooks.preLaunch`, and kept out of `/setting` for the same reason: `command` is a shell command.
 
 `review` is on the user side because "should anything review conversations on its own, and with
-which agent" is a per-deployment decision — and one that spends the reviewer's quota. Its tuning
-(the idle hour, the three-message floor, the 24-hour freshness rule, the back-off and its three
-attempts) is constants in [`daemon/review.ts`](../daemon/review.ts), not config. Which agent and
-which model are also `/setting` rows (`core/settings.ts`), since choosing them is a decision, not
-plumbing.
+which reviewer" is a per-deployment decision — and one that spends the reviewer's quota. The
+reviewer is `agent` (any agent, with `model` and, for a `custom` / `gemini` / `dsh` one, `args`)
+or `api` (`{url, key, model}`, an OpenAI-compatible endpoint), never both; `checkReview` in
+`schema.ts` holds that and which fields go with which, and `REVIEW_ARGS_HARNESSES` is the one list
+of harnesses `args` is for. `api.key` is a credential like `title.llm.apiKey`: `${VAR}` in the
+file, expanded at load, never written back. Its tuning (the idle hour, the three-message floor,
+the 24-hour freshness rule, the back-off and its three attempts) is constants in
+[`daemon/review.ts`](../daemon/review.ts), not config. Which agent and which model are also
+`/setting` rows (`core/settings.ts`), since choosing them is a decision, not plumbing; an
+endpoint is not, because it comes with a key, so naming an agent from chat replaces it and
+nothing there writes one (`daemon/settings-store.ts` reviewCompanions).
 
 `voice` is on the user side because it is a credential and an endpoint (the transcriber), plus
 one decision — `confirm`, whether a transcript waits for a tap. Everything that tunes it (the
