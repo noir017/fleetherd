@@ -63,7 +63,7 @@ describe('toolInputSchema', () => {
     const p = props('schedule');
     expect(p.action!.enum).toEqual(['add', 'list', 'show', 'edit', 'pause', 'resume', 'run', 'rm']);
     expect(p.session!.enum).toEqual(['fixed', 'new', 'daily']);
-    for (const key of ['cron', 'at', 'tz', 'prompt', 'bash', 'agent', 'model', 'name', 'cwd', 'timeout', 'channel']) {
+    for (const key of ['cron', 'at', 'tz', 'prompt', 'bash', 'agent', 'model', 'name', 'tag', 'cwd', 'timeout', 'channel']) {
       expect(p[key], key).toBeDefined();
     }
     expect(toolInputSchema(tool('schedule')).required).toEqual(['action']);
@@ -100,6 +100,33 @@ describe('toolAction', () => {
   it('runs option parsers exactly as commander would (10m → ms)', () => {
     const action = toolAction(tool('schedule'), { action: 'add', at: '+30m', bash: 'backup.sh', timeout: '10m' });
     expect(action).toMatchObject({ kind: 'schedule-add', at: '+30m', bash: 'backup.sh', timeoutMs: 600_000 });
+  });
+
+  it('passes --tag through as a list, the same as the shell command', () => {
+    const action = toolAction(tool('schedule'), { action: 'add', cron: '0 8 * * *', prompt: 'brief', tag: 'ci, deploy' });
+    expect(action).toMatchObject({ kind: 'schedule-add', tags: ['ci', 'deploy'] });
+    // An empty tag is not "absent" here: it is the command's way of clearing the set.
+    expect(toolAction(tool('schedule'), { action: 'edit', id: 'k3x9', tag: '' })).toMatchObject({
+      kind: 'schedule-edit',
+      id: 'k3x9',
+      tags: [],
+    });
+  });
+
+  it('ignores an empty tag on an action that cannot set tags, rather than refusing it', () => {
+    // Models fill every optional parameter; an empty tag on list/pause/rm is not a request to
+    // clear anything and used to be ignored, as any other empty option is.
+    expect(toolAction(tool('schedule'), { action: 'list', tag: '' })).toEqual({ kind: 'schedule-list' });
+    expect(toolAction(tool('schedule'), { action: 'pause', id: 'k3x9', tag: '' })).toEqual({
+      kind: 'schedule-op',
+      id: 'k3x9',
+      op: 'pause',
+    });
+    expect(toolAction(tool('schedule'), { action: 'rm', id: 'k3x9', tag: '' })).toEqual({
+      kind: 'schedule-op',
+      id: 'k3x9',
+      op: 'remove',
+    });
   });
 
   it('passes a model through as the shell command would', () => {

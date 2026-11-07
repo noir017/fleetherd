@@ -3,12 +3,16 @@ import {
   bashResultText,
   buildTask,
   CATCH_UP_GRACE_MS,
+  cleanTags,
   decide,
   editTask,
   FIXED_SESSION_WINDOW_MS,
   formatDay,
   formatInZone,
+  MAX_TAG_LENGTH,
+  MAX_TASK_TAGS,
   nextRunOf,
+  normalizeTags,
   parseAt,
   taskCardText,
   taskView,
@@ -482,5 +486,88 @@ describe('bashResultText', () => {
 
   it('says so when there was no output at all', () => {
     expect(bashResultText(t(), outcome({ tail: '  \n', bytes: 3 }), 600_000).text).toMatch(/\n\(no output\)$/);
+  });
+});
+
+describe('task tags', () => {
+  it('trims and lowercases every tag, drops duplicates, and keeps the order given', () => {
+    expect(normalizeTags([' CI ', 'ci', 'Deploy', 'deploy'])).toEqual({ ok: true, tags: ['ci', 'deploy'] });
+  });
+
+  it('takes exactly five tags and refuses a sixth, after dedupe', () => {
+    const five = ['a', 'b', 'c', 'd', 'e'];
+    expect(normalizeTags(five)).toEqual({ ok: true, tags: five });
+    expect(normalizeTags([...five, 'f'])).toEqual({
+      ok: false,
+      error: `a task takes at most ${MAX_TASK_TAGS} tags, got 6`,
+    });
+    // A duplicate does not use a slot: four distinct names plus a repeat is still four.
+    expect(normalizeTags([...five.slice(0, 4), 'a', 'e'])).toEqual({ ok: true, tags: five });
+  });
+
+  it('caps a tag at 24 characters and refuses anything outside letters, digits and - _ . /', () => {
+    const long = 'x'.repeat(MAX_TAG_LENGTH);
+    expect(normalizeTags([long])).toEqual({ ok: true, tags: [long] });
+    expect(normalizeTags([`${long}y`]).ok).toBe(false);
+    expect(normalizeTags(['two words'])).toEqual({
+      ok: false,
+      error: 'tag "two words" may contain only letters, digits and - _ . /',
+    });
+    expect(normalizeTags(['a,b']).ok).toBe(false);
+    expect(normalizeTags(['`quote`']).ok).toBe(false);
+    // What the set is for: repo-ish names and Chinese both fit.
+    expect(normalizeTags(['release-2026', 'a_b.c/d', '发布'])).toEqual({
+      ok: true,
+      tags: ['release-2026', 'a_b.c/d', '发布'],
+    });
+  });
+
+  it('cleans a stored list: normalize what can be, drop the rest, keep five', () => {
+    const cleaned = cleanTags([' CI ', 'ci', '发布', 'two words', '`x`', 'a', 'b', 'c', 'd', 'e']);
+    // ` CI ` and `ci` are the same tag; the next invalid ones are dropped; then the five cap is
+    // reached, so later tags go too.
+    expect(cleaned.tags).toEqual(['ci', '发布', 'a', 'b', 'c']);
+    expect(cleaned.dropped.map((d) => d.tag)).toEqual(['ci', 'two words', '`x`', 'd', 'e']);
+    expect(cleaned.dropped.map((d) => d.reason)).toEqual([
+      'duplicate',
+      'tag "two words" may contain only letters, digits and - _ . /',
+      'tag "`x`" may contain only letters, digits and - _ . /',
+      `more than ${MAX_TASK_TAGS} tags`,
+      `more than ${MAX_TASK_TAGS} tags`,
+    ]);
+    expect(cleanTags(['', '  '])).toEqual({ tags: [], dropped: [] });
+  });
+
+  it('treats an empty list as no tags, which is what --tag "" clears with', () => {
+    expect(normalizeTags([])).toEqual({ ok: true, tags: [] });
+    expect(normalizeTags(['', '  '])).toEqual({ ok: true, tags: [] });
+  });
+
+  it('stores tags on a new task and leaves the field off when none were given', () => {
+    expect(built({ cron: '0 8 * * *', prompt: 'x', tags: ['ci', 'release'] }).tags).toEqual(['ci', 'release']);
+    expect(built({ cron: '0 8 * * *', prompt: 'x' }).tags).toBeUndefined();
+    expect(built({ cron: '0 8 * * *', prompt: 'x', tags: [] }).tags).toBeUndefined();
+  });
+
+  it('refuses a bad tag on add, naming the limit', () => {
+    expect(refusal({ cron: '0 8 * * *', prompt: 'x', tags: ['a', 'b', 'c', 'd', 'e', 'f'] })).toMatch(/at most 5 tags/);
+  });
+
+  it('edit replaces the whole set, and an empty list removes it', () => {
+    const t = built({ cron: '0 8 * * *', prompt: 'x', tags: ['ci', 'release'] });
+    const replaced = editTask(t, { tags: ['ops'] }, ctx());
+    expect(replaced.ok && replaced.task.tags).toEqual(['ops']);
+
+    const cleared = editTask(t, { tags: [] }, ctx());
+    expect(cleared.ok && cleared.task.tags).toBeUndefined();
+
+    // Not naming them keeps them, exactly like every other field.
+    const kept = editTask(t, { name: 'renamed' }, ctx());
+    expect(kept.ok && kept.task.tags).toEqual(['ci', 'release']);
+  });
+
+  it('writes the tags on the card posted for a change', () => {
+    const t = built({ cron: '0 8 * * *', prompt: 'x', tags: ['ci', 'release'] });
+    expect(taskCardText(t, 'registered', NOW)).toContain('• Tags: `ci`, `release`');
   });
 });

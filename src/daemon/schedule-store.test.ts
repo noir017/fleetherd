@@ -91,6 +91,69 @@ describe('ScheduleStore', () => {
     expect(error.mock.calls[0]!.join(' ')).toMatch(/fixed-session task cannot name a model/);
   });
 
+  it('loads a task written before tags existed, with no field added', () => {
+    const store = new ScheduleStore(
+      fileWith([{ ...base, run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } }])
+    );
+    expect(store.get('a1b2c3')!.tags).toBeUndefined();
+  });
+
+  it('round-trips tags through a reload', () => {
+    const file = fileWith([
+      { ...base, tags: ['ci', 'release'], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } },
+    ]);
+    expect(new ScheduleStore(file).get('a1b2c3')!.tags).toEqual(['ci', 'release']);
+  });
+
+  it('keeps a task whose file carries a tag the rule refuses, dropping only that tag', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const store = new ScheduleStore(
+      fileWith([
+        { ...base, tags: ['ok', 'Two Words', '', 'x'.repeat(25)], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } },
+      ])
+    );
+    // The task is the thing worth keeping; the labels are not.
+    expect(store.get('a1b2c3')).toMatchObject({ name: 'brief', tags: ['ok'] });
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/Two Words/);
+  });
+
+  it('normalizes the tags a hand-edited file holds, and drops the duplicates', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const store = new ScheduleStore(
+      fileWith([
+        { ...base, tags: ['CI', 'ci', ' Release '], run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' } },
+      ])
+    );
+    expect(store.get('a1b2c3')!.tags).toEqual(['ci', 'release']);
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/duplicate/);
+  });
+
+  it('keeps a task whose tags field is one string, and drops non-strings from a list', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const run = { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' };
+    const wrapped = new ScheduleStore(fileWith([{ ...base, tags: 'ci', run }]));
+    expect(wrapped.get('a1b2c3')!.tags).toEqual(['ci']);
+
+    const mixed = new ScheduleStore(fileWith([{ ...base, tags: ['ci', 1, null, 'ops'], run }]));
+    expect(mixed.get('a1b2c3')!.tags).toEqual(['ci', 'ops']);
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/not a string/);
+  });
+
+  it('keeps the first five tags of a file that has more, and warns about the rest', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const store = new ScheduleStore(
+      fileWith([
+        {
+          ...base,
+          tags: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+          run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' },
+        },
+      ])
+    );
+    expect(store.get('a1b2c3')!.tags).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
   it('round-trips a daily task through a reload', () => {
     const file = fileWith([{ ...base, run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'daily' } }]);
     const store = new ScheduleStore(file);

@@ -53,6 +53,10 @@ export interface ConversationWorkdir {
 export interface SchedulePanelTask {
   id: string;
   name: string;
+  /** The task's labels, normalized by core/schedule.ts; empty when it has none. */
+  tags: string[];
+  /** Epoch ms; the panel's "Created" sort. */
+  createdAt: number;
   state: 'active' | 'paused' | 'expired' | 'done';
   /** `0 8 * * * (Asia/Shanghai)` or `once at 2026-11-05 08:00 (Asia/Shanghai)`. */
   when: string;
@@ -86,8 +90,11 @@ export interface SchedulePanelTask {
   expires?: string;
 }
 
-/** The four things the panel can do to one task. The daemon's `ScheduleService.op` names them. */
-export type SchedulePanelAction = 'pause' | 'resume' | 'run' | 'remove';
+/**
+ * What the panel can do to one task. The daemon's `ScheduleService.op` names the first four;
+ * `tags` replaces the task's whole label set and is `ScheduleService.setTags`.
+ */
+export type SchedulePanelAction = 'pause' | 'resume' | 'run' | 'remove' | 'tags';
 
 /**
  * The outcome of one action, with the fresh list when it worked.
@@ -132,10 +139,11 @@ export interface ModelPicker {
   choose(ref: ConversationRef, value: string): Promise<ModelPickerResult>;
 }
 
-/** What `useSchedulePanel` hands a platform: the list, and the four operations. */
+/** What `useSchedulePanel` hands a platform: the list, and the operations on one task. */
 export interface SchedulePanel {
   list(): SchedulePanelTask[];
-  op(id: string, action: SchedulePanelAction): SchedulePanelResult;
+  /** `tags` is the whole new set; every other action ignores it. */
+  op(id: string, action: SchedulePanelAction, tags?: string[]): SchedulePanelResult;
 }
 
 /**

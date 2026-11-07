@@ -129,6 +129,8 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       kind: z.literal('schedule-add'),
       channelId,
       name: z.string().min(1).max(200).optional(),
+      // Shape only: core/schedule.ts normalizeTags owns the trim/lowercase/dedupe and the limits.
+      tags: z.array(z.string().max(200)).max(50).optional(),
       cron: z.string().min(1).max(200).optional(),
       at: z.string().min(1).max(100).optional(),
       tz: z.string().min(1).max(64).optional(),
@@ -149,6 +151,8 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       kind: z.literal('schedule-edit'),
       id: z.string().min(1),
       name: z.string().min(1).max(200).optional(),
+      /** An empty list clears the task's tags; absent keeps them. */
+      tags: z.array(z.string().max(200)).max(50).optional(),
       cron: z.string().min(1).max(200).optional(),
       at: z.string().min(1).max(100).optional(),
       tz: z.string().min(1).max(64).optional(),
@@ -334,6 +338,7 @@ export type IpcAction =
       kind: 'schedule-add';
       channelId?: string;
       name?: string;
+      tags?: string[];
       cron?: string;
       at?: string;
       tz?: string;
@@ -349,6 +354,7 @@ export type IpcAction =
       kind: 'schedule-edit';
       id: string;
       name?: string;
+      tags?: string[];
       cron?: string;
       at?: string;
       tz?: string;
@@ -498,6 +504,8 @@ export interface ListChannelsResult {
 export interface ScheduleTaskView {
   id: string;
   name: string;
+  /** Comma-separated, as one TOON cell; empty when the task has none. */
+  tags: string;
   state: string;
   when: string;
   next: string;

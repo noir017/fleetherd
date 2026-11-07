@@ -41,6 +41,14 @@ describe('the web UI task panel', () => {
     expect(view.running).toBe(false);
   });
 
+  it('hands the page the tags and the registration time, for its Tags filter and Created sort', () => {
+    const tagged = panelTask(task({ cron: '0 8 * * *', prompt: 'x', tags: ['ci', 'release'] }), NOW, false, 'web');
+    expect(tagged.tags).toEqual(['ci', 'release']);
+    expect(tagged.createdAt).toBe(NOW);
+    // The DTO always spells the field, empty included: the page draws chips from it either way.
+    expect(panelTask(task({ cron: '0 8 * * *', prompt: 'x' }), NOW, false, 'web').tags).toEqual([]);
+  });
+
   it('names a topic only when the task posts into this very instance', () => {
     const here = task({ cron: '0 8 * * *', prompt: 'x' });
     expect(panelTask(here, NOW, false, 'web').targetTopic).toBe('t1');

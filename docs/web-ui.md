@@ -92,7 +92,13 @@ closed like the rest. **Clear all topics** is an icon button beside Topics in th
 **Side tasks.** The clock at the right of the chat header opens a panel with two tabs at its
 foot: **Scheduled** and **Reviews**. Inside **Scheduled**, two sub-tabs under the header separate
 **Tasks** (default) and **Sessions**. **Tasks** lists every task the gateway has registered — what
-it runs, when it runs next, where its output goes, and how the last run ended. **Sessions** lists the
+it runs, when it runs next, where its output goes, and how the last run ended. Above that list a
+search field, **Filter** and a sort narrow and order it: the search matches the task's name, its
+prompt or command, and its target; the filters are **Status** (Running, Active, Paused, and Ended —
+expired and done together) and **Tags** (every tag in use, plus **Untagged**); the sort switches
+between **Status** (the default), **Next run**, **Last run** and **Created**, either direction, and
+a task with nothing to sort by stays last. The keyword, the filters and the sort are kept in this
+browser, and **Showing N of M** with **Clear** says what survived. **Sessions** lists the
 topics a new-session run opened; those topics are kept out of the main topic list, so this is where
 they live, and tapping one opens it (the × deletes it). **Reviews** lists the automatic reviews of
 quiet conversations (see [skills](skills.md#auto-review)): what each one changed, what the store
@@ -114,8 +120,10 @@ is what closes it. It is closed by default, and only a docked panel is restored 
 narrow screen it opens from the clock each time. Opening a session leaves a docked panel where it
 is. It is narrower than the topic sidebar — drag its left edge to resize it, double-click the edge
 for the default width. Tap a task for the
-full prompt or command, pause or resume it, run it now, or delete it (two taps). Tasks are still
-registered by asking an agent in a topic — the panel manages them, it does not create them.
+full prompt or command, pause or resume it, run it now, or delete it (two taps); its tags are
+edited there too, with the × on a tag to remove it and the **+ tag** field, saved with Enter, to
+add one. Tasks are still registered by asking an agent in a topic — the panel manages them, it does
+not create them.
 
 **What needs you.** Every topic waiting on you moves to the top of the list, its title in green,
 with a line under the group: a question to answer first (amber dot), then a turn that failed (red

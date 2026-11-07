@@ -46,6 +46,77 @@ export const CATCH_UP_GRACE_MS = 3_600_000;
 export const DEFAULT_BASH_TIMEOUT_MS = 10 * 60_000;
 export const MAX_BASH_TIMEOUT_MS = 6 * 3_600_000;
 
+/**
+ * A task's labels: at most five, each at most this long, lowercase, and made of Unicode letters
+ * and digits plus `- _ . /`. Chinese tags are letters, so they work; whitespace, commas and the
+ * punctuation the chat card wraps tags in are not, which is why a tag is safe to print in a
+ * backtick.
+ */
+export const MAX_TASK_TAGS = 5;
+export const MAX_TAG_LENGTH = 24;
+const TAG_CHAR = /^[\p{L}\p{N}._/-]+$/u;
+
+/**
+ * The one rule for a task's tags, wherever they come from — `schedule add/edit --tag`, a native
+ * tool call, the web UI's tag editor, and the store's cleanup of a hand-edited file. Trim and
+ * lowercase first, then drop duplicates, then check the length and the character set: `--tag
+ * "CI, ci"` is one tag, not a refusal.
+ *
+ * A tag is a filter chip, so it has to be one word: whitespace would be split by the search box's
+ * own word matching, and a comma is the CLI's separator. Lowercase keeps `CI` and `ci` from being
+ * two chips in the panel. The character set is what makes a tag renderable anywhere the gateway
+ * prints it — a task card, a TOON row, a chip — without quoting surprises.
+ */
+export function normalizeTags(input: readonly string[]): { ok: true; tags: string[] } | { ok: false; error: string } {
+  const tags: string[] = [];
+  for (const raw of input) {
+    const tag = raw.trim().toLowerCase();
+    if (!tag) continue;
+    if ([...tag].length > MAX_TAG_LENGTH) {
+      return { ok: false, error: `tag "${tag}" is longer than ${MAX_TAG_LENGTH} characters` };
+    }
+    if (!TAG_CHAR.test(tag)) {
+      return { ok: false, error: `tag "${tag}" may contain only letters, digits and - _ . /` };
+    }
+    if (!tags.includes(tag)) tags.push(tag);
+  }
+  if (tags.length > MAX_TASK_TAGS) {
+    return { ok: false, error: `a task takes at most ${MAX_TASK_TAGS} tags, got ${tags.length}` };
+  }
+  return { ok: true, tags };
+}
+
+/**
+ * What a stored list of tags becomes after loading a file: the tags an edit would have accepted,
+ * and the raw pieces that had to go. `normalizeTags` stays the judge of one tag; this only decides
+ * what to do with a whole list whose count can exceed the limit. Used by `ScheduleStore`, which
+ * warns about each drop and keeps the task.
+ */
+export function cleanTags(input: readonly string[]): { tags: string[]; dropped: Array<{ tag: string; reason: string }> } {
+  const tags: string[] = [];
+  const dropped: Array<{ tag: string; reason: string }> = [];
+  for (const raw of input) {
+    const one = normalizeTags([raw]);
+    if (!one.ok) {
+      dropped.push({ tag: raw, reason: one.error });
+      continue;
+    }
+    const tag = one.tags[0];
+    // An empty piece normalizes away with nothing to say; it is not a tag that was refused.
+    if (tag === undefined) continue;
+    if (tags.includes(tag)) {
+      dropped.push({ tag: raw, reason: 'duplicate' });
+      continue;
+    }
+    if (tags.length >= MAX_TASK_TAGS) {
+      dropped.push({ tag: raw, reason: `more than ${MAX_TASK_TAGS} tags` });
+      continue;
+    }
+    tags.push(tag);
+  }
+  return { tags, dropped };
+}
+
 export type ScheduleWhen = { cron: string; tz: string } | { at: number; tz: string };
 
 export type ScheduleRun =
@@ -111,6 +182,8 @@ export interface ScheduleDaySession {
 export interface ScheduleTask {
   id: string;
   name: string;
+  /** Free labels for the task list's filter; absent on tasks written before tags existed. */
+  tags?: string[];
   when: ScheduleWhen;
   run: ScheduleRun;
   target: ScheduleTarget;
@@ -327,6 +400,7 @@ export function decide(task: ScheduleTask, now: number, graceMs = CATCH_UP_GRACE
 /** What `schedule add` carries, already structurally validated at the IPC boundary. */
 export interface NewTaskInput {
   name?: string;
+  tags?: string[];
   cron?: string;
   at?: string;
   tz?: string;
@@ -393,9 +467,12 @@ export function buildTask(input: NewTaskInput, ctx: NewTaskContext): Built {
   }
   const when = parseWhen(input, ctx);
   if ('error' in when) return fail(when.error);
+  const tags = taskTags(input);
+  if ('error' in tags) return fail(tags.error);
 
   const base: TaskBase = {
     id: ctx.id,
+    ...tags,
     when,
     target: {
       platform: ctx.target.platform,
@@ -419,6 +496,14 @@ export function buildTask(input: NewTaskInput, ctx: NewTaskContext): Built {
     case 'daily':
       return buildDailyTask(input, prompt, ctx, base);
   }
+}
+
+/** The tags to store, or the refusal — `{}` when none were given, so the field stays absent. */
+function taskTags(input: NewTaskInput): { tags?: string[] } | { error: string } {
+  if (input.tags === undefined) return {};
+  const normalized = normalizeTags(input.tags);
+  if (!normalized.ok) return { error: normalized.error };
+  return normalized.tags.length ? { tags: normalized.tags } : {};
 }
 
 function parseWhen(input: NewTaskInput, ctx: NewTaskContext): ScheduleWhen | { error: string } {
@@ -566,6 +651,8 @@ function firstRunCheck(task: ScheduleTask, now: number): Built {
  */
 export interface EditTaskInput {
   name?: string;
+  /** The whole group: `[]` clears every tag, undefined keeps the task's own. */
+  tags?: string[];
   cron?: string;
   at?: string;
   tz?: string;
@@ -689,6 +776,7 @@ function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
   const run = task.run;
   const common: NewTaskInput = {
     name: input.name ?? task.name,
+    ...(input.tags !== undefined ? { tags: input.tags } : task.tags !== undefined ? { tags: task.tags } : {}),
     ...mergedTime(task, input),
     tz: input.tz ?? task.when.tz,
     ...(input.cwd !== undefined ? { cwd: input.cwd } : run.cwd !== undefined ? { cwd: run.cwd } : {}),
@@ -806,6 +894,7 @@ export function taskCardText(task: ScheduleTask, verb: string, now: number): str
     `• Posts to: \`${targetId(task.target)}\``,
     `• ${task.run.kind === 'bash' ? 'Command' : 'Prompt'}: ${body(task)}`,
   ];
+  if (task.tags?.length) lines.push(`• Tags: ${task.tags.map((tag) => `\`${tag}\``).join(', ')}`);
   if (task.state !== 'active') lines.push(`• State: ${STATE_LABEL[task.state]}`);
   lines.push('`/setting schedule` lists, pauses and deletes tasks.');
   return lines.join('\n');
@@ -846,6 +935,7 @@ export function taskView(task: ScheduleTask, now: number, opts: { detail?: boole
   const view = {
     id: task.id,
     name: task.name,
+    tags: task.tags?.join(', ') ?? '',
     state: task.state,
     when: describeWhen(task.when, true),
     next: next !== undefined ? formatInZone(next, tz) : '',

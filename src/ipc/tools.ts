@@ -72,9 +72,10 @@ export const NATIVE_TOOLS: readonly NativeTool[] = [
       'Tasks that run later or repeatedly — a prompt an agent answers, or a bash command — kept ' +
       'outside this session, so they survive restarts and idle shutdowns, unlike a session\'s own ' +
       'scheduler. Output goes to this conversation unless channel names another. If the time, time ' +
-      'zone or destination is unclear, ask first. add needs cron or at, and prompt or bash; edit ' +
-      'changes fields of an existing task and keeps its id and history; show, pause, resume, run ' +
-      '(now, once) and rm take the id that add and list print.',
+      'zone or destination is unclear, ask first. add needs cron or at, and prompt or bash; tag ' +
+      'labels a task for the web UI task list (comma-separated, max 5); edit changes fields of an ' +
+      'existing task and keeps its id and history; show, pause, resume, run (now, once) and rm ' +
+      'take the id that add and list print.',
     positionals: {
       action: 'what to do',
       id: 'the task id, for show / edit / pause / resume / run / rm',
@@ -165,6 +166,8 @@ export function toolInputSchema(tool: NativeTool): Record<string, unknown> {
  *
  * An empty string or null counts as absent: models fill optional parameters with them, and treating
  * `cron: ""` on a `list` as "a cron was given" would refuse a call that asked for nothing wrong.
+ * `tag` is the exception — `schedule edit --tag ""` is how a task's tags are cleared, so that one
+ * empty value is passed through and becomes an empty list.
  */
 export function toolAction(tool: NativeTool, args: unknown): IpcAction {
   const spec = specOf(tool);
@@ -180,9 +183,13 @@ export function toolAction(tool: NativeTool, args: unknown): IpcAction {
     throw new Error(`${tool.name}: unknown parameter(s) ${unknown.join(', ')}; accepted: ${[...known].join(', ')}`);
   }
 
+  // An empty tag clears a set only where tags can be set; on any other action the model's habit
+  // of filling every optional parameter with "" must not turn into a refusal.
+  const action = typeof given.action === 'string' ? given.action : '';
   const value = (name: string): string | undefined => {
     const v = given[name];
-    if (v === undefined || v === null || v === '') return undefined;
+    if (v === undefined || v === null) return undefined;
+    if (v === '' && !(name === 'tag' && (action === 'add' || action === 'edit'))) return undefined;
     if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') {
       throw new Error(`${tool.name}: ${name} must be a string`);
     }

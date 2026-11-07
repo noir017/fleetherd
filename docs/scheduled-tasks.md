@@ -53,6 +53,12 @@ whose agent or directory changes cannot go on in the topic it already opened tod
 its agent and its directory — so the next run opens a new topic for the rest of the day, and the
 earlier one is left as it is.
 
+Label a task with `--tag ci,release` when it is registered, or with `talkcode schedule edit <id>
+--tag …` later: up to five tags, each at most 24 characters, lowercased, made of letters (Chinese
+included), digits and `- _ . /`. `edit` replaces the whole set, and `--tag ""` clears it. The tags
+are shown under the task's name and on the card posted for the change; the web UI's Tasks list
+filters by them.
+
 A task's directory is a path on one machine, and the task has to run on that machine. A `--cwd` is
 a path on the machine you type the command on, and without one `add` takes your conversation's
 directory. So when the task runs on another machine — an agent on a [remote host](remote-hosts.md)
@@ -65,7 +71,14 @@ came from.
 
 On the web UI, the clock at the right of the chat header opens the **⏰ Side tasks** panel of its
 own: the bottom has **Scheduled** and **Reviews** tabs. Under **Scheduled**, the **Tasks** sub-tab
-is the same list, plus "run now". On a phone the same panel is a drawer from the right, with the chat
+is the same list, plus "run now", a search field, filters and a sort. The search matches the task's
+name, its prompt or command, and its target. **Filter** narrows by **Status** — Running, Active,
+Paused, and Ended (expired and done together) — and by **Tags**, which offers every tag in use plus
+**Untagged**. The sort is Status (the default, the list's own order), Next run, Last run or Created,
+ascending or descending; a task with no next run, or one that has never run, stays at the bottom
+either way. The keyword, filters and sort are kept in this browser. A task's tags are edited in its
+card: the × removes one, and typing in **+ tag** and pressing Enter adds one. Only the Tasks
+sub-tab has this bar — Sessions and Reviews do not. On a phone the same panel is a drawer from the right, with the chat
 still visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
 session opens topics; the **Sessions** sub-tab lists those topics, and they no longer appear in the
 ordinary topic list. The panel's second outer tab, **Reviews**, is the automatic review of quiet

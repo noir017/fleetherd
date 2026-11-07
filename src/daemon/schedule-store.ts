@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import type { ScheduleTask } from '../core/schedule.js';
+import { cleanTags, type ScheduleTask } from '../core/schedule.js';
 
 /**
  * Scheduled tasks on disk (`<configDir>/schedules.json`) — its own file, not a section of
@@ -53,6 +53,9 @@ const TaskSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9]{4,16}$/),
     name: z.string().min(1),
+    // Optional is the migration: every file written before tags existed has none. Shape only —
+    // a bad tag costs that tag, never the task (see the cleanup in the constructor).
+    tags: z.array(z.string()).optional(),
     when: WhenSchema,
     run: RunSchema,
     target: TargetSchema,
@@ -108,6 +111,33 @@ type _Aligned = [
 ];
 const _aligned: _Aligned = [true, true];
 
+/**
+ * Repair a hand-edited tags field before the schema sees it. The task is worth more than its
+ * labels, and a wrong TYPE here would otherwise fail validation and delete the whole entry on the
+ * next write: one string becomes a one-item list, every non-string in a list is dropped with a
+ * warning, and anything that is neither a string nor a list is removed. The schema still checks
+ * the repaired shape, and cleanTags still applies the tag rule afterwards.
+ */
+function repairedTags(entry: unknown): unknown {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+  const record = entry as Record<string, unknown>;
+  if (!('tags' in record)) return entry;
+  const id = typeof record.id === 'string' ? `#${record.id}` : '(no id)';
+  const raw = record.tags;
+  if (typeof raw === 'string') return { ...record, tags: [raw] };
+  if (Array.isArray(raw)) {
+    const tags: string[] = [];
+    for (const item of raw) {
+      if (typeof item === 'string') tags.push(item);
+      else console.warn(`[schedule] ${id}: dropped tag ${JSON.stringify(item)} — not a string`);
+    }
+    return { ...record, tags };
+  }
+  console.warn(`[schedule] ${id}: dropped tags — expected a string or a list`);
+  const { tags: _bad, ...rest } = record;
+  return rest;
+}
+
 export class ScheduleStore {
   private tasks = new Map<string, ScheduleTask>();
 
@@ -125,9 +155,17 @@ export class ScheduleStore {
       ? ((raw as { tasks: unknown[] }).tasks)
       : [];
     for (const entry of entries) {
-      const parsed = TaskSchema.safeParse(entry);
+      const parsed = TaskSchema.safeParse(repairedTags(entry));
       if (parsed.success) {
-        this.tasks.set(parsed.data.id, parsed.data);
+        // Tags are labels, not the task: a hand-edited file may hold ones an edit would refuse,
+        // and dropping the whole entry would make it disappear for good on the next write. Each
+        // is normalized if it can be, dropped loudly if not, and the task stays.
+        const cleaned = cleanTags(parsed.data.tags ?? []);
+        for (const drop of cleaned.dropped) {
+          console.warn(`[schedule] #${parsed.data.id}: dropped tag ${JSON.stringify(drop.tag)} — ${drop.reason}`);
+        }
+        const { tags: _stored, ...rest } = parsed.data;
+        this.tasks.set(parsed.data.id, cleaned.tags.length ? { ...rest, tags: cleaned.tags } : rest);
       } else {
         const id = (entry as { id?: unknown } | null)?.id;
         const issue = parsed.error.issues[0];

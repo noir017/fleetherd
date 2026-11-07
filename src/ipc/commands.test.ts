@@ -228,8 +228,22 @@ describe('schedule <action> [id]', () => {
     });
   });
 
+  it('parses --tag as a comma-separated list, empty pieces dropped, and "" as clearing', () => {
+    expect(
+      schedule(['add'], { cron: '0 8 * * *', prompt: 'x', tag: ' CI, deploy ,,' })
+    ).toMatchObject({ tags: ['CI', 'deploy'] });
+    // An empty string is a defined empty list: edit reads it as "clear", not as "not given".
+    expect(schedule(['edit', 'a1b2c3'], { tag: '' })).toMatchObject({ tags: [] });
+    // A tag alone is something to change.
+    expect(schedule(['edit', 'a1b2c3'], { tag: 'ops' })).toMatchObject({ tags: ['ops'] });
+    // Not naming it leaves it undefined, so an edit keeps the task's own set.
+    const untagged = schedule(['add'], { cron: '0 8 * * *', prompt: 'x' }) as { tags?: string[] };
+    expect(untagged.tags).toBeUndefined();
+  });
+
   it.each([
     [['pause'], {}, /needs a task id/],
+    [['list'], { tag: 'ci' }, /--tag only applies to `schedule add` and `schedule edit`/],
     [['frobnicate'], {}, /unknown schedule action "frobnicate"/],
     [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add`/],
     [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add`/],

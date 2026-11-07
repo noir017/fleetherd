@@ -801,7 +801,7 @@ function scheduleList({ req, res }: Req, ctx: Ctx): void {
 async function scheduleOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, ScheduleOpRequestSchema);
   if (!parsed) return;
-  const result = ctx.room.scheduleOp(parsed.id, parsed.action);
+  const result = ctx.room.scheduleOp(parsed.id, parsed.action, 'tags' in parsed ? parsed.tags : undefined);
   send(req, res, result.ok ? 200 : 400, result);
 }
 

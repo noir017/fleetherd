@@ -7041,6 +7041,325 @@ describe('webui page: the scheduled-task panel', () => {
   });
 });
 
+describe('webui page: the task list filter', () => {
+  const A = 'a1b2c3d4';
+  const HOUR = 3_600_000;
+  const task = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'a1b2c3',
+    name: 'Morning CI',
+    tags: [],
+    createdAt: Date.UTC(2026, 10, 1),
+    state: 'active',
+    when: '0 8 * * * (Asia/Shanghai)',
+    next: '2026-11-05 08:00',
+    nextAt: Date.UTC(2026, 10, 5, 0, 0, 0),
+    run: 'cc · fixed session',
+    target: 'web:main#' + A,
+    targetTopic: A,
+    runs: 2,
+    running: false,
+    detail: 'summarise the failures',
+    kind: 'agent',
+    ...over,
+  });
+  const listReply = (tasks: Array<Record<string, unknown>>): Record<string, unknown> => ({ enabled: true, tasks });
+  const ids = (h: Harness): string[] =>
+    Array.from(h.doc.querySelectorAll('#schedules-list .sched-item')).map((n) => n.getAttribute('data-id') ?? '');
+  const search = async (h: Harness, s: string): Promise<void> => {
+    const q = h.doc.querySelector('#sched-filter .fb-q') as HTMLInputElement;
+    q.value = s;
+    q.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    await tick();
+  };
+  const toggle = async (h: Harness, group: string, value: string): Promise<void> => {
+    await h.click(`#sched-filter .fb-chip[data-fb-group="${group}"][data-fb-value="${value}"]`);
+  };
+  const sortBy = async (h: Harness, value: string): Promise<void> => {
+    const sel = h.doc.querySelector('#sched-filter .fb-sortsel') as HTMLSelectElement;
+    sel.value = value;
+    sel.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+    await tick();
+  };
+  const flip = async (h: Harness): Promise<void> => {
+    await h.click('#sched-filter .fb-dir');
+  };
+  const openPanel = async (h: Harness): Promise<void> => {
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+  };
+  /** One task per status, two tags plus untagged, and a live run. */
+  const fleet = (): Array<Record<string, unknown>> => [
+    task({ id: 'a1b2c3', name: 'Morning CI', tags: ['ci'] }),
+    task({
+      id: 'b2c3d4',
+      name: 'Nightly backup',
+      state: 'paused',
+      tags: ['ops'],
+      nextAt: undefined,
+      next: undefined,
+      detail: 'pg_dump app',
+      target: 'tg:1',
+      targetTopic: undefined,
+    }),
+    task({ id: 'c3d4e5', name: 'Old report', state: 'expired', nextAt: undefined, next: undefined, detail: 'weekly report' }),
+    task({ id: 'd4e5f6', name: 'One shot', state: 'done', nextAt: undefined, next: undefined, detail: 'ping once' }),
+    task({ id: 'e5f6a7', name: 'Live run', running: true, tags: ['ci'] }),
+  ];
+
+  it('hangs its bar above the list on the Tasks sub-tab only', async () => {
+    const replies = { 'api/schedules': listReply([task()]), 'api/reviews': { enabled: true, reviews: [] } };
+    const h = await open({ replies });
+    await openPanel(h);
+
+    const host = h.el('sched-filter');
+    expect(host.hidden).toBe(false);
+    expect(host.querySelector('.filterbar')).not.toBeNull();
+    // Outside the list that is redrawn: the caret and the open panel live in this DOM.
+    expect(h.el('schedules-list').querySelector('.filterbar')).toBeNull();
+
+    await h.click('#sched-tab-sessions');
+    expect(host.hidden).toBe(true);
+    await h.click('#sched-tab-tasks');
+    expect(host.hidden).toBe(false);
+    await h.click('#sched-tab-reviews');
+    await until('the reviews list', () => h.el('sched-reviews-list').textContent !== '');
+    expect(host.hidden).toBe(true);
+  });
+
+  it('searches the name, the prompt or command, and the target, word by word', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply(fleet()) } });
+    await openPanel(h);
+    expect(ids(h)).toHaveLength(5);
+
+    await search(h, 'backup');
+    expect(ids(h)).toEqual(['b2c3d4']);
+    await search(h, 'pg_dump');
+    expect(ids(h)).toEqual(['b2c3d4']);
+    await search(h, 'tg:1');
+    expect(ids(h)).toEqual(['b2c3d4']);
+    await search(h, 'MORNING weekend');
+    expect(ids(h)).toEqual([]);
+    await search(h, 'morning');
+    expect(ids(h)).toEqual(['a1b2c3']);
+  });
+
+  it('filters by status (Running, Active, Paused, Ended) and by tag, with counts', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply(fleet()) } });
+    await openPanel(h);
+    await h.click('#sched-filter .fb-filter');
+
+    const count = (group: string, value: string): string | undefined =>
+      h.doc.querySelector(`#sched-filter .fb-chip[data-fb-group="${group}"][data-fb-value="${value}"] .fb-count`)
+        ?.textContent ?? undefined;
+    expect([count('status', 'running'), count('status', 'active'), count('status', 'paused'), count('status', 'ended')]).toEqual([
+      '1',
+      '1',
+      '1',
+      '2',
+    ]);
+    expect(count('tags', 'ci')).toBe('2');
+    expect(count('tags', 'ops')).toBe('1');
+    expect(count('tags', ' untagged')).toBe('2');
+    // The chip carries the tag icon, like the card's own chips.
+    expect(h.doc.querySelector('#sched-filter .fb-chip[data-fb-value="ci"] .ic-tag')).not.toBeNull();
+
+    await toggle(h, 'status', 'ended');
+    expect(new Set(ids(h))).toEqual(new Set(['c3d4e5', 'd4e5f6']));
+    // Values in one group widen: running joins the ended ones.
+    await toggle(h, 'status', 'running');
+    expect(new Set(ids(h))).toEqual(new Set(['c3d4e5', 'd4e5f6', 'e5f6a7']));
+
+    await toggle(h, 'status', 'ended');
+    await toggle(h, 'status', 'running');
+    await toggle(h, 'tags', 'ops');
+    expect(ids(h)).toEqual(['b2c3d4']);
+    // Groups intersect: a tag plus a status the tagged task does not have matches nothing.
+    await toggle(h, 'status', 'active');
+    expect(ids(h)).toEqual([]);
+    expect(h.doc.querySelector('.sched-none')?.textContent).toContain('No matching tasks');
+    await h.click('.sched-none .fb-clear');
+    expect(ids(h)).toHaveLength(5);
+    expect((h.doc.querySelector('#sched-filter .fb-q') as HTMLInputElement).value).toBe('');
+  });
+
+  it('sorts by next run, last run and creation, with the missing values always last', async () => {
+    const at = (n: number): Record<string, unknown> => ({ at: n, atText: 'x', status: 'ok' });
+    const replies = {
+      'api/schedules': listReply([
+        task({ id: 'd0d0d0', name: 'done', state: 'done', nextAt: undefined, next: undefined, createdAt: 4000 }),
+        task({
+          id: 'b0b0b0',
+          name: 'paused',
+          state: 'paused',
+          nextAt: undefined,
+          next: undefined,
+          last: at(1000),
+          createdAt: 3000,
+        }),
+        task({ id: 'e0e0e0', name: 'later', nextAt: 30 * HOUR, last: at(3000), createdAt: 1000 }),
+        task({ id: 'a0a0a0', name: 'sooner', nextAt: HOUR, last: undefined, createdAt: 2000 }),
+      ]),
+    };
+    const h = await open({ replies });
+    await openPanel(h);
+
+    // Status is the daemon's order, untouched.
+    expect(ids(h)).toEqual(['d0d0d0', 'b0b0b0', 'e0e0e0', 'a0a0a0']);
+
+    await sortBy(h, 'next');
+    expect(ids(h)).toEqual(['a0a0a0', 'e0e0e0', 'd0d0d0', 'b0b0b0']);
+    await flip(h);
+    // Descending reverses the values; the two with no next run stay at the bottom.
+    expect(ids(h)).toEqual(['e0e0e0', 'a0a0a0', 'd0d0d0', 'b0b0b0']);
+
+    await sortBy(h, 'last');
+    await flip(h); // back to ascending
+    expect(ids(h)).toEqual(['b0b0b0', 'e0e0e0', 'd0d0d0', 'a0a0a0']);
+    await flip(h);
+    expect(ids(h)).toEqual(['e0e0e0', 'b0b0b0', 'd0d0d0', 'a0a0a0']);
+
+    await sortBy(h, 'created');
+    await flip(h); // ascending again
+    expect(ids(h)).toEqual(['e0e0e0', 'a0a0a0', 'b0b0b0', 'd0d0d0']);
+    await flip(h);
+    expect(ids(h)).toEqual(['d0d0d0', 'b0b0b0', 'a0a0a0', 'e0e0e0']);
+
+    // Back to Status: the API's order, reversed while the direction is descending.
+    await sortBy(h, 'status');
+    expect(ids(h)).toEqual(['a0a0a0', 'e0e0e0', 'b0b0b0', 'd0d0d0']);
+    await flip(h);
+    expect(ids(h)).toEqual(['d0d0d0', 'b0b0b0', 'e0e0e0', 'a0a0a0']);
+  });
+
+  it('adds a tag from the card and keeps the card open through the repaint', async () => {
+    const replies = {
+      'api/schedules': listReply([task({ tags: ['ci'] })]),
+      'api/schedules/op': { ok: true, tasks: [task({ tags: ['ci', 'deploy'] })] },
+    };
+    const h = await open({ replies });
+    await openPanel(h);
+
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await tick();
+    const input = h.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    input.value = 'deploy';
+    input.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await until('the tags request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
+
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({
+      id: 'a1b2c3',
+      action: 'tags',
+      tags: ['ci', 'deploy'],
+    });
+    await until('the new chip', () => h.doc.querySelectorAll('.sched-tags .sched-tag').length === 2);
+    expect(h.el('schedules-list').textContent).toContain('deploy');
+    // A poll or the answer's repaint must not fold a card being edited.
+    expect((h.doc.querySelector('.sched-detail') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('removes a tag with its ×, and shows the daemon sentence when a save is refused', async () => {
+    const removed = {
+      'api/schedules': listReply([task({ tags: ['ci'] })]),
+      'api/schedules/op': { ok: true, tasks: [task({ tags: [] })] },
+    };
+    const h = await open({ replies: removed });
+    await openPanel(h);
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await tick();
+    (h.doc.querySelector('[data-tag-del="ci"]') as HTMLElement).click();
+    await until('the tags request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
+
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({
+      id: 'a1b2c3',
+      action: 'tags',
+      tags: [],
+    });
+    await until('no chip', () => h.doc.querySelectorAll('.sched-tags .sched-tag').length === 0);
+
+    const refused = {
+      'api/schedules': listReply([task({ tags: ['ci'] })]),
+      'api/schedules/op': { ok: false, error: 'a task takes at most 5 tags, got 6' },
+    };
+    const r = await open({ replies: refused, status: { 'api/schedules/op': 400 } });
+    await openPanel(r);
+    (r.doc.querySelector('.sched-item') as HTMLElement).click();
+    await tick();
+    const input = r.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    input.value = 'x';
+    input.dispatchEvent(new r.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await until('the refusal', () => !r.el('schedules-note').hidden);
+
+    expect(r.el('schedules-note').textContent).toBe('a task takes at most 5 tags, got 6');
+    expect(r.el('schedules-list').textContent).toContain('Morning CI');
+  });
+
+  it('keeps a tag being typed and its caret through a poll repaint', async () => {
+    const replies = { 'api/schedules': listReply([task()]) };
+    // The 30s poll is shortened to 30ms, which is the repaint a person editing a tag would see.
+    const h = await open({ replies, shortenLong: true });
+    await openPanel(h);
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await tick();
+
+    const input = h.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    input.value = 'deploy';
+    input.focus();
+    input.setSelectionRange(3, 3);
+
+    await within('a poll repaint', 1000, () => !h.doc.contains(input));
+    const next = h.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    expect(next).not.toBe(input);
+    expect(next.value).toBe('deploy');
+    expect(h.doc.activeElement).toBe(next);
+    expect(next.selectionStart).toBe(3);
+  });
+
+  it('keeps Loading until the first answer arrives, even when the bar is used', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) }, held: { 'api/schedules': gate } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await until('the loading line', () => h.el('schedules-list').textContent!.includes('Loading'));
+
+    // A sort before the list has arrived must not paint "no scheduled tasks" over the wait.
+    await sortBy(h, 'created');
+    expect(h.el('schedules-list').textContent).toContain('Loading');
+
+    release();
+    await until('the tasks', () => h.el('schedules-list').textContent!.includes('Morning CI'));
+  });
+
+  it('restores the keyword, the tags and the sort after a reload', async () => {
+    const replies = { 'api/schedules': listReply(fleet()) };
+    const h = await open({ replies });
+    await openPanel(h);
+    await h.click('#sched-filter .fb-filter');
+    await toggle(h, 'tags', 'ops');
+    await sortBy(h, 'created');
+    await flip(h);
+    expect(ids(h)).toEqual(['b2c3d4']);
+
+    const saved = h.window.localStorage.getItem('aa_sched_filter');
+    expect(saved).toBeTruthy();
+    const again = await open({ replies, storage: { aa_sched_filter: saved! } });
+    await openPanel(again);
+    // The page came back with the panel open; clicking the clock is a click outside the bar, so
+    // it folds the panel as any click elsewhere does. Reopen it to read the restored view.
+    await again.click('#sched-filter .fb-filter');
+
+    expect((again.doc.querySelector('#sched-filter .fb-q') as HTMLInputElement).value).toBe('');
+    expect(again.doc.querySelector('#sched-filter .fb-chip[data-fb-value="ops"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect((again.doc.querySelector('#sched-filter .fb-panel') as HTMLElement).hidden).toBe(false);
+    expect((again.doc.querySelector('#sched-filter .fb-sortsel') as HTMLSelectElement).value).toBe('created');
+    expect(again.doc.querySelector('#sched-filter .fb-dir')?.getAttribute('title')).toBe('Descending');
+    expect(ids(again)).toEqual(['b2c3d4']);
+    expect(again.doc.querySelector('#sched-filter .fb-sumtext')?.textContent).toBe('Showing 1 of 5');
+  });
+});
+
 describe('webui page: the Reviews tab', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
