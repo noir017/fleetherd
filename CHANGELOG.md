@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.51.0] - 2026-11-07
+
 ### Changed
 
 - **A question about a delegated investigation is answered by the part that ran it.** The
