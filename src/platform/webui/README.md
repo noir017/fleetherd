@@ -229,15 +229,15 @@ a running agent rebuilds that list with `innerHTML` on every message and a menu 
 mid-tap. `paintTopics` re-finds the button after a repaint and closes the menu only if its topic is
 gone. `role=menu`/`menuitem`, arrow keys/Home/End move between items, Escape closes and returns the
 focus, Tab (any move of the focus out) closes it, and a click anywhere else closes it.
-**End agent** ends the process behind the topic and the sub-agent topics the confirmation lists
-under it (`useTopicKill` → `Delegation.endTopic`, `/kill`'s rules, not the idle sweeper's), and
-the item says how many sub-agent processes it reaches. It is disabled when none of
-them has a process, with the reason on its title. The confirmation is `openIdle`'s dialog — the
-same list and per-topic result — and the request carries that list: the daemon walks the subtree
-from its own parent record but ends only the intersection, so a sub-agent opened while the dialog
-was open is left alone and every row says what became of it (`ended`, `no process`, `cannot
-resume`). A running turn is marked `running — will be interrupted`. The header's power button is
-unchanged: it ends this topic only.
+**End agent** ends the process behind the topic and the sub-agent topics under it at once
+(`useTopicKill` → `Delegation.endTopic`, `/kill`'s rules, not the idle sweeper's); the item says
+how many sub-agent processes it reaches, and it is disabled when none of them has a process, with
+the reason on its title. There is no second confirmation (2026-11-09): the label already states
+the reach, and the header's power button has never asked either. The request carries the list the
+page held at the click — the daemon walks the subtree from its own parent record but ends only
+the intersection, so a sub-agent opened since is left alone. A running turn is interrupted on
+purpose; a runtime that cannot resume leaves its process up, and the page says so in one alert.
+The header's power button is unchanged: it ends this topic only.
 
 **The dot on each row is about the agent, not about the turn.** Four states, and two of them
 exist because "a turn is running" turned out to be a bad proxy for both of the things a person

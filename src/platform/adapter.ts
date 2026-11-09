@@ -599,11 +599,11 @@ export interface PlatformAdapter {
    * the idle sweeper's gates. The conversation of every topic is kept — the next message there
    * resumes it where it left off.
    *
-   * `confirmed` is the list the person was shown in the confirmation, and only its intersection
-   * with the subtree walked now is ended. That is what makes "the person confirmed each topic" true
-   * when a sub-agent appeared while the dialog was open: the newcomer is not in the list, so it is
-   * not touched. The walk is still the platform's own `childrenOf` (`Delegation.endTopic`), never a
-   * list the page assembled.
+   * `confirmed` is the list the page held when the menu item was clicked, and only its
+   * intersection with the subtree walked now is ended. That is what keeps a sub-agent that
+   * appeared since out of the kill: the newcomer is not in the list, so it is not touched. The
+   * walk is still the platform's own `childrenOf` (`Delegation.endTopic`), never a list the page
+   * assembled.
    *
    * Answers one row per topic it acted on, root first, so the page can say what became of each
    * rather than a count. An address that names nothing answers no rows.

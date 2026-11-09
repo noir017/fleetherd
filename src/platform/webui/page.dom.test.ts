@@ -5629,7 +5629,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     expect(h.doc.querySelector('[data-tm="end"]')?.textContent).toBe('End agent');
   });
 
-  it('confirms against the list it ends — running marked — and reports each topic', async () => {
+  it('ends the whole subtree on the click, with no second question', async () => {
     const h = await open({
       url: `http://localhost:8787/?t=${A}`,
       replies: {
@@ -5637,47 +5637,41 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
           results: [
             { topic: A, outcome: 'ended' },
             { topic: B, outcome: 'no-child' },
-            { topic: C, outcome: 'unresumable' },
+            { topic: C, outcome: 'ended' },
           ],
         },
       },
     });
     await h.emit(sync(A, [], [A]));
-    const topics = fleet({ [A]: { running: true, asking: true }, [C]: { running: true } });
-    await h.emit({ t: 'topics', topics });
+    // A running turn and a question in the tree do not bring a confirmation back: /kill
+    // interrupts them, and the menu item said how far it reaches before it was clicked.
+    await h.emit({ t: 'topics', topics: fleet({ [A]: { running: true, asking: true }, [C]: { running: true } }) });
     await rowMenu(h, A);
     await h.click('[data-tm="end"]');
+    await until('the kill', () => h.calls.some((c) => c.path === 'api/topics/kill'));
 
-    expect(h.el('idle-dialog').hidden).toBe(false);
-    expect(h.el('idle-title').textContent).toBe('End 3 agents?');
-    const rows = Array.from(h.doc.querySelectorAll('#idle-list li')).map((li) => ({
-      id: li.getAttribute('data-idle'),
-      run: li.querySelector('.idle-run')?.textContent ?? null,
-    }));
-    expect(rows).toEqual([
-      { id: A, run: 'running — will be interrupted' },
-      { id: B, run: null },
-      { id: C, run: 'running — will be interrupted' },
-    ]);
-    expect(h.el('idle-go').textContent).toBe('End 3 agents');
-    expect(h.doc.activeElement).toBe(h.el('idle-cancel'));
-    expect(h.calls.map((c) => c.path)).not.toContain('api/topics/kill');
-
-    await h.click('#idle-go');
-    await until('the answers', () => h.el('idle-cancel').textContent === 'Done');
-    // The root names the subtree; the list is what the dialog showed, and the daemon ends only
-    // their intersection — a sub-agent opened since is not in it.
+    expect(h.el('idle-dialog').hidden).toBe(true);
+    expect(h.confirms).toEqual([]);
+    // The root names the subtree; the list is what the page held, and the daemon ends only their
+    // intersection — a sub-agent opened since is not in it.
     expect(h.calls.find((c) => c.path === 'api/topics/kill')?.body).toEqual({ topic: A, topics: [A, B, C] });
-    // no process is not "cannot resume": the first had none, the second cannot be resumed.
-    expect(Array.from(h.doc.querySelectorAll('#idle-list .idle-out')).map((o) => o.textContent)).toEqual([
-      'ended',
-      'no process',
-      'cannot resume',
-    ]);
-    expect(h.el('idle-title').textContent).toBe(
-      'Ended 1 agent; 1 had no process; 1 left running — cannot resume'
-    );
-    expect(h.el('idle-go').hidden).toBe(true);
+    expect(h.el('topic-menu').hidden).toBe(true);
+    // Nothing to report when every process was ended or had already gone.
+    expect(h.alerts).toEqual([]);
+  });
+
+  it('says which process the runtime would not end — nothing else would explain a lit row', async () => {
+    const h = await open({
+      url: `http://localhost:8787/?t=${A}`,
+      replies: { 'api/topics/kill': { results: [{ topic: A, outcome: 'unresumable' }] } },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: fleet() });
+    await rowMenu(h, A);
+    await h.click('[data-tm="end"]');
+    await until('the alert', () => h.alerts.length > 0);
+
+    expect(h.alerts[0]).toBe('1 agent left running: the runtime cannot resume it.');
   });
 
   it('stays open, and follows its row, while a running agent repaints the list', async () => {
