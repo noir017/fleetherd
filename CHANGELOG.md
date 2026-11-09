@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.52.0] - 2026-11-09
+
 ### Fixed
 
 - **`-c` and `--version` after a command belong to that command.** Commander read the global
