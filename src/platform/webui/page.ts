@@ -7044,6 +7044,9 @@ const SCRIPT = `
     if(chipsChange) renderChips();
     if(input.value !== next){ input.value = next; suggest(); grow(); }
     if(d) try { input.setSelectionRange(d.s, d.e); } catch(x){}
+    // "Compressing…" belongs to the composer whose pictures are being shrunk, not to whichever
+    // one is on screen now.
+    notePending();
   }
 
   /** Everything this page remembers about one topic, for a topic that no longer exists. */
@@ -7077,24 +7080,392 @@ const SCRIPT = `
   document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'hidden') stashDraft(topic); });
   window.addEventListener('pagehide', function(){ stashDraft(topic); });
 
+  // ── Pictures are shrunk before they go ─────────────────────────────────────
+  /**
+   * A phone camera writes 3–10 MB for one photo, and what an agent can use of it is a fraction of
+   * that: Claude sees about 1568 px on the long edge whatever is sent. Every byte above that is
+   * paid for on the upload, over a mobile uplink, for nothing.
+   *
+   * So a still picture the browser can decode, and that is over 300 KB, is redrawn inside
+   * 2048×1536 pixels — about 3.1 MP, which is what a model can use of a photo — and re-encoded at
+   * the highest quality whose result fits under 300 KB: quality bisected between 0.5 and 0.92 at
+   * that size, and the dimensions stepped down only when even 0.5 is too big. A re-encode that did
+   * not come out smaller than the original is thrown away.
+   *
+   * Area, not a long edge, because the two pictures people send are shaped differently. A 1170×2532
+   * phone screenshot is already under 3.1 MP, so it keeps its size and its text stays the size it
+   * was; a 12 MP photo comes down to 2048×1536 whatever its shape. A 4096 px cap on one side is
+   * there for the panorama that fits the area budget by being extremely long and thin, and the
+   * floor below which shrinking stops is the area a 1024 px long edge would have at this shape.
+   *
+   * Never touched: GIF (a canvas keeps one frame, and the animation is the picture), SVG (the file
+   * is text), and anything already at or under 300 KB. A decode or encode that fails sends the
+   * original with a console warning — a slow send is a nuisance, a lost picture is not.
+   *
+   * Re-encoding drops EXIF, GPS included. That is a side benefit worth knowing, not the reason.
+   */
+  var SHRINK_LIMIT = 300 * 1024;
+  var SHRINK_PIXELS = 2048 * 1536;
+  var SHRINK_EDGE = 4096;
+  var SHRINK_EDGE_MIN = 1024;
+  // iOS refuses a canvas over 16,777,216 pixels and can answer with a blank one rather than an
+  // error, so no canvas here is ever allowed past it.
+  var CANVAS_MAX_PIXELS = 4096 * 4096;
+  var SHRINK_QUALITY_MAX = 0.92;
+  var SHRINK_QUALITY_MIN = 0.5;
+
+  // What the browser might decode as a still. The MIME a picker gives is the first answer; an
+  // empty one — a HEIC off an iPhone, through a picker that does not know the type — is read from
+  // the name, which is what Safari goes by anyway. GIF and SVG are excluded here, not later.
+  var STILL_MIME = /^image\\/(jpeg|jpg|png|webp|heic|heif|avif|bmp|x-ms-bmp)$/i;
+  var STILL_NAME = /\\.(jpe?g|png|webp|heic|heif|avif|bmp)$/i;
+  function stillImage(f){
+    var t = String(f.type || '').toLowerCase();
+    if(t) return STILL_MIME.test(t);
+    return STILL_NAME.test(String(f.name || ''));
+  }
+
+  /**
+   * One file's bytes as the base64 the send API takes, or null when the browser could not read it.
+   * A null is reported in #note by the caller: a picture that cannot be attached must not vanish
+   * without a word.
+   */
+  function readBase64(blob){
+    return new Promise(function(resolve){
+      var r = new FileReader();
+      r.onload = function(){
+        var s = String(r.result), c = s.indexOf(',');
+        resolve(c < 0 ? '' : s.slice(c + 1));
+      };
+      r.onerror = function(){ resolve(null); };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  /**
+   * The decoded picture: a bitmap when the browser has createImageBitmap, an <img> otherwise.
+   *
+   * createImageBitmap is first because it decodes a File directly — no URL at all, which matters
+   * since the page's CSP is img-src 'self' data: and a blob: URL would be refused — and its
+   * imageOrientation:'from-image' applies the EXIF rotation a phone saved the shot with. A
+   * browser that lacks it, or refuses this file, gets the data: URL and an <img>, which those
+   * browsers rotate themselves when drawing.
+   */
+  function decodePhoto(f){
+    var attempt = null;
+    if(typeof createImageBitmap === 'function'){
+      try { attempt = createImageBitmap(f, {imageOrientation:'from-image'}); } catch(x){ attempt = null; }
+    }
+    if(attempt && typeof attempt.then === 'function')
+      return attempt.then(function(b){ return b; }, function(){ return decodeViaImg(f); });
+    return decodeViaImg(f);
+  }
+  function decodeViaImg(f){
+    return readBase64(f).then(function(b64){
+      if(b64 === null) throw new Error('the file could not be read');
+      return new Promise(function(resolve, reject){
+        var img = new Image();
+        img.onload = function(){ resolve(img); };
+        img.onerror = function(){ reject(new Error('the browser cannot decode it')); };
+        img.src = 'data:' + (f.type || '') + ';base64,' + b64;
+      });
+    });
+  }
+  function closePhoto(p){ if(p && p.close){ try { p.close(); } catch(x){} } }
+
+  /** A canvas with high-quality smoothing on: the default filter is what makes a shrunk picture soft. */
+  function paintCanvas(w, h){
+    var canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    var ctx = canvas.getContext('2d');
+    if(!ctx) return null;
+    ctx.imageSmoothingEnabled = true;
+    if('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+    return {canvas:canvas, ctx:ctx};
+  }
+
+  /**
+   * The picture drawn at a fraction of its own pixels, never enlarged.
+   *
+   * A single drawImage of an 8000 px photo down to 2048 aliases badly — thin lines and text break
+   * up — so while the source is more than twice the target in both directions it is halved into
+   * an intermediate canvas first. Each of those is one high-quality resample rather than one
+   * huge jump.
+   */
+  function canvasAt(img, scale){
+    var iw = img.width, ih = img.height;
+    if(!iw || !ih) return null;
+    var w = Math.max(1, Math.round(iw * scale));
+    var h = Math.max(1, Math.round(ih * scale));
+    var from = img, fw = iw, fh = ih;
+    // One halving of an 80 MP source is still 20 MP — over the cap, and a canvas over it can come
+    // back blank. Come inside the cap in one step before the halving loop starts.
+    if(fw * fh > CANVAS_MAX_PIXELS){
+      var fit = Math.sqrt(CANVAS_MAX_PIXELS / (fw * fh));
+      var cw = Math.max(w, Math.floor(fw * fit)), ch = Math.max(h, Math.floor(fh * fit));
+      var first = paintCanvas(cw, ch);
+      if(!first) return null;
+      first.ctx.drawImage(from, 0, 0, cw, ch);
+      from = first.canvas; fw = cw; fh = ch;
+    }
+    while(fw > w * 2 && fh > h * 2){
+      var mw = Math.max(w, Math.round(fw / 2)), mh = Math.max(h, Math.round(fh / 2));
+      var mid = paintCanvas(mw, mh);
+      if(!mid) return null;
+      mid.ctx.drawImage(from, 0, 0, mw, mh);
+      from = mid.canvas; fw = mw; fh = mh;
+    }
+    var out = paintCanvas(w, h);
+    if(!out) return null;
+    out.ctx.drawImage(from, 0, 0, w, h);
+    return out.canvas;
+  }
+
+  /**
+   * Encode one canvas, or null if the browser would not.
+   *
+   * The blob's own type is checked against the one asked for because iOS Safari quietly answers a
+   * WebP request with a PNG; a PNG wearing a .webp name is worse than no shrink at all. A JPEG
+   * gets a white ground first: JPEG has no alpha, and every transparent pixel would otherwise
+   * turn black.
+   */
+  function encodeAs(canvas, mime, quality){
+    if(mime === 'image/jpeg'){
+      var flat = paintCanvas(canvas.width, canvas.height);
+      if(!flat) return Promise.resolve(null);
+      flat.ctx.fillStyle = '#fff';
+      flat.ctx.fillRect(0, 0, canvas.width, canvas.height);
+      flat.ctx.drawImage(canvas, 0, 0);
+      canvas = flat.canvas;
+    }
+    return new Promise(function(resolve){
+      try {
+        canvas.toBlob(function(blob){ resolve(blob && blob.type === mime ? blob : null); }, mime, quality);
+      } catch(x){ resolve(null); }
+    });
+  }
+
+  /** Whether this browser really encodes WebP, asked once with a 1×1 canvas and remembered. */
+  var webpProbe = null;
+  function canEncodeWebp(){
+    if(webpProbe) return webpProbe;
+    webpProbe = new Promise(function(resolve){
+      try {
+        var c = document.createElement('canvas');
+        c.width = 1; c.height = 1;
+        c.toBlob(function(b){ resolve(Boolean(b && b.type === 'image/webp')); }, 'image/webp', 0.8);
+      } catch(x){ resolve(false); }
+    });
+    return webpProbe;
+  }
+
+  /**
+   * The highest quality whose blob fits, by bisection. Five rounds take 0.5–0.92 down to about
+   * 0.013, finer than one JPEG quantisation step, and each round is a full encode at 2048 px —
+   * so more rounds would cost a visible moment for bytes nobody can see.
+   */
+  function findQuality(canvas, mime, limit, lo, hi, best, rounds){
+    if(rounds <= 0 || hi - lo < 0.05) return Promise.resolve(best);
+    var q = (lo + hi) / 2;
+    return encodeAs(canvas, mime, q).then(function(blob){
+      if(!blob) return best;
+      if(blob.size <= limit) return findQuality(canvas, mime, limit, q, hi, blob, rounds - 1);
+      return findQuality(canvas, mime, limit, lo, q, best, rounds - 1);
+    });
+  }
+
+  /**
+   * One size: the top quality first (most screenshots fit there), then the bottom one to learn
+   * whether this size can fit at all, then the bisection between them. blob is the smallest
+   * encode made either way, because when no size fits that is what gets kept.
+   */
+  function encodeAtSize(canvas, mime, limit){
+    var smallest = null;
+    function note(blob){
+      if(blob && (!smallest || blob.size < smallest.size)) smallest = blob;
+      return blob;
+    }
+    return encodeAs(canvas, mime, SHRINK_QUALITY_MAX).then(function(top){
+      note(top);
+      if(top && top.size <= limit) return {fits:true, blob:top};
+      return encodeAs(canvas, mime, SHRINK_QUALITY_MIN).then(function(bottom){
+        note(bottom);
+        if(!bottom || bottom.size > limit) return {fits:false, blob:smallest};
+        return findQuality(canvas, mime, limit, SHRINK_QUALITY_MIN, SHRINK_QUALITY_MAX, bottom, 5)
+          .then(function(best){ note(best); return {fits:true, blob:best || bottom}; });
+      });
+    });
+  }
+
+  /** Whether this one is worth the canvas at all. Asked twice: once to say "Compressing…", once to work. */
+  function willShrink(f){
+    return Boolean(f && f.size && f.size > SHRINK_LIMIT && stillImage(f));
+  }
+
+  /**
+   * The smaller picture, or null to send the file as it is.
+   *
+   * Rejects nothing: every failure — no decoder, a canvas that will not give a context, an encoder
+   * that returns nothing — ends in null and a warning, because the person attached a picture and
+   * the send is not allowed to lose it.
+   */
+  function shrinkPhoto(file){
+    if(!willShrink(file)) return Promise.resolve(null);
+    var photo = null;
+    return decodePhoto(file).then(function(img){
+      photo = img;
+      return canEncodeWebp();
+    }).then(function(webp){
+      if(!photo) return null;
+      /**
+       * One pass at one format: the smallest encode made at each size, and whether the encoder
+       * produced anything at all. That second answer is what tells a too-big picture apart from
+       * a format this browser will not write.
+       */
+      function attempt(mime){
+        var smallest = null, any = false;
+        var w = photo.width, h = photo.height;
+        var long = Math.max(w, h) || 1;
+        var scale = Math.min(1, Math.sqrt(SHRINK_PIXELS / (w * h)), SHRINK_EDGE / long);
+        // The floor is the area a 1024 px long edge would have at this shape: below it a picture
+        // would fit by being too small to read, and what was made so far is the answer instead.
+        var floor = Math.min(1, SHRINK_EDGE_MIN / long);
+        function step(){
+          var canvas = canvasAt(photo, scale);
+          if(!canvas) return Promise.resolve({blob:smallest, any:any});
+          return encodeAtSize(canvas, mime, SHRINK_LIMIT).then(function(out){
+            if(out.blob){
+              any = true;
+              if(!smallest || out.blob.size < smallest.size) smallest = out.blob;
+            }
+            if(out.fits) return {blob:out.blob, any:true};
+            // Nothing at all, even at the bottom quality: a smaller canvas would fail the same
+            // way, so only the format is worth another try.
+            if(!out.blob) return {blob:smallest, any:any};
+            var next = scale * 0.72;
+            if(!(next < scale) || next < floor) return {blob:smallest, any:any};
+            scale = Math.max(floor, next);
+            return step();
+          });
+        }
+        return step();
+      }
+      if(!webp) return attempt('image/jpeg').then(function(r){ return r.blob; });
+      return attempt('image/webp').then(function(r){
+        // The 1×1 probe can be right and a full-size canvas wrong: iOS Safari answers the probe
+        // with WebP and a real encode with PNG, which encodeAs refuses. Nothing came back, so
+        // JPEG is still worth trying.
+        if(r.any) return r.blob;
+        return attempt('image/jpeg').then(function(j){ return j.blob; });
+      });
+    }).then(function(blob){
+      closePhoto(photo);
+      // Not smaller than what was attached means the re-encode spent quality and saved nothing.
+      return blob && blob.size < file.size ? {blob:blob} : null;
+    }, function(x){
+      closePhoto(photo);
+      console.warn('talkcode: could not shrink ' + (file.name || 'a picture') + '; sending the original', x);
+      return null;
+    });
+  }
+
+  /**
+   * The extension follows the bytes. The daemon sniffs the magic number, so a wrong name is not a
+   * format bug — but a JPEG called IMG_0001.HEIC is a trap for whoever saves it later, and the
+   * agent reads the name too.
+   */
+  function withMime(name, mime){
+    var base = String(name || 'image');
+    // Only a known picture extension is replaced. "2026.11 photo" is a name, not a .11 photo.
+    if(STILL_NAME.test(base)) base = base.replace(/\\.[^.]*$/, '');
+    var sub = mime === 'image/jpeg' ? 'jpg' : String(mime || '').split('/')[1];
+    return (base || 'image') + '.' + (sub || 'jpg').toLowerCase();
+  }
+
+  /**
+   * What each composer is still waiting for, by topic, and the Send tap that arrived during the
+   * wait. Both are per topic: a picture being shrunk in one conversation must not hold up a send
+   * in another, and "Compressing…" may only appear over the composer it belongs to. A picture
+   * smaller than 300 KB is not worth a canvas, so it never counts here.
+   */
+  var pendingBy = {}, shrinkingBy = {}, queuedSend = null, noteOwner = null;
+  function countUp(map, id){ map[id] = (map[id] || 0) + 1; }
+  function countDown(map, id){
+    if((map[id] || 0) > 1) map[id]--;
+    else delete map[id];
+  }
+  function notePending(){
+    var n = shrinkingBy[topic] || 0;
+    if(!n){ clearPendingNote(); return; }
+    if(noteOwner === null && note.textContent) return;
+    noteOwner = 'Compressing ' + (n > 1 ? n + ' pictures' : 'picture') + '...';
+    note.textContent = noteOwner;
+  }
+  function clearPendingNote(){
+    if(noteOwner !== null && note.textContent === noteOwner) note.textContent = '';
+    noteOwner = null;
+  }
+  /**
+   * One file has become an attachment, or failed to. A queued Send happens only if the person is
+   * still in the topic they pressed it in and nothing else is still coming there; a switch away
+   * cancels it, and the text and picture stay in that topic's draft for when they come back.
+   */
+  function settled(into, tookCanvas){
+    countDown(pendingBy, into);
+    if(tookCanvas) countDown(shrinkingBy, into);
+    if(into === topic) notePending();
+    if(pendingBy[into]) return;
+    var queued = queuedSend;
+    if(!queued || queued.topic !== into) return;
+    queuedSend = null;
+    if(into === topic) send();
+  }
+
   // The rename argument exists for the clipboard, which is the one source that hands over files
   // the browser has already named badly — see the paste handler below. Everything else passes
   // the name through, and this stays the single place a file becomes a chip.
   function take(list, rename){
-    // The topic this is being attached in, fixed now: FileReader answers a turn or more later, and
-    // a topic switched to in between must not receive a file picked in the one before it.
+    // The topic this is being attached in, fixed now: the shrink and the FileReader both answer a
+    // turn or more later, and a topic switched to in between must not receive a file picked in
+    // the one before it.
     var into = topic;
     for(var i=0;i<list.length;i++){
       (function(f){
-        var r=new FileReader();
-        r.onload=function(){
-          var s=String(r.result), c=s.indexOf(',');
-          var file={name:(rename ? rename(f) : f.name) || 'file', mime:f.type||'', data:c<0?'':s.slice(c+1)};
-          if(!into || into === topic){ files.push(file); renderChips(); return; }
-          var d = drafts[into] || (drafts[into] = {text:'', s:0, e:0, files:[]});
-          d.files.push(file);
-        };
-        r.readAsDataURL(f);
+        // The name is fixed here rather than after the shrink: the clipboard's counter has to
+        // advance in the order the files were handed over, or two pastes share one name.
+        var name = (rename ? rename(f) : f.name) || 'file';
+        var tookCanvas = willShrink(f);
+        countUp(pendingBy, into);
+        if(tookCanvas) countUp(shrinkingBy, into);
+        notePending();
+        shrinkPhoto(f).then(function(out){
+          var blob = out ? out.blob : f;
+          var mime = out ? out.blob.type : (f.type || '');
+          if(out) name = withMime(name, mime);
+          return readBase64(blob).then(function(data){
+            if(data === null){
+              // Degrade explicitly: the picture is not attached, and #note names the one that
+              // failed — in the composer it was attached in, never over whichever topic is on
+              // screen now.
+              if(into === topic){
+                noteOwner = null;
+                note.textContent = 'Could not read ' + name + '; it was not attached.';
+              } else {
+                console.warn('talkcode: could not read ' + name + '; it was not attached');
+              }
+              return;
+            }
+            var file = {name:name, mime:mime, data:data};
+            if(!into || into === topic){ files.push(file); renderChips(); return; }
+            var d = drafts[into] || (drafts[into] = {text:'', s:0, e:0, files:[]});
+            d.files.push(file);
+          });
+        }).then(function(){ settled(into, tookCanvas); }, function(x){
+          // Nothing above is supposed to reject; if it ever does, the send must still be let go.
+          console.warn('talkcode: could not prepare ' + name + '; it was not attached', x);
+          settled(into, tookCanvas);
+        });
       })(list[i]);
     }
   }
@@ -7422,6 +7793,15 @@ const SCRIPT = `
    * says so.
    */
   function send(){
+    // A picture still being shrunk in THIS topic is not in files yet, so a send now would leave
+    // it out — or wait for nothing and look broken. The tap is remembered for this topic and
+    // happens when its last picture lands; #note says why nothing moved yet, unless it is
+    // carrying something of its own. Another topic's pictures do not hold this send.
+    if(pendingBy[topic]){
+      queuedSend = {topic:topic};
+      notePending();
+      return;
+    }
     var typed = input.value;
     if(!typed.trim() && !files.length) return;
     var attached = files;

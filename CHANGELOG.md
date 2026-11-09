@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI shrinks a large picture before it uploads it.** A phone writes 3–10 MB for one
+  photo, and the upload — not the model — is the slow half of sending it: every harness sees at
+  most about 3 MP anyway. A still over 300 KB is now redrawn to about 3.1 megapixels (2048×1536
+  at 4:3, with a 4096 px cap on one side for a panorama) and encoded at the highest quality that
+  stays under 300 KB — every still, JPEG included, as WebP where the browser really writes it,
+  and as JPEG where iOS Safari answers a WebP request with a PNG — with the extension and MIME
+  following the new format. A common phone screenshot keeps its own size or comes out close to
+  it, so its text stays the size it was. GIF, SVG and anything already small go as they were, a
+  picture that cannot be decoded is sent untouched, and a Send pressed during the second the
+  shrink takes waits for it — in that conversation only, so switching topics cancels the wait
+  rather than sending it elsewhere. Re-encoding also drops EXIF, GPS included.
+
 ## [2.53.0] - 2026-11-09
 
 ### Added
