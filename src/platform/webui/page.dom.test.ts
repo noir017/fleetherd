@@ -4858,7 +4858,9 @@ describe('webui page: shrinking a picture before it goes', () => {
     await h.click(`[data-topic="${B}"]`);
     // The note belongs to the composer A's picture is being shrunk for, not to B's.
     expect(h.el('note').textContent).toBe('');
-    expect((h.el('input') as HTMLTextAreaElement).value).toBe('');
+    // B holds a draft of its own when A's picture lands. A page-global queue sends THIS text —
+    // which is the bug the second half of the test exists to catch.
+    (h.el('input') as HTMLTextAreaElement).value = 'b draft';
 
     h.photos.release('IMG_4.HEIC');
     await new Promise((r) => setTimeout(r, 50));
@@ -4873,6 +4875,11 @@ describe('webui page: shrinking a picture before it goes', () => {
     await h.click('#composer button[type="submit"]');
     expect(sent(h)).toHaveLength(1);
     expect(h.calls.find((c) => c.path === 'api/send')?.body).toMatchObject({ topic: A, text: 'for A only' });
+
+    // B's draft was there when the picture landed; it must still be there, and never have gone out.
+    await h.click(`[data-topic="${B}"]`);
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe('b draft');
+    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['for A only']);
   });
 
   it('does not hold up a send in another topic while a picture is being shrunk', async () => {

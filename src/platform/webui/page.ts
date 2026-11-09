@@ -7446,9 +7446,14 @@ const SCRIPT = `
           return readBase64(blob).then(function(data){
             if(data === null){
               // Degrade explicitly: the picture is not attached, and #note names the one that
-              // failed instead of leaving the chip off with no explanation.
-              noteOwner = null;
-              note.textContent = 'Could not read ' + name + '; it was not attached.';
+              // failed — in the composer it was attached in, never over whichever topic is on
+              // screen now.
+              if(into === topic){
+                noteOwner = null;
+                note.textContent = 'Could not read ' + name + '; it was not attached.';
+              } else {
+                console.warn('talkcode: could not read ' + name + '; it was not attached');
+              }
               return;
             }
             var file = {name:name, mime:mime, data:data};
