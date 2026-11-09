@@ -110,5 +110,6 @@ config.yaml reloaded.
 | `start` | run the daemon |
 | `<reverse-command>` | chat actions for the agent — see [Acting in the chat](agent-actions.md#acting-in-the-chat) |
 
-All commands accept `-c, --config <path>` and print structured output to
-stdout.
+All commands accept `-c, --config <path>` before the command (`talkcode -c <path> start`) and
+print structured output to stdout. After the command, `-c` is that command's own: `--channel` for
+the chat actions.

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { encode } from '@toon-format/toon';
 import { runSetup } from './commands/setup.js';
@@ -7,6 +6,7 @@ import { runDoctor } from './commands/doctor.js';
 import { runReverse } from './commands/reverse.js';
 import { registerReverseCommand } from './commands/reverse-cli.js';
 import { handOffRemoteCli } from './commands/remote-cli.js';
+import { newProgram } from './commands/program.js';
 import { REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './ipc/commands.js';
 
 // Before commander sees anything: inside an agent on a host the gateway reaches over ssh, this
@@ -35,15 +35,7 @@ const runStart = () => import('./commands/start.js').then((m) => m.runStart());
  */
 const version = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
 
-const program = new Command();
-program
-  .name('talkcode')
-  .description('Gateway that connects IM platforms to coding agents: messaging via Koishi, handled over ACP')
-  .version(version)
-  // Global: pick a specific config file (e.g. one per platform). Default is ~/.config/talkcode/config.yaml.
-  // We stash it on process.env so it's inherited by the spawned agent — its reverse commands then resolve
-  // the same config/socket. Only one daemon runs at a time, so the socket sits next to the chosen file.
-  .option('-c, --config <path>', 'path to the config YAML to use (default: ~/.config/talkcode/config.yaml)');
+const program = newProgram(version);
 
 // Set the override before any subcommand action runs (setup/start/doctor/reverse all read it via configPath()).
 program.hook('preAction', (thisCommand) => {

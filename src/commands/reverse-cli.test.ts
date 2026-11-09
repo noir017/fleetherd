@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
 import { REVERSE_COMMANDS } from '../ipc/commands.js';
 import type { IpcAction } from '../ipc/protocol.js';
+import { newProgram } from './program.js';
 import { registerReverseCommand } from './reverse-cli.js';
 
 /**
@@ -17,6 +18,8 @@ import { registerReverseCommand } from './reverse-cli.js';
 const sessionsSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('sessions'))!;
 const taskNewSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('task-new'))!;
 const scheduleSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('schedule'))!;
+const skillsSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('skills'))!;
+const fetchSpec = REVERSE_COMMANDS.find((c) => c.usage.startsWith('fetch-messages'))!;
 
 /** Parse one argv and return the action the CLI would hand to `runReverse`. */
 function parse(argv: string[], spec = sessionsSpec): IpcAction {
@@ -105,5 +108,47 @@ describe('schedule edit on the command line', () => {
       id: 'a1b2c3',
       agent: 'oc',
     });
+  });
+});
+
+describe('global options beside a command\'s own', () => {
+  /**
+   * Through the real top-level command (program.ts), whose `-c, --config` and `--version` share
+   * their names with every command's `-c, --channel` and with `skills patch --version`.
+   */
+  function parseTop(argv: string[], spec: (typeof REVERSE_COMMANDS)[number]): { action?: IpcAction; out: string; config?: string } {
+    const program = newProgram('9.9.9');
+    let out = '';
+    program.exitOverride().configureOutput({ writeOut: (s) => void (out += s) });
+    let action: IpcAction | undefined;
+    registerReverseCommand(program, spec, (a) => {
+      action = a;
+    });
+    try {
+      program.parse(['node', 'talkcode', ...argv]);
+    } catch (e) {
+      if ((e as { code?: string }).code !== 'commander.version') throw e;
+    }
+    const config = program.opts().config as string | undefined;
+    return { ...(action ? { action } : {}), out, ...(config ? { config } : {}) };
+  }
+
+  it('gives skills patch its own --version instead of printing the CLI\'s', () => {
+    const r = parseTop(['skills', 'patch', 'deploy-check', '--version', 'abc123', '--content', 'x'], skillsSpec);
+    expect(r.out).toBe('');
+    expect(r.action).toMatchObject({ kind: 'skills', action: 'patch', name: 'deploy-check', version: 'abc123' });
+  });
+
+  it('gives -c after a command to that command as --channel, not to the config file', () => {
+    const r = parseTop(['fetch-messages', '-c', 'main/abc'], fetchSpec);
+    expect(r.config).toBeUndefined();
+    expect(r.action).toMatchObject({ kind: 'fetch-messages', channelId: 'main/abc' });
+  });
+
+  it('still reads the global options before the command', () => {
+    expect(parseTop(['--version'], fetchSpec).out.trim()).toBe('9.9.9');
+    const r = parseTop(['-c', '/tmp/x.yaml', 'fetch-messages'], fetchSpec);
+    expect(r.config).toBe('/tmp/x.yaml');
+    expect(r.action).toMatchObject({ kind: 'fetch-messages', channelId: undefined });
   });
 });

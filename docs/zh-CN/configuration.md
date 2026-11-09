@@ -101,4 +101,4 @@ config.yaml reloaded.
 | `start` | 运行守护进程 |
 | `<反向命令>` | 供智能体使用的聊天操作，见[在聊天中行动](agent-actions.md#在聊天中行动) |
 
-所有命令均接受 `-c, --config <path>`，并将结构化输出写到 stdout。
+所有命令均接受写在命令之前的 `-c, --config <path>`（`talkcode -c <path> start`），并将结构化输出写到 stdout。写在命令之后的 `-c` 归该命令自己：聊天动作里是 `--channel`。
