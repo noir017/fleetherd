@@ -472,6 +472,7 @@ type Outbound = Pick<
   | 'stopTyping'
   | 'setStatus'
   | 'setActivity'
+  | 'setOfflineMachines'
   | 'seenAt'
   | 'parentOf'
   | 'childrenOf'
@@ -609,6 +610,10 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
     /** How a topic's last turn ended: what its row and the Needs-you list say about it. */
     setActivity(address, activity) {
       room.setActivity(topicOf(address, 'setActivity'), activity);
+    },
+    /** Machines that cannot be reached: marked in the topic list, the agent cards and the composer. */
+    setOfflineMachines(machines) {
+      room.setOfflineMachines(machines);
     },
     /** Read, so a topic that is gone answers "never seen" rather than throwing. */
     seenAt(address) {

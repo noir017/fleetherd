@@ -6,6 +6,7 @@ import type {
   CommandInteraction,
   InboundMessage,
   MessageRef,
+  OfflineMachine,
   SettingsScreen,
   SlashCommandSpec,
   TopicActivity,
@@ -661,6 +662,18 @@ export interface PlatformAdapter {
    * list is the chat app's. Synchronous and best-effort.
    */
   setActivity?(address: ConversationAddress, activity: TopicActivity | undefined): void;
+
+  /**
+   * Tell the platform which machines cannot be reached right now — every one, each time the list
+   * changes (an empty list: all of them can). Names are the ones the agent menus and
+   * `ConversationWorkdir.host` use, so a page can mark the topics and the agents on them.
+   *
+   * Pushed for the reason setStatus is: the daemon measures it (daemon/host-availability.ts) and
+   * knows when it moves. Optional and web-UI-only for the reason the lookups above are: a chat app
+   * has nowhere to keep a machine list, and its `/agent` menu says it when drawn. Synchronous and
+   * best-effort.
+   */
+  setOfflineMachines?(machines: readonly OfflineMachine[]): void;
 
   /**
    * When the person last looked at the conversation at an address (epoch ms), as far as this

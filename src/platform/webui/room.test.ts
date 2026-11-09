@@ -1939,7 +1939,9 @@ describe('WebRoom: the agent status strip', () => {
     expect(kinds(resumed)).not.toContain('sync');
     expect(resumed.filter((s) => s.ev.t === 'msg')).toHaveLength(1);
     // …and since none of those 400 were replayed, the resumed page is told the current one.
-    expect(last(resumed)).toEqual({ t: 'status', status: { ...STATUS, context: { used: 399, size: 200_000 } } });
+    expect(resumed.filter((s) => s.ev.t === 'status').map((s) => s.ev)).toEqual([
+      { t: 'status', status: { ...STATUS, context: { used: 399, size: 200_000 } } },
+    ]);
   });
 
   it('tells a resumed page the status was cleared while it was away', () => {
@@ -1952,7 +1954,61 @@ describe('WebRoom: the agent status strip', () => {
 
     const resumed: Seen[] = [];
     room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
-    expect(last(resumed)).toEqual({ t: 'status' });
+    expect(resumed.filter((s) => s.ev.t === 'status').map((s) => s.ev)).toEqual([{ t: 'status' }]);
+  });
+});
+
+describe('WebRoom: machines the daemon cannot reach', () => {
+  const DOWN = [{ name: 'laptop', since: 1_762_000_000_000 }];
+
+  it('tells every client, whichever topic it reads, unnumbered', () => {
+    const { room, seen } = attached();
+    const other = room.createTopic('other').id;
+    const elsewhere: Seen[] = [];
+    room.subscribe(other, (id, ev) => elsewhere.push({ id, ev }));
+    seen.length = 0;
+    elsewhere.length = 0;
+
+    room.setOfflineMachines(DOWN);
+    expect(seen.map((s) => [s.ev.t, s.id])).toEqual([['machines', '']]);
+    expect(last(seen)).toEqual({ t: 'machines', offline: DOWN });
+    expect(elsewhere.map((s) => s.ev)).toEqual([{ t: 'machines', offline: DOWN }]);
+  });
+
+  it('drops a list equal to the last, and says "all back" with an empty one', () => {
+    const { room, seen } = attached();
+    seen.length = 0;
+    room.setOfflineMachines(DOWN);
+    room.setOfflineMachines([...DOWN]);
+    expect(kinds(seen)).toEqual(['machines']);
+    room.setOfflineMachines([]);
+    expect(last(seen)).toEqual({ t: 'machines', offline: [] });
+  });
+
+  it('puts the list on a sync, and leaves the field off when nothing is offline', () => {
+    const { room, topic } = attached();
+    room.setOfflineMachines(DOWN);
+    const first: Seen[] = [];
+    room.subscribe(topic, (id, ev) => first.push({ id, ev }));
+    expect(first[0]?.ev).toMatchObject({ t: 'sync', offline: DOWN });
+
+    room.setOfflineMachines([]);
+    const second: Seen[] = [];
+    room.subscribe(topic, (id, ev) => second.push({ id, ev }));
+    expect('offline' in (second[0]?.ev ?? {})).toBe(false);
+  });
+
+  it('tells a resumed page the list as it is now, which may have changed while it was away', () => {
+    const { room, topic, seen, off } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id !== '').at(-1)?.id ?? '';
+    off();
+    room.setOfflineMachines(DOWN);
+
+    const resumed: Seen[] = [];
+    room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    expect(kinds(resumed)).not.toContain('sync');
+    expect(last(resumed)).toEqual({ t: 'machines', offline: DOWN });
   });
 });
 

@@ -24,10 +24,13 @@ import { parseButtonId, PICK_PREFIX, parsePickButtonId } from '../core/button-id
 import {
   buildAgentMenu,
   flatAgents,
+  offlinePlaces,
   parseAgentButtonId,
   type AgentButtonClick,
   type AgentGroup,
 } from '../core/agent-menu.js';
+import { canReach } from '../remote/reachable.js';
+import { HostAvailability } from './host-availability.js';
 import {
   buildEffortMenu,
   effortChoiceText,
@@ -748,6 +751,14 @@ function isSkillRead(action: Extract<IpcAction, { kind: 'skills' }>['action']): 
 export class Daemon {
   private registry: ConversationRegistry;
   private ipc: IpcServer;
+  /** Which hosts can be reached now (host-availability.ts): the web UI's offline marks, `/agent`'s. */
+  private readonly availability = new HostAvailability({
+    probe: (ssh) => canReach(ssh),
+    isUp: (id) => remoteHosts.get(id)?.isUp ?? false,
+    onChange: () => this.pushOfflineMachines(),
+  });
+  /** The names offlinePlaces gave last: what the `/agent` menu marks (ConversationRegistry hook). */
+  private offlineNames: ReadonlySet<string> = new Set();
   /** Pending ask requests: reqId → wait handle. Resolved and deleted on click, typed reply or timeout. */
   private pendingAsks = new Map<string, PendingAsk>();
   /**
@@ -993,6 +1004,7 @@ export class Daemon {
       onWorkdirMenuRequest: (id, agentId, conv, menu) =>
         this.onWorkdirMenuRequest(id, agentId, conv, menu),
       onAgentMenuRequest: (id, msg, menu) => this.onAgentMenuRequest(id, msg, menu),
+      offlinePlaces: () => this.offlineNames,
       // A voice message is transcribed and confirmed before it becomes a prompt; typing drops a
       // transcript still waiting, and /stop and /new call them off.
       takeVoice: (id, msg) => this.voice.take(id, msg),
@@ -1056,6 +1068,7 @@ export class Daemon {
     // Before anything can start an agent: an agent with `host:` reaches its machine through this.
     this.socketPath = socketPath;
     remoteHosts.configure(config, socketPath);
+    this.watchHosts();
     this.ipc = new IpcServer(
       socketPath,
       {
@@ -1178,6 +1191,36 @@ export class Daemon {
    */
   private wireTopicKill(adapter: PlatformAdapter): void {
     adapter.useTopicKill?.((ref, confirmed) => this.killTopicTree(ref, confirmed));
+  }
+
+  /**
+   * Start watching which hosts can be reached (host-availability.ts): every host in config, with
+   * each connection's coming and going as a hint. Its own method for the reason wireTopicKill is.
+   */
+  private watchHosts(): void {
+    remoteHosts.onConnection((id, up) => (up ? this.availability.connected(id) : this.availability.dropped(id)));
+    this.availability.configure(this.config.hosts ?? {});
+  }
+
+  /**
+   * Tell every platform which machines cannot be reached, by the names its menus and topic list use
+   * (core/agent-menu.ts offlinePlaces), and keep the names for the `/agent` menu. Called on every
+   * change and after a reload; a platform drops a list equal to its last (webui room.ts).
+   */
+  private pushOfflineMachines(): void {
+    const machines = offlinePlaces(this.config.agents, this.availability.offline());
+    const names = new Set(machines.map((m) => m.name));
+    if ([...names].join(',') !== [...this.offlineNames].join(',')) {
+      console.log(`[remote] offline: ${names.size > 0 ? [...names].join(', ') : 'none'}`);
+    }
+    this.offlineNames = names;
+    for (const [id, adapter] of this.platforms) {
+      try {
+        adapter.setOfflineMachines?.(machines);
+      } catch (e) {
+        console.warn(`[remote] could not tell ${id} which machines are offline:`, e instanceof Error ? e.message : e);
+      }
+    }
   }
 
   /**
@@ -1325,6 +1368,7 @@ export class Daemon {
     // anyway when the next gateway connects (a new epoch), or after its orphan timeout.
     await remoteHosts.flushAll(2_000);
     remoteHosts.closeAll();
+    this.availability.stop();
   }
 
   /**
@@ -1838,6 +1882,10 @@ export class Daemon {
     read.commitEnv();
     applyConfig(this.config, next);
     remoteHosts.configure(this.config, this.socketPath);
+    // A host added or moved is probed now; and an agent added or moved changes which machine is
+    // wholly offline even when no host did, so the list is worked out again either way.
+    this.availability.configure(this.config.hosts ?? {});
+    this.pushOfflineMachines();
     // A new host or a moved `cwd` has no directory list yet; already-listed ones are just reread.
     this.registry.warmRemoteScans();
 

@@ -95,6 +95,13 @@ export class RemoteHosts {
   private readonly managedLinks = new Map<string, string>();
   /** host id + daemon instance + skill name → archived and taken back; skipped until a restore. */
   private readonly managedArchived = new Set<string>();
+  /** Told each time a host's connection comes up or drops (host-availability.ts listens). */
+  private connectionListener: ((id: string, up: boolean) => void) | undefined;
+
+  /** Hear about every host's connection coming up or dropping — one listener, the daemon's. */
+  onConnection(listener: (id: string, up: boolean) => void): void {
+    this.connectionListener = listener;
+  }
 
   /** (Re)build the host table from config. Unchanged entries keep their live connection. */
   configure(cfg: Pick<Config, 'hosts'>, socketPath: string): void {
@@ -124,6 +131,10 @@ export class RemoteHosts {
         cli: (req, io) => this.runCli(req, io),
       });
       this.hosts.set(id, { key: hostKey(def), host });
+      // Through a field rather than the listener itself, so one set after configure() still hears
+      // the hosts configured before it.
+      host.on('up', () => this.connectionListener?.(id, true));
+      host.on('down', () => this.connectionListener?.(id, false));
       // Reached once now rather than on the first message: a host whose last gateway died without
       // stopping its agents (a crash, a kill -9) sees this gateway's new epoch and stops them at
       // once instead of whenever someone next writes; and a wrong address or key shows up in the

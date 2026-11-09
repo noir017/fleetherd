@@ -5,6 +5,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI shows which machines are offline.** A remote host's connection is opened on demand
+  and closed when idle, so "not connected" said nothing, and a message to a laptop that had gone to
+  sleep just sat there — held until it came back, or failing only once it was tried — with nothing
+  on screen saying why. The gateway now checks every host once a minute with a TCP connect to its
+  ssh port (no login; offline after two failures in a row, five seconds apart), and the web UI marks
+  an offline machine in the line of every topic on it, over its agents on a new topic (dimmed, still
+  choosable), and above the composer of a topic on it, with the time it went. The `/agent` menu on
+  every platform says `offline` after its name.
+
+### Fixed
+
+- **`pod-add`, `task-new --model` and `reload` no longer report a timeout for a change that went
+  through.** The CLI waited 10 seconds for an answer; adding a host installs the helper on it, a
+  reload reads every host (up to 20 seconds for one that does not answer), and a sub-task with a
+  model starts the agent to read its model list. On a cold host each took longer, the CLI said
+  "IPC timeout", and an agent that retried added the host twice or proposed the sub-task twice.
+  They now wait up to 60 seconds, as `schedule add` already did.
+
 ## [2.52.0] - 2026-11-09
 
 ### Fixed

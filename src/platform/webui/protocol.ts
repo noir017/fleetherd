@@ -17,7 +17,7 @@
 import { z } from 'zod';
 
 import type { ButtonSpec, MessageKind } from '../adapter.js';
-import type { AgentCatalog, AgentStatus, SettingsScreen, SlashCommandSpec } from '../../types.js';
+import type { AgentCatalog, AgentStatus, OfflineMachine, SettingsScreen, SlashCommandSpec } from '../../types.js';
 import { MAX_TOPICS, type Topic } from './topics.js';
 
 /**
@@ -338,6 +338,8 @@ export type WebEvent =
        * topic that has started with its agent cannot move (see `PlatformAdapter.useAgentCatalog`).
        */
       agents?: AgentCatalog;
+      /** Machines the daemon cannot reach right now (`machines` below); absent when there are none. */
+      offline?: OfflineMachine[];
     }
   | { t: 'msg'; msg: WebMessage }
   | { t: 'del'; id: string }
@@ -360,6 +362,12 @@ export type WebEvent =
    * that crosses topics.
    */
   | { t: 'topics'; topics: Topic[] }
+  /**
+   * The machines the daemon cannot reach changed — every one of them, so an empty list says they
+   * are all back. State like `status`, never sequenced, and to every client like `topics`: the
+   * topic list marks a row whose machine is gone, whichever topic the page is in.
+   */
+  | { t: 'machines'; offline: OfflineMachine[] }
   /**
    * The daemon is going away; stop reconnecting.
    *

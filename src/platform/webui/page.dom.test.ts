@@ -2472,6 +2472,121 @@ describe('webui page: choosing an agent for a new topic', () => {
   });
 });
 
+describe('webui page: a machine the gateway cannot reach', () => {
+  const agents = {
+    current: 'cc',
+    groups: [
+      { name: 'uniagent', agents: [{ id: 'cc', harness: 'claude', kind: 'Claude Code' }] },
+      { name: 'laptop', agents: [{ id: 'cc@laptop', harness: 'claude', kind: 'Claude Code' }, { id: 'oc@laptop', harness: 'opencode', kind: 'OpenCode' }] },
+    ],
+  };
+  // A few minutes ago, so the page says it as a time of day.
+  const since = Date.now() - 5 * 60_000;
+  const at = (ms: number): string => {
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+  const laptopDown = [{ name: 'laptop', since }];
+  /** Two topics, one on each machine, the shape `topicList` builds with a workdir lookup. */
+  const placed = (current: string, messages: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}): Record<string, unknown> =>
+    sync(current, messages, [], {
+      topics: [
+        { id: 'a1b2c3d4', title: 'Fix the build', lastAt: 1000, running: false, msgCount: current === 'a1b2c3d4' ? messages.length : 0, dir: { name: 'quantlab', path: '/home/user/work/quantlab', host: 'laptop' } },
+        { id: 'b2c3d4e5', title: 'Docs', lastAt: 999, running: false, msgCount: 0, dir: { name: 'talkcode', path: '/home/user/workspace/talkcode', host: 'uniagent' } },
+      ],
+      ...extra,
+    });
+  const row = (h: Harness, id: string): HTMLElement => h.el('topics').querySelector<HTMLElement>(`[data-topic="${id}"]`)!;
+  const heading = (h: Harness, name: string): Element | undefined =>
+    Array.from(h.el('log').querySelectorAll('.launch-host')).find((e) => e.firstChild?.textContent?.trim() === name);
+
+  it('marks the machine over its agents on a new topic, and still lets one be chosen', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents, offline: laptopDown }));
+
+    expect(face(heading(h, 'laptop')?.querySelector('.off'))).toBe(`[offline]offline since ${at(since)}`);
+    expect(heading(h, 'uniagent')?.querySelector('.off')).toBeNull();
+    expect(h.el('log').querySelector('.launch-group.off .agent-card')?.getAttribute('data-agent')).toBe('cc@laptop');
+    // Dimmed, not disabled: the machine may be back by the time anyone writes.
+    await h.click('.agent-card[data-agent="oc@laptop"]');
+    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['/agent oc@laptop']);
+  });
+
+  it('follows the machines event while the choice is open, both ways', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+    expect(h.el('log').querySelector('.launch-group.off')).toBeNull();
+
+    await h.emit({ t: 'machines', offline: laptopDown });
+    expect(heading(h, 'laptop')?.querySelector('.off')).not.toBeNull();
+
+    await h.emit({ t: 'machines', offline: [] });
+    expect(h.el('log').querySelector('.launch-group.off, .launch-host .off')).toBeNull();
+  });
+
+  it('names the only machine when it is the one that is offline', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents: { current: 'cc@laptop', groups: [agents.groups[1]] }, offline: laptopDown }));
+    expect(face(heading(h, 'laptop'))).toContain('offline since');
+  });
+
+  it('marks the machine in the line of every topic on it, and only those', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=b2c3d4e5' });
+    await h.emit(placed('b2c3d4e5', [message('w1', '<p>hi</p>')]));
+    expect(row(h, 'a1b2c3d4').querySelector('.topic-off')).toBeNull();
+
+    await h.emit({ t: 'machines', offline: laptopDown });
+    const off = row(h, 'a1b2c3d4').querySelector('.topic-off');
+    expect(face(off)).toBe('[offline]laptop');
+    expect(off?.getAttribute('title')).toContain(`offline since ${at(since)}`);
+    // The line still says where the topic is.
+    expect(face(row(h, 'a1b2c3d4').querySelector('.topic-dir'))).toBe('[offline]laptop · quantlab');
+    expect(row(h, 'b2c3d4e5').querySelector('.topic-off')).toBeNull();
+
+    await h.emit({ t: 'machines', offline: [] });
+    expect(h.el('topics').querySelector('.topic-off')).toBeNull();
+    expect(row(h, 'a1b2c3d4').querySelector('.topic-dir')?.textContent).toBe('laptop · quantlab');
+  });
+
+  it('says above the composer why the topic on screen will not be answered', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(placed('a1b2c3d4', [message('w1', '<p>hi</p>')], { offline: laptopDown }));
+
+    const note = h.el('machine-note');
+    expect(note.hidden).toBe(false);
+    expect(face(note)).toBe(`[offline]laptop is offline since ${at(since)} — its agents cannot answer until it is back.`);
+
+    // Gone once it is back, and never for a topic on a machine that is up.
+    await h.emit({ t: 'machines', offline: [] });
+    expect(note.hidden).toBe(true);
+    await h.emit({ t: 'machines', offline: laptopDown });
+    expect(note.hidden).toBe(false);
+    await h.click('[data-topic="b2c3d4e5"]');
+    expect(note.hidden).toBe(true);
+  });
+
+  it('leaves the line out under the agent cards, whose heading already says it', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(placed('a1b2c3d4', [], { agents, offline: laptopDown }));
+    expect(heading(h, 'laptop')?.querySelector('.off')).not.toBeNull();
+    expect(h.el('machine-note').hidden).toBe(true);
+  });
+
+  it('escapes the machine name, which comes from config.yaml', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    const odd = '<img src=x>';
+    await h.emit(
+      sync('a1b2c3d4', [message('w1', '<p>hi</p>')], [], {
+        topics: [{ id: 'a1b2c3d4', title: 'T', lastAt: 1, running: false, msgCount: 1, dir: { name: 'w', path: '/w', host: odd } }],
+        offline: [{ name: odd, since }],
+      })
+    );
+    expect(h.el('topics').querySelector('img')).toBeNull();
+    expect(h.el('machine-note').querySelector('img')).toBeNull();
+    expect(h.el('machine-note').textContent).toContain(odd);
+  });
+});
+
 describe('webui page: menus', () => {
   /** A `/cd`-shaped menu: a root, the current directory, two more, and the page controls. */
   const menu = (): Record<string, unknown> => ({

@@ -54,7 +54,9 @@ the machine is named on the line below — and hovering the title shows the whol
 one; the agent can open one itself with
 `talkcode create-thread`, and write into one with `--channel main/<topic id>`. Under each
 title is the directory the topic works in, led by the machine when its agent runs on a
-[remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. At the end of
+[remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. A machine the
+gateway cannot reach is marked there, over its agents on a new topic, and above the composer
+([When a host is offline](remote-hosts.md#when-a-host-is-offline)). At the end of
 each row a **⋯** button (on hover or keyboard focus; always shown on a touch screen) opens that
 topic's menu without switching to it: **Star**/**Unstar**, **End agent**, and **Delete topic**
 (red, with the same confirmation as before). **End agent** ends the process behind this topic and

@@ -1,5 +1,5 @@
 import type { AgentDef } from '../config/schema.js';
-import type { AgentCatalog } from '../types.js';
+import type { AgentCatalog, OfflineMachine } from '../types.js';
 import { parseButtonId, formatButtonId } from './button-id.js';
 import { shortModelName } from './runtime-footer.js';
 import { pageCount, pageSlice, truncateLabel, wrapPage } from './paging.js';
@@ -31,7 +31,12 @@ export const LOCAL_GROUP = 'this machine';
 export interface AgentGroup {
   name: string;
   agents: AgentDef[];
+  /** Every agent in it runs on a host the gateway cannot reach right now (offlinePlaces). */
+  offline?: true;
 }
+
+/** What the menus say after an offline machine's name. */
+const OFFLINE_NOTE = 'offline';
 
 /** What an agent is grouped under (see the header). */
 export function agentGroupOf(def: AgentDef): string {
@@ -49,14 +54,37 @@ export function agentPlaceOf(def: AgentDef): string | undefined {
   return def.group ?? def.host;
 }
 
-/** Agents by group, groups in the order their first agent appears in config.yaml. */
-export function agentGroups(agents: readonly AgentDef[]): AgentGroup[] {
+/**
+ * Agents by group, groups in the order their first agent appears in config.yaml. A group named in
+ * `offline` (offlinePlaces' names) is marked, so every menu built from it says so.
+ */
+export function agentGroups(agents: readonly AgentDef[], offline?: ReadonlySet<string>): AgentGroup[] {
   const groups = new Map<string, AgentDef[]>();
   for (const def of agents) {
     const name = agentGroupOf(def);
     groups.set(name, [...(groups.get(name) ?? []), def]);
   }
-  return [...groups].map(([name, list]) => ({ name, agents: list }));
+  return [...groups].map(([name, list]) => ({ name, agents: list, ...(offline?.has(name) ? { offline: true as const } : {}) }));
+}
+
+/**
+ * The machines, by the name agentPlaceOf gives them, that cannot be reached: those whose every
+ * agent runs on a host in `offlineHosts` (host id → since when). A place with an agent elsewhere —
+ * a `group` spanning two hosts, or one with an agent on this machine — still has someone to answer,
+ * so it is not listed. `since` is when the last of its hosts went: the place has been unreachable
+ * as a whole only from then. In config order, like the groups.
+ */
+export function offlinePlaces(agents: readonly AgentDef[], offlineHosts: ReadonlyMap<string, number>): OfflineMachine[] {
+  const places = new Map<string, number | undefined>();
+  for (const def of agents) {
+    const name = agentPlaceOf(def);
+    if (name === undefined) continue;
+    const since = def.host ? offlineHosts.get(def.host) : undefined;
+    const seen = places.has(name) ? places.get(name) : 0;
+    // undefined marks a place with an agent that can be reached; it stays that way.
+    places.set(name, seen === undefined || since === undefined ? undefined : Math.max(seen, since));
+  }
+  return [...places].flatMap(([name, since]) => (since === undefined ? [] : [{ name, since }]));
 }
 
 /** Choose a group: `agg:<reqId>:<group index>`. */
@@ -119,7 +147,7 @@ export function buildAgentMenu(opts: {
       text: `Which machine? ${current ? `(now: ${current})` : ''}`.trim(),
       buttons: groups.map((g, i) => ({
         id: formatButtonId(AGENT_GROUP_PREFIX, reqId, i),
-        label: truncateLabel(`${i === currentGroup ? CURRENT_MARK : ''}${g.name} (${g.agents.length})`),
+        label: truncateLabel(`${i === currentGroup ? CURRENT_MARK : ''}${g.name} (${g.agents.length})${g.offline ? ` · ${OFFLINE_NOTE}` : ''}`),
       })),
     };
   }
@@ -142,7 +170,9 @@ export function buildAgentMenu(opts: {
   if (groups.length > 1) buttons.push({ id: formatButtonId(AGENT_BACK_PREFIX, reqId, 0), label: '‹ machines' });
   const where = groups.length > 1 ? ` on ${group.name}` : '';
   const pageNote = pages > 1 ? ` (${page + 1}/${pages})` : '';
-  return { text: `Which agent${where} should answer this topic?${pageNote}`, buttons };
+  // Said, not refused: the machine may well be back by the time anyone writes.
+  const offline = group.offline ? `\n${group.name} is ${OFFLINE_NOTE}: its agents cannot answer until it is back.` : '';
+  return { text: `Which agent${where} should answer this topic?${pageNote}${offline}`, buttons };
 }
 
 /**
@@ -205,7 +235,8 @@ export function flatAgents(groups: readonly AgentGroup[]): AgentDef[] {
 export function agentListText(groups: readonly AgentGroup[], current: string | undefined): string {
   const lines = ['Agents (`/agent <id>` chooses one for this topic):'];
   for (const g of groups) {
-    if (groups.length > 1) lines.push(`${g.name}:`);
+    if (groups.length > 1) lines.push(`${g.name}${g.offline ? ` (${OFFLINE_NOTE})` : ''}:`);
+    else if (g.offline) lines.push(`(${g.name} is ${OFFLINE_NOTE})`);
     for (const def of g.agents) {
       const mark = def.id === current ? '● ' : '  ';
       lines.push(`${groups.length > 1 ? '  ' : ''}${mark}${def.id} — ${def.harness}${def.model ? ` (${def.model})` : ''}`);
