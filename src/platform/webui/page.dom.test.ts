@@ -61,6 +61,20 @@ interface FakeRecorder {
   feed: (bytes: string) => void;
 }
 
+/** What a page did with the picture APIs a real browser has and jsdom does not. */
+interface PhotoLog {
+  /** Every file whose bytes reached createImageBitmap, in order. */
+  decoded: string[];
+  /** Every held decode the test let answer. */
+  released: string[];
+  /** How many canvas encodes were asked for. */
+  encoded: number;
+  /** How many ImageBitmaps the page closed. */
+  closed: number;
+  /** Let a held decode answer, the way a phone finishes one a second later. */
+  release: (name: string) => void;
+}
+
 interface Harness {
   window: DOMWindow;
   doc: Document;
@@ -89,6 +103,8 @@ interface Harness {
   longTimers: number[];
   /** What the page did with the push APIs (only with the `push` option). */
   push: PushLog;
+  /** What the page did with pictures (only with the `photos` option). */
+  photos: PhotoLog;
   el: (id: string) => HTMLElement;
   /** Messages currently painted in the transcript. */
   painted: () => number;
@@ -164,6 +180,91 @@ function installPush(
       w.Notification.permission = opts.answer ?? 'granted';
       return w.Notification.permission;
     },
+  };
+}
+
+/**
+ * A browser that can decode and encode pictures, installed before the page's script runs. jsdom
+ * has no createImageBitmap and no working canvas, so without this every large picture would take
+ * the page's "cannot decode it" path and the shrink itself could not be exercised at all.
+ *
+ * The encoder is priced rather than real: a blob is `pixels × quality × bytesPerPixel` bytes. That
+ * is what makes a 4000×3000 photo come out over 300 KB at quality 0.92 and under it lower down,
+ * so the page's bisection has an answer to find. `hold` gates one decode the way a phone takes a
+ * moment over a photo; the test releases it with the harness's `photos.release`.
+ */
+function installPhotos(
+  w: any,
+  opts: {
+    sizes?: Record<string, [number, number] | 'fail'>;
+    hold?: string[];
+    bytesPerPixel?: number;
+    /** iOS Safari: a WebP request is answered with a PNG, silently. */
+    noWebp?: boolean;
+  },
+  log: PhotoLog
+): void {
+  const sizes = opts.sizes ?? {};
+  const held = new Set(opts.hold ?? []);
+  const gates = new Map<string, Array<() => void>>();
+  const bytesPerPixel = opts.bytesPerPixel ?? 0.18;
+  const bitmap = (size: [number, number]) => ({
+    width: size[0],
+    height: size[1],
+    close: () => {
+      log.closed++;
+    },
+  });
+  w.createImageBitmap = (file: File) => {
+    log.decoded.push(file.name);
+    const size = sizes[file.name];
+    if (size === 'fail') return Promise.reject(new Error('this browser cannot decode it'));
+    const made = bitmap(size ?? [4000, 3000]);
+    if (!held.has(file.name)) return Promise.resolve(made);
+    return new Promise((resolve) => {
+      const waiting = gates.get(file.name) ?? [];
+      waiting.push(() => resolve(made));
+      gates.set(file.name, waiting);
+    });
+  };
+  log.release = (name: string) => {
+    log.released.push(name);
+    for (const go of gates.get(name) ?? []) go();
+    gates.delete(name);
+  };
+  // What the page needs of a 2d context, and a toBlob that honours the type it was asked for —
+  // Chrome, not iOS Safari, which is the other branch the page has to survive.
+  const noop = (): void => {};
+  w.HTMLCanvasElement.prototype.getContext = function getContext() {
+    return {
+      imageSmoothingEnabled: false,
+      imageSmoothingQuality: 'low',
+      fillStyle: '#000',
+      fillRect: noop,
+      drawImage: noop,
+    };
+  };
+  w.HTMLCanvasElement.prototype.toBlob = function toBlob(
+    this: HTMLCanvasElement,
+    cb: (b: Blob | null) => void,
+    type?: string,
+    quality?: number
+  ) {
+    log.encoded++;
+    const bytes = Math.round(this.width * this.height * (quality ?? 0.92) * bytesPerPixel);
+    const mime = type === 'image/webp' ? (opts.noWebp ? 'image/png' : 'image/webp') : 'image/jpeg';
+    setTimeout(() => cb(new w.Blob([new Uint8Array(bytes)], { type: mime })), 0);
+  };
+  // The fallback decoder, for a file createImageBitmap refused: a data: URL and an <img>. jsdom
+  // never loads an image, so this one says no — the same answer a browser without the codec gives.
+  w.Image = class {
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    width = 0;
+    height = 0;
+    set src(_url: string) {
+      setTimeout(() => this.onerror?.(), 0);
+    }
   };
 }
 
@@ -365,6 +466,16 @@ async function open(
     shortenLong?: boolean;
     /** A browser that can do Web Push (see installPush). Absent = jsdom as it is: no notifications offered. */
     push?: { permission?: string; answer?: string; subscribed?: boolean };
+    /**
+     * A browser that can decode and encode pictures (see installPhotos). Absent = jsdom as it is:
+     * no createImageBitmap and no canvas, so a large picture is sent as it is.
+     */
+    photos?: {
+      sizes?: Record<string, [number, number] | 'fail'>;
+      hold?: string[];
+      bytesPerPixel?: number;
+      noWebp?: boolean;
+    };
   } = {}
 ): Promise<Harness> {
   const {
@@ -384,8 +495,10 @@ async function open(
     held = {},
     shortenLong = false,
     push,
+    photos,
   } = opts;
   const pushLog: PushLog = { unsubscribed: false, listeners: [] };
+  const photoLog: PhotoLog = { decoded: [], released: [], encoded: 0, closed: 0, release: () => {} };
   const streams: Stream[] = [];
   const recorders: FakeRecorder[] = [];
   const calls: Call[] = [];
@@ -440,6 +553,7 @@ async function open(
       };
       if (mic) installMic(w, mic, recorders);
       if (push) installPush(w, push, pushLog);
+      if (photos) installPhotos(w, photos, photoLog);
       if (shortenLong) {
         const real = w.setTimeout.bind(w) as (fn: () => void, ms: number) => number;
         (w as any).setTimeout = (fn: () => void, ms: number): number => {
@@ -490,6 +604,7 @@ async function open(
     recorders,
     longTimers,
     push: pushLog,
+    photos: photoLog,
     cached: (topic) => readCache(idb, topic),
     emit: async (ev) => {
       live().onmessage?.({ data: JSON.stringify(ev) });
@@ -3842,7 +3957,12 @@ describe('webui page: sending', () => {
     // second off mid-upload on an ordinary uplink and call that a failure. And an attempt that was
     // given over a minute was carrying an upload: repeating it from byte zero twice more is a
     // quarter of an hour of grey, so it fails once and Retry is one tap.
-    const h = await open({ hang: ['api/send'], shortenLong: true });
+    //
+    // This browser is given a decoder that refuses the picture, so it goes as it is: the limit is
+    // about the bytes in the body, not about what a canvas could have made of them.
+    const h = await open({ hang: ['api/send'], shortenLong: true, photos: { sizes: { 'big.png': 'fail' } } });
+    // The page warns that it is sending the original; that is expected here, not test output.
+    vi.spyOn(h.window.console, 'warn').mockImplementation(() => {});
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
     const big = new h.window.File([new Uint8Array(3_000_000)], 'big.png', { type: 'image/png' });
     const ev = new h.window.Event('paste', { bubbles: true, cancelable: true });
@@ -4528,6 +4648,140 @@ describe('webui page: the file picker', () => {
       ['report.pdf', 'application/pdf'],
       ['logs.tar.zst', ''],
     ]);
+  });
+});
+
+/**
+ * A phone writes 3–10 MB for one photo and the upload is the slow half of sending it, so the
+ * composer re-encodes a large still before it becomes an attachment. These tests are about what
+ * leaves the composer — the name, the bytes — and about the tap on Send that lands while the
+ * picture is still being shrunk, which must not send the message without it.
+ */
+describe('webui page: shrinking a picture before it goes', () => {
+  const A = 'a1b2c3d4';
+
+  /** A file of `bytes` bytes; the shrink never reads the contents, only the decoder's answer. */
+  const photo = (h: Harness, name: string, type: string, bytes: number): File =>
+    new h.window.File([new Uint8Array(bytes)], name, { type });
+
+  /** Attach through the picker, which — unlike a paste — keeps the name the file came with. */
+  const attach = (h: Harness, file: File): void => {
+    const picker = h.el('picker');
+    Object.defineProperty(picker, 'files', { value: [file], configurable: true, writable: true });
+    picker.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  };
+
+  const sent = (h: Harness): Array<Record<string, string>> =>
+    (h.calls.find((c) => c.path === 'api/send')?.body.files as Array<Record<string, string>>) ?? [];
+
+  const sendIt = async (h: Harness, text = 'look'): Promise<void> => {
+    (h.el('input') as HTMLTextAreaElement).value = text;
+    await h.click('#composer button[type="submit"]');
+  };
+
+  it('leaves a picture already under 300 KB exactly as it was', async () => {
+    const h = await open({ photos: {} });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'small.jpg', 'image/jpeg', 100 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    await sendIt(h);
+
+    // No canvas was ever asked for, and the bytes went as they came.
+    expect(h.photos.decoded).toEqual([]);
+    expect(h.photos.encoded).toBe(0);
+    expect(sent(h)[0]).toMatchObject({ name: 'small.jpg', mime: 'image/jpeg' });
+    expect(Buffer.from(sent(h)[0]!.data!, 'base64')).toHaveLength(100 * 1024);
+  });
+
+  it('re-encodes a large JPEG as WebP under 300 KB, renaming it to match', async () => {
+    const h = await open({ photos: { sizes: { 'IMG_1.JPG': [4000, 3000] } } });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'IMG_1.JPG', 'image/jpeg', 600 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    expect(chipNames(h)).toEqual(['IMG_1.webp']);
+    await sendIt(h);
+
+    const file = sent(h)[0]!;
+    expect(file.name).toBe('IMG_1.webp');
+    expect(file.mime).toBe('image/webp');
+    const bytes = Buffer.from(file.data!, 'base64');
+    expect(bytes.length).toBeLessThanOrEqual(300 * 1024);
+    expect(bytes.length).toBeLessThan(600 * 1024);
+    // The search ran: the top quality was too big, so a lower one had to be found.
+    expect(h.photos.encoded).toBeGreaterThan(2);
+    expect(h.photos.closed).toBe(1);
+  });
+
+  it('falls back to JPEG when the browser answers a WebP request with a PNG', async () => {
+    // iOS Safari's canvas does exactly this, silently — which is why the encoder checks the blob's
+    // own type and not the one it asked for.
+    const h = await open({ photos: { sizes: { 'IMG_1.JPG': [4000, 3000] }, noWebp: true } });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'IMG_1.JPG', 'image/jpeg', 600 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    expect(chipNames(h)).toEqual(['IMG_1.jpg']);
+    await sendIt(h);
+
+    expect(sent(h)[0]).toMatchObject({ name: 'IMG_1.jpg', mime: 'image/jpeg' });
+    expect(Buffer.from(sent(h)[0]!.data!, 'base64').length).toBeLessThanOrEqual(300 * 1024);
+  });
+
+  it('never touches a GIF, however big', async () => {
+    const h = await open({ photos: {} });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'loop.gif', 'image/gif', 2 * 1024 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    await sendIt(h);
+
+    // A canvas would keep one frame and lose the animation, which is the picture.
+    expect(h.photos.decoded).toEqual([]);
+    expect(sent(h)[0]).toMatchObject({ name: 'loop.gif', mime: 'image/gif' });
+    expect(Buffer.from(sent(h)[0]!.data!, 'base64')).toHaveLength(2 * 1024 * 1024);
+  });
+
+  it('sends the original when the browser cannot decode the picture', async () => {
+    const h = await open({ photos: { sizes: { 'IMG_2.HEIC': 'fail' } } });
+    const warn = vi.spyOn(h.window.console, 'warn').mockImplementation(() => {});
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'IMG_2.HEIC', 'image/heic', 500 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    await sendIt(h);
+
+    expect(sent(h)[0]).toMatchObject({ name: 'IMG_2.HEIC', mime: 'image/heic' });
+    expect(Buffer.from(sent(h)[0]!.data!, 'base64')).toHaveLength(500 * 1024);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('holds a Send pressed while the picture is still being shrunk, and sends it after', async () => {
+    // The decode is held, as a phone takes a moment over a 12 MP HEIC. The chip does not exist
+    // yet, so a page that let this send through would send the text alone and drop the picture.
+    const h = await open({
+      photos: { sizes: { 'IMG_3.HEIC': [4032, 3024] }, hold: ['IMG_3.HEIC'] },
+    });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'IMG_3.HEIC', 'image/heic', 3 * 1024 * 1024));
+    await until('the decoder was asked', () => h.photos.decoded.length === 1);
+    expect(chipNames(h)).toEqual([]);
+    expect(h.el('note').textContent).toContain('Compressing');
+
+    await sendIt(h, 'what is this?');
+    await tick();
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+
+    h.photos.release('IMG_3.HEIC');
+    await until('the send goes out', () => h.calls.some((c) => c.path === 'api/send'));
+
+    const files = sent(h);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ name: 'IMG_3.webp', mime: 'image/webp' });
+    expect(h.el('note').textContent).toBe('');
   });
 });
 
