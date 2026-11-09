@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.53.0] - 2026-11-09
+
 ### Added
 
 - **The web UI shows which machines are offline.** A remote host's connection is opened on demand
