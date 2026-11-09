@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.54.0] - 2026-11-09
+
 ### Added
 
 - **The web UI shrinks a large picture before it uploads it.** A phone writes 3–10 MB for one
