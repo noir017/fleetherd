@@ -79,6 +79,8 @@ const PACING = {
   setStatus: 'unpaced',
   // Same: state drawn in the page's own topic list, pushed only at a turn's start and end.
   setActivity: 'unpaced',
+  // Same: state drawn in the page's own lists, pushed only when a machine comes or goes.
+  setOfflineMachines: 'unpaced',
   // A read of what the page reported; nothing is sent anywhere.
   seenAt: 'unpaced',
   // Reads of the page's own topic list; nothing is sent anywhere.

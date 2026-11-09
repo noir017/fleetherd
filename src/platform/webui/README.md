@@ -387,9 +387,16 @@ footer says it. Five decisions in it:
 - **Over the stale notice, not beside it.** An open choice means no agent has a session here, so
   "the agent still has its context" would be untrue of that room.
 
-No online/offline mark on a machine, though one was considered: a host's link closes itself after
-five idle minutes (`remote/connection.ts` IDLE_CLOSE_MS), so "not connected" mostly means "not used
-lately", and marking it would grey out healthy machines.
+An offline machine is marked — the heading over its agents, dimmed cards that can still be chosen —
+but not from the connection's state, which was the first idea and why it was dropped on 2026-11-02:
+a host's link closes itself after five idle minutes (`remote/connection.ts` IDLE_CLOSE_MS), so "not
+connected" mostly means "not used lately", and marking it would grey out healthy machines. The
+daemon measures reachability instead (`daemon/host-availability.ts`: a TCP connect to the ssh port
+every minute) and pushes the machines it cannot reach (`PlatformAdapter.setOfflineMachines`), which
+`room.ts` sends as the sync's `offline` and then as `machines` events — state like `status`, outside
+the backlog, to every client. The same list marks the topic rows and puts a line above the composer
+of a topic on such a machine (`paintMachineNote`), since a message there waits or fails with
+nothing on screen saying why (since 2.53.0).
 
 Layout was measured in Chromium against a real daemon with seven agents on two machines on
 2026-11-02: four cards to a row at 1280 px, two at 390 px (179×68 px each), no card's kind or model

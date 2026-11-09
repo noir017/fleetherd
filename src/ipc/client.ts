@@ -3,33 +3,36 @@ import { StringDecoder } from 'node:string_decoder';
 import { ASK_CLIENT_TIMEOUT_MARGIN_MS, DEFAULT_ASK_TIMEOUT_MS, type IpcAction, type IpcRequest, type IpcResponse } from './protocol.js';
 
 /**
- * How long the client waits for `schedule add` / `schedule edit` when the caller does not say.
+ * How long the client waits for the commands that can outlast the 10 s default.
  *
- * A task carrying `--model` is not a disk write: the daemon asks the agent for its model list,
- * which may mean starting a session (cold start, and an ssh round trip for a remote agent). The
- * 10 s default is shorter than that on a busy machine, and the failure is the bad kind — the client
- * gives up while the daemon finishes and registers the change, so an agent that retries leaves a
- * duplicate (add) or edits twice (edit). The daemon answers immediately without `--model`; one
- * generous bound for the command is simpler than making it depend on a field.
+ * - `schedule add` / `schedule edit` and `task-new` with `--model`: the daemon asks the agent for its
+ *   model list, which may mean starting a session (cold start, and an ssh round trip for a remote
+ *   agent). The daemon answers at once without `--model`; one generous bound for the command is
+ *   simpler than making it depend on a field.
+ * - `reload` and `pod-add`: a reload reads every pod first, waiting up to 20 s for a host that does
+ *   not answer (daemon.ts RELOAD_POD_TIMEOUT_MS), and a host added just now has the helper installed
+ *   before it can be read.
+ *
+ * The failure is the bad kind: the client gives up while the daemon finishes and applies the
+ * change, so an agent that retries leaves a duplicate (an add, a proposal) or edits twice. Both
+ * `pod-add` and `task-new --model` did exactly that on a cold host (laptop, 2026-11-09), each
+ * reporting "IPC timeout" for a change that had gone through.
  */
-const SCHEDULE_WRITE_TIMEOUT_MS = 60_000;
+const SLOW_ACTION_TIMEOUT_MS = 60_000;
+const SLOW_ACTIONS: ReadonlySet<IpcAction['kind']> = new Set(['schedule-add', 'schedule-edit', 'task-new', 'reload-config', 'pod-add']);
 
 /**
  * The wait this action needs, or undefined for the 10 s default (which still honours
  * `TALKCODE_IPC_TIMEOUT_MS`). Shared by the shell command and the native tool, so both get the
- * same bound: `ask` blocks until the person answers, `schedule add` / `schedule edit` until a
- * model list is read.
+ * same bound: `ask` blocks until the person answers, the slow actions above until the daemon has
+ * done what they ask.
  */
 export function clientTimeoutFor(action: IpcAction): number | undefined {
   if (action.kind === 'ask') return (action.timeoutMs ?? DEFAULT_ASK_TIMEOUT_MS) + ASK_CLIENT_TIMEOUT_MARGIN_MS;
-  if (action.kind === 'schedule-add' || action.kind === 'schedule-edit') return SCHEDULE_WRITE_TIMEOUT_MS;
+  if (SLOW_ACTIONS.has(action.kind)) return SLOW_ACTION_TIMEOUT_MS;
   return undefined;
 }
 
-/**
- * CLI-side IPC client. Reverse-command processes use it to connect back to the daemon.
- * The token is read from TALKCODE_TURN_TOKEN (injected by the daemon when it spawns the agent).
- */
 export async function callDaemon(
   socketPath: string,
   action: IpcAction,

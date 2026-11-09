@@ -53,6 +53,7 @@ import type {
   AgentStatus,
   ButtonInteraction,
   InboundMessage,
+  OfflineMachine,
   SettingsScreen,
   SlashCommandSpec,
   TopicActivity,
@@ -382,6 +383,8 @@ export class WebRoom {
   private topicKill: ((ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]) | null = null;
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
   private catalog: ((ref: ConversationRef) => AgentCatalog | undefined) | null = null;
+  /** Machines the daemon cannot reach — see `setOfflineMachines`. */
+  private offline: readonly OfflineMachine[] = [];
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
   private liveTimer: NodeJS.Timeout | null = null;
   /** Sends a push notification (index.ts, webpush.ts); absent = nobody to notify. See `useNotifier`. */
@@ -1058,7 +1061,9 @@ export class WebRoom {
       ? missed.every((entry) => this.deliver(client, entry.ev, entry.seq)) &&
         // Status is state and is not in the backlog (see the `status` event), so a resumed stream
         // is told the current one outright — it may have changed, or been cleared, during the gap.
-        this.deliver(client, { t: 'status', ...(room.status ? { status: room.status } : {}) })
+        this.deliver(client, { t: 'status', ...(room.status ? { status: room.status } : {}) }) &&
+        // The machine list likewise, for the same reason: a machine can come or go in the gap.
+        this.deliver(client, { t: 'machines', offline: [...this.offline] })
       : this.deliver(client, this.syncEvent(topicId, room));
     if (ok) {
       console.log(
@@ -1103,6 +1108,7 @@ export class WebRoom {
       ...(this.isStale(topicId, room) ? { stale: true } : {}),
       ...(room.status ? { status: room.status } : {}),
       ...(agents ? { agents } : {}),
+      ...(this.offline.length > 0 ? { offline: [...this.offline] } : {}),
     };
   }
 
@@ -1385,6 +1391,20 @@ export class WebRoom {
     for (const client of [...this.clients]) {
       if (client.topic === topicId) this.deliver(client, ev, undefined, data);
     }
+  }
+
+  /**
+   * The machines the daemon cannot reach. Not per topic, like the vocabulary below: every page marks
+   * them in its topic list, so it goes to every client — as state, outside the backlog, the way
+   * `status` does. A list equal to the last one is dropped here, so the daemon may push on any
+   * change of its own.
+   */
+  setOfflineMachines(machines: readonly OfflineMachine[]): void {
+    if (JSON.stringify(machines) === JSON.stringify(this.offline)) return;
+    this.offline = [...machines];
+    const ev: WebEvent = { t: 'machines', offline: [...this.offline] };
+    const data = JSON.stringify(ev);
+    for (const client of this.clients) this.deliver(client, ev, undefined, data);
   }
 
   /** The registered slash vocabulary, for the page's autocomplete. Not per topic. */

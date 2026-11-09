@@ -448,6 +448,20 @@ export interface AgentCatalogGroup {
   agents: AgentCatalogEntry[];
 }
 
+/**
+ * A machine the gateway cannot reach right now, named the way the agent menus and the web UI's topic
+ * list name it (`core/agent-menu.ts` agentPlaceOf: an agent's group, else its host).
+ *
+ * Built by `core/agent-menu.ts` offlinePlaces from what `daemon/host-availability.ts` measured. A
+ * place is listed only when EVERY agent placed there runs on a host that cannot be reached: a group
+ * spanning two hosts with one of them down still has agents that answer.
+ */
+export interface OfflineMachine {
+  name: string;
+  /** Epoch ms of the first failed check of the outage (of the last of its hosts to go, for a group). */
+  since: number;
+}
+
 export interface AgentCatalogEntry {
   /** The id `/agent <id>` takes. */
   id: string;

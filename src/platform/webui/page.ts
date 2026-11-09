@@ -246,6 +246,12 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    for when several topics are open, not what you read. */
 .topic-dir{font-size:11px;line-height:1.35;color:#6b7683;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #topics .topic-item.on .topic-dir{color:#8b98a6}
+/* A machine the gateway cannot reach (OfflineMachine, the machines event): its name in a topic's
+   line, the heading over its agents on a new topic, and a line above the composer. A muted red of
+   its own, because amber already means "waiting for you" on this page, and this is not something to
+   act on in the topic — it is why nothing there will answer. */
+.topic-off{color:#c98a7d}
+.topic-off .ic{width:11px;height:11px;margin-right:3px;vertical-align:-.15em}
 #topics .topic-item.running .topic-title{color:var(--fg)}
 #topics .topic-item.on.running .topic-title{color:#fff}
 #topics .topic-item.idle .topic-title{color:var(--dim)}
@@ -784,6 +790,11 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .launch-host{display:flex;align-items:center;gap:10px;margin:0 2px 9px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
 .launch-host::after{content:'';flex:1;border-top:1px solid var(--line)}
 .launch-host .n{font-weight:400;color:#5c5c5c;letter-spacing:0}
+.launch-host .off{display:inline-flex;align-items:center;gap:4px;font-weight:500;letter-spacing:0;text-transform:none;color:#c98a7d}
+.launch-host .off .ic{width:11px;height:11px}
+/* Dimmed, not disabled: the machine may be back before anyone writes, and the choice is kept. */
+.launch-group.off .agent-card{opacity:.55}
+.launch-group.off .agent-card:hover,.launch-group.off .agent-card:focus-visible{opacity:.85}
 .launch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px}
 .agent-card{display:flex;flex-direction:column;align-items:stretch;gap:3px;min-width:0;min-height:68px;padding:11px 13px 10px;background:#181818;border:1px solid var(--line);border-radius:8px;text-align:left;line-height:1.3;transition:background .12s,border-color .12s,transform .12s}
 .agent-card:hover{background:#1e1e1e;border-color:#3a3a3a;transform:translateY(-1px)}
@@ -1100,6 +1111,8 @@ button:disabled{opacity:.5;cursor:default}
    set display and still be hidden while there is nothing to show. */
 #status{display:flex;align-items:center;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:var(--dim);white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums;cursor:pointer;user-select:none;-webkit-user-select:none}
 #status.open{flex-wrap:wrap;white-space:normal;row-gap:1px;column-gap:14px}
+#machine-note{display:flex;align-items:center;gap:6px;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:#c98a7d}
+#machine-note .ic{width:12px;height:12px}
 .st{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px}
 .st+.st::before{content:'\\00b7';margin:0 7px;color:#4a4a4a}
 /* Open, the line wraps, and a separator belonging to the first segment of a wrapped line would
@@ -1370,7 +1383,7 @@ const SCRIPT = `
       skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
       settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
-      killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'),
+      killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent');
   var data={}, els={}, files=[], commands=[], stream=null, done=false;
   // The row menu's topic and the button that opened it. The button is re-found after every repaint
@@ -1389,6 +1402,9 @@ const SCRIPT = `
   // The agents the last sync said this topic could still be given to (null once it cannot, or
   // when the daemon offered none), the element laying them out, and what it was drawn from.
   var launch=null, launchEl=null, launchSig='';
+  // The machines the daemon cannot reach, by the name the topic list and the agent cards use →
+  // since when (OfflineMachine), and what the list was drawn from. Replaced whole on every push.
+  var offlineMachines={}, offlineSig='[]';
   // Which run of the daemon the live stream belongs to, and whether this topic's first sync has
   // landed. 0 until one has: every message below is qualified by the generation it came from,
   // and before the first sync the only generations known are the ones out of the cache.
@@ -3880,16 +3896,19 @@ const SCRIPT = `
   function launchHtml(c){
     var h = '<div class="launch-head"><div class="launch-title">Choose an agent</div>'
       + '<div class="launch-sub">Or just type \u2014 <b>'+text(c.current)+'</b> answers by default.</div></div>';
-    // One machine needs no heading: it would name the only answer to a question nobody asked.
+    // One machine needs no heading: it would name the only answer to a question nobody asked —
+    // unless it is offline, which is worth saying even of the only one.
     var many = c.groups.length > 1;
     for(var i=0;i<c.groups.length;i++){
-      var g = c.groups[i];
-      h += '<section class="launch-group">';
-      if(many) h += '<h3 class="launch-host">'+text(g.name)+' <span class="n">'+g.agents.length+'</span></h3>';
+      var g = c.groups[i], off = offSince(g.name);
+      h += '<section class="launch-group'+(off?' off':'')+'">';
+      if(many || off) h += '<h3 class="launch-host">'+text(g.name)+' <span class="n">'+g.agents.length+'</span>'
+        + (off ? '<span class="off" title="'+text(offTitle(g.name))+'">'+IC.icon.offline+'offline since '+text(offWhen(off))+'</span>' : '')
+        + '</h3>';
       h += '<div class="launch-grid">';
       for(var j=0;j<g.agents.length;j++){
         var a = g.agents[j], on = a.id === c.current;
-        h += '<button type="button" class="agent-card'+(on?' def':'')+'" data-agent="'+text(a.id)+'" title="/agent '+text(a.id)+'">'
+        h += '<button type="button" class="agent-card'+(on?' def':'')+'" data-agent="'+text(a.id)+'" title="/agent '+text(a.id)+(off?' — '+text(g.name)+' is offline':'')+'">'
           + '<span class="ac-top"><span class="ac-id">'+text(a.id)+'</span>'+(on?'<span class="ac-tag">default</span>':'')+'</span>'
           + '<span class="ac-kind"><i class="ac-dot h-'+text(a.harness)+'"></i><span>'+text(a.kind)+'</span></span>'
           + (a.model ? '<span class="ac-model" title="'+text(a.model)+'">'+text(a.model)+'</span>' : '')
@@ -3902,7 +3921,8 @@ const SCRIPT = `
 
   /** Show the choice, or take it away; redrawn only when what it was drawn from changed. */
   function syncLaunch(want){
-    var s = want ? JSON.stringify(launch) : '';
+    // The machine list is part of what it is drawn from: an offline heading comes and goes with it.
+    var s = want ? JSON.stringify(launch)+offlineSig : '';
     if(s === launchSig && want === Boolean(launchEl)) return;
     if(launchEl && launchEl.parentNode) launchEl.parentNode.removeChild(launchEl);
     launchEl = null;
@@ -3918,6 +3938,62 @@ const SCRIPT = `
     // The model switch waits on the launcher (paintStatus), so it follows it at once: up the moment
     // an agent is chosen, gone again if a failed send empties the room and the choice comes back.
     paintStatus();
+    paintMachineNote();
+  }
+
+  // ── Machines the gateway cannot reach ───────────────────────────────────────────
+  // The daemon measures it (daemon/host-availability.ts) and pushes the whole list on every change:
+  // the sync's offline field, then machines events. Shown where it explains something — a topic's
+  // line in the list, the heading over that machine's agents, and above the composer of a topic on
+  // it — because a message to such a machine is not refused: it waits, or fails once it is tried,
+  // and either way nothing on screen said why.
+
+  /** Take the list as state; true when it changed. The caller repaints. */
+  function takeMachines(list){
+    var sigNow = JSON.stringify(list || []);
+    if(sigNow === offlineSig) return false;
+    var next = {};
+    for(var i=0;i<(list||[]).length;i++) next[list[i].name] = list[i].since;
+    offlineMachines = next;
+    offlineSig = sigNow;
+    return true;
+  }
+
+  function setMachines(list){
+    if(!takeMachines(list)) return;
+    paintTopics();
+    if(launchEl) syncLaunch(true);
+  }
+
+  /** Since when a machine is offline (epoch ms), or 0 for one that is not. */
+  function offSince(name){
+    return name && Object.prototype.hasOwnProperty.call(offlineMachines, name) ? offlineMachines[name] : 0;
+  }
+
+  /** A time of day for an outage that began today-ish, the date as well for an older one. */
+  function offWhen(at){
+    return Date.now() - at < 20*3600000 ? stClock(at) : new Date(at).toLocaleString();
+  }
+
+  function offTitle(name){
+    return name+' has been offline since '+offWhen(offSince(name))+': the gateway cannot reach it, so its agents cannot answer until it is back.';
+  }
+
+  /** The line above the composer, for the topic on screen when its machine is offline. */
+  function paintMachineNote(){
+    var cur = null;
+    for(var i=0;i<topics.length;i++) if(topics[i].id===topic){ cur = topics[i]; break; }
+    var name = cur && cur.dir ? cur.dir.host : '';
+    var off = offSince(name);
+    // Not under the agent cards, whose heading already says it.
+    if(!off || launchEl){
+      machineNoteEl.hidden = true;
+      machineNoteEl.innerHTML = '';
+      return;
+    }
+    machineNoteEl.innerHTML = IC.icon.offline+'<span>'+text(name+' is offline since '+offWhen(off)+' — its agents cannot answer until it is back.')+'</span>';
+    machineNoteEl.title = offTitle(name);
+    machineNoteEl.hidden = false;
   }
 
   /**
@@ -4732,8 +4808,12 @@ const SCRIPT = `
       // project have the same last segment, and the column is 240px wide. The machine goes
       // first: it is the short word, and the one that tells apart two agents of one harness on two
       // hosts — whose directories usually share a name too — so it is what the ellipsis spares.
-      var where=t.dir&&t.dir.host?t.dir.host+' · ':'';
-      var dir=t.dir?'<span class="topic-dir" title="'+text((t.dir.host?t.dir.host+':':'')+t.dir.path)+'">'+text(where+t.dir.name)+'</span>':'';
+      // An offline machine keeps its name and gains a mark: the line still says where the topic is.
+      var offAt=t.dir&&t.dir.host?offSince(t.dir.host):0;
+      var where=t.dir&&t.dir.host
+        ? (offAt ? '<span class="topic-off" title="'+text(offTitle(t.dir.host))+'">'+IC.icon.offline+text(t.dir.host)+'</span> · ' : text(t.dir.host+' · '))
+        : '';
+      var dir=t.dir?'<span class="topic-dir" title="'+text((t.dir.host?t.dir.host+':':'')+t.dir.path)+'">'+where+text(t.dir.name)+'</span>':'';
       var named=splitTitle(t.title || 'Untitled', t.dir&&t.dir.host);
       var title='<span class="topic-title">'
          + (named.tag?'<span class="topic-tag"'+(named.full?' title="'+text(named.full)+'"':'')+'>'+text(named.tag)+'</span> ':'')
@@ -4767,6 +4847,8 @@ const SCRIPT = `
          + '</div>';
     }
     bar.innerHTML=h;
+    // From the same list the rows were drawn from, so the line and the row cannot disagree.
+    paintMachineNote();
     // A filtered list with nothing left says so where the rows would be, rather than looking like
     // a topic list that failed to load. Clear is the way back without hunting for the field.
     if(!h && painted.filtering){
@@ -5432,6 +5514,8 @@ const SCRIPT = `
       stale = Boolean(ev.stale);
       // Present only for a room that is empty and can still be given to an agent; absent clears it.
       launch = ev.agents || null;
+      // Before the launcher is drawn below, which marks an offline machine's agents. Absent: none.
+      takeMachines(ev.offline || []);
       repaintHistory();
       // Before the reconcile, which claims any of them whose echo this sync turns out to carry. A
       // visit that named no topic learns only now which ones are its own.
@@ -5506,6 +5590,7 @@ const SCRIPT = `
     }
     else if(ev.t==='commands'){ commands = ev.commands || []; }
     else if(ev.t==='status'){ setStatus(ev.status); }
+    else if(ev.t==='machines'){ setMachines(ev.offline || []); }
     else if(ev.t==='topics'){
       topics = ev.topics || [];
       paintTopics();
@@ -7736,6 +7821,9 @@ __GATE__
     <div id="bar">
       <!-- The agent's live status. Inside #bar rather than above it so it goes away with the
            composer in terminal mode, and so it reads as part of the place you type. -->
+      <!-- The topic's machine cannot be reached (paintMachineNote). Beside the status line, for
+           the same reason it is inside #bar: it is about what typing here will do. -->
+      <div id="machine-note" role="status" hidden></div>
       <div id="status" hidden title="Tap for details"></div>
       <!-- The model switch's list, opened from the model in the status line (openModelPop). -->
       <div id="model-pop" hidden role="dialog" aria-labelledby="mp-heading">

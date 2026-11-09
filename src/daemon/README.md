@@ -69,6 +69,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `pod-admin.ts` | `talkcode pod-add` / `pod-remove`: a `hosts:` entry in config.yaml and its pinned host key, changed together and refused before anything is written when either would end up wrong; and the authorized_keys line `talkcode pods` offers a new host |
 | `pod-peers.ts` | The pod-to-pod ssh mesh (`peer:` in pod.yaml): the `authorized_keys`, `known_hosts` and `config` it writes into each member's `~/.talkcode/ssh/` after every read of the pods. Host keys come from the gateway's own known_hosts, never the network |
 | `host-probe.ts` | The `command -v` script run on a host in the PATH an agent will have: `talkcode doctor`'s check of each host, and `pods.ts`'s look at a host with no `pod.yaml` |
+| `host-availability.ts` | Which hosts can be reached now: a TCP connect to each ssh port every minute (`remote/reachable.ts`), offline after two failures in a row, a live connection taken as proof. `Daemon.pushOfflineMachines` turns it into `OfflineMachine`s (`core/agent-menu.ts` offlinePlaces) for `PlatformAdapter.setOfflineMachines` and the `/agent` menu |
 | `agent-renames.ts` | `agent-renames.json`: new ids for agents, applied at startup to config.yaml, `conversations.json` and `schedules.json` together (after backing them up), because an id is also the key each conversation and task remembers its agent by |
 
 ## Inbound flow

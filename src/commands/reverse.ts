@@ -95,7 +95,8 @@ export async function runReverse(rawAction: IpcAction): Promise<void> {
   const action = normalizeActionPaths(rawAction, process.env.TALKCODE_REMOTE_HOME ? process.env.TALKCODE_CWD : undefined);
 
   // A blocking command needs a longer wait than the client's default: `ask` until the person
-  // answers, `schedule add` until a model list is read. See clientTimeoutFor.
+  // answers, `schedule add` until a model list is read, `reload` until the pods are. See
+  // clientTimeoutFor.
   const resp = await callDaemon(socket, action, undefined, clientTimeoutFor(action));
   if (!resp.ok) {
     // AXI §6: errors go to stdout in the same structured format as data, with an actionable hint.

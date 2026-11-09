@@ -650,6 +650,8 @@ export class ConversationRegistry {
        * buttons and hands a pick back through chooseAgent.
        */
       onAgentMenuRequest?(id: ConversationId, msg: InboundMessage, menu: { groups: AgentGroup[]; current: string | undefined }): void;
+      /** The machines that cannot be reached now, by agentPlaceOf name: the `/agent` menu marks them. */
+      offlinePlaces?(): ReadonlySet<string>;
       /**
        * Whether the daemon is holding work for this conversation that lives OUTSIDE a turn — today,
        * a pending `ask` whose IPC caller is blocked on a button click. The idle sweeper asks before
@@ -1789,7 +1791,7 @@ export class ConversationRegistry {
     fallbackAgent: string,
     msg: InboundMessage
   ): { text?: string; chosen?: string } {
-    const groups = agentGroups(this.config.agents);
+    const groups = agentGroups(this.config.agents, this.hooks?.offlinePlaces?.());
     const current = this.boundAgentFor(key, fallbackAgent);
     const query = rest?.trim();
     if (!query) {

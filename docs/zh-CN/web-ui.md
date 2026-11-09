@@ -45,6 +45,7 @@ harness 不提供模型选择时会直接说明。话题一有智能体，这个
 点 `+` 新建；agent 自己也可以用 `talkcode create-thread` 开一个，用
 `--channel main/<话题 id>` 往指定话题里写。每个标题下面是这个话题的工作目录；智能体跑在
 [远程主机](remote-hosts.md)上时前面还会带上机器名（`devbox · talkcode`），鼠标悬停能看到完整路径。
+网关连不上的机器会在这里、新话题里它那组智能体的标题上、以及输入框上方标出来（见[主机离线时](remote-hosts.md#主机离线时)）。
 每行末尾的 **⋯** 按钮（悬停或键盘聚焦时出现，触屏上常显）打开这个话题的菜单，不会切换话题：
 **Star**/**Unstar**、**End agent**、**Delete topic**（红色，确认框和以前一样）。**End agent**
 结束这个话题以及确认框里列出的子代理话题的进程——有子代理时这一项会写成 **End agent + N sub-agents**——

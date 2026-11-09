@@ -208,6 +208,20 @@ refused there.
   it starts again.
 - A host that hears nothing from its gateway for 24 hours stops that gateway's agents.
 
+## When a host is offline
+
+The gateway checks every host once a minute by opening a TCP connection to its ssh port — no
+login — and a host that fails twice in a row, five seconds apart, counts as offline. A laptop that
+went to sleep is the usual case. While it is:
+
+- The web UI marks it: the machine's name in the line under each topic on it, the heading over its
+  agents on a new topic (they stay dimmed but can still be chosen), and a line above the composer
+  of a topic on it, saying since when.
+- The `/agent` menu says `offline` after its name, on every platform.
+
+Both go at the next check after it answers again. A machine is marked only when every agent placed
+there (`group`, else `host`) runs on a host that is down.
+
 ## Versions
 
 Each gateway version installs its own helper on a host, under `~/.talkcode/remote/<version>/`.

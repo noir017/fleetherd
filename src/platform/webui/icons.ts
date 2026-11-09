@@ -67,6 +67,10 @@ const PATHS = {
     '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
     '<path d="M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3z"/>',
   subagent: '<path d="M6 4v8a3 3 0 0 0 3 3h10.5"/><path d="m15.5 11 4 4-4 4"/>',
+  // A machine the gateway cannot reach: a signal's arcs, struck through.
+  offline:
+    '<path d="M2.5 8.8a14 14 0 0 1 19 0M5.6 12.3a9.5 9.5 0 0 1 12.8 0M8.8 15.7a5 5 0 0 1 6.4 0"/>' +
+    '<circle cx="12" cy="19.2" r="1.3" fill="currentColor" stroke="none"/><path d="M4 3.5 20 20.5"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;
