@@ -7083,10 +7083,17 @@ const SCRIPT = `
    * that: Claude sees about 1568 px on the long edge whatever is sent. Every byte above that is
    * paid for on the upload, over a mobile uplink, for nothing.
    *
-   * So a still picture the browser can decode, and that is over 300 KB, is redrawn at 2048 px on
-   * the long edge and re-encoded at the highest quality whose result fits under 300 KB: quality
-   * bisected between 0.5 and 0.92 at that size, and the dimensions stepped down only when even
-   * 0.5 is too big. A re-encode that did not come out smaller than the original is thrown away.
+   * So a still picture the browser can decode, and that is over 300 KB, is redrawn inside
+   * 2048×1536 pixels — about 3.1 MP, which is what a model can use of a photo — and re-encoded at
+   * the highest quality whose result fits under 300 KB: quality bisected between 0.5 and 0.92 at
+   * that size, and the dimensions stepped down only when even 0.5 is too big. A re-encode that did
+   * not come out smaller than the original is thrown away.
+   *
+   * Area, not a long edge, because the two pictures people send are shaped differently. A 1170×2532
+   * phone screenshot is already under 3.1 MP, so it keeps its size and its text stays the size it
+   * was; a 12 MP photo comes down to 2048×1536 whatever its shape. A 4096 px cap on one side is
+   * there for the panorama that fits the area budget by being extremely long and thin, and the
+   * floor below which shrinking stops is the area a 1024 px long edge would have at this shape.
    *
    * Never touched: GIF (a canvas keeps one frame, and the animation is the picture), SVG (the file
    * is text), and anything already at or under 300 KB. A decode or encode that fails sends the
@@ -7095,7 +7102,8 @@ const SCRIPT = `
    * Re-encoding drops EXIF, GPS included. That is a side benefit worth knowing, not the reason.
    */
   var SHRINK_LIMIT = 300 * 1024;
-  var SHRINK_EDGE = 2048;
+  var SHRINK_PIXELS = 2048 * 1536;
+  var SHRINK_EDGE = 4096;
   var SHRINK_EDGE_MIN = 1024;
   var SHRINK_QUALITY_MAX = 0.92;
   var SHRINK_QUALITY_MIN = 0.5;
@@ -7171,17 +7179,16 @@ const SCRIPT = `
   }
 
   /**
-   * The picture drawn at the target edge on its long edge, never enlarged.
+   * The picture drawn at a fraction of its own pixels, never enlarged.
    *
    * A single drawImage of an 8000 px photo down to 2048 aliases badly — thin lines and text break
    * up — so while the source is more than twice the target in both directions it is halved into
    * an intermediate canvas first. Each of those is one high-quality resample rather than one
    * huge jump.
    */
-  function canvasAt(img, edge){
+  function canvasAt(img, scale){
     var iw = img.width, ih = img.height;
     if(!iw || !ih) return null;
-    var scale = Math.min(1, edge / Math.max(iw, ih));
     var w = Math.max(1, Math.round(iw * scale));
     var h = Math.max(1, Math.round(ih * scale));
     var from = img, fw = iw, fh = ih;
@@ -7296,18 +7303,21 @@ const SCRIPT = `
       if(!photo) return null;
       var mime = webp ? 'image/webp' : 'image/jpeg';
       var smallest = null;
-      var edge = Math.min(SHRINK_EDGE, Math.max(photo.width, photo.height) || 1);
+      var w = photo.width, h = photo.height;
+      var long = Math.max(w, h) || 1;
+      var scale = Math.min(1, Math.sqrt(SHRINK_PIXELS / (w * h)), SHRINK_EDGE / long);
+      // The floor is the area a 1024 px long edge would have at this shape: below it a picture
+      // would fit by being too small to read, and what was made so far is the answer instead.
+      var floor = Math.min(1, SHRINK_EDGE_MIN / long);
       function step(){
-        var canvas = canvasAt(photo, edge);
+        var canvas = canvasAt(photo, scale);
         if(!canvas) return Promise.resolve(smallest);
         return encodeAtSize(canvas, mime, SHRINK_LIMIT).then(function(out){
           if(out.blob && (!smallest || out.blob.size < smallest.size)) smallest = out.blob;
           if(out.fits) return out.blob;
-          var next = Math.floor(edge * 0.72);
-          // Under the floor a picture would fit by being too small to read; what was made so far
-          // is the answer instead.
-          if(next >= edge || next < SHRINK_EDGE_MIN) return smallest;
-          edge = Math.max(SHRINK_EDGE_MIN, next);
+          var next = scale * 0.72;
+          if(!(next < scale) || next < floor) return smallest;
+          scale = Math.max(floor, next);
           return step();
         });
       }

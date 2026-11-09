@@ -69,6 +69,8 @@ interface PhotoLog {
   released: string[];
   /** How many canvas encodes were asked for. */
   encoded: number;
+  /** The pixel size of every canvas that was encoded, oldest first. */
+  encodedSizes: Array<[number, number]>;
   /** How many ImageBitmaps the page closed. */
   closed: number;
   /** Let a held decode answer, the way a phone finishes one a second later. */
@@ -251,6 +253,7 @@ function installPhotos(
     quality?: number
   ) {
     log.encoded++;
+    log.encodedSizes.push([this.width, this.height]);
     const bytes = Math.round(this.width * this.height * (quality ?? 0.92) * bytesPerPixel);
     const mime = type === 'image/webp' ? (opts.noWebp ? 'image/png' : 'image/webp') : 'image/jpeg';
     setTimeout(() => cb(new w.Blob([new Uint8Array(bytes)], { type: mime })), 0);
@@ -498,7 +501,14 @@ async function open(
     photos,
   } = opts;
   const pushLog: PushLog = { unsubscribed: false, listeners: [] };
-  const photoLog: PhotoLog = { decoded: [], released: [], encoded: 0, closed: 0, release: () => {} };
+  const photoLog: PhotoLog = {
+    decoded: [],
+    released: [],
+    encoded: 0,
+    encodedSizes: [],
+    closed: 0,
+    release: () => {},
+  };
   const streams: Stream[] = [];
   const recorders: FakeRecorder[] = [];
   const calls: Call[] = [];
@@ -4712,6 +4722,43 @@ describe('webui page: shrinking a picture before it goes', () => {
     // The search ran: the top quality was too big, so a lower one had to be found.
     expect(h.photos.encoded).toBeGreaterThan(2);
     expect(h.photos.closed).toBe(1);
+    // 4000×3000 is 12 MP, so the area budget lands it on 2048×1536. (The 1×1 WebP probe is the
+    // first encode of the page's life, which is why this looks for the first real one.)
+    expect(h.photos.encodedSizes.find(([w]) => w > 1)).toEqual([2048, 1536]);
+  });
+
+  it('keeps a phone screenshot at its own size and only lowers the quality', async () => {
+    // 1170×2532 is 2.96 MP, under the 3.1 MP budget. A long-edge rule shrank it to 946 px and the
+    // text with it; by area it keeps every pixel and pays in quality instead.
+    const h = await open({ photos: { sizes: { 'shot.png': [1170, 2532] } } });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'shot.png', 'image/png', 600 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    await sendIt(h);
+
+    const file = sent(h)[0]!;
+    expect(file).toMatchObject({ name: 'shot.webp', mime: 'image/webp' });
+    expect(Buffer.from(file.data!, 'base64').length).toBeLessThanOrEqual(300 * 1024);
+    // Every encode was at the screenshot's own size: not one pixel was resampled.
+    const real = h.photos.encodedSizes.filter(([w]) => w > 1);
+    expect(real.length).toBeGreaterThan(1);
+    expect(real.every(([w, ht]) => w === 1170 && ht === 2532)).toBe(true);
+  });
+
+  it('caps one long side at 4096 for a panorama the area budget would let through', async () => {
+    // 12000×1000 is 12 MP, so area alone asks for 6144 px wide; the long-side cap holds it to 4096.
+    const h = await open({ photos: { sizes: { 'pano.jpg': [12000, 1000] } } });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'pano.jpg', 'image/jpeg', 600 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    await sendIt(h);
+
+    const real = h.photos.encodedSizes.filter(([w]) => w > 1);
+    expect(real.length).toBeGreaterThan(0);
+    expect(real[0]).toEqual([4096, 341]);
+    expect(Math.max(...real.map(([w]) => w))).toBe(4096);
   });
 
   it('falls back to JPEG when the browser answers a WebP request with a PNG', async () => {

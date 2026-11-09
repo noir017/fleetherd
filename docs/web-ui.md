@@ -185,12 +185,14 @@ composer, with an × to take it back off the message. Once sent, your message sh
 tap fills the screen with it. The daemon keeps that copy only while it is running: after a
 restart, a message from before it keeps the picture's name but not the picture.
 
-A picture over 300 KB is shrunk in the browser before it is sent: the long edge is fitted to
-2048 px and the quality taken as high as still fits under 300 KB, so a phone photo uploads in a
-moment and the agent still sees it in full. PNG and HEIC go out as WebP where the browser can
-write it, as JPEG where it cannot; a GIF keeps its animation and is sent as it is, and a picture
-the browser cannot decode is sent untouched. Re-encoding drops the camera's EXIF data, location
-included.
+A picture over 300 KB is shrunk in the browser before it is sent: it is fitted into 2048×1536
+pixels — about 3 megapixels, which is what a model can use of a photo, with a 4096 px cap on one
+side for a panorama — and the quality is taken as high as still fits under 300 KB, so a phone
+photo uploads in a moment and the agent still sees it in full. A phone screenshot is already
+inside that budget and keeps its own size, so its text stays the size it was. PNG and HEIC go out
+as WebP where the browser can write it, as JPEG where it cannot; a GIF keeps its animation and is
+sent as it is, and a picture the browser cannot decode is sent untouched. Re-encoding drops the
+camera's EXIF data, location included.
 
 **Reading a file without downloading it.** When the agent sends a Markdown file, a log, a
 CSV or a source file, click its name and it opens in a window over the conversation; **Download**

@@ -9,12 +9,14 @@ All notable changes to this project are documented here. The format is based on
 
 - **The web UI shrinks a large picture before it uploads it.** A phone writes 3–10 MB for one
   photo, and the upload — not the model — is the slow half of sending it: every harness sees at
-  most about 2048 px anyway. A still over 300 KB is now redrawn at 2048 px on its long edge and
-  encoded at the highest quality that stays under 300 KB — WebP where the browser really writes
-  it, JPEG where iOS Safari answers a WebP request with a PNG — with the extension and MIME
-  following the new format. GIF, SVG and anything already small go as they were, a picture that
-  cannot be decoded is sent untouched, and a Send pressed during the second the shrink takes waits
-  for it instead of leaving it out. Re-encoding also drops EXIF, GPS included.
+  most about 3 MP anyway. A still over 300 KB is now redrawn within 2048×1536 pixels (a 4096 px
+  cap on one side for a panorama) and encoded at the highest quality that stays under 300 KB —
+  WebP where the browser really writes it, JPEG where iOS Safari answers a WebP request with a
+  PNG — with the extension and MIME following the new format. A phone screenshot is already inside
+  that pixel budget and keeps its own size, so its text stays the size it was. GIF, SVG and
+  anything already small go as they were, a picture that cannot be decoded is sent untouched, and
+  a Send pressed during the second the shrink takes waits for it instead of leaving it out.
+  Re-encoding also drops EXIF, GPS included.
 
 ## [2.53.0] - 2026-11-09
 
