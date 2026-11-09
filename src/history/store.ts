@@ -174,12 +174,20 @@ export interface HistoryHit {
  * never compared with the skill library, and saying either way would be a guess.
  */
 export interface HistoryReviewChange {
-  action: 'create' | 'patch' | 'write-file';
+  action: 'create' | 'patch' | 'write-file' | 'archive';
   name: string;
   file?: string;
+  /** An archive suggestion's skill that took over what `name` had. */
+  into?: string;
   /** The reviewer's own sentence about why. */
   reason?: string;
   applied?: boolean;
+  /**
+   * A change the gateway never applies and the person decides: an archive. `applied` is then
+   * absent — it was neither taken nor refused — and this says why, rather than leaving it to read
+   * as an old review's unknown.
+   */
+  suggested?: boolean;
   /** Why the store refused it, or why its shape was rejected. */
   error?: string;
   /** The history entry (a commit) `talkcode skills revert` names, when there is one. */

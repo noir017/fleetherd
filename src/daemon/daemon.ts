@@ -137,6 +137,7 @@ import { buildReviewPanel } from './review-panel.js';
 import { standingInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
+  activeSkillNames,
   archiveSkill,
   createSkill,
   listSkills,
@@ -1971,6 +1972,8 @@ export class Daemon {
       enabled: () => reviews.enabled(),
       dismissed: () => state?.dismissedPreferences() ?? new Set<string>(),
       dismiss: (text) => state?.dismissPreference(text),
+      standing: () => standingInstructions(),
+      activeSkills: () => new Set(activeSkillNames()),
     });
   }
 

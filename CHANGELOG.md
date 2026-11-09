@@ -5,6 +5,40 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`-c` and `--version` after a command belong to that command.** Commander read the global
+  options anywhere on the line, and two of them share a name with a command's own:
+  `talkcode fetch-messages -c <channel>` was taken as a config file ("config not found at
+  /tmp/<channel>"), and `talkcode skills patch <name> --version <v> --content …` printed the
+  CLI's version and exited 0 without patching anything. An agent lost a skill edit that way and
+  wrote a second skill on the same subject instead. Global options now count only before the
+  command: `talkcode -c <file> start` works as before, `talkcode start -c <file>` no longer does.
+
+### Changed
+
+- **The automatic review sees the skills a conversation is about, not only the ones it used.**
+  Up to three more skills whose description best matches what the person wrote come in full, with
+  the reference files that best match it quoted. A review used to see every other skill as one
+  line, so it could neither tell that a reference on the subject existed nor quote it to edit it:
+  three reviews wrote three files on one subject into one skill. A skill read or written through
+  `talkcode skills` or the `skills` tool now counts as used for this, too.
+- **A file a review writes has to be linked from its SKILL.md.** The same answer adds the line with
+  an `edit` (or carries it in a `create`'s body), or the file is refused: an agent reads the rest of
+  a skill only where SKILL.md sends it, and four reference files in one skill were linked from
+  nowhere.
+
+### Added
+
+- **The review can suggest archiving a skill.** When two skills cover one subject, it moves the
+  useful part into the one that stays and suggests archiving the other. The gateway never applies
+  it: the Reviews tab lists it under **Suggestions** with an **Archive** button (the Skills tab's
+  own archive), and it leaves the list once the skill is archived by any route. "Never delete"
+  alone had left two skills on one tool side by side, with the review that saw both saying nothing.
+- **A suggested preference already in the instructions leaves the Reviews tab by itself.** One
+  adopted word for word was still listed two days later, because only Dismiss took a suggestion
+  off.
+
 ## [2.51.2] - 2026-11-07
 
 ### Fixed

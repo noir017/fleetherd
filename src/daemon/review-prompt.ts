@@ -26,6 +26,10 @@ export interface PromptSkillText extends PromptSkill {
   content: string;
   /** The other files the skill carries, by path — named so a `write-file` can extend one. */
   files: string[];
+  /** Files of `files` given in full, so an `edit` can quote them (review-related.ts picks which). */
+  quoted?: Array<{ file: string; content: string }>;
+  /** Found by what the conversation is about rather than used in it (review-related.ts). */
+  related?: boolean;
 }
 
 export interface PromptMessage {
@@ -51,6 +55,12 @@ export interface PromptInput {
   /** Messages the character budget left out, so the reviewer knows the log is not whole. */
   dropped: number;
   catalog: PromptSkill[];
+  /**
+   * The skills given in full: the ones the conversation used, then the ones closest to what it was
+   * about. The second half since 2026-11-09: a review shown only a skill's name and one line could
+   * neither see that the reference it was about to write already existed nor quote the file to
+   * `edit` it, so three reviews wrote three files on one subject into antigravity-config.
+   */
   used: PromptSkillText[];
   /**
    * Skill files the conversation already wrote, with their text. Named because the calls are not
@@ -107,27 +117,35 @@ export function buildReviewPrompt(input: PromptInput): string {
     '读下面的对话记录，判断网关的技能库要不要改，只输出下面的 JSON。',
     '',
     '规则',
-    '- 先改这段对话里用到的技能；没有合适的，再改已有的同类技能；再补参考资料；最后才新建。',
+    '- 先改下面给了全文的相关技能：同一件事已有技能或参考资料的，用 edit 补进去，不要另建技能，也不要另写一个参考文件；最后才新建。',
     // The next two are from 2026-11-07. A review wrote a plan the person had agreed to but nobody
     // ran — later shown wrong in another conversation — into server-ops as a "must"; only a version
     // race kept it out. Another wrote one rule into SKILL.md twice, beside a reference that had it.
     '- 只记这段对话里做成并验证过的结论。只提了没执行的方案、没验证的推测、后来被推翻的说法，都不记。',
     '- 同一件事只写一处：已经写过的技能文件和技能全文里有的不再写。细节放参考资料，SKILL.md 里最多留一句指过去。',
     '- 技能按任务类别命名：小写加连字符。不要用日期、报错、分支名、一次性的任务名。',
-    '- 不删技能。不记一次性的事：这次的具体报错、临时路径、单个 PR 都不算。',
+    '- 不记一次性的事：这次的具体报错、临时路径、单个 PR 都不算。',
+    // Since 2026-11-09. "Never delete" alone left two skills on one subject side by side for good:
+    // simular-box (a review's) and sbox (an agent's, resident), with the review that saw both in
+    // its catalog answering nothing. An archive is still never applied here — it is a suggestion a
+    // person carries out from the Reviews tab.
+    '- 不删技能。两个技能讲的是同一件事时，先用 edit 把要归档那个里还有用的内容并进留下的那个，再提一条 archive，由人确认后归档。',
     '- 只写对下一次同类任务有用的规则，不要抄对话原文。',
     '- 没什么可改就返回空清单。',
     '- 改已有的文件用 edit，不要整篇重写：old 从原文逐字照抄，在文件里只能出现一次；要加内容，就把插入点前后的一行放进 old，在 new 里接上新内容。原文里的反斜杠，在 JSON 里要写成两个。',
-    '- write-file 只用来建新文件。',
+    // The link is enforced (review.ts applyChange): on 2026-11-09 antigravity-config had four
+    // references and a SKILL.md naming none of them, so no agent that loaded it could find them.
+    '- write-file 只用来建新文件，而且 SKILL.md 里要有一句指向它（同一个回答里用 edit 加上，或写在 create 的 body 里），否则会被拒。',
     '- 不要动 frontmatter 里的 metadata：talkcode-resident 只有人能改，改了会被拒。',
     '- 不要调用任何工具，直接输出 JSON。',
     '',
     '输出',
     '{"changes":[…],"preferences":[…]}',
-    'changes 里每一项是下面三种之一：',
+    'changes 里每一项是下面四种之一：',
     '{"action":"edit","name":"…","version":"技能库里的版本号","file":"SKILL.md 或 references/xxx.md","edits":[{"old":"原文里的一段","new":"改成什么"}],"reason":"为什么"}',
     '{"action":"write-file","name":"…","file":"references/xxx.md","content":"文件内容","reason":"为什么"}',
     '{"action":"create","name":"…","category":"分类","description":"一句话说明什么时候用","body":"SKILL.md 正文，不含 frontmatter","reason":"为什么"}',
+    '{"action":"archive","name":"要归档的技能","into":"内容并进了哪个技能","reason":"为什么"}（不会自动执行，是给人的建议）',
     `create 的 category 从这些里选：${categories}；都不合适才另起一个，两到四个字。`,
     // Narrowed on 2026-11-07: the 26 suggestions of the first two days were all cleared from the
     // Reviews tab, and only two ever reached the instructions. The rest were about one project,
@@ -137,7 +155,7 @@ export function buildReviewPrompt(input: PromptInput): string {
     '技能库（名字、版本、简介）',
     catalog,
     '',
-    '这段对话用到的技能全文',
+    '相关技能全文（这段对话用到的，和内容相近的）',
     used,
     ...written,
     ...standing,
@@ -151,8 +169,13 @@ export function buildReviewPrompt(input: PromptInput): string {
 }
 
 function renderUsedSkill(skill: PromptSkillText): string {
-  const files = skill.files.length ? `\n其他文件：${skill.files.join(', ')}` : '';
-  return `### ${skill.name}（${skill.version}）\n${skill.content.trim()}${files}`;
+  const quoted = skill.quoted ?? [];
+  const shown = new Set(quoted.map((q) => q.file));
+  const rest = skill.files.filter((f) => !shown.has(f));
+  const head = `### ${skill.name}（${skill.version}）${skill.related ? '（内容相近，这段对话没用到）' : ''}`;
+  const files = quoted.map((q) => `\n#### ${skill.name}/${q.file}\n${q.content.trim()}`).join('');
+  const others = rest.length ? `\n其他文件：${rest.join(', ')}` : '';
+  return `${head}\n${skill.content.trim()}${files}${others}`;
 }
 
 function renderWritten(file: PromptWrittenFile): string {
@@ -210,7 +233,18 @@ const WriteFileChange = z.object({
   reason: z.string().optional(),
 });
 
-const Change = z.discriminatedUnion('action', [CreateChange, PatchChange, EditChange, WriteFileChange]);
+/**
+ * A suggestion, never applied by the gateway: archive `name`, whose useful part the same answer has
+ * moved into `into` with an edit. Recorded for the Reviews tab, where a person carries it out.
+ */
+const ArchiveChange = z.object({
+  action: z.literal('archive'),
+  name: z.string().min(1),
+  into: z.string().min(1).optional(),
+  reason: z.string().optional(),
+});
+
+const Change = z.discriminatedUnion('action', [CreateChange, PatchChange, EditChange, WriteFileChange, ArchiveChange]);
 export type ReviewChange = z.infer<typeof Change>;
 
 export interface ReviewOutput {
@@ -281,15 +315,22 @@ function extractJson(text: string): string | undefined {
   return start >= 0 && end > start ? text.slice(start, end + 1) : undefined;
 }
 
+/** `talkcode skills <verb> <name>` in a shell call's line: a read or a write of that skill. */
+const TALKCODE_SKILLS_CALL = /\btalkcode skills (?:show|patch|write-file|remove-file|history|revert) ([a-z0-9][a-z0-9-]*)/g;
+
+/** The native `skills` tool's row (ipc/tools.ts): `skills: {"action":"show","name":"sbox",…}`. */
+const NATIVE_SKILLS_CALL = /^(?:mcp__[\w-]+__)?skills:\s*\{/;
+
 /**
  * The managed skills a conversation used, in the order they first appear.
  *
  * The three signals are the ones `skill-usage.ts` counts, read back out of the library's tool
  * rows instead of live events: the `Skill` tool's own line, a path under `~/.talkcode/skills/`,
- * and a message the person started with `/<name>`. A tool row is one line, so a path cut off by
- * its 200-character preview is a miss — the skill still appears in the catalog, and a patch to a
- * skill whose text the reviewer was not given is refused by the version check rather than applied
- * blind.
+ * and a message the person started with `/<name>` — plus a read or write through `talkcode skills`
+ * or the native `skills` tool, which is not a use but is about that skill. A tool row is one line,
+ * so a path cut off by its 200-character preview is a miss — the skill may still be found by
+ * review-related.ts, and an edit of a skill whose text the reviewer was not given is refused by
+ * the version check rather than applied blind.
  */
 export function usedSkillNames(messages: Array<{ role: string; text: string }>, known: ReadonlySet<string>): string[] {
   const out: string[] = [];
@@ -301,6 +342,14 @@ export function usedSkillNames(messages: Array<{ role: string; text: string }>, 
       for (const match of message.text.matchAll(/\.talkcode\/skills\/([a-z0-9][a-z0-9-]*)/g)) add(match[1]);
       for (const match of message.text.matchAll(/\bSkill:\s*\/?([a-z0-9][a-z0-9-]*)/g)) add(match[1]);
       for (const match of message.text.matchAll(/"skill"\s*:\s*"([a-z0-9][a-z0-9-]*)"/g)) add(match[1]);
+      // Reading or writing one through talkcode itself — not a use (skill-usage.ts does not count
+      // it), but what the conversation was doing with that skill. On 2026-11-08 an agent read
+      // simular-box this way, tried to patch it, created sbox instead, and the review of it was
+      // given sbox alone.
+      for (const match of message.text.matchAll(TALKCODE_SKILLS_CALL)) add(match[1]);
+      if (NATIVE_SKILLS_CALL.test(message.text) && /"action"\s*:\s*"show"/.test(message.text)) {
+        add(/"name"\s*:\s*"([a-z0-9][a-z0-9-]*)"/.exec(message.text)?.[1]);
+      }
       continue;
     }
     if (message.role === 'user') {

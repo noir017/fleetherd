@@ -1,7 +1,7 @@
 import type { HistoryReviewChange, HistoryReviewRecord, HistoryReviewRow, HistorySessionRow, HistoryStore } from '../history/store.js';
 import type { ReviewPanel, ReviewPanelEntry, ReviewPanelList, ReviewPanelPreference } from '../platform/adapter.js';
 import { parseReviewOutput } from './review-prompt.js';
-import { inferOutcome, recordedAction, summaryOf, undoOf, type AppliedChange } from './review-result.js';
+import { commandOf, inferOutcome, recordedAction, summaryOf, undoOf, type AppliedChange } from './review-result.js';
 import { preferenceKey } from './review-state.js';
 
 /**
@@ -41,6 +41,13 @@ export interface ReviewPanelOptions {
   dismissed: () => ReadonlySet<string>;
   /** Dismiss one suggestion (ReviewStateStore.dismissPreference). */
   dismiss: (text: string) => void;
+  /**
+   * What agents are already told (instructions.ts standingInstructions): a preference found there is
+   * dealt with, whether or not anyone tapped Dismiss. Best-effort — unreadable is the same as none.
+   */
+  standing?: () => string | undefined;
+  /** The skills still active: an archive suggestion for one that is not has been dealt with. */
+  activeSkills?: () => ReadonlySet<string>;
   max?: number;
 }
 
@@ -54,7 +61,10 @@ export function buildReviewPanel(options: ReviewPanelOptions): ReviewPanel {
       enabled: true,
       running: options.enabled(),
       reviews: entries.slice(0, options.max ?? REVIEW_PANEL_LIMIT),
-      pending: pendingPreferences(entries, options.dismissed()),
+      pending: pendingPreferences(entries, options.dismissed(), {
+        standing: bestEffort(() => options.standing?.()),
+        active: bestEffort(() => options.activeSkills?.()),
+      }),
     };
   };
   return {
@@ -76,24 +86,65 @@ export function buildReviewPanel(options: ReviewPanelOptions): ReviewPanel {
  * included two the instructions already carried; the reviewer is now shown those instructions, and
  * what still gets through is dismissed here.
  */
-export function pendingPreferences(entries: ReviewPanelEntry[], dismissed: ReadonlySet<string>): ReviewPanelPreference[] {
+export function pendingPreferences(
+  entries: ReviewPanelEntry[],
+  dismissed: ReadonlySet<string>,
+  context: { standing?: string | undefined; active?: ReadonlySet<string> | undefined } = {}
+): ReviewPanelPreference[] {
+  // Since 2026-11-09 a suggestion already in the instructions leaves by itself: one adopted word for
+  // word on 2026-11-07 was still on the list two days later, because only Dismiss took one off.
+  const standing = context.standing?.replace(/\s+/g, '') ?? '';
+  const active = context.active;
   const byKey = new Map<string, ReviewPanelPreference>();
+  const add = (key: string, entry: ReviewPanelEntry, fresh: () => ReviewPanelPreference): void => {
+    const seen = byKey.get(key);
+    const from = { title: entry.title, ...(entry.topic ? { topic: entry.topic } : {}) };
+    if (!seen) {
+      byKey.set(key, { ...fresh(), count: 1, at: entry.at, from: [from] });
+      return;
+    }
+    seen.count += 1;
+    seen.at = Math.max(seen.at, entry.at);
+    if (seen.from.length < 3 && !seen.from.some((f) => f.title === from.title)) seen.from.push(from);
+  };
   for (const entry of entries) {
     for (const text of entry.preferences) {
       const key = preferenceKey(text);
-      if (!key || dismissed.has(key)) continue;
-      const seen = byKey.get(key);
-      const from = { title: entry.title, ...(entry.topic ? { topic: entry.topic } : {}) };
-      if (!seen) {
-        byKey.set(key, { text: text.trim(), count: 1, at: entry.at, from: [from] });
-        continue;
-      }
-      seen.count += 1;
-      seen.at = Math.max(seen.at, entry.at);
-      if (seen.from.length < 3 && !seen.from.some((f) => f.title === from.title)) seen.from.push(from);
+      if (!key || dismissed.has(key) || standing.includes(key)) continue;
+      add(key, entry, () => ({ text: text.trim(), count: 0, at: 0, from: [] }));
+    }
+    for (const change of entry.changes) {
+      if (change.action !== 'archive' || !change.suggested) continue;
+      // Archived since (from the page, a command, or expiry) — or the skill it was to merge into is
+      // gone, which makes the suggestion wrong rather than done.
+      if (active && (!active.has(change.name) || (change.into && !active.has(change.into)))) continue;
+      const text = archiveText(change.name, change.into);
+      const key = preferenceKey(text);
+      if (dismissed.has(key)) continue;
+      add(key, entry, () => ({
+        text,
+        archive: { name: change.name, ...(change.into ? { into: change.into } : {}) },
+        ...(change.reason ? { reason: change.reason } : {}),
+        count: 0,
+        at: 0,
+        from: [],
+      }));
     }
   }
   return [...byKey.values()].sort((a, b) => b.at - a.at).slice(0, PENDING_LIMIT);
+}
+
+/** An archive suggestion's line on the pending list, and the key it is dismissed by. */
+export function archiveText(name: string, into: string | undefined): string {
+  return into ? `Archive ${name}, merged into ${into}` : `Archive ${name}`;
+}
+
+function bestEffort<T>(read: () => T | undefined): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
 }
 
 function recordedEntry(record: HistoryReviewRecord, session: HistorySessionRow, instance: string): ReviewPanelEntry {
@@ -105,7 +156,8 @@ function recordedEntry(record: HistoryReviewRecord, session: HistorySessionRow, 
     summary: summaryOf(record),
     changes: record.changes.map((change) => {
       const undo = undoFor(change);
-      return { ...change, ...(undo ? { undo } : {}) };
+      const command = commandOf(change);
+      return { ...change, ...(undo ? { undo } : {}), ...(command ? { command } : {}) };
     }),
     preferences: record.preferences,
     invalid: record.invalid,

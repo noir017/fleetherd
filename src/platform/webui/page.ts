@@ -2039,28 +2039,54 @@ const SCRIPT = `
   }
 
   /**
-   * The preference suggestions nobody has dealt with, merged across reviews. Nothing acts on them:
-   * the person has one added to the instructions every agent gets, or dismisses it — so this block
-   * says that, rather than looking like settings that are already in force.
+   * The suggestions nobody has dealt with, merged across reviews: preferences, and since 2026-11-09
+   * skills to archive. Nothing acts on them: the person has a preference added to the instructions
+   * every agent gets, archives the skill, or dismisses the suggestion — so this block says that,
+   * rather than looking like settings that are already in force.
    *
-   * Adopt is the first half of that: it opens a topic whose composer holds a draft asking an agent
-   * to add the suggestion to the person's instructions. The draft is not sent, so the suggestion
-   * stays on the list until a message that carries it actually goes out from that topic
-   * (settleAdopted). A draft thrown away costs nothing.
+   * Adopt is the first half of a preference: it opens a topic whose composer holds a draft asking an
+   * agent to add the suggestion to the person's instructions. The draft is not sent, so the
+   * suggestion stays on the list until a message that carries it actually goes out from that topic
+   * (settleAdopted), or the daemon finds it in the instructions. A draft thrown away costs nothing.
+   * Archive is the Skills tab's own archive (archiveSuggested).
    */
   function revPending(list){
     if(!list.length) return '';
-    var h = '<div class="rev-pending"><div class="rev-label">Suggested preferences · ' + list.length + '</div>';
-    h += '<div class="rev-note">Not in effect anywhere. Adopt opens a new topic with a draft asking an agent to add it to your instructions; Dismiss takes it off this list.</div>';
+    var h = '<div class="rev-pending"><div class="rev-label">Suggestions · ' + list.length + '</div>';
+    h += '<div class="rev-note">Not in effect anywhere. Adopt opens a new topic with a draft asking an agent to add a preference to your instructions; Archive takes a skill off every agent (Restore in Skills brings it back); Dismiss takes a suggestion off this list.</div>';
     for(var i=0;i<list.length;i++){
       var p = list[i], from = [];
       for(var j=0;j<p.from.length;j++) from.push(p.from[j].title);
       h += '<div class="rev-pitem"><div class="rev-pbody"><div class="rev-ptext">' + text(p.text) + '</div>';
+      if(p.reason) h += '<div class="rev-reason">' + text(p.reason) + '</div>';
       h += '<div class="rev-pmeta">' + (p.count > 1 ? text(p.count + ' reviews · ') : '') + text(from.join(', ')) + '</div></div>';
-      h += '<div class="rev-pacts"><button type="button" class="rev-adopt" data-rev-adopt="' + i + '">Adopt</button>';
+      h += '<div class="rev-pacts">' + (p.archive
+        ? '<button type="button" class="rev-adopt rev-archive" data-rev-archive="' + i + '">Archive</button>'
+        : '<button type="button" class="rev-adopt" data-rev-adopt="' + i + '">Adopt</button>');
       h += '<button type="button" class="rev-dismiss" data-rev-dismiss="' + i + '">Dismiss</button></div></div>';
     }
     return h + '</div>';
+  }
+
+  /**
+   * Carry out an archive suggestion with the Skills tab's own operation (api/skills/op), so the
+   * Reviews seam itself stays read-only. The suggestion leaves the list by itself once its skill is
+   * no longer active, so a refresh is all that follows; Restore in the Skills tab undoes it.
+   */
+  function archiveSuggested(btn){
+    var i = Number(btn.getAttribute('data-rev-archive'));
+    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
+    if(!p || !p.archive) return;
+    btn.disabled = true;
+    post('api/skills/op', {action:'archive', name:p.archive.name}, 1).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(!d || !d.ok) throw new Error((d && d.error) || 'the archive was refused');
+      loadReviews();
+    }).catch(function(e){
+      btn.disabled = false;
+      showSchedNote('Could not archive ' + p.archive.name + ': ' + ((e && e.message) || 'network error'));
+    });
   }
 
   /**
@@ -2180,18 +2206,22 @@ const SCRIPT = `
 
   /**
    * One change. applied is three-state on purpose: true and false are what the gateway recorded,
-   * and absent is an old review whose raw answer never said — marked unknown rather than guessed.
+   * and absent is an old review whose raw answer never said — marked unknown rather than guessed —
+   * or a suggestion (an archive), which the gateway never applies and says so.
    */
   function revChange(c){
-    var what = c.action==='create' ? 'Create ' : (c.action==='patch' ? 'Update ' : 'Write ');
-    var name = c.action==='write-file' ? (c.file || 'a file') + ' in ' + c.name : c.name;
+    var what = c.action==='create' ? 'Create ' : (c.action==='patch' ? 'Update ' : (c.action==='archive' ? 'Archive ' : 'Write '));
+    var name = c.action==='write-file' ? (c.file || 'a file') + ' in ' + c.name
+      : (c.action==='archive' && c.into ? c.name + ' into ' + c.into : c.name);
     var status = c.applied===true ? '<span class="rev-status ok">applied</span>'
       : c.applied===false ? '<span class="rev-status bad">refused</span>'
+      : c.suggested ? '<span class="rev-status unknown">suggested</span>'
       : '<span class="rev-status unknown">unknown</span>';
     var h = '<div class="rev-change">' + what + '<span class="rev-name">' + text(name) + '</span>' + status;
     if(c.reason) h += '<div class="rev-reason">' + text(c.reason) + '</div>';
     if(c.error) h += '<div class="rev-note bad">' + text(c.error) + '</div>';
     if(c.undo) h += '<code class="rev-undo">' + text(c.undo) + '</code>';
+    if(c.command) h += '<code class="rev-undo">' + text(c.command) + '</code>';
     h += '</div>';
     return h;
   }
@@ -2752,6 +2782,12 @@ const SCRIPT = `
     if(adoptBtn){
       e.stopPropagation();
       adoptPreference(adoptBtn);
+      return;
+    }
+    var archiveBtn = e.target.closest ? e.target.closest('[data-rev-archive]') : null;
+    if(archiveBtn){
+      e.stopPropagation();
+      archiveSuggested(archiveBtn);
       return;
     }
     var dismissBtn = e.target.closest ? e.target.closest('[data-rev-dismiss]') : null;

@@ -17,6 +17,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `conversation.ts` | `ConversationRegistry` — per-conversation state, agent binding, access + gating, command translation |
 | `settings-store.ts` | The write half of `/setting`: validate, patch config.yaml, apply to the live `Config` |
 | `review-run.ts` | Who runs an automatic review and how: `review.api` (one `/chat/completions` request), an agy agent (`agy -p` with every class denied), or any other agent (one ACP session of its own, its tools switched off, every permission refused) |
+| `review-related.ts` | Pure: which skills beyond the used ones a review is given in full (description match on the person's words), and which of their reference files are quoted |
 | `model-catalog.ts` | Any agent's model list for the settings screen: from a live session, from what was learned, or from a session brought up just to ask |
 | `config-reload.ts` | `/reload` and `talkcode reload`: diff the re-read config against the live one, copy it in place, and say what changed. Which sections apply live and which need a restart is decided in its `RELOAD_KIND`; what happens to running agent processes is `ConversationRegistry.respawnAgents` |
 | `turn-runner.ts` | One turn end to end: prompt, streaming, tools, footer, errors |
@@ -475,7 +476,12 @@ mode: `--input-format=stream-json --output-format=stream-json -p=`, one NDJSON
 stdin, so the temporary directory stays empty.
 
 **What the prompt holds.** The rules, the skill catalog and the categories in use, the text of
-the skills the conversation used, the skill files the conversation wrote with what they hold now
+the skills the conversation used (a `talkcode skills` read or write and the native `skills` tool's
+`show` count), then of up to three more whose name, description or category best match the title
+and the person's messages, and the reference files of all of them that best match those, quoted
+within 30 000 characters beyond the used skills' `SKILL.md` (`ReviewService.skillsInFull`,
+`review-related.ts`: before 2026-11-09 three reviews wrote three references on one subject into
+antigravity-config, never having been shown the skill), the skill files the conversation wrote with what they hold now
 (`ReviewService.writtenFiles`: the skills repository's commits whose `Talkcode-Conversation` trailer
 names it — `conversationSkillFiles` — plus `writtenSkillFiles`, the write-type calls in
 `reviewWindow`'s `skillCalls`; quoted up to 8 000 characters a file and 20 000 in all), every file
@@ -495,7 +501,11 @@ originals must occur exactly once in the version it was shown (`applyEdits`); th
 the new file and writes it through `patchSkill` or `writeSkillFile`. `patch` — the whole `SKILL.md`
 retyped — is no longer offered and is refused if it comes anyway: on 2026-11-06 it took 18 000
 characters to add two lines to server-ops, and changed an unrelated word on the way. `write-file`
-is for a new file only. A change the store refuses — a taken name, a file outside the three
+is for a new file only, and one its `SKILL.md` does not point to is refused: new files are applied
+after every other change of the answer, so the `edit` (or `create` body) that links one may come
+anywhere in it, and the check reads the store after those ran. An `archive` is never applied — it
+is filed as `suggested` when it names an active skill (and `into` another one), refused otherwise,
+and left to the person on the Reviews tab. A change the store refuses — a taken name, a file outside the three
 directories, a version that moved while the reviewer was thinking — is dropped and logged; the
 rest of the answer still applies. An `edit` is recorded as the `patch` or `write-file` it amounts
 to (`recordedAction`), so the Reviews tab keeps its three verbs. The reviewer's own output and the prompt are filed in the
@@ -511,12 +521,14 @@ the store's `error` when it refused one, the `revertId` a `revert` names, the pr
 suggestions, the shape-check rejects, and the outcome `classifyReview` derives from them. A failed
 run is filed too, so "why was this conversation never reviewed" is answerable from the web UI
 instead of only from the log. `review-panel.ts` turns those rows into the Reviews tab's entries,
-gathers the pending preference suggestions across the newest 200 reviews, less the ones dismissed
-in the same `ReviewStateStore` the sweep writes (`dismissedPreferences`), and marks an old review
+gathers the pending suggestions across the newest 200 reviews — preferences, less any the
+standing instructions already contain, and archive suggestions whose skills are both still
+active — less the ones dismissed in the same `ReviewStateStore` the sweep writes
+(`dismissedPreferences`), and marks an old review
 (raw answer only, no result row) as inferred. `review-result.ts` holds the wording and the
 classification both sides share. The panel's one write is dismissing a suggestion, to
 `reviews.json` alone; nothing on it touches a skill or a review — the undo is the command the row
-names.
+names, and the page's Archive button posts to the Skills tab's own operation.
 
 ## Scheduled tasks
 

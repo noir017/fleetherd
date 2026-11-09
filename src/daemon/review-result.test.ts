@@ -41,6 +41,13 @@ describe('classifyReview', () => {
     expect(classifyReview({ changes: [], preferences: [], invalid: [] })).toBe('nothing');
   });
 
+  it('calls an archive suggestion a suggestion, and a refused one refused', () => {
+    const suggested = { action: 'archive' as const, name: 'old', suggested: true };
+    expect(classifyReview({ changes: [suggested], preferences: [], invalid: [] })).toBe('preferences');
+    expect(classifyReview({ changes: [suggested, { action: 'archive', name: 'gone', applied: false, error: 'x' }], preferences: [], invalid: [] })).toBe('refused');
+    expect(summaryOf({ ...base, outcome: 'preferences', changes: [suggested], preferences: ['先给结论'] })).toBe('1 preference · 1 archive suggestion');
+  });
+
   it('never calls an inferred answer changed', () => {
     expect(inferOutcome([{ action: 'patch', name: 'a' }], [], [])).toBe('proposed');
     expect(inferOutcome([], ['先给结论'], [])).toBe('preferences');

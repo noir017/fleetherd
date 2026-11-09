@@ -296,7 +296,11 @@ are never reviewed.
 
 The reviewer gets the conversation without its tool calls — every message you sent, then the
 agent's replies newest first up to the cap — the skill list with versions and the categories in
-use, the full text of the skills that conversation used, the skill files that conversation already
+use, the full text of the skills that conversation used (a skill it read or wrote through
+`talkcode skills` or the `skills` tool counts) and of up to three more whose description best
+matches what you wrote, with the reference files of those skills that best match it quoted in
+full — so it extends the reference that already covers a subject instead of writing a second one
+beside it — the skill files that conversation already
 wrote, with what they hold now (so it neither creates a second copy of a skill you just had written
 nor adds a rule the agent already put in a reference), and every file of your
 [instructions for agents](instructions.md) (so it does not suggest a preference you already
@@ -306,8 +310,13 @@ noticed:
 - `edit` — exact replacements in `SKILL.md` or one of its files: each quoted original must occur
   exactly once, against the version the reviewer was given, or the change is refused. A review
   never retypes a whole file.
-- `write-file` — a new reference, template or script; one that already exists is refused.
+- `write-file` — a new reference, template or script; one that already exists is refused, and so
+  is one its `SKILL.md` does not point to — the same answer has to add that line with an `edit`
+  (or carry it in a `create`'s body), because an agent reads the rest of a skill only where
+  `SKILL.md` sends it.
 - `create` — a new skill, in the library, under a category.
+- `archive` — a skill to archive, usually with the skill its useful part was just moved into.
+  Never applied by the gateway: it waits for you on the Reviews tab.
 
 It is told to record only what the conversation actually did and verified — not a plan nobody
 ran, a guess, or something later overturned — and to say each thing in one place. Preferences are
@@ -343,14 +352,16 @@ because each conversation's watermark already stops it being reviewed twice. Rev
 the conversation library as `review` sessions, which search and `list` leave out.
 
 **Where the results are.** The web UI's side panel has a **Reviews** tab: every review, including
-the ones that changed nothing and posted no line. Above them, **Suggested preferences** gathers the
-preference suggestions no one has dealt with: one entry per wording, with how many reviews made it
-and which conversations they came from. None of them is in force anywhere — **Adopt** one and a new
-topic opens with a draft asking an agent to add it to your instructions (edit it, switch agent
-first, or throw it away; the suggestion leaves the list only when a message that still carries it
-is sent there), and **Dismiss** the rest (or the ones you added); a dismissed suggestion does not
-come back. A row is the reviewed conversation, when, and
-what happened — a skill created or updated, only preference suggestions, a change the store
+the ones that changed nothing and posted no line. Above them, **Suggestions** gathers what no one
+has dealt with: one entry per wording, with how many reviews made it and which conversations they
+came from. None of them is in force anywhere. A preference: **Adopt** it and a new topic opens with
+a draft asking an agent to add it to your instructions (edit it, switch agent first, or throw it
+away; the suggestion leaves the list when a message that still carries it is sent there, or once
+your instructions contain it word for word). A skill to archive: **Archive** does what the Skills
+tab's switch does — Restore there brings it back — and the suggestion leaves once the skill is no
+longer active, however it was archived. **Dismiss** the rest; a dismissed suggestion does not come
+back. A row is the reviewed conversation, when, and
+what happened — a skill created or updated, only suggestions, a change the store
 refused, nothing found, or a failed run. Opening it shows each change with the reviewer's reason,
 whether it actually took effect (and the store's sentence when it did not), the preference
 suggestions in full, and the `talkcode skills revert` / `archive` command that undoes a change.

@@ -41,8 +41,9 @@ export function classifyReview(input: {
 }): HistoryReviewOutcome {
   if (input.error) return 'failed';
   if (input.changes.some((c) => c.applied === true)) return 'changed';
-  if (input.changes.length > 0 || input.invalid.length > 0) return 'refused';
-  if (input.preferences.length > 0) return 'preferences';
+  if (input.changes.some((c) => c.applied === false) || input.invalid.length > 0) return 'refused';
+  // An archive suggestion is, like a preference, something only the person can act on.
+  if (input.preferences.length > 0 || input.changes.some((c) => c.suggested)) return 'preferences';
   return 'nothing';
 }
 
@@ -73,6 +74,8 @@ export function recordedAction(change: ReviewChange): Pick<HistoryReviewChange, 
     case 'create':
     case 'patch':
       return { action: change.action };
+    case 'archive':
+      return { action: 'archive', ...(change.into ? { into: change.into } : {}) };
     default: {
       const _exhaustive: never = change;
       return _exhaustive;
@@ -83,7 +86,7 @@ export function recordedAction(change: ReviewChange): Pick<HistoryReviewChange, 
 /** One change as the result record keeps it, with what became of it. */
 export function recordedChange(
   change: ReviewChange,
-  outcome: { applied: AppliedChange } | { refused: string }
+  outcome: { applied: AppliedChange } | { refused: string } | { suggested: true }
 ): HistoryReviewChange {
   const base: HistoryReviewChange = {
     ...recordedAction(change),
@@ -93,7 +96,13 @@ export function recordedChange(
   if ('applied' in outcome) {
     return { ...base, applied: true, ...(outcome.applied.revertId ? { revertId: outcome.applied.revertId } : {}) };
   }
+  if ('suggested' in outcome) return { ...base, suggested: true };
   return { ...base, applied: false, error: outcome.refused };
+}
+
+/** The command that carries out a suggested change — what the person runs, or the Skills tab does. */
+export function commandOf(change: HistoryReviewChange): string | undefined {
+  return change.suggested && change.action === 'archive' ? `talkcode skills archive ${change.name}` : undefined;
 }
 
 /** The row's one line: what happened, short enough to scan. */
@@ -104,17 +113,15 @@ export function summaryOf(record: HistoryReviewRecord): string {
     case 'changed':
       return changedSummary(record);
     case 'refused': {
-      const n = record.changes.length + record.invalid.length;
+      const n = record.changes.filter((c) => c.applied === false).length + record.invalid.length;
       return `${n} change${n === 1 ? '' : 's'} refused`;
     }
     case 'proposed': {
       const n = record.changes.length + record.invalid.length;
       return `${n} change${n === 1 ? '' : 's'} proposed`;
     }
-    case 'preferences': {
-      const n = record.preferences.length;
-      return `${n} preference${n === 1 ? '' : 's'}`;
-    }
+    case 'preferences':
+      return suggestionParts(record).join(' · ');
     case 'nothing':
       return 'nothing found';
     default: {
@@ -135,10 +142,18 @@ function changedSummary(record: HistoryReviewRecord): string {
   // A refused change beside an applied one is not visible anywhere else in the row, and "it tried
   // three things and one was not allowed" is what a person needs to know before trusting the rest.
   if (refused) parts.push(`${refused} refused`);
-  if (record.preferences.length) {
-    parts.push(`${record.preferences.length} preference${record.preferences.length === 1 ? '' : 's'}`);
-  }
+  parts.push(...suggestionParts(record));
   return parts.join(' · ');
+}
+
+/** What a review left for the person: `2 preferences`, `1 archive suggestion`, either or both. */
+function suggestionParts(record: HistoryReviewRecord): string[] {
+  const parts: string[] = [];
+  const prefs = record.preferences.length;
+  if (prefs) parts.push(`${prefs} preference${prefs === 1 ? '' : 's'}`);
+  const archives = record.changes.filter((c) => c.suggested).length;
+  if (archives) parts.push(`${archives} archive suggestion${archives === 1 ? '' : 's'}`);
+  return parts;
 }
 
 function oneChange(change: HistoryReviewChange): string {

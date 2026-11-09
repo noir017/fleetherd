@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { HistoryStore } from '../history/store.js';
+import { HistoryStore, type HistoryReviewChange } from '../history/store.js';
 import { buildReviewPanel } from './review-panel.js';
 import { ReviewStateStore } from './review-state.js';
 
@@ -26,7 +26,15 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function panel(over: { running?: boolean; instance?: string; state?: ReviewStateStore } = {}) {
+function panel(
+  over: {
+    running?: boolean;
+    instance?: string;
+    state?: ReviewStateStore;
+    standing?: () => string | undefined;
+    activeSkills?: () => ReadonlySet<string>;
+  } = {}
+) {
   const state = over.state ?? new ReviewStateStore(path.join(dir, 'reviews.json'), () => {});
   return buildReviewPanel({
     history,
@@ -34,6 +42,8 @@ function panel(over: { running?: boolean; instance?: string; state?: ReviewState
     enabled: () => over.running ?? true,
     dismissed: () => state.dismissedPreferences(),
     dismiss: (text) => state.dismissPreference(text),
+    ...(over.standing ? { standing: over.standing } : {}),
+    ...(over.activeSkills ? { activeSkills: over.activeSkills } : {}),
   });
 }
 
@@ -180,8 +190,8 @@ describe('buildReviewPanel', () => {
 });
 
 describe('the pending preference list', () => {
-  /** A recorded review of `title` that suggested `preferences`, `minutes` after `now`. */
-  function suggested(n: number, title: string, preferences: string[], thread = `t${n}`): void {
+  /** A recorded review of `title` that suggested `preferences` (and `changes`), `minutes` after `now`. */
+  function suggested(n: number, title: string, preferences: string[], thread = `t${n}`, changes: HistoryReviewChange[] = []): void {
     const at = now + n * 60_000;
     const id = reviewSession(`review:web#main#${thread}:${at}`, `复盘：${title}`, at);
     history.recordReview(id, {
@@ -191,7 +201,7 @@ describe('the pending preference list', () => {
       channel: 'main',
       thread,
       outcome: 'preferences',
-      changes: [],
+      changes,
       preferences,
       invalid: [],
       at,
@@ -225,5 +235,46 @@ describe('the pending preference list', () => {
     expect(panel({ state: fresh }).list().pending.map((p) => p.text)).toEqual(['回答先给结论']);
     // Reviews are untouched by it.
     expect(panel({ state: fresh }).list().reviews).toHaveLength(2);
+  });
+
+  it('drops a suggestion the instructions already carry, spacing aside', () => {
+    suggested(1, '部署', ['架构优先保持简洁。', '回答先给结论']);
+    const pending = panel({ standing: () => '# 偏好\n6. 架构优先 保持简洁。\n' }).list().pending;
+    expect(pending.map((p) => p.text)).toEqual(['回答先给结论']);
+    // Unreadable instructions are no instructions: nothing is hidden, nothing fails.
+    const broken = panel({
+      standing: () => {
+        throw new Error('EACCES');
+      },
+    });
+    expect(broken.list().pending).toHaveLength(2);
+  });
+
+  it('lists an archive suggestion until the skill is archived, and dismisses it like a preference', () => {
+    const archive: HistoryReviewChange = { action: 'archive', name: 'simular-box', into: 'sbox', reason: '同一件事', suggested: true };
+    suggested(1, 'Simular Box', [], 't1', [archive]);
+    suggested(2, 'mcpmux', [], 't2', [archive]);
+    const active = new Set(['simular-box', 'sbox']);
+    const list = panel({ activeSkills: () => active }).list();
+    expect(list.pending).toEqual([
+      {
+        text: 'Archive simular-box, merged into sbox',
+        archive: { name: 'simular-box', into: 'sbox' },
+        reason: '同一件事',
+        count: 2,
+        at: now + 2 * 60_000,
+        from: [
+          { title: 'mcpmux', topic: 't2' },
+          { title: 'Simular Box', topic: 't1' },
+        ],
+      },
+    ]);
+    expect(list.reviews[0]!.changes[0]).toMatchObject({ suggested: true, command: 'talkcode skills archive simular-box' });
+    expect(list.reviews[0]!.summary).toBe('1 archive suggestion');
+    // Archived since, or the skill to merge into is gone: dealt with either way.
+    expect(panel({ activeSkills: () => new Set(['sbox']) }).list().pending).toEqual([]);
+    expect(panel({ activeSkills: () => new Set(['simular-box']) }).list().pending).toEqual([]);
+    const state = new ReviewStateStore(path.join(dir, 'reviews.json'), () => {});
+    expect(panel({ state, activeSkills: () => active }).dismiss('Archive simular-box, merged into sbox').pending).toEqual([]);
   });
 });

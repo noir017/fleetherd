@@ -7719,7 +7719,7 @@ describe('webui page: the Reviews tab', () => {
     const block = h.doc.querySelector('.rev-pending')!;
     // Above the reviews, and saying that nothing here is in force.
     expect(h.el('sched-reviews-list').firstElementChild).toBe(block);
-    expect(block.textContent).toContain('Suggested preferences · 2');
+    expect(block.textContent).toContain('Suggestions · 2');
     expect(block.textContent).toContain('Not in effect anywhere');
     // The note says what each answer does, now that there are two of them.
     expect(block.textContent).toContain('Adopt opens a new topic');
@@ -7736,9 +7736,82 @@ describe('webui page: the Reviews tab', () => {
       action: 'dismiss',
       text: 'answers lead with the conclusion',
     });
-    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 1');
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggestions · 1');
     // Dismissing is not opening: no review row was toggled by the click.
     expect(h.doc.querySelector('.rev-detail')).toBeNull();
+  });
+
+  it('offers Archive for an archive suggestion, through the Skills tab\'s own operation', async () => {
+    const pending = [
+      {
+        text: 'Archive simular-box, merged into sbox',
+        archive: { name: 'simular-box', into: 'sbox' },
+        reason: 'the same tool, written twice',
+        count: 1,
+        at,
+        from: [{ title: 'mcpmux' }],
+      },
+    ];
+    const suggestion = review({
+      outcome: 'preferences',
+      summary: '1 archive suggestion',
+      changes: [
+        {
+          action: 'archive',
+          name: 'simular-box',
+          into: 'sbox',
+          suggested: true,
+          command: 'talkcode skills archive simular-box',
+        },
+      ],
+      preferences: [],
+    });
+    const replies: Record<string, unknown> = {
+      'api/reviews': reply([suggestion], { pending }),
+      'api/skills/op': { ok: true, skills: [] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the pending list', () => Boolean(h.doc.querySelector('.rev-pending')));
+
+    const item = h.doc.querySelector('.rev-pitem')!;
+    expect(item.textContent).toContain('the same tool, written twice');
+    expect(item.querySelector('[data-rev-adopt]')).toBeNull();
+    // The change row says it was a suggestion and names the command that carries it out.
+    (h.doc.querySelector('.rev-item') as HTMLElement).click();
+    await until('the detail', () => Boolean(h.doc.querySelector('.rev-detail')));
+    const change = h.doc.querySelector('.rev-change')!;
+    expect(change.textContent).toContain('Archive simular-box into sbox');
+    expect(change.querySelector('.rev-status')!.textContent).toBe('suggested');
+    expect(change.querySelector('.rev-undo')!.textContent).toBe('talkcode skills archive simular-box');
+
+    replies['api/reviews'] = reply([suggestion], { pending: [] });
+    (h.doc.querySelector('[data-rev-archive]') as HTMLElement).click();
+    await until('the archive', () => h.calls.some((c) => c.path === 'api/skills/op'));
+    expect(h.calls.find((c) => c.path === 'api/skills/op')?.body).toEqual({ action: 'archive', name: 'simular-box' });
+    // Gone once the daemon no longer lists it — the skill is archived, so the suggestion is done.
+    await until('the refreshed list', () => h.doc.querySelector('.rev-pending') === null);
+  });
+
+  it('keeps an archive suggestion and says why when the archive is refused', async () => {
+    const pending = [
+      { text: 'Archive simular-box', archive: { name: 'simular-box' }, count: 1, at, from: [{ title: 'mcpmux' }] },
+    ];
+    const h = await open({
+      replies: {
+        'api/reviews': reply([review()], { pending }),
+        'api/skills/op': { ok: false, error: 'no skill named "simular-box"' },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the pending list', () => Boolean(h.doc.querySelector('.rev-pending')));
+    (h.doc.querySelector('[data-rev-archive]') as HTMLElement).click();
+    await until('the note', () => h.doc.body.textContent!.includes('Could not archive simular-box: no skill named'));
+    expect((h.doc.querySelector('[data-rev-archive]') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('draws no pending block when nothing is pending', async () => {
@@ -7797,7 +7870,7 @@ describe('webui page: the Reviews tab', () => {
     // A draft, not a message: nothing went out, and the suggestion is still on the list.
     expect(h.calls.map((c) => c.path)).not.toContain('api/send');
     expect(h.calls.map((c) => c.path)).not.toContain('api/reviews/op');
-    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 2');
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggestions · 2');
   });
 
   it('takes a suggestion off the list once the draft is actually sent', async () => {
@@ -7817,7 +7890,7 @@ describe('webui page: the Reviews tab', () => {
       text: SUGGESTION,
     });
     await until('one suggestion left', () => h.doc.querySelectorAll('.rev-pitem').length === 1);
-    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 1');
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggestions · 1');
   });
 
   it('leaves the suggestion alone when the draft is replaced before anything is sent', async () => {
@@ -7832,7 +7905,7 @@ describe('webui page: the Reviews tab', () => {
     await tick();
 
     expect(h.calls.map((c) => c.path)).not.toContain('api/reviews/op');
-    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 2');
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggestions · 2');
   });
 
   it('says why a topic could not be opened, and keeps the suggestion', async () => {
@@ -7849,7 +7922,7 @@ describe('webui page: the Reviews tab', () => {
     expect(h.alerts[0]).toBe(`Could not open a new topic: ${refusal}`);
     // Still in the conversation it was in, with the suggestion untouched and Adopt usable again.
     expect(h.window.location.search).toContain(`t=${A}`);
-    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 2');
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggestions · 2');
     expect((h.doc.querySelector('.rev-adopt') as HTMLButtonElement).disabled).toBe(false);
     expect(h.calls.map((c) => c.path)).not.toContain('api/send');
   });
@@ -7933,7 +8006,7 @@ describe('webui page: the Reviews tab', () => {
     await tick();
     await tick();
     expect(h.doc.querySelectorAll('.rev-pitem')).toHaveLength(1);
-    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggested preferences · 1');
+    expect(h.doc.querySelector('.rev-pending')!.textContent).toContain('Suggestions · 1');
   });
 
   it('opens a review for its changes, reasons, undo command and preferences', async () => {

@@ -13,6 +13,7 @@ import {
   type ReviewChange,
 } from './review-prompt.js';
 import { classifyReview, recordedChange, undoOf, type AppliedChange } from './review-result.js';
+import { QUOTED_FILE_CHARS, RELATED_CHARS, quotable, rankFiles, relatedSkillNames, reviewQuery } from './review-related.js';
 import { isCapacityFailure, reviewerOf, runReview, type Reviewer, type ReviewRun } from './review-run.js';
 import { REVIEW_CAPACITY_MAX_ATTEMPTS, REVIEW_CAPACITY_RETRY_MS, type ReviewStateStore } from './review-state.js';
 import {
@@ -28,6 +29,7 @@ import {
   validateFilePath,
   writeSkillFile,
   type SkillChangeBy,
+  type SkillRecord,
   type SkillSource,
 } from './skills-store.js';
 
@@ -187,10 +189,12 @@ interface Plan {
   window: ReviewWindow;
 }
 
-/** What one review's answer produced: what the store took, and what it refused. */
+/** What one review's answer produced: what the store took, what it refused, and what waits for a person. */
 interface AppliedResult {
   applied: Array<{ change: ReviewChange; result: AppliedChange }>;
   refused: Array<{ change: ReviewChange; error: string }>;
+  /** Archive suggestions that name skills which exist: recorded for the Reviews tab, never applied. */
+  suggested: ReviewChange[];
 }
 
 export class ReviewService {
@@ -407,6 +411,7 @@ export class ReviewService {
     const changes: HistoryReviewChange[] = [
       ...outcome.applied.map((a) => recordedChange(a.change, { applied: a.result })),
       ...outcome.refused.map((r) => recordedChange(r.change, { refused: r.error })),
+      ...outcome.suggested.map((c) => recordedChange(c, { suggested: true })),
     ];
     this.writeResult(id, plan, candidate, now, {
       outcome: classifyReview({ changes, preferences: parsed.parsed.output.preferences, invalid: parsed.parsed.invalid }),
@@ -435,16 +440,8 @@ export class ReviewService {
     // the ones that touched a skill are what says which skills were used and which were written.
     const calls = plan.window.skillCalls;
     const signals = [...calls.map((text) => ({ role: 'tool', text })), ...plan.window.messages];
-    const used: PromptSkillText[] = [];
-    for (const name of usedSkillNames(signals, new Set(activeSkillNames(dir))).slice(0, MAX_USED_SKILLS)) {
-      try {
-        used.push(this.usedSkill(name));
-      } catch (e) {
-        // Archived between the listing and the read: the catalog still names it, so a create or a
-        // patch of something else is unaffected.
-        this.log(`[review] could not read "${name}" for the prompt: ${e instanceof Error ? e.message : e}`);
-      }
-    }
+    const usedNames = usedSkillNames(signals, new Set(activeSkillNames(dir))).slice(0, MAX_USED_SKILLS);
+    const used = this.skillsInFull(plan, usedNames, active);
     const written = this.writtenFiles(key, since, calls, used);
     return buildReviewPrompt({
       title: plan.session.title,
@@ -491,7 +488,8 @@ export class ReviewService {
       const path = `${entry.name}/${entry.file}`;
       if (seen.has(path)) continue;
       seen.add(path);
-      if (entry.file === 'SKILL.md' && used.some((u) => u.name === entry.name)) {
+      const above = used.find((u) => u.name === entry.name);
+      if (above && (entry.file === 'SKILL.md' || above.quoted?.some((q) => q.file === entry.file))) {
         out.push({ path, note: '全文见上' });
         continue;
       }
@@ -527,7 +525,62 @@ export class ReviewService {
     }
   }
 
-  /** One used skill in full: its `SKILL.md`, its version and the names of the files beside it. */
+  /**
+   * The skills the reviewer reads in full: the ones the conversation used, then up to
+   * MAX_RELATED_SKILLS more whose description fits what it was about, then the files of all of them
+   * that fit it best, quoted — within RELATED_CHARS beyond the used skills' SKILL.md
+   * (review-related.ts says why). A related skill that does not fit is left in the catalog; a file
+   * that does not fit is named under 其他文件, as every file was before.
+   */
+  private skillsInFull(plan: Plan, usedNames: string[], active: SkillRecord[]): PromptSkillText[] {
+    const dir = this.deps.skillsDir;
+    const shown: PromptSkillText[] = [];
+    const read = (name: string): PromptSkillText | undefined => {
+      try {
+        return this.usedSkill(name);
+      } catch (e) {
+        // Archived between the listing and the read: the catalog still names it, so a create or a
+        // patch of something else is unaffected.
+        this.log(`[review] could not read "${name}" for the prompt: ${e instanceof Error ? e.message : e}`);
+        return undefined;
+      }
+    };
+    for (const name of usedNames) {
+      const skill = read(name);
+      if (skill) shown.push(skill);
+    }
+    const query = reviewQuery(plan.session.title, plan.window.messages);
+    let left = RELATED_CHARS;
+    for (const name of relatedSkillNames(query, active, new Set(usedNames))) {
+      const skill = read(name);
+      if (!skill || skill.content.length > left) continue;
+      left -= skill.content.length;
+      shown.push({ ...skill, related: true });
+    }
+    const files: Array<{ key: string; skill: PromptSkillText; file: string; content: string }> = [];
+    for (const skill of shown) {
+      let all: Map<string, Buffer>;
+      try {
+        all = readSkillFiles(skill.name, dir);
+      } catch {
+        continue;
+      }
+      for (const file of skill.files.filter(quotable)) {
+        const content = all.get(file)?.toString('utf8');
+        if (content !== undefined) files.push({ key: `${skill.name}/${file}`, skill, file, content });
+      }
+    }
+    const byKey = new Map(files.map((f) => [f.key, f]));
+    for (const key of rankFiles(query, files)) {
+      const f = byKey.get(key);
+      if (!f || f.content.length > QUOTED_FILE_CHARS || f.content.length > left) continue;
+      left -= f.content.length;
+      (f.skill.quoted ??= []).push({ file: f.file, content: f.content });
+    }
+    return shown;
+  }
+
+  /** One skill in full: its `SKILL.md`, its version and the names of the files beside it. */
   private usedSkill(name: string): PromptSkillText {
     const dir = this.deps.skillsDir;
     const shown = showSkill(name, undefined, dir);
@@ -550,7 +603,7 @@ export class ReviewService {
    * and the next one is still tried.
    */
   private apply(candidate: ReviewCandidate, changes: ReviewChange[], reviewer: Reviewer): AppliedResult {
-    const out: AppliedResult = { applied: [], refused: [] };
+    const out: AppliedResult = { applied: [], refused: [], suggested: [] };
     const dir = this.deps.skillsDir;
     const source = {
       conversation: candidate.key,
@@ -561,7 +614,17 @@ export class ReviewService {
       origin: 'review' as const,
     };
     const by = { kind: 'review' as const, agent: reviewer.id, conversation: candidate.key };
-    for (const change of changes) {
+    // New files last: a write-file must be linked from its SKILL.md (applyChange), and the edit or
+    // create that links it may come anywhere in the answer. Checked against the store after those
+    // ran, so a link whose edit was refused does not let an unreachable file in.
+    const ordered = [...changes.filter((c) => c.action !== 'write-file'), ...changes.filter((c) => c.action === 'write-file')];
+    for (const change of ordered) {
+      if (change.action === 'archive') {
+        const problem = archiveProblem(change, dir);
+        if (problem) out.refused.push({ change, error: problem });
+        else out.suggested.push(change);
+        continue;
+      }
       try {
         out.applied.push({ change, result: applyChange(change, { source, by }, dir) });
       } catch (e) {
@@ -705,14 +768,38 @@ function applyChange(change: ReviewChange, who: ReviewAuthor, dir: string | unde
       if (readSkillFiles(change.name, dir).has(file)) {
         throw new Error(`${file} already exists in "${change.name}"; the review changes an existing file with edit`);
       }
+      // A file SKILL.md does not point to is one no agent finds: the harness loads SKILL.md, and the
+      // rest is read only when SKILL.md says where. Four such files sat in antigravity-config on
+      // 2026-11-09.
+      if (!showSkill(change.name, SKILL_FILE, dir).content.includes(file)) {
+        throw new Error(`${file} is not linked from "${change.name}"'s SKILL.md; add a line pointing to it with an edit in the same answer`);
+      }
       writeSkillFile({ name: change.name, file, content: change.content, note: change.reason, by }, dir);
       return { name: change.name, action: 'file', file, revertId: newestHistoryId(change.name, dir) };
     }
+    case 'archive':
+      // Never applied here (apply() files it as a suggestion before this is reached): archiving takes
+      // a skill off every agent, and the review is not trusted with that.
+      throw new Error('an archive is a suggestion for a person; the review does not archive');
     default: {
       const _exhaustive: never = change;
       throw new Error(`unknown change ${JSON.stringify(_exhaustive)}`);
     }
   }
+}
+
+/**
+ * Why an archive suggestion is not worth a person's look, or undefined: it must name an active
+ * skill, and `into`, when given, another active one — a suggestion to archive what is gone, or to
+ * merge a skill into itself, is refused with the reason like any other change.
+ */
+function archiveProblem(change: Extract<ReviewChange, { action: 'archive' }>, dir: string | undefined): string | undefined {
+  const active = new Set(activeSkillNames(dir));
+  if (!active.has(change.name)) return `no active skill named "${change.name}"`;
+  if (change.into === undefined) return undefined;
+  if (change.into === change.name) return `"${change.name}" cannot be merged into itself`;
+  if (!active.has(change.into)) return `no active skill named "${change.into}" to merge into`;
+  return undefined;
 }
 
 /**

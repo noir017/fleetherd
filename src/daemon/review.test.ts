@@ -524,7 +524,7 @@ describe('ReviewService', () => {
 
   it('refuses a whole-file patch, and a write-file over a file that exists', async () => {
     seed('telegram:chat:1', 3);
-    createSkill({ name: 'deploy-check', description: '部署前检查', body: '旧正文。' }, dir);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '旧正文。细节见 references/new.md。' }, dir);
     writeSkillFile({ name: 'deploy-check', file: 'references/api.md', content: '# API\n' }, dir);
     const version = showSkill('deploy-check', undefined, dir).version;
     const output = JSON.stringify({
@@ -545,6 +545,85 @@ describe('ReviewService', () => {
     ]);
     expect(readSkillFiles('deploy-check', dir).get('SKILL.md')!.toString()).toContain('旧正文。');
     expect(readSkillFiles('deploy-check', dir).get('references/api.md')!.toString()).toBe('# API\n');
+  });
+
+  it('refuses a new file SKILL.md does not point to, and takes one the same answer links', async () => {
+    seed('telegram:chat:1', 3);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '旧正文。' }, dir);
+    const version = showSkill('deploy-check', undefined, dir).version;
+    const output = JSON.stringify({
+      changes: [
+        // Before the edit that links it: new files are written after every other change.
+        { action: 'write-file', name: 'deploy-check', file: 'references/linked.md', content: '有入口', reason: '细节' },
+        { action: 'write-file', name: 'deploy-check', file: 'references/orphan.md', content: '没入口', reason: '细节' },
+        {
+          action: 'edit',
+          name: 'deploy-check',
+          version,
+          file: 'SKILL.md',
+          edits: [{ old: '旧正文。', new: '旧正文。细节见 [references/linked.md](references/linked.md)。' }],
+          reason: '指过去',
+        },
+      ],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+    const [row] = history.reviewSessions();
+    expect(row!.record!.changes.map((c) => [c.action, c.file ?? '', c.applied, c.error ?? ''])).toEqual([
+      ['patch', '', true, ''],
+      ['write-file', 'references/linked.md', true, ''],
+      ['write-file', 'references/orphan.md', false, expect.stringContaining('not linked from')],
+    ]);
+    expect([...readSkillFiles('deploy-check', dir).keys()].sort()).toEqual(['SKILL.md', 'references/linked.md']);
+  });
+
+  it('takes a new skill and its linked file from one answer', async () => {
+    seed('telegram:chat:1', 3);
+    const output = JSON.stringify({
+      changes: [
+        { action: 'write-file', name: 'box-ops', file: 'references/specs.md', content: '规格', reason: '规格' },
+        { action: 'create', name: 'box-ops', description: '操作云桌面', body: '规格见 references/specs.md。', reason: '新' },
+      ],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+    expect(history.reviewSessions()[0]!.record!.changes.every((c) => c.applied === true)).toBe(true);
+    expect(readSkillFiles('box-ops', dir).has('references/specs.md')).toBe(true);
+  });
+
+  it('files an archive as a suggestion for the person and archives nothing', async () => {
+    seed('telegram:chat:1', 3);
+    createSkill({ name: 'old-box', description: '云桌面（旧）', body: '旧。' }, dir);
+    createSkill({ name: 'new-box', description: '云桌面', body: '新。' }, dir);
+    const output = JSON.stringify({
+      changes: [
+        { action: 'archive', name: 'old-box', into: 'new-box', reason: '同一件事' },
+        { action: 'archive', name: 'gone-box', reason: '不存在' },
+        { action: 'archive', name: 'new-box', into: 'new-box', reason: '自己' },
+      ],
+    });
+    const h = harness({ output });
+    await h.service.sweep();
+    const record = history.reviewSessions()[0]!.record!;
+    expect(record.outcome).toBe('refused');
+    expect(record.changes).toEqual([
+      { action: 'archive', name: 'gone-box', reason: '不存在', applied: false, error: 'no active skill named "gone-box"' },
+      { action: 'archive', name: 'new-box', into: 'new-box', reason: '自己', applied: false, error: '"new-box" cannot be merged into itself' },
+      { action: 'archive', name: 'old-box', into: 'new-box', reason: '同一件事', suggested: true },
+    ]);
+    expect(listSkills(dir).find((s) => s.name === 'old-box')!.status).toBe('active');
+    // Nothing landed, so nothing is posted: the suggestion waits on the Reviews tab.
+    expect(h.notifications).toEqual([]);
+  });
+
+  it('calls a review that only suggested an archive a suggestion, like a preference', async () => {
+    seed('telegram:chat:1', 3);
+    createSkill({ name: 'old-box', description: '云桌面（旧）', body: '旧。' }, dir);
+    createSkill({ name: 'new-box', description: '云桌面', body: '新。' }, dir);
+    const output = JSON.stringify({ changes: [{ action: 'archive', name: 'old-box', into: 'new-box' }] });
+    const h = harness({ output });
+    await h.service.sweep();
+    expect(history.reviewSessions()[0]!.record!.outcome).toBe('preferences');
   });
 
   it('files a new skill under the category the reviewer chose', async () => {
@@ -1105,6 +1184,39 @@ describe('what a review is given', () => {
     expect(prompt).toContain('- vlt/references/long.md（太长，没有附上）');
   });
 
+  it('gives in full the skills closest to what the person asked, with the files closest to it', async () => {
+    createSkill({ name: 'antigravity-config', description: '配置或维护 agy 的网关与额度', body: '网关正文。见 references/context-budget.md。' }, dir);
+    writeSkillFile({ name: 'antigravity-config', file: 'references/context-budget.md', content: 'agy 自动压缩预算 256k 的来源和调整。' }, dir);
+    writeSkillFile({ name: 'antigravity-config', file: 'references/account.md', content: 'OAuth 凭据与切号。' }, dir);
+    writeSkillFile({ name: 'antigravity-config', file: 'scripts/probe.sh', content: 'echo agy 256k' }, dir);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '先跑测试。' }, dir);
+    const id = seed('telegram:chat:1', 3);
+    history.message(id, { ts: now - 3_600_000 - 1_000, role: 'user', kind: 'normal', text: 'agy 上下文 256k 压缩是怎么解决的' });
+    const h = harness();
+    await h.service.sweep();
+    const prompt = h.calls[0]!.prompt;
+    expect(prompt).toContain(`### antigravity-config（${showSkill('antigravity-config', undefined, dir).version}）（内容相近，这段对话没用到）`);
+    expect(prompt).toContain('网关正文。');
+    expect(prompt).toContain('#### antigravity-config/references/context-budget.md\nagy 自动压缩预算 256k 的来源和调整。');
+    // Not about the question, and not prose: named, not quoted.
+    expect(prompt).not.toContain('OAuth 凭据与切号。');
+    expect(prompt).toContain('其他文件：references/account.md, scripts/probe.sh');
+    expect(prompt).not.toContain('先跑测试。');
+  });
+
+  it('quotes no related skill that does not fit, and says nothing of one that matches nothing', async () => {
+    createSkill({ name: 'agy-huge', description: 'agy 的一切', body: 'q'.repeat(31_000) }, dir);
+    createSkill({ name: 'deploy-check', description: '部署前检查', body: '先跑测试。' }, dir);
+    const id = seed('telegram:chat:1', 3);
+    history.message(id, { ts: now - 3_600_000 - 1_000, role: 'user', kind: 'normal', text: 'agy 怎么配' });
+    const h = harness();
+    await h.service.sweep();
+    const prompt = h.calls[0]!.prompt;
+    expect(prompt).not.toContain('qqqqqqqq');
+    expect(prompt).toContain('- agy-huge（');
+    expect(prompt).not.toContain('（内容相近，这段对话没用到）');
+  });
+
   it('offers the categories the library uses for a new skill', async () => {
     seed('telegram:chat:1', 3);
     createSkill({ name: 'server-ops', description: '运维', category: '运维' }, dir);
@@ -1355,6 +1467,28 @@ describe('usedSkillNames', () => {
         known
       )
     ).toEqual(['deploy-check', 'other-skill']);
+  });
+
+  it('counts a skill read or written through talkcode skills or the skills tool', () => {
+    expect(
+      usedSkillNames(
+        [
+          { role: 'tool', text: 'Bash: talkcode skills show other-skill\n{"CommandLine":"talkcode skills show other-skill"}' },
+          { role: 'tool', text: 'skills: {"action":"show","name":"deploy-check","toolSummary":"Show"}' },
+        ],
+        known
+      )
+    ).toEqual(['other-skill', 'deploy-check']);
+    // A search names what was wanted, not a skill that was read; a list names none.
+    expect(
+      usedSkillNames(
+        [
+          { role: 'tool', text: 'skills: {"action":"search","name":"deploy-check"}' },
+          { role: 'tool', text: 'Bash: talkcode skills list' },
+        ],
+        known
+      )
+    ).toEqual([]);
   });
 
   it('ignores names that are not managed skills, and counts one skill once', () => {

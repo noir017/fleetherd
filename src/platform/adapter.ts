@@ -275,17 +275,23 @@ export type ReviewPanelOutcome = 'changed' | 'preferences' | 'refused' | 'propos
 
 /** One change a review's answer carried, and what became of it. */
 export interface ReviewPanelChange {
-  action: 'create' | 'patch' | 'write-file';
+  action: 'create' | 'patch' | 'write-file' | 'archive';
   name: string;
   file?: string;
+  /** An archive suggestion's skill that took over what `name` had. */
+  into?: string;
   /** The reviewer's own sentence about why. */
   reason?: string;
-  /** Absent on an inferred old review, where the library does not know. */
+  /** Absent on an inferred old review, where the library does not know, and on a suggestion. */
   applied?: boolean;
+  /** A change the gateway never applies — an archive — left for the person. */
+  suggested?: boolean;
   /** Why the store refused it. */
   error?: string;
   /** The command that undoes it, when it landed and can be undone. */
   undo?: string;
+  /** The command that carries out a suggestion. */
+  command?: string;
 }
 
 /** One review, as the tab lists it. */
@@ -325,18 +331,25 @@ export interface ReviewPanelList {
   enabled: boolean;
   running: boolean;
   reviews: ReviewPanelEntry[];
-  /** The preference suggestions waiting for the person, merged across reviews (see ReviewPanelPreference). */
+  /** The suggestions waiting for the person, merged across reviews (see ReviewPanelPreference). */
   pending: ReviewPanelPreference[];
 }
 
 /**
- * One preference suggestion on the pending list: the same sentence from every review that made it,
- * once. Nothing acts on it — the person reads it and either has it added to the instructions every
- * agent gets or dismisses it — so a wrong suggestion costs a tap, never an agent's behaviour.
+ * One suggestion on the pending list: the same sentence from every review that made it, once.
+ * Nothing acts on it — the person reads it and either has it added to the instructions every agent
+ * gets (a preference), archives the skill from the page (an archive, since 2026-11-09), or
+ * dismisses it — so a wrong suggestion costs a tap, never an agent's behaviour.
  */
 export interface ReviewPanelPreference {
-  /** The sentence, as the newest review worded it. */
+  /** The sentence, as the newest review worded it. For an archive, a line naming the skills. */
   text: string;
+  /**
+   * Set when the suggestion is to archive a skill rather than a preference: the page offers to
+   * archive it (the Skills tab's own operation) instead of Adopt, and `reason` says why.
+   */
+  archive?: { name: string; into?: string };
+  reason?: string;
   /** How many reviews suggested it. */
   count: number;
   /** Epoch ms of the newest of them. */
@@ -553,7 +566,8 @@ export interface PlatformAdapter {
    * Read-only on purpose. A review is not a control: the writer is the review sweep, held to the
    * skill store's own validation and history, and nothing a page sends can make one run or undo one.
    * The page shows what happened and names the `talkcode skills revert` / `archive` command, which
-   * the person runs as they would any other command.
+   * the person runs as they would any other command. An archive suggestion's button posts to the
+   * Skills tab's own operation (`useSkillsPanel`), so nothing here gains a write.
    *
    * Optional and web-UI-only for the reason the seams above are: a chat app already gets the one
    * line a change posts, and has no column to list the quiet reviews that posted nothing.
