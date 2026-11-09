@@ -852,16 +852,16 @@ export class WebRoom {
   }
 
   /**
-   * End the agent process behind `topicId` and the topics under it that the person was shown —
-   * the row menu's "End agent". `confirmed` is that list, and only its intersection with the
-   * subtree is ended; the walk itself is the daemon's (`useTopicKill`, Delegation.endTopic), not
-   * this module's: the topics here are the page's list, and `Topic.parent` is a copy of a
+   * End the agent process behind `topicId` and the topics under it that the page listed when the
+   * row menu's "End agent" was clicked. `confirmed` is that list, and only its intersection with
+   * the subtree is ended; the walk itself is the daemon's (`useTopicKill`, Delegation.endTopic),
+   * not this module's: the topics here are the page's list, and `Topic.parent` is a copy of a
    * relation the platform owns.
    *
-   * Deliberately not filtered like `closeIdle`: this control is confirmed against the very
-   * topics it names, and a turn still running in one of them is interrupted on purpose — that
-   * is what `/kill` does. A topic the store no longer holds answers no rows, and one whose
-   * daemon offered no hook answers `no-child` rather than pretending something was ended.
+   * Deliberately not filtered like `closeIdle`: this control names the very topics it reaches in
+   * the menu item, and a turn still running in one of them is interrupted on purpose — that is
+   * what `/kill` does. A topic the store no longer holds answers no rows, and one whose daemon
+   * offered no hook answers `no-child` rather than pretending something was ended.
    */
   killTopic(topicId: string, confirmed: readonly string[]): { results: TopicKillResult[] } {
     if (!this.topics.has(topicId)) return { results: [] };

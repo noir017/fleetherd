@@ -60,8 +60,9 @@ gateway cannot reach is marked there, over its agents on a new topic, and above 
 each row a **⋯** button (on hover or keyboard focus; always shown on a touch screen) opens that
 topic's menu without switching to it: **Star**/**Unstar**, **End agent**, and **Delete topic**
 (red, with the same confirmation as before). **End agent** ends the process behind this topic and
-the sub-agent topics listed in the confirmation — the item reads **End agent + N sub-agents**
-when there are any — and the dialog marks a running turn as *running — will be interrupted*. Every conversation is kept, and the next message resumes it. A starred row shows a
+every sub-agent topic under it as soon as it is clicked — the item reads **End agent + N
+sub-agents** when there are any, so how far it reaches is on screen before you press it, and a
+running turn is interrupted on purpose. Every conversation is kept, and the next message resumes it. A starred row shows a
 lit star at its end even when you are not hovering: a marker, not a button. Drag its right
 edge to make it wider or narrower — the width is kept in this browser — and double-click the edge
 for the default. On a narrow screen it becomes a drawer. Above the list, a search field and

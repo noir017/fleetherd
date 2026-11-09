@@ -133,13 +133,12 @@ export const ClearTopicsRequestSchema = z.object({}).strict();
  */
 export const CloseIdleRequestSchema = z.object({ topics: z.array(TopicId).min(1).max(MAX_TOPICS) }).strict();
 /**
- * End the agent process behind one topic and the sub-agent topics under it that the person was
- * shown — the row menu's "End agent". `topic` is the row the menu was opened on and `topics` is
- * the confirmation's list: the daemon walks `topic`'s subtree from its own record
+ * End the agent process behind one topic and the sub-agent topics under it — the row menu's
+ * "End agent", which acts on the click. `topic` is the row the menu was opened on and `topics`
+ * is the list the page held then: the daemon walks `topic`'s subtree from its own record
  * (`PlatformAdapter.childrenOf`) and ends only the intersection. That is what keeps a sub-agent
- * opened while the dialog was open out of the kill, and it is why the list travels rather than
- * being re-derived from the page. Bounded by the store's cap, as a topic cannot be listed that
- * the store does not hold.
+ * opened since out of the kill, and it is why the list travels rather than being re-derived from
+ * the page. Bounded by the store's cap, as a topic cannot be listed that the store does not hold.
  */
 export const KillTopicRequestSchema = z
   .object({ topic: TopicId, topics: z.array(TopicId).min(1).max(MAX_TOPICS) })

@@ -403,8 +403,6 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .idle-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .idle-name,.idle-dir{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .idle-dir{color:var(--dim);font-size:12px}
-/* "running — will be interrupted": the one row in the End-agent confirmation whose turn dies now. */
-.idle-run{color:#fbbf24;font-size:12px}
 .idle-out{flex:none;font-size:12px;color:var(--dim)}
 .idle-out.kept{color:#fbbf24}
 .idle-acts{display:flex;justify-content:flex-end;gap:8px}
@@ -5797,7 +5795,7 @@ const SCRIPT = `
     closeTopicMenu(false);
     if(what==='star') starTopic(id);
     else if(what==='delete') deleteTopic(id);
-    else if(what==='end') openEnd(id);
+    else if(what==='end') endTopic(id);
   });
   // Arrow keys move between the enabled items, as role=menu promises. Tab leaves the menu like any
   // other focus trip; Escape is the page-wide handler's, which also puts the focus back.
@@ -5981,11 +5979,10 @@ const SCRIPT = `
    * topic list at the click — a topic that went idle while the dialog was open was not shown, and
    * nothing is closed that the operator did not see. idleSeq drops an answer for a dialog since closed.
    */
-  var idleIds=[], idleSeq=0, idleMode='close', idleTopic=null;
+  var idleIds=[], idleSeq=0;
   function openIdle(){
     var list=idleTopics();
     if(!list.length) return;
-    idleMode='close';
     idleIds=[];
     var h='';
     for(var i=0;i<list.length;i++){
@@ -6007,40 +6004,34 @@ const SCRIPT = `
     idleCancel.focus();
   }
   /**
-   * A row menu's "End agent", in the same dialog as Close idle because it is the same promise: a
-   * list of the agents that go, and the conversations that stay. The list is the topic the menu
-   * was opened on plus every topic under it with a process — what Delegation.endTopic will walk,
-   * in the list's order. A running turn is marked as the interruption it is.
+   * A row menu's "End agent": end the process behind this topic and every topic under it at
+   * once. The item's label already says how far it reaches ("End agent + 2 sub-agents"), so the
+   * reach was on screen when it was clicked — there is no second question. /kill is one tap
+   * away in the header and does the same without asking, and a running turn is interrupted here
+   * on purpose.
    *
-   * The request names the root, never the list: the daemon's walk is the platform's record, and a
-   * child that appeared while the dialog was open belongs to the topic the person confirmed.
+   * The request carries the list as the page drew it: the daemon walks the subtree from its own
+   * parent record and ends only the intersection, so a sub-agent opened since is left alone.
+   * Posted once, not retried: a retry after a lost answer would find every agent already ended.
    */
-  function openEnd(id){
+  function endTopic(id){
     var list=subtreeOf(id).filter(function(t){ return Boolean(t.live); });
     if(!list.length) return;
-    idleMode='end';
-    idleTopic=id;
-    idleIds=[];
-    var h='';
-    for(var i=0;i<list.length;i++){
-      var t=list[i];
-      idleIds.push(t.id);
-      var where=t.dir?(t.dir.host?t.dir.host+' · ':'')+t.dir.name:'';
-      var running=Boolean(t.running || t.asking);
-      h += '<li data-idle="'+text(t.id)+'"><span class="idle-main"><span class="idle-name">'+text(t.title || 'Untitled')+'</span>'
-         + (where?'<span class="idle-dir">'+text(where)+'</span>':'')
-         + (running?'<span class="idle-run">running — will be interrupted</span>':'')
-         + '</span><span class="idle-out"></span></li>';
-    }
-    idleList.innerHTML=h;
-    idleTitle.textContent='End '+list.length+' agent'+(list.length===1?'':'s')+'?';
-    idleWhy.hidden=false;
-    idleGo.hidden=false;
-    idleGo.disabled=false;
-    idleGo.textContent='End '+list.length+' agent'+(list.length===1?'':'s');
-    idleCancel.textContent='Cancel';
-    idleDialog.hidden=false;
-    idleCancel.focus();
+    var ids=[];
+    for(var i=0;i<list.length;i++) ids.push(list[i].id);
+    post('api/topics/kill',{topic:id, topics:ids},0).then(function(r){
+      return r.ok ? r.json() : null;
+    }).then(function(d){
+      if(!d) return alert('Could not end the agent'+(ids.length===1?'':'s')+': the daemon refused the request.');
+      // Nothing to say for a clean end — the dots go grey from the daemon's own broadcast. A
+      // process the runtime cannot resume is the one refusal that leaves a row looking untouched,
+      // and nothing else on the page would say why it is still lit.
+      var results=d.results || [], stuck=0;
+      for(var i=0;i<results.length;i++) if(results[i].outcome==='unresumable') stuck++;
+      if(stuck) alert(stuck+' agent'+(stuck===1?'':'s')+' left running: the runtime cannot resume '+(stuck===1?'it':'them')+'.');
+    }, function(){
+      alert('Could not reach the server to end the agent'+(ids.length===1?'':'s')+'.');
+    });
   }
   function closeIdle(){
     if(idleDialog.hidden) return;
@@ -6059,50 +6050,21 @@ const SCRIPT = `
    */
   function goIdle(){
     idleGo.disabled=true;
-    var mine=++idleSeq, ending=idleMode==='end';
-    var url=ending?'api/topics/kill':'api/topics/close-idle';
-    // The root names the subtree; the list is what the person actually saw. The daemon ends only
-    // their intersection, so a sub-agent opened since the dialog was drawn survives.
-    var body=ending?{topic:idleTopic, topics:idleIds}:{topics:idleIds};
-    post(url,body,0).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+    var mine=++idleSeq;
+    post('api/topics/close-idle',{topics:idleIds},0).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if(mine!==idleSeq) return;
       if(!d) return idleFailed('The daemon refused the request.');
-      var rows=idleList.querySelectorAll('li'), i, n=0, k=0;
-      if(ending){
-        // Three outcomes, three sentences: ended; there was no process (the page's dot was a
-        // snapshot); the runtime cannot resume, so the process was left alone. A row the daemon
-        // did not answer for was not in the confirmed list any more — say it was left running
-        // rather than invent a reason.
-        var seen={}, results=d.results || [], gone=0, stuck=0, left=0;
-        for(i=0;i<results.length;i++) seen[results[i].topic]=results[i].outcome;
-        for(i=0;i<rows.length;i++){
-          var id=rows[i].getAttribute('data-idle'), how=seen[id];
-          var eout=rows[i].querySelector('.idle-out');
-          var word = how==='ended' ? 'ended' : how==='no-child' ? 'no process' : how==='unresumable' ? 'cannot resume' : 'left running';
-          eout.textContent=word;
-          eout.className='idle-out'+(how==='ended' ? '' : ' kept');
-          if(how==='ended') n++;
-          else if(how==='no-child') gone++;
-          else if(how==='unresumable') stuck++;
-          else left++;
-        }
-        idleTitle.textContent='Ended '+n+' agent'+(n===1?'':'s')
-          + (gone ? '; '+gone+' had no process' : '')
-          + (stuck ? '; '+stuck+' left running — cannot resume' : '')
-          + (left ? '; '+left+' left running' : '');
-      } else {
-        var closed={};
-        for(i=0;i<d.closed.length;i++) closed[d.closed[i]]=1;
-        for(i=0;i<rows.length;i++){
-          var out=rows[i].querySelector('.idle-out'), ok=closed[rows[i].getAttribute('data-idle')];
-          out.textContent = ok ? 'closed' : 'left running';
-          out.className = 'idle-out' + (ok ? '' : ' kept');
-        }
-        n=d.closed.length;
-        k=d.kept.length;
-        idleTitle.textContent='Closed '+n+' idle agent'+(n===1?'':'s')
-          + (k ? '; '+k+' left running — busy again, or unable to resume' : '');
+      var rows=idleList.querySelectorAll('li'), i;
+      var closed={};
+      for(i=0;i<d.closed.length;i++) closed[d.closed[i]]=1;
+      for(i=0;i<rows.length;i++){
+        var out=rows[i].querySelector('.idle-out'), ok=closed[rows[i].getAttribute('data-idle')];
+        out.textContent = ok ? 'closed' : 'left running';
+        out.className = 'idle-out' + (ok ? '' : ' kept');
       }
+      var n=d.closed.length, k=d.kept.length;
+      idleTitle.textContent='Closed '+n+' idle agent'+(n===1?'':'s')
+        + (k ? '; '+k+' left running — busy again, or unable to resume' : '');
       idleWhy.hidden=true;
       idleGo.hidden=true;
       idleCancel.textContent='Done';
@@ -8148,8 +8110,7 @@ __GATE__
     <button type="button" role="menuitem" data-tm="delete" class="tm-del"></button>
   </div>
   <!-- "Close idle agents", confirmed against the list it will act on (openIdle), then showing what
-       happened to each. The row menu's "End agent" reuses it (openEnd): same box, same list, same
-       per-topic result; only the title, the endpoint and the button's words change. -->
+       happened to each. -->
   <div id="idle-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="idle-title">
     <div id="idle-box">
       <div id="idle-title"></div>

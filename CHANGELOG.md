@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's topic menu ends an agent on the click.** "End agent" used to open a dialog
+  listing every process it would stop and wait for a second confirmation; the item's own label
+  already says how far it reaches ("End agent + 2 sub-agents"), and the power button in the
+  header never asked. It now posts at once, carrying the list the page held so a sub-agent opened
+  since is still left alone. A runtime that cannot resume leaves its process up, and the page
+  says so in one alert rather than leaving a lit row unexplained.
+
 ## [2.54.0] - 2026-11-09
 
 ### Added

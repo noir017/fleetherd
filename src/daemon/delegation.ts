@@ -926,10 +926,10 @@ export class Delegation {
    * running there is interrupted, a question is called off, and the child process is disposed.
    * The conversation itself is kept in every case.
    *
-   * `only` is the list the person confirmed, and the kill is the INTERSECTION of it with the tree
-   * walked now. A sub-agent opened after the confirmation is not in it, so it is not ended; an id
-   * in it that the tree no longer holds is not ended either. Omit it to mean the whole tree (the
-   * direct path in tests); the daemon always passes the confirmed list.
+   * `only` is the list the page held when "End agent" was clicked, and the kill is the
+   * INTERSECTION of it with the tree walked now. A sub-agent opened since is not in it, so it is
+   * not ended; an id in it that the tree no longer holds is not ended either. Omit it to mean the
+   * whole tree (the direct path in tests); the daemon always passes that list.
    *
    * `ended` runs BEFORE the first kill, and that ordering is load-bearing. A turn interrupted here
    * ends as 'stopped' and tells nobody (TurnOutcomes), but a turn that ended NORMALLY a moment

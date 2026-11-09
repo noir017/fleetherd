@@ -733,7 +733,7 @@ function lifecycle(
     useIdleReclaim: (reclaim) => room.useIdleReclaim(reclaim),
     /**
      * The broader half of the same seam: the row menu's "End agent" ends one topic and every topic
-     * its agent opened, mid-turn if that is what the person confirmed. See WebRoom.killTopic.
+     * its agent opened, mid-turn and without a second question. See WebRoom.killTopic.
      */
     useTopicKill: (kill) => room.useTopicKill(kill),
     /**
