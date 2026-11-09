@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.55.0] - 2026-11-09
+
 ### Changed
 
 - **The web UI's topic menu ends an agent on the click.** "End agent" used to open a dialog
