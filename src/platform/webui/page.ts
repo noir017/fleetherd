@@ -7044,6 +7044,9 @@ const SCRIPT = `
     if(chipsChange) renderChips();
     if(input.value !== next){ input.value = next; suggest(); grow(); }
     if(d) try { input.setSelectionRange(d.s, d.e); } catch(x){}
+    // "Compressing…" belongs to the composer whose pictures are being shrunk, not to whichever
+    // one is on screen now.
+    notePending();
   }
 
   /** Everything this page remembers about one topic, for a topic that no longer exists. */
@@ -7105,6 +7108,9 @@ const SCRIPT = `
   var SHRINK_PIXELS = 2048 * 1536;
   var SHRINK_EDGE = 4096;
   var SHRINK_EDGE_MIN = 1024;
+  // iOS refuses a canvas over 16,777,216 pixels and can answer with a blank one rather than an
+  // error, so no canvas here is ever allowed past it.
+  var CANVAS_MAX_PIXELS = 4096 * 4096;
   var SHRINK_QUALITY_MAX = 0.92;
   var SHRINK_QUALITY_MIN = 0.5;
 
@@ -7121,7 +7127,8 @@ const SCRIPT = `
 
   /**
    * One file's bytes as the base64 the send API takes, or null when the browser could not read it.
-   * The old read had no onerror, so a failed one left the chip off with no explanation at all.
+   * A null is reported in #note by the caller: a picture that cannot be attached must not vanish
+   * without a word.
    */
   function readBase64(blob){
     return new Promise(function(resolve){
@@ -7192,6 +7199,16 @@ const SCRIPT = `
     var w = Math.max(1, Math.round(iw * scale));
     var h = Math.max(1, Math.round(ih * scale));
     var from = img, fw = iw, fh = ih;
+    // One halving of an 80 MP source is still 20 MP — over the cap, and a canvas over it can come
+    // back blank. Come inside the cap in one step before the halving loop starts.
+    if(fw * fh > CANVAS_MAX_PIXELS){
+      var fit = Math.sqrt(CANVAS_MAX_PIXELS / (fw * fh));
+      var cw = Math.max(w, Math.floor(fw * fit)), ch = Math.max(h, Math.floor(fh * fit));
+      var first = paintCanvas(cw, ch);
+      if(!first) return null;
+      first.ctx.drawImage(from, 0, 0, cw, ch);
+      from = first.canvas; fw = cw; fh = ch;
+    }
     while(fw > w * 2 && fh > h * 2){
       var mw = Math.max(w, Math.round(fw / 2)), mh = Math.max(h, Math.round(fh / 2));
       var mid = paintCanvas(mw, mh);
@@ -7301,27 +7318,47 @@ const SCRIPT = `
       return canEncodeWebp();
     }).then(function(webp){
       if(!photo) return null;
-      var mime = webp ? 'image/webp' : 'image/jpeg';
-      var smallest = null;
-      var w = photo.width, h = photo.height;
-      var long = Math.max(w, h) || 1;
-      var scale = Math.min(1, Math.sqrt(SHRINK_PIXELS / (w * h)), SHRINK_EDGE / long);
-      // The floor is the area a 1024 px long edge would have at this shape: below it a picture
-      // would fit by being too small to read, and what was made so far is the answer instead.
-      var floor = Math.min(1, SHRINK_EDGE_MIN / long);
-      function step(){
-        var canvas = canvasAt(photo, scale);
-        if(!canvas) return Promise.resolve(smallest);
-        return encodeAtSize(canvas, mime, SHRINK_LIMIT).then(function(out){
-          if(out.blob && (!smallest || out.blob.size < smallest.size)) smallest = out.blob;
-          if(out.fits) return out.blob;
-          var next = scale * 0.72;
-          if(!(next < scale) || next < floor) return smallest;
-          scale = Math.max(floor, next);
-          return step();
-        });
+      /**
+       * One pass at one format: the smallest encode made at each size, and whether the encoder
+       * produced anything at all. That second answer is what tells a too-big picture apart from
+       * a format this browser will not write.
+       */
+      function attempt(mime){
+        var smallest = null, any = false;
+        var w = photo.width, h = photo.height;
+        var long = Math.max(w, h) || 1;
+        var scale = Math.min(1, Math.sqrt(SHRINK_PIXELS / (w * h)), SHRINK_EDGE / long);
+        // The floor is the area a 1024 px long edge would have at this shape: below it a picture
+        // would fit by being too small to read, and what was made so far is the answer instead.
+        var floor = Math.min(1, SHRINK_EDGE_MIN / long);
+        function step(){
+          var canvas = canvasAt(photo, scale);
+          if(!canvas) return Promise.resolve({blob:smallest, any:any});
+          return encodeAtSize(canvas, mime, SHRINK_LIMIT).then(function(out){
+            if(out.blob){
+              any = true;
+              if(!smallest || out.blob.size < smallest.size) smallest = out.blob;
+            }
+            if(out.fits) return {blob:out.blob, any:true};
+            // Nothing at all, even at the bottom quality: a smaller canvas would fail the same
+            // way, so only the format is worth another try.
+            if(!out.blob) return {blob:smallest, any:any};
+            var next = scale * 0.72;
+            if(!(next < scale) || next < floor) return {blob:smallest, any:any};
+            scale = Math.max(floor, next);
+            return step();
+          });
+        }
+        return step();
       }
-      return step();
+      if(!webp) return attempt('image/jpeg').then(function(r){ return r.blob; });
+      return attempt('image/webp').then(function(r){
+        // The 1×1 probe can be right and a full-size canvas wrong: iOS Safari answers the probe
+        // with WebP and a real encode with PNG, which encodeAs refuses. Nothing came back, so
+        // JPEG is still worth trying.
+        if(r.any) return r.blob;
+        return attempt('image/jpeg').then(function(j){ return j.blob; });
+      });
     }).then(function(blob){
       closePhoto(photo);
       // Not smaller than what was attached means the re-encode spent quality and saved nothing.
@@ -7339,33 +7376,50 @@ const SCRIPT = `
    * agent reads the name too.
    */
   function withMime(name, mime){
-    var base = String(name || 'image').replace(/\\.[^./]*$/, '');
+    var base = String(name || 'image');
+    // Only a known picture extension is replaced. "2026.11 photo" is a name, not a .11 photo.
+    if(STILL_NAME.test(base)) base = base.replace(/\\.[^.]*$/, '');
     var sub = mime === 'image/jpeg' ? 'jpg' : String(mime || '').split('/')[1];
     return (base || 'image') + '.' + (sub || 'jpg').toLowerCase();
   }
 
   /**
-   * A picture smaller than 300 KB is not worth a canvas; one still being shrunk is not in files
-   * yet, and a Send pressed meanwhile must not go without it. pending is what send() waits on,
-   * and queuedSend is the tap that arrived during the wait.
+   * What each composer is still waiting for, by topic, and the Send tap that arrived during the
+   * wait. Both are per topic: a picture being shrunk in one conversation must not hold up a send
+   * in another, and "Compressing…" may only appear over the composer it belongs to. A picture
+   * smaller than 300 KB is not worth a canvas, so it never counts here.
    */
-  var pending = 0, shrinking = 0, queuedSend = false, noteOwner = null;
+  var pendingBy = {}, shrinkingBy = {}, queuedSend = null, noteOwner = null;
+  function countUp(map, id){ map[id] = (map[id] || 0) + 1; }
+  function countDown(map, id){
+    if((map[id] || 0) > 1) map[id]--;
+    else delete map[id];
+  }
   function notePending(){
-    if(!shrinking){ clearPendingNote(); return; }
+    var n = shrinkingBy[topic] || 0;
+    if(!n){ clearPendingNote(); return; }
     if(noteOwner === null && note.textContent) return;
-    noteOwner = 'Compressing ' + (shrinking > 1 ? shrinking + ' pictures' : 'picture') + '...';
+    noteOwner = 'Compressing ' + (n > 1 ? n + ' pictures' : 'picture') + '...';
     note.textContent = noteOwner;
   }
   function clearPendingNote(){
     if(noteOwner !== null && note.textContent === noteOwner) note.textContent = '';
     noteOwner = null;
   }
-  function settled(tookCanvas){
-    pending--;
-    if(tookCanvas) shrinking--;
-    if(pending > 0){ notePending(); return; }
-    clearPendingNote();
-    if(queuedSend){ queuedSend = false; send(); }
+  /**
+   * One file has become an attachment, or failed to. A queued Send happens only if the person is
+   * still in the topic they pressed it in and nothing else is still coming there; a switch away
+   * cancels it, and the text and picture stay in that topic's draft for when they come back.
+   */
+  function settled(into, tookCanvas){
+    countDown(pendingBy, into);
+    if(tookCanvas) countDown(shrinkingBy, into);
+    if(into === topic) notePending();
+    if(pendingBy[into]) return;
+    var queued = queuedSend;
+    if(!queued || queued.topic !== into) return;
+    queuedSend = null;
+    if(into === topic) send();
   }
 
   // The rename argument exists for the clipboard, which is the one source that hands over files
@@ -7382,24 +7436,30 @@ const SCRIPT = `
         // advance in the order the files were handed over, or two pastes share one name.
         var name = (rename ? rename(f) : f.name) || 'file';
         var tookCanvas = willShrink(f);
-        pending++;
-        if(tookCanvas) shrinking++;
+        countUp(pendingBy, into);
+        if(tookCanvas) countUp(shrinkingBy, into);
         notePending();
         shrinkPhoto(f).then(function(out){
           var blob = out ? out.blob : f;
           var mime = out ? out.blob.type : (f.type || '');
           if(out) name = withMime(name, mime);
           return readBase64(blob).then(function(data){
-            if(data === null) return;
+            if(data === null){
+              // Degrade explicitly: the picture is not attached, and #note names the one that
+              // failed instead of leaving the chip off with no explanation.
+              noteOwner = null;
+              note.textContent = 'Could not read ' + name + '; it was not attached.';
+              return;
+            }
             var file = {name:name, mime:mime, data:data};
             if(!into || into === topic){ files.push(file); renderChips(); return; }
             var d = drafts[into] || (drafts[into] = {text:'', s:0, e:0, files:[]});
             d.files.push(file);
           });
-        }).then(function(){ settled(tookCanvas); }, function(x){
+        }).then(function(){ settled(into, tookCanvas); }, function(x){
           // Nothing above is supposed to reject; if it ever does, the send must still be let go.
           console.warn('talkcode: could not prepare ' + name + '; it was not attached', x);
-          settled(tookCanvas);
+          settled(into, tookCanvas);
         });
       })(list[i]);
     }
@@ -7728,11 +7788,12 @@ const SCRIPT = `
    * says so.
    */
   function send(){
-    // A picture still being shrunk is not in files yet, so a send now would leave it out — or
-    // wait for nothing and look broken. The tap is remembered and happens when the last one
-    // lands; #note says why nothing moved yet, unless it is carrying something of its own.
-    if(pending){
-      queuedSend = true;
+    // A picture still being shrunk in THIS topic is not in files yet, so a send now would leave
+    // it out — or wait for nothing and look broken. The tap is remembered for this topic and
+    // happens when its last picture lands; #note says why nothing moved yet, unless it is
+    // carrying something of its own. Another topic's pictures do not hold this send.
+    if(pendingBy[topic]){
+      queuedSend = {topic:topic};
       notePending();
       return;
     }

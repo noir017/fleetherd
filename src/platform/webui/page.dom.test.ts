@@ -203,6 +203,10 @@ function installPhotos(
     bytesPerPixel?: number;
     /** iOS Safari: a WebP request is answered with a PNG, silently. */
     noWebp?: boolean;
+    /** A probe that says WebP and real-size encodes that answer PNG, as Safari's canvas can. */
+    webpLies?: boolean;
+    /** A browser with no createImageBitmap whose <img> decodes at this pixel size. */
+    viaImg?: [number, number];
   },
   log: PhotoLog
 ): void {
@@ -217,18 +221,20 @@ function installPhotos(
       log.closed++;
     },
   });
-  w.createImageBitmap = (file: File) => {
-    log.decoded.push(file.name);
-    const size = sizes[file.name];
-    if (size === 'fail') return Promise.reject(new Error('this browser cannot decode it'));
-    const made = bitmap(size ?? [4000, 3000]);
-    if (!held.has(file.name)) return Promise.resolve(made);
-    return new Promise((resolve) => {
-      const waiting = gates.get(file.name) ?? [];
-      waiting.push(() => resolve(made));
-      gates.set(file.name, waiting);
-    });
-  };
+  if (!opts.viaImg) {
+    w.createImageBitmap = (file: File) => {
+      log.decoded.push(file.name);
+      const size = sizes[file.name];
+      if (size === 'fail') return Promise.reject(new Error('this browser cannot decode it'));
+      const made = bitmap(size ?? [4000, 3000]);
+      if (!held.has(file.name)) return Promise.resolve(made);
+      return new Promise((resolve) => {
+        const waiting = gates.get(file.name) ?? [];
+        waiting.push(() => resolve(made));
+        gates.set(file.name, waiting);
+      });
+    };
+  }
   log.release = (name: string) => {
     log.released.push(name);
     for (const go of gates.get(name) ?? []) go();
@@ -255,18 +261,20 @@ function installPhotos(
     log.encoded++;
     log.encodedSizes.push([this.width, this.height]);
     const bytes = Math.round(this.width * this.height * (quality ?? 0.92) * bytesPerPixel);
-    const mime = type === 'image/webp' ? (opts.noWebp ? 'image/png' : 'image/webp') : 'image/jpeg';
+    const realWebp = !opts.noWebp && !(opts.webpLies && this.width * this.height > 1);
+    const mime = type === 'image/webp' ? (realWebp ? 'image/webp' : 'image/png') : 'image/jpeg';
     setTimeout(() => cb(new w.Blob([new Uint8Array(bytes)], { type: mime })), 0);
   };
-  // The fallback decoder, for a file createImageBitmap refused: a data: URL and an <img>. jsdom
-  // never loads an image, so this one says no — the same answer a browser without the codec gives.
+  // The fallback decoder, for a file createImageBitmap refused or a browser without it: a data:
+  // URL and an <img>. jsdom never loads an image, so unless a test asks for a working one this
+  // says no — the same answer a browser without the codec gives.
   w.Image = class {
     onload: (() => void) | null = null;
     onerror: (() => void) | null = null;
-    width = 0;
-    height = 0;
+    width = opts.viaImg ? opts.viaImg[0] : 0;
+    height = opts.viaImg ? opts.viaImg[1] : 0;
     set src(_url: string) {
-      setTimeout(() => this.onerror?.(), 0);
+      setTimeout(() => (opts.viaImg ? this.onload?.() : this.onerror?.()), 0);
     }
   };
 }
@@ -478,6 +486,8 @@ async function open(
       hold?: string[];
       bytesPerPixel?: number;
       noWebp?: boolean;
+      webpLies?: boolean;
+      viaImg?: [number, number];
     };
   } = {}
 ): Promise<Harness> {
@@ -4675,11 +4685,12 @@ describe('webui page: shrinking a picture before it goes', () => {
     new h.window.File([new Uint8Array(bytes)], name, { type });
 
   /** Attach through the picker, which — unlike a paste — keeps the name the file came with. */
-  const attach = (h: Harness, file: File): void => {
+  const attachAll = (h: Harness, list: File[]): void => {
     const picker = h.el('picker');
-    Object.defineProperty(picker, 'files', { value: [file], configurable: true, writable: true });
+    Object.defineProperty(picker, 'files', { value: list, configurable: true, writable: true });
     picker.dispatchEvent(new h.window.Event('change', { bubbles: true }));
   };
+  const attach = (h: Harness, file: File): void => attachAll(h, [file]);
 
   const sent = (h: Harness): Array<Record<string, string>> =>
     (h.calls.find((c) => c.path === 'api/send')?.body.files as Array<Record<string, string>>) ?? [];
@@ -4829,6 +4840,133 @@ describe('webui page: shrinking a picture before it goes', () => {
     expect(files).toHaveLength(1);
     expect(files[0]).toMatchObject({ name: 'IMG_3.webp', mime: 'image/webp' });
     expect(h.el('note').textContent).toBe('');
+  });
+
+  it('cancels a queued Send when the topic changes, leaving its text and picture in that topic', async () => {
+    const B = 'b2c3d4e5';
+    const h = await open({
+      photos: { sizes: { 'IMG_4.HEIC': [4032, 3024] }, hold: ['IMG_4.HEIC'] },
+    });
+    await h.emit(sync(A, [], [A, B]));
+
+    attach(h, photo(h, 'IMG_4.HEIC', 'image/heic', 3 * 1024 * 1024));
+    await until('the decoder was asked', () => h.photos.decoded.length === 1);
+    (h.el('input') as HTMLTextAreaElement).value = 'for A only';
+    await h.click('#composer button[type="submit"]');
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+
+    await h.click(`[data-topic="${B}"]`);
+    // The note belongs to the composer A's picture is being shrunk for, not to B's.
+    expect(h.el('note').textContent).toBe('');
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe('');
+
+    h.photos.release('IMG_4.HEIC');
+    await new Promise((r) => setTimeout(r, 50));
+    // The switch cancelled the queued send; nothing went out while the person was elsewhere.
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+
+    await h.click(`[data-topic="${A}"]`);
+    await until('the picture is back with the draft', () => chipNames(h).join() === 'IMG_4.webp');
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe('for A only');
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+
+    await h.click('#composer button[type="submit"]');
+    expect(sent(h)).toHaveLength(1);
+    expect(h.calls.find((c) => c.path === 'api/send')?.body).toMatchObject({ topic: A, text: 'for A only' });
+  });
+
+  it('does not hold up a send in another topic while a picture is being shrunk', async () => {
+    const B = 'b2c3d4e5';
+    const h = await open({
+      photos: { sizes: { 'IMG_5.HEIC': [4032, 3024] }, hold: ['IMG_5.HEIC'] },
+    });
+    await h.emit(sync(A, [], [A, B]));
+
+    attach(h, photo(h, 'IMG_5.HEIC', 'image/heic', 3 * 1024 * 1024));
+    await until('the decoder was asked', () => h.photos.decoded.length === 1);
+
+    await h.click(`[data-topic="${B}"]`);
+    (h.el('input') as HTMLTextAreaElement).value = 'b only';
+    await h.click('#composer button[type="submit"]');
+
+    const call = h.calls.find((c) => c.path === 'api/send');
+    expect(call?.body).toMatchObject({ topic: B, text: 'b only' });
+    expect(call?.body.files).toBeUndefined();
+    h.photos.release('IMG_5.HEIC');
+  });
+
+  it('shrinks several pictures at once and waits for the last one before sending', async () => {
+    const h = await open({
+      photos: { sizes: { 'one.jpg': [4000, 3000], 'two.jpg': [4000, 3000] }, hold: ['one.jpg', 'two.jpg'] },
+    });
+    await h.emit(sync(A, [], [A]));
+
+    attachAll(h, [
+      photo(h, 'one.jpg', 'image/jpeg', 600 * 1024),
+      photo(h, 'two.jpg', 'image/jpeg', 600 * 1024),
+    ]);
+    await until('both decoders were asked', () => h.photos.decoded.length === 2);
+    await sendIt(h, 'both');
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+
+    h.photos.release('one.jpg');
+    await new Promise((r) => setTimeout(r, 30));
+    // One is attached, one is still being encoded: the send still waits for both.
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+
+    h.photos.release('two.jpg');
+    await until('the send goes out', () => h.calls.some((c) => c.path === 'api/send'));
+    expect(sent(h).map((f) => f.name).sort()).toEqual(['one.webp', 'two.webp']);
+  });
+
+  it('decodes through an <img> when the browser has no createImageBitmap', async () => {
+    const h = await open({ photos: { viaImg: [4032, 3024] } });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'IMG_6.HEIC', 'image/heic', 600 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    expect(chipNames(h)).toEqual(['IMG_6.webp']);
+    // No bitmap was ever asked for; the data: URL and the <img> did the decode.
+    expect(h.photos.decoded).toEqual([]);
+    await sendIt(h);
+
+    expect(sent(h)[0]).toMatchObject({ name: 'IMG_6.webp', mime: 'image/webp' });
+    expect(Buffer.from(sent(h)[0]!.data!, 'base64').length).toBeLessThanOrEqual(300 * 1024);
+  });
+
+  it('falls back to JPEG when the probe promises WebP but a real encode returns PNG', async () => {
+    const h = await open({ photos: { sizes: { 'IMG_7.JPG': [4000, 3000] }, webpLies: true } });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, 'IMG_7.JPG', 'image/jpeg', 600 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    expect(chipNames(h)).toEqual(['IMG_7.jpg']);
+    await sendIt(h);
+
+    expect(sent(h)[0]).toMatchObject({ name: 'IMG_7.jpg', mime: 'image/jpeg' });
+    expect(Buffer.from(sent(h)[0]!.data!, 'base64').length).toBeLessThanOrEqual(300 * 1024);
+  });
+
+  it('appends the new extension when the name only looks like it has one', async () => {
+    const h = await open({ photos: { sizes: { '2026.11 photo': [4000, 3000] } } });
+    await h.emit(sync(A, [], [A]));
+
+    attach(h, photo(h, '2026.11 photo', 'image/jpeg', 600 * 1024));
+    await until('the chip', () => chipNames(h).length === 1);
+    expect(chipNames(h)).toEqual(['2026.11 photo.webp']);
+  });
+
+  it('names the file it could not read instead of dropping it without a word', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    h.window.FileReader.prototype.readAsDataURL = function (this: FileReader) {
+      setTimeout(() => (this as any).onerror?.(), 0);
+    };
+
+    attach(h, photo(h, 'notes.txt', 'text/plain', 16));
+    await until('the note names the file', () => h.el('note').textContent.includes('notes.txt'));
+    expect(h.el('note').textContent).toBe('Could not read notes.txt; it was not attached.');
+    expect(chipNames(h)).toEqual([]);
   });
 });
 
