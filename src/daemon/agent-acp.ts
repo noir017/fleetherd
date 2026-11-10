@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { client, ndJsonStream, PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk';
 import type {
@@ -834,6 +835,82 @@ export async function applyModelPreference(
 }
 
 /**
+ * Pin `agents[].options` on a started session — the harness's own config options that talkcode has
+ * no menu for, e.g. cursor's `context` (`256k` / `500k`) and `fast`.
+ *
+ * Why this exists: an option the client cannot render is one the person cannot choose, and a
+ * harness that offers it only when the client advertises a picker (cursor does — see
+ * isCursorAgent) would otherwise leave it at whatever its own config last said. Pinning it here
+ * makes the value a property of the agent definition, on the agent's own host, instead of a file
+ * the CLI rewrites behind the gateway's back.
+ *
+ * Order matters and is enforced by the caller: after the model, because the option set belongs to
+ * the model, and before the conversation's `/effort`, so a level chosen in chat still wins over a
+ * pinned `reasoning_effort`.
+ *
+ * Best-effort like its siblings — never fails a turn. An id the current model does not offer, or a
+ * value it does not list, is skipped with a log line rather than forced: a model switch reshapes
+ * the set (cursor's `effort` becomes `reasoning_effort`, `thinking` appears or goes), and a pin
+ * meant for one model must not take the next one's session down.
+ */
+export async function applyPinnedOptions(
+  ctx: Pick<ClientContext, 'request'>,
+  sessionId: string,
+  def: AgentDef,
+  options: SessionConfigOption[] | undefined,
+  pinned: AgentDef['options']
+): Promise<SessionConfigOption[] | undefined> {
+  const entries = Object.entries(pinned ?? {});
+  if (entries.length === 0) return undefined;
+  let current = options;
+  let changed = false;
+  for (const [id, raw] of entries) {
+    const want = String(raw);
+    const opt = current?.find((o) => o.id === id);
+    if (!opt || opt.type !== 'select') {
+      console.debug(`[acp] agent "${def.id}": pinned option "${id}" is not offered by this session; leaving it`);
+      continue;
+    }
+    if (opt.currentValue === want) continue; // already there — don't spend a round trip
+    const offered = opt.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
+    if (offered.length > 0 && !offered.some((o) => o.value === want)) {
+      console.warn(
+        `[acp] agent "${def.id}": pinned option "${id}" does not offer "${want}" here; ` +
+          `staying at "${opt.currentValue}". Offered: ${offered.map((o) => o.value).join(', ')}`
+      );
+      continue;
+    }
+    try {
+      const res = await ctx.request('session/set_config_option', { sessionId, configId: id, value: want });
+      current = res?.configOptions ?? current;
+      changed = true;
+      console.log(`[acp] agent "${def.id}": option "${id}" pinned to "${want}"`);
+    } catch (err) {
+      console.warn(
+        `[acp] agent "${def.id}": could not pin option "${id}" to "${want}" ` +
+          `(${err instanceof Error ? err.message : err}); staying at "${opt.currentValue}"`
+      );
+    }
+  }
+  return changed ? current : undefined;
+}
+
+/**
+ * Whether this agent is Cursor's CLI (`cursor-agent acp`) — the one harness known to read
+ * `clientCapabilities._meta.parameterizedModelPicker` (cursor-agent 2026.11.05, its ACP agent's
+ * clientSupportsParameterizedModelPicker). Read off the command's last segment, the way
+ * skillHomes reads CodeBuddy out of a `custom` agent; a preset harness never matches.
+ *
+ * The binary has to be named `cursor-agent`, which is what its installer and `npm i -g` both
+ * provide. A symlink under another name would not be recognised, and the agent would keep the
+ * pre-combined model list — visible, but not silent: `options:` pins would then be skipped with
+ * "not offered by this session" in the log.
+ */
+export function isCursorAgent(def: Pick<AgentDef, 'harness' | 'command'>): boolean {
+  return def.harness === 'custom' && path.basename(def.command ?? '') === 'cursor-agent';
+}
+
+/**
  * Watch whether a turn shows the person anything. It only decides the fate of an UNNAMED refusal
  * (see failIfRefused): claude-agent-acp sends `lastRefusalExplanation` as an ordinary
  * `agent_message_chunk` before reporting `stopReason: "refusal"`, and that explanation is a
@@ -1327,9 +1404,22 @@ function createAcpSession(
   }
 
   /**
+   * Put the agent's pinned session options (`agents[].options`) back on a session, folding the
+   * harness's answer into liveConfigOptions. Called wherever the option set can have been reshaped —
+   * a fresh session, a reload, a model switch — and always BEFORE reapplyEffort, so a level chosen
+   * in chat outranks a pinned `reasoning_effort`.
+   */
+  async function reapplyPinned(ctx: Pick<ClientContext, 'request'>, sessionId: string): Promise<void> {
+    const after = await applyPinnedOptions(ctx, sessionId, def, liveConfigOptions, def.options);
+    if (after) liveConfigOptions = after;
+  }
+
+  /**
    * A started session's runtime choices, in the only order that works: the model first, then the
-   * effort, because the levels on offer are the model's (see applyEffortPreference) and must be
-   * checked against the list the model switch produced, not the one it replaced.
+   * pinned options and the effort, because the levels and the option set on offer are the model's
+   * (see applyEffortPreference, applyPinnedOptions) and must be checked against the list the model
+   * switch produced, not the one it replaced. A pinned `reasoning_effort` goes before the
+   * conversation's own choice so the person's `/effort` wins.
    *
    * `model` is what to enforce: on session/new the person's choice or else the configured model; on
    * session/load only the person's choice. A reloaded session is left on whatever it was on unless
@@ -1353,6 +1443,7 @@ function createAcpSession(
       liveConfigOptions = afterModel;
       liveModel = liveModelName(afterModel) ?? liveModel;
     }
+    await reapplyPinned(ctx, sessionId);
     await reapplyEffort(ctx, sessionId, split?.effort);
   }
 
@@ -1513,7 +1604,18 @@ function createAcpSession(
     // claude harness is asked: no other adapter is known to read the key, and opencode validates
     // the capability object strictly (see `form: true` below), so sending it a key it never needed
     // is all risk and no gain.
-    const failureRecords = def.harness === 'claude' ? { _meta: SESSION_FAILURE_CAPABILITY_META } : {};
+    //
+    // The second key is cursor-agent's, and it is the opposite trade: the server reads it to decide
+    // whether to split a model's context / reasoning effort / fast into separate config options.
+    // Without it the model list is one pre-combined variant per model, and a combination it did not
+    // pre-combine cannot be chosen at all — `grok-4.7[context=500k,reasoning_effort=xhigh,fast=false]`
+    // is rejected as an invalid model value, while the four options set one by one are accepted
+    // (probed against cursor-agent 2026.11.05-86047df, 2026-11-10). Only cursor is told: it is the
+    // one adapter known to read the key, and no other needs its model list reshaped.
+    const capabilityMeta = {
+      ...(def.harness === 'claude' ? SESSION_FAILURE_CAPABILITY_META : {}),
+      ...(isCursorAgent(def) ? { parameterizedModelPicker: true } : {}),
+    };
     const startup = (async () => {
       const initResult = await ctx.request('initialize', {
         protocolVersion: ACP_PROTOCOL_VERSION,
@@ -1536,7 +1638,7 @@ function createAcpSession(
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
           elicitation: { form: {} },
-          ...failureRecords,
+          ...(Object.keys(capabilityMeta).length > 0 ? { _meta: capabilityMeta } : {}),
         },
       });
       loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
@@ -2627,8 +2729,10 @@ function createAcpSession(
       // Remember BEFORE trusting the echo: the choice must outlive this child either way.
       modelPreference = value;
       liveConfigOptions = res?.configOptions ?? liveConfigOptions;
-      // The new model brings its own effort levels, and may have reset the level to its default.
-      // Put the conversation's `/effort` choice back where the new model still offers it.
+      // The new model brings its own option set and effort levels, and may have reset both to its
+      // defaults. Pinned options first (agents[].options), then the conversation's `/effort` choice,
+      // which outranks a pinned level.
+      await reapplyPinned(agentCtx, sessionId);
       await reapplyEffort(agentCtx, sessionId);
       liveModel = liveModelName(liveConfigOptions) ?? value;
       console.log(`[acp] agent "${def.id}": model switched to "${value}" at runtime`);

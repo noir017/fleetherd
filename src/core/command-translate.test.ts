@@ -30,7 +30,7 @@ import type { AgentDef, RouteRule } from '../config/schema.js';
  */
 
 const agent = (id: string, harness: AgentDef['harness']): AgentDef =>
-  ({ id, harness, args: [], env: {}, permissions: 'auto' }) as AgentDef;
+  ({ id, harness, args: [], env: {}, permissions: 'auto', options: {} }) as AgentDef;
 
 describe('translateCommand', () => {
   it('translates a generic command to the harness native name', () => {

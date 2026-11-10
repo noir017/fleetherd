@@ -10,12 +10,41 @@ English | [简体中文](zh-CN/agents.md)
 | `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` Google sign-in (OS keyring) |
 | `custom` | your `command` + `args` | any ACP executable | your agent's |
 
-Each agent takes `cwd`, `env`, `args`, a best-effort `model`, a
-[pre-launch hook](#pre-launch-hook), and a [permission policy](#permission-requests). With
+Each agent takes `cwd`, `env`, `args`, a best-effort `model`, pinned
+[session options](#pinned-session-options), a [pre-launch hook](#pre-launch-hook), and a
+[permission policy](#permission-requests). With
 `host:` it runs on another machine, reached over ssh — see [Remote hosts](remote-hosts.md). Sessions
 persist where the agent supports it; the commands an agent advertises are
 reachable through its own `/<agent>` menu rather than registered globally (see
 [Chat commands](chat-commands.md#agent-commands)). `doctor` verifies every configured harness.
+
+## Pinned session options
+
+`options` sets the agent's own ACP session config options — the ones the chat has no command for,
+by the id the harness reports (`context`, `fast`, `mode`). Each is applied when a session starts
+and again after a model switch, before the conversation's own `/effort`, so a level chosen in chat
+still wins. An id the current model does not offer is skipped with a line in the log, never forced:
+the set belongs to the model, and switching model reshapes it.
+
+```yaml
+agents:
+  - id: cur
+    harness: custom
+    command: cursor-agent
+    args: [acp]
+    options:
+      context: 500k
+      reasoning_effort: xhigh
+      fast: false
+```
+
+A `custom` agent whose command is named `cursor-agent` is also told that this client can render a
+*parameterized* model picker. Cursor's ACP server then reports the model, its context size, its
+reasoning effort and its fast mode as separate options instead of one pre-combined variant per
+model — which is what makes `/effort` work there, and what `options` above is pinning. With the
+plain list, a combination cursor did not pre-combine (500k / extra high / fast off, say) cannot be
+chosen at all. The binary has to be named `cursor-agent`; a symlink under another name keeps the
+pre-combined list, and the pins above are then skipped with a log line.
 
 ## Pre-launch hook
 

@@ -13,7 +13,7 @@ import type { AgentDef, Config } from '../config/schema.js';
  */
 
 const agent = (id: string, harness: AgentDef['harness']): AgentDef =>
-  ({ id, harness, args: [], env: {}, permissions: 'auto' }) as AgentDef;
+  ({ id, harness, args: [], env: {}, permissions: 'auto', options: {} }) as AgentDef;
 
 const cfg = (...agents: AgentDef[]): Pick<Config, 'agents' | 'routing'> => ({
   agents,

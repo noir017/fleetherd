@@ -38,7 +38,7 @@ const PROBES: ReadonlyArray<{ command: string; agent: PodAgent }> = [
 ];
 
 function agent(a: Pick<PodAgent, 'id' | 'harness'> & Partial<PodAgent>): PodAgent {
-  return { args: [], env: {}, permissions: 'auto', ...a };
+  return { args: [], env: {}, options: {}, permissions: 'auto', ...a };
 }
 
 /** The parts of a RemoteHost this reads with (a fake in tests). */

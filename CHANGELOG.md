@@ -5,6 +5,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **An agent can pin the harness's own session options, and Cursor finally exposes them.** Cursor's
+  ACP server reports one pre-combined model variant per model (`grok-4.7[context=256k,
+  reasoning_effort=high,fast=true]`) unless the client says it can render a parameterized picker —
+  and a combination it did not pre-combine, such as 500k with extra-high effort and fast off, is
+  rejected as an invalid model value, so it could not be chosen at all. A `custom` agent whose
+  command is named `cursor-agent` now gets that picker: the model, its context size, its reasoning
+  effort and its fast mode arrive as separate options, which is also what makes `/effort` work
+  there. The ones chat has no command for are set by the new `options:` map on the agent
+  definition, applied at session start and again after a model switch, before the conversation's
+  own `/effort` — so a pinned `reasoning_effort` is a default, not an override. An option the
+  current model does not offer is skipped with a log line rather than forced.
+
+  ```yaml
+  agents:
+    - id: cur
+      harness: custom
+      command: cursor-agent
+      args: [acp]
+      options:
+        context: 500k
+        reasoning_effort: xhigh
+        fast: false
+  ```
+
 ## [2.56.0] - 2026-11-10
 
 ### Added

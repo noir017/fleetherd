@@ -13,7 +13,7 @@ describe('buildHarnessEnv', () => {
     process.env.CLAUDECODE = '1';
 
     try {
-      const env = buildHarnessEnv({ id: 'cc', harness: 'claude', args: [], env: {}, permissions: 'auto' });
+      const env = buildHarnessEnv({ id: 'cc', harness: 'claude', args: [], env: {}, permissions: 'auto', options: {} });
 
       expect(env.CLAUDE_CODE_EXECUTABLE).toBe('/usr/bin/claude');
       expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();

@@ -10,11 +10,37 @@
 | `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` 的 Google 登录态（系统钥匙串） |
 | `custom` | 你的 `command` + `args` | 任意 ACP 可执行文件 | 由智能体自身决定 |
 
-每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[启动前钩子](#启动前钩子)，以及[权限策略](#权限请求)。
+每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[固定会话选项](#固定会话选项)、
+[启动前钩子](#启动前钩子)，以及[权限策略](#权限请求)。
 设了 `host:` 就跑在另一台机器上、经 ssh 连接，见[远程主机](remote-hosts.md)。支持会话恢复
 的智能体，上下文可跨重启保留；智能体自己声明的斜杠命令不会全局注册，而是通过
 它的 `/<agent>` 菜单调出（见[聊天命令](chat-commands.md#智能体命令)）。
 `doctor` 会逐一校验已配置的 harness。
+
+## 固定会话选项
+
+`options` 用来固定智能体自己的 ACP 会话配置选项——聊天里没有对应命令的那些，按 harness
+上报的 id 写（`context`、`fast`、`mode`）。每个选项在会话启动时应用一次，切换模型后再应用一次，
+位置在对话自己的 `/effort` 之前，所以聊天里选的档位仍然优先。当前模型不提供的 id 会跳过并在
+日志里写一行，不会硬塞：选项集合属于模型，换模型就会变。
+
+```yaml
+agents:
+  - id: cur
+    harness: custom
+    command: cursor-agent
+    args: [acp]
+    options:
+      context: 500k
+      reasoning_effort: xhigh
+      fast: false
+```
+
+`command` 名为 `cursor-agent` 的 `custom` 智能体还会被告知：本客户端能渲染*参数化*模型选择器。
+Cursor 的 ACP 服务端随后把模型、上下文大小、思考深度和 fast 模式作为独立选项上报，而不是每个模型
+只给一个预先组合好的变体——这正是 `/effort` 在它上面可用的原因，也是上面 `options` 能固定的前提。
+在旧的平铺列表里，cursor 没有预先组合过的组合（比如 500k / Extra High / Fast Off）根本选不到。
+可执行文件必须叫 `cursor-agent`；换成别的名字的软链就还是平铺列表，上面的固定项会被跳过并记日志。
 
 ## 启动前钩子
 

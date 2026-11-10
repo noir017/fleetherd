@@ -74,6 +74,18 @@ const AgentDefFields = z
     /** Model (best-effort via newSession; whether it takes effect depends on the harness). */
     model: z.string().optional(),
     /**
+     * ACP session config options pinned for this agent, by the harness's own option id: `context`,
+     * `fast`, `mode`, … Each is applied once the session's model is settled and before the
+     * conversation's own `/effort`, so a level chosen in chat still wins. An id the current model
+     * does not offer is skipped with a log line, never forced — the set belongs to the model, and
+     * switching model reshapes it (daemon/agent-acp.ts applyPinnedOptions).
+     *
+     * Values are the strings the harness lists for that option (`500k`, `xhigh`, `false`). YAML
+     * booleans and numbers are accepted and written as their string form, because `fast: false`
+     * unquoted is what a person writes.
+     */
+    options: z.record(z.union([z.string(), z.number(), z.boolean()])).default({}),
+    /**
      * Override the context-window size the footer reports (tokens), replacing whatever the harness
      * sends over ACP `usage_update`. Set this when the harness UNDER-reports the window: claude-agent-acp
      * carries a hardcoded model table, and a model absent from it (e.g. `claude-opus-5`) falls back to a
