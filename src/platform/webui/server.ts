@@ -646,12 +646,17 @@ function stream({ req, res, url }: Req, ctx: Ctx): void {
   const topic = wanted && ctx.room.topics.has(wanted) ? wanted : ctx.room.topics.current().id;
   const out = openStream(req, res, ctx.instance);
   ctx.streams.add(out);
-  const lastId = req.headers['last-event-id'];
+  // The header is what `EventSource` sends when it reconnects by itself, and it is always the newer
+  // of the two. `?last=` is the page's own way to resume a stream it closed on purpose (a tab put in
+  // the background, see the page's `park`): a new EventSource cannot set a header, and without a
+  // resume point it would be handed the whole topic again. The room validates either the same way.
+  const header = req.headers['last-event-id'];
+  const lastId = (Array.isArray(header) ? header[0] : header) || url.searchParams.get('last') || undefined;
   const unsubscribe = ctx.room.subscribe(
     topic,
     // `data` is made once per event by the room, however many streams it goes to.
     (id, _ev, data) => out.write(`${id ? `id: ${id}\n` : ''}data: ${data}\n\n`),
-    Array.isArray(lastId) ? lastId[0] : lastId
+    lastId
   );
   // The response's close, not only the request's: a stream cut for falling behind is ended from
   // this side, and either way it has to leave the room's fan-out at once.

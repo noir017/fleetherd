@@ -127,14 +127,15 @@ function openStream(
   port: number,
   topic: string,
   cookie: string,
-  lastEventId?: string
+  lastEventId?: string,
+  query = ''
 ): Promise<{ res: http.IncomingMessage; next: () => Promise<string>; close: () => void }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
         host: '127.0.0.1',
         port,
-        path: `/api/events?t=${topic}`,
+        path: `/api/events?t=${topic}${query}`,
         headers: {
           cookie,
           'accept-encoding': 'gzip',
@@ -768,6 +769,41 @@ describe('webui server: built for a weak link', () => {
     expect(resumed).not.toContain('"t":"sync"');
     expect(resumed).not.toContain('one');
     second.close();
+  });
+
+  it('resumes a stream the page opened again on purpose, from the point it names in ?last=', async () => {
+    // A tab back from the background opens a NEW EventSource, which cannot set Last-Event-ID; the
+    // query is how it says where it got to. When EventSource later reconnects by itself, the header
+    // it sends is newer than the query in the URL it reuses, and wins.
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    // The ids the stream hands out, read where they are made rather than out of gzip chunks.
+    const ids: string[] = [];
+    room.subscribe(topic, (id, ev) => void (ev.t === 'msg' && ids.push(id)));
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
+    const [early = '', late = ''] = ids;
+    room.post(topic, { own: false, html: '<p>three</p>' }, 'three');
+
+    // A resume ends with the state no backlog keeps — status, machines, the topic list — so read
+    // up to the list, however the frames were chunked.
+    const upToList = async (s: { next: () => Promise<string> }): Promise<string> => {
+      let got = '';
+      while (!got.includes('"t":"topics"') && !got.includes('"t":"sync"')) got += await s.next();
+      return got;
+    };
+    const parked = await openStream(port, topic, cookie, undefined, `&last=${encodeURIComponent(early)}`);
+    const back = await upToList(parked);
+    expect(back).not.toContain('"t":"sync"');
+    expect(back).toContain('two');
+    expect(back).toContain('three');
+    parked.close();
+
+    const both = await openStream(port, topic, cookie, late, `&last=${encodeURIComponent(early)}`);
+    const caught = await upToList(both);
+    expect(caught).toContain('three');
+    expect(caught).not.toContain('two');
+    both.close();
   });
 
   /**

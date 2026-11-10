@@ -853,6 +853,20 @@ script carries the same hash as `BUILD`, and when they differ a line above the c
 edited, a recording, the place in a long transcript), and the old script still works against a
 newer daemon for as long as the protocol only grows.
 
+**A tab nobody is looking at has no stream.** It used to receive everything — each message in
+its topic, and the whole topic list after every message posted anywhere — whether it was a phone
+on the table or a desktop tab behind ten others. Nothing on the page needs the stream while it is
+hidden (it never changes the title; notifications are Web Push, through the service worker; the
+seen mark is posted only while visible), so a tab hidden for 15 s (`PARK_MS`, so a glance at
+another tab costs no reconnect) closes it, and coming back opens a new one with `?last=<id>`:
+a new `EventSource` cannot set `Last-Event-ID`, and `server.ts` reads the query when the header is
+absent. Two things make that resume land. A sync is now sent numbered with the room's position,
+so a stream has a resume point from its first event rather than from the first message after it;
+and a resumed stream is handed the topic list after the replay, since no backlog keeps it and a
+sidebar from before the tab was hidden would otherwise stay wrong until the next post. A resume
+neither takes the focus nor re-asks the side panel for its lists — the tab coming back has
+already done that, and the focus is where the person left it.
+
 **Everything is compressed**, the event stream included — which is the part with a trap in it.
 A gzip stream buffers until told otherwise, so each event is followed by an explicit
 `Z_SYNC_FLUSH`. Without it the page receives nothing until the connection closes, which is

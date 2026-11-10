@@ -14,6 +14,14 @@ All notable changes to this project are documented here. The format is based on
   out a cache used without asking, not one that asks. The page now carries an ETag that is a hash
   of its rendered bytes and `private, no-cache`, so the browser asks every time and an upgrade, a
   new title or a terminal turned on still reach the next load. It is rendered and compressed once.
+- **A web UI tab in the background stops receiving.** A phone on the table or a desktop tab behind
+  others kept its event stream open and was sent every message in its topic and the whole topic
+  list after every message posted anywhere — 2.5 KB per message at 200 topics. A tab hidden for
+  15 seconds now closes its stream, and when it is looked at again it resumes from the last event
+  it had: what was said meanwhile is replayed, with the topic list as it now is. Nothing on the
+  page relied on the stream while hidden — notifications are Web Push. A sync now carries a resume
+  point of its own, so a connection that drops straight after one resumes instead of taking the
+  whole topic again.
 
 ### Fixed
 

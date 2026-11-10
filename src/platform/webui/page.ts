@@ -5639,9 +5639,9 @@ const SCRIPT = `
     }
     // The daemon is going away. The stream is closed here rather than left to EventSource, which
     // would retry it every few seconds for as long as the daemon is down; this tries again on a
-    // back-off instead, and the stream it opens has no resume point, so the daemon that answers
-    // hands over the whole topic — which is what a page that outlived a restart needs. It used to
-    // stop for good and ask for a reload.
+    // back-off instead. The resume point it sends names the run that is going away, so the daemon
+    // that answers hands over the whole topic — which is what a page that outlived a restart needs.
+    // It used to stop for good and ask for a reload.
     else if(ev.t==='bye'){
       if(stream) stream.close();
       note.textContent='The daemon is restarting. Reconnecting...';
@@ -5651,13 +5651,44 @@ const SCRIPT = `
 
   // How long until the next attempt after a bye or a refused stream: one second, doubling to half
   // a minute, and back to nothing once a stream opens. Every attempt is one request, so a daemon
-  // that is down for an hour costs a tab two a minute.
+  // that is down for an hour costs a tab two a minute. One that falls due behind a hidden tab is
+  // left for the tab to make when it is looked at again (see park).
   var retryMs=0, retryTimer=0;
   function reconnectLater(){
     if(retryTimer) return;
     retryMs = retryMs ? Math.min(retryMs*2, 30000) : 1000;
-    retryTimer = setTimeout(function(){ retryTimer=0; connect(); }, retryMs);
+    retryTimer = setTimeout(function(){
+      retryTimer=0;
+      if(document.visibilityState === 'hidden'){ parked = true; return; }
+      connect(true);
+    }, retryMs);
   }
+
+  // ── The stream behind a hidden tab ──────────────────────────────────────────
+  // A tab nobody is looking at still received every event: each message in the topic, and the
+  // topic list after every message posted anywhere. A phone on the table and a desktop tab behind
+  // others are most of the time the page is open. So a tab hidden for PARK_MS closes its stream,
+  // and coming back opens a new one from the last event it had (?last=, which the server treats as
+  // Last-Event-ID): what was said meanwhile is replayed from the backlog, or the whole topic comes
+  // again if the backlog no longer reaches. Nothing on the page needs the stream while hidden —
+  // the title is never changed, notifications are Web Push and go through the service worker, the
+  // seen mark is only posted while visible — so the grace is only there so that glancing at another
+  // tab does not cost a reconnect. lastEv is the newest event id this stream has delivered.
+  var PARK_MS=15000, parkTimer=0, parked=false, lastEv='';
+  function park(){
+    parkTimer=0;
+    if(document.visibilityState !== 'hidden' || !stream || stream.readyState === 2) return;
+    parked=true;
+    stream.close();
+  }
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'hidden'){
+      if(!parkTimer && !parked) parkTimer = setTimeout(park, PARK_MS);
+      return;
+    }
+    clearTimeout(parkTimer); parkTimer=0;
+    if(parked){ parked=false; connect(true); }
+  });
 
   /**
    * Whether the session is still good, asked after a stream was refused for good.
@@ -5688,27 +5719,48 @@ const SCRIPT = `
     }, function(){});
   }
 
-  function connect(){
+  /**
+   * Open the event stream for the topic on screen.
+   *
+   * resume carries the last event this page had, for a stream opened again on the same topic (a
+   * tab coming back, a retry after a refused stream); the daemon replays what came after it, or
+   * sends the whole topic when it cannot. Without it — a new topic, a fresh visit — there is
+   * nothing to resume from.
+   */
+  function connect(resume){
     if(stream) stream.close();
     clearTimeout(retryTimer); retryTimer=0;
+    parked=false;
     // Placeholders for the wait that is about to start. Guarded on an empty log inside, so a
     // reconnect after a blip — where the conversation is still on screen and only the stream went
     // away — is not answered by replacing it with skeletons.
     showSkeleton();
+    var from = resume ? lastEv : '';
+    lastEv = from;
+    var qs = [];
+    if(topic) qs.push('t='+encodeURIComponent(topic));
+    if(from) qs.push('last='+encodeURIComponent(from));
     // EventSource resends the last id it saw on its own, so a blip is answered with the few
     // events that were missed rather than the whole conversation.
-    var es = stream = new EventSource('api/events' + (topic ? '?t='+encodeURIComponent(topic) : ''));
-    es.onmessage = function(e){ try{ handle(JSON.parse(e.data)); }catch(x){} };
+    var es = stream = new EventSource('api/events' + (qs.length ? '?'+qs.join('&') : ''));
+    es.onmessage = function(e){
+      if(es === stream && e.lastEventId) lastEv = e.lastEventId;
+      try{ handle(JSON.parse(e.data)); }catch(x){}
+    };
     // Not focused on a phone: the keyboard would come up before a word has been read, and on
     // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
+    // Nor when the same topic's stream comes back (resume): a tab returning to the front
+    // reconnects, and the focus is wherever the person left it.
     es.onopen = function(){
       retryMs = 0;
-      gate.hidden=true; app.hidden=false; note.textContent=''; if(!narrow()) input.focus(); initNotify();
+      var fresh = app.hidden || !resume;
+      gate.hidden=true; app.hidden=false; note.textContent=''; if(fresh && !narrow()) input.focus(); initNotify();
       // A panel opened (or restored from aa_sched_open) before the gate came down asked too
       // early (loadSchedules and loadReviews refuse while #app is hidden); this is the first
       // moment the answer can be had. The restored tab is read here too: on a reload that comes
-      // back to Reviews the panel opens before the gate does, so nothing else would ask.
-      if(schedPane.isOpen()){ loadSchedules(); if(schedTab === 'reviews') loadReviews(); armSched(); }
+      // back to Reviews the panel opens before the gate does, so nothing else would ask. A tab
+      // coming back has already asked (the panel's own visibilitychange), so a resume does not.
+      if(fresh && schedPane.isOpen()){ loadSchedules(); if(schedTab === 'reviews') loadReviews(); armSched(); }
     };
     es.onerror = function(){
       // A stream this page has since replaced or closed has nothing left to say.

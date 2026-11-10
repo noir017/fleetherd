@@ -1072,8 +1072,16 @@ export class WebRoom {
         // is told the current one outright — it may have changed, or been cleared, during the gap.
         this.deliver(client, { t: 'status', ...(room.status ? { status: room.status } : {}) }) &&
         // The machine list likewise, for the same reason: a machine can come or go in the gap.
-        this.deliver(client, { t: 'machines', offline: [...this.offline] })
-      : this.deliver(client, this.syncEvent(topicId, room));
+        this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
+        // And the topic list, which is in no backlog either. A blip's gap is short, but a page put
+        // in the background closes its stream and resumes it minutes later (`?last=`), and a
+        // sidebar from before that would be wrong until something else was posted.
+        this.deliver(client, { t: 'topics', topics: this.topicList() })
+      : // Numbered with the room's position, so the stream has a resume point from the start: a
+        // blip straight after a sync — or a tab put away before anything else was said — resumes
+        // from here instead of taking the whole topic again. The sync is the room's state as of
+        // that number; anything held back and sent later is numbered after it.
+        this.deliver(client, this.syncEvent(topicId, room), room.seq);
     if (ok) {
       console.log(
         `[webui] client attached to ${topicId}${missed ? ` (resumed, ${missed.length} missed)` : ' (full sync)'}; ${this.clients.size} watching`

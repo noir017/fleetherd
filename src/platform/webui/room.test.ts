@@ -2049,7 +2049,45 @@ describe('WebRoom: machines the daemon cannot reach', () => {
     const resumed: Seen[] = [];
     room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
     expect(kinds(resumed)).not.toContain('sync');
-    expect(last(resumed)).toEqual({ t: 'machines', offline: DOWN });
+    expect(resumed.find((s) => s.ev.t === 'machines')?.ev).toEqual({ t: 'machines', offline: DOWN });
+  });
+
+  it('hands a resumed page the topic list too, which no backlog keeps', () => {
+    // A page in the background closes its stream and resumes it minutes later; whatever the list
+    // went through meanwhile reached nobody, and a sidebar from before would stay wrong until the
+    // next message anywhere.
+    const { room, topic, seen, off } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id !== '').at(-1)?.id ?? '';
+    off();
+    const added = room.createTopic('made while it was away');
+    const resumed: Seen[] = [];
+    room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    expect(kinds(resumed)).not.toContain('sync');
+    const list = resumed.find((s) => s.ev.t === 'topics')?.ev as { topics: Array<{ id: string }> } | undefined;
+    expect(list?.topics.map((t) => t.id)).toContain(added.id);
+  });
+
+  it('numbers a sync with the room’s position, so a stream that drops straight after it resumes', () => {
+    const { room, topic } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
+    const first: Seen[] = [];
+    room.subscribe(topic, (id, ev) => first.push({ id, ev }));
+    expect(first[0]?.ev.t).toBe('sync');
+    expect(first[0]?.id).toMatch(new RegExp(`^${topic}\\.[0-9a-z]+\\.\\d+$`));
+    // Nothing said since: the resume hands over nothing, not the topic again.
+    const again: Seen[] = [];
+    room.subscribe(topic, (id, ev) => again.push({ id, ev }), first[0]?.id);
+    expect(kinds(again)).not.toContain('sync');
+    expect(again.filter((s) => s.ev.t === 'msg')).toHaveLength(0);
+    // Something said since: exactly that.
+    room.post(topic, { own: false, html: '<p>three</p>' }, 'three');
+    const later: Seen[] = [];
+    room.subscribe(topic, (id, ev) => later.push({ id, ev }), first[0]?.id);
+    expect(later.filter((s) => s.ev.t === 'msg').map((s) => (s.ev as { msg: { html: string } }).msg.html)).toEqual([
+      '<p>three</p>',
+    ]);
   });
 });
 

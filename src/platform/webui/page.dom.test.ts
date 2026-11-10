@@ -48,7 +48,8 @@ interface Stream {
   url: string;
   readyState: number;
   closed: boolean;
-  onmessage: ((e: { data: string }) => void) | null;
+  /** lastEventId as a browser hands it over: the id of the newest event that carried one. */
+  onmessage: ((e: { data: string; lastEventId?: string }) => void) | null;
   onopen: (() => void) | null;
   onerror: (() => void) | null;
 }
@@ -553,7 +554,7 @@ async function open(
       class FakeEventSource implements Stream {
         readyState = 1;
         closed = false;
-        onmessage: ((e: { data: string }) => void) | null = null;
+        onmessage: ((e: { data: string; lastEventId?: string }) => void) | null = null;
         onopen: (() => void) | null = null;
         onerror: (() => void) | null = null;
         constructor(readonly url: string) {
@@ -1350,6 +1351,74 @@ describe('webui page: a daemon that restarts under an open page', () => {
       // jsdom: "Not implemented: navigation".
     }
     expect(JSON.parse(h.window.localStorage.getItem('aa_drafts') ?? '{}').a1b2c3d4).toContain('half a thought');
+  });
+});
+
+describe('webui page: a tab in the background', () => {
+  const setVisible = (h: Harness, visible: boolean): void => {
+    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => (visible ? 'visible' : 'hidden') });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+  };
+  /** An event the way a browser delivers one that carried an `id:`. */
+  const numbered = async (h: Harness, ev: Record<string, unknown>, id: string): Promise<void> => {
+    h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
+    await tick();
+  };
+
+  it('closes the stream behind a tab hidden for a while, and resumes from the last event on the way back', async () => {
+    // A phone on the table and a desktop tab behind others still received every message and the
+    // whole topic list after every message posted anywhere.
+    const h = await open({ shortenLong: true });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    await numbered(h, { t: 'msg', msg: message('m2', '<p>two</p>') }, 'a1b2c3d4.run.7');
+    const first = h.live();
+    setVisible(h, false);
+    await until('the stream is closed', () => first.closed);
+    expect(h.longTimers).toContain(15000);
+    setVisible(h, true);
+    // A new stream, told where the old one got to: the daemon replays what came after it.
+    expect(h.streams).toHaveLength(2);
+    expect(h.live().url).toBe('api/events?t=a1b2c3d4&last=a1b2c3d4.run.7');
+    // And the transcript never left the screen.
+    expect(h.painted()).toBe(2);
+    expect(h.skeletons()).toBe(0);
+  });
+
+  it('leaves the stream alone for a glance at another tab', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    const first = h.live();
+    setVisible(h, false);
+    await new Promise((r) => setTimeout(r, 50));
+    setVisible(h, true);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(first.closed).toBe(false);
+    expect(h.streams).toHaveLength(1);
+  });
+
+  it('does not take the focus when the stream comes back', async () => {
+    const h = await open({ shortenLong: true });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    const search = h.doc.querySelector<HTMLInputElement>('#topics-filter input');
+    expect(search).not.toBeNull();
+    search!.focus();
+    setVisible(h, false);
+    await until('the stream is closed', () => h.streams[0]!.closed);
+    setVisible(h, true);
+    await tick();
+    await tick();
+    expect(h.doc.activeElement).toBe(search);
+  });
+
+  it('waits for the tab to be looked at before reconnecting after a bye', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    setVisible(h, false);
+    await h.emit({ t: 'bye' });
+    await new Promise((r) => setTimeout(r, 1300));
+    expect(h.streams).toHaveLength(1);
+    setVisible(h, true);
+    expect(h.streams).toHaveLength(2);
   });
 });
 
