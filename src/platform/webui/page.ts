@@ -6875,6 +6875,10 @@ const SCRIPT = `
       if(!histSessions.length) historyListEl.innerHTML = '';
       historyMore.hidden = !histNext;
       historyMore.disabled = false;
+      // The line took the button's place and pushed it down by its own height. The reader asked
+      // from the bottom, so both belong in view: keep them there rather than leave the retry
+      // half below the fold.
+      if(before) historyBody.scrollTop = historyBody.scrollHeight;
     });
   }
 
@@ -8942,9 +8946,14 @@ __GATE__
           <button type="button" class="btn-icon" id="history-go" title="Search" aria-label="Search">${icon('search')}</button>
         </div>
         <div id="history-note" class="hist-note" hidden></div>
-        <div id="history-err" class="hist-note bad" hidden></div>
         <div id="history-list"></div>
         <div id="history-detail" hidden></div>
+        <!-- Below the list, not above it: a page that could not be read was asked for with the
+             button under the last row, and a list fifty rows long puts anything above it out of
+             view (measured 2026-11-10, 390×844: the error sat 2550px above the viewport). The
+             first page failing leaves the list empty, so there this element is still the first
+             thing under the search row. -->
+        <div id="history-err" class="hist-note bad" hidden></div>
         <button type="button" id="history-more" hidden>Load older conversations</button>
       </div>
     </div>

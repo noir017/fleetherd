@@ -10108,6 +10108,36 @@ describe('webui page: the history page', () => {
     expect([...h.doc.querySelectorAll('#history-list .hist-item')]).toHaveLength(3);
   });
 
+  it('puts a failed page under the list, beside the button that asked for it', async () => {
+    const next = 'api/history?before=1762300000000.2';
+    const h = await open({
+      replies: {
+        'api/history': page([row(), row({ id: 2, title: 'Second' })], '1762300000000.2'),
+        [next]: page([row({ id: 3, title: 'Older still' })]),
+      },
+      status: { [next]: 500 },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the first page', () => h.el('history-list').textContent!.includes('Second'));
+
+    await h.click('#history-more');
+    await until('the error', () => !h.el('history-err').hidden);
+
+    // jsdom does no layout, so the DOM order is the evidence: the error follows the list and sits
+    // immediately above the button. That is where a reader who tapped it at the bottom of fifty
+    // rows is looking; above the list, the same line was 2550px out of view on a phone.
+    const err = h.el('history-err');
+    expect(err.parentElement).toBe(h.el('history-body'));
+    expect(h.el('history-list').compareDocumentPosition(err) & h.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(err.nextElementSibling).toBe(h.el('history-more'));
+
+    // Failing twice changes nothing: the same line, and the button offers the same page again.
+    await h.click('#history-more');
+    await until('the second failure', () => !h.el('history-err').hidden && !(h.el('history-more') as HTMLButtonElement).disabled);
+    expect(err.textContent).toMatch(/HTTP 500/);
+  });
+
   it('searches the library, and puts the list back when the field is cleared', async () => {
     const h = await open({
       replies: {
