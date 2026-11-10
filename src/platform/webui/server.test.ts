@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { createGunzip, inflateSync } from 'node:zlib';
+import { brotliDecompressSync, createGunzip, gunzipSync, inflateSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
@@ -127,14 +127,15 @@ function openStream(
   port: number,
   topic: string,
   cookie: string,
-  lastEventId?: string
+  lastEventId?: string,
+  query = ''
 ): Promise<{ res: http.IncomingMessage; next: () => Promise<string>; close: () => void }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
         host: '127.0.0.1',
         port,
-        path: `/api/events?t=${topic}`,
+        path: `/api/events?t=${topic}${query}`,
         headers: {
           cookie,
           'accept-encoding': 'gzip',
@@ -189,13 +190,130 @@ describe('webui server: the page', () => {
   });
 
   it('compresses it, because the page is the largest thing on the wire', async () => {
+    const { port } = await boot();
+    const res = await rawGet(port, '/', { 'accept-encoding': 'gzip' });
+    expect(res.headers['content-encoding']).toBe('gzip');
+    expect(res.headers.vary).toBe('Accept-Encoding');
+    expect(gunzipSync(res.body).toString('utf8')).toContain('<title>Chat</title>');
+  });
+
+  it('answers a browser that already holds this page with a 304, and an upgraded page with the page', async () => {
+    const { port } = await boot();
+    const first = await rawGet(port, '/', { 'accept-encoding': 'gzip' });
+    const etag = String(first.headers.etag);
+    // Kept and asked about every time, never used unasked: no-cache is what makes an upgrade show
+    // at the next load. private, because the answer may carry a renewed session cookie.
+    expect(first.headers['cache-control']).toBe('private, no-cache');
+    expect(etag).toMatch(/^W\/"[\w-]+"$/);
+    const again = await rawGet(port, '/', { 'accept-encoding': 'gzip', 'if-none-match': etag });
+    expect(again.status).toBe(304);
+    expect(again.body.length).toBe(0);
+    expect(again.headers.etag).toBe(etag);
+    // A list, and the strong spelling of the same tag, are the same question.
+    const listed = await rawGet(port, '/', { 'if-none-match': `"x", ${etag.slice(2)}` });
+    expect(listed.status).toBe(304);
+    // A page the browser holds from another build — here, another render of it — is not this one.
+    const stale = await rawGet(port, '/', { 'if-none-match': 'W/"from-before-the-upgrade"' });
+    expect(stale.status).toBe(200);
+    expect(stale.body.toString('utf8')).toContain('<title>Chat</title>');
+  });
+
+  it('hashes what it renders, so anything that changes the page changes its validator', async () => {
+    const a = await boot();
+    const b = await boot({ title: 'Another' });
+    const c = await boot({}, { enabled: true, socket: '/nonexistent.sock' });
+    const tags = await Promise.all([a, b, c].map(async (x) => (await rawGet(x.port, '/')).headers.etag));
+    expect(new Set(tags).size).toBe(3);
+    // And the browser holding a's page is given b's whole, not told it is current.
+    expect((await rawGet(b.port, '/', { 'if-none-match': String(tags[0]) })).status).toBe(200);
+  });
+
+  it('serves the same validator compressed or not, for the same page', async () => {
+    const { port } = await boot();
+    const plain = await rawGet(port, '/');
+    const zipped = await rawGet(port, '/', { 'accept-encoding': 'gzip' });
+    expect(plain.headers['content-encoding']).toBeUndefined();
+    expect(plain.headers.vary).toBe('Accept-Encoding');
+    expect(zipped.headers.etag).toBe(plain.headers.etag);
+    expect(gunzipSync(zipped.body).equals(plain.body)).toBe(true);
+  });
+
+  it('serves brotli to a client that takes it, once it has been made, and gzip until then', async () => {
+    // Quality 11 is ~18% smaller than gzip and takes about a second, so it is made once, off the
+    // event loop, the first time someone could use it — never per request.
+    const { port } = await boot();
+    const plain = await rawGet(port, '/');
+    const first = await rawGet(port, '/', { 'accept-encoding': 'gzip, br' });
+    expect(first.headers['content-encoding']).toBe('gzip');
+    let br = first;
+    for (let i = 0; i < 100 && br.headers['content-encoding'] !== 'br'; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      br = await rawGet(port, '/', { 'accept-encoding': 'gzip, deflate, br' });
+    }
+    expect(br.headers['content-encoding']).toBe('br');
+    expect(br.headers.vary).toBe('Accept-Encoding');
+    expect(br.headers.etag).toBe(plain.headers.etag);
+    expect(brotliDecompressSync(br.body).equals(plain.body)).toBe(true);
+    expect(br.body.length).toBeLessThan(first.body.length);
+    // A client that says no to br, or never mentions it, is not sent it.
+    expect((await rawGet(port, '/', { 'accept-encoding': 'gzip, br;q=0' })).headers['content-encoding']).toBe('gzip');
+    expect((await rawGet(port, '/', { 'accept-encoding': 'gzip' })).headers['content-encoding']).toBe('gzip');
+    // The event stream stays gzip whatever the client takes: it is flushed per event.
     const { base } = await boot();
-    const res = await fetch(`${base}/`, { headers: { 'accept-encoding': 'gzip' } });
-    // undici decodes and drops the header, so the reliable witness is Vary — set only on the
-    // branch that actually compressed.
-    expect(res.headers.get('vary')).toBe('Accept-Encoding');
+    const cookie = await signIn(base);
+    const ev = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port: Number(new URL(base).port), path: '/api/events', headers: { cookie, 'accept-encoding': 'br, gzip' } },
+        resolve
+      );
+      req.once('error', reject);
+      req.end();
+    });
+    expect(ev.headers['content-encoding']).toBe('gzip');
+    ev.destroy();
+  });
+
+  it('still renews a live session cookie on a 304', async () => {
+    const { base, port } = await boot();
+    const cookie = await signIn(base);
+    const { headers } = await rawGet(port, '/');
+    const res = await rawGet(port, '/', { cookie, 'if-none-match': String(headers.etag) });
+    expect(res.status).toBe(304);
+    expect(String(res.headers['set-cookie']).split(';')[0]).toBe(cookie);
+  });
+
+  it('names its build in a HEAD, and the page it serves carries the same one', async () => {
+    // How a page left open through a restart learns whether the daemon now serves another page:
+    // one round trip, no body, compared with the BUILD in its own script.
+    const { port } = await boot();
+    const head = await rawGet(port, '/', {}, 'HEAD');
+    expect(head.status).toBe(200);
+    expect(head.body.length).toBe(0);
+    const page = await rawGet(port, '/');
+    expect(head.headers.etag).toBe(page.headers.etag);
+    const build = /^W\/"(.+)"$/.exec(String(page.headers.etag))?.[1] ?? '';
+    expect(build).not.toBe('');
+    expect(page.body.toString('utf8')).toContain(`var BUILD = '${build}';`);
   });
 });
+
+/** A GET with raw `node:http`, so compression and a 304 are visible instead of undone by fetch. */
+function rawGet(
+  port: number,
+  path: string,
+  headers: Record<string, string> = {},
+  method = 'GET'
+): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path, headers, method }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.once('error', reject);
+    req.end();
+  });
+}
 
 describe('webui server: installing it as an app', () => {
   it('serves the manifest and both icons without a session', async () => {
@@ -674,7 +792,7 @@ describe('webui server: built for a weak link', () => {
     room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
     const frame = await first.next();
     const id = /id: (\S+)/.exec(frame)?.[1] ?? '';
-    expect(id).toMatch(new RegExp(`^${topic}\\.\\d+$`));
+    expect(id).toMatch(new RegExp(`^${topic}\\.[0-9a-z]+\\.\\d+$`));
     first.close();
 
     room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
@@ -686,6 +804,41 @@ describe('webui server: built for a weak link', () => {
     expect(resumed).not.toContain('"t":"sync"');
     expect(resumed).not.toContain('one');
     second.close();
+  });
+
+  it('resumes a stream the page opened again on purpose, from the point it names in ?last=', async () => {
+    // A tab back from the background opens a NEW EventSource, which cannot set Last-Event-ID; the
+    // query is how it says where it got to. When EventSource later reconnects by itself, the header
+    // it sends is newer than the query in the URL it reuses, and wins.
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    // The ids the stream hands out, read where they are made rather than out of gzip chunks.
+    const ids: string[] = [];
+    room.subscribe(topic, (id, ev) => void (ev.t === 'msg' && ids.push(id)));
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
+    const [early = '', late = ''] = ids;
+    room.post(topic, { own: false, html: '<p>three</p>' }, 'three');
+
+    // A resume ends with the state no backlog keeps — status, machines, the topic list — so read
+    // up to the list, however the frames were chunked.
+    const upToList = async (s: { next: () => Promise<string> }): Promise<string> => {
+      let got = '';
+      while (!got.includes('"t":"topics"') && !got.includes('"t":"sync"')) got += await s.next();
+      return got;
+    };
+    const parked = await openStream(port, topic, cookie, undefined, `&last=${encodeURIComponent(early)}`);
+    const back = await upToList(parked);
+    expect(back).not.toContain('"t":"sync"');
+    expect(back).toContain('two');
+    expect(back).toContain('three');
+    parked.close();
+
+    const both = await openStream(port, topic, cookie, late, `&last=${encodeURIComponent(early)}`);
+    const caught = await upToList(both);
+    expect(caught).toContain('three');
+    expect(caught).not.toContain('two');
+    both.close();
   });
 
   /**
@@ -807,6 +960,120 @@ describe('webui server: built for a weak link', () => {
     // The retry is answered as if it were the original, because for the caller it is.
     expect([a.status, b.status]).toEqual([202, 202]);
     expect(heard).toEqual(['only once']);
+  });
+});
+
+describe('webui server: a send that carries its files as bytes', () => {
+  /** What page.ts `framed` sends: a 4-byte length, the JSON header, the files' bytes. */
+  const frame = (header: unknown, ...files: Buffer[]): Uint8Array<ArrayBuffer> => {
+    const head = Buffer.from(JSON.stringify(header), 'utf8');
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(head.length);
+    return new Uint8Array(Buffer.concat([len, head, ...files]));
+  };
+  const OCTETS = { 'content-type': 'application/octet-stream' };
+
+  it('takes the files as bytes and hands the daemon what the JSON form would have', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const heard: Array<{ text: string; files: Array<{ name?: string; url: string; mime?: string }> }> = [];
+    room.onMessage((m) => heard.push({ text: m.content, files: m.attachments ?? [] }));
+    const png = Buffer.from([137, 80, 78, 71, 0, 255, 10]);
+    const notes = Buffer.from('first line\nsecond — line\n', 'utf8');
+    const body = frame(
+      {
+        topic,
+        text: 'two files — ✓',
+        nonce: 'bin-1',
+        files: [
+          { name: 'shot.png', mime: 'image/png', size: png.length },
+          { name: 'notes.txt', mime: 'text/plain', size: notes.length },
+        ],
+      },
+      png,
+      notes
+    );
+    const res = await fetch(`${base}/api/send`, { method: 'POST', headers: { ...OCTETS, cookie }, body });
+    expect(res.status).toBe(202);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]!.text).toBe('two files — ✓');
+    expect(heard[0]!.files.map((f) => [f.name, f.mime, f.url])).toEqual([
+      ['shot.png', 'image/png', `data:image/png;base64,${png.toString('base64')}`],
+      ['notes.txt', 'text/plain', `data:text/plain;base64,${notes.toString('base64')}`],
+    ]);
+    // The same nonce as JSON is the same message: a retry in either form is answered, not repeated.
+    const again = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ topic, text: 'two files — ✓', nonce: 'bin-1' }),
+    });
+    expect(again.status).toBe(202);
+    expect(heard).toHaveLength(1);
+  });
+
+  it('refuses framing that does not add up, and says why', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { base, topic } = await boot();
+    const cookie = await signIn(base);
+    const post = (body: Uint8Array<ArrayBuffer>): Promise<Response> =>
+      fetch(`${base}/api/send`, { method: 'POST', headers: { ...OCTETS, cookie }, body });
+    const file = Buffer.from('abcdef');
+    const header = { topic, text: 'x', files: [{ name: 'a.bin', mime: '', size: file.length }] };
+    // A byte too many, a byte too few, a header longer than the body, no header at all.
+    for (const body of [
+      frame(header, file, Buffer.from('!')),
+      frame(header, file.subarray(1)),
+      new Uint8Array([0, 0, 1, 0, 123, 125]),
+      new Uint8Array([0, 0]),
+    ]) {
+      expect((await post(body)).status).toBe(400);
+    }
+    // A header the JSON form would refuse is refused here too: an extra key, and no files at all.
+    expect((await post(frame({ ...header, extra: 1 }, file))).status).toBe(400);
+    expect((await post(frame({ topic, text: 'x', files: [] })))).toMatchObject({ status: 400 });
+    expect(warn.mock.calls.flat().join('\n')).toMatch(/POST \/api\/send: refused — .*do not add up/);
+  });
+
+  it('keeps the JSON form’s limits: the body cap, and the topic and name rules', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { base, topic } = await boot();
+    const cookie = await signIn(base);
+    const big = Buffer.alloc(37 * 1024 * 1024);
+    const over = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...OCTETS, cookie },
+      body: frame({ topic, text: '', files: [{ name: 'big.bin', mime: '', size: big.length }] }, big),
+    }).catch(() => undefined);
+    // The server hangs up on an oversized body mid-send, so the client may see a reset instead.
+    if (over) expect(over.status).toBe(413);
+    const file = Buffer.from('x');
+    const named = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...OCTETS, cookie },
+      body: frame({ topic: 'not-a-topic', text: '', files: [{ name: 'a', mime: '', size: 1 }] }, file),
+    });
+    expect(named.status).toBe(400);
+  });
+
+  it('is a POST like any other: refused from another origin, and without a session', async () => {
+    const { base, topic } = await boot();
+    const cookie = await signIn(base);
+    const body = frame({ topic, text: '', files: [{ name: 'a', mime: '', size: 1 }] }, Buffer.from('x'));
+    const cross = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...OCTETS, cookie, origin: 'https://evil.example' },
+      body,
+    });
+    expect(cross.status).toBe(403);
+    const stranger = await fetch(`${base}/api/send`, { method: 'POST', headers: OCTETS, body });
+    expect(stranger.status).toBe(401);
+    // And a type a form CAN send is still not one this route reads.
+    const form = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain', cookie },
+      body,
+    });
+    expect(form.status).toBe(415);
   });
 });
 

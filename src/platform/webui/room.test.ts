@@ -19,7 +19,7 @@ import {
   type UploadStore,
   type WebuiInstance,
 } from './room.js';
-import { MAX_TOPICS, TopicStore } from './topics.js';
+import { MAX_TOPICS, TopicStore, type Topic } from './topics.js';
 import { icon } from './icons.js';
 import { hasTopic } from './index.js';
 import type { InboundMessage } from '../../types.js';
@@ -64,13 +64,19 @@ function attached(over?: Partial<WebuiInstance>): {
   topic: string;
   seen: Seen[];
   off: () => void;
+  /** The topic list as this client holds it, every list event applied — `seen` may have been emptied. */
+  list: () => Topic[];
 } {
   const store = new TopicStore(path.join(dir, `${Math.random()}.json`));
   const room = new WebRoom(instance(over), store);
   const topic = store.current().id;
   const seen: Seen[] = [];
-  const off = room.subscribe(topic, (id, ev) => seen.push({ id, ev }));
-  return { room, topic, seen, off };
+  let held: Topic[] = [];
+  const off = room.subscribe(topic, (id, ev) => {
+    seen.push({ id, ev });
+    held = applyList(held, ev);
+  });
+  return { room, topic, seen, off, list: () => held };
 }
 
 const kinds = (seen: Seen[]): string[] => seen.map((s) => s.ev.t);
@@ -78,6 +84,30 @@ const last = (seen: Seen[]): WebEvent | undefined => seen[seen.length - 1]?.ev;
 /** The last event of one kind: an edit that carries buttons now drags a topic list along behind it. */
 const lastOf = (seen: Seen[], t: WebEvent['t']): WebEvent | undefined =>
   [...seen].reverse().find((s) => s.ev.t === t)?.ev;
+/** The events that carry the topic list, whole (a sync, `topics`) or what changed in it (`topic-rows`). */
+const listEvents = (seen: Seen[]): Seen[] => seen.filter((s) => s.ev.t === 'topics' || s.ev.t === 'topic-rows');
+
+/**
+ * A list event applied to the list a client holds, the way the page applies it (`applyRows`):
+ * written here rather than borrowed from room.ts, so the order the server derives is checked
+ * against an independent reading of the same rule.
+ */
+function applyList(held: Topic[], ev: WebEvent): Topic[] {
+  if (ev.t === 'sync' || ev.t === 'topics') return ev.topics;
+  if (ev.t !== 'topic-rows') return held;
+  const gone = new Set(ev.gone ?? []);
+  const next = held.filter((t) => !gone.has(t.id));
+  for (const row of ev.rows) {
+    const at = next.findIndex((t) => t.id === row.id);
+    if (at >= 0) next[at] = row;
+    else next.push(row);
+  }
+  if (ev.order) return ev.order.map((id) => next.find((t) => t.id === id)).filter((t): t is Topic => Boolean(t));
+  return next
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => b.t.lastAt - a.t.lastAt || a.i - b.i)
+    .map((x) => x.t);
+}
 
 describe('WebRoom: topics are separate conversations', () => {
   it('keeps two topics' + " messages and streams apart", () => {
@@ -92,7 +122,9 @@ describe('WebRoom: topics are separate conversations', () => {
     // A client reading one room is not billed for traffic in another — the point of a
     // per-topic stream on a weak link. Only the topic list crosses.
     expect(kinds(seenA).filter((k) => k === 'msg')).toEqual([]);
-    expect(kinds(seenA)).toContain('topics');
+    // And of the list, only the row that moved.
+    expect(kinds(seenA)).toContain('topic-rows');
+    expect((lastOf(seenA, 'topic-rows') as { rows: Topic[] }).rows.map((t) => t.id)).toEqual([b]);
 
     room.post(a, { own: false, html: '<p>in a</p>' }, 'in a');
     expect(seenA.filter((s) => s.ev.t === 'msg')).toHaveLength(1);
@@ -144,18 +176,20 @@ describe('WebRoom: topics are separate conversations', () => {
   });
 
   it('announces the topic list when one is created, renamed or spoken in', () => {
-    const { room, topic, seen } = attached();
+    const { room, topic, seen, list } = attached();
     seen.length = 0;
-    room.createTopic('second');
-    expect(last(seen)).toMatchObject({ t: 'topics' });
+    const second = room.createTopic('second');
+    expect(last(seen)).toMatchObject({ t: 'topic-rows' });
+    expect(list().map((t) => t.id)).toContain(second.id);
     seen.length = 0;
     room.renameTopic(topic, '[cc] a subject');
-    expect(last(seen)).toMatchObject({ t: 'topics' });
-    expect((last(seen) as { topics: Array<{ title: string }> }).topics.some((t) => t.title === '[cc] a subject')).toBe(true);
+    // The renamed row, and nothing about the other one.
+    expect((last(seen) as { rows: Topic[] }).rows.map((t) => [t.id, t.title])).toEqual([[topic, '[cc] a subject']]);
+    expect(list().some((t) => t.title === '[cc] a subject')).toBe(true);
   });
 
   it('tracks running state and msgCount in the topic list', () => {
-    const { room, topic, seen } = attached();
+    const { room, topic, seen, list } = attached();
     expect(room.topicList().find((t) => t.id === topic)?.running).toBe(false);
     expect(room.topicList().find((t) => t.id === topic)?.msgCount).toBe(0);
 
@@ -163,29 +197,32 @@ describe('WebRoom: topics are separate conversations', () => {
     seen.length = 0;
     room.setTyping(topic, true);
     expect(room.topicList().find((t) => t.id === topic)?.running).toBe(true);
-    expect(seen.some((s) => s.ev.t === 'topics')).toBe(true);
+    expect(listEvents(seen)).toHaveLength(1);
+    expect(list().find((t) => t.id === topic)?.running).toBe(true);
 
     // Posting a message increments msgCount
     room.post(topic, { own: false, html: '<p>hi</p>' }, 'hi');
     expect(room.topicList().find((t) => t.id === topic)?.msgCount).toBe(1);
+    expect(list().find((t) => t.id === topic)?.msgCount).toBe(1);
 
     // Stopping typing sets running: false and announces
     seen.length = 0;
     room.setTyping(topic, false);
     expect(room.topicList().find((t) => t.id === topic)?.running).toBe(false);
-    expect(seen.some((s) => s.ev.t === 'topics')).toBe(true);
+    expect(listEvents(seen)).toHaveLength(1);
+    expect(list().find((t) => t.id === topic)?.running).toBe(false);
   });
 
   it('deletes a topic, cleans up room state, and announces the updated list', () => {
-    const { room, seen } = attached();
+    const { room, seen, list } = attached();
     const second = room.createTopic('second');
     room.post(second.id, { own: false, html: '<p>msg</p>' }, 'msg');
     seen.length = 0;
 
     expect(room.deleteTopic(second.id)).toBe(true);
     expect(room.topicList().some((t) => t.id === second.id)).toBe(false);
-    expect(last(seen)).toMatchObject({ t: 'topics' });
-    expect((last(seen) as { topics: Array<{ id: string }> }).topics.some((t) => t.id === second.id)).toBe(false);
+    expect(last(seen)).toMatchObject({ t: 'topic-rows', gone: [second.id] });
+    expect(list().some((t) => t.id === second.id)).toBe(false);
 
     // Deleting again returns false
     expect(room.deleteTopic(second.id)).toBe(false);
@@ -203,7 +240,7 @@ describe('WebRoom: topics are separate conversations', () => {
 
   it('clears every topic at once, announcing the replacement rather than each removal', () => {
     vi.useFakeTimers();
-    const { room, topic, seen } = attached();
+    const { room, topic, seen, list } = attached();
     const second = room.createTopic('second');
     const msg = room.post(second.id, { own: false, html: '<p>msg</p>' }, 'msg');
     // An edit left in flight, so the sweep is proved to stop the timers rather than leave one
@@ -217,62 +254,176 @@ describe('WebRoom: topics are separate conversations', () => {
     expect(fresh.id).not.toBe(topic);
     expect(fresh.id).not.toBe(second.id);
     // One announcement for the whole sweep, not one per topic dropped.
-    expect(kinds(seen)).toEqual(['topics']);
-    expect((last(seen) as { topics: Array<{ id: string }> }).topics.map((t) => t.id)).toEqual([fresh.id]);
+    expect(kinds(seen)).toEqual(['topic-rows']);
+    expect(list().map((t) => t.id)).toEqual([fresh.id]);
 
     vi.advanceTimersByTime(60_000);
-    expect(kinds(seen)).toEqual(['topics']);
+    expect(kinds(seen)).toEqual(['topic-rows']);
   });
 });
 
 describe('WebRoom: the topic list reaching every client', () => {
   it('does not send a list that has not changed', () => {
     // Several announcers cannot tell whether they changed anything — an outcome the topic already
-    // had, a star set to what it was — and the list goes to every client, a row per topic.
-    const { room, topic, seen } = attached();
+    // had, a star set to what it was — and the list goes to every client.
+    const { room, topic, seen, list } = attached();
     room.renameTopic(topic, 'named');
     room.setActivity(topic, { outcome: { kind: 'done', at: 5, line: 'Done' } });
-    expect(kinds(seen).filter((k) => k === 'topics')).toHaveLength(2);
+    expect(listEvents(seen)).toHaveLength(2);
     seen.length = 0;
 
     room.setActivity(topic, { outcome: { kind: 'done', at: 5, line: 'Done' } });
     room.starTopic(topic, false);
     room.renameTopic(topic, 'named');
-    expect(kinds(seen)).not.toContain('topics');
+    expect(listEvents(seen)).toHaveLength(0);
 
     // A real change still goes out.
     room.starTopic(topic, true);
-    expect((lastOf(seen, 'topics') as { topics: Array<{ starred?: boolean }> }).topics[0]?.starred).toBe(true);
+    expect(list()[0]?.starred).toBe(true);
   });
 
-  it('sends the next list to a client that has just attached, even one the others already have', () => {
-    // A sync is drawn from the list as it is now, which may be newer than the last one sent; the
-    // repeat check must not leave the newcomer holding it.
-    const { room, topic, seen } = attached();
-    room.starTopic(topic, true);
-    const later: Seen[] = [];
-    room.subscribe(topic, (id, ev) => later.push({ id, ev }));
+  it('sends a message elsewhere as its one row, not the whole list', () => {
+    // It was the whole list, to every client, on every message posted anywhere: 34 KB of JSON at
+    // 200 topics for one row's msgCount and lastAt.
+    const { room, topic, seen, list } = attached();
+    const others = Array.from({ length: 30 }, (_, i) => room.createTopic(`topic ${i}`));
+    const busy = others[7]!;
     seen.length = 0;
-    room.starTopic(topic, true);
-    expect(kinds(later)).toEqual(['sync', 'topics']);
-    expect(kinds(seen)).toEqual(['topics']);
-    room.starTopic(topic, true);
-    expect(kinds(later)).toEqual(['sync', 'topics']);
+    room.post(busy.id, { own: false, html: '<p>x</p>' }, 'x');
+    const ev = last(seen) as { t: string; rows: Topic[]; gone?: string[]; order?: string[] };
+    expect(ev.t).toBe('topic-rows');
+    expect(ev.rows.map((t) => t.id)).toEqual([busy.id]);
+    expect(ev.gone).toBeUndefined();
+    // Its new lastAt puts it first, which the page works out by itself.
+    expect(ev.order).toBeUndefined();
+    expect(list().map((t) => t.id)).toEqual(room.topicList().map((t) => t.id));
+    expect(list()[0]?.id).toBe(busy.id);
+    expect(list().some((t) => t.id === topic)).toBe(true);
   });
 
-  it('serialises a list once for every client, not once per client', () => {
+  it('sends the order only when the page would break a tie differently', () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const { room, topic, seen, list } = attached();
+    vi.setSystemTime(1_000_100);
+    const a = room.createTopic('a');
+    vi.setSystemTime(1_000_200);
+    const b = room.createTopic('b');
+    // a and b touched in the same millisecond: the store keeps them in the order they were made
+    // (a first), while the page, which held b ahead of a, would keep b first.
+    vi.setSystemTime(1_000_300);
+    room.topics.touch(b.id, 1_000_300);
+    room.topics.touch(a.id, 1_000_300);
+    seen.length = 0;
+    room.renameTopic(topic, 'nudge');
+    const ev = last(seen) as { order?: string[] };
+    expect(ev.order?.slice(0, 2)).toEqual([a.id, b.id]);
+    expect(list().map((t) => t.id)).toEqual(room.topicList().map((t) => t.id));
+  });
+
+  it('brings every client up to the list a newcomer is handed, so one change reaches all alike', () => {
+    // A sync is drawn from the list as it is now, which may hold a change nobody was sent (the
+    // liveness poll is the only announcer of an agent going away). Unless the others are brought
+    // up to it first, the next change is worked out against a list the newcomer never had.
+    let live = true;
+    const { room, topic, seen, list } = attached();
+    room.useLivenessLookup(() => live);
+    live = false; // unannounced
+    seen.length = 0;
+    const later: Seen[] = [];
+    let laterList: Topic[] = [];
+    room.subscribe(topic, (id, ev) => {
+      later.push({ id, ev });
+      laterList = applyList(laterList, ev);
+    });
+    // The old client is told on the newcomer's arrival; the newcomer's sync already has it.
+    expect(listEvents(seen)).toHaveLength(1);
+    expect(list().find((t) => t.id === topic)?.live).toBe(false);
+    expect(kinds(later)).toEqual(['sync']);
+    room.starTopic(topic, true);
+    expect(listEvents(later)).toHaveLength(1);
+    expect(laterList).toEqual(list());
+    expect(laterList).toEqual(room.topicList());
+  });
+
+  it('keeps a client holding exactly the daemon’s list through any run of changes', () => {
+    // Creates, deletes, posts, renames, stars, and touches landing in the same millisecond (the
+    // ties the page cannot order by itself): after each, what the client folded must be the list.
+    vi.useFakeTimers({ now: 5_000_000 });
+    const { room, list } = attached();
+    let seed = 7;
+    const rnd = (n: number): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n);
+    for (let step = 0; step < 300; step++) {
+      const ids = room.topicList().map((t) => t.id);
+      const pick = ids[rnd(ids.length)]!;
+      if (rnd(3) === 0) vi.advanceTimersByTime(1); // otherwise: the same millisecond, a tie
+      switch (rnd(6)) {
+        case 0:
+          if (ids.length < 40) room.createTopic(`t${step}`);
+          break;
+        case 1:
+          if (ids.length > 1) room.deleteTopic(pick);
+          break;
+        case 2:
+          room.post(pick, { own: false, html: '<p>x</p>' }, 'x');
+          break;
+        case 3:
+          room.renameTopic(pick, `n${step}`);
+          break;
+        case 4:
+          room.starTopic(pick, rnd(2) === 0);
+          break;
+        default:
+          room.setTyping(pick, rnd(2) === 0);
+      }
+      expect(list()).toEqual(room.topicList());
+    }
+  });
+
+  it('serialises a change once for every client, not once per client', () => {
     const { room, topic } = attached();
     const bodies: string[] = [];
-    for (let i = 0; i < 4; i++) room.subscribe(topic, (_id, ev, data) => void (ev.t === 'topics' && bodies.push(data)));
+    for (let i = 0; i < 4; i++) room.subscribe(topic, (_id, ev, data) => void (ev.t === 'topic-rows' && bodies.push(data)));
     const stringify = vi.spyOn(JSON, 'stringify');
     room.starTopic(topic, true);
-    const lists = stringify.mock.calls.filter(([v]) => (v as { t?: string } | undefined)?.t === 'topics');
+    const lists = stringify.mock.calls.filter(([v]) => (v as { t?: string } | undefined)?.t === 'topic-rows');
     stringify.mockRestore();
     expect(lists).toHaveLength(1);
     // And every client is handed that one serialisation, which is what the server writes.
     expect(bodies).toHaveLength(4);
     expect(new Set(bodies).size).toBe(1);
-    expect(JSON.parse(bodies[0]!)).toMatchObject({ t: 'topics' });
+    expect(JSON.parse(bodies[0]!)).toMatchObject({ t: 'topic-rows' });
+  });
+
+  it('hands a resumed page the list only when it moved since the version it holds', () => {
+    const { room, topic, seen, off } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id !== '').at(-1)?.id ?? '';
+    const tv = (listEvents(seen).at(-1)?.ev as { tv: number }).tv;
+    off();
+    const same: Seen[] = [];
+    room.subscribe(topic, (id, ev) => same.push({ id, ev }), lastId, tv);
+    expect(listEvents(same)).toHaveLength(0);
+    room.createTopic('meanwhile');
+    const moved: Seen[] = [];
+    room.subscribe(topic, (id, ev) => moved.push({ id, ev }), lastId, tv);
+    expect(kinds(moved)).not.toContain('sync');
+    expect(lastOf(moved, 'topics')).toMatchObject({ t: 'topics', tv: tv + 1 });
+  });
+
+  it('ends a resume with a marker, and a sync with none', () => {
+    // A page that entered a topic from memory has no sync coming to say it is caught up.
+    const { room, topic, seen, off } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id !== '').at(-1)?.id ?? '';
+    off();
+    room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
+    const resumed: Seen[] = [];
+    room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    expect(kinds(resumed).at(-1)).toBe('resumed');
+    expect(resumed.at(-1)?.id).toBe('');
+    const fresh: Seen[] = [];
+    room.subscribe(topic, (id, ev) => fresh.push({ id, ev }));
+    expect(kinds(fresh)).toEqual(['sync']);
   });
 });
 
@@ -353,7 +504,7 @@ describe('WebRoom: resuming a dropped stream', () => {
     room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
     const identified = seen.filter((s) => s.id !== '');
     const lastId = identified[identified.length - 1]?.id ?? '';
-    expect(lastId).toMatch(new RegExp(`^${topic}\\.\\d+$`));
+    expect(lastId).toMatch(new RegExp(`^${topic}\\.[0-9a-z]+\\.\\d+$`));
     off();
 
     room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
@@ -368,20 +519,31 @@ describe('WebRoom: resuming a dropped stream', () => {
   });
 
   it('gives the cross-topic list event no id, so it cannot move a resume point', () => {
-    // `topics` is the one event that crosses rooms, so it is in no topic's backlog and nothing
+    // The list is the one thing that crosses rooms, so it is in no topic's backlog and nothing
     // could be resumed from it. A browser only advances Last-Event-ID when it sees an `id:`
     // field, so leaving it off keeps the resume point pointing at the last event that IS
     // replayable — numbering it would silently break the resume it looks like it enables.
     const { room, seen } = attached();
     seen.length = 0;
     room.createTopic('another');
-    expect(seen.map((s) => [s.ev.t, s.id])).toEqual([['topics', '']]);
+    expect(seen.map((s) => [s.ev.t, s.id])).toEqual([['topic-rows', '']]);
   });
 
   it('falls back to a full sync when it has nothing to resume from', () => {
-    const { room, topic } = attached();
+    const { room, topic, seen: first } = attached();
     room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
-    for (const lastId of [undefined, 'garbage', `${topic}.notanumber`, 'someothertopic.1']) {
+    const real = first.filter((s) => s.id).pop()?.id ?? '';
+    const [, run, seq] = real.split('.');
+    for (const lastId of [
+      undefined,
+      'garbage',
+      `${topic}.${run}.notanumber`,
+      `someothertopic.${run}.1`,
+      // The shape ids had before they named their process: a page from before the upgrade.
+      `${topic}.${seq}`,
+      // Further on than this room has ever been.
+      `${topic}.${run}.${Number(seq) + 5}`,
+    ]) {
       const seen: Seen[] = [];
       room.subscribe(topic, (id, ev) => seen.push({ id, ev }), lastId);
       expect(seen[0]?.ev.t).toBe('sync');
@@ -389,13 +551,43 @@ describe('WebRoom: resuming a dropped stream', () => {
   });
 
   it('falls back to a full sync rather than handing over a transcript with a hole in it', () => {
-    const { room, topic } = attached();
+    const { room, topic, seen: first } = attached();
+    room.post(topic, { own: false, html: '' }, '');
+    const early = first.filter((s) => s.id).pop()?.id;
     // Further back than the backlog keeps: the gap cannot be filled, and pretending otherwise
     // would silently drop messages out of the middle of the conversation.
     for (let i = 0; i < 400; i += 1) room.post(topic, { own: false, html: '' }, '');
     const seen: Seen[] = [];
-    room.subscribe(topic, (id, ev) => seen.push({ id, ev }), `${topic}.1`);
+    room.subscribe(topic, (id, ev) => seen.push({ id, ev }), early);
     expect(seen[0]?.ev.t).toBe('sync');
+  });
+
+  it('answers a resume point from the process before a restart with a full sync, not with nothing', () => {
+    // The crash path: no `bye`, so EventSource reconnects by itself and sends back the id it last
+    // saw — from a process that is gone. The new one's numbering starts again at 1 and its backlog
+    // is empty, which read as "nothing missed": the page was handed no sync and kept a transcript
+    // the new process had never seen, with nothing on screen to say so.
+    vi.useFakeTimers({ now: new Date('2026-11-10T08:00:00Z') });
+    const file = path.join(dir, 'restart.json');
+    const store = new TopicStore(file);
+    const topic = store.current().id;
+    const before = new WebRoom(instance(), store);
+    const seen: Seen[] = [];
+    before.subscribe(topic, (id, ev) => seen.push({ id, ev }));
+    for (let i = 0; i < 5; i++) before.post(topic, { own: false, html: `<p>m${i}</p>` }, `m${i}`);
+    const lastId = seen.filter((s) => s.id).pop()?.id;
+    before.dispose();
+
+    vi.setSystemTime(new Date('2026-11-10T08:00:07Z'));
+    const after = new WebRoom(instance(), new TopicStore(file));
+    // Even one that has since said MORE than the old process had: the old id's number is reached
+    // again, and only the run tells the two apart.
+    for (let i = 0; i < 8; i++) after.post(topic, { own: false, html: `<p>n${i}</p>` }, `n${i}`);
+    const resumed: Seen[] = [];
+    after.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    expect(resumed[0]?.ev).toMatchObject({ t: 'sync', topic });
+    expect((resumed[0]?.ev as { messages: unknown[] }).messages).toHaveLength(8);
+    after.dispose();
   });
 
   it('a sync carries the topic it is for, its messages, and the topic list', () => {
@@ -1290,10 +1482,9 @@ describe('WebRoom: which directory a topic is working in', () => {
     expect(room.topicList().find((t) => t.id === topic)?.dir).toBeUndefined();
   });
 
-  /** The row's label as the last topic list sent said it. */
-  const sentDir = (seen: Seen[], topic: string): string | undefined => {
-    const ev = lastOf(seen, 'topics') as { topics: Array<{ id: string; dir?: { name: string; host?: string } }> } | undefined;
-    const dir = ev?.topics.find((t) => t.id === topic)?.dir;
+  /** The row's label as the client holds it, from the topic list events it was sent. */
+  const sentDir = (held: Topic[], topic: string): string | undefined => {
+    const dir = held.find((t) => t.id === topic)?.dir;
     return dir ? `${dir.host ?? ''}·${dir.name}` : undefined;
   };
 
@@ -1302,7 +1493,7 @@ describe('WebRoom: which directory a topic is working in', () => {
     // directory menu both announced the list inside the TTL, and the row went on naming the default
     // agent's machine until something happened to announce it again.
     vi.useFakeTimers();
-    const { room, topic, seen } = attached();
+    const { room, topic, list } = attached();
     let where = { path: '/home/u/workspace', host: 'uniagent' };
     room.useWorkdirLookup(() => where);
     room.topicList();
@@ -1310,32 +1501,32 @@ describe('WebRoom: which directory a topic is working in', () => {
     room.submit({ topic, text: '/agent oc2' });
     where = { path: '/home/u/workspace', host: 'awsfree2' }; // what the daemon did with it
     room.post(topic, { own: false, html: '<p>ack</p>' }, '▸ opencode is answering');
-    expect(sentDir(seen, topic)).toBe('awsfree2·workspace');
+    expect(sentDir(list(), topic)).toBe('awsfree2·workspace');
 
     // And a tap, the other way the operator moves a topic: a `/cd` menu pick.
     const menu = room.post(topic, { own: false, html: '', buttons: [{ id: 'wdr:r:1', label: 'quantlab' }] }, 'Working dir:');
     room.click({ topic, messageId: menu.id, buttonId: 'wdr:r:1' });
     where = { path: '/home/u/workspace/quantlab', host: 'awsfree2' };
     room.revise(topic, menu.id, 'Now working in quantlab', []);
-    expect(sentDir(seen, topic)).toBe('awsfree2·quantlab');
+    expect(sentDir(list(), topic)).toBe('awsfree2·quantlab');
   });
 
   it('is corrected by the liveness poll when a move lands after its own announcement', () => {
     // A `/cd` on a host lists the directory over the link before it applies, so the list sent with
     // the echo is already out of date and nothing else is coming. The poll reads the label fresh.
     vi.useFakeTimers();
-    const { room, topic, seen } = attached();
+    const { room, topic, seen, list } = attached();
     let path = '/srv/a';
     room.useWorkdirLookup(() => ({ path }));
     room.useLivenessLookup(() => false);
     seen.length = 0;
 
     vi.advanceTimersByTime(60_000);
-    expect(kinds(seen)).not.toContain('topics'); // nothing moved, nothing sent
+    expect(listEvents(seen)).toHaveLength(0); // nothing moved, nothing sent
 
     path = '/srv/b';
     vi.advanceTimersByTime(60_000);
-    expect(sentDir(seen, topic)).toBe('·b');
+    expect(sentDir(list(), topic)).toBe('·b');
   });
 });
 
@@ -1358,7 +1549,7 @@ describe('WebRoom: what the switcher dot is saying', () => {
     seen.length = 0;
     room.revise(topic, msg.id, 'answered: Yes', []);
     expect(flagsOf(room, topic).asking).toBe(false);
-    expect(kinds(seen)).toContain('topics');
+    expect(listEvents(seen)).toHaveLength(1);
   });
 
   it('keeps saying it is waiting while a menu turns its pages', () => {
@@ -1372,7 +1563,7 @@ describe('WebRoom: what the switcher dot is saying', () => {
     room.revise(topic, msg.id, 'pick one', [{ id: 'cd:p:2', label: 'Next' }]);
 
     expect(flagsOf(room, topic).asking).toBe(true);
-    expect(kinds(seen)).not.toContain('topics');
+    expect(listEvents(seen)).toHaveLength(0);
   });
 
   it('stops waiting when the question is deleted rather than answered', () => {
@@ -1626,20 +1817,19 @@ describe('WebRoom: what the switcher dot is saying', () => {
     // An idle reclaim happens on a timer in a conversation nobody is touching, so there is no
     // message, no typing change and no click to hang the redraw off. Hence the poll.
     vi.useFakeTimers();
-    const { room, topic, seen } = attached();
+    const { room, topic, seen, list } = attached();
     let up = true;
     room.useLivenessLookup(() => up);
     seen.length = 0;
 
     // Nothing changed: the poll stays silent rather than re-sending the list every tick.
     vi.advanceTimersByTime(60_000);
-    expect(kinds(seen)).not.toContain('topics');
+    expect(listEvents(seen)).toHaveLength(0);
 
     up = false;
     vi.advanceTimersByTime(60_000);
-    expect(kinds(seen)).toContain('topics');
-    expect((lastOf(seen, 'topics') as { topics: Array<{ id: string; live?: boolean }> }).topics
-      .find((t) => t.id === topic)?.live).toBe(false);
+    expect(listEvents(seen)).toHaveLength(1);
+    expect(list().find((t) => t.id === topic)?.live).toBe(false);
   });
 
   it('keeps posting messages when the liveness lookup throws', () => {
@@ -1658,7 +1848,7 @@ describe('WebRoom: what the switcher dot is saying', () => {
 describe('WebRoom: closing idle agents', () => {
   /** A room with four topics — idle, working, asking, and an idle one whose daemon refuses — plus a log of what was asked. */
   function fleet() {
-    const { room, topic: idle, seen } = attached();
+    const { room, topic: idle, seen, list } = attached();
     const working = room.createTopic('working').id;
     const asking = room.createTopic('asking').id;
     const stubborn = room.createTopic('stubborn').id;
@@ -1674,7 +1864,7 @@ describe('WebRoom: closing idle agents', () => {
       up.delete(id);
       return true;
     });
-    return { room, seen, asked, idle, working, asking, stubborn };
+    return { room, seen, list, asked, idle, working, asking, stubborn };
   }
 
   it('ends the listed topics that are still idle, and leaves the rest running', () => {
@@ -1690,11 +1880,11 @@ describe('WebRoom: closing idle agents', () => {
   });
 
   it('redraws the dots at once instead of at the next liveness poll', () => {
-    const { room, seen, idle } = fleet();
+    const { room, seen, list, idle } = fleet();
     seen.length = 0;
     room.closeIdle([idle]);
-    const listed = (lastOf(seen, 'topics') as { topics: Array<{ id: string; live?: boolean }> } | undefined)?.topics;
-    expect(listed?.find((t) => t.id === idle)?.live).toBe(false);
+    expect(listEvents(seen)).toHaveLength(1);
+    expect(list().find((t) => t.id === idle)?.live).toBe(false);
   });
 
   it('closes nothing, and says so, without a daemon to ask or when asking throws', () => {
@@ -1709,10 +1899,13 @@ describe('WebRoom: closing idle agents', () => {
 
 describe('WebRoom: ending a topic and the topics under it', () => {
   it('hands the one topic to the daemon and answers what became of each', () => {
-    const { room, topic, seen } = attached();
+    const { room, topic, seen, list } = attached();
     const asked: Array<{ topic: string; confirmed: string[] }> = [];
+    let up = true;
+    room.useLivenessLookup(() => up);
     room.useTopicKill((ref, confirmed) => {
       asked.push({ topic: ref.thread ?? '', confirmed: [...confirmed].sort() });
+      up = false;
       return [
         { topic: ref.thread ?? '', outcome: 'ended' },
         { topic: 'b2c3d4e5', outcome: 'ended' },
@@ -1731,7 +1924,8 @@ describe('WebRoom: ending a topic and the topics under it', () => {
       { topic: 'c3d4e5f6', outcome: 'no-child' },
     ]);
     // The dots go grey now rather than at the next liveness poll.
-    expect(kinds(seen)).toContain('topics');
+    expect(listEvents(seen)).toHaveLength(1);
+    expect(list().find((t) => t.id === topic)?.live).toBe(false);
   });
 
   it('answers no rows for a topic it does not hold, and no-child when no daemon offered a hook', () => {
@@ -1785,8 +1979,11 @@ describe('WebRoom: a full topic list makes room instead of refusing', () => {
     // The id and the title, because the daemon's binding for it outlives the row and this line
     // is how its session can still be found.
     expect(log.mock.calls.flat().join('\n')).toMatch(new RegExp(`evicted ${ids[0]} "t0"`));
-    // One list, not one for the eviction and another for the creation.
-    expect(kinds(seen).filter((k) => k === 'topics')).toHaveLength(1);
+    // One list event, not one for the eviction and another for the creation: the one that went
+    // and the one that came, together.
+    expect(listEvents(seen)).toHaveLength(1);
+    expect(listEvents(seen)[0]?.ev).toMatchObject({ t: 'topic-rows', gone: [ids[0]] });
+    expect((listEvents(seen)[0]?.ev as { rows: Topic[] }).rows.map((t) => t.id)).toEqual([fresh.id]);
   });
 
   it('takes an evicted topic\'s kept transcript with it', () => {
@@ -1856,11 +2053,11 @@ describe('WebRoom: a full topic list makes room instead of refusing', () => {
   });
 
   it('announces a star, and refuses one for a topic that does not exist', () => {
-    const { room, topic, seen } = attached();
+    const { room, topic, seen, list } = attached();
     seen.length = 0;
     expect(room.starTopic(topic, true)).toBe(true);
-    expect((lastOf(seen, 'topics') as { topics: Array<{ id: string; starred?: boolean }> }).topics
-      .find((t) => t.id === topic)?.starred).toBe(true);
+    expect(listEvents(seen)).toHaveLength(1);
+    expect(list().find((t) => t.id === topic)?.starred).toBe(true);
     expect(room.starTopic('ffffffff', true)).toBe(false);
   });
 
@@ -2008,7 +2205,45 @@ describe('WebRoom: machines the daemon cannot reach', () => {
     const resumed: Seen[] = [];
     room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
     expect(kinds(resumed)).not.toContain('sync');
-    expect(last(resumed)).toEqual({ t: 'machines', offline: DOWN });
+    expect(resumed.find((s) => s.ev.t === 'machines')?.ev).toEqual({ t: 'machines', offline: DOWN });
+  });
+
+  it('hands a resumed page the topic list too, which no backlog keeps', () => {
+    // A page in the background closes its stream and resumes it minutes later; whatever the list
+    // went through meanwhile reached nobody, and a sidebar from before would stay wrong until the
+    // next message anywhere.
+    const { room, topic, seen, off } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id !== '').at(-1)?.id ?? '';
+    off();
+    const added = room.createTopic('made while it was away');
+    const resumed: Seen[] = [];
+    room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    expect(kinds(resumed)).not.toContain('sync');
+    const list = resumed.find((s) => s.ev.t === 'topics')?.ev as { topics: Array<{ id: string }> } | undefined;
+    expect(list?.topics.map((t) => t.id)).toContain(added.id);
+  });
+
+  it('numbers a sync with the room’s position, so a stream that drops straight after it resumes', () => {
+    const { room, topic } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
+    const first: Seen[] = [];
+    room.subscribe(topic, (id, ev) => first.push({ id, ev }));
+    expect(first[0]?.ev.t).toBe('sync');
+    expect(first[0]?.id).toMatch(new RegExp(`^${topic}\\.[0-9a-z]+\\.\\d+$`));
+    // Nothing said since: the resume hands over nothing, not the topic again.
+    const again: Seen[] = [];
+    room.subscribe(topic, (id, ev) => again.push({ id, ev }), first[0]?.id);
+    expect(kinds(again)).not.toContain('sync');
+    expect(again.filter((s) => s.ev.t === 'msg')).toHaveLength(0);
+    // Something said since: exactly that.
+    room.post(topic, { own: false, html: '<p>three</p>' }, 'three');
+    const later: Seen[] = [];
+    room.subscribe(topic, (id, ev) => later.push({ id, ev }), first[0]?.id);
+    expect(later.filter((s) => s.ev.t === 'msg').map((s) => (s.ev as { msg: { html: string } }).msg.html)).toEqual([
+      '<p>three</p>',
+    ]);
   });
 });
 

@@ -833,17 +833,90 @@ full re-send of the conversation. A `Last-Event-ID` the backlog no longer reache
 a full sync rather than handing over a transcript with a hole in it, and the cross-topic
 `topics` event deliberately carries no id so it cannot move a resume point.
 
+**The id names the process that sent it** (`<topic>.<run>.<seq>`, the run being `startedAt` in
+base 36). Numbering restarts at 1 with every process and the backlog starts empty, so through a
+crash — no `bye`, `EventSource` reconnecting by itself with its old id — the new process used to
+find nothing in its backlog newer than the id, call that "nothing missed", and send no sync: the
+page sat on a transcript the new process had never seen, with nothing on screen to say so. An id
+from another run, or from beyond anything this room has numbered, is now answered with a sync.
+
+**A restart under an open page is ridden out, not reported.** `bye` used to stop the page for
+good with "Reload when it is back", which on a phone nobody read until they typed into a dead
+page. The page now closes the stream and opens a new one on a back-off (1 s doubling to 30 s,
+reset by a stream that opens); the resume point it sends names the run that went away, so the
+daemon that answers sends the whole topic. A stream refused for good (`readyState` 2) used to mean "show the
+gate", but a proxy's 502 while the daemon restarts is refused the same way as a 401 — cloudflared
+answers so — so the page asks `api/push` first and shows the gate only for a 401. After a sync
+from a new run the page sends a HEAD for itself: the ETag is the page's build (`servePage`), the
+script carries the same hash as `BUILD`, and when they differ a line above the composer offers a
+**Reload**. An offer, not a reload: the page cannot see what a reload would cost (a skill half
+edited, a recording, the place in a long transcript), and the old script still works against a
+newer daemon for as long as the protocol only grows.
+
+**A tab nobody is looking at has no stream.** It used to receive everything — each message in
+its topic, and the whole topic list after every message posted anywhere — whether it was a phone
+on the table or a desktop tab behind ten others. Nothing on the page needs the stream while it is
+hidden (it never changes the title; notifications are Web Push, through the service worker; the
+seen mark is posted only while visible), so a tab hidden for 15 s (`PARK_MS`, so a glance at
+another tab costs no reconnect) closes it, and coming back opens a new one with `?last=<id>`:
+a new `EventSource` cannot set `Last-Event-ID`, and `server.ts` reads the query when the header is
+absent. Two things make that resume land. A sync is now sent numbered with the room's position,
+so a stream has a resume point from its first event rather than from the first message after it;
+and a resumed stream is handed the topic list after the replay, since no backlog keeps it and a
+sidebar from before the tab was hidden would otherwise stay wrong until the next post. A resume
+neither takes the focus nor re-asks the side panel for its lists — the tab coming back has
+already done that, and the focus is where the person left it.
+
 **Everything is compressed**, the event stream included — which is the part with a trap in it.
 A gzip stream buffers until told otherwise, so each event is followed by an explicit
 `Z_SYNC_FLUSH`. Without it the page receives nothing until the connection closes, which is
 indistinguishable from a hung daemon. `server.test.ts` pins it, and the test hangs rather than
 failing an assertion if the flush goes away — which is the honest reproduction.
 
+**The page is downloaded once per build, not once per load.** It is 455 KB, 134 KB gzipped, and
+until it has all arrived nothing can be tapped: 2.6 s at 500 kbps, 6.3 s at 200 kbps, on every
+reload and every tab a phone brought back. It used to be `no-store`, so that a stale page could
+never outlive an upgrade. It is now `private, no-cache` with an ETag that is a hash of the rendered
+bytes (`servedPage`): the browser keeps it and asks every time, and the answer is a 304 until
+anything that changes those bytes changes — an upgrade, the title, the terminal or the password
+door. The render and its gzip (20 ms on the event loop per load, before) are made once per set of
+inputs. Measured in Chromium at 400 ms / 500 kbps and 800 ms / 200 kbps on 2026-11-10: a reload
+of an address the browser already loaded went from 134 KB to a 0.6 KB 304, and from 6.3 s to 1.0 s
+on the slower link (`project-scripts/talkcode-webui-net/reload-probe.mts`, `weak.mts` F).
+
+The browser keys its cache by the whole URL, and the page keeps the topic in the address
+(`?t=<id>`, so a reload and a shared link land on it). So the first reload after switching to a
+topic this browser has never loaded the page on still downloads it whole, once; after that, that
+address is a 304 too. Moving the topic out of the query string would make every reload a 304, but
+it is what links and notifications open, so it was left alone.
+
+**When the page is downloaded, it is brotli where the client takes it.** Quality 11 makes it 18%
+smaller than gzip (114 KB against 139 KB; DOMContentLoaded 2.65 s → 2.25 s at 500 kbps, Chromium,
+`br-probe.mts`) and takes about a second, so it is made once per cached page, on libuv's pool
+(`brotliPage`), the first time a client that takes `br` asks; until it lands that client is sent
+gzip. Browsers offer `br` only over https, so behind the TLS proxy this page is meant to sit behind
+— whether the proxy asks the daemon for it is the proxy's choice. The event stream stays gzip: it is
+flushed after every event, and that is where the trap is (above), not the ratio.
+
 **Sends are idempotent.** A POST can be accepted and still time out on a bad link, so the page
 retries — which is only safe because each send carries a nonce the server remembers. The
 daemon's own inbound dedup cannot help here: it keys on a message id, and a retry mints a fresh
 one. That nonce comes back out on the echo (`WebMessage.nonce`), which is how the page knows
 which of its local bubbles the echo is.
+
+**Files go up as bytes, not as base64 in JSON.** A send that carries files is framed by the page
+(`framed`: a 4-byte length, the send as JSON with each file's `data` replaced by its `size`, then
+the files' bytes) and posted to the same `api/send` as `application/octet-stream`. `server.ts`
+`readFramedSend` checks that the sizes add up to the body exactly, turns it back into the JSON
+request — base64 and all, which is what `room.submit` and the daemon's `data:` URL path take — and
+validates that with `SendRequestSchema`, so the body cap, the per-file limits, the topic id and
+`.strict()` are the JSON form's, unchanged. Same route, same nonce, so a retry in either form is the
+same message. The type is not one a form can send, so a cross-site page cannot post it without a
+preflight; the origin check and the session apply as to any POST. Text alone stays JSON. Base64 is a
+third larger than the file, and on a slow uplink that third decided whether a send finished inside
+its limit at all: in Chromium at 250 kbps up (`project-scripts/talkcode-webui-net/upload.mts`,
+2026-11-10) a 1 MB file used to go up as 1.33 MB, outlast its 37 s limit, be retried twice from
+zero and fail after 110 s; as bytes it arrives in 33 s.
 
 **A message is on screen before the request leaves.** Waiting for the echo to draw it meant a
 visibly empty transcript for as long as the round trip took — and on a request that failed after
@@ -949,6 +1022,24 @@ refused for space drops everything but the topic being read and tries once befor
 written off for the session with one `console.warn`. Writes are coalesced into a 400ms window:
 a streamed reply upserts the same message every second or so and each one would otherwise
 re-serialise the whole topic.
+
+**Going back to a topic in the same tab resumes it from memory** (`held`, since this branch).
+Before, every switch was a full sync — up to 1000 messages, 85 KB gzipped and 3.4–3.7 s at
+500 kbps for a long topic — because this cache keeps 200 and a switch empties memory, so it saved
+nothing on the way back. Now the topic being left is kept in memory whole (every message on screen,
+the run it belongs to, and `lastEv`, the id of the last event that reached it), and coming back puts
+it up at once and opens the stream with `?last=` — the backlog replays what was said meanwhile,
+then a `resumed` event says the catch-up is over (there is no sync to say it), which takes the
+waiting line away. When the backlog no longer reaches, the daemon sends the whole topic as before
+and it is reconciled over what is on screen. Chosen over two alternatives: putting the whole ring in
+IndexedDB would mean re-serialising up to 1.5 MB every 400 ms while a long topic streams; a sync
+that sends only the tail and fetches the rest on scroll would change what every reader of a sync
+assumes (claiming echoes, settling unsure sends, landing on a message, the unread count). Bounded
+at 8 topics and 4000 messages between them, least recently left first; a topic left before its
+stream said where it was, or held from a daemon that has since restarted, is entered the old way.
+Measured in Chromium at 400 ms / 500 kbps on 2026-11-10: switching back to a 1000-message topic went
+from 85.0 KB and 3.7 s to a few hundred bytes and 1.4 s, which is the time it takes to draw 1000
+messages on that (loaded) machine; the first visit to that topic is unchanged, at 86 KB.
 
 **A browser with no IndexedDB is a supported configuration.** Private windows and old engines
 both produce one; the cache is the only thing that goes, and `page.dom.test.ts` holds that.
@@ -1071,6 +1162,27 @@ reconnect, receive the same sync and loop. The topic list (`announceTopics`) is 
 every client and not sent at all when it has not changed; each client's gzip stream is its own, so
 compression stays per client. `topics.json` gathers a streaming reply's touches into one write a
 second, while creating, deleting, clearing and starring still write at once.
+
+**The topic list travels as what changed** (`topic-rows`, since this branch). It used to be the
+whole list after every message posted anywhere, to every client — 34 KB of JSON at 200 topics,
+2.5 KB gzipped, for one row's `msgCount` and `lastAt` — and since a message always moves those two,
+the "has it changed" check never once found two lists equal. Now the room keeps the list every
+attached client holds (`sent`) and sends the rows that differ, the ids that went, and the order only
+when the page could not work it out: the page re-sorts by `lastAt` with ties left as they were
+(`applyRows`), the store breaks a tie by insertion order, and `derivedOrder` runs the page's rule to
+see whether they agree. A message elsewhere now costs every other page 0.07 KB on the wire instead
+of 2.48 KB (`project-scripts/talkcode-webui-net/events.mts`, 2026-11-10). Three things make it hold:
+
+- **Everyone is brought up to the list a newcomer is handed.** `subscribe` announces before it
+  attaches, so a change nobody was told about (the liveness poll is the only announcer of an agent
+  going away) reaches the others first, and the next change is worked out against one list for all.
+  Installing a liveness lookup announces too, for the same reason.
+- **A version (`tv`) names the list.** It moves with every change, attached clients or not; a sync
+  carries it, the page sends it back on a resume, and a resumed stream is handed the whole list
+  (`topics`) only when it moved — so a tab coming back to an unchanged sidebar costs nothing for it.
+- **A kind of its own, not a variant of `topics`.** A page from before this that is still open
+  across the upgrade ignores `topic-rows`; handed a `topics` with no list in it, it would have read
+  "every topic is gone" and opened a new one.
 
 **The page reconciles; it does not rebuild.** A `sync` carries the whole topic, and the obvious
 reading of that — empty `#log`, paint it again — is what made entering a topic jarring: the
@@ -1321,7 +1433,7 @@ or not, has a × (44px under the narrow-screen layout). Two things about it are 
   carrying one key too many. `page.dom.test.ts` pins both halves.
 
 **Once sent, the operator's own pictures show in their message too** (since 2.4.0; before, only
-their names did). The page drops the bytes once they are sent — they are base64 in a request
+their names did). The page drops the bytes once they are sent — they are in a request
 body, and the same reason means a failed message that carried them cannot be retried after a
 reload, see [built for a bad connection](#built-for-a-bad-connection) — so the daemon keeps the
 copy. `room.ts` `submit`
@@ -1484,8 +1596,10 @@ dropped the service-worker-with-a-fetch-handler requirement — the check was a 
 an offline story", sites defeated it with empty handlers, and it was removed rather than
 tightened ([Chrome for Developers](https://developer.chrome.com/blog/update-install-criteria),
 read 2026-09-20). What remains is HTTPS and a manifest. A worker here would also mean caching
-the app shell, and the shell is served `no-store` on purpose: a stale copy after an upgrade is
-a support question with no error message. If offline reading is ever wanted, the local
+the app shell, and the shell is never used without asking the daemon first: a stale copy after
+an upgrade is a support question with no error message. It is cached by the browser, but under
+`no-cache` and an ETag that is a hash of the rendered bytes ([below](#built-for-a-bad-connection)),
+which a cache in a worker would bypass. If offline reading is ever wanted, the local
 transcript cache above is the place for it, not a second copy of the shell.
 
 **The icon exists twice on purpose.** `ICON_SVG` is the drawing; the base64 PNG beside it is
@@ -1510,7 +1624,8 @@ without it. `page.test.ts` pins the viewport tag so this does not get added by r
 
 - **Shutdown.** `server.close()` alone never returns: its callback waits for every connection
   to end, and an event stream by definition never does. `stop()` ends the streams itself
-  (with a `bye` event, because `EventSource` reconnects after a *clean* close too), then
+  (with a `bye` event, so the page closes its stream and retries on a back-off rather than on
+  `EventSource`'s own schedule), then
   `closeIdleConnections` / `close` / `closeAllConnections`, behind a timeout. Get this wrong
   and Ctrl-C hangs the daemon forever, because the signal handler's `process.exit` lives in
   that promise's `finally`.

@@ -42,11 +42,11 @@ import { createReadStream } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
-import { constants as zlibConstants, createGzip, gzipSync } from 'node:zlib';
+import { brotliCompress, constants as zlibConstants, createGzip, gzipSync } from 'node:zlib';
 
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
-import { renderPage } from './page.js';
+import { servePage } from './page.js';
 import {
   ClickRequestSchema,
   CreateTopicRequestSchema,
@@ -55,6 +55,7 @@ import {
   KillTopicRequestSchema,
   DeleteTopicRequestSchema,
   EndTerminalRequestSchema,
+  FramedSendHeaderSchema,
   LoginRequestSchema,
   MAX_BODY_BYTES,
   SendRequestSchema,
@@ -67,6 +68,7 @@ import {
   ReviewOpRequestSchema,
   StarTopicRequestSchema,
   parseBody,
+  type SendRequest,
   type WebEvent,
 } from './protocol.js';
 import { MAX_READ_BYTES, readableKind, renderReading } from './reading.js';
@@ -302,6 +304,41 @@ interface Ctx {
   warned: Map<string, number>;
   /** Push notifications (webpush.ts); absent in a test that does not care, which then offers none. */
   push?: WebPush;
+  /** The page as last served — see `servedPage`. */
+  page?: ServedPage;
+}
+
+/**
+ * The page document, rendered once per configuration, with its validator and its compressed form.
+ *
+ * Every load used to render it (3.7 ms) and gzip it (16.4 ms) again on the event loop, and send all
+ * of it: 455 KB, 134 KB on the wire — 2.6 s on a 500 kbps link, for bytes that only change when the
+ * daemon is upgraded. Now the browser keeps it and asks before using it (`no-cache`), and the answer
+ * is a 304 unless the rendered bytes changed. The validator is the page's build — a hash of what
+ * `servePage` rendered — rather than a version number, so an upgrade, a new title or a terminal
+ * turned on all produce a new page at the next load without anyone having to remember to bump
+ * anything, and the page itself carries the same hash to compare with after a restart.
+ */
+interface ServedPage {
+  /** The render inputs this entry was made from; a different set renders again. */
+  key: string;
+  raw: Buffer;
+  gzip: Buffer;
+  /**
+   * The same page as brotli at quality 11 — 18% smaller than gzip (113 KB against 138 KB) — once it
+   * is ready. That quality takes about a second, which is why it is only ever made for this cached
+   * page, on the thread pool, and never per request (`brotliPage`): until it lands, a client that
+   * takes br is sent gzip. The event stream stays gzip, flushed per event (see `openStream`).
+   */
+  br?: Buffer;
+  /** `brotliPage` has started on this entry. */
+  brotli?: boolean;
+  /**
+   * Weak, because the same validator stands for every encoding of it: they are the same page, and
+   * `If-None-Match` compares weakly anyway. A strong tag would also oblige a proxy that
+   * re-compresses (Cloudflare does) to drop it.
+   */
+  etag: string;
 }
 
 /** One request, already parsed as far as routing needs it. */
@@ -322,7 +359,11 @@ interface Route {
 
 /** Reachable without a session: the page itself, and the exchange that gets you one. */
 const OPEN: Route[] = [
-  { method: 'GET', path: '/', run: ({ req, res }, ctx) => { renewCookie(req, res, ctx); sendPage(req, res, ctx.instance, ctx.terminal); } },
+  { method: 'GET', path: '/', run: ({ req, res }, ctx) => { renewCookie(req, res, ctx); sendPage(req, res, ctx); } },
+  // The page's validator alone, for a page left open through a restart to ask whether the daemon
+  // it reconnected to would serve a different page (`checkBuild` in the script). node:http sends no
+  // body for a HEAD, so this is the GET's headers and nothing else.
+  { method: 'HEAD', path: '/', run: ({ req, res }, ctx) => sendPage(req, res, ctx) },
   { method: 'POST', path: '/api/login', run: login },
   // Open on purpose. The browser fetches these while deciding whether the site can be
   // installed, which is before anyone has signed in, and a 401 there is indistinguishable from
@@ -470,48 +511,123 @@ function renewCookie(req: IncomingMessage, res: ServerResponse, ctx: Ctx): void 
   if (id && ctx.auth.check(req.headers.cookie)) res.setHeader('Set-Cookie', sessionCookie(id, isSecure(req)));
 }
 
-function sendPage(
-  req: IncomingMessage,
-  res: ServerResponse,
-  instance: WebuiInstance,
-  terminal: TerminalSettings
-): void {
-  body(
-    req,
-    res,
-    200,
-    Buffer.from(
-      renderPage(instance.title, terminal.enabled, passwordLogin(instance), terminal.sessions.canEnd),
-      'utf8'
-    ),
-    {
-    'Content-Type': 'text/html; charset=utf-8',
-    // The page is the app; a stale cached copy after an upgrade is a support question.
-    'Cache-Control': 'no-store',
-    // Belt and braces around web-markdown's escaping: even if something did get through, an
-    // inline script from it would not run and no external origin could be reached.
-    //
-    // `frame-src 'self'` is what lets the terminal pane exist. Same-origin is not a sandbox —
-    // ttyd's page can read this one's DOM and its cookie — and that is accepted knowingly:
-    // the alternative buys nothing, because a cross-origin iframe would need
-    // `allow-same-origin` to hold a session at all and that undoes the sandbox. The trade is
-    // ttyd's terminal, with its IME and file transfer, against re-implementing all of it here.
-    //
-    // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
-    // It names where a WORKER may be loaded from and nothing else: the page's own scripts are still
-    // inline only, so no same-origin file — an agent's upload included — can run as one.
-    'Content-Security-Policy':
-      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+/**
+ * The page, or a 304 when the browser already holds this exact one.
+ *
+ * `private, no-cache` rather than the `no-store` it had: the reason given for that — a stale copy
+ * after an upgrade is a support question — rules out a cache that is used WITHOUT asking, not one
+ * that asks. `no-cache` asks every time, and the ETag is a hash of the rendered bytes, so the first
+ * load after an upgrade gets the new page as surely as before; every other load costs one round
+ * trip instead of 134 KB. `private` because the response can carry a renewed session cookie
+ * (`renewCookie`), which no shared cache may keep.
+ *
+ * No service worker stands in the way: `sw.ts` has no fetch handler, so this header is the whole of
+ * the page's caching.
+ */
+function sendPage(req: IncomingMessage, res: ServerResponse, ctx: Ctx): void {
+  const page = servedPage(ctx);
+  const headers: Record<string, string> = {
+    ...PAGE_HEADERS,
+    'Cache-Control': 'private, no-cache',
+    ETag: page.etag,
+    // On every answer, compressed or not and 304 or not: which body a cache holds depends on it.
+    Vary: 'Accept-Encoding',
+  };
+  if (matchesEtag(req, page.etag)) {
+    res.writeHead(304, headers);
+    res.end();
+    return;
+  }
+  const takesBr = accepts(req, 'br');
+  if (takesBr) brotliPage(page);
+  const br = takesBr ? page.br : undefined;
+  const gzip = !br && acceptsGzip(req);
+  const out = br ?? (gzip ? page.gzip : page.raw);
+  res.writeHead(200, {
+    ...headers,
+    'Content-Length': String(out.length),
+    ...(br ? { 'Content-Encoding': 'br' } : gzip ? { 'Content-Encoding': 'gzip' } : {}),
   });
+  res.end(out);
 }
+
+/** Render, hash and compress the page — once per set of render inputs. */
+function servedPage(ctx: Ctx): ServedPage {
+  const args = [
+    ctx.instance.title,
+    ctx.terminal.enabled,
+    passwordLogin(ctx.instance),
+    ctx.terminal.sessions.canEnd,
+  ] as const;
+  const key = JSON.stringify(args);
+  if (ctx.page?.key === key) return ctx.page;
+  const { html, build } = servePage(...args);
+  const raw = Buffer.from(html, 'utf8');
+  const page: ServedPage = { key, raw, gzip: gzipSync(raw), etag: `W/"${build}"` };
+  ctx.page = page;
+  return page;
+}
+
+/**
+ * Make the page's brotli form, the first time a client that takes br asks for the page. Off the
+ * event loop (zlib's async form runs on libuv's pool), and onto this entry only: a page rendered
+ * again meanwhile is a different entry and makes its own. Nothing is made for a deployment whose
+ * clients never ask — a proxy that only takes gzip, say.
+ */
+function brotliPage(page: ServedPage): void {
+  if (page.br || page.brotli) return;
+  page.brotli = true;
+  brotliCompress(
+    page.raw,
+    {
+      params: {
+        [zlibConstants.BROTLI_PARAM_MODE]: zlibConstants.BROTLI_MODE_TEXT,
+        [zlibConstants.BROTLI_PARAM_QUALITY]: zlibConstants.BROTLI_MAX_QUALITY,
+        [zlibConstants.BROTLI_PARAM_SIZE_HINT]: page.raw.length,
+      },
+    },
+    (e, out) => {
+      if (e) console.warn(`[webui] could not brotli the page, serving gzip: ${e.message}`);
+      else page.br = out;
+    }
+  );
+}
+
+/** Whether `If-None-Match` names this validator. Compared weakly, as RFC 9110 §13.1.2 says for it. */
+function matchesEtag(req: IncomingMessage, etag: string): boolean {
+  const header = req.headers['if-none-match'];
+  if (!header) return false;
+  const opaque = (tag: string): string => tag.trim().replace(/^W\//, '');
+  const mine = opaque(etag);
+  return header.split(',').some((tag) => tag.trim() === '*' || opaque(tag) === mine);
+}
+
+const PAGE_HEADERS: Record<string, string> = {
+  'Content-Type': 'text/html; charset=utf-8',
+  // Belt and braces around web-markdown's escaping: even if something did get through, an
+  // inline script from it would not run and no external origin could be reached.
+  //
+  // `frame-src 'self'` is what lets the terminal pane exist. Same-origin is not a sandbox —
+  // ttyd's page can read this one's DOM and its cookie — and that is accepted knowingly:
+  // the alternative buys nothing, because a cross-origin iframe would need
+  // `allow-same-origin` to hold a session at all and that undoes the sandbox. The trade is
+  // ttyd's terminal, with its IME and file transfer, against re-implementing all of it here.
+  //
+  // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
+  // It names where a WORKER may be loaded from and nothing else: the page's own scripts are still
+  // inline only, so no same-origin file — an agent's upload included — can run as one.
+  'Content-Security-Policy':
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+};
 
 /**
  * The manifest, which is what makes "add to home screen" offer an app rather than a bookmark.
  *
- * `no-store` for the same reason the page has it: the name and the colours come from config,
- * and an installed app holding last week's title is a support question with no error message.
+ * `no-store`, unlike the page's validated cache: the name and the colours come from config, an
+ * installed app holding last week's title is a support question with no error message, and at a
+ * few hundred bytes the manifest is not worth a validator.
  * The icons below are the opposite case — bytes that only change when this file does — so they
  * get a long cache and save the round trip on every launch.
  */
@@ -570,12 +686,20 @@ function stream({ req, res, url }: Req, ctx: Ctx): void {
   const topic = wanted && ctx.room.topics.has(wanted) ? wanted : ctx.room.topics.current().id;
   const out = openStream(req, res, ctx.instance);
   ctx.streams.add(out);
-  const lastId = req.headers['last-event-id'];
+  // The header is what `EventSource` sends when it reconnects by itself, and it is always the newer
+  // of the two. `?last=` is the page's own way to resume a stream it closed on purpose (a tab put in
+  // the background, see the page's `park`): a new EventSource cannot set a header, and without a
+  // resume point it would be handed the whole topic again. The room validates either the same way.
+  const header = req.headers['last-event-id'];
+  const lastId = (Array.isArray(header) ? header[0] : header) || url.searchParams.get('last') || undefined;
+  // The version of the topic list the page holds, so a resume carries the list only if it moved.
+  const tv = Number(url.searchParams.get('tv') ?? NaN);
   const unsubscribe = ctx.room.subscribe(
     topic,
     // `data` is made once per event by the room, however many streams it goes to.
     (id, _ev, data) => out.write(`${id ? `id: ${id}\n` : ''}data: ${data}\n\n`),
-    Array.isArray(lastId) ? lastId[0] : lastId
+    lastId,
+    Number.isInteger(tv) ? tv : undefined
   );
   // The response's close, not only the request's: a stream cut for falling behind is ended from
   // this side, and either way it has to leave the room's fan-out at once.
@@ -653,8 +777,18 @@ function openStream(req: IncomingMessage, res: ServerResponse, instance: WebuiIn
   };
 }
 
+/**
+ * A message from the page: JSON, or — when it carries files — the same request framed as bytes.
+ *
+ * The files used to travel only as base64 inside the JSON, a third larger than they are: on a
+ * 250 kbps uplink a 1 MB photo took 44 s instead of 33. A send with files now comes as
+ * `application/octet-stream` (`readFramedSend`), and is turned back into the JSON request's shape
+ * — base64 and all, which is what `room.submit` and the daemon's `data:` URL path take — and then
+ * validated by the very same schema, so every limit and check is the JSON request's. Same route,
+ * same nonce: a retry of either form is the same message.
+ */
 async function submit({ req, res }: Req, ctx: Ctx): Promise<void> {
-  const parsed = await readBody(req, res, SendRequestSchema, true);
+  const parsed = isOctetStream(req) ? await readFramedSend(req, res) : await readBody(req, res, SendRequestSchema, true);
   if (!parsed) return;
   switch (ctx.room.submit(parsed)) {
     case 'unknown-topic':
@@ -1121,6 +1255,34 @@ async function readBody<T>(
     send(req, res, 415, { error: 'expected application/json' });
     return undefined;
   }
+  const body = await readRaw(req, res, refused);
+  if (!body) return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(body.toString('utf8')) as unknown;
+  } catch {
+    refused(`malformed JSON (${body.length} bytes)`);
+    send(req, res, 400, { error: 'malformed JSON' });
+    return undefined;
+  }
+  const parsed = parseBody(schema, raw);
+  if (!parsed.ok) {
+    refused(parsed.error);
+    send(req, res, 400, { error: parsed.error });
+    return undefined;
+  }
+  return parsed.value;
+}
+
+/**
+ * Read a whole body up to `MAX_BODY_BYTES`, answering the request itself when it is over that or
+ * the client goes away. `undefined` means "already answered (or nobody to answer), stop".
+ */
+async function readRaw(
+  req: IncomingMessage,
+  res: ServerResponse,
+  refused: (why: string) => void
+): Promise<Buffer | undefined> {
   const declared = req.headers['content-length'] ?? '?';
   const chunks: Buffer[] = [];
   let size = 0;
@@ -1144,20 +1306,59 @@ async function readBody<T>(
     refused(`the client hung up after ${size} of ${declared} bytes (${e instanceof Error ? e.message : String(e)})`);
     return undefined;
   }
-  let raw: unknown;
+  return Buffer.concat(chunks);
+}
+
+function isOctetStream(req: IncomingMessage): boolean {
+  return (req.headers['content-type'] ?? '').split(';')[0]?.trim() === 'application/octet-stream';
+}
+
+/**
+ * A send carrying files, as the page frames it: a 4-byte big-endian length, that many bytes of
+ * JSON — the send request with each file's `data` replaced by its `size` — then every file's bytes
+ * in order. Turned back into the JSON request (`data` as base64) and validated by its schema.
+ *
+ * As safe against a cross-site form as the JSON body is: `application/octet-stream` is not one of
+ * the three types a form or a simple request can send, so a cross-origin page cannot post it
+ * without a preflight, and `sameOrigin` and the cookie's `SameSite=Strict` apply as to any POST.
+ * The framing is checked exactly — the sizes must add up to the bytes that follow, to the byte — so
+ * nothing in the body goes unaccounted for.
+ */
+async function readFramedSend(req: IncomingMessage, res: ServerResponse): Promise<SendRequest | undefined> {
+  const refused = (why: string): void => logRefused(req, `refused — ${why}`);
+  const malformed = (why: string): undefined => {
+    refused(why);
+    send(req, res, 400, { error: `malformed upload: ${why}` });
+    return undefined;
+  };
+  const body = await readRaw(req, res, refused);
+  if (!body) return undefined;
+  if (body.length < 4) return malformed('no header');
+  const headerLength = body.readUInt32BE(0);
+  if (4 + headerLength > body.length) return malformed('the header runs past the body');
+  let header: unknown;
   try {
-    raw = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    header = JSON.parse(body.subarray(4, 4 + headerLength).toString('utf8')) as unknown;
   } catch {
-    refused(`malformed JSON (${size} bytes)`);
-    send(req, res, 400, { error: 'malformed JSON' });
-    return undefined;
+    return malformed('the header is not JSON');
   }
-  const parsed = parseBody(schema, raw);
-  if (!parsed.ok) {
-    refused(parsed.error);
-    send(req, res, 400, { error: parsed.error });
-    return undefined;
+  const shape = parseBody(FramedSendHeaderSchema, header);
+  if (!shape.ok) return malformed(shape.error);
+  const { files, ...rest } = shape.value;
+  let at = 4 + headerLength;
+  if (files.reduce((n, f) => n + f.size, 0) !== body.length - at) {
+    return malformed(`the files' sizes do not add up to the ${body.length - at} bytes sent`);
   }
+  const request = {
+    ...rest,
+    files: files.map((f) => {
+      const data = body.subarray(at, at + f.size).toString('base64');
+      at += f.size;
+      return { name: f.name, mime: f.mime, data };
+    }),
+  };
+  const parsed = parseBody(SendRequestSchema, request);
+  if (!parsed.ok) return malformed(parsed.error);
   return parsed.value;
 }
 
@@ -1189,6 +1390,21 @@ function isSecure(req: IncomingMessage): boolean {
 function acceptsGzip(req: IncomingMessage): boolean {
   const accept = req.headers['accept-encoding'];
   return (Array.isArray(accept) ? accept.join(',') : (accept ?? '')).includes('gzip');
+}
+
+/**
+ * Whether `Accept-Encoding` names this coding with a q above zero. Parsed rather than searched for,
+ * unlike `acceptsGzip`: "br" is two letters, and "br;q=0" is a client saying no.
+ */
+function accepts(req: IncomingMessage, coding: string): boolean {
+  const accept = req.headers['accept-encoding'];
+  const list = Array.isArray(accept) ? accept.join(',') : (accept ?? '');
+  return list.split(',').some((item) => {
+    const [name, ...params] = item.split(';').map((s) => s.trim().toLowerCase());
+    if (name !== coding) return false;
+    const q = params.find((p) => p.startsWith('q='));
+    return q === undefined || Number(q.slice(2)) > 0;
+  });
 }
 
 function send(req: IncomingMessage, res: ServerResponse, status: number, payload: unknown): void {

@@ -86,6 +86,29 @@ export const SendRequestSchema = z
   })
   .strict();
 
+/**
+ * The header of a send that carries its files as bytes (`server.ts` readFramedSend): the send
+ * request with each file's base64 `data` replaced by its byte `size`. Only the shape of the
+ * envelope is checked here; once the bytes are read the request is rebuilt and goes through
+ * `SendRequestSchema` like any other, so every limit there applies unchanged.
+ */
+export const FramedSendHeaderSchema = SendRequestSchema.omit({ files: true })
+  .extend({
+    files: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(255),
+            mime: z.string().max(255),
+            size: z.number().int().min(0).max(MAX_BODY_BYTES),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(10),
+  })
+  .strict();
+
 export const CreateTopicRequestSchema = z.object({ title: z.string().max(200).optional() }).strict();
 export const DeleteTopicRequestSchema = z.object({ topic: TopicId }).strict();
 /**
@@ -305,6 +328,8 @@ export type WebEvent =
       messages: WebMessage[];
       commands: SlashCommandSpec[];
       topics: Topic[];
+      /** The version of `topics` (see the `topics` event); what a later `topic-rows` applies to. */
+      tv: number;
       /**
        * Which run of the daemon these messages come from — `WebRoom`'s construction time.
        *
@@ -354,13 +379,29 @@ export type WebEvent =
   | { t: 'status'; status?: AgentStatus }
   | { t: 'commands'; commands: SlashCommandSpec[] }
   /**
-   * The topic list changed — one was created, renamed, or spoken in.
+   * The whole topic list, at version `tv`: in a sync, and to a resumed stream whose list is older.
    *
-   * Broadcast to every client regardless of which topic it is watching, because the switcher
-   * has to stay current without subscribing to rooms nobody is reading. It is the only event
-   * that crosses topics.
+   * Every list event crosses topics — the switcher has to stay current without every client
+   * subscribing to rooms nobody is reading — and none is sequenced, since none belongs to a room.
+   * A page resuming says which version it holds (`?tv=`), and is sent this only if that moved.
    */
-  | { t: 'topics'; topics: Topic[] }
+  | { t: 'topics'; topics: Topic[]; tv: number }
+  /**
+   * What changed in the topic list since the version every client was sent last: the rows that
+   * differ (whole rows, replacing the page's by id; a new one is appended), the ids that went, and
+   * the order only when the page could not work it out by sorting on `lastAt` (`derivedOrder`).
+   *
+   * A kind of its own rather than a variant of `topics`, for a page from before it: one still open
+   * across the upgrade ignores an event it does not know, where a `topics` without its list would
+   * have read as "every topic is gone" — and a page that thinks so opens a new one.
+   */
+  | { t: 'topic-rows'; tv: number; rows: Topic[]; gone?: string[]; order?: string[] }
+  /**
+   * A resumed stream has been handed everything it missed (the replay, then the state no backlog
+   * keeps). The answer to a page that asked to resume instead of being sent a sync: one that came
+   * back to a topic it still held in memory has no sync coming to say it is caught up.
+   */
+  | { t: 'resumed' }
   /**
    * The machines the daemon cannot reach changed — every one of them, so an empty list says they
    * are all back. State like `status`, never sequenced, and to every client like `topics`: the
@@ -368,11 +409,13 @@ export type WebEvent =
    */
   | { t: 'machines'; offline: OfflineMachine[] }
   /**
-   * The daemon is going away; stop reconnecting.
+   * The daemon is going away; stop this stream.
    *
-   * `EventSource` reconnects after ANY close, including a clean one, so without this a tab
-   * left open through a restart hammers a dead port on a fixed retry interval — and, worse,
-   * looks connected. The page answers it by closing the stream itself and saying so.
+   * `EventSource` reconnects after ANY close, including a clean one, so without this a tab left
+   * open through a restart retries a dead port on EventSource's own schedule and looks connected
+   * meanwhile. The page closes the stream itself, says it is reconnecting, and opens a new one on a
+   * back-off — new, so it carries no resume point and the daemon that answers sends a full sync.
+   * It used to stop for good and ask for a reload, which on a phone nobody saw until they typed.
    */
   | { t: 'bye' };
 

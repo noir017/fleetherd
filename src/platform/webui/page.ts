@@ -30,6 +30,8 @@
  * kind of feature that makes a page memorable. Nothing is loaded from anywhere: no fonts, no
  * CDN, no favicon request. The whole document is what the daemon serves.
  */
+import { createHash } from 'node:crypto';
+
 import { escapeHtml } from '../web-markdown.js';
 import { clientIcons, icon } from './icons.js';
 
@@ -42,11 +44,31 @@ import { clientIcons, icon } from './icons.js';
  * open, and a control that appears one sync later is a control that flickers into existence.
  */
 export function renderPage(title: string, terminal: boolean, password = true, terminalEnd = false): string {
-  return PAGE.replace(/__TITLE__/g, escapeHtml(title))
+  return servePage(title, terminal, password, terminalEnd).html;
+}
+
+/**
+ * The page, and the build it carries: a hash of everything it was rendered from.
+ *
+ * The same hash is the page's ETag (`server.ts` servedPage) and `BUILD` inside its script, which
+ * is how a page left open through a restart can tell whether the daemon it reconnected to would
+ * serve it a different page (`checkBuild`): the server's answer to a HEAD names its ETag, and the
+ * page compares it with its own. Hashed with the placeholder in place, so the stamp is not part of
+ * what it stamps.
+ */
+export function servePage(
+  title: string,
+  terminal: boolean,
+  password = true,
+  terminalEnd = false
+): { html: string; build: string } {
+  const html = PAGE.replace(/__TITLE__/g, escapeHtml(title))
     .replace(/__TERM__/g, terminal ? 'true' : 'false')
     .replace(/__TERM_END__/g, terminalEnd ? 'true' : 'false')
     .replace(/__PASSWORD__/g, password ? 'true' : 'false')
     .replace('__GATE__', password ? PASSWORD_GATE : SSO_GATE);
+  const build = createHash('sha256').update(html).digest('base64url').slice(0, 27);
+  return { html: html.replace(/__BUILD__/g, build), build };
 }
 
 /**
@@ -1111,6 +1133,9 @@ button:disabled{opacity:.5;cursor:default}
 #status.open{flex-wrap:wrap;white-space:normal;row-gap:1px;column-gap:14px}
 #machine-note{display:flex;align-items:center;gap:6px;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:#c98a7d}
 #machine-note .ic{width:12px;height:12px}
+#update{display:flex;align-items:center;gap:8px;margin:-3px 0 7px;font-size:12px;line-height:1.5;color:var(--dim)}
+#update[hidden]{display:none}
+#update button{font:inherit;color:inherit;background:none;border:1px solid currentColor;border-radius:6px;padding:1px 9px;cursor:pointer}
 .st{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px}
 .st+.st::before{content:'\\00b7';margin:0 7px;color:#4a4a4a}
 /* Open, the line wraps, and a separator belonging to the first segment of a wrapped line would
@@ -1382,8 +1407,9 @@ const SCRIPT = `
       settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
+      updateEl=$('update'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent');
-  var data={}, els={}, files=[], commands=[], stream=null, done=false;
+  var data={}, els={}, files=[], commands=[], stream=null;
   // The row menu's topic and the button that opened it. The button is re-found after every repaint
   // (paintTopics), because the row it lives in is replaced while the menu stays open.
   var topicMenuFor=null, topicMenuBtn=null;
@@ -1416,6 +1442,10 @@ const SCRIPT = `
   var IC = ${clientIcons()};
   var TERM_OK = __TERM__;
   var TERM_END = __TERM_END__;
+  // Which page this is: a hash of everything it was rendered from, and the page's ETag (servePage).
+  // Compared with the daemon's after a restart (checkBuild), since the script on screen is the one
+  // the old process served.
+  var BUILD = '__BUILD__';
   // Whether the shared secret is still a way in. False means the gate above has no field and
   // the only thing that can sign anyone in is the proxy in front (sso.password: false).
   var PASSWORD_LOGIN = __PASSWORD__;
@@ -2981,8 +3011,10 @@ const SCRIPT = `
   // different complaint from a message that looks sent and is not.
   function post(path, body, tries, limit){
     // Built first: JSON.stringify is the one thing here that can throw, and nothing is armed yet.
-    var init = {method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body),credentials:'same-origin'};
+    // Bytes (a send that carries files, see framed) go as they are.
+    var bytes = ArrayBuffer.isView(body);
+    var init = {method:'POST',headers:{'Content-Type': bytes ? 'application/octet-stream' : 'application/json'},
+      body: bytes ? body : JSON.stringify(body),credentials:'same-origin'};
     var expired = false, timer = 0;
     if(limit && typeof AbortController === 'function'){
       var ctl = new AbortController();
@@ -3016,6 +3048,36 @@ const SCRIPT = `
     var n = (body.text || '').length, f = body.files || [];
     for(var i=0;i<f.length;i++) n += f[i].data.length + f[i].name.length;
     return Math.min(300000, 15000 + Math.round(n / 65.536));
+  }
+
+  /**
+   * A send that carries files, as bytes rather than JSON: a 4-byte big-endian length, the send as
+   * JSON with each file's base64 data replaced by its size, then the files' bytes (server.ts
+   * readFramedSend). Base64 in JSON is a third larger than the file, and on the uplinks this page
+   * is used over that third is the difference between 33 and 44 seconds for one photo. Built as one
+   * Uint8Array from strings — atob, and UTF-8 through encodeURIComponent — so it needs nothing a
+   * browser might lack, and the same array is sent again by a retry.
+   */
+  function framed(body){
+    var meta = {topic:body.topic, text:body.text, files:[]}, parts = [], total = 0, i, j;
+    if(body.nonce) meta.nonce = body.nonce;
+    if(body.quiet) meta.quiet = true;
+    for(i=0;i<body.files.length;i++){
+      var f = body.files[i], bin = atob(f.data);
+      meta.files.push({name:f.name, mime:f.mime || '', size:bin.length});
+      parts.push(bin);
+      total += bin.length;
+    }
+    var head = unescape(encodeURIComponent(JSON.stringify(meta)));
+    var out = new Uint8Array(4 + head.length + total), at = 4;
+    out[0] = (head.length >>> 24) & 255; out[1] = (head.length >>> 16) & 255;
+    out[2] = (head.length >>> 8) & 255; out[3] = head.length & 255;
+    for(j=0;j<head.length;j++) out[at++] = head.charCodeAt(j);
+    for(i=0;i<parts.length;i++){
+      var p = parts[i];
+      for(j=0;j<p.length;j++) out[at++] = p.charCodeAt(j);
+    }
+    return out;
   }
 
   function atBottom(){ return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
@@ -5123,6 +5185,35 @@ const SCRIPT = `
     });
   }
 
+  // ── Topics held in memory ────────────────────────────────────────────────────
+  // Switching back to a topic used to cost the whole of it again: the sync carries up to 1000
+  // messages (85 KB gzipped for a long topic, 3.4 s at 500 kbps), the cache keeps the last 200 and
+  // a switch empties memory — so going back and forth between two long topics was a full download
+  // every time, cache or no cache. Now the topic being left is kept here, every message it had and
+  // the id of the last event that reached it, and coming back puts the messages up at once and
+  // resumes the stream from that id: the daemon replays what was said meanwhile from its backlog,
+  // or sends the whole topic as before when the backlog no longer reaches. Memory only, so it is
+  // the same tab going back and forth that this helps, which is the case it was measured in.
+  // Bounded both ways: HELD_TOPICS topics, HELD_MSGS messages between them, least recent first.
+  var held={}, HELD_TOPICS=8, HELD_MSGS=4000;
+  function hold(id){
+    delete held[id];
+    // Only a topic whose stream has said where it got to (lastEv names this topic): the first
+    // thing a stream delivers is a sync or a replay, both numbered, so a page that has an id for
+    // the topic holds every message the daemon's ring had as of that id. Without one — left before
+    // the sync arrived — there is nothing a replay could be added to.
+    if(!id || !lastEv || lastEv.indexOf(id+'.') !== 0) return;
+    var msgs = cacheable();
+    if(!msgs.length) return;
+    held[id] = {msgs:msgs, last:lastEv, epoch:epoch, stale:stale, at:Date.now()};
+    var ids = Object.keys(held).sort(function(a, b){ return held[b].at - held[a].at; });
+    var total = 0;
+    for(var i=0;i<ids.length;i++){
+      total += held[ids[i]].msgs.length;
+      if(i >= HELD_TOPICS || (i > 0 && total > HELD_MSGS)) delete held[ids[i]];
+    }
+  }
+
   function switchTopic(id){
     if(!id || id===topic) return;
     // The settings page is bound to the topic it was opened in: its rows write that conversation's
@@ -5139,6 +5230,7 @@ const SCRIPT = `
     // Both read off the topic being left, so both before anything below takes it off screen.
     saveView(topic);
     stashDraft(topic);
+    hold(topic);
     topic = id;
     history.replaceState(null,'',urlNow());
     // Before the transcript work below, so the terminal follows the topic in the same frame
@@ -5181,11 +5273,25 @@ const SCRIPT = `
     // cache normally answers first and replaces it; nothing about that is guaranteed, which is
     // why the placeholders go in regardless.
     showSkeleton();
-    restore(id);
+    // A topic still held in memory from this daemon is put up whole, now, and its stream resumed
+    // from where it was left; otherwise the cache and a sync, as on any first visit.
+    var back = held[id];
+    delete held[id];
+    if(back && back.epoch === epoch){
+      stale = back.stale;
+      // Marked as read from the cache, so the sync that follows a resume the daemon could not
+      // honour does not read it in a second time.
+      restoreFor = id;
+      adopt(back.msgs);
+      lastEv = back.last;
+    } else {
+      back = null;
+      restore(id);
+    }
     // What was sent into this topic and not acknowledged — including a send still in flight from
     // before the switch, whose bubble went with the transcript it was in.
     showUnsent(id);
-    connect();
+    connect(Boolean(back));
   }
 
   function deleteTopic(delId){
@@ -5505,6 +5611,9 @@ const SCRIPT = `
       entering = false;
       // Which run of the daemon everything in this sync belongs to. Anything already on screen
       // from another one is cached history from here on, whatever it was painted as.
+      // A different run under a page that was already open is a restart, and the daemon that came
+      // back may be a newer one than served this script.
+      if(epoch && ev.epoch && ev.epoch !== epoch) checkBuild();
       epoch = ev.epoch || 0;
       synced = true;
       // What the server says about this room BEFORE the transcript is reconciled, so the drops
@@ -5530,6 +5639,7 @@ const SCRIPT = `
       saveReads();
       commands = ev.commands || [];
       topics = ev.topics || [];
+      topicsV = ev.tv || 0;
       paintTopics();
       prune();
       // Absent when the topic's agent has reported nothing since the daemon started, which clears
@@ -5589,8 +5699,10 @@ const SCRIPT = `
     else if(ev.t==='commands'){ commands = ev.commands || []; }
     else if(ev.t==='status'){ setStatus(ev.status); }
     else if(ev.t==='machines'){ setMachines(ev.offline || []); }
-    else if(ev.t==='topics'){
-      topics = ev.topics || [];
+    else if(ev.t==='topics' || ev.t==='topic-rows'){
+      if(ev.t==='topics') topics = ev.topics || [];
+      else applyRows(ev);
+      topicsV = ev.tv || 0;
       paintTopics();
       reportSeen();
       if(topic && !topics.some(function(t){ return t.id===topic; })){
@@ -5604,35 +5716,196 @@ const SCRIPT = `
       // topic that has just gone, in that case.
       prune();
     }
-    else if(ev.t==='bye'){ done=true; if(stream) stream.close(); note.textContent='Disconnected. Reload when it is back.'; }
+    // The daemon is going away. The stream is closed here rather than left to EventSource, which
+    // would retry it every few seconds for as long as the daemon is down; this tries again on a
+    // back-off instead. The resume point it sends names the run that is going away, so the daemon
+    // that answers hands over the whole topic — which is what a page that outlived a restart needs.
+    // It used to stop for good and ask for a reload.
+    else if(ev.t==='bye'){
+      if(stream) stream.close();
+      note.textContent='The daemon is restarting. Reconnecting...';
+      reconnectLater();
+    }
+    // The end of a resumed stream's catch-up. For a blip or a tab coming back there is nothing to
+    // finish; for a topic put back from memory (held) this is what a sync would have done: the
+    // waiting line goes, and what is on screen is the room from here on.
+    else if(ev.t==='resumed'){
+      if(synced) return;
+      synced = true;
+      entering = false;
+      clearSyncing();
+      placeDivider();
+      syncEmptyNote();
+      cacheSave();
+      note.textContent='';
+    }
   }
 
-  function connect(){
+  // The version of the topic list on this page (the daemon's tv), sent on a resume so the list is
+  // only sent again if it moved.
+  var topicsV=0;
+
+  /**
+   * What changed in the topic list (a topic-rows event): every row it carries replaces the one with
+   * its id, or joins the end; the ids it names as gone are dropped; and the list is put back in the
+   * daemon's order — sorted by lastAt, newest first, ties left as they were, which is how the store
+   * orders it — unless the event says the order outright. room.ts derivedOrder is this same
+   * algorithm on the other side, and sends the order whenever the two would disagree.
+   */
+  function applyRows(ev){
+    var gone={}, at={}, next=[], i;
+    var g=ev.gone || [], rows=ev.rows || [];
+    for(i=0;i<g.length;i++) gone[g[i]]=1;
+    for(i=0;i<topics.length;i++){
+      if(gone[topics[i].id]) continue;
+      at[topics[i].id]=next.length;
+      next.push(topics[i]);
+    }
+    for(i=0;i<rows.length;i++){
+      var r=rows[i];
+      if(Object.prototype.hasOwnProperty.call(at, r.id)) next[at[r.id]]=r;
+      else { at[r.id]=next.length; next.push(r); }
+    }
+    if(ev.order){
+      var byId={};
+      for(i=0;i<next.length;i++) byId[next[i].id]=next[i];
+      next=[];
+      for(i=0;i<ev.order.length;i++) if(byId[ev.order[i]]) next.push(byId[ev.order[i]]);
+    } else {
+      next = next.map(function(t, n){ return {t:t, n:n}; })
+        .sort(function(a, b){ return (b.t.lastAt||0) - (a.t.lastAt||0) || a.n - b.n; })
+        .map(function(x){ return x.t; });
+    }
+    topics = next;
+  }
+
+  // How long until the next attempt after a bye or a refused stream: one second, doubling to half
+  // a minute, and back to nothing once a stream opens. Every attempt is one request, so a daemon
+  // that is down for an hour costs a tab two a minute. One that falls due behind a hidden tab is
+  // left for the tab to make when it is looked at again (see park).
+  var retryMs=0, retryTimer=0;
+  function reconnectLater(){
+    if(retryTimer) return;
+    retryMs = retryMs ? Math.min(retryMs*2, 30000) : 1000;
+    retryTimer = setTimeout(function(){
+      retryTimer=0;
+      if(document.visibilityState === 'hidden'){ parked = true; return; }
+      connect(true, true);
+    }, retryMs);
+  }
+
+  // ── The stream behind a hidden tab ──────────────────────────────────────────
+  // A tab nobody is looking at still received every event: each message in the topic, and the
+  // topic list after every message posted anywhere. A phone on the table and a desktop tab behind
+  // others are most of the time the page is open. So a tab hidden for PARK_MS closes its stream,
+  // and coming back opens a new one from the last event it had (?last=, which the server treats as
+  // Last-Event-ID): what was said meanwhile is replayed from the backlog, or the whole topic comes
+  // again if the backlog no longer reaches. Nothing on the page needs the stream while hidden —
+  // the title is never changed, notifications are Web Push and go through the service worker, the
+  // seen mark is only posted while visible — so the grace is only there so that glancing at another
+  // tab does not cost a reconnect. lastEv is the newest event id this stream has delivered.
+  var PARK_MS=15000, parkTimer=0, parked=false, lastEv='';
+  function park(){
+    parkTimer=0;
+    if(document.visibilityState !== 'hidden' || !stream || stream.readyState === 2) return;
+    parked=true;
+    stream.close();
+  }
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'hidden'){
+      if(!parkTimer && !parked) parkTimer = setTimeout(park, PARK_MS);
+      return;
+    }
+    clearTimeout(parkTimer); parkTimer=0;
+    if(parked){ parked=false; connect(true, true); }
+  });
+
+  /**
+   * Whether the session is still good, asked after a stream was refused for good.
+   *
+   * EventSource gives up on any answer that is not an event stream, and two very different answers
+   * are that: the daemon's 401 when the session is gone, and a proxy's 502 while the daemon behind
+   * it is restarting (cloudflared answers that way). Only the first is a reason to show the gate.
+   * A request that cannot get through says nothing about the session, so it counts as still good.
+   */
+  function signedIn(){
+    return fetch('api/push', {credentials:'same-origin', cache:'no-store'})
+      .then(function(r){ return r.status !== 401; }, function(){ return true; });
+  }
+
+  /**
+   * After a restart: does the daemon now serve a different page from this one?
+   *
+   * A HEAD names the page's ETag, which is its build (servePage), so this is one round trip with
+   * no body. When it differs the script on screen is the old one, talking to a newer daemon; the
+   * page says so and offers the reload rather than doing it, because a reload here would throw away
+   * whatever is open — a skill half-edited, a recording, the place in a long transcript. An answer
+   * with no ETag (a proxy that stripped it) says nothing, and nothing is shown.
+   */
+  function checkBuild(){
+    fetch(location.pathname, {method:'HEAD', cache:'no-store', credentials:'same-origin'}).then(function(r){
+      var tag = (r && r.headers && r.headers.get) ? (r.headers.get('ETag') || '') : '';
+      if(tag && tag.indexOf(BUILD) < 0) updateEl.hidden = false;
+    }, function(){});
+  }
+
+  /**
+   * Open the event stream for the topic on screen.
+   *
+   * resume carries the last event this page had (lastEv): for a stream opened again on the same
+   * topic (a tab coming back, a retry after a refused stream), or on a topic put back from memory
+   * (held). The daemon replays what came after it, or sends the whole topic when it cannot. Without
+   * it — a new topic, a fresh visit — there is nothing to resume from. quiet is for the same topic
+   * coming back: no focus taken, no side-panel lists asked for again.
+   */
+  function connect(resume, quiet){
     if(stream) stream.close();
+    clearTimeout(retryTimer); retryTimer=0;
+    parked=false;
     // Placeholders for the wait that is about to start. Guarded on an empty log inside, so a
     // reconnect after a blip — where the conversation is still on screen and only the stream went
     // away — is not answered by replacing it with skeletons.
     showSkeleton();
+    var from = resume ? lastEv : '';
+    lastEv = from;
+    var qs = [];
+    if(topic) qs.push('t='+encodeURIComponent(topic));
+    if(from) qs.push('last='+encodeURIComponent(from));
+    if(from && topicsV) qs.push('tv='+topicsV);
     // EventSource resends the last id it saw on its own, so a blip is answered with the few
     // events that were missed rather than the whole conversation.
-    stream = new EventSource('api/events' + (topic ? '?t='+encodeURIComponent(topic) : ''));
-    stream.onmessage = function(e){ try{ handle(JSON.parse(e.data)); }catch(x){} };
+    var es = stream = new EventSource('api/events' + (qs.length ? '?'+qs.join('&') : ''));
+    es.onmessage = function(e){
+      if(es === stream && e.lastEventId) lastEv = e.lastEventId;
+      try{ handle(JSON.parse(e.data)); }catch(x){}
+    };
     // Not focused on a phone: the keyboard would come up before a word has been read, and on
     // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
-    stream.onopen = function(){
-      gate.hidden=true; app.hidden=false; note.textContent=''; if(!narrow()) input.focus(); initNotify();
+    // Nor when the same topic's stream comes back (quiet): a tab returning to the front
+    // reconnects, and the focus is wherever the person left it.
+    es.onopen = function(){
+      retryMs = 0;
+      var fresh = app.hidden || !quiet;
+      gate.hidden=true; app.hidden=false; note.textContent=''; if(fresh && !narrow()) input.focus(); initNotify();
       // A panel opened (or restored from aa_sched_open) before the gate came down asked too
       // early (loadSchedules and loadReviews refuse while #app is hidden); this is the first
       // moment the answer can be had. The restored tab is read here too: on a reload that comes
-      // back to Reviews the panel opens before the gate does, so nothing else would ask.
-      if(schedPane.isOpen()){ loadSchedules(); if(schedTab === 'reviews') loadReviews(); armSched(); }
+      // back to Reviews the panel opens before the gate does, so nothing else would ask. A tab
+      // coming back has already asked (the panel's own visibilitychange), so a resume does not.
+      if(fresh && schedPane.isOpen()){ loadSchedules(); if(schedTab === 'reviews') loadReviews(); armSched(); }
     };
-    stream.onerror = function(){
-      if(done) return;
-      if(stream.readyState === 2){
-        // Closed for good rather than retrying: the server refused it, which here means the
-        // session is gone. Anything else leaves EventSource to reconnect on its own.
-        app.hidden=true; gate.hidden=false;
+    es.onerror = function(){
+      // A stream this page has since replaced or closed has nothing left to say.
+      if(es !== stream) return;
+      if(es.readyState === 2){
+        // Closed for good rather than retrying: the server answered with something that is not a
+        // stream. The gate only if that was the session going; otherwise a back-off, which is what
+        // carries a page through a restart behind a proxy that answers 502 meanwhile.
+        signedIn().then(function(ok){
+          if(es !== stream) return;
+          if(ok){ note.textContent='Reconnecting...'; reconnectLater(); }
+          else { app.hidden=true; gate.hidden=false; }
+        });
       } else {
         note.textContent='Reconnecting...';
       }
@@ -6088,6 +6361,7 @@ const SCRIPT = `
   function keepOnly(keep){
     var id;
     cacheKeep(keep);
+    for(id in held) if(!keep[id]) delete held[id];
     for(id in readCounts) if(!keep[id]) delete readCounts[id];
     saveReads();
     for(id in views) if(!keep[id]) delete views[id];
@@ -6112,6 +6386,10 @@ const SCRIPT = `
       if(Object.prototype.hasOwnProperty.call(termFrames, id) && !keep[id]) dropTerm(id);
     }
   }
+
+  // The draft first: a reload is a way out of the page, and the composer is the one thing here a
+  // person would have typed into.
+  $('update-reload').addEventListener('click', function(){ stashDraft(topic); location.reload(); });
 
   $('gate').addEventListener('submit', function(e){
     e.preventDefault();
@@ -7014,6 +7292,7 @@ const SCRIPT = `
   /** Everything this page remembers about one topic, for a topic that no longer exists. */
   function forget(id){
     delete views[id];
+    delete held[id];
     for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === id) dropUnsent(n);
     if(!drafts[id]) return;
     delete drafts[id];
@@ -7031,6 +7310,7 @@ const SCRIPT = `
     var known={}, id;
     for(var i=0;i<topics.length;i++) known[topics[i].id]=1;
     for(id in views) if(!known[id]) delete views[id];
+    for(id in held) if(!known[id]) delete held[id];
     for(id in drafts) if(!known[id]) forget(id);
     for(id in unsent) if(Object.prototype.hasOwnProperty.call(unsent, id) && !known[unsent[id].t]) dropUnsent(id);
   }
@@ -7821,7 +8101,7 @@ const SCRIPT = `
     // nothing was attached that could ever change it; as a rejection it becomes a failure, with
     // Copy and Discard, like any other message that did not go.
     var sent;
-    try { sent = post('api/send', body, 2, sendLimit(body)); }
+    try { sent = post('api/send', body.files ? framed(body) : body, 2, sendLimit(body)); }
     catch(x){ sent = Promise.reject(x); }
     sent.then(function(r){
       setLocal(nonce, (r && r.ok) ? 'sent' : 'failed');
@@ -8164,6 +8444,10 @@ __GATE__
            composer in terminal mode, and so it reads as part of the place you type. -->
       <!-- The topic's machine cannot be reached (paintMachineNote). Beside the status line, for
            the same reason it is inside #bar: it is about what typing here will do. -->
+      <!-- The daemon came back from a restart serving a different page than this one (checkBuild).
+           Above the composer, where a phone still shows it, and an offer rather than a reload:
+           the page knows nothing about what a reload would throw away. -->
+      <div id="update" role="status" hidden>talkcode was updated while this page was open. <button type="button" id="update-reload">Reload</button></div>
       <div id="machine-note" role="status" hidden></div>
       <div id="status" hidden title="Tap for details"></div>
       <!-- The model switch's list, opened from the model in the status line (openModelPop). -->

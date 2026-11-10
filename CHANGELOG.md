@@ -5,6 +5,63 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Reloading the web UI is a 304, not 134 KB.** The page was served `no-store`, so every reload
+  and every reopened tab downloaded the whole document again — 2.6 s on a 500 kbps link, 6.3 s at
+  200 kbps — and the daemon rendered and gzipped it afresh each time (20 ms on the event loop). The
+  reason was that a stale page after an upgrade is a support question; that rules out a cache used
+  without asking, not one that asks. The page now carries an ETag that is a hash of its rendered
+  bytes and `private, no-cache`, so the browser asks every time and an upgrade, a new title or a
+  terminal turned on still reach the next load; it is rendered and compressed once. A reload at
+  200 kbps went from 6.3 s to 1.0 s. The browser caches by address, and the address names the topic
+  (`?t=`), so the first load of each topic's address in a browser still downloads the page once.
+- **A web UI tab in the background stops receiving.** A phone on the table or a desktop tab behind
+  others kept its event stream open and was sent every message in its topic and the whole topic
+  list after every message posted anywhere — 2.5 KB per message at 200 topics. A tab hidden for
+  15 seconds now closes its stream, and when it is looked at again it resumes from the last event
+  it had: what was said meanwhile is replayed, with the topic list as it now is. Nothing on the
+  page relied on the stream while hidden — notifications are Web Push. A sync now carries a resume
+  point of its own, so a connection that drops straight after one resumes instead of taking the
+  whole topic again.
+- **A message in one web UI topic no longer re-sends the whole topic list to every page.** Every
+  message posted anywhere sent every open page the entire list — 34 KB of JSON, 2.5 KB gzipped at
+  200 topics, growing with each topic — although only that topic's row had changed. Pages are now
+  sent the rows that changed, the ids that went, and the order only when they could not work it out
+  themselves: 0.07 KB for the same message. A page resuming its stream says which list it holds and
+  is sent the whole list only if that moved.
+- **Going back to a web UI topic no longer downloads all of it again.** Every switch was a full
+  sync of up to 1000 messages — 85 KB gzipped and over three seconds at 500 kbps for a long topic —
+  even straight back to the topic just left, because the browser's cache keeps only the last 200
+  and a switch emptied memory. The page now keeps the last topics it left in memory (up to 8, 4000
+  messages between them) and resumes their stream from where it was: only what was said meanwhile
+  comes down, or the whole topic as before when the daemon's backlog no longer reaches that far.
+- **The web UI uploads files as bytes, not as base64 in JSON.** Base64 is a third larger than the
+  file, and on a slow uplink that third decided whether a send finished inside its time limit at
+  all: at 250 kbps a 1 MB file went up as 1.33 MB, ran past its 37-second limit, was retried twice
+  from the start and failed after 110 s. A send that carries files is now posted to the same route
+  as `application/octet-stream` — the request's JSON with each file's size, then the files — and the
+  daemon turns it back into the same request and checks it with the same rules, size cap included.
+  The same file now arrives in 33 s. Text alone is still sent as JSON.
+- **The web UI's page is sent as brotli to a browser that takes it.** 114 KB instead of 139 KB of
+  gzip, 18% less on a first load. Brotli at that ratio takes about a second, so it is made once, off
+  the event loop, the first time a client that accepts it asks, and gzip is sent until then.
+  Browsers ask for brotli only over https, so it reaches a page behind a TLS proxy that asks the
+  daemon for it. The event stream stays gzip.
+
+### Fixed
+
+- **A web UI page left open through a daemon restart catches up by itself.** Two ways it did
+  not. After a crash, `EventSource` reconnected with its last event id, the new process — whose
+  numbering starts at 1 again and whose backlog is empty — found nothing newer in it and sent
+  nothing: the page went on showing a transcript the new process had never seen, silently. Event
+  ids now name the process that sent them, and one from another run is answered with a full sync.
+  After an ordinary stop, the daemon's `bye` stopped the page for good with "Reload when it is
+  back"; the page now reconnects on a back-off (1 s doubling to 30 s), and a stream refused by a
+  proxy's 502 while the daemon is down no longer puts up the sign-in gate — only a 401 does. When
+  the daemon that comes back serves a different page, a line above the composer offers a
+  **Reload** instead of reloading by itself over whatever was open.
+
 ## [2.55.0] - 2026-11-09
 
 ### Changed

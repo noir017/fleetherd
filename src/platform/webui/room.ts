@@ -342,6 +342,14 @@ export class WebRoom {
    * because it is new, or because the restart took its transcript". See `isStale`.
    */
   private readonly startedAt = Date.now();
+  /**
+   * `startedAt` as it is written into every event id (`<topic>.<run>.<seq>`), so a resume point
+   * from an earlier process can be told apart from one of ours. Sequence numbers restart at 1 with
+   * every process and the backlog restarts empty, so before this a page that reconnected through a
+   * crash — `EventSource` sending back its `<topic>.5` — was handed the empty backlog as "nothing
+   * missed", and sat on a transcript the new process had never seen: no sync, no error, nothing.
+   */
+  private readonly run = this.startedAt.toString(36);
   private readonly rooms = new Map<string, Room>();
   private readonly clients = new Set<Client>();
   private readonly downloads = new Map<string, Download>();
@@ -400,13 +408,17 @@ export class WebRoom {
    */
   private lastFlags = '';
   /**
-   * The last `topics` event actually sent, as sent, so a list that has not changed is not sent
-   * again. Everything that might change the list announces it — and several of those cannot tell
-   * whether they did (`setActivity` with the outcome it already had, a star set to what it was, a
-   * terminal attaching to a topic that already had one) — so the comparison is made here, once, on
-   * the serialised list. Emptied by a new subscriber, whose sync may hold a list newer than this.
+   * The topic list every attached client holds — each row as it was last sent, and their order —
+   * and its version, which every list event carries (`tv`).
+   *
+   * Clients are sent what changed against this, not the list (`sendTopics`). Everything that might
+   * change the list announces it, and several cannot tell whether they did (`setActivity` with the
+   * outcome it already had, a star set to what it was, a terminal attaching to a topic that already
+   * had one), so the comparison is made here, once, row by row. A new subscriber is handed the
+   * whole list at the version it is at, after everyone else has been brought up to it.
    */
-  private lastTopics = '';
+  private sent: { rows: Map<string, string>; order: string[] } | null = null;
+  private topicsVer = 0;
   private readonly dirCache = new Map<string, { at: number; dir?: Topic['dir'] }>();
   /**
    * Who has a terminal pane attached. Absent when the feature is off, and in every test that
@@ -654,9 +666,12 @@ export class WebRoom {
    */
   useLivenessLookup(lookup: (ref: ConversationRef) => boolean): void {
     this.liveness = lookup;
-    // What the list says NOW is the poll's baseline, so installing a lookup does not itself look
-    // like a change. Nothing is lost by it: a client is handed the whole list on subscribe.
-    this.lastFlags = flagsOf(this.topicList());
+    // The list reads differently with a lookup than without one, so it is sent as it now is: that
+    // is also the poll's baseline, so installing a lookup is not later mistaken for a change, and a
+    // client already attached is not left holding rows from before it (what reaches a client is
+    // the difference from what it holds, see `sendTopics`).
+    const topics = this.topicList();
+    this.sendTopics(topics, flagsOf(topics));
     if (this.liveTimer) return;
     this.liveTimer = setInterval(() => this.sweepLiveness(), LIVENESS_POLL_MS);
     this.liveTimer.unref?.();
@@ -1007,29 +1022,52 @@ export class WebRoom {
     return false;
   }
 
-  private announceTopics(): void {
+  /** Work out the topic list, act on stage changes, and bring every client up to it. Returns it. */
+  private announceTopics(): Topic[] {
     const topics = this.topicList();
     this.watchStages(topics);
     this.sendTopics(topics, flagsOf(topics));
+    return topics;
   }
 
   /**
    * The one place a topic list reaches a client, so `lastFlags` cannot drift from what was sent.
    *
-   * Serialised once for every client rather than once per client, and not sent at all when it is
-   * what every client already has. It is the largest event there is — a row per topic, 200 of them
-   * at the cap, ~70 KB — and the one that goes to every client on every message posted anywhere.
+   * What goes out is what changed (`topic-rows`): the rows that differ from the ones every client
+   * already holds, the ids that went, and the order only when the page could not work it out
+   * itself. It used to be the whole list, on every message posted anywhere — a row per topic,
+   * 34 KB of JSON at 200 topics, 2.5 KB gzipped, to every client — of which one row had changed: a
+   * message moves its topic's `msgCount` and `lastAt`, which also meant the old whole-list
+   * comparison never found two lists equal. Now that message costs its one row, about 0.2 KB.
+   *
+   * Recorded as what the clients hold even when none is attached, so the version stays the name of
+   * one list: a page resuming with the version it had is told the list again only if it moved.
+   * Serialised once for every client, not once per client.
    */
   private sendTopics(topics: Topic[], flags: string): void {
     this.lastFlags = flags;
-    if (this.clients.size === 0) {
-      this.lastTopics = '';
-      return;
-    }
-    const ev: WebEvent = { t: 'topics', topics };
+    const rows = new Map<string, string>();
+    for (const t of topics) rows.set(t.id, JSON.stringify(t));
+    const order = topics.map((t) => t.id);
+    const before = this.sent;
+    const changed = topics.filter((t) => before?.rows.get(t.id) !== rows.get(t.id));
+    const gone = before ? before.order.filter((id) => !rows.has(id)) : [];
+    // The page keeps its list in the order it was given, applies the rows and re-sorts by lastAt —
+    // which is how the store orders it — so the order is sent only on a tie the page would break
+    // differently (two topics touched in the same millisecond).
+    const reordered = !before || derivedOrder(before.order, topics).join() !== order.join();
+    if (before && changed.length === 0 && gone.length === 0 && !reordered) return;
+    this.sent = { rows, order };
+    this.topicsVer += 1;
+    if (this.clients.size === 0) return;
+    const ev: WebEvent = {
+      t: 'topic-rows',
+      tv: this.topicsVer,
+      rows: changed,
+      ...(gone.length > 0 ? { gone } : {}),
+      ...(reordered ? { order } : {}),
+    };
     const data = JSON.stringify(ev);
-    if (data === this.lastTopics) return;
-    this.lastTopics = data;
     // The one event that crosses rooms: the switcher has to stay current without every client
     // subscribing to topics nobody is reading.
     for (const client of this.clients) this.deliver(client, ev, undefined, data);
@@ -1046,15 +1084,19 @@ export class WebRoom {
    * time the radio hiccuped was what this protocol did before, and on a long topic that is
    * hundreds of kilobytes per hiccup.
    *
-   * The id carries its topic (`<topic>.<seq>`), so a tab that switched topics cannot resume
-   * against the wrong room's numbering — it falls back to a full sync, which is correct.
+   * The id carries its topic and this process's run (`<topic>.<run>.<seq>`), so a tab that
+   * switched topics cannot resume against the wrong room's numbering, nor a tab that outlived a
+   * restart against the new process's — either falls back to a full sync, which is correct.
+   *
+   * `topicsVersion` is the version of the topic list the client holds (`tv`); a resumed stream is
+   * handed the list only when it has moved since.
    */
-  subscribe(topicId: string, send: Sink, lastEventId?: string): () => void {
+  subscribe(topicId: string, send: Sink, lastEventId?: string, topicsVersion?: number): () => void {
+    // Everyone already attached is brought up to the list as it is now, BEFORE this client is
+    // handed it: they then all hold the same list, which is what the next change is sent against.
+    const topics = this.announceTopics();
     const client: Client = { topic: topicId, send };
     this.clients.add(client);
-    // Its sync is drawn from the list as it is now, which may be newer than the last one sent, so
-    // the next announcement goes out even if it matches that one (see `lastTopics`).
-    this.lastTopics = '';
     const room = this.roomOf(topicId);
     const missed = this.replayFrom(room, topicId, lastEventId);
     const ok = missed
@@ -1063,8 +1105,21 @@ export class WebRoom {
         // is told the current one outright — it may have changed, or been cleared, during the gap.
         this.deliver(client, { t: 'status', ...(room.status ? { status: room.status } : {}) }) &&
         // The machine list likewise, for the same reason: a machine can come or go in the gap.
-        this.deliver(client, { t: 'machines', offline: [...this.offline] })
-      : this.deliver(client, this.syncEvent(topicId, room));
+        this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
+        // And the topic list, which is in no backlog either. A blip's gap is short, but a page put
+        // in the background closes its stream and resumes it minutes later (`?last=`), and a
+        // sidebar from before that would be wrong until something else was posted. Not when the
+        // client says it holds this very version: that is most resumes, and the list is the
+        // largest thing a resume would otherwise carry.
+        (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer })) &&
+        // Last, so the page knows the replay is over: a page that entered the topic from what it
+        // kept in memory has no sync coming to say it is caught up.
+        this.deliver(client, { t: 'resumed' })
+      : // Numbered with the room's position, so the stream has a resume point from the start: a
+        // blip straight after a sync — or a tab put away before anything else was said — resumes
+        // from here instead of taking the whole topic again. The sync is the room's state as of
+        // that number; anything held back and sent later is numbered after it.
+        this.deliver(client, this.syncEvent(topicId, room, topics), room.seq);
     if (ok) {
       console.log(
         `[webui] client attached to ${topicId}${missed ? ` (resumed, ${missed.length} missed)` : ' (full sync)'}; ${this.clients.size} watching`
@@ -1082,10 +1137,13 @@ export class WebRoom {
     lastEventId: string | undefined
   ): Array<{ seq: number; ev: WebEvent }> | undefined {
     if (!lastEventId) return undefined;
-    const dot = lastEventId.lastIndexOf('.');
-    if (dot < 0 || lastEventId.slice(0, dot) !== topicId) return undefined;
-    const from = Number(lastEventId.slice(dot + 1));
-    if (!Number.isFinite(from)) return undefined;
+    const [topic, run, seq, ...more] = lastEventId.split('.');
+    // Another topic's numbering, another process's, or an id from before ids named their process:
+    // none of them says anything about what this room has sent.
+    if (more.length > 0 || topic !== topicId || run !== this.run) return undefined;
+    const from = Number(seq);
+    // A position this room never reached cannot be ours either, whatever it says.
+    if (!Number.isInteger(from) || from < 0 || from > room.seq) return undefined;
     const oldest = room.backlog[0];
     // Nothing kept that far back: the gap cannot be filled, so say so by re-syncing rather
     // than silently handing over a transcript with a hole in it.
@@ -1093,14 +1151,16 @@ export class WebRoom {
     return room.backlog.filter((entry) => entry.seq > from);
   }
 
-  private syncEvent(topicId: string, room: Room): WebEvent {
+  /** `topics` is the list as it was just announced to everyone else (see `subscribe`). */
+  private syncEvent(topicId: string, room: Room, topics: Topic[]): WebEvent {
     const agents = this.catalogFor(topicId, room);
     return {
       t: 'sync',
       topic: topicId,
       messages: [...room.stored.values()].map((s) => s.msg),
       commands: this.commands,
-      topics: this.topicList(),
+      topics,
+      tv: this.topicsVer,
       // Which run of the daemon the ids in `messages` belong to. The page caches transcripts
       // and `nextId` restarts at `w1` every process, so without this a cached `w3` and a fresh
       // `w3` are indistinguishable to it — see the field's comment in `protocol.ts`.
@@ -1162,7 +1222,7 @@ export class WebRoom {
    */
   private deliver(client: Client, ev: WebEvent, seq?: number, data = JSON.stringify(ev)): boolean {
     try {
-      client.send(seq === undefined ? '' : `${client.topic}.${seq}`, ev, data);
+      client.send(seq === undefined ? '' : `${client.topic}.${this.run}.${seq}`, ev, data);
       return true;
     } catch (e) {
       console.warn('[webui] dropping a client that failed to receive:', e instanceof Error ? e.message : e);
@@ -1825,6 +1885,25 @@ export function isControlMenuButton(id: string): boolean {
 export function isControlMenu(msg: WebMessage): boolean {
   if (msg.buttons.length === 0) return msg.settings !== undefined;
   return msg.buttons.every((b) => isControlMenuButton(b.id));
+}
+
+/**
+ * The order the page will put its list in after applying a `topic-rows` event, worked out the way
+ * the page does it (`applyRows` in page.ts): the order it held, less what went, with any new topic
+ * after the rest in the order it was listed, then sorted by `lastAt`, newest first, stable. The two
+ * must stay the same algorithm — when this one and the store's order disagree the event carries the
+ * order outright, so a drift costs bytes, never a wrong sidebar.
+ */
+export function derivedOrder(held: readonly string[], topics: readonly Topic[]): string[] {
+  const byId = new Map(topics.map((t) => [t.id, t]));
+  const ids = held.filter((id) => byId.has(id));
+  const known = new Set(ids);
+  for (const t of topics) if (!known.has(t.id)) ids.push(t.id);
+  const at = (id: string): number => byId.get(id)?.lastAt ?? 0;
+  return ids
+    .map((id, i) => ({ id, i }))
+    .sort((a, b) => at(b.id) - at(a.id) || a.i - b.i)
+    .map((x) => x.id);
 }
 
 function flagsOf(topics: Topic[]): string {

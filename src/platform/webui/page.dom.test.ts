@@ -31,7 +31,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { JSDOM, type DOMWindow } from 'jsdom';
 import { IDBFactory } from 'fake-indexeddb';
 
-import { renderPage } from './page.js';
+import { renderPage, servePage } from './page.js';
 import { renderWebToolLines } from '../web-markdown.js';
 import { webMessageHtml } from './room.js';
 
@@ -39,6 +39,31 @@ import { webMessageHtml } from './room.js';
 interface Call {
   path: string;
   body: Record<string, unknown>;
+  /** Absent for the page's ordinary GETs and POSTs (`post()` says POST); set for anything else. */
+  method?: string;
+  /**
+   * The body went as bytes (a send carrying files, framed as server.ts readFramedSend reads it).
+   * `body` is then that request read back the way the server reads it — files' `data` as base64 —
+   * so an assertion about what was sent reads the same either way.
+   */
+  binary?: boolean;
+}
+
+/** A framed send (page.ts `framed`) read back as the server does, into the JSON request's shape. */
+function unframe(view: ArrayBufferView): Record<string, unknown> {
+  const b = Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+  const n = b.readUInt32BE(0);
+  const head = JSON.parse(b.subarray(4, 4 + n).toString('utf8')) as {
+    files: Array<{ name: string; mime: string; size: number }>;
+  } & Record<string, unknown>;
+  let at = 4 + n;
+  const files = head.files.map((f) => {
+    const data = b.subarray(at, at + f.size).toString('base64');
+    at += f.size;
+    return { name: f.name, mime: f.mime, data };
+  });
+  if (at !== b.length) throw new Error(`framed send: ${b.length - at} bytes unaccounted for`);
+  return { ...head, files };
 }
 
 /** The stub for the one browser API the whole page is built on. */
@@ -46,7 +71,8 @@ interface Stream {
   url: string;
   readyState: number;
   closed: boolean;
-  onmessage: ((e: { data: string }) => void) | null;
+  /** lastEventId as a browser hands it over: the id of the newest event that carried one. */
+  onmessage: ((e: { data: string; lastEventId?: string }) => void) | null;
   onopen: (() => void) | null;
   onerror: (() => void) | null;
 }
@@ -432,6 +458,8 @@ async function open(
     height?: number;
     /** What each request answers with; anything unlisted answers `{}`, as most routes do. */
     replies?: Record<string, unknown>;
+    /** Response headers per path, for the few answers the page reads a header of. */
+    heads?: Record<string, Record<string, string>>;
     /** Per-path HTTP status. Anything unlisted answers 200; ≥400 is `ok: false`. */
     status?: Record<string, number>;
     /**
@@ -496,6 +524,7 @@ async function open(
     width = 1440,
     height = 900,
     replies = {},
+    heads = {},
     status = {},
     idb = new IDBFactory(),
     storage = {},
@@ -548,7 +577,7 @@ async function open(
       class FakeEventSource implements Stream {
         readyState = 1;
         closed = false;
-        onmessage: ((e: { data: string }) => void) | null = null;
+        onmessage: ((e: { data: string; lastEventId?: string }) => void) | null = null;
         onopen: (() => void) | null = null;
         onerror: (() => void) | null = null;
         constructor(readonly url: string) {
@@ -582,9 +611,15 @@ async function open(
           return real(fn, 30);
         };
       }
-      (w as any).fetch = (path: string, init: { body?: string; signal?: AbortSignal }) => {
+      (w as any).fetch = (path: string, init: { body?: unknown; signal?: AbortSignal; method?: string } = {}) => {
         // A GET (the file reader's) carries no body; recorded as an empty one.
-        calls.push({ path, body: init.body === undefined ? {} : JSON.parse(init.body) });
+        const bytes = ArrayBuffer.isView(init.body);
+        calls.push({
+          path,
+          body: init.body === undefined ? {} : bytes ? unframe(init.body as ArrayBufferView) : JSON.parse(String(init.body)),
+          ...(init.method && init.method !== 'POST' ? { method: init.method } : {}),
+          ...(bytes ? { binary: true } : {}),
+        });
         if (hang.includes(path)) {
           return new Promise((_, reject) => {
             init.signal?.addEventListener('abort', () =>
@@ -593,9 +628,11 @@ async function open(
           });
         }
         const code = status[path] ?? 200;
+        const head = heads[path] ?? {};
         return (held[path] ?? Promise.resolve()).then(() => ({
           ok: code < 400,
           status: code,
+          headers: { get: (name: string) => head[name] ?? head[name.toLowerCase()] ?? null },
           json: () => Promise.resolve(replies[path] ?? {}),
         }));
       };
@@ -1217,7 +1254,8 @@ describe('webui page: the gate', () => {
 
   it('comes back when the stream is refused for good, under either gate', async () => {
     for (const password of [true, false]) {
-      const h = await open({ password });
+      // The session really is gone: the daemon says so to any guarded request.
+      const h = await open({ password, status: { 'api/push': 401 } });
       await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
       // The stream opened, so whichever gate was served is out of the way.
       expect(h.el('login').hidden).toBe(true);
@@ -1226,10 +1264,248 @@ describe('webui page: the gate', () => {
       // button under SSO.
       h.live().readyState = 2;
       h.live().onerror?.();
-      await tick();
-      expect(h.el('login').hidden).toBe(false);
+      await until('the gate is up', () => !h.el('login').hidden);
       expect(h.el('app').hidden).toBe(true);
     }
+  });
+
+  it('does not take a proxy’s 502 during a restart for a lost session: it tries again', async () => {
+    // cloudflared answers 502 while the daemon behind it is down, and EventSource gives up on
+    // that exactly as on a 401. Showing the gate there sent the person looking for a token they
+    // still had; under SSO it was a page with a Reload button and nothing else.
+    const h = await open({ status: { 'api/push': 502 } });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    const before = h.streams.length;
+    h.live().readyState = 2;
+    h.live().onerror?.();
+    await until('it asked whether the session is still good', () => h.calls.some((c) => c.path === 'api/push'));
+    await tick();
+    expect(h.el('login').hidden).toBe(true);
+    expect(h.el('note').textContent).toBe('Reconnecting...');
+    await within('a new stream after a second', 2500, () => h.streams.length > before);
+    expect(h.el('app').hidden).toBe(false);
+  });
+});
+
+describe('webui page: a daemon that restarts under an open page', () => {
+  it('reconnects after a bye instead of stopping for good, and takes the whole topic again', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    const first = h.live();
+    await h.emit({ t: 'bye' });
+    // Closed by the page, so EventSource does not hammer the port on its own schedule.
+    expect(first.closed).toBe(true);
+    expect(h.el('note').textContent).toContain('Reconnecting');
+    expect(h.el('note').textContent).not.toContain('Reload');
+    await within('a new stream after a second', 2500, () => h.streams.length === 2);
+    // A new EventSource has no resume point to send, so the daemon that answers sends a full sync.
+    expect(h.live().url).toBe('api/events?t=a1b2c3d4');
+    // The transcript stayed on screen meanwhile; the restarted daemon's sync takes over — the
+    // message it kept from the run before carries that run (g), and lands on the copy on screen.
+    expect(h.painted()).toBe(1);
+    await h.emit(
+      sync('a1b2c3d4', [{ ...message('m1', '<p>hello</p>'), g: 1 }, message('w1', '<p>after</p>')], ['a1b2c3d4'], {
+        epoch: 2,
+      })
+    );
+    expect(h.painted()).toBe(2);
+    expect(h.el('note').textContent).toBe('');
+  });
+
+  it('backs off between attempts, and starts again from a second once a stream opens', async () => {
+    const h = await open({ status: { 'api/push': 502 } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    const timers: number[] = [];
+    const real = h.window.setTimeout.bind(h.window);
+    (h.window as any).setTimeout = (fn: () => void, ms: number) => {
+      if (ms >= 1000) timers.push(ms);
+      return real(fn, 0);
+    };
+    for (let i = 0; i < 7; i++) {
+      // A stream that never opens: the proxy answers 502 every time.
+      const s = h.live();
+      s.onopen = null;
+      s.readyState = 2;
+      s.onerror?.();
+      const n = h.streams.length;
+      await until('the next attempt', () => h.streams.length > n);
+    }
+    expect(timers).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+    // One that opens resets it.
+    h.live().onopen?.();
+    await h.emit({ t: 'bye' });
+    expect(timers[timers.length - 1]).toBe(1000);
+  });
+
+  it('offers a reload when the daemon that came back serves a different page', async () => {
+    const h = await open({ heads: { '/': { ETag: 'W/"some-other-build"' } } });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    // The first sync of a page is the daemon that served it: nothing to compare yet.
+    expect(h.calls.some((c) => c.method === 'HEAD')).toBe(false);
+    expect(h.el('update').hidden).toBe(true);
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4'], { epoch: 2 }));
+    await until('it asked which page the daemon serves', () => h.calls.some((c) => c.method === 'HEAD'));
+    expect(h.calls.find((c) => c.method === 'HEAD')?.path).toBe('/');
+    await until('the offer is up', () => !h.el('update').hidden);
+    expect(h.el('update').textContent).toContain('updated');
+  });
+
+  it('says nothing when the daemon came back serving this same page, or would not say', async () => {
+    const build = servePage('Chat', false).build;
+    const answers: Array<Record<string, Record<string, string>>> = [{ '/': { ETag: `W/"${build}"` } }, {}];
+    for (const heads of answers) {
+      const h = await open({ heads });
+      await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+      await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { epoch: 2 }));
+      await until('it asked', () => h.calls.some((c) => c.method === 'HEAD'));
+      await tick();
+      expect(h.el('update').hidden).toBe(true);
+    }
+  });
+
+  it('keeps the draft when the offer is taken', async () => {
+    const h = await open({ heads: { '/': { ETag: 'W/"some-other-build"' } } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { epoch: 2 }));
+    await until('the offer is up', () => !h.el('update').hidden);
+    (h.el('input') as HTMLTextAreaElement).value = 'half a thought';
+    // jsdom does not navigate; what matters is what is on disk when the reload happens.
+    try {
+      await h.click('#update-reload');
+    } catch {
+      // jsdom: "Not implemented: navigation".
+    }
+    expect(JSON.parse(h.window.localStorage.getItem('aa_drafts') ?? '{}').a1b2c3d4).toContain('half a thought');
+  });
+});
+
+describe('webui page: a tab in the background', () => {
+  const setVisible = (h: Harness, visible: boolean): void => {
+    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => (visible ? 'visible' : 'hidden') });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+  };
+  /** An event the way a browser delivers one that carried an `id:`. */
+  const numbered = async (h: Harness, ev: Record<string, unknown>, id: string): Promise<void> => {
+    h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
+    await tick();
+  };
+
+  it('closes the stream behind a tab hidden for a while, and resumes from the last event on the way back', async () => {
+    // A phone on the table and a desktop tab behind others still received every message and the
+    // whole topic list after every message posted anywhere.
+    const h = await open({ shortenLong: true });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    await numbered(h, { t: 'msg', msg: message('m2', '<p>two</p>') }, 'a1b2c3d4.run.7');
+    const first = h.live();
+    setVisible(h, false);
+    await until('the stream is closed', () => first.closed);
+    expect(h.longTimers).toContain(15000);
+    setVisible(h, true);
+    // A new stream, told where the old one got to: the daemon replays what came after it.
+    expect(h.streams).toHaveLength(2);
+    expect(h.live().url).toBe('api/events?t=a1b2c3d4&last=a1b2c3d4.run.7');
+    // And the transcript never left the screen.
+    expect(h.painted()).toBe(2);
+    expect(h.skeletons()).toBe(0);
+  });
+
+  it('leaves the stream alone for a glance at another tab', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    const first = h.live();
+    setVisible(h, false);
+    await new Promise((r) => setTimeout(r, 50));
+    setVisible(h, true);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(first.closed).toBe(false);
+    expect(h.streams).toHaveLength(1);
+  });
+
+  it('does not take the focus when the stream comes back', async () => {
+    const h = await open({ shortenLong: true });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    const search = h.doc.querySelector<HTMLInputElement>('#topics-filter input');
+    expect(search).not.toBeNull();
+    search!.focus();
+    setVisible(h, false);
+    await until('the stream is closed', () => h.streams[0]!.closed);
+    setVisible(h, true);
+    await tick();
+    await tick();
+    expect(h.doc.activeElement).toBe(search);
+  });
+
+  it('waits for the tab to be looked at before reconnecting after a bye', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    setVisible(h, false);
+    await h.emit({ t: 'bye' });
+    await new Promise((r) => setTimeout(r, 1300));
+    expect(h.streams).toHaveLength(1);
+    setVisible(h, true);
+    expect(h.streams).toHaveLength(2);
+  });
+});
+
+describe('webui page: what changed in the topic list', () => {
+  const order = (h: Harness): string[] =>
+    Array.from(h.doc.querySelectorAll('#topics [data-topic]')).map((n) => n.getAttribute('data-topic') ?? '');
+  const row = (id: string, lastAt: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id,
+    title: `Topic ${id}`,
+    lastAt,
+    running: false,
+    msgCount: 0,
+    ...extra,
+  });
+
+  it('applies the rows it is sent, drops the ones that went, and re-sorts by activity', async () => {
+    // The whole list used to come after every message posted anywhere; now only what changed does.
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6']));
+    expect(order(h)).toEqual(['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6']);
+    // A message in the last one: its row alone, newer than the rest, so it goes to the top.
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row('c3d4e5f6', 5000, { title: 'spoken in', msgCount: 1 })] });
+    expect(order(h)).toEqual(['c3d4e5f6', 'a1b2c3d4', 'b2c3d4e5']);
+    expect(h.doc.querySelector('[data-topic="c3d4e5f6"]')?.textContent).toContain('spoken in');
+    // A new one joins, one goes.
+    await h.emit({ t: 'topic-rows', tv: 3, rows: [row('d4e5f6a7', 6000)], gone: ['b2c3d4e5'] });
+    expect(order(h)).toEqual(['d4e5f6a7', 'c3d4e5f6', 'a1b2c3d4']);
+  });
+
+  it('takes the order it is given when the daemon sends one', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6']));
+    // A tie the page would have broken the other way.
+    await h.emit({
+      t: 'topic-rows',
+      tv: 2,
+      rows: [row('b2c3d4e5', 7000), row('c3d4e5f6', 7000)],
+      order: ['c3d4e5f6', 'b2c3d4e5', 'a1b2c3d4'],
+    });
+    expect(order(h)).toEqual(['c3d4e5f6', 'b2c3d4e5', 'a1b2c3d4']);
+  });
+
+  it('leaves a topic that another tab deleted for the next one, as a whole list would', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hi</p>')], ['a1b2c3d4', 'b2c3d4e5']));
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [], gone: ['a1b2c3d4'] });
+    expect(h.live().url).toBe('api/events?t=b2c3d4e5');
+    // Nothing was created to replace it: there was somewhere to go.
+    expect(h.calls.map((c) => c.path)).not.toContain('api/topics');
+  });
+
+  it('tells the daemon which list it holds when it resumes, so an unchanged one is not sent again', async () => {
+    const h = await open({ shortenLong: true });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { tv: 5 }));
+    await h.emit({ t: 'topic-rows', tv: 6, rows: [row('a1b2c3d4', 2000)] });
+    h.live().onmessage?.({ data: JSON.stringify({ t: 'typing', on: false }), lastEventId: 'a1b2c3d4.run.3' });
+    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+    await until('the stream is closed', () => h.streams[0]!.closed);
+    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'visible' });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+    expect(h.live().url).toBe('api/events?t=a1b2c3d4&last=a1b2c3d4.run.3&tv=6');
   });
 });
 
@@ -2123,6 +2399,87 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     (h.window as any).confirm = () => true;
     await h.click('#clear-topics');
     await until('clear request is sent', () => h.calls.some((c) => c.path === 'api/topics/clear'));
+  });
+});
+
+describe('webui page: a topic held in memory', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  /** An event as a browser delivers one that carried an `id:` — a sync is numbered too. */
+  const numbered = async (h: Harness, ev: Record<string, unknown>, id: string): Promise<void> => {
+    h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
+    await tick();
+  };
+  const many = (n: number): Array<Record<string, unknown>> =>
+    Array.from({ length: n }, (_, i) => message(`w${i + 1}`, `<p>line ${i + 1}</p>`));
+
+  it('puts a topic back whole and resumes its stream, instead of being sent all of it again', async () => {
+    // Back and forth between two long topics was a full sync every time — 85 KB gzipped for 1000
+    // messages — because the cache keeps 200 and a switch empties memory.
+    const h = await open();
+    await numbered(h, sync(A, many(300), [A, B]), `${A}.run.300`);
+    await h.click(`[data-topic="${B}"]`);
+    await numbered(h, sync(B, [message('b1', '<p>in B</p>')], [A, B]), `${B}.run.1`);
+    expect(h.painted()).toBe(1);
+
+    await h.click(`[data-topic="${A}"]`);
+    // On screen at once, every one of them, before the stream has said anything.
+    expect(h.painted()).toBe(300);
+    expect(h.live().url).toBe(`api/events?t=${A}&last=${encodeURIComponent(`${A}.run.300`)}`);
+    expect(h.waiting()).not.toBeNull();
+    // What was said meanwhile is replayed; then the daemon says the catch-up is over.
+    await numbered(h, { t: 'msg', msg: message('w301', '<p>said while away</p>') }, `${A}.run.301`);
+    await h.emit({ t: 'resumed' });
+    expect(h.painted()).toBe(301);
+    expect(h.waiting()).toBeNull();
+    expect(h.el('log').lastElementChild?.textContent).toContain('said while away');
+  });
+
+  it('takes the whole topic as before when the daemon can no longer resume it', async () => {
+    const h = await open();
+    await numbered(h, sync(A, many(5), [A, B]), `${A}.run.5`);
+    await h.click(`[data-topic="${B}"]`);
+    await numbered(h, sync(B, [], [A, B]), `${B}.run.0`);
+    await h.click(`[data-topic="${A}"]`);
+    expect(h.painted()).toBe(5);
+    // The backlog did not reach that far: a sync, which is reconciled over what is on screen.
+    await numbered(h, sync(A, many(7).slice(2), [A, B]), `${A}.run.400`);
+    expect(h.painted()).toBe(5);
+    expect(h.waiting()).toBeNull();
+    expect(h.el('log').textContent).not.toContain('line 1');
+    expect(h.el('log').textContent).toContain('line 7');
+  });
+
+  it('holds nothing for a topic left before its stream said where it was', async () => {
+    const h = await open();
+    await numbered(h, sync(A, many(3), [A, B]), `${A}.run.3`);
+    await h.click(`[data-topic="${B}"]`);
+    // Left again before B's sync arrived: there is no position to resume B from.
+    await h.click(`[data-topic="${A}"]`);
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.live().url).toBe(`api/events?t=${B}`);
+  });
+
+  it('does not put back a topic held from a daemon that has since restarted', async () => {
+    const h = await open();
+    await numbered(h, sync(A, many(3), [A, B]), `${A}.run.3`);
+    await h.click(`[data-topic="${B}"]`);
+    await numbered(h, sync(B, [], [A, B], { epoch: 2 }), `${B}.other.0`);
+    await h.click(`[data-topic="${A}"]`);
+    expect(h.live().url).toBe(`api/events?t=${A}`);
+  });
+
+  it('forgets what it held for a topic the list no longer has', async () => {
+    const h = await open();
+    await numbered(h, sync(A, many(3), [A, B, 'c3d4e5f6']), `${A}.run.3`);
+    await h.click(`[data-topic="${B}"]`);
+    await numbered(h, sync(B, [], [A, B, 'c3d4e5f6']), `${B}.run.0`);
+    // A goes from the list (deleted in another tab): its held copy goes with it — memory nobody
+    // could read again. Listed once more, it is entered like any topic, not put back from memory.
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [], gone: [A] });
+    await h.emit({ t: 'topics', tv: 3, topics: (sync(B, [], [A, B, 'c3d4e5f6']).topics as unknown[]) });
+    await h.click(`[data-topic="${A}"]`);
+    expect(h.live().url).toBe(`api/events?t=${A}`);
   });
 });
 
@@ -4549,6 +4906,32 @@ describe('webui page: pasting', () => {
     expect(files[0]!.mime).toBe('image/png');
     // Base64 with the `data:` prefix cut off, which is what `api/send` accepts.
     expect(files[0]!.data).toBe('iVBORw==');
+  });
+
+  it('sends the files as bytes rather than as base64 in JSON, and text alone as JSON', async () => {
+    // Base64 is a third larger than the file: on a 250 kbps uplink a 1 MB photo went from 33 s to 44.
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    (h.el('input') as HTMLTextAreaElement).value = 'just words';
+    await h.click('#composer button[type="submit"]');
+    const words = h.calls.filter((c) => c.path === 'api/send');
+    expect(words).toHaveLength(1);
+    expect(words[0]!.binary).toBeUndefined();
+
+    h.el('input').dispatchEvent(pasteOf(h, [{ kind: 'file', type: 'image/png', file: image(h, 'image.png', 'image/png') }]));
+    await until('the chip is rendered', () => chipNames(h).length > 0);
+    (h.el('input') as HTMLTextAreaElement).value = 'and a picture — ✓';
+    await h.click('#composer button[type="submit"]');
+    const sent = h.calls.filter((c) => c.path === 'api/send')[1]!;
+    expect(sent.binary).toBe(true);
+    // Read back as the server reads it: the same request the JSON form carried, nonce and all —
+    // the text's UTF-8 intact, the file's four bytes exact.
+    expect(sent.body).toMatchObject({
+      topic: 'a1b2c3d4',
+      text: 'and a picture — ✓',
+      files: [{ name: 'pasted-1.png', mime: 'image/png', data: 'iVBORw==' }],
+    });
+    expect(typeof sent.body.nonce).toBe('string');
   });
 
   it('shows a sent screenshot in the transcript once the echo brings it, and opens it on a tap', async () => {
