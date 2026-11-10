@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -103,9 +103,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 `;
 
 let live: AgentSession | undefined;
+// Every rig's temp directory: the fake agent, its request log, and the `cursor-agent` symlink.
+const dirs: string[] = [];
 afterEach(() => {
   live?.dispose();
   live = undefined;
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 function rig(opts: {
@@ -122,6 +125,7 @@ function rig(opts: {
   writes: () => string[];
 } {
   const dir = mkdtempSync(join(tmpdir(), 'aa-acp-options-'));
+  dirs.push(dir);
   const script = join(dir, 'fake-acp-agent.cjs');
   const logPath = join(dir, 'requests.jsonl');
   writeFileSync(script, FAKE_AGENT);
