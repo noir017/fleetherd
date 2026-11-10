@@ -839,6 +839,16 @@ A gzip stream buffers until told otherwise, so each event is followed by an expl
 indistinguishable from a hung daemon. `server.test.ts` pins it, and the test hangs rather than
 failing an assertion if the flush goes away — which is the honest reproduction.
 
+**The page is downloaded once per build, not once per load.** It is 455 KB, 134 KB gzipped, and
+until it has all arrived nothing can be tapped: 2.6 s at 500 kbps, 6.3 s at 200 kbps, on every
+reload and every tab a phone brought back. It used to be `no-store`, so that a stale page could
+never outlive an upgrade. It is now `private, no-cache` with an ETag that is a hash of the rendered
+bytes (`servedPage`): the browser keeps it and asks every time, and the answer is a 304 until
+anything that changes those bytes changes — an upgrade, the title, the terminal or the password
+door. The render and its gzip (20 ms on the event loop per load, before) are made once per set of
+inputs. Measured in Chromium at 400 ms / 500 kbps on 2026-11-10: a reload went from 134 KB and
+2.6 s to a 304.
+
 **Sends are idempotent.** A POST can be accepted and still time out on a bad link, so the page
 retries — which is only safe because each send carries a nonce the server remembers. The
 daemon's own inbound dedup cannot help here: it keys on a message id, and a retry mints a fresh
@@ -1484,8 +1494,10 @@ dropped the service-worker-with-a-fetch-handler requirement — the check was a 
 an offline story", sites defeated it with empty handlers, and it was removed rather than
 tightened ([Chrome for Developers](https://developer.chrome.com/blog/update-install-criteria),
 read 2026-09-20). What remains is HTTPS and a manifest. A worker here would also mean caching
-the app shell, and the shell is served `no-store` on purpose: a stale copy after an upgrade is
-a support question with no error message. If offline reading is ever wanted, the local
+the app shell, and the shell is never used without asking the daemon first: a stale copy after
+an upgrade is a support question with no error message. It is cached by the browser, but under
+`no-cache` and an ETag that is a hash of the rendered bytes ([below](#built-for-a-bad-connection)),
+which a cache in a worker would bypass. If offline reading is ever wanted, the local
 transcript cache above is the place for it, not a second copy of the shell.
 
 **The icon exists twice on purpose.** `ICON_SVG` is the drawing; the base64 PNG beside it is

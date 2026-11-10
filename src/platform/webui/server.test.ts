@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { createGunzip, inflateSync } from 'node:zlib';
+import { createGunzip, gunzipSync, inflateSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
@@ -189,13 +189,80 @@ describe('webui server: the page', () => {
   });
 
   it('compresses it, because the page is the largest thing on the wire', async () => {
-    const { base } = await boot();
-    const res = await fetch(`${base}/`, { headers: { 'accept-encoding': 'gzip' } });
-    // undici decodes and drops the header, so the reliable witness is Vary — set only on the
-    // branch that actually compressed.
-    expect(res.headers.get('vary')).toBe('Accept-Encoding');
+    const { port } = await boot();
+    const res = await rawGet(port, '/', { 'accept-encoding': 'gzip' });
+    expect(res.headers['content-encoding']).toBe('gzip');
+    expect(res.headers.vary).toBe('Accept-Encoding');
+    expect(gunzipSync(res.body).toString('utf8')).toContain('<title>Chat</title>');
+  });
+
+  it('answers a browser that already holds this page with a 304, and an upgraded page with the page', async () => {
+    const { port } = await boot();
+    const first = await rawGet(port, '/', { 'accept-encoding': 'gzip' });
+    const etag = String(first.headers.etag);
+    // Kept and asked about every time, never used unasked: no-cache is what makes an upgrade show
+    // at the next load. private, because the answer may carry a renewed session cookie.
+    expect(first.headers['cache-control']).toBe('private, no-cache');
+    expect(etag).toMatch(/^W\/"[\w-]+"$/);
+    const again = await rawGet(port, '/', { 'accept-encoding': 'gzip', 'if-none-match': etag });
+    expect(again.status).toBe(304);
+    expect(again.body.length).toBe(0);
+    expect(again.headers.etag).toBe(etag);
+    // A list, and the strong spelling of the same tag, are the same question.
+    const listed = await rawGet(port, '/', { 'if-none-match': `"x", ${etag.slice(2)}` });
+    expect(listed.status).toBe(304);
+    // A page the browser holds from another build — here, another render of it — is not this one.
+    const stale = await rawGet(port, '/', { 'if-none-match': 'W/"from-before-the-upgrade"' });
+    expect(stale.status).toBe(200);
+    expect(stale.body.toString('utf8')).toContain('<title>Chat</title>');
+  });
+
+  it('hashes what it renders, so anything that changes the page changes its validator', async () => {
+    const a = await boot();
+    const b = await boot({ title: 'Another' });
+    const c = await boot({}, { enabled: true, socket: '/nonexistent.sock' });
+    const tags = await Promise.all([a, b, c].map(async (x) => (await rawGet(x.port, '/')).headers.etag));
+    expect(new Set(tags).size).toBe(3);
+    // And the browser holding a's page is given b's whole, not told it is current.
+    expect((await rawGet(b.port, '/', { 'if-none-match': String(tags[0]) })).status).toBe(200);
+  });
+
+  it('serves the same validator compressed or not, for the same page', async () => {
+    const { port } = await boot();
+    const plain = await rawGet(port, '/');
+    const zipped = await rawGet(port, '/', { 'accept-encoding': 'gzip' });
+    expect(plain.headers['content-encoding']).toBeUndefined();
+    expect(plain.headers.vary).toBe('Accept-Encoding');
+    expect(zipped.headers.etag).toBe(plain.headers.etag);
+    expect(gunzipSync(zipped.body).equals(plain.body)).toBe(true);
+  });
+
+  it('still renews a live session cookie on a 304', async () => {
+    const { base, port } = await boot();
+    const cookie = await signIn(base);
+    const { headers } = await rawGet(port, '/');
+    const res = await rawGet(port, '/', { cookie, 'if-none-match': String(headers.etag) });
+    expect(res.status).toBe(304);
+    expect(String(res.headers['set-cookie']).split(';')[0]).toBe(cookie);
   });
 });
+
+/** A GET with raw `node:http`, so compression and a 304 are visible instead of undone by fetch. */
+function rawGet(
+  port: number,
+  path: string,
+  headers: Record<string, string> = {}
+): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path, headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.once('error', reject);
+    req.end();
+  });
+}
 
 describe('webui server: installing it as an app', () => {
   it('serves the manifest and both icons without a session', async () => {

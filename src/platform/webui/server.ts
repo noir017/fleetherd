@@ -38,6 +38,7 @@
  * response), then closes connections, with a timeout as a backstop. Getting this wrong does not
  * leak a socket; it hangs Ctrl-C forever.
  */
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -302,6 +303,31 @@ interface Ctx {
   warned: Map<string, number>;
   /** Push notifications (webpush.ts); absent in a test that does not care, which then offers none. */
   push?: WebPush;
+  /** The page as last served — see `servedPage`. */
+  page?: ServedPage;
+}
+
+/**
+ * The page document, rendered once per configuration, with its validator and its compressed form.
+ *
+ * Every load used to render it (3.7 ms) and gzip it (16.4 ms) again on the event loop, and send all
+ * of it: 455 KB, 134 KB on the wire — 2.6 s on a 500 kbps link, for bytes that only change when the
+ * daemon is upgraded. Now the browser keeps it and asks before using it (`no-cache`), and the answer
+ * is a 304 unless the rendered bytes changed. The validator is a hash of those bytes rather than a
+ * version number, so an upgrade, a new title or a terminal turned on all produce a new page at the
+ * next load without anyone having to remember to bump anything.
+ */
+interface ServedPage {
+  /** The render inputs this entry was made from; a different set renders again. */
+  key: string;
+  raw: Buffer;
+  gzip: Buffer;
+  /**
+   * Weak, because the same validator stands for the identity and the gzip form: they are the same
+   * page, and `If-None-Match` compares weakly anyway. A strong tag would also oblige a proxy that
+   * re-compresses (Cloudflare does) to drop it.
+   */
+  etag: string;
 }
 
 /** One request, already parsed as far as routing needs it. */
@@ -322,7 +348,7 @@ interface Route {
 
 /** Reachable without a session: the page itself, and the exchange that gets you one. */
 const OPEN: Route[] = [
-  { method: 'GET', path: '/', run: ({ req, res }, ctx) => { renewCookie(req, res, ctx); sendPage(req, res, ctx.instance, ctx.terminal); } },
+  { method: 'GET', path: '/', run: ({ req, res }, ctx) => { renewCookie(req, res, ctx); sendPage(req, res, ctx); } },
   { method: 'POST', path: '/api/login', run: login },
   // Open on purpose. The browser fetches these while deciding whether the site can be
   // installed, which is before anyone has signed in, and a 401 there is indistinguishable from
@@ -470,48 +496,94 @@ function renewCookie(req: IncomingMessage, res: ServerResponse, ctx: Ctx): void 
   if (id && ctx.auth.check(req.headers.cookie)) res.setHeader('Set-Cookie', sessionCookie(id, isSecure(req)));
 }
 
-function sendPage(
-  req: IncomingMessage,
-  res: ServerResponse,
-  instance: WebuiInstance,
-  terminal: TerminalSettings
-): void {
-  body(
-    req,
-    res,
-    200,
-    Buffer.from(
-      renderPage(instance.title, terminal.enabled, passwordLogin(instance), terminal.sessions.canEnd),
-      'utf8'
-    ),
-    {
-    'Content-Type': 'text/html; charset=utf-8',
-    // The page is the app; a stale cached copy after an upgrade is a support question.
-    'Cache-Control': 'no-store',
-    // Belt and braces around web-markdown's escaping: even if something did get through, an
-    // inline script from it would not run and no external origin could be reached.
-    //
-    // `frame-src 'self'` is what lets the terminal pane exist. Same-origin is not a sandbox —
-    // ttyd's page can read this one's DOM and its cookie — and that is accepted knowingly:
-    // the alternative buys nothing, because a cross-origin iframe would need
-    // `allow-same-origin` to hold a session at all and that undoes the sandbox. The trade is
-    // ttyd's terminal, with its IME and file transfer, against re-implementing all of it here.
-    //
-    // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
-    // It names where a WORKER may be loaded from and nothing else: the page's own scripts are still
-    // inline only, so no same-origin file — an agent's upload included — can run as one.
-    'Content-Security-Policy':
-      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+/**
+ * The page, or a 304 when the browser already holds this exact one.
+ *
+ * `private, no-cache` rather than the `no-store` it had: the reason given for that — a stale copy
+ * after an upgrade is a support question — rules out a cache that is used WITHOUT asking, not one
+ * that asks. `no-cache` asks every time, and the ETag is a hash of the rendered bytes, so the first
+ * load after an upgrade gets the new page as surely as before; every other load costs one round
+ * trip instead of 134 KB. `private` because the response can carry a renewed session cookie
+ * (`renewCookie`), which no shared cache may keep.
+ *
+ * No service worker stands in the way: `sw.ts` has no fetch handler, so this header is the whole of
+ * the page's caching.
+ */
+function sendPage(req: IncomingMessage, res: ServerResponse, ctx: Ctx): void {
+  const page = servedPage(ctx);
+  const headers: Record<string, string> = {
+    ...PAGE_HEADERS,
+    'Cache-Control': 'private, no-cache',
+    ETag: page.etag,
+    // On every answer, compressed or not and 304 or not: which body a cache holds depends on it.
+    Vary: 'Accept-Encoding',
+  };
+  if (matchesEtag(req, page.etag)) {
+    res.writeHead(304, headers);
+    res.end();
+    return;
+  }
+  const gzip = acceptsGzip(req);
+  const out = gzip ? page.gzip : page.raw;
+  res.writeHead(200, {
+    ...headers,
+    'Content-Length': String(out.length),
+    ...(gzip ? { 'Content-Encoding': 'gzip' } : {}),
   });
+  res.end(out);
 }
+
+/** Render, hash and compress the page — once per set of render inputs. */
+function servedPage(ctx: Ctx): ServedPage {
+  const args = [
+    ctx.instance.title,
+    ctx.terminal.enabled,
+    passwordLogin(ctx.instance),
+    ctx.terminal.sessions.canEnd,
+  ] as const;
+  const key = JSON.stringify(args);
+  if (ctx.page?.key === key) return ctx.page;
+  const raw = Buffer.from(renderPage(...args), 'utf8');
+  const etag = `W/"${createHash('sha256').update(raw).digest('base64url').slice(0, 27)}"`;
+  ctx.page = { key, raw, gzip: gzipSync(raw), etag };
+  return ctx.page;
+}
+
+/** Whether `If-None-Match` names this validator. Compared weakly, as RFC 9110 §13.1.2 says for it. */
+function matchesEtag(req: IncomingMessage, etag: string): boolean {
+  const header = req.headers['if-none-match'];
+  if (!header) return false;
+  const opaque = (tag: string): string => tag.trim().replace(/^W\//, '');
+  const mine = opaque(etag);
+  return header.split(',').some((tag) => tag.trim() === '*' || opaque(tag) === mine);
+}
+
+const PAGE_HEADERS: Record<string, string> = {
+  'Content-Type': 'text/html; charset=utf-8',
+  // Belt and braces around web-markdown's escaping: even if something did get through, an
+  // inline script from it would not run and no external origin could be reached.
+  //
+  // `frame-src 'self'` is what lets the terminal pane exist. Same-origin is not a sandbox —
+  // ttyd's page can read this one's DOM and its cookie — and that is accepted knowingly:
+  // the alternative buys nothing, because a cross-origin iframe would need
+  // `allow-same-origin` to hold a session at all and that undoes the sandbox. The trade is
+  // ttyd's terminal, with its IME and file transfer, against re-implementing all of it here.
+  //
+  // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
+  // It names where a WORKER may be loaded from and nothing else: the page's own scripts are still
+  // inline only, so no same-origin file — an agent's upload included — can run as one.
+  'Content-Security-Policy':
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+};
 
 /**
  * The manifest, which is what makes "add to home screen" offer an app rather than a bookmark.
  *
- * `no-store` for the same reason the page has it: the name and the colours come from config,
- * and an installed app holding last week's title is a support question with no error message.
+ * `no-store`, unlike the page's validated cache: the name and the colours come from config, an
+ * installed app holding last week's title is a support question with no error message, and at a
+ * few hundred bytes the manifest is not worth a validator.
  * The icons below are the opposite case — bytes that only change when this file does — so they
  * get a long cache and save the round trip on every launch.
  */

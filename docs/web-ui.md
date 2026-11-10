@@ -208,7 +208,9 @@ a message from before a restart keeps the plain download link.
 every keystroke of the stream, everything on the wire is compressed, and a dropped
 connection resumes from where it left off instead of re-downloading the
 conversation. In a 30-second streamed answer that is 13 updates collapsed to 3, at
-about a quarter of the bytes. Sends carry a nonce, so the page retries safely on a
+about a quarter of the bytes. The page itself is downloaded once per version: a reload
+only asks the daemon whether it changed, and the first reload after an upgrade gets the
+new one. Sends carry a nonce, so the page retries safely on a
 link that drops them. A send that gets no answer at all does not stay grey: after 15
 seconds (longer for a big attachment, up to 5 minutes) it turns red with **Retry**,
 **Copy** and **Discard**. A message that is still grey after that has not left the

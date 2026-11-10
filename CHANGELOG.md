@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's page is a 304 after the first load, not 134 KB.** It was served `no-store`, so
+  every reload and every reopened tab downloaded the whole document again — 2.6 s on a 500 kbps
+  link, 6.3 s at 200 kbps — and the daemon rendered and gzipped it afresh each time (20 ms on the
+  event loop). The reason was that a stale page after an upgrade is a support question; that rules
+  out a cache used without asking, not one that asks. The page now carries an ETag that is a hash
+  of its rendered bytes and `private, no-cache`, so the browser asks every time and an upgrade, a
+  new title or a terminal turned on still reach the next load. It is rendered and compressed once.
+
 ## [2.55.0] - 2026-11-09
 
 ### Changed
