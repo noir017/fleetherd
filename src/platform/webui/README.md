@@ -549,7 +549,7 @@ the browser. Only the Tasks sub-tab shows it — Sessions and Reviews do not.
 A group marked `pinned` is drawn as one always-visible row under the search instead of folding
 into the panel, and both bars use it for their state filter: Status here (Running, Active,
 Paused, Ended) and State in the topic list (Needs you, Running, Idle, No agent). Four chips share
-the row equally and never wrap. When the bar's content is under 280px — the sidebar's 180px and
+the row equally and never wrap. When the bar's content is 308px or less — the sidebar's 180px and
 this panel's 220px are — the word goes and the icon and count stay, with the full name on the
 chip's `title` and `aria-label`, because four words do not fit; above that the short word returns.
 A pinned chip never lights the Filter dot: that dot says the panel holds a choice you cannot see.

@@ -233,7 +233,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .fb-pin-row{flex-wrap:nowrap;gap:4px}
 .fb-pin{flex:1 1 0;min-width:0;justify-content:center;padding:2px 5px}
 .fb-pin .fb-chip-label{overflow:hidden;text-overflow:ellipsis}
-@container (max-width:280px){
+@container (max-width:308px){
   .fb-pin .fb-chip-label{display:none}
 }
 /* A row kept only because a topic under it matched is context, not a result: it is
@@ -4831,6 +4831,11 @@ const SCRIPT = `
         }
         var n = c.querySelector('.fb-count');
         if(o && n && typeof o.count === 'number') n.textContent = String(o.count);
+        // The pinned row's word may be hidden, so its full name is the accessible one — and the
+        // number is the half of the chip a reader cannot infer from the icon.
+        if(o && c.hasAttribute('aria-label')){
+          c.setAttribute('aria-label', o.label + (typeof o.count === 'number' ? ' ' + o.count : ''));
+        }
       }
     }
 
@@ -4859,7 +4864,7 @@ const SCRIPT = `
           chips += '<button type="button" class="fb-chip' + (gg.pinned ? ' fb-pin' : '') + '"'
             + ' data-fb-group="' + text(gg.id) + '" data-fb-value="' + text(oo.value) + '"'
             + ' aria-pressed="false" title="' + text(oo.label) + '"'
-            + (gg.pinned ? ' aria-label="' + text(oo.label) + '"' : '') + '>'
+            + (gg.pinned ? ' aria-label="' + text(oo.label + (typeof oo.count === 'number' ? ' ' + oo.count : '')) + '"' : '') + '>'
             + (oo.icon && IC.icon[oo.icon] ? IC.icon[oo.icon] : '')
             + '<span class="fb-chip-label">' + text(gg.pinned ? (oo.short || oo.label) : oo.label) + '</span>'
             + (typeof oo.count === 'number' ? '<span class="fb-count">' + oo.count + '</span>' : '')
@@ -4897,6 +4902,10 @@ const SCRIPT = `
     function emit(){
       save();
       paintChrome();
+      // The pressed state of a chip lives here, not in the caller's repaint: the task list
+      // redraws its rows on every change but does not restate its groups, so without this a
+      // click would filter the list while the chip still read unpressed.
+      paintChips();
       if(opts.onChange) opts.onChange(state());
     }
 
@@ -4933,6 +4942,11 @@ const SCRIPT = `
         // there is nothing to move away from.
         if(panel.contains(e.target)) fBtn.focus();
         e.preventDefault(); e.stopPropagation();
+      } else if(e.target.closest && e.target.closest('[data-fb-value]')){
+        // A chip is in the bar whether the panel is open or not, and Escape on it is the person
+        // dismissing nothing. Let it through and the page-wide handler closes the whole drawer
+        // behind a filter that did not move.
+        e.stopPropagation();
       }
     });
     fBtn.addEventListener('click', function(){ st.open = !st.open; save(); paintChrome(); });

@@ -2179,6 +2179,22 @@ describe('webui page: the topic filter bar', () => {
     expect(h.doc.activeElement).toBe(h.doc.querySelector('.fb-filter'));
   });
 
+  it('keeps Escape on a pinned chip from closing the panel behind it', async () => {
+    const h = await open();
+    await withFleet(h);
+    // The filter panel is shut; the State row is on the bar.
+    expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(true);
+    const chip = h.doc.querySelector('.fb-chip[data-fb-value="idle"]') as HTMLElement;
+    chip.focus();
+    chip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick();
+
+    // Nothing in the bar was open to put away, so the drawer behind it must stay where it is.
+    expect(h.el('app').classList.contains('sb-open')).toBe(true);
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(false);
+    expect(h.doc.activeElement).toBe(chip);
+  });
+
   it('keeps the State row on the bar with the panel shut, and filters from it', async () => {
     const h = await open();
     await withFleet(h);
@@ -2191,9 +2207,10 @@ describe('webui page: the topic filter bar', () => {
     expect(chips.map((c) => c.getAttribute('data-fb-value'))).toEqual(['needs', 'running', 'idle', 'none']);
     expect(pins.querySelector('.fb-label')).toBeNull();
     expect(h.doc.querySelector('.fb-panel .fb-chip[data-fb-group="state"]')).toBeNull();
-    // The row's word is the short one; the full name stays on the chip for a pointer and a reader.
+    // The row's word is the short one; the full name and its count stay on the chip for a
+    // pointer and a reader.
     expect(chips[0]!.getAttribute('title')).toBe('Needs you');
-    expect(chips[0]!.getAttribute('aria-label')).toBe('Needs you');
+    expect(chips[0]!.getAttribute('aria-label')).toBe('Needs you 1');
     expect(chips[0]!.querySelector('.fb-chip-label')?.textContent).toBe('Needs');
 
     await toggle(h, 'state', 'idle');
@@ -8798,6 +8815,27 @@ describe('webui page: the task list filter', () => {
     await h.click('.sched-none .fb-clear');
     expect(ids(h)).toHaveLength(5);
     expect((h.doc.querySelector('#sched-filter .fb-q') as HTMLInputElement).value).toBe('');
+  });
+
+  it('keeps a pinned Status chip’s pressed state in step without restating the groups', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply(fleet()) } });
+    await openPanel(h);
+    const paused = (): HTMLElement =>
+      h.doc.querySelector('#sched-filter .fb-chip[data-fb-group="status"][data-fb-value="paused"]') as HTMLElement;
+    expect(paused().getAttribute('aria-pressed')).toBe('false');
+
+    await toggle(h, 'status', 'paused');
+    expect(paused().getAttribute('aria-pressed')).toBe('true');
+    // The chip carries its full name and its number, because the row may show only the number.
+    expect(paused().getAttribute('aria-label')).toBe('Paused 1');
+
+    await toggle(h, 'status', 'paused');
+    expect(paused().getAttribute('aria-pressed')).toBe('false');
+
+    await toggle(h, 'status', 'paused');
+    await h.click('#sched-filter .fb-sum .fb-clear');
+    expect(paused().getAttribute('aria-pressed')).toBe('false');
+    expect((h.doc.querySelector('#sched-filter .fb-sum') as HTMLElement).hidden).toBe(true);
   });
 
   it('sorts by next run, last run and creation, with the missing values always last', async () => {
