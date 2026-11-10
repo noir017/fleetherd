@@ -152,6 +152,29 @@ export interface HistorySessionRow {
   messages?: number;
 }
 
+/**
+ * Where a page of `list` resumes: the last row the page before it returned.
+ *
+ * Keyset rather than an offset because the library is written while it is read — a conversation
+ * that becomes active between two requests moves to the top, and an offset would then skip the row
+ * that fell past it. `lastAt` is the epoch ms `sessions.last_at` is stored as, `id` the tiebreak
+ * for two conversations last active in the same millisecond.
+ */
+export interface HistoryListCursor {
+  lastAt: number;
+  id: number;
+}
+
+export interface HistoryListOptions {
+  /** How far back to look, in days. Ignored when `all` is set. */
+  days?: number;
+  limit?: number;
+  /** Every conversation the library holds, however old — the web UI's history page. */
+  all?: boolean;
+  /** Resume after this row. A page and a cursor are the only way through a library older than `days`. */
+  before?: HistoryListCursor;
+}
+
 export interface HistoryHit {
   /** The session id `read` takes. */
   session: number;
@@ -1220,20 +1243,38 @@ export class HistoryStore {
     return { ids: [Number(row.id)] };
   }
 
-  /** The most recently active conversations, newest first. */
-  list(opts: { days?: number; limit?: number } = {}): HistorySessionRow[] {
+  /**
+   * The most recently active conversations, newest first — the last `days` of them, or every one
+   * when `all` is set, a page at a time when `before` names where the last page ended.
+   *
+   * The id tiebreak in the ORDER BY is what makes the cursor sound: two conversations last active
+   * in the same millisecond would otherwise come back in an order SQLite is free to choose, and a
+   * page boundary between them could repeat or drop one.
+   */
+  list(opts: HistoryListOptions = {}): HistorySessionRow[] {
     const db = this.requireDb();
     const days = opts.days !== undefined && opts.days > 0 ? opts.days : DEFAULT_LIST_DAYS;
     const limit = Math.max(1, Math.min(opts.limit ?? DEFAULT_LIST_LIMIT, 200));
+    const where = ["s.kind != 'review'"];
+    const params: Array<string | number> = [];
+    if (!opts.all) {
+      where.push('s.last_at >= ?');
+      params.push(Date.now() - days * 86_400_000);
+    }
+    if (opts.before) {
+      where.push('(s.last_at < ? OR (s.last_at = ? AND s.id < ?))');
+      params.push(opts.before.lastAt, opts.before.lastAt, opts.before.id);
+    }
+    params.push(limit);
     const rows = db
       .prepare(
         `SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS messages
          FROM sessions s
-         WHERE s.last_at >= ? AND s.kind != 'review'
-         ORDER BY s.last_at DESC
+         WHERE ${where.join(' AND ')}
+         ORDER BY s.last_at DESC, s.id DESC
          LIMIT ?`
       )
-      .all(Date.now() - days * 86_400_000, limit) as Array<Record<string, unknown>>;
+      .all(...params) as Array<Record<string, unknown>>;
     return rows.map(sessionRow);
   }
 

@@ -371,6 +371,79 @@ export interface ReviewPanel {
 }
 
 /**
+ * What `useHistoryPanel` hands a platform: the conversation library, read-only — every conversation
+ * ever recorded, a keyword search over them, and one conversation opened whole.
+ *
+ * It is the same `history.db` `talkcode sessions list/search/read` reads, with the same rules: a
+ * review's own session is not a conversation and is left out of the list, a read is bounded (and
+ * says so in `note` when it was), and nothing here writes.
+ */
+export interface HistoryPanel {
+  /** One page of conversations, newest first. `before` is the previous page's `next`. */
+  list(opts?: { before?: string; limit?: number }): HistoryPanelPage;
+  /** Keyword matches across every conversation, newest first. */
+  search(query: string): HistoryPanelHit[];
+  /** One conversation whole. Throws the store's own sentence for an id that names none. */
+  read(id: number): HistoryPanelRead;
+}
+
+/** One conversation, as the history page lists it. */
+export interface HistoryPanelSession {
+  /** The library's session id — what `talkcode sessions read` takes, and the page's key. */
+  id: number;
+  /** The conversation key (`<platform>#<channel>#<thread>`). */
+  key: string;
+  title: string;
+  agent: string;
+  platform: string;
+  /** Epoch ms of the last activity. */
+  lastAt: number;
+  /** How many rows the conversation holds. */
+  messages: number;
+  /** The topic to open, when this conversation is one this web UI instance still shows. */
+  topic?: string;
+}
+
+/** One page of the library. */
+export interface HistoryPanelPage {
+  /** `false` when this daemon has no conversation library at all. */
+  enabled: boolean;
+  sessions: HistoryPanelSession[];
+  /**
+   * Where the next page starts, absent when this page reached the oldest conversation. Opaque to
+   * the page — the daemon decides what it means, so the store's ordering can change without the
+   * page having to.
+   */
+  next?: string;
+}
+
+/** One keyword match. `session` is the id `read` takes. */
+export interface HistoryPanelHit {
+  session: number;
+  /** The message the match was in. */
+  message: number;
+  /** Epoch ms. */
+  at: number;
+  title: string;
+  agent: string;
+  platform: string;
+  role: string;
+  excerpt: string;
+}
+
+/** One conversation, read whole. */
+export interface HistoryPanelRead {
+  session: HistoryPanelSession;
+  messages: Array<{ id: number; at: number; role: string; kind: string; text: string }>;
+  /**
+   * What a bound left out. Present means the transcript below is not the whole conversation, and
+   * the page says so — a person reading half a log as the whole is the failure this field exists
+   * to prevent.
+   */
+  note?: string;
+}
+
+/**
  * Platform capability interface. One layer above Satori so the core classes depend only on
  * capabilities, not concrete platforms; missing capabilities degrade gracefully in the
  * implementation (see capabilities).
@@ -574,6 +647,20 @@ export interface PlatformAdapter {
    * line a change posts, and has no column to list the quiet reviews that posted nothing.
    */
   useReviewPanel?(panel: ReviewPanel): void;
+
+  /**
+   * Hand the platform the conversation library — every conversation this gateway ever recorded,
+   * for the web UI's history page.
+   *
+   * Read-only by construction: the library is written as turns happen, and nothing here adds,
+   * changes or deletes a row. The list leaves out a review's own session (`HistoryStore.list`),
+   * because a review is the gateway's background work, not a conversation someone had; the
+   * Reviews tab is where those are read.
+   *
+   * Optional and web-UI-only for the reason the seams above are: a chat app already has
+   * `talkcode sessions list/search/read` for this, and no surface to draw a list on.
+   */
+  useHistoryPanel?(panel: HistoryPanel): void;
 
   /**
    * Hand the platform a way to end the agent process behind a conversation that is idle — what the

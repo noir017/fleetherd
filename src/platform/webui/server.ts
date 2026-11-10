@@ -408,6 +408,12 @@ const GUARDED: Route[] = [
   { method: 'GET', path: '/api/reviews', run: reviewsList },
   // Dismissing a preference suggestion — the Reviews tab's only write, to reviews.json alone.
   { method: 'POST', path: '/api/reviews/op', run: reviewsOp },
+  // The history page: every conversation in the library, a keyword search over them, and one
+  // opened whole. Read-only, and the same store `talkcode sessions` reads. Every parameter is in
+  // the query string rather than a body, so the checks are here — there is no schema to hold them.
+  { method: 'GET', path: '/api/history', run: historyList },
+  { method: 'GET', path: '/api/history/search', run: historySearch },
+  { method: 'GET', path: '/api/history/read', run: historyRead },
   { method: 'DELETE', path: '/api/topics', run: deleteTopic },
   { method: 'POST', path: '/api/logout', run: logout },
   { method: 'GET', path: '/f/', prefix: true, run: ({ req, res, rest }, ctx) => download(req, res, ctx.room, rest) },
@@ -1013,6 +1019,54 @@ async function reviewsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   if (!parsed) return;
   const result = ctx.room.reviewOp(parsed);
   send(req, res, result.ok ? 200 : 400, result.ok ? result.list : { error: result.error });
+}
+
+/** How many conversations one page may carry. The store's own ceiling; a page asks for 50. */
+const HISTORY_PAGE_MAX = 200;
+
+/**
+ * One page of the conversation library, newest first.
+ *
+ * `before` is the `next` of the page before it, and is validated by shape rather than trusted: it
+ * goes straight into the store's keyset comparison, and a cursor that means nothing would answer
+ * with a page that silently repeats or skips rows. `limit` is bounded for the same reason the
+ * store bounds it — a page is a screenful, not the library.
+ */
+function historyList({ req, res, url }: Req, ctx: Ctx): void {
+  const before = url.searchParams.get('before') ?? '';
+  if (before && !/^\d{1,15}\.\d{1,15}$/.test(before)) return send(req, res, 400, { error: 'not a page of this history' });
+  const raw = url.searchParams.get('limit') ?? '';
+  const limit = Number(raw);
+  if (raw && (!Number.isInteger(limit) || limit < 1 || limit > HISTORY_PAGE_MAX)) {
+    return send(req, res, 400, { error: `limit must be 1..${HISTORY_PAGE_MAX}` });
+  }
+  send(req, res, 200, ctx.room.historyPage({ ...(before ? { before } : {}), ...(raw ? { limit } : {}) }));
+}
+
+/**
+ * Keyword matches across the whole library. A query the tokenizer finds no word in is a refusal
+ * with the store's own sentence, not an empty answer that reads as "nothing matched".
+ */
+function historySearch({ req, res, url }: Req, ctx: Ctx): void {
+  const q = (url.searchParams.get('q') ?? '').trim();
+  if (!q) return send(req, res, 400, { error: 'a search needs a word to look for' });
+  if (q.length > 200) return send(req, res, 400, { error: 'that search is too long' });
+  try {
+    send(req, res, 200, ctx.room.historySearch(q));
+  } catch (e) {
+    send(req, res, 400, { error: e instanceof Error ? e.message : 'could not search the library' });
+  }
+}
+
+/** One conversation, whole. 404 for an id that names none, with the store's own sentence. */
+function historyRead({ req, res, url }: Req, ctx: Ctx): void {
+  const raw = url.searchParams.get('id') ?? '';
+  if (!/^\d{1,15}$/.test(raw)) return send(req, res, 400, { error: 'not a conversation id' });
+  try {
+    send(req, res, 200, ctx.room.historyRead(Number(raw)));
+  } catch (e) {
+    send(req, res, 404, { error: e instanceof Error ? e.message : 'no such conversation' });
+  }
 }
 
 async function download(req: IncomingMessage, res: ServerResponse, room: WebRoom, token: string): Promise<void> {

@@ -79,6 +79,7 @@ import {
 } from '../core/settings.js';
 import type {
   ButtonSpec,
+  HistoryPanel,
   MessageKind,
   PlatformAdapter,
   ReviewPanel,
@@ -137,6 +138,7 @@ import { startSkillSweep } from './skill-lifecycle.js';
 import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
 import { ReviewStateStore } from './review-state.js';
 import { buildReviewPanel } from './review-panel.js';
+import { buildHistoryPanel } from './history-panel.js';
 import { standingInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
@@ -1134,6 +1136,11 @@ export class Daemon {
       // library, including the reviews that changed nothing and so posted no line anywhere.
       const reviewPanel = this.reviewPanel(id);
       if (reviewPanel) adapter.useReviewPanel?.(reviewPanel);
+      // …and the conversation library itself, read-only, for the web UI's history page: every
+      // conversation of every agent and platform, searchable — including the topics this page has
+      // long forgotten and the ones on other platforms. `talkcode sessions` reads the same store.
+      const historyPanel = this.historyPanel(id);
+      if (historyPanel) adapter.useHistoryPanel?.(historyPanel);
       // …and one with room to lay out the agents a new conversation could be given to (the web UI's
       // empty topic) gets a way to ask which, and who answers if nobody picks.
       adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
@@ -2023,6 +2030,19 @@ export class Daemon {
       standing: () => standingInstructions(),
       activeSkills: () => new Set(activeSkillNames()),
     });
+  }
+
+  /**
+   * The web UI's history page, bound to one platform instance: the conversation library, read the
+   * way `talkcode sessions` reads it. Read-only by construction — see `useHistoryPanel`.
+   *
+   * The instance id is only for the link back to a topic: a Telegram conversation has no topic in
+   * this page, and a topic id from another instance would point at a lane it does not have.
+   */
+  private historyPanel(instance: string): HistoryPanel | undefined {
+    const history = this.history;
+    if (!history) return undefined;
+    return buildHistoryPanel({ history, instance });
   }
 
   /**

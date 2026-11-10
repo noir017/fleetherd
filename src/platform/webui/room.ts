@@ -63,6 +63,10 @@ import type {
 import type {
   ButtonSpec,
   ConversationWorkdir,
+  HistoryPanel,
+  HistoryPanelHit,
+  HistoryPanelPage,
+  HistoryPanelRead,
   MessageKind,
   SchedulePanel,
   ModelPicker,
@@ -385,6 +389,8 @@ export class WebRoom {
   private skillsPanel: SkillsPanel | null = null;
   /** The automatic reviews the daemon recorded — see `useReviewPanel`. */
   private reviewPanel: ReviewPanel | null = null;
+  /** The conversation library, for the history page — see `useHistoryPanel`. */
+  private historyPanel: HistoryPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise, but broader: ends a topic's agent and every agent under it. See `killTopic`. */
@@ -795,6 +801,36 @@ export class WebRoom {
   reviewOp(op: ReviewOpRequest): { ok: true; list: ReviewPanelList } | { ok: false; error: string } {
     if (!this.reviewPanel) return { ok: false, error: 'this daemon has no conversation library, so there are no reviews' };
     return { ok: true, list: this.reviewPanel.dismiss(op.text) };
+  }
+
+  /**
+   * Accept the conversation library, for the history page.
+   *
+   * A facade like the panels above, and read-only like the Reviews tab: the library is written as
+   * turns happen, and nothing the page sends adds, changes or deletes a row. A topic cleared from
+   * the switcher is still in here — that is the point of the page — but the only way back into one
+   * is a topic this instance still lists, which `session.topic` carries.
+   */
+  useHistoryPanel(panel: HistoryPanel): void {
+    this.historyPanel = panel;
+  }
+
+  /** One page of every conversation the library holds. `enabled: false` when the daemon has none. */
+  historyPage(opts: { before?: string; limit?: number } = {}): HistoryPanelPage {
+    if (!this.historyPanel) return { enabled: false, sessions: [] };
+    return this.historyPanel.list(opts);
+  }
+
+  /** Keyword matches across the library. */
+  historySearch(query: string): { enabled: boolean; hits: HistoryPanelHit[] } {
+    if (!this.historyPanel) return { enabled: false, hits: [] };
+    return { enabled: true, hits: this.historyPanel.search(query) };
+  }
+
+  /** One conversation whole. The store's own sentence is thrown for an id that names none. */
+  historyRead(id: number): HistoryPanelRead {
+    if (!this.historyPanel) throw new Error('the conversation library is not enabled in this daemon');
+    return this.historyPanel.read(id);
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */
