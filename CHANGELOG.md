@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI's Sessions list groups runs by day and month, and marks them all read in one tap.**
+  A daily task opens a topic per run, and the list had become one undifferentiated column: this
+  month's runs are now grouped by day and everything older by month, each group folded or opened
+  on its own and remembered in the browser — the newest group and the one holding the topic on
+  screen start open, and a folded header still says how many replies are unread and whether a run
+  is working or waiting on an answer. **Mark all read** clears every badge at once and reports the
+  replies the daemon still counted as unseen through the same `api/seen` the open topic uses, so
+  the green finished marks go with them.
+
 ## [2.55.0] - 2026-11-09
 
 ### Changed

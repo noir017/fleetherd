@@ -505,6 +505,25 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sess-del{opacity:.35;flex:none}
 .sess-item:hover .sess-del,.sess-item:focus-within .sess-del{opacity:1}
 .sess-del:hover{color:#f87171;background:rgba(248,113,113,.15)}
+/* The one bulk action over the list, and the period headers that keep a long run history
+   scannable. A folded header carries what its rows would: the unread count and any run still
+   working or waiting. */
+.sess-bar{display:flex;justify-content:flex-end;padding:0 2px 4px}
+.sess-readall{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:11.5px;padding:4px 9px;cursor:pointer}
+.sess-readall:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
+.sess-readall:disabled{opacity:.45;cursor:default}
+.sess-group{display:flex;flex-direction:column;margin-top:2px}
+.sess-group-head{display:flex;align-items:center;gap:5px;width:100%;padding:5px 6px;border:0;border-radius:5px;background:none;color:var(--dim);font:inherit;font-size:11.5px;cursor:pointer;text-align:left}
+.sess-group-head:hover{background:#202020;color:var(--fg)}
+.sess-group-caret{display:inline-flex;flex:none;color:#6b7280}
+.sess-group-name{font-weight:600;color:#9aa4af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess-group-count{flex:none;color:#6b7683}
+.sess-group-flag{margin-left:auto;flex:none;color:#9aa4af}
+.sess-group-flag+.sess-group-flag{margin-left:6px}
+.sess-group-flag.unread{color:#60a5fa}
+.sess-group-flag.asking{color:#fbbf24}
+.sess-group-flag.running{color:#38bdf8}
+.sess-group-rows{display:flex;flex-direction:column;gap:2px}
 /* A task card, in the order a person asks about one: what is it, when does it run, when next,
    where does it post, how did last time go. The name and the schedule carry the weight; the
    countdown and the target are one quiet line under them, and the only colour is a state that is
@@ -1442,6 +1461,14 @@ const SCRIPT = `
   // Which of the panel's lists is on screen: Scheduled vs Reviews, and Tasks vs Sessions inside Scheduled.
   // Persisted, because it is a preference about the workspace rather than about one visit.
   var schedTab='scheduled', schedSubtab='tasks';
+  // The Sessions list's folded groups, per browser: a period key ('d:2026-11-08', 'm:2026-10')
+  // maps to open (true) or folded (false). A group with no entry follows the default in
+  // sessGroupOpen — the newest group and the one holding the topic on screen start open.
+  var sessGroups = {};
+  try { sessGroups = JSON.parse(localStorage.getItem('aa_sched_groups') || '{}') || {}; } catch(x){}
+  function saveSessGroups(){
+    try { localStorage.setItem('aa_sched_groups', JSON.stringify(sessGroups)); } catch(x){}
+  }
   // The Reviews tab's last answer, and the rows the reader has opened. null is "not asked yet",
   // which is different from an empty list and is what the tab shows as Loading….
   var reviewData=null, reviewSeq=0, revOpen={};
@@ -1969,6 +1996,72 @@ const SCRIPT = `
     return Math.round(s/86400)+'d ago';
   }
 
+  var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  /**
+   * A run's unread replies, as the row's badge counts them. The topic on screen is read by
+   * definition: opening it stamps readCounts.
+   */
+  function sessUnread(t){
+    var count=t.msgCount||0;
+    return t.id===topic?0:Math.max(0, count-(readCounts[t.id]||0));
+  }
+
+  /** Whether a run has anything the mark-all button would clear: a badge, or a reply the daemon
+   *  still counts as unseen (stage review). The topic on screen is excluded: reportSeen is
+   *  already clearing it. */
+  function sessNeedsRead(t){
+    return t.id!==topic && (sessUnread(t)>0 || t.stage==='review');
+  }
+
+  /**
+   * The Sessions list's groups: this month one per day, everything older one per month.
+   *
+   * A day is only worth naming while it is recent: a daily run would otherwise make thirty
+   * headers that say nothing. The calendar is the browser's own — lastAt is when the run was
+   * last active, and the operator's day is what the list is read against, not the server's.
+   * Groups come out in the order their first run does, which is lastAt descending.
+   */
+  function schedSessionGroups(list){
+    var now=new Date();
+    var y=now.getFullYear(), m=now.getMonth();
+    var yesterday=new Date(y, m, now.getDate()-1);
+    var out=[], byKey={};
+    for(var i=0;i<list.length;i++){
+      var t=list[i], at=new Date(t.lastAt||0);
+      var day=at.getFullYear()===y && at.getMonth()===m;
+      var month=('0'+(at.getMonth()+1)).slice(-2);
+      var key=day
+        ? 'd:'+at.getFullYear()+'-'+month+'-'+('0'+at.getDate()).slice(-2)
+        : 'm:'+at.getFullYear()+'-'+month;
+      var g=byKey[key];
+      if(!g){
+        var label;
+        if(day){
+          if(at.getDate()===now.getDate()) label='Today';
+          else if(at.getFullYear()===yesterday.getFullYear() && at.getMonth()===yesterday.getMonth() && at.getDate()===yesterday.getDate()) label='Yesterday';
+          else label=MONTH_NAMES[at.getMonth()].slice(0,3)+' '+at.getDate();
+        } else label=MONTH_NAMES[at.getMonth()]+' '+at.getFullYear();
+        g={ key:key, label:label, items:[], unread:0, running:0, asking:0, current:false };
+        byKey[key]=g;
+        out.push(g);
+      }
+      g.items.push(t);
+      if(t.id===topic) g.current=true;
+      g.unread+=sessUnread(t);
+      if(t.running) g.running++;
+      if(t.asking) g.asking++;
+    }
+    return out;
+  }
+
+  /** A group's fold state: what the operator chose, else the default for its position. */
+  function sessGroupOpen(g, newest){
+    var st=sessGroups[g.key];
+    if(st===true || st===false) return st;
+    return newest || g.current;
+  }
+
   /**
    * One scheduled run, as the Sessions tab draws it.
    *
@@ -1981,7 +2074,7 @@ const SCRIPT = `
     var asking=Boolean(t.asking), running=Boolean(t.running);
     var dot='topic-dot'+(asking?' asking':(running?' running':(t.stage==='failed'?' failed':(t.stage==='review'?' review':(t.live?' live':'')))));
     var count=t.msgCount||0;
-    var unread=t.id===topic?0:Math.max(0, count-(readCounts[t.id]||0));
+    var unread=sessUnread(t);
     var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
     var state=asking?'awaiting you':(running?'running':(t.stage==='failed'?'failed':(t.stage==='review'?'finished':'')));
     var meta=schedAgo(t.lastAt)+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'');
@@ -1995,15 +2088,69 @@ const SCRIPT = `
       + '</div>';
   }
 
+  /**
+   * The Sessions list: a bar with the one bulk action, then the groups.
+   *
+   * A folded group keeps its rows in the DOM but hidden, so aria-controls still names a real
+   * element and a repaint does not have to remember what it left out. The flags on a folded
+   * header are the whole point of folding: they say what the rows underneath would.
+   */
   function paintSessions(){
     var list=schedSessions();
     if(!list.length){
       schedSessionList.innerHTML='<div class="sched-empty">No scheduled sessions yet. A task that runs in a new or daily session opens one here.</div>';
       return;
     }
-    var h='';
-    for(var i=0;i<list.length;i++) h+=schedSessionRow(list[i]);
+    var pending=0;
+    for(var p=0;p<list.length;p++) if(sessNeedsRead(list[p])) pending++;
+    var groups=schedSessionGroups(list);
+    var h='<div class="sess-bar"><button type="button" class="sess-readall" data-readall="1"'
+      + (pending?'':' disabled') + '>Mark all read</button></div>';
+    for(var g=0;g<groups.length;g++){
+      var gr=groups[g];
+      var open=sessGroupOpen(gr, g===0);
+      var flags='';
+      if(!open){
+        if(gr.unread) flags+='<span class="sess-group-flag unread">'+gr.unread+' unread</span>';
+        if(gr.asking) flags+='<span class="sess-group-flag asking">'+gr.asking+' awaiting you</span>';
+        if(gr.running>gr.asking) flags+='<span class="sess-group-flag running">'+(gr.running-gr.asking)+' running</span>';
+      }
+      var body='';
+      for(var i=0;i<gr.items.length;i++) body+=schedSessionRow(gr.items[i]);
+      var id='sess-g-'+gr.key.replace(/:/g,'-');
+      h+='<div class="sess-group">'
+        + '<button type="button" class="sess-group-head" data-sgroup="'+text(gr.key)+'" aria-expanded="'+(open?'true':'false')+'" aria-controls="'+id+'">'
+        + '<span class="sess-group-caret">'+(open?IC.icon.chevronDown:IC.icon.chevronRight)+'</span>'
+        + '<span class="sess-group-name">'+text(gr.label)+'</span>'
+        + '<span class="sess-group-count">'+gr.items.length+'</span>'
+        + flags
+        + '</button>'
+        + '<div class="sess-group-rows" id="'+id+'"'+(open?'':' hidden')+'>'+body+'</div>'
+        + '</div>';
+    }
     schedSessionList.innerHTML=h;
+  }
+
+  /**
+   * Mark every scheduled run read.
+   *
+   * Two kinds of unread live in this list and both have to go: the badge is this page's own
+   * count (readCounts in localStorage), while the green dot is the daemon's stage: review,
+   * which clears only when the server is told the topic was seen. api/seen takes one topic
+   * and has no bulk form, so this posts once per run that still has a reply to clear — a
+   * handful of requests on a tap, not a poll.
+   */
+  function markSessionsRead(){
+    var list=schedSessions(), wrote=false;
+    for(var i=0;i<list.length;i++){
+      var count=list[i].msgCount||0;
+      if((readCounts[list[i].id]||0)!==count){ readCounts[list[i].id]=count; wrote=true; }
+    }
+    if(wrote) saveReads();
+    for(i=0;i<list.length;i++){
+      if(list[i].stage==='review') post('api/seen',{topic:list[i].id},0).catch(function(){});
+    }
+    paintSessions();
   }
 
   // ── Reviews ────────────────────────────────────────────────────────────────
@@ -2837,6 +2984,22 @@ const SCRIPT = `
   });
 
   schedSessionList.addEventListener('click', function(e){
+    var readall = e.target.closest ? e.target.closest('[data-readall]') : null;
+    if(readall){
+      e.stopPropagation();
+      markSessionsRead();
+      return;
+    }
+    var head = e.target.closest ? e.target.closest('[data-sgroup]') : null;
+    if(head){
+      e.stopPropagation();
+      var key = head.getAttribute('data-sgroup');
+      if(!key) return;
+      sessGroups[key] = head.getAttribute('aria-expanded') !== 'true';
+      saveSessGroups();
+      paintSessions();
+      return;
+    }
     var del = e.target.closest ? e.target.closest('[data-sdel]') : null;
     if(del){
       e.stopPropagation();

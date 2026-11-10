@@ -7841,6 +7841,180 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.window.location.search).not.toContain(C);
   });
 
+  /**
+   * The Sessions list's calendar: this month by day, older by month. The timestamps are built
+   * from the browser's own clock, because that is what the list groups by — a fixed epoch would
+   * make "today" depend on when the suite runs.
+   */
+  const CAL = (() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const at = (month: number, day: number): number => new Date(y, month, day, 12).getTime();
+    /** The label the page gives a run on a day of this month. */
+    const dayLabel = (d: Date): string =>
+      d.getDate() === now.getDate() ? 'Today'
+        : d.getDate() === now.getDate() - 1 ? 'Yesterday'
+          : SHORT[d.getMonth()] + ' ' + d.getDate();
+    return { dayLabel, LONG, day1: at(m, 1), day2: at(m, 2), prev1: at(m - 1, 15), prev2: at(m - 1, 16) };
+  })();
+  const heads = (h: Harness): HTMLElement[] =>
+    Array.from(h.doc.querySelectorAll('#sched-sessions .sess-group-head')) as HTMLElement[];
+  const body = (h: Harness, head: HTMLElement): HTMLElement =>
+    h.doc.getElementById(head.getAttribute('aria-controls') ?? '') as HTMLElement;
+  const flags = (head: HTMLElement): string[] =>
+    Array.from(head.querySelectorAll('.sess-group-flag')).map((n) => n.textContent ?? '');
+  const dayKey = (d: Date): string =>
+    `d:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  it('groups this month by day and older runs by month, folded except the newest', async () => {
+    const C = 'c3d4e5f6';
+    const D = 'd4e5f6a7';
+    const E = 'e5f6a7b8';
+    const F = 'f6a7b8c9';
+    const h = await open({ storage: { aa_reads: JSON.stringify({ [C]: 1, [E]: 0 }) } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: D, title: 'newest run', lastAt: CAL.day2, msgCount: 1, stage: 'idle', scheduled: true },
+        { id: C, title: 'earlier today', lastAt: CAL.day1, msgCount: 5, stage: 'idle', scheduled: true },
+        { id: F, title: 'last month, asking', lastAt: CAL.prev2, msgCount: 2, stage: 'answer', asking: true, running: true, scheduled: true },
+        { id: E, title: 'last month, working', lastAt: CAL.prev1, msgCount: 2, stage: 'idle', running: true, scheduled: true },
+        { id: A, title: 'ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    const hs = heads(h);
+    expect(hs).toHaveLength(3);
+    expect(hs.map((n) => n.querySelector('.sess-group-name')?.textContent)).toEqual([
+      CAL.dayLabel(new Date(CAL.day2)),
+      CAL.dayLabel(new Date(CAL.day1)),
+      CAL.LONG[new Date(CAL.prev1).getMonth()] + ' ' + new Date(CAL.prev1).getFullYear(),
+    ]);
+    expect(hs.map((n) => n.querySelector('.sess-group-count')?.textContent)).toEqual(['1', '1', '2']);
+    // The newest group starts open; the rest are folded, and their headers carry what the rows
+    // underneath would have said. 5 messages against a mark of 1 is 4 unread; 2 against 0 is 2.
+    expect(hs.map((n) => n.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'false']);
+    expect(flags(hs[0]!)).toEqual([]);
+    expect(flags(hs[1]!)).toEqual(['4 unread']);
+    expect(flags(hs[2]!)).toEqual(['2 unread', '1 awaiting you', '1 running']);
+    expect(body(h, hs[0]!).hidden).toBe(false);
+    expect(body(h, hs[1]!).hidden).toBe(true);
+    expect(body(h, hs[2]!).hidden).toBe(true);
+    // Rows live in their group, not in one flat list.
+    expect(body(h, hs[0]!).querySelector('.sess-item')?.textContent).toContain('newest run');
+    expect(body(h, hs[1]!).querySelector('.sess-item')?.textContent).toContain('earlier today');
+  });
+
+  it('remembers a folded or opened group in this browser', async () => {
+    const C = 'c3d4e5f6';
+    const D = 'd4e5f6a7';
+    const sessions = (): Array<Record<string, unknown>> => [
+      { id: D, title: 'newest run', lastAt: CAL.day2, msgCount: 1, stage: 'idle', scheduled: true },
+      { id: C, title: 'earlier today', lastAt: CAL.day1, msgCount: 2, stage: 'idle', scheduled: true },
+      { id: A, title: 'ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
+    ];
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: sessions() });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    heads(h)[1]!.click();
+    await tick();
+    expect(heads(h)[1]!.getAttribute('aria-expanded')).toBe('true');
+    expect(body(h, heads(h)[1]!).hidden).toBe(false);
+    expect(JSON.parse(h.window.localStorage.getItem('aa_sched_groups') ?? '{}')).toEqual({
+      [dayKey(new Date(CAL.day1))]: true,
+    });
+
+    const again = await open({ storage: { aa_sched_groups: h.window.localStorage.getItem('aa_sched_groups') ?? '{}' } });
+    await again.emit(sync(A, [], [A]));
+    await again.emit({ t: 'topics', topics: sessions() });
+    await again.click('#schedules-toggle');
+    await again.click('#sched-tab-sessions');
+    expect(heads(again)[1]!.getAttribute('aria-expanded')).toBe('true');
+
+    // The newest group can be folded too, and that is remembered over its default.
+    heads(again)[0]!.click();
+    await tick();
+    expect(heads(again)[0]!.getAttribute('aria-expanded')).toBe('false');
+    expect(JSON.parse(again.window.localStorage.getItem('aa_sched_groups') ?? '{}')).toEqual({
+      [dayKey(new Date(CAL.day1))]: true,
+      [dayKey(new Date(CAL.day2))]: false,
+    });
+  });
+
+  it('starts with the group holding the open run unfolded as well', async () => {
+    const C = 'c3d4e5f6';
+    const D = 'd4e5f6a7';
+    const E = 'e5f6a7b8';
+    const h = await open({ url: `http://localhost:8787/?t=${E}` });
+    await h.emit(sync(E, [], [E]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: D, title: 'newest run', lastAt: CAL.day2, msgCount: 1, stage: 'idle', scheduled: true },
+        { id: C, title: 'earlier today', lastAt: CAL.day1, msgCount: 1, stage: 'idle', scheduled: true },
+        { id: E, title: 'the one on screen', lastAt: CAL.prev1, msgCount: 1, stage: 'idle', scheduled: true },
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    const hs = heads(h);
+    expect(hs).toHaveLength(3);
+    // Newest first, then the run on screen: two open, the day between them folded.
+    expect(hs.map((n) => n.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'true']);
+    expect(body(h, hs[2]!).querySelector('.sess-item')?.textContent).toContain('the one on screen');
+  });
+
+  it('marks every run read in one tap, badges and the daemon’s reply mark alike', async () => {
+    const C = 'c3d4e5f6';
+    const D = 'd4e5f6a7';
+    const h = await open({ storage: { aa_reads: JSON.stringify({ [C]: 0, [D]: 0 }) } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: C, title: 'finished run', lastAt: Date.now(), msgCount: 3, stage: 'review', scheduled: true },
+        { id: D, title: 'working run', lastAt: Date.now() - 1000, msgCount: 2, stage: 'idle', scheduled: true },
+        { id: A, title: 'ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    const button = (): HTMLButtonElement => h.doc.querySelector('[data-readall]') as HTMLButtonElement;
+    expect(button().disabled).toBe(false);
+    expect(h.el('sched-sessions').querySelectorAll('.topic-badge')).toHaveLength(2);
+
+    button().click();
+    await until('the seen request', () => h.calls.some((c) => c.path === 'api/seen'));
+
+    // The badge is this page's count, so it goes at once; the green dot is the daemon's, and
+    // only the run that had one is reported.
+    expect(h.el('sched-sessions').querySelectorAll('.topic-badge')).toHaveLength(0);
+    expect(h.calls.filter((c) => c.path === 'api/seen').map((c) => c.body)).toEqual([{ topic: C }]);
+    expect(JSON.parse(h.window.localStorage.getItem('aa_reads') ?? '{}')).toMatchObject({ [C]: 3, [D]: 2 });
+
+    // Once the daemon's own list says the reply was seen, there is nothing left to mark.
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: C, title: 'finished run', lastAt: Date.now(), msgCount: 3, stage: 'idle', scheduled: true },
+        { id: D, title: 'working run', lastAt: Date.now() - 1000, msgCount: 2, stage: 'idle', scheduled: true },
+        { id: A, title: 'ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
+      ],
+    });
+    expect(button().disabled).toBe(true);
+  });
+
   it('restores a dragged width, and double-clicking the handle returns to the default', async () => {
     const h = await open({ storage: { aa_sched_w: '300' } });
     expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('300px');
