@@ -5563,6 +5563,7 @@ const SCRIPT = `
       saveReads();
       commands = ev.commands || [];
       topics = ev.topics || [];
+      topicsV = ev.tv || 0;
       paintTopics();
       prune();
       // Absent when the topic's agent has reported nothing since the daemon started, which clears
@@ -5622,8 +5623,10 @@ const SCRIPT = `
     else if(ev.t==='commands'){ commands = ev.commands || []; }
     else if(ev.t==='status'){ setStatus(ev.status); }
     else if(ev.t==='machines'){ setMachines(ev.offline || []); }
-    else if(ev.t==='topics'){
-      topics = ev.topics || [];
+    else if(ev.t==='topics' || ev.t==='topic-rows'){
+      if(ev.t==='topics') topics = ev.topics || [];
+      else applyRows(ev);
+      topicsV = ev.tv || 0;
       paintTopics();
       reportSeen();
       if(topic && !topics.some(function(t){ return t.id===topic; })){
@@ -5647,6 +5650,44 @@ const SCRIPT = `
       note.textContent='The daemon is restarting. Reconnecting...';
       reconnectLater();
     }
+  }
+
+  // The version of the topic list on this page (the daemon's tv), sent on a resume so the list is
+  // only sent again if it moved.
+  var topicsV=0;
+
+  /**
+   * What changed in the topic list (a topic-rows event): every row it carries replaces the one with
+   * its id, or joins the end; the ids it names as gone are dropped; and the list is put back in the
+   * daemon's order — sorted by lastAt, newest first, ties left as they were, which is how the store
+   * orders it — unless the event says the order outright. room.ts derivedOrder is this same
+   * algorithm on the other side, and sends the order whenever the two would disagree.
+   */
+  function applyRows(ev){
+    var gone={}, at={}, next=[], i;
+    var g=ev.gone || [], rows=ev.rows || [];
+    for(i=0;i<g.length;i++) gone[g[i]]=1;
+    for(i=0;i<topics.length;i++){
+      if(gone[topics[i].id]) continue;
+      at[topics[i].id]=next.length;
+      next.push(topics[i]);
+    }
+    for(i=0;i<rows.length;i++){
+      var r=rows[i];
+      if(Object.prototype.hasOwnProperty.call(at, r.id)) next[at[r.id]]=r;
+      else { at[r.id]=next.length; next.push(r); }
+    }
+    if(ev.order){
+      var byId={};
+      for(i=0;i<next.length;i++) byId[next[i].id]=next[i];
+      next=[];
+      for(i=0;i<ev.order.length;i++) if(byId[ev.order[i]]) next.push(byId[ev.order[i]]);
+    } else {
+      next = next.map(function(t, n){ return {t:t, n:n}; })
+        .sort(function(a, b){ return (b.t.lastAt||0) - (a.t.lastAt||0) || a.n - b.n; })
+        .map(function(x){ return x.t; });
+    }
+    topics = next;
   }
 
   // How long until the next attempt after a bye or a refused stream: one second, doubling to half
@@ -5740,6 +5781,7 @@ const SCRIPT = `
     var qs = [];
     if(topic) qs.push('t='+encodeURIComponent(topic));
     if(from) qs.push('last='+encodeURIComponent(from));
+    if(from && topicsV) qs.push('tv='+topicsV);
     // EventSource resends the last id it saw on its own, so a blip is answered with the few
     // events that were missed rather than the whole conversation.
     var es = stream = new EventSource('api/events' + (qs.length ? '?'+qs.join('&') : ''));

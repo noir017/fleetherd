@@ -1422,6 +1422,68 @@ describe('webui page: a tab in the background', () => {
   });
 });
 
+describe('webui page: what changed in the topic list', () => {
+  const order = (h: Harness): string[] =>
+    Array.from(h.doc.querySelectorAll('#topics [data-topic]')).map((n) => n.getAttribute('data-topic') ?? '');
+  const row = (id: string, lastAt: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id,
+    title: `Topic ${id}`,
+    lastAt,
+    running: false,
+    msgCount: 0,
+    ...extra,
+  });
+
+  it('applies the rows it is sent, drops the ones that went, and re-sorts by activity', async () => {
+    // The whole list used to come after every message posted anywhere; now only what changed does.
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6']));
+    expect(order(h)).toEqual(['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6']);
+    // A message in the last one: its row alone, newer than the rest, so it goes to the top.
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row('c3d4e5f6', 5000, { title: 'spoken in', msgCount: 1 })] });
+    expect(order(h)).toEqual(['c3d4e5f6', 'a1b2c3d4', 'b2c3d4e5']);
+    expect(h.doc.querySelector('[data-topic="c3d4e5f6"]')?.textContent).toContain('spoken in');
+    // A new one joins, one goes.
+    await h.emit({ t: 'topic-rows', tv: 3, rows: [row('d4e5f6a7', 6000)], gone: ['b2c3d4e5'] });
+    expect(order(h)).toEqual(['d4e5f6a7', 'c3d4e5f6', 'a1b2c3d4']);
+  });
+
+  it('takes the order it is given when the daemon sends one', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6']));
+    // A tie the page would have broken the other way.
+    await h.emit({
+      t: 'topic-rows',
+      tv: 2,
+      rows: [row('b2c3d4e5', 7000), row('c3d4e5f6', 7000)],
+      order: ['c3d4e5f6', 'b2c3d4e5', 'a1b2c3d4'],
+    });
+    expect(order(h)).toEqual(['c3d4e5f6', 'b2c3d4e5', 'a1b2c3d4']);
+  });
+
+  it('leaves a topic that another tab deleted for the next one, as a whole list would', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hi</p>')], ['a1b2c3d4', 'b2c3d4e5']));
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [], gone: ['a1b2c3d4'] });
+    expect(h.live().url).toBe('api/events?t=b2c3d4e5');
+    // Nothing was created to replace it: there was somewhere to go.
+    expect(h.calls.map((c) => c.path)).not.toContain('api/topics');
+  });
+
+  it('tells the daemon which list it holds when it resumes, so an unchanged one is not sent again', async () => {
+    const h = await open({ shortenLong: true });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { tv: 5 }));
+    await h.emit({ t: 'topic-rows', tv: 6, rows: [row('a1b2c3d4', 2000)] });
+    h.live().onmessage?.({ data: JSON.stringify({ t: 'typing', on: false }), lastEventId: 'a1b2c3d4.run.3' });
+    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+    await until('the stream is closed', () => h.streams[0]!.closed);
+    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'visible' });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+    expect(h.live().url).toBe('api/events?t=a1b2c3d4&last=a1b2c3d4.run.3&tv=6');
+  });
+});
+
 describe('webui page: topics', () => {
   it('paints a switched-to topic from cache before its stream has answered', async () => {
     const h = await open();

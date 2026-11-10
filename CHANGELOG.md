@@ -22,6 +22,12 @@ All notable changes to this project are documented here. The format is based on
   page relied on the stream while hidden — notifications are Web Push. A sync now carries a resume
   point of its own, so a connection that drops straight after one resumes instead of taking the
   whole topic again.
+- **A message in one web UI topic no longer re-sends the whole topic list to every page.** Every
+  message posted anywhere sent every open page the entire list — 34 KB of JSON, 2.5 KB gzipped at
+  200 topics, growing with each topic — although only that topic's row had changed. Pages are now
+  sent the rows that changed, the ids that went, and the order only when they could not work it out
+  themselves: 0.07 KB for the same message. A page resuming its stream says which list it holds and
+  is sent the whole list only if that moved.
 
 ### Fixed
 

@@ -305,6 +305,8 @@ export type WebEvent =
       messages: WebMessage[];
       commands: SlashCommandSpec[];
       topics: Topic[];
+      /** The version of `topics` (see the `topics` event); what a later `topic-rows` applies to. */
+      tv: number;
       /**
        * Which run of the daemon these messages come from — `WebRoom`'s construction time.
        *
@@ -354,13 +356,23 @@ export type WebEvent =
   | { t: 'status'; status?: AgentStatus }
   | { t: 'commands'; commands: SlashCommandSpec[] }
   /**
-   * The topic list changed — one was created, renamed, or spoken in.
+   * The whole topic list, at version `tv`: in a sync, and to a resumed stream whose list is older.
    *
-   * Broadcast to every client regardless of which topic it is watching, because the switcher
-   * has to stay current without subscribing to rooms nobody is reading. It is the only event
-   * that crosses topics.
+   * Every list event crosses topics — the switcher has to stay current without every client
+   * subscribing to rooms nobody is reading — and none is sequenced, since none belongs to a room.
+   * A page resuming says which version it holds (`?tv=`), and is sent this only if that moved.
    */
-  | { t: 'topics'; topics: Topic[] }
+  | { t: 'topics'; topics: Topic[]; tv: number }
+  /**
+   * What changed in the topic list since the version every client was sent last: the rows that
+   * differ (whole rows, replacing the page's by id; a new one is appended), the ids that went, and
+   * the order only when the page could not work it out by sorting on `lastAt` (`derivedOrder`).
+   *
+   * A kind of its own rather than a variant of `topics`, for a page from before it: one still open
+   * across the upgrade ignores an event it does not know, where a `topics` without its list would
+   * have read as "every topic is gone" — and a page that thinks so opens a new one.
+   */
+  | { t: 'topic-rows'; tv: number; rows: Topic[]; gone?: string[]; order?: string[] }
   /**
    * The machines the daemon cannot reach changed — every one of them, so an empty list says they
    * are all back. State like `status`, never sequenced, and to every client like `topics`: the

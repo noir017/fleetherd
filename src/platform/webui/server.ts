@@ -652,11 +652,14 @@ function stream({ req, res, url }: Req, ctx: Ctx): void {
   // resume point it would be handed the whole topic again. The room validates either the same way.
   const header = req.headers['last-event-id'];
   const lastId = (Array.isArray(header) ? header[0] : header) || url.searchParams.get('last') || undefined;
+  // The version of the topic list the page holds, so a resume carries the list only if it moved.
+  const tv = Number(url.searchParams.get('tv') ?? NaN);
   const unsubscribe = ctx.room.subscribe(
     topic,
     // `data` is made once per event by the room, however many streams it goes to.
     (id, _ev, data) => out.write(`${id ? `id: ${id}\n` : ''}data: ${data}\n\n`),
-    lastId
+    lastId,
+    Number.isInteger(tv) ? tv : undefined
   );
   // The response's close, not only the request's: a stream cut for falling behind is ended from
   // this side, and either way it has to leave the room's fan-out at once.

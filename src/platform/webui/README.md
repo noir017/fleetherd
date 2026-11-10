@@ -1116,6 +1116,27 @@ every client and not sent at all when it has not changed; each client's gzip str
 compression stays per client. `topics.json` gathers a streaming reply's touches into one write a
 second, while creating, deleting, clearing and starring still write at once.
 
+**The topic list travels as what changed** (`topic-rows`, since this branch). It used to be the
+whole list after every message posted anywhere, to every client — 34 KB of JSON at 200 topics,
+2.5 KB gzipped, for one row's `msgCount` and `lastAt` — and since a message always moves those two,
+the "has it changed" check never once found two lists equal. Now the room keeps the list every
+attached client holds (`sent`) and sends the rows that differ, the ids that went, and the order only
+when the page could not work it out: the page re-sorts by `lastAt` with ties left as they were
+(`applyRows`), the store breaks a tie by insertion order, and `derivedOrder` runs the page's rule to
+see whether they agree. A message elsewhere now costs every other page 0.07 KB on the wire instead
+of 2.48 KB (`project-scripts/talkcode-webui-net/events.mts`, 2026-11-10). Three things make it hold:
+
+- **Everyone is brought up to the list a newcomer is handed.** `subscribe` announces before it
+  attaches, so a change nobody was told about (the liveness poll is the only announcer of an agent
+  going away) reaches the others first, and the next change is worked out against one list for all.
+  Installing a liveness lookup announces too, for the same reason.
+- **A version (`tv`) names the list.** It moves with every change, attached clients or not; a sync
+  carries it, the page sends it back on a resume, and a resumed stream is handed the whole list
+  (`topics`) only when it moved — so a tab coming back to an unchanged sidebar costs nothing for it.
+- **A kind of its own, not a variant of `topics`.** A page from before this that is still open
+  across the upgrade ignores `topic-rows`; handed a `topics` with no list in it, it would have read
+  "every topic is gone" and opened a new one.
+
 **The page reconciles; it does not rebuild.** A `sync` carries the whole topic, and the obvious
 reading of that — empty `#log`, paint it again — is what made entering a topic jarring: the
 scroll container was destroyed along with its position, so a topic already painted from the
