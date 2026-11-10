@@ -1762,7 +1762,8 @@ drawer open or shut, where the URL points. Add to it whenever you touch `page.ts
 assertions in `page.test.ts` were green throughout the release that rendered nothing. The skills
 page is driven there too: the list, an editor save carrying the version the detail read, the New
 form, a revert, and the two-tap archive. So is the settings page — the menu's quiet request, a
-typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel'sdrawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
+typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
+drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
 it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review
 opened for its changes
 and undo command, the link back to a topic that exists and its absence when the topic is gone, the

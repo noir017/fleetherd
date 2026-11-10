@@ -1833,7 +1833,7 @@ describe('webui server: traffic', () => {
           asked.push(opts ?? {});
           return page;
         },
-        search: () => [hit],
+        search: () => ({ hits: [hit] }),
         read: () => read,
       });
       const res = await fetch(`${base}/api/history?before=1762300000000.1&limit=20`, { headers: { cookie } });
@@ -1846,7 +1846,7 @@ describe('webui server: traffic', () => {
       const { base, room } = await boot();
       const cookie = await signIn(base);
       const asked: unknown[] = [];
-      room.useHistoryPanel({ list: (opts) => (asked.push(opts), page), search: () => [], read: () => read });
+      room.useHistoryPanel({ list: (opts) => (asked.push(opts), page), search: () => ({ hits: [] }), read: () => read });
       for (const query of ['before=yesterday', 'before=1.2.3', 'before=-1.2', 'limit=0', 'limit=201', 'limit=abc', 'limit=1.5']) {
         expect((await fetch(`${base}/api/history?${query}`, { headers: { cookie } })).status, query).toBe(400);
       }
@@ -1862,13 +1862,13 @@ describe('webui server: traffic', () => {
         list: () => page,
         search: (q) => {
           queries.push(q);
-          return [hit];
+          return { hits: [hit], more: true };
         },
         read: () => read,
       });
       const res = await fetch(`${base}/api/history/search?q=${encodeURIComponent('deployment')}`, { headers: { cookie } });
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ enabled: true, hits: [hit] });
+      expect(await res.json()).toEqual({ enabled: true, hits: [hit], more: true });
       expect(queries).toEqual(['deployment']);
 
       for (const query of ['', 'q=', `q=${'x'.repeat(201)}`]) {
@@ -1898,7 +1898,7 @@ describe('webui server: traffic', () => {
       const ids: number[] = [];
       room.useHistoryPanel({
         list: () => page,
-        search: () => [hit],
+        search: () => ({ hits: [hit] }),
         read: (id) => {
           ids.push(id);
           return read;
@@ -1915,7 +1915,7 @@ describe('webui server: traffic', () => {
       const cookie = await signIn(base);
       room.useHistoryPanel({
         list: () => page,
-        search: () => [hit],
+        search: () => ({ hits: [hit] }),
         read: () => {
           throw new Error('no conversation "99"; `talkcode sessions list` shows the ids');
         },

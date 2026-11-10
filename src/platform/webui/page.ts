@@ -697,6 +697,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #history-more{align-self:center;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:7px 14px;cursor:pointer;margin:4px 0 8px}
 #history-more:hover{border-color:#3a3a3a;background:#2a2a2a}
 .hist-note{font-size:12px;line-height:1.5;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:6px;padding:8px 10px;overflow-wrap:anywhere}
+.hist-note.bad{color:#f87171;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.25)}
 .hist-item{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:6px;padding:9px 11px;background:#1b1b1b;cursor:pointer}
 .hist-item:hover{background:#1e1e1e}
 .hist-title{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1470,7 +1471,8 @@ const SCRIPT = `
       historyTitleEl=$('history-title'), historyCountEl=$('history-count'), historyClose=$('history-close'),
       historyBody=$('history-body'), historyQ=$('history-q'), historyGo=$('history-go'),
       historySearchRow=$('history-search'),
-      historyNote=$('history-note'), historyListEl=$('history-list'), historyDetailEl=$('history-detail'),
+      historyNote=$('history-note'), historyErr=$('history-err'),
+      historyListEl=$('history-list'), historyDetailEl=$('history-detail'),
       historyMore=$('history-more'),
       settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
@@ -6820,6 +6822,8 @@ const SCRIPT = `
     historyQ.value = '';
     historyNote.hidden = true;
     historyNote.textContent = '';
+    historyErr.hidden = true;
+    historyErr.textContent = '';
     historyDetailEl.hidden = true;
     historyDetailEl.innerHTML = '';
     historyListEl.hidden = false;
@@ -6844,6 +6848,8 @@ const SCRIPT = `
   function loadHistory(before){
     var seq = ++histSeq;
     historyMore.disabled = true;
+    historyErr.hidden = true;
+    historyErr.textContent = '';
     fetch('api/history' + (before ? '?before=' + encodeURIComponent(before) : ''), {credentials:'same-origin'}).then(function(r){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
@@ -6861,12 +6867,21 @@ const SCRIPT = `
       renderHistory();
     }).catch(function(e){
       if(seq !== histSeq) return;
-      historyListEl.innerHTML = '<div class="skills-empty">Could not read the conversation library: ' + text((e && e.message) || 'network error') + '</div>';
+      // What is already on screen stays: a page that could not be read is not a reason to throw
+      // away the ones that were. The error is its own line, and the button comes back so the same
+      // page can be asked for again.
+      historyErr.textContent = 'Could not read the conversation library: ' + ((e && e.message) || 'network error');
+      historyErr.hidden = false;
+      if(!histSessions.length) historyListEl.innerHTML = '';
+      historyMore.hidden = !histNext;
+      historyMore.disabled = false;
     });
   }
 
   function renderHistory(){
     histQuery = '';
+    historyErr.hidden = true;
+    historyErr.textContent = '';
     var h = '';
     if(!histSessions.length) h = '<div class="skills-empty">No conversations yet. Every conversation this gateway records appears here, whichever agent or platform it ran on.</div>';
     for(var i=0;i<histSessions.length;i++) h += histRow(histSessions[i]);
@@ -6907,6 +6922,8 @@ const SCRIPT = `
     historyBack.hidden = true;
     historyMore.hidden = true;
     historySearchRow.hidden = false;
+    historyErr.hidden = true;
+    historyErr.textContent = '';
     historyCountEl.textContent = '';
     historyListEl.innerHTML = '<div class="skills-empty">Searching\\u2026</div>';
     fetch('api/history/search?q=' + encodeURIComponent(q), {credentials:'same-origin'}).then(function(r){
@@ -6931,7 +6948,8 @@ const SCRIPT = `
       var h = '';
       for(var i=0;i<hits.length;i++) h += histHit(hits[i]);
       historyListEl.innerHTML = h;
-      historyCountEl.textContent = String(hits.length);
+      // "30+" when the daemon says there are more: the number is the size of the answer.
+      historyCountEl.textContent = String(hits.length) + (a.d.more ? '+' : '');
     }).catch(function(e){
       if(seq !== histSeq) return;
       historyListEl.innerHTML = '<div class="skills-empty">Could not search the library: ' + text((e && e.message) || 'network error') + '</div>';
@@ -6949,6 +6967,8 @@ const SCRIPT = `
     historyDetailEl.hidden = false;
     historyDetailEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
     historyNote.hidden = true;
+    historyErr.hidden = true;
+    historyErr.textContent = '';
     historyBack.hidden = false;
     historyTitleEl.textContent = 'Conversation';
     historyTitleEl.title = '';
@@ -7018,7 +7038,11 @@ const SCRIPT = `
   historyBack.addEventListener('click', historyBackToList);
   historyGo.addEventListener('click', runHistorySearch);
   historyMore.addEventListener('click', function(){ if(histNext) loadHistory(histNext); });
-  historyQ.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); runHistorySearch(); } });
+  historyQ.addEventListener('keydown', function(e){
+    // Mid-composition, Enter chooses an IME candidate — it is not a search. Same guard as the
+    // composer's: without it, picking 部署 from the candidate list would search for half of it.
+    if(e.key === 'Enter' && !e.isComposing){ e.preventDefault(); runHistorySearch(); }
+  });
   historyQ.addEventListener('input', function(){
     // The search field's own × (and a person deleting the query) puts the library back rather
     // than leaving the last search's rows under an empty field.
@@ -8918,6 +8942,7 @@ __GATE__
           <button type="button" class="btn-icon" id="history-go" title="Search" aria-label="Search">${icon('search')}</button>
         </div>
         <div id="history-note" class="hist-note" hidden></div>
+        <div id="history-err" class="hist-note bad" hidden></div>
         <div id="history-list"></div>
         <div id="history-detail" hidden></div>
         <button type="button" id="history-more" hidden>Load older conversations</button>

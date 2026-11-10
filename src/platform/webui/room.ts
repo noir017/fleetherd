@@ -822,9 +822,9 @@ export class WebRoom {
   }
 
   /** Keyword matches across the library. */
-  historySearch(query: string): { enabled: boolean; hits: HistoryPanelHit[] } {
+  historySearch(query: string): { enabled: boolean; hits: HistoryPanelHit[]; more?: boolean } {
     if (!this.historyPanel) return { enabled: false, hits: [] };
-    return { enabled: true, hits: this.historyPanel.search(query) };
+    return { enabled: true, ...this.historyPanel.search(query) };
   }
 
   /** One conversation whole. The store's own sentence is thrown for an id that names none. */

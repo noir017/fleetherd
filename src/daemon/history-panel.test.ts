@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HistoryStore } from '../history/store.js';
-import { buildHistoryPanel, cursorOf, HISTORY_PAGE_LIMIT } from './history-panel.js';
+import { buildHistoryPanel, cursorOf, HISTORY_PAGE_LIMIT, HISTORY_SEARCH_LIMIT } from './history-panel.js';
 
 /**
  * The web UI's history page, from the daemon's side.
@@ -80,11 +80,29 @@ describe('the web UI history panel', () => {
     store.message(id, { ts: at - 1_000, role: 'agent', kind: 'normal', text: 'the deployment finished' });
     const panel = buildHistoryPanel({ history: store, instance: 'webui' });
 
-    const hits = panel.search('deployment');
+    const { hits } = panel.search('deployment');
     expect(hits).toHaveLength(1);
     expect(hits[0]).toMatchObject({ session: id, agent: 'oc', platform: 'telegram', role: 'agent' });
     expect(hits[0]!.excerpt).toContain('deployment');
     expect(hits[0]!.at).toBe(at - 1_000);
+    store.close();
+  });
+
+  it('says the answer is a floor when the library has more matches than one carries', () => {
+    const store = tempStore();
+    const at = Date.now();
+    const id = store.session({ key: 'telegram#chat#1', platform: 'telegram', title: 'many', agent: 'cc', at })!;
+    // One more than a search answer carries, so the count the page shows is not the total.
+    for (let i = 0; i < HISTORY_SEARCH_LIMIT + 1; i++) {
+      store.message(id, { ts: at + i, role: 'user', kind: 'normal', text: `deployment ${i}` });
+    }
+    const panel = buildHistoryPanel({ history: store, instance: 'webui' });
+
+    const answer = panel.search('deployment');
+    expect(answer.hits).toHaveLength(HISTORY_SEARCH_LIMIT);
+    expect(answer.more).toBe(true);
+    // A library with fewer matches is not a floor, and says nothing about one.
+    expect(panel.search('nothing-matches-this').more).toBeUndefined();
     store.close();
   });
 
@@ -99,9 +117,27 @@ describe('the web UI history panel', () => {
     const read = panel.read(id);
     expect(read.session.title).toBe('long');
     expect(read.messages).toHaveLength(500);
-    // The page shows this line: half a log presented as the whole is the failure it prevents.
-    expect(read.note).toMatch(/more than 500 messages/);
+    // The page says it in its own words: half a log presented as the whole is the failure it
+    // prevents, and the store's `note` would name flags this page cannot run.
+    expect(read.note).toMatch(/only the first 500 are shown/);
+    expect(read.note).not.toMatch(/--around|--role|--window/);
     expect(() => panel.read(999_999)).toThrow(/no conversation/);
+    store.close();
+  });
+
+  it('says nothing about folded tool calls: the page shows the folded lines as they are', () => {
+    const store = tempStore();
+    const at = Date.now();
+    const id = seed(store, 'webui#main#abcdef12', 'tools', at);
+    for (let i = 0; i < 4; i++) store.message(id, { ts: at + i, role: 'tool', kind: 'normal', text: `Bash: step ${i}` });
+    store.message(id, { ts: at + 9, role: 'agent', kind: 'normal', text: 'done' });
+    const panel = buildHistoryPanel({ history: store, instance: 'webui' });
+
+    // The store says it folded a run (and its CLI note explains that); the page does not repeat it.
+    const result = store.read(String(id));
+    expect(result.folded).toBe(true);
+    expect(result.note).toMatch(/--role tool/);
+    expect(panel.read(id).note).toBeUndefined();
     store.close();
   });
 

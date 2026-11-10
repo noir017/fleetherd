@@ -1,9 +1,9 @@
-import type { HistorySessionRow, HistoryStore } from '../history/store.js';
+import type { HistoryReadCut, HistorySessionRow, HistoryStore } from '../history/store.js';
 import type {
   HistoryPanel,
-  HistoryPanelHit,
   HistoryPanelPage,
   HistoryPanelRead,
+  HistoryPanelSearch,
   HistoryPanelSession,
 } from '../platform/adapter.js';
 
@@ -50,20 +50,27 @@ export function buildHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
     };
   };
 
-  const search = (query: string): HistoryPanelHit[] =>
-    options.history.search(query, { limit: HISTORY_SEARCH_LIMIT }).map((hit) => ({
-      session: hit.session,
-      message: hit.message,
-      at: Date.parse(hit.at) || 0,
-      title: hit.title,
-      agent: hit.agent,
-      platform: hit.platform,
-      role: hit.role,
-      excerpt: hit.excerpt,
-    }));
+  const search = (query: string): HistoryPanelSearch => {
+    // One row past the answer: its presence is what says the count is a floor, not the total.
+    const rows = options.history.search(query, { limit: HISTORY_SEARCH_LIMIT + 1 });
+    return {
+      hits: rows.slice(0, HISTORY_SEARCH_LIMIT).map((hit) => ({
+        session: hit.session,
+        message: hit.message,
+        at: Date.parse(hit.at) || 0,
+        title: hit.title,
+        agent: hit.agent,
+        platform: hit.platform,
+        role: hit.role,
+        excerpt: hit.excerpt,
+      })),
+      ...(rows.length > HISTORY_SEARCH_LIMIT ? { more: true } : {}),
+    };
+  };
 
   const read = (id: number): HistoryPanelRead => {
     const result = options.history.read(String(id));
+    const note = pageNote(result.truncated);
     return {
       session: sessionEntry(result.session, options.instance),
       messages: result.messages.map((message) => ({
@@ -73,11 +80,29 @@ export function buildHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
         kind: message.kind,
         text: message.text,
       })),
-      ...(result.note ? { note: result.note } : {}),
+      ...(note ? { note } : {}),
     };
   };
 
   return { list, search, read };
+}
+
+/**
+ * What the page says when a read is not the whole conversation.
+ *
+ * Its own words, not the store's `note`: that one is written for `sessions read` and names flags
+ * (`--around`, `--role tool`) a page has no way to run, and it explains folded tool runs, which
+ * the page shows as the lines they are. The facts come from `truncated`, so this cannot drift
+ * from what the CLI answered — only the wording differs.
+ */
+export function pageNote(cut: HistoryReadCut | undefined): string | undefined {
+  if (!cut) return undefined;
+  const parts: string[] = [];
+  if (cut.rows !== undefined) {
+    parts.push(`This conversation is longer than the ${cut.rows} messages this page reads; only the first ${cut.rows} are shown.`);
+  }
+  if (cut.chars !== undefined) parts.push(`${cut.chars} later message(s) are not shown, so the page stays a readable size.`);
+  return parts.length > 0 ? parts.join(' ') : undefined;
 }
 
 /**

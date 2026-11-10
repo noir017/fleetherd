@@ -1118,37 +1118,9 @@ export class Daemon {
       // ask which of them a scheduled task still posts into. Not decoration, unlike the two above:
       // a task whose topic was evicted fails every run after it.
       adapter.useScheduleLookup?.((ref) => this.schedules?.targets(ref) ?? false);
-      // …and one that can draw the tasks themselves gets the list and the five operations — the
-      // four verbs plus the tag editor (the web UI's side panel). Same service the agent's commands and `/setting schedule` use, so
-      // a change made in the panel is a change made everywhere.
-      const panel = this.schedulePanel(id);
-      if (panel) adapter.useSchedulePanel?.(panel);
-      // …and one with room for a skills page gets the gateway's managed skills and every write
-      // the store allows (the web UI). `talkcode skills` is the same store, so the two cannot
-      // disagree; archiving here tells the creating conversation exactly as the CLI path does.
-      adapter.useSkillsPanel?.(
-        buildSkillsPanel({
-          notifyArchived: (skill) => this.notifySkillArchived(skill, 'manual'),
-          write: (fn) => this.skillsRepo.write(fn),
-        })
-      );
-      // …and the automatic reviews, read-only: what each quiet conversation taught the skill
-      // library, including the reviews that changed nothing and so posted no line anywhere.
-      const reviewPanel = this.reviewPanel(id);
-      if (reviewPanel) adapter.useReviewPanel?.(reviewPanel);
-      // …and the conversation library itself, read-only, for the web UI's history page: every
-      // conversation of every agent and platform, searchable — including the topics this page has
-      // long forgotten and the ones on other platforms. `talkcode sessions` reads the same store.
-      const historyPanel = this.historyPanel(id);
-      if (historyPanel) adapter.useHistoryPanel?.(historyPanel);
-      // …and one with room to lay out the agents a new conversation could be given to (the web UI's
-      // empty topic) gets a way to ask which, and who answers if nobody picks.
-      adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
-      // The status line's model switch: `/model` as a control (ConversationRegistry.modelPickerForRef).
-      adapter.useModelPicker?.({
-        list: (ref) => this.registry.modelPickerForRef(ref),
-        choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
-      });
+      // …and one that can draw them gets the tasks, the skills, the reviews and the conversation
+      // library — see wirePanels, kept out of run because each seam is a paragraph of its own.
+      this.wirePanels(adapter, id);
       await adapter.start();
       console.log(`[daemon] platform instance "${id}" (${adapter.platformType}) started`);
     }
@@ -2006,6 +1978,40 @@ export class Daemon {
         }
       },
     };
+  }
+
+  /**
+   * The surfaces a platform with a page of its own can draw, and the two lookups an empty topic
+   * needs. Extracted from `run`, which is already at the complexity limit: each seam carries its
+   * own paragraph of reasoning and they are one decision — what this daemon offers a platform that
+   * has somewhere to put it. All of them are optional, so a platform that implements none is
+   * unchanged.
+   *
+   * Tasks: the list and the five operations, from the same ScheduleService the agent's commands
+   * and `/setting schedule` use. Skills: the store every write goes through, so the page and
+   * `talkcode skills` cannot disagree, and archiving here tells the creating conversation exactly
+   * as the CLI path does. Reviews: read-only. History: the conversation library, read-only — every
+   * agent and platform, including the topics this page has long forgotten. Then the agent catalog
+   * an empty topic lays out, and the status line's model switch (`/model` as a control).
+   */
+  private wirePanels(adapter: PlatformAdapter, id: string): void {
+    const schedulePanel = this.schedulePanel(id);
+    if (schedulePanel) adapter.useSchedulePanel?.(schedulePanel);
+    adapter.useSkillsPanel?.(
+      buildSkillsPanel({
+        notifyArchived: (skill) => this.notifySkillArchived(skill, 'manual'),
+        write: (fn) => this.skillsRepo.write(fn),
+      })
+    );
+    const reviewPanel = this.reviewPanel(id);
+    if (reviewPanel) adapter.useReviewPanel?.(reviewPanel);
+    const historyPanel = this.historyPanel(id);
+    if (historyPanel) adapter.useHistoryPanel?.(historyPanel);
+    adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
+    adapter.useModelPicker?.({
+      list: (ref) => this.registry.modelPickerForRef(ref),
+      choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
+    });
   }
 
   /**

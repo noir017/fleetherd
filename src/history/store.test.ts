@@ -139,6 +139,25 @@ describe('HistoryStore', () => {
     store.close();
   });
 
+  it('says in data why a read is not the whole conversation, and keeps the CLI note as it was', () => {
+    const { store } = tempStore();
+    const at = Date.now();
+    const id = seed(store);
+    const all = store.read(String(id));
+    // A tool row was folded: the page can see that without reading the CLI's sentence.
+    expect(all.folded).toBe(true);
+    expect(all.truncated).toBeUndefined();
+    expect(all.note).toBe('Each run of tool calls is folded into one line; --role tool lists them with their arguments.');
+
+    // One past the row bound: the cut is a fact, and the note still names the flag that shows more.
+    for (let i = 0; i < 500; i++) store.message(id, { ts: at + 10_000 + i, role: 'agent', kind: 'normal', text: `line ${i}` });
+    const long = store.read(String(id));
+    expect(long.truncated).toEqual({ rows: 500 });
+    expect(long.note).toContain('This conversation has more than 500 messages.');
+    expect(long.note).toContain('--around <message>');
+    store.close();
+  });
+
   it('lists recent conversations, newest first', () => {
     const { store } = tempStore();
     const at = Date.now();

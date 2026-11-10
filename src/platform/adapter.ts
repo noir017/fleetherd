@@ -382,7 +382,7 @@ export interface HistoryPanel {
   /** One page of conversations, newest first. `before` is the previous page's `next`. */
   list(opts?: { before?: string; limit?: number }): HistoryPanelPage;
   /** Keyword matches across every conversation, newest first. */
-  search(query: string): HistoryPanelHit[];
+  search(query: string): HistoryPanelSearch;
   /** One conversation whole. Throws the store's own sentence for an id that names none. */
   read(id: number): HistoryPanelRead;
 }
@@ -429,6 +429,16 @@ export interface HistoryPanelHit {
   platform: string;
   role: string;
   excerpt: string;
+}
+
+/** One search answer: the matches, and whether the library had more than these. */
+export interface HistoryPanelSearch {
+  hits: HistoryPanelHit[];
+  /**
+   * More matches exist than one answer carries. The page counts "30+" rather than "30", because
+   * the number it shows is the size of the answer, not of the result.
+   */
+  more?: boolean;
 }
 
 /** One conversation, read whole. */
