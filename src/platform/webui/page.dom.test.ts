@@ -6720,6 +6720,51 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     expect(h.doc.querySelector(`#topics [data-topic="${C}"]`)?.classList.contains('after-needs')).toBe(true);
   });
 
+  it('puts a topic with no title yet below what needs you and above every state', async () => {
+    const U = 'a9b8c7d6';
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        // The daemon's order, deliberately the reverse of the one these states belong in.
+        { id: A, title: 'stopped', lastAt: 1000, msgCount: 0, stage: 'idle' },
+        { id: D, title: 'resident', lastAt: 999, msgCount: 0, stage: 'idle', live: true },
+        { id: C, title: 'working', lastAt: 998, msgCount: 0, stage: 'working', running: true, live: true },
+        { id: B, title: 'decision', lastAt: 997, msgCount: 0, stage: 'answer', asking: true, running: true, live: true },
+        // Opened a moment ago: nothing said in it yet, so no title and no agent behind it.
+        { id: U, title: '', lastAt: 996, msgCount: 0, stage: 'idle' },
+      ],
+    });
+    expect(rows(h)).toEqual([B, U, C, D, A]);
+    // The line under the needs-you group falls before the untitled row, which is the first of
+    // the ordinary ones.
+    expect(h.doc.querySelector(`#topics [data-topic="${U}"]`)?.classList.contains('after-needs')).toBe(true);
+
+    // Untitled is a place in the list, not a state: it leads even a working topic.
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: C, title: 'working', lastAt: 1000, msgCount: 0, stage: 'working', running: true, live: true },
+        { id: U, title: '', lastAt: 999, msgCount: 0, stage: 'working', running: true, live: true },
+      ],
+    });
+    expect(rows(h)).toEqual([U, C]);
+
+    // And a sub-agent's topic stays its parent's, untitled or not.
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: D, title: 'parent', lastAt: 1000, msgCount: 0, stage: 'idle', live: true },
+        { id: U, title: '', lastAt: 999, msgCount: 0, stage: 'idle', parent: D },
+        { id: C, title: 'working', lastAt: 998, msgCount: 0, stage: 'working', running: true, live: true },
+      ],
+    });
+    expect(rows(h)).toEqual([C, D]);
+    await h.click(`#topics [data-fold="${D}"]`);
+    expect(rows(h)).toEqual([C, D, U]);
+  });
+
   it('puts a sub-agent’s topic first only for a question of its own', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));

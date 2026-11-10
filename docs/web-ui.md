@@ -145,9 +145,10 @@ agent that opened it, so it is never moved up, and its finished turn keeps the o
 dot instead of the green one. Its questions (amber) and its work (blue) are unchanged, and the
 topic that started it is what turns green when the answer is waiting for you.
 
-Below that group the list is ordered by what each topic is doing: working, then an agent that is up
-with nothing to do, then one with no process behind it. The directory menu a new topic shows after
-you pick its agent is not one of these: it is a control for your own next step rather than
+Below that group, a topic with no title yet comes first — a new conversation is where you are
+about to work — and the rest is ordered by what each topic is doing: working, then an agent that
+is up with nothing to do, then one with no process behind it. The directory menu a new topic shows
+after you pick its agent is not one of these: it is a control for your own next step rather than
 something an agent is blocked on, so a topic you leave half set up keeps its place and sends no
 notification.
 [Sub-agent](sub-agents.md) topics are folded under the topic that opened
