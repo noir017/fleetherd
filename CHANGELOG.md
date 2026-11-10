@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's state filter is one row under the search, not a click inside Filter.** The topic
+  list's four states (Needs you, Running, Idle, No agent) and the task list's four (Running,
+  Active, Paused, Ended) were chips inside the Filter panel, so the filter a person reaches for
+  most cost a click to see and another to put away. Both lists now draw that group as a pinned
+  row of the shared `makeFilterBar`, always on screen and never wrapping: at the sidebar's 180px
+  and the side panel's 220px the words give way to an icon and the count, with the full name on
+  the chip's title and aria-label, and the short words return once the bar is wide enough. The
+  Filter dot and highlight count the panel's groups only — a pinned chip is never hidden state —
+  while **Showing N of M** and **Clear** still cover every group.
+
 ## [2.56.0] - 2026-11-10
 
 ### Added

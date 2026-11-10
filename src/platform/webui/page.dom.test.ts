@@ -2166,8 +2166,8 @@ describe('webui page: the topic filter bar', () => {
     const h = await open();
     await withFleet(h);
     await openPanel(h);
-    await toggle(h, 'state', 'idle');
-    const chip = h.doc.querySelector('.fb-chip[data-fb-value="idle"]') as HTMLElement;
+    await toggle(h, 'starred', 'plain');
+    const chip = h.doc.querySelector('.fb-chip[data-fb-group="starred"][data-fb-value="plain"]') as HTMLElement;
     chip.focus();
     chip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await tick();
@@ -2177,6 +2177,56 @@ describe('webui page: the topic filter bar', () => {
     // The chip is still on: Escape put the panel away, it did not clear the filter.
     expect(chip.getAttribute('aria-pressed')).toBe('true');
     expect(h.doc.activeElement).toBe(h.doc.querySelector('.fb-filter'));
+  });
+
+  it('keeps the State row on the bar with the panel shut, and filters from it', async () => {
+    const h = await open();
+    await withFleet(h);
+
+    const pins = h.doc.querySelector('.fb-pins') as HTMLElement;
+    expect(pins.hidden).toBe(false);
+    expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(true);
+    // One row of four, in the list's own order, and the panel no longer repeats them.
+    const chips = Array.from(pins.querySelectorAll('.fb-chip'));
+    expect(chips.map((c) => c.getAttribute('data-fb-value'))).toEqual(['needs', 'running', 'idle', 'none']);
+    expect(pins.querySelector('.fb-label')).toBeNull();
+    expect(h.doc.querySelector('.fb-panel .fb-chip[data-fb-group="state"]')).toBeNull();
+    // The row's word is the short one; the full name stays on the chip for a pointer and a reader.
+    expect(chips[0]!.getAttribute('title')).toBe('Needs you');
+    expect(chips[0]!.getAttribute('aria-label')).toBe('Needs you');
+    expect(chips[0]!.querySelector('.fb-chip-label')?.textContent).toBe('Needs');
+
+    await toggle(h, 'state', 'idle');
+    expect(ids(h)).toEqual([A, P, K, H]);
+    // Filtering from the row does not open the panel, and the line says what survived.
+    expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(true);
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 4 of 7');
+  });
+
+  it('restores a State choice after a reload, with the row still on the bar', async () => {
+    const stored = JSON.stringify({ q: '', sel: { state: ['none'] }, sort: '', dir: '', open: false });
+    const h = await open({ storage: { aa_topic_filter: stored } });
+    await withFleet(h);
+
+    expect((h.doc.querySelector('.fb-pins') as HTMLElement).hidden).toBe(false);
+    expect(h.doc.querySelector('.fb-chip[data-fb-value="none"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(ids(h)).toEqual([C]);
+  });
+
+  it('lights the Filter dot for the panel’s groups only', async () => {
+    const h = await open();
+    await withFleet(h);
+
+    await toggle(h, 'state', 'idle');
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 4 of 7');
+    // A pinned chip is not hidden state: the dot points at the panel, and the panel has nothing on.
+    expect((h.doc.querySelector('.fb-dot') as HTMLElement).hidden).toBe(true);
+    expect(h.doc.querySelector('.fb-filter')!.classList.contains('on')).toBe(false);
+
+    await openPanel(h);
+    await toggle(h, 'starred', 'plain');
+    expect((h.doc.querySelector('.fb-dot') as HTMLElement).hidden).toBe(false);
+    expect(h.doc.querySelector('.fb-filter')!.classList.contains('on')).toBe(true);
   });
 
   it('leaves scheduled runs out of the filter counts and the match total', async () => {
@@ -8705,7 +8755,11 @@ describe('webui page: the task list filter', () => {
   it('filters by status (Running, Active, Paused, Ended) and by tag, with counts', async () => {
     const h = await open({ replies: { 'api/schedules': listReply(fleet()) } });
     await openPanel(h);
-    await h.click('#sched-filter .fb-filter');
+
+    // Status is the pinned row: on screen with the panel shut, four chips in one row.
+    expect((h.doc.querySelector('#sched-filter .fb-panel') as HTMLElement).hidden).toBe(true);
+    const statusChips = Array.from(h.doc.querySelectorAll('#sched-filter .fb-pins .fb-chip'));
+    expect(statusChips.map((c) => c.getAttribute('data-fb-value'))).toEqual(['running', 'active', 'paused', 'ended']);
 
     const count = (group: string, value: string): string | undefined =>
       h.doc.querySelector(`#sched-filter .fb-chip[data-fb-group="${group}"][data-fb-value="${value}"] .fb-count`)
@@ -8716,14 +8770,19 @@ describe('webui page: the task list filter', () => {
       '1',
       '2',
     ]);
+    // A pinned chip filters without opening the panel.
+    await toggle(h, 'status', 'ended');
+    expect(new Set(ids(h))).toEqual(new Set(['c3d4e5', 'd4e5f6']));
+    expect((h.doc.querySelector('#sched-filter .fb-panel') as HTMLElement).hidden).toBe(true);
+
+    // The tags still live in the panel.
+    await h.click('#sched-filter .fb-filter');
     expect(count('tags', 'ci')).toBe('2');
     expect(count('tags', 'ops')).toBe('1');
     expect(count('tags', ' untagged')).toBe('2');
     // The chip carries the tag icon, like the card's own chips.
     expect(h.doc.querySelector('#sched-filter .fb-chip[data-fb-value="ci"] .ic-tag')).not.toBeNull();
 
-    await toggle(h, 'status', 'ended');
-    expect(new Set(ids(h))).toEqual(new Set(['c3d4e5', 'd4e5f6']));
     // Values in one group widen: running joins the ended ones.
     await toggle(h, 'status', 'running');
     expect(new Set(ids(h))).toEqual(new Set(['c3d4e5', 'd4e5f6', 'e5f6a7']));
@@ -8896,6 +8955,7 @@ describe('webui page: the task list filter', () => {
     const h = await open({ replies });
     await openPanel(h);
     await h.click('#sched-filter .fb-filter');
+    await toggle(h, 'status', 'paused');
     await toggle(h, 'tags', 'ops');
     await sortBy(h, 'created');
     await flip(h);
@@ -8911,6 +8971,9 @@ describe('webui page: the task list filter', () => {
 
     expect((again.doc.querySelector('#sched-filter .fb-q') as HTMLInputElement).value).toBe('');
     expect(again.doc.querySelector('#sched-filter .fb-chip[data-fb-value="ops"]')?.getAttribute('aria-pressed')).toBe('true');
+    // The pinned Status row came back too, without the panel.
+    expect(again.doc.querySelector('#sched-filter .fb-chip[data-fb-value="paused"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect((again.doc.querySelector('#sched-filter .fb-pins') as HTMLElement).hidden).toBe(false);
     expect((again.doc.querySelector('#sched-filter .fb-panel') as HTMLElement).hidden).toBe(false);
     expect((again.doc.querySelector('#sched-filter .fb-sortsel') as HTMLSelectElement).value).toBe('created');
     expect(again.doc.querySelector('#sched-filter .fb-dir')?.getAttribute('title')).toBe('Descending');

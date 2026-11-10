@@ -223,6 +223,19 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .fb-chip.on{color:#fff;background:#24455a;border-color:#3a6f93}
 .fb-chip .ic{width:10px;height:10px}
 .fb-count{opacity:.65;font-size:10px}
+/* A group the bar keeps on screen rather than folding into the panel: the state filter of both
+   lists, always one row under the search. Four chips share the row's width equally and never
+   wrap — the sidebar's 180px and the panel's 220px cannot hold four words and four counts, and
+   a second row of chips would push the list down for a filter that is mostly left alone. Under
+   the width where the words fit, the label goes and the icon and count carry the chip; the full
+   name stays in its title and aria-label, so nothing is lost to a pointer or a reader. */
+.fb-pins{display:flex;flex-direction:column;gap:4px}
+.fb-pin-row{flex-wrap:nowrap;gap:4px}
+.fb-pin{flex:1 1 0;min-width:0;justify-content:center;padding:2px 5px}
+.fb-pin .fb-chip-label{overflow:hidden;text-overflow:ellipsis}
+@container (max-width:280px){
+  .fb-pin .fb-chip-label{display:none}
+}
 /* A row kept only because a topic under it matched is context, not a result: it is
    drawn so the hierarchy still reads, and dimmed so the matches themselves stand out. */
 #topics .topic-item.ctx{opacity:.5}
@@ -1248,6 +1261,9 @@ button:disabled{opacity:.5;cursor:default}
   .fb-sort select{font-size:16px;max-width:140px}
   .fb-dir{width:36px}
   .fb-chip{min-height:32px;padding:4px 10px}
+  /* The pinned row keeps its four chips on one line in a drawer too: the finger target comes
+     from the height, not from padding the words apart. */
+  .fb-pin{padding:4px 6px}
   .fb-sum{font-size:12px}
   .fb-sum .fb-clear,.topics-empty .fb-clear{min-height:32px;font-size:12px}
   /* The header and the footer row are finger targets here: 12px text in 7px of padding is a
@@ -2730,11 +2746,11 @@ const SCRIPT = `
     for(i=0;i<order.length;i++) tagOpts.push({value:order[i], label:order[i], icon:'tag', count:tags[order[i]]});
     tagOpts.push({value:' untagged', label:'Untagged', icon:'tag', count:untagged});
     return {groups:[
-      {id:'status', label:'Status', options:[
-        {value:'running', label:'Running', count:counts.running},
-        {value:'active', label:'Active', count:counts.active},
-        {value:'paused', label:'Paused', count:counts.paused},
-        {value:'ended', label:'Ended', count:counts.ended}
+      {id:'status', label:'Status', pinned:true, options:[
+        {value:'running', label:'Running', short:'Run', icon:'play', count:counts.running},
+        {value:'active', label:'Active', short:'Active', icon:'clock', count:counts.active},
+        {value:'paused', label:'Paused', short:'Pause', icon:'pause', count:counts.paused},
+        {value:'ended', label:'Ended', short:'End', icon:'stop', count:counts.ended}
       ]},
       {id:'tags', label:'Tags', options:tagOpts}
     ]};
@@ -4660,10 +4676,16 @@ const SCRIPT = `
    *
    * opts: {
    *   key, placeholder,
-   *   groups: [{id, label, options: [{value, label, icon?, count?}]}],
+   *   groups: [{id, label, pinned?, options: [{value, label, short?, icon?, count?}]}],
    *   sort?: {options: [{value, label}], value?, dir?: 'asc' | 'desc'},
    *   onChange: (state) => void
    * }
+   * A pinned group is drawn as one always-visible row under the search instead of folding into
+   * the panel — the state filter of both lists, which is what a person reaches for most and
+   * should not cost a click to see. short is its label in that row; the full label stays on the
+   * chip's title and aria-label, because the row hides the word when four chips cannot share the
+   * width (see .fb-pin in the stylesheet). The Filter dot counts the panel's groups only: a
+   * pinned chip is never hidden state.
    * setGroups(null) is for the first frame only, before the caller's data has arrived: it offers
    * nothing and prunes nothing. A refresh is not this — keep the last options by passing them
    * again (or leave them alone until the new ones are in hand), because a reload that lands
@@ -4721,6 +4743,7 @@ const SCRIPT = `
         + '<button type="button" class="fb-dir fb-btn" aria-label="Ascending" title="Ascending"></button></span>';
     }
     html += '</div>'
+      + '<div class="fb-pins" hidden></div>'
       + '<div class="fb-sum" hidden><span class="fb-sumtext"></span><button type="button" class="fb-clear">Clear</button></div>'
       + '<div class="fb-panel" hidden></div>';
     root.innerHTML = html;
@@ -4729,6 +4752,7 @@ const SCRIPT = `
     var qClear = root.querySelector('.fb-qclear');
     var fBtn = root.querySelector('.fb-filter');
     var dot = root.querySelector('.fb-dot');
+    var pins = root.querySelector('.fb-pins');
     var panel = root.querySelector('.fb-panel');
     var sum = root.querySelector('.fb-sum');
     var sumText = root.querySelector('.fb-sumtext');
@@ -4738,6 +4762,17 @@ const SCRIPT = `
 
     function hasSel(){
       for(var i=0;i<groups.length;i++){
+        var v = st.sel[groups[i].id];
+        if(v && v.length) return true;
+      }
+      return false;
+    }
+    /** A selection in a group that lives in the panel. A pinned group is always on screen, so
+        selecting one is not hidden state: the dot on Filter says "the panel holds a choice you
+        cannot see", and lighting it for a chip in the row would point at nothing. */
+    function panelHasSel(){
+      for(var i=0;i<groups.length;i++){
+        if(groups[i].pinned) continue;
         var v = st.sel[groups[i].id];
         if(v && v.length) return true;
       }
@@ -4776,7 +4811,7 @@ const SCRIPT = `
     var panelSig = '';
 
     function paintChips(){
-      var chips = panel.querySelectorAll('[data-fb-value]');
+      var chips = root.querySelectorAll('[data-fb-value]');
       for(var i=0;i<chips.length;i++){
         var c = chips[i], id = c.getAttribute('data-fb-group'), v = c.getAttribute('data-fb-value');
         var on = (st.sel[id] || []).indexOf(v) >= 0;
@@ -4787,7 +4822,7 @@ const SCRIPT = `
 
     /** Only the numbers move between paints, so they are written in place rather than rebuilt. */
     function paintCounts(){
-      var chips = panel.querySelectorAll('[data-fb-value]');
+      var chips = root.querySelectorAll('[data-fb-value]');
       for(var i=0;i<chips.length;i++){
         var c = chips[i], id = c.getAttribute('data-fb-group'), v = c.getAttribute('data-fb-value'), o = null;
         for(var g=0;g<groups.length;g++) if(groups[g].id === id){
@@ -4804,31 +4839,41 @@ const SCRIPT = `
       // or goes. Rebuilding on a count would replace the chip mid-click and lose its event path.
       var shape = [];
       for(var i=0;i<groups.length;i++){
-        var g = groups[i], row = [g.id, g.label];
+        var g = groups[i], row = [g.id, g.label, g.pinned ? 1 : 0];
         for(var k=0;k<g.options.length;k++){
           var o = g.options[k];
-          row.push([o.value, o.label, o.icon || '', typeof o.count === 'number' ? 1 : 0]);
+          row.push([o.value, o.label, o.short || '', o.icon || '', typeof o.count === 'number' ? 1 : 0]);
         }
         shape.push(row);
       }
       var sig = JSON.stringify(shape);
       if(sig === panelSig){ paintCounts(); paintChips(); return; }
       panelSig = sig;
-      var h = '';
+      // A pinned group goes into its own always-visible row under the search; the rest keep the
+      // panel, label and all. Both are built here so one signature still guards both hosts.
+      var ph = '', h = '';
       for(i=0;i<groups.length;i++){
-        var gg = groups[i];
-        h += '<div class="fb-group"><div class="fb-label">' + text(gg.label) + '</div><div class="fb-chips">';
+        var gg = groups[i], chips = '';
         for(k=0;k<gg.options.length;k++){
           var oo = gg.options[k];
-          h += '<button type="button" class="fb-chip" data-fb-group="' + text(gg.id) + '" data-fb-value="' + text(oo.value) + '"'
-            + ' aria-pressed="false" title="' + text(oo.label) + '">'
+          chips += '<button type="button" class="fb-chip' + (gg.pinned ? ' fb-pin' : '') + '"'
+            + ' data-fb-group="' + text(gg.id) + '" data-fb-value="' + text(oo.value) + '"'
+            + ' aria-pressed="false" title="' + text(oo.label) + '"'
+            + (gg.pinned ? ' aria-label="' + text(oo.label) + '"' : '') + '>'
             + (oo.icon && IC.icon[oo.icon] ? IC.icon[oo.icon] : '')
-            + '<span>' + text(oo.label) + '</span>'
+            + '<span class="fb-chip-label">' + text(gg.pinned ? (oo.short || oo.label) : oo.label) + '</span>'
             + (typeof oo.count === 'number' ? '<span class="fb-count">' + oo.count + '</span>' : '')
             + '</button>';
         }
-        h += '</div></div>';
+        if(gg.pinned){
+          ph += '<div class="fb-chips fb-pin-row" role="group" aria-label="' + text(gg.label) + '">' + chips + '</div>';
+        } else {
+          h += '<div class="fb-group"><div class="fb-label">' + text(gg.label) + '</div>'
+            + '<div class="fb-chips">' + chips + '</div></div>';
+        }
       }
+      pins.innerHTML = ph;
+      pins.hidden = !ph;
       panel.innerHTML = h;
       paintChips();
     }
@@ -4841,8 +4886,8 @@ const SCRIPT = `
 
     function paintChrome(){
       qClear.hidden = !st.q;
-      dot.hidden = !hasSel();
-      fBtn.classList.toggle('on', hasSel());
+      dot.hidden = !panelHasSel();
+      fBtn.classList.toggle('on', panelHasSel());
       fBtn.setAttribute('aria-expanded', st.open ? 'true' : 'false');
       panel.hidden = !st.open;
       if(st.q && q.value !== st.q) q.value = st.q;
@@ -4883,9 +4928,10 @@ const SCRIPT = `
       }
       if(st.open){
         st.open = false; save(); paintChrome();
-        // The chip that had focus is hidden with the panel; leave the keyboard on the control
-        // that opens it rather than nowhere.
-        if(e.target !== fBtn) fBtn.focus();
+        // A chip in the panel had focus and is hidden with it; leave the keyboard on the control
+        // that opens it rather than nowhere. A chip in the pinned row is still on screen, so
+        // there is nothing to move away from.
+        if(panel.contains(e.target)) fBtn.focus();
         e.preventDefault(); e.stopPropagation();
       }
     });
@@ -4893,7 +4939,7 @@ const SCRIPT = `
     clearBtn.addEventListener('click', clear);
     if(sortSel) sortSel.addEventListener('change', function(){ st.sort = sortSel.value; emit(); });
     if(dirBtn) dirBtn.addEventListener('click', function(){ st.dir = st.dir === 'desc' ? 'asc' : 'desc'; paintDir(); emit(); });
-    panel.addEventListener('click', function(e){
+    root.addEventListener('click', function(e){
       var chip = e.target.closest ? e.target.closest('[data-fb-value]') : null;
       if(!chip) return;
       var id = chip.getAttribute('data-fb-group'), val = chip.getAttribute('data-fb-value');
@@ -4973,10 +5019,10 @@ const SCRIPT = `
    */
   function topicFilterGroups(){
     var stateOpts = [
-      {value:'needs', label:'Needs you', count:0},
-      {value:'running', label:'Running', count:0},
-      {value:'idle', label:'Idle', count:0},
-      {value:'none', label:'No agent', count:0}
+      {value:'needs', label:'Needs you', short:'Needs', icon:'bell', count:0},
+      {value:'running', label:'Running', short:'Run', icon:'play', count:0},
+      {value:'idle', label:'Idle', short:'Idle', icon:'dot', count:0},
+      {value:'none', label:'No agent', short:'None', icon:'offline', count:0}
     ];
     var starredOpts = [
       {value:'starred', label:'Starred', icon:'star', count:0},
@@ -5011,7 +5057,7 @@ const SCRIPT = `
       hostOpts.push({value:hv, label:hv === '__local' ? 'Local' : hv, icon:'globe', count:hosts[hv]});
     }
     var groups = [
-      {id:'state', label:'State', options:stateOpts},
+      {id:'state', label:'State', pinned:true, options:stateOpts},
       {id:'starred', label:'Starred', options:starredOpts}
     ];
     if(agentOpts.length) groups.push({id:'agent', label:'Agent', options:agentOpts});

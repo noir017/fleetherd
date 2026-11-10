@@ -67,8 +67,11 @@ lit star at its end even when you are not hovering: a marker, not a button. Drag
 edge to make it wider or narrower — the width is kept in this browser — and double-click the edge
 for the default. On a narrow screen it becomes a drawer. Above the list, a search field and
 **Filter** narrow it: the search matches the title, the agent tag, the directory name, its full
-path and the machine, word by word, and the filters narrow by state, star, agent and host —
-several values in one group widen the result, values in different groups narrow it. A parent
+path and the machine, word by word, and a row of four state chips under the search — **Needs
+you**, **Running**, **Idle**, **No agent** — is always on screen. **Filter** holds the rest: star,
+agent and host. Several values in one group widen the result, values in different groups narrow
+it. When the column is too narrow for the state words, the chips keep their icon and count and
+the full name moves to the hover text. A parent
 stays on screen dimmed when a sub-agent under it matches, and **Showing N of M** with **Clear**
 says what survived. The keyword and the filters are kept in this browser. The × in its header closes it at any
 width, and the same × closes the task panel on the right: the two are one component, with the
@@ -103,8 +106,9 @@ foot: **Scheduled** and **Reviews**. Inside **Scheduled**, two sub-tabs under th
 **Tasks** (default) and **Sessions**. **Tasks** lists every task the gateway has registered — what
 it runs, when it runs next, where its output goes, and how the last run ended. Above that list a
 search field, **Filter** and a sort narrow and order it: the search matches the task's name, its
-prompt or command, and its target; the filters are **Status** (Running, Active, Paused, and Ended —
-expired and done together) and **Tags** (every tag in use, plus **Untagged**); the sort switches
+prompt or command, and its target; a row of four **Status** chips under the search — Running,
+Active, Paused, and Ended (expired and done together) — is always on screen, and **Filter** holds
+**Tags** (every tag in use, plus **Untagged**); the sort switches
 between **Status** (the default), **Next run**, **Last run** and **Created**, either direction, and
 a task with nothing to sort by stays last. The keyword, the filters and the sort are kept in this
 browser, and **Showing N of M** with **Clear** says what survived. **Sessions** lists the
