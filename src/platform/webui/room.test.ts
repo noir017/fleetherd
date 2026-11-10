@@ -285,10 +285,20 @@ describe('WebRoom: the topic list reaching every client', () => {
   it('sends a message elsewhere as its one row, not the whole list', () => {
     // It was the whole list, to every client, on every message posted anywhere: 34 KB of JSON at
     // 200 topics for one row's msgCount and lastAt.
+    //
+    // On a clock that moves a millisecond per step. On the real one a fast machine (CI, 2026-11-10)
+    // made several of these topics, and then posted, inside one millisecond: the post's lastAt tied
+    // with topics made in it, the store and the page break that tie differently, and the order is
+    // sent — correctly, which is what the next test is about, but not what this one is.
+    vi.useFakeTimers({ now: 1_000_000 });
     const { room, topic, seen, list } = attached();
-    const others = Array.from({ length: 30 }, (_, i) => room.createTopic(`topic ${i}`));
+    const others = Array.from({ length: 30 }, (_, i) => {
+      vi.advanceTimersByTime(1);
+      return room.createTopic(`topic ${i}`);
+    });
     const busy = others[7]!;
     seen.length = 0;
+    vi.advanceTimersByTime(1);
     room.post(busy.id, { own: false, html: '<p>x</p>' }, 'x');
     const ev = last(seen) as { t: string; rows: Topic[]; gone?: string[]; order?: string[] };
     expect(ev.t).toBe('topic-rows');
