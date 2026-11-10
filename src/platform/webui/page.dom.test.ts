@@ -31,7 +31,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { JSDOM, type DOMWindow } from 'jsdom';
 import { IDBFactory } from 'fake-indexeddb';
 
-import { renderPage } from './page.js';
+import { renderPage, servePage } from './page.js';
 import { renderWebToolLines } from '../web-markdown.js';
 import { webMessageHtml } from './room.js';
 
@@ -39,6 +39,8 @@ import { webMessageHtml } from './room.js';
 interface Call {
   path: string;
   body: Record<string, unknown>;
+  /** Absent for the page's ordinary GETs and POSTs (`post()` says POST); set for anything else. */
+  method?: string;
 }
 
 /** The stub for the one browser API the whole page is built on. */
@@ -432,6 +434,8 @@ async function open(
     height?: number;
     /** What each request answers with; anything unlisted answers `{}`, as most routes do. */
     replies?: Record<string, unknown>;
+    /** Response headers per path, for the few answers the page reads a header of. */
+    heads?: Record<string, Record<string, string>>;
     /** Per-path HTTP status. Anything unlisted answers 200; ≥400 is `ok: false`. */
     status?: Record<string, number>;
     /**
@@ -496,6 +500,7 @@ async function open(
     width = 1440,
     height = 900,
     replies = {},
+    heads = {},
     status = {},
     idb = new IDBFactory(),
     storage = {},
@@ -582,9 +587,13 @@ async function open(
           return real(fn, 30);
         };
       }
-      (w as any).fetch = (path: string, init: { body?: string; signal?: AbortSignal }) => {
+      (w as any).fetch = (path: string, init: { body?: string; signal?: AbortSignal; method?: string } = {}) => {
         // A GET (the file reader's) carries no body; recorded as an empty one.
-        calls.push({ path, body: init.body === undefined ? {} : JSON.parse(init.body) });
+        calls.push({
+          path,
+          body: init.body === undefined ? {} : JSON.parse(init.body),
+          ...(init.method && init.method !== 'POST' ? { method: init.method } : {}),
+        });
         if (hang.includes(path)) {
           return new Promise((_, reject) => {
             init.signal?.addEventListener('abort', () =>
@@ -593,9 +602,11 @@ async function open(
           });
         }
         const code = status[path] ?? 200;
+        const head = heads[path] ?? {};
         return (held[path] ?? Promise.resolve()).then(() => ({
           ok: code < 400,
           status: code,
+          headers: { get: (name: string) => head[name] ?? head[name.toLowerCase()] ?? null },
           json: () => Promise.resolve(replies[path] ?? {}),
         }));
       };
@@ -1217,7 +1228,8 @@ describe('webui page: the gate', () => {
 
   it('comes back when the stream is refused for good, under either gate', async () => {
     for (const password of [true, false]) {
-      const h = await open({ password });
+      // The session really is gone: the daemon says so to any guarded request.
+      const h = await open({ password, status: { 'api/push': 401 } });
       await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
       // The stream opened, so whichever gate was served is out of the way.
       expect(h.el('login').hidden).toBe(true);
@@ -1226,10 +1238,118 @@ describe('webui page: the gate', () => {
       // button under SSO.
       h.live().readyState = 2;
       h.live().onerror?.();
-      await tick();
-      expect(h.el('login').hidden).toBe(false);
+      await until('the gate is up', () => !h.el('login').hidden);
       expect(h.el('app').hidden).toBe(true);
     }
+  });
+
+  it('does not take a proxy’s 502 during a restart for a lost session: it tries again', async () => {
+    // cloudflared answers 502 while the daemon behind it is down, and EventSource gives up on
+    // that exactly as on a 401. Showing the gate there sent the person looking for a token they
+    // still had; under SSO it was a page with a Reload button and nothing else.
+    const h = await open({ status: { 'api/push': 502 } });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    const before = h.streams.length;
+    h.live().readyState = 2;
+    h.live().onerror?.();
+    await until('it asked whether the session is still good', () => h.calls.some((c) => c.path === 'api/push'));
+    await tick();
+    expect(h.el('login').hidden).toBe(true);
+    expect(h.el('note').textContent).toBe('Reconnecting...');
+    await within('a new stream after a second', 2500, () => h.streams.length > before);
+    expect(h.el('app').hidden).toBe(false);
+  });
+});
+
+describe('webui page: a daemon that restarts under an open page', () => {
+  it('reconnects after a bye instead of stopping for good, and takes the whole topic again', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    const first = h.live();
+    await h.emit({ t: 'bye' });
+    // Closed by the page, so EventSource does not hammer the port on its own schedule.
+    expect(first.closed).toBe(true);
+    expect(h.el('note').textContent).toContain('Reconnecting');
+    expect(h.el('note').textContent).not.toContain('Reload');
+    await within('a new stream after a second', 2500, () => h.streams.length === 2);
+    // A new EventSource has no resume point to send, so the daemon that answers sends a full sync.
+    expect(h.live().url).toBe('api/events?t=a1b2c3d4');
+    // The transcript stayed on screen meanwhile; the restarted daemon's sync takes over — the
+    // message it kept from the run before carries that run (g), and lands on the copy on screen.
+    expect(h.painted()).toBe(1);
+    await h.emit(
+      sync('a1b2c3d4', [{ ...message('m1', '<p>hello</p>'), g: 1 }, message('w1', '<p>after</p>')], ['a1b2c3d4'], {
+        epoch: 2,
+      })
+    );
+    expect(h.painted()).toBe(2);
+    expect(h.el('note').textContent).toBe('');
+  });
+
+  it('backs off between attempts, and starts again from a second once a stream opens', async () => {
+    const h = await open({ status: { 'api/push': 502 } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    const timers: number[] = [];
+    const real = h.window.setTimeout.bind(h.window);
+    (h.window as any).setTimeout = (fn: () => void, ms: number) => {
+      if (ms >= 1000) timers.push(ms);
+      return real(fn, 0);
+    };
+    for (let i = 0; i < 7; i++) {
+      // A stream that never opens: the proxy answers 502 every time.
+      const s = h.live();
+      s.onopen = null;
+      s.readyState = 2;
+      s.onerror?.();
+      const n = h.streams.length;
+      await until('the next attempt', () => h.streams.length > n);
+    }
+    expect(timers).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+    // One that opens resets it.
+    h.live().onopen?.();
+    await h.emit({ t: 'bye' });
+    expect(timers[timers.length - 1]).toBe(1000);
+  });
+
+  it('offers a reload when the daemon that came back serves a different page', async () => {
+    const h = await open({ heads: { '/': { ETag: 'W/"some-other-build"' } } });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    // The first sync of a page is the daemon that served it: nothing to compare yet.
+    expect(h.calls.some((c) => c.method === 'HEAD')).toBe(false);
+    expect(h.el('update').hidden).toBe(true);
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4'], { epoch: 2 }));
+    await until('it asked which page the daemon serves', () => h.calls.some((c) => c.method === 'HEAD'));
+    expect(h.calls.find((c) => c.method === 'HEAD')?.path).toBe('/');
+    await until('the offer is up', () => !h.el('update').hidden);
+    expect(h.el('update').textContent).toContain('updated');
+  });
+
+  it('says nothing when the daemon came back serving this same page, or would not say', async () => {
+    const build = servePage('Chat', false).build;
+    const answers: Array<Record<string, Record<string, string>>> = [{ '/': { ETag: `W/"${build}"` } }, {}];
+    for (const heads of answers) {
+      const h = await open({ heads });
+      await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+      await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { epoch: 2 }));
+      await until('it asked', () => h.calls.some((c) => c.method === 'HEAD'));
+      await tick();
+      expect(h.el('update').hidden).toBe(true);
+    }
+  });
+
+  it('keeps the draft when the offer is taken', async () => {
+    const h = await open({ heads: { '/': { ETag: 'W/"some-other-build"' } } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { epoch: 2 }));
+    await until('the offer is up', () => !h.el('update').hidden);
+    (h.el('input') as HTMLTextAreaElement).value = 'half a thought';
+    // jsdom does not navigate; what matters is what is on disk when the reload happens.
+    try {
+      await h.click('#update-reload');
+    } catch {
+      // jsdom: "Not implemented: navigation".
+    }
+    expect(JSON.parse(h.window.localStorage.getItem('aa_drafts') ?? '{}').a1b2c3d4).toContain('half a thought');
   });
 });
 

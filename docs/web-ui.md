@@ -348,7 +348,11 @@ in them: the daemon writes each topic's transcript to its own disk within a few 
 change, and the agent's session is on disk too. So after a restart or a container rebuild every
 topic comes back, in every browser, with everything that was said in it — including a reply that
 finished after you put your phone down. The messages from before sit above a divider saying so,
-and the agent carries on below them with its context intact. (Before 2.13.0 only starred topics
+and the agent carries on below them with its context intact. A page left open does not need a
+reload: while the daemon is down it says it is reconnecting, and when the daemon is back it catches
+up on its own. If what came back is a newer version, a line above the composer says so with a
+**Reload** button — it does not reload by itself and throw away what you were in the middle of.
+(Before 2.13.0 only starred topics
 were kept this way; an unstarred topic from then shows what your browser had of it, or nothing.)
 A **starred** topic (a lit star at the end of its row) is never removed to make room for a new one, and "Clear
 unstarred topics" leaves it alone.

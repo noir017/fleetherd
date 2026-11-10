@@ -833,6 +833,26 @@ full re-send of the conversation. A `Last-Event-ID` the backlog no longer reache
 a full sync rather than handing over a transcript with a hole in it, and the cross-topic
 `topics` event deliberately carries no id so it cannot move a resume point.
 
+**The id names the process that sent it** (`<topic>.<run>.<seq>`, the run being `startedAt` in
+base 36). Numbering restarts at 1 with every process and the backlog starts empty, so through a
+crash — no `bye`, `EventSource` reconnecting by itself with its old id — the new process used to
+find nothing in its backlog newer than the id, call that "nothing missed", and send no sync: the
+page sat on a transcript the new process had never seen, with nothing on screen to say so. An id
+from another run, or from beyond anything this room has numbered, is now answered with a sync.
+
+**A restart under an open page is ridden out, not reported.** `bye` used to stop the page for
+good with "Reload when it is back", which on a phone nobody read until they typed into a dead
+page. The page now closes the stream and opens a new one on a back-off (1 s doubling to 30 s,
+reset by a stream that opens); a new `EventSource` has no resume point, so the daemon that
+answers sends the whole topic. A stream refused for good (`readyState` 2) used to mean "show the
+gate", but a proxy's 502 while the daemon restarts is refused the same way as a 401 — cloudflared
+answers so — so the page asks `api/push` first and shows the gate only for a 401. After a sync
+from a new run the page sends a HEAD for itself: the ETag is the page's build (`servePage`), the
+script carries the same hash as `BUILD`, and when they differ a line above the composer offers a
+**Reload**. An offer, not a reload: the page cannot see what a reload would cost (a skill half
+edited, a recording, the place in a long transcript), and the old script still works against a
+newer daemon for as long as the protocol only grows.
+
 **Everything is compressed**, the event stream included — which is the part with a trap in it.
 A gzip stream buffers until told otherwise, so each event is followed by an explicit
 `Z_SYNC_FLUSH`. Without it the page receives nothing until the connection closes, which is
@@ -1522,7 +1542,8 @@ without it. `page.test.ts` pins the viewport tag so this does not get added by r
 
 - **Shutdown.** `server.close()` alone never returns: its callback waits for every connection
   to end, and an event stream by definition never does. `stop()` ends the streams itself
-  (with a `bye` event, because `EventSource` reconnects after a *clean* close too), then
+  (with a `bye` event, so the page closes its stream and retries on a back-off rather than on
+  `EventSource`'s own schedule), then
   `closeIdleConnections` / `close` / `closeAllConnections`, behind a timeout. Get this wrong
   and Ctrl-C hangs the daemon forever, because the signal handler's `process.exit` lives in
   that promise's `finally`.

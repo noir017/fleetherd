@@ -245,16 +245,31 @@ describe('webui server: the page', () => {
     expect(res.status).toBe(304);
     expect(String(res.headers['set-cookie']).split(';')[0]).toBe(cookie);
   });
+
+  it('names its build in a HEAD, and the page it serves carries the same one', async () => {
+    // How a page left open through a restart learns whether the daemon now serves another page:
+    // one round trip, no body, compared with the BUILD in its own script.
+    const { port } = await boot();
+    const head = await rawGet(port, '/', {}, 'HEAD');
+    expect(head.status).toBe(200);
+    expect(head.body.length).toBe(0);
+    const page = await rawGet(port, '/');
+    expect(head.headers.etag).toBe(page.headers.etag);
+    const build = /^W\/"(.+)"$/.exec(String(page.headers.etag))?.[1] ?? '';
+    expect(build).not.toBe('');
+    expect(page.body.toString('utf8')).toContain(`var BUILD = '${build}';`);
+  });
 });
 
 /** A GET with raw `node:http`, so compression and a 304 are visible instead of undone by fetch. */
 function rawGet(
   port: number,
   path: string,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  method = 'GET'
 ): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path, headers }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port, path, headers, method }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -741,7 +756,7 @@ describe('webui server: built for a weak link', () => {
     room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
     const frame = await first.next();
     const id = /id: (\S+)/.exec(frame)?.[1] ?? '';
-    expect(id).toMatch(new RegExp(`^${topic}\\.\\d+$`));
+    expect(id).toMatch(new RegExp(`^${topic}\\.[0-9a-z]+\\.\\d+$`));
     first.close();
 
     room.post(topic, { own: false, html: '<p>two</p>' }, 'two');

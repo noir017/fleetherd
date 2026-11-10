@@ -353,7 +353,7 @@ describe('WebRoom: resuming a dropped stream', () => {
     room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
     const identified = seen.filter((s) => s.id !== '');
     const lastId = identified[identified.length - 1]?.id ?? '';
-    expect(lastId).toMatch(new RegExp(`^${topic}\\.\\d+$`));
+    expect(lastId).toMatch(new RegExp(`^${topic}\\.[0-9a-z]+\\.\\d+$`));
     off();
 
     room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
@@ -379,9 +379,20 @@ describe('WebRoom: resuming a dropped stream', () => {
   });
 
   it('falls back to a full sync when it has nothing to resume from', () => {
-    const { room, topic } = attached();
+    const { room, topic, seen: first } = attached();
     room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
-    for (const lastId of [undefined, 'garbage', `${topic}.notanumber`, 'someothertopic.1']) {
+    const real = first.filter((s) => s.id).pop()?.id ?? '';
+    const [, run, seq] = real.split('.');
+    for (const lastId of [
+      undefined,
+      'garbage',
+      `${topic}.${run}.notanumber`,
+      `someothertopic.${run}.1`,
+      // The shape ids had before they named their process: a page from before the upgrade.
+      `${topic}.${seq}`,
+      // Further on than this room has ever been.
+      `${topic}.${run}.${Number(seq) + 5}`,
+    ]) {
       const seen: Seen[] = [];
       room.subscribe(topic, (id, ev) => seen.push({ id, ev }), lastId);
       expect(seen[0]?.ev.t).toBe('sync');
@@ -389,13 +400,43 @@ describe('WebRoom: resuming a dropped stream', () => {
   });
 
   it('falls back to a full sync rather than handing over a transcript with a hole in it', () => {
-    const { room, topic } = attached();
+    const { room, topic, seen: first } = attached();
+    room.post(topic, { own: false, html: '' }, '');
+    const early = first.filter((s) => s.id).pop()?.id;
     // Further back than the backlog keeps: the gap cannot be filled, and pretending otherwise
     // would silently drop messages out of the middle of the conversation.
     for (let i = 0; i < 400; i += 1) room.post(topic, { own: false, html: '' }, '');
     const seen: Seen[] = [];
-    room.subscribe(topic, (id, ev) => seen.push({ id, ev }), `${topic}.1`);
+    room.subscribe(topic, (id, ev) => seen.push({ id, ev }), early);
     expect(seen[0]?.ev.t).toBe('sync');
+  });
+
+  it('answers a resume point from the process before a restart with a full sync, not with nothing', () => {
+    // The crash path: no `bye`, so EventSource reconnects by itself and sends back the id it last
+    // saw — from a process that is gone. The new one's numbering starts again at 1 and its backlog
+    // is empty, which read as "nothing missed": the page was handed no sync and kept a transcript
+    // the new process had never seen, with nothing on screen to say so.
+    vi.useFakeTimers({ now: new Date('2026-11-10T08:00:00Z') });
+    const file = path.join(dir, 'restart.json');
+    const store = new TopicStore(file);
+    const topic = store.current().id;
+    const before = new WebRoom(instance(), store);
+    const seen: Seen[] = [];
+    before.subscribe(topic, (id, ev) => seen.push({ id, ev }));
+    for (let i = 0; i < 5; i++) before.post(topic, { own: false, html: `<p>m${i}</p>` }, `m${i}`);
+    const lastId = seen.filter((s) => s.id).pop()?.id;
+    before.dispose();
+
+    vi.setSystemTime(new Date('2026-11-10T08:00:07Z'));
+    const after = new WebRoom(instance(), new TopicStore(file));
+    // Even one that has since said MORE than the old process had: the old id's number is reached
+    // again, and only the run tells the two apart.
+    for (let i = 0; i < 8; i++) after.post(topic, { own: false, html: `<p>n${i}</p>` }, `n${i}`);
+    const resumed: Seen[] = [];
+    after.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    expect(resumed[0]?.ev).toMatchObject({ t: 'sync', topic });
+    expect((resumed[0]?.ev as { messages: unknown[] }).messages).toHaveLength(8);
+    after.dispose();
   });
 
   it('a sync carries the topic it is for, its messages, and the topic list', () => {

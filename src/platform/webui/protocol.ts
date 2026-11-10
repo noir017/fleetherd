@@ -368,11 +368,13 @@ export type WebEvent =
    */
   | { t: 'machines'; offline: OfflineMachine[] }
   /**
-   * The daemon is going away; stop reconnecting.
+   * The daemon is going away; stop this stream.
    *
-   * `EventSource` reconnects after ANY close, including a clean one, so without this a tab
-   * left open through a restart hammers a dead port on a fixed retry interval — and, worse,
-   * looks connected. The page answers it by closing the stream itself and saying so.
+   * `EventSource` reconnects after ANY close, including a clean one, so without this a tab left
+   * open through a restart retries a dead port on EventSource's own schedule and looks connected
+   * meanwhile. The page closes the stream itself, says it is reconnecting, and opens a new one on a
+   * back-off — new, so it carries no resume point and the daemon that answers sends a full sync.
+   * It used to stop for good and ask for a reload, which on a phone nobody saw until they typed.
    */
   | { t: 'bye' };
 

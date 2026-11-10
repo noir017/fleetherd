@@ -342,6 +342,14 @@ export class WebRoom {
    * because it is new, or because the restart took its transcript". See `isStale`.
    */
   private readonly startedAt = Date.now();
+  /**
+   * `startedAt` as it is written into every event id (`<topic>.<run>.<seq>`), so a resume point
+   * from an earlier process can be told apart from one of ours. Sequence numbers restart at 1 with
+   * every process and the backlog restarts empty, so before this a page that reconnected through a
+   * crash — `EventSource` sending back its `<topic>.5` — was handed the empty backlog as "nothing
+   * missed", and sat on a transcript the new process had never seen: no sync, no error, nothing.
+   */
+  private readonly run = this.startedAt.toString(36);
   private readonly rooms = new Map<string, Room>();
   private readonly clients = new Set<Client>();
   private readonly downloads = new Map<string, Download>();
@@ -1046,8 +1054,9 @@ export class WebRoom {
    * time the radio hiccuped was what this protocol did before, and on a long topic that is
    * hundreds of kilobytes per hiccup.
    *
-   * The id carries its topic (`<topic>.<seq>`), so a tab that switched topics cannot resume
-   * against the wrong room's numbering — it falls back to a full sync, which is correct.
+   * The id carries its topic and this process's run (`<topic>.<run>.<seq>`), so a tab that
+   * switched topics cannot resume against the wrong room's numbering, nor a tab that outlived a
+   * restart against the new process's — either falls back to a full sync, which is correct.
    */
   subscribe(topicId: string, send: Sink, lastEventId?: string): () => void {
     const client: Client = { topic: topicId, send };
@@ -1082,10 +1091,13 @@ export class WebRoom {
     lastEventId: string | undefined
   ): Array<{ seq: number; ev: WebEvent }> | undefined {
     if (!lastEventId) return undefined;
-    const dot = lastEventId.lastIndexOf('.');
-    if (dot < 0 || lastEventId.slice(0, dot) !== topicId) return undefined;
-    const from = Number(lastEventId.slice(dot + 1));
-    if (!Number.isFinite(from)) return undefined;
+    const [topic, run, seq, ...more] = lastEventId.split('.');
+    // Another topic's numbering, another process's, or an id from before ids named their process:
+    // none of them says anything about what this room has sent.
+    if (more.length > 0 || topic !== topicId || run !== this.run) return undefined;
+    const from = Number(seq);
+    // A position this room never reached cannot be ours either, whatever it says.
+    if (!Number.isInteger(from) || from < 0 || from > room.seq) return undefined;
     const oldest = room.backlog[0];
     // Nothing kept that far back: the gap cannot be filled, so say so by re-syncing rather
     // than silently handing over a transcript with a hole in it.
@@ -1162,7 +1174,7 @@ export class WebRoom {
    */
   private deliver(client: Client, ev: WebEvent, seq?: number, data = JSON.stringify(ev)): boolean {
     try {
-      client.send(seq === undefined ? '' : `${client.topic}.${seq}`, ev, data);
+      client.send(seq === undefined ? '' : `${client.topic}.${this.run}.${seq}`, ev, data);
       return true;
     } catch (e) {
       console.warn('[webui] dropping a client that failed to receive:', e instanceof Error ? e.message : e);

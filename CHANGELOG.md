@@ -15,6 +15,19 @@ All notable changes to this project are documented here. The format is based on
   of its rendered bytes and `private, no-cache`, so the browser asks every time and an upgrade, a
   new title or a terminal turned on still reach the next load. It is rendered and compressed once.
 
+### Fixed
+
+- **A web UI page left open through a daemon restart catches up by itself.** Two ways it did
+  not. After a crash, `EventSource` reconnected with its last event id, the new process — whose
+  numbering starts at 1 again and whose backlog is empty — found nothing newer in it and sent
+  nothing: the page went on showing a transcript the new process had never seen, silently. Event
+  ids now name the process that sent them, and one from another run is answered with a full sync.
+  After an ordinary stop, the daemon's `bye` stopped the page for good with "Reload when it is
+  back"; the page now reconnects on a back-off (1 s doubling to 30 s), and a stream refused by a
+  proxy's 502 while the daemon is down no longer puts up the sign-in gate — only a 401 does. When
+  the daemon that comes back serves a different page, a line above the composer offers a
+  **Reload** instead of reloading by itself over whatever was open.
+
 ## [2.55.0] - 2026-11-09
 
 ### Changed

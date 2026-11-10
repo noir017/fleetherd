@@ -38,7 +38,6 @@
  * response), then closes connections, with a timeout as a backstop. Getting this wrong does not
  * leak a socket; it hangs Ctrl-C forever.
  */
-import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -47,7 +46,7 @@ import { constants as zlibConstants, createGzip, gzipSync } from 'node:zlib';
 
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
-import { renderPage } from './page.js';
+import { servePage } from './page.js';
 import {
   ClickRequestSchema,
   CreateTopicRequestSchema,
@@ -313,9 +312,10 @@ interface Ctx {
  * Every load used to render it (3.7 ms) and gzip it (16.4 ms) again on the event loop, and send all
  * of it: 455 KB, 134 KB on the wire — 2.6 s on a 500 kbps link, for bytes that only change when the
  * daemon is upgraded. Now the browser keeps it and asks before using it (`no-cache`), and the answer
- * is a 304 unless the rendered bytes changed. The validator is a hash of those bytes rather than a
- * version number, so an upgrade, a new title or a terminal turned on all produce a new page at the
- * next load without anyone having to remember to bump anything.
+ * is a 304 unless the rendered bytes changed. The validator is the page's build — a hash of what
+ * `servePage` rendered — rather than a version number, so an upgrade, a new title or a terminal
+ * turned on all produce a new page at the next load without anyone having to remember to bump
+ * anything, and the page itself carries the same hash to compare with after a restart.
  */
 interface ServedPage {
   /** The render inputs this entry was made from; a different set renders again. */
@@ -349,6 +349,10 @@ interface Route {
 /** Reachable without a session: the page itself, and the exchange that gets you one. */
 const OPEN: Route[] = [
   { method: 'GET', path: '/', run: ({ req, res }, ctx) => { renewCookie(req, res, ctx); sendPage(req, res, ctx); } },
+  // The page's validator alone, for a page left open through a restart to ask whether the daemon
+  // it reconnected to would serve a different page (`checkBuild` in the script). node:http sends no
+  // body for a HEAD, so this is the GET's headers and nothing else.
+  { method: 'HEAD', path: '/', run: ({ req, res }, ctx) => sendPage(req, res, ctx) },
   { method: 'POST', path: '/api/login', run: login },
   // Open on purpose. The browser fetches these while deciding whether the site can be
   // installed, which is before anyone has signed in, and a 401 there is indistinguishable from
@@ -543,9 +547,9 @@ function servedPage(ctx: Ctx): ServedPage {
   ] as const;
   const key = JSON.stringify(args);
   if (ctx.page?.key === key) return ctx.page;
-  const raw = Buffer.from(renderPage(...args), 'utf8');
-  const etag = `W/"${createHash('sha256').update(raw).digest('base64url').slice(0, 27)}"`;
-  ctx.page = { key, raw, gzip: gzipSync(raw), etag };
+  const { html, build } = servePage(...args);
+  const raw = Buffer.from(html, 'utf8');
+  ctx.page = { key, raw, gzip: gzipSync(raw), etag: `W/"${build}"` };
   return ctx.page;
 }
 
