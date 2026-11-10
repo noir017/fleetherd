@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.58.0] - 2026-11-10
+
 ### Added
 
 - **The web UI can read every conversation the gateway ever recorded.** A button beside **Clear
