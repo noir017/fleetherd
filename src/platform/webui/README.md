@@ -542,10 +542,18 @@ bookkeeping are behind a tap, so a column of tasks stays scannable.
 
 Above the cards sits a `makeFilterBar` instance of its own, mounted outside `#schedules-list`
 because that list is redrawn with innerHTML on every poll. Its search covers the name, the prompt
-or command and the target; its groups are Status (Running, Active, Paused, Ended) and Tags (every
-tag in use, plus Untagged); its sort is Status, Next run, Last run or Created, either direction,
+or command and the target; its sort is Status, Next run, Last run or Created, either direction,
 with a row that has no value for the field kept last. The keyword, selection and sort persist in
 the browser. Only the Tasks sub-tab shows it — Sessions and Reviews do not.
+
+A group marked `pinned` is drawn as one always-visible row under the search instead of folding
+into the panel, and both bars use it for their state filter: Status here (Running, Active,
+Paused, Ended) and State in the topic list (Needs you, Running, Idle, No agent). Four chips share
+the row equally and never wrap. When the bar's content is 308px or less — the sidebar's 180px and
+this panel's 220px are — the word goes and the icon and count stay, with the full name on the
+chip's `title` and `aria-label`, because four words do not fit; above that the short word returns.
+A pinned chip never lights the Filter dot: that dot says the panel holds a choice you cannot see.
+Tags (every tag in use, plus Untagged) stay in the panel.
 
 **Reviews** is the automatic review of quiet conversations (`daemon/review.ts`). A review that
 changed nothing posts no line in any chat, so this is the only place it can be read. Nothing on the
@@ -1730,7 +1738,9 @@ driven as one component
 there (`one panel component on both edges`):
 both close with the same ×, both go inert while shut, Escape puts away the right and then the
 left, each keeps its own width and clears it on a double-click, and the footer's two menus are
-checked by the items they hold and what each item does — All settings, Skills, Close idle.
+checked by the items they hold and what each item does — All settings, Skills, Close idle. The
+pinned state row is driven on both lists: on screen with the panel shut, filtering from a chip
+without opening it, surviving a reload, and leaving the Filter dot to the panel's groups.
 
 Four things about it that are not obvious:
 

@@ -51,6 +51,12 @@ const PATHS = {
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',
   // The filter bar's own row, and the row actions the lists put beside it.
   filter: '<path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/>',
+  // The pinned state rows in the two filter bars: a question waiting for an answer, work in
+  // flight, a quiet agent, and a task's schedule. Paused and ended borrow pause and stop.
+  bell: '<path d="M6 9a6 6 0 0 1 12 0c0 3.6 1.2 5.2 2.2 6.3H3.8C4.8 14.2 6 12.6 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/>',
+  play: '<path d="M8 5.5v13l10-6.5z"/>',
+  pause: '<path d="M9 5.5v13M15 5.5v13"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/>',
   sort: '<path d="M8 20V4M4.5 7.5 8 4l3.5 3.5M16 4v16M12.5 16.5 16 20l3.5-3.5"/>',
   arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   arrowDown: '<path d="M12 5v14M6 13l6 6 6-6"/>',
