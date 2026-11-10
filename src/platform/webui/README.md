@@ -439,8 +439,9 @@ so a new kind of ask is announced rather than silently missed.
 persisted, and the only record of the relation (`parentOf` / `childrenOf` on the adapter read it back).
 `TopicStore.orphan` drops a `parent` that names a topic no longer there, on load and after every
 delete or sweep, so the × on a parent never takes its children with it. The page nests them
-(`topicRows`: what needs you first, then each root by state — working, resident, no agent — with a
-starred row leading its unstarred peers inside a state, each followed by what it opened, depth-first;
+(`topicRows`: what needs you first, then each root by state — a root with no title yet first, then
+working, resident, no agent — with a starred row leading its unstarred peers inside a state, each
+followed by what it opened, depth-first;
 drawn as `sub d1`–`d3` classes rather than a `--depth` in a style attribute, which the CSP refuses)
 and folds them per browser, folded by default (`aa_folded` in localStorage; `false` is an opened
 one); the topic on screen is never folded away, and a `parent` chain

@@ -61,6 +61,12 @@ All notable changes to this project are documented here. The format is based on
   proxy's 502 while the daemon is down no longer puts up the sign-in gate — only a 401 does. When
   the daemon that comes back serves a different page, a line above the composer offers a
   **Reload** instead of reloading by itself over whatever was open.
+- **The web UI's topic list puts a topic with no title yet at the top.** A new topic is named by
+  its first message, so until then it read as "Untitled" — and, with no agent behind it yet, sank
+  to the bottom of the column among the topics that are not doing anything, at the moment it was
+  the one the person had just opened. It now sits directly below the green needs-you group and
+  above every state; a sub-agent's topic keeps its place under its parent, and the filter bar
+  still counts it under the state its dot shows.
 
 ## [2.55.0] - 2026-11-09
 

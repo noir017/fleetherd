@@ -1959,6 +1959,58 @@ describe('webui page: the topic filter bar', () => {
     expect(JSON.parse(h.window.localStorage.getItem('aa_folded') || '{}')).toEqual({});
   });
 
+  it('keeps a matched root ahead of a parent drawn only as context for a matched child', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'hit: working', lastAt: 1000, msgCount: 0, running: true, live: true },
+        { id: P, title: 'parent', lastAt: 999, msgCount: 0, live: true },
+        { id: K, title: 'hit: child', lastAt: 998, msgCount: 0, parent: P, running: true, live: true },
+      ],
+    });
+    await type(h, 'hit');
+    // Both are working: the parent is kept only to show the child, and must not outrank the root
+    // that matched on its own.
+    expect(ids(h)).toEqual([A, P, K]);
+    expect(h.doc.querySelector(`[data-topic="${P}"]`)?.classList.contains('ctx')).toBe(true);
+  });
+
+  it('gives an untitled ancestor and an untitled root the same scale as the matches around them', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    const topics = [
+      { id: B, title: 'hit: root', lastAt: 1000, msgCount: 0, running: true, live: true },
+      { id: P, title: '', lastAt: 999, msgCount: 0, live: true },
+      { id: K, title: 'hit: child', lastAt: 998, msgCount: 0, parent: P, running: true, live: true },
+    ];
+    await h.emit({ t: 'topics', topics });
+    await type(h, 'hit');
+    // P's empty title is not a reason to lift it above B, which matched on its own.
+    expect(ids(h)).toEqual([B, P, K]);
+
+    // And a root with no title is the first ordinary row: P, kept only for K, does not press it
+    // down. Its empty title still matches through its directory.
+    const U = 'a9b8c7d6';
+    await h.emit({
+      t: 'topics',
+      topics: [
+        ...topics,
+        {
+          id: U,
+          title: '',
+          lastAt: 997,
+          msgCount: 0,
+          running: true,
+          live: true,
+          dir: { name: 'hit-checkout', path: '/w/hit-checkout' },
+        },
+      ],
+    });
+    expect(ids(h)).toEqual([U, B, P, K]);
+  });
+
   it('unions the values of one group and intersects across groups', async () => {
     const h = await open();
     await withFleet(h);
@@ -7101,6 +7153,51 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     // A star leads its unstarred peers inside a state, and the daemon's order holds below that.
     expect(rows(h)).toEqual([B, C, E, D, A]);
     expect(h.doc.querySelector(`#topics [data-topic="${C}"]`)?.classList.contains('after-needs')).toBe(true);
+  });
+
+  it('puts a topic with no title yet below what needs you and above every state', async () => {
+    const U = 'a9b8c7d6';
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        // The daemon's order, deliberately the reverse of the one these states belong in.
+        { id: A, title: 'stopped', lastAt: 1000, msgCount: 0, stage: 'idle' },
+        { id: D, title: 'resident', lastAt: 999, msgCount: 0, stage: 'idle', live: true },
+        { id: C, title: 'working', lastAt: 998, msgCount: 0, stage: 'working', running: true, live: true },
+        { id: B, title: 'decision', lastAt: 997, msgCount: 0, stage: 'answer', asking: true, running: true, live: true },
+        // Opened a moment ago: nothing said in it yet, so no title and no agent behind it.
+        { id: U, title: '', lastAt: 996, msgCount: 0, stage: 'idle' },
+      ],
+    });
+    expect(rows(h)).toEqual([B, U, C, D, A]);
+    // The line under the needs-you group falls before the untitled row, which is the first of
+    // the ordinary ones.
+    expect(h.doc.querySelector(`#topics [data-topic="${U}"]`)?.classList.contains('after-needs')).toBe(true);
+
+    // Untitled is a place in the list, not a state: it leads even a working topic.
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: C, title: 'working', lastAt: 1000, msgCount: 0, stage: 'working', running: true, live: true },
+        { id: U, title: '', lastAt: 999, msgCount: 0, stage: 'working', running: true, live: true },
+      ],
+    });
+    expect(rows(h)).toEqual([U, C]);
+
+    // And a sub-agent's topic stays its parent's, untitled or not.
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: D, title: 'parent', lastAt: 1000, msgCount: 0, stage: 'idle', live: true },
+        { id: U, title: '', lastAt: 999, msgCount: 0, stage: 'idle', parent: D },
+        { id: C, title: 'working', lastAt: 998, msgCount: 0, stage: 'working', running: true, live: true },
+      ],
+    });
+    expect(rows(h)).toEqual([C, D]);
+    await h.click(`#topics [data-fold="${D}"]`);
+    expect(rows(h)).toEqual([C, D, U]);
   });
 
   it('puts a sub-agent’s topic first only for a question of its own', async () => {
