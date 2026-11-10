@@ -1467,6 +1467,12 @@ const SCRIPT = `
   var sessGroups = {};
   try { sessGroups = JSON.parse(localStorage.getItem('aa_sched_groups') || '{}') || {}; } catch(x){}
   function saveSessGroups(){
+    // Only the groups the list still has: a day group becomes a month group when the calendar
+    // turns, and a deleted run's group can go entirely, so the keys kept here would otherwise
+    // pile up for ever.
+    var keep={}, now=schedSessionGroups(schedSessions());
+    for(var i=0;i<now.length;i++) keep[now[i].key]=true;
+    for(var k in sessGroups) if(!keep[k]) delete sessGroups[k];
     try { localStorage.setItem('aa_sched_groups', JSON.stringify(sessGroups)); } catch(x){}
   }
   // The Reviews tab's last answer, and the rows the reader has opened. null is "not asked yet",
@@ -2021,6 +2027,10 @@ const SCRIPT = `
    * headers that say nothing. The calendar is the browser's own — lastAt is when the run was
    * last active, and the operator's day is what the list is read against, not the server's.
    * Groups come out in the order their first run does, which is lastAt descending.
+   *
+   * A run with no timestamp at all (a record written before topics stored one — topics.ts
+   * defaults it to 0) has no date to name, so it goes in one "Earlier" group at the end rather
+   * than in a day in 1970 the run never had.
    */
   function schedSessionGroups(list){
     var now=new Date();
@@ -2028,16 +2038,17 @@ const SCRIPT = `
     var yesterday=new Date(y, m, now.getDate()-1);
     var out=[], byKey={};
     for(var i=0;i<list.length;i++){
-      var t=list[i], at=new Date(t.lastAt||0);
-      var day=at.getFullYear()===y && at.getMonth()===m;
-      var month=('0'+(at.getMonth()+1)).slice(-2);
-      var key=day
-        ? 'd:'+at.getFullYear()+'-'+month+'-'+('0'+at.getDate()).slice(-2)
+      var t=list[i], at=t.lastAt?new Date(t.lastAt):null;
+      var day=Boolean(at) && at.getFullYear()===y && at.getMonth()===m;
+      var month=at?('0'+(at.getMonth()+1)).slice(-2):'';
+      var key=!at ? 'x:earlier'
+        : day ? 'd:'+at.getFullYear()+'-'+month+'-'+('0'+at.getDate()).slice(-2)
         : 'm:'+at.getFullYear()+'-'+month;
       var g=byKey[key];
       if(!g){
         var label;
-        if(day){
+        if(!at) label='Earlier';
+        else if(day){
           if(at.getDate()===now.getDate()) label='Today';
           else if(at.getFullYear()===yesterday.getFullYear() && at.getMonth()===yesterday.getMonth() && at.getDate()===yesterday.getDate()) label='Yesterday';
           else label=MONTH_NAMES[at.getMonth()].slice(0,3)+' '+at.getDate();
@@ -2052,14 +2063,25 @@ const SCRIPT = `
       if(t.running) g.running++;
       if(t.asking) g.asking++;
     }
+    // Undated runs belong at the bottom even if the list arrived in another order.
+    for(var j=0;j<out.length;j++){
+      if(out[j].key==='x:earlier' && j<out.length-1){ out.push(out.splice(j,1)[0]); break; }
+    }
     return out;
   }
 
-  /** A group's fold state: what the operator chose, else the default for its position. */
+  /**
+   * A group's fold state: what the operator chose, else the default for its position.
+   *
+   * The group holding the topic on screen is always open, whatever was chosen before: a link or
+   * a notification can land in a run from months ago, and the row that is the reason the page
+   * moved there must be visible.
+   */
   function sessGroupOpen(g, newest){
+    if(g.current) return true;
     var st=sessGroups[g.key];
     if(st===true || st===false) return st;
-    return newest || g.current;
+    return newest;
   }
 
   /**
@@ -2119,7 +2141,8 @@ const SCRIPT = `
       for(var i=0;i<gr.items.length;i++) body+=schedSessionRow(gr.items[i]);
       var id='sess-g-'+gr.key.replace(/:/g,'-');
       h+='<div class="sess-group">'
-        + '<button type="button" class="sess-group-head" data-sgroup="'+text(gr.key)+'" aria-expanded="'+(open?'true':'false')+'" aria-controls="'+id+'">'
+        + '<button type="button" class="sess-group-head" data-sgroup="'+text(gr.key)+'"'+(gr.current?' data-slock="1"':'')
+        + ' aria-expanded="'+(open?'true':'false')+'" aria-controls="'+id+'">'
         + '<span class="sess-group-caret">'+(open?IC.icon.chevronDown:IC.icon.chevronRight)+'</span>'
         + '<span class="sess-group-name">'+text(gr.label)+'</span>'
         + '<span class="sess-group-count">'+gr.items.length+'</span>'
@@ -2139,18 +2162,33 @@ const SCRIPT = `
    * which clears only when the server is told the topic was seen. api/seen takes one topic
    * and has no bulk form, so this posts once per run that still has a reply to clear — a
    * handful of requests on a tap, not a poll.
+   *
+   * One at a time, not all at once: every markSeen announces the topic list to every open page,
+   * and N parallel posts would be N announcements racing each other. And a 4xx/5xx is a
+   * resolved response, not a rejection — post() only rejects on a dead link — so r.ok has to be
+   * checked or a refused mark would leave the badge gone here and the run still finished there,
+   * with nothing said.
    */
   function markSessionsRead(){
-    var list=schedSessions(), wrote=false;
+    var list=schedSessions(), wrote=false, queue=[];
     for(var i=0;i<list.length;i++){
       var count=list[i].msgCount||0;
       if((readCounts[list[i].id]||0)!==count){ readCounts[list[i].id]=count; wrote=true; }
+      if(list[i].stage==='review') queue.push(list[i].id);
     }
     if(wrote) saveReads();
-    for(i=0;i<list.length;i++){
-      if(list[i].stage==='review') post('api/seen',{topic:list[i].id},0).catch(function(){});
-    }
     paintSessions();
+    var failed=0;
+    function markOneAt(n){
+      if(n>=queue.length){
+        if(failed) showSchedNote('Could not mark '+failed+' session'+(failed===1?'':'s')+' read: the daemon did not accept it. '+(failed===1?'It':'They')+' keep the finished mark.');
+        return;
+      }
+      post('api/seen',{topic:queue[n]},0).then(function(r){
+        if(!r.ok) failed++;
+      }, function(){ failed++; }).then(function(){ markOneAt(n+1); });
+    }
+    markOneAt(0);
   }
 
   // ── Reviews ────────────────────────────────────────────────────────────────
@@ -2993,11 +3031,19 @@ const SCRIPT = `
     var head = e.target.closest ? e.target.closest('[data-sgroup]') : null;
     if(head){
       e.stopPropagation();
+      // The group holding the topic on screen is always open (sessGroupOpen), so folding it
+      // would be a tap that does nothing; leave the state alone rather than storing a fold that
+      // is invisible now and applies the next time the topic moves.
+      if(head.getAttribute('data-slock') === '1') return;
       var key = head.getAttribute('data-sgroup');
       if(!key) return;
       sessGroups[key] = head.getAttribute('aria-expanded') !== 'true';
       saveSessGroups();
       paintSessions();
+      // The repaint replaced every header, so the button that was clicked is gone with its
+      // focus. Put it back on the same group's header, or a keyboard user is dropped on the page.
+      var again = schedSessionList.querySelector('[data-sgroup="' + key + '"]');
+      if(again && again.focus) again.focus();
       return;
     }
     var del = e.target.closest ? e.target.closest('[data-sdel]') : null;

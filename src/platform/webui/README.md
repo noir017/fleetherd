@@ -524,7 +524,7 @@ a task definition and a run instance. The switcher leaves session topics out (`t
 them), so the Sessions sub-tab is their only listing and its × is the only delete. Sessions needs
 no request of its own — the `topics` event that keeps the switcher current carries their titles,
 state, message counts and unread marks, so a run that starts or finishes moves the tab as it
-happens. Its one write is **Mark all read**, which clears this page's `aa_reads` marks and posts
+happens. Its one bulk write is **Mark all read**, which clears this page's `aa_reads` marks and posts
 `api/seen` once for each run the daemon still counts as `stage: review` (the route takes one topic
 and has no bulk form; a run list is a handful). The list is grouped by the browser's calendar —
 this month by day, older by month, `lastAt` deciding — with each group folded or opened on its own

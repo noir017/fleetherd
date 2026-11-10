@@ -27,7 +27,7 @@
  * the same way, as a `fake-indexeddb` factory the harness can hand to a SECOND page so a reload,
  * or a daemon restart under a page that is still open, can be driven end to end.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { JSDOM, type DOMWindow } from 'jsdom';
 import { IDBFactory } from 'fake-indexeddb';
 
@@ -532,6 +532,10 @@ async function open(
     runScripts: 'dangerously',
     pretendToBeVisual: true,
     beforeParse(w) {
+      // jsdom builds its own realm, so its Date is not the one vi.setSystemTime patches. Hand
+      // the page this realm's Date: the clock is then fixed for both, which is what a test about
+      // "today" and "this month" needs. With real timers the two are the same clock anyway.
+      (w as any).Date = Date;
       Object.defineProperty(w, 'innerWidth', { value: width, configurable: true });
       Object.defineProperty(w, 'innerHeight', { value: height, configurable: true });
       if (idb) (w as any).indexedDB = idb;
@@ -7841,180 +7845,6 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.window.location.search).not.toContain(C);
   });
 
-  /**
-   * The Sessions list's calendar: this month by day, older by month. The timestamps are built
-   * from the browser's own clock, because that is what the list groups by — a fixed epoch would
-   * make "today" depend on when the suite runs.
-   */
-  const CAL = (() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth();
-    const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const at = (month: number, day: number): number => new Date(y, month, day, 12).getTime();
-    /** The label the page gives a run on a day of this month. */
-    const dayLabel = (d: Date): string =>
-      d.getDate() === now.getDate() ? 'Today'
-        : d.getDate() === now.getDate() - 1 ? 'Yesterday'
-          : SHORT[d.getMonth()] + ' ' + d.getDate();
-    return { dayLabel, LONG, day1: at(m, 1), day2: at(m, 2), prev1: at(m - 1, 15), prev2: at(m - 1, 16) };
-  })();
-  const heads = (h: Harness): HTMLElement[] =>
-    Array.from(h.doc.querySelectorAll('#sched-sessions .sess-group-head')) as HTMLElement[];
-  const body = (h: Harness, head: HTMLElement): HTMLElement =>
-    h.doc.getElementById(head.getAttribute('aria-controls') ?? '') as HTMLElement;
-  const flags = (head: HTMLElement): string[] =>
-    Array.from(head.querySelectorAll('.sess-group-flag')).map((n) => n.textContent ?? '');
-  const dayKey = (d: Date): string =>
-    `d:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-  it('groups this month by day and older runs by month, folded except the newest', async () => {
-    const C = 'c3d4e5f6';
-    const D = 'd4e5f6a7';
-    const E = 'e5f6a7b8';
-    const F = 'f6a7b8c9';
-    const h = await open({ storage: { aa_reads: JSON.stringify({ [C]: 1, [E]: 0 }) } });
-    await h.emit(sync(A, [], [A]));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: D, title: 'newest run', lastAt: CAL.day2, msgCount: 1, stage: 'idle', scheduled: true },
-        { id: C, title: 'earlier today', lastAt: CAL.day1, msgCount: 5, stage: 'idle', scheduled: true },
-        { id: F, title: 'last month, asking', lastAt: CAL.prev2, msgCount: 2, stage: 'answer', asking: true, running: true, scheduled: true },
-        { id: E, title: 'last month, working', lastAt: CAL.prev1, msgCount: 2, stage: 'idle', running: true, scheduled: true },
-        { id: A, title: 'ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
-      ],
-    });
-    await h.click('#schedules-toggle');
-    await h.click('#sched-tab-sessions');
-
-    const hs = heads(h);
-    expect(hs).toHaveLength(3);
-    expect(hs.map((n) => n.querySelector('.sess-group-name')?.textContent)).toEqual([
-      CAL.dayLabel(new Date(CAL.day2)),
-      CAL.dayLabel(new Date(CAL.day1)),
-      CAL.LONG[new Date(CAL.prev1).getMonth()] + ' ' + new Date(CAL.prev1).getFullYear(),
-    ]);
-    expect(hs.map((n) => n.querySelector('.sess-group-count')?.textContent)).toEqual(['1', '1', '2']);
-    // The newest group starts open; the rest are folded, and their headers carry what the rows
-    // underneath would have said. 5 messages against a mark of 1 is 4 unread; 2 against 0 is 2.
-    expect(hs.map((n) => n.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'false']);
-    expect(flags(hs[0]!)).toEqual([]);
-    expect(flags(hs[1]!)).toEqual(['4 unread']);
-    expect(flags(hs[2]!)).toEqual(['2 unread', '1 awaiting you', '1 running']);
-    expect(body(h, hs[0]!).hidden).toBe(false);
-    expect(body(h, hs[1]!).hidden).toBe(true);
-    expect(body(h, hs[2]!).hidden).toBe(true);
-    // Rows live in their group, not in one flat list.
-    expect(body(h, hs[0]!).querySelector('.sess-item')?.textContent).toContain('newest run');
-    expect(body(h, hs[1]!).querySelector('.sess-item')?.textContent).toContain('earlier today');
-  });
-
-  it('remembers a folded or opened group in this browser', async () => {
-    const C = 'c3d4e5f6';
-    const D = 'd4e5f6a7';
-    const sessions = (): Array<Record<string, unknown>> => [
-      { id: D, title: 'newest run', lastAt: CAL.day2, msgCount: 1, stage: 'idle', scheduled: true },
-      { id: C, title: 'earlier today', lastAt: CAL.day1, msgCount: 2, stage: 'idle', scheduled: true },
-      { id: A, title: 'ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
-    ];
-    const h = await open();
-    await h.emit(sync(A, [], [A]));
-    await h.emit({ t: 'topics', topics: sessions() });
-    await h.click('#schedules-toggle');
-    await h.click('#sched-tab-sessions');
-
-    heads(h)[1]!.click();
-    await tick();
-    expect(heads(h)[1]!.getAttribute('aria-expanded')).toBe('true');
-    expect(body(h, heads(h)[1]!).hidden).toBe(false);
-    expect(JSON.parse(h.window.localStorage.getItem('aa_sched_groups') ?? '{}')).toEqual({
-      [dayKey(new Date(CAL.day1))]: true,
-    });
-
-    const again = await open({ storage: { aa_sched_groups: h.window.localStorage.getItem('aa_sched_groups') ?? '{}' } });
-    await again.emit(sync(A, [], [A]));
-    await again.emit({ t: 'topics', topics: sessions() });
-    await again.click('#schedules-toggle');
-    await again.click('#sched-tab-sessions');
-    expect(heads(again)[1]!.getAttribute('aria-expanded')).toBe('true');
-
-    // The newest group can be folded too, and that is remembered over its default.
-    heads(again)[0]!.click();
-    await tick();
-    expect(heads(again)[0]!.getAttribute('aria-expanded')).toBe('false');
-    expect(JSON.parse(again.window.localStorage.getItem('aa_sched_groups') ?? '{}')).toEqual({
-      [dayKey(new Date(CAL.day1))]: true,
-      [dayKey(new Date(CAL.day2))]: false,
-    });
-  });
-
-  it('starts with the group holding the open run unfolded as well', async () => {
-    const C = 'c3d4e5f6';
-    const D = 'd4e5f6a7';
-    const E = 'e5f6a7b8';
-    const h = await open({ url: `http://localhost:8787/?t=${E}` });
-    await h.emit(sync(E, [], [E]));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: D, title: 'newest run', lastAt: CAL.day2, msgCount: 1, stage: 'idle', scheduled: true },
-        { id: C, title: 'earlier today', lastAt: CAL.day1, msgCount: 1, stage: 'idle', scheduled: true },
-        { id: E, title: 'the one on screen', lastAt: CAL.prev1, msgCount: 1, stage: 'idle', scheduled: true },
-      ],
-    });
-    await h.click('#schedules-toggle');
-    await h.click('#sched-tab-sessions');
-
-    const hs = heads(h);
-    expect(hs).toHaveLength(3);
-    // Newest first, then the run on screen: two open, the day between them folded.
-    expect(hs.map((n) => n.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'true']);
-    expect(body(h, hs[2]!).querySelector('.sess-item')?.textContent).toContain('the one on screen');
-  });
-
-  it('marks every run read in one tap, badges and the daemon’s reply mark alike', async () => {
-    const C = 'c3d4e5f6';
-    const D = 'd4e5f6a7';
-    const h = await open({ storage: { aa_reads: JSON.stringify({ [C]: 0, [D]: 0 }) } });
-    await h.emit(sync(A, [], [A]));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: C, title: 'finished run', lastAt: Date.now(), msgCount: 3, stage: 'review', scheduled: true },
-        { id: D, title: 'working run', lastAt: Date.now() - 1000, msgCount: 2, stage: 'idle', scheduled: true },
-        { id: A, title: 'ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
-      ],
-    });
-    await h.click('#schedules-toggle');
-    await h.click('#sched-tab-sessions');
-
-    const button = (): HTMLButtonElement => h.doc.querySelector('[data-readall]') as HTMLButtonElement;
-    expect(button().disabled).toBe(false);
-    expect(h.el('sched-sessions').querySelectorAll('.topic-badge')).toHaveLength(2);
-
-    button().click();
-    await until('the seen request', () => h.calls.some((c) => c.path === 'api/seen'));
-
-    // The badge is this page's count, so it goes at once; the green dot is the daemon's, and
-    // only the run that had one is reported.
-    expect(h.el('sched-sessions').querySelectorAll('.topic-badge')).toHaveLength(0);
-    expect(h.calls.filter((c) => c.path === 'api/seen').map((c) => c.body)).toEqual([{ topic: C }]);
-    expect(JSON.parse(h.window.localStorage.getItem('aa_reads') ?? '{}')).toMatchObject({ [C]: 3, [D]: 2 });
-
-    // Once the daemon's own list says the reply was seen, there is nothing left to mark.
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: C, title: 'finished run', lastAt: Date.now(), msgCount: 3, stage: 'idle', scheduled: true },
-        { id: D, title: 'working run', lastAt: Date.now() - 1000, msgCount: 2, stage: 'idle', scheduled: true },
-        { id: A, title: 'ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
-      ],
-    });
-    expect(button().disabled).toBe(true);
-  });
-
   it('restores a dragged width, and double-clicking the handle returns to the default', async () => {
     const h = await open({ storage: { aa_sched_w: '300' } });
     expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('300px');
@@ -8041,6 +7871,252 @@ describe('webui page: the scheduled-task panel', () => {
 
     expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('280px');
     expect(h.window.localStorage.getItem('aa_sched_w')).toBe('280');
+  });
+});
+
+/**
+ * The Sessions list's calendar, with the clock fixed.
+ *
+ * "Today", "Yesterday", "this month" and a month across the year boundary are all real cases,
+ * and a test that read the wall clock could reach only some of them — the Today and Yesterday
+ * branches only on the 1st and 2nd of a month — and would flake across midnight. The date is
+ * Saturday 2027-01-02, 12:00 local: yesterday is 2027-01-01 and last month is December 2026, so
+ * both the day labels and the year boundary are exercised on every run.
+ */
+describe('webui page: the Sessions list calendar', () => {
+  const A = 'a1b2c3d4';
+  const C = 'c3d4e5f6';
+  const D = 'd4e5f6a7';
+  const E = 'e5f6a7b8';
+  const F = 'f6a7b8c9';
+  const NOW = new Date(2027, 0, 2, 12, 0, 0);
+  const at = (y: number, m: number, d: number): number => new Date(y, m, d, 12).getTime();
+  const TODAY = at(2027, 0, 2);
+  const YESTERDAY = at(2027, 0, 1);
+  const LAST_MONTH = at(2026, 11, 31);
+  const OLDER = at(2026, 10, 15);
+  /** Keeps the topic on screen off the run list, so the default fold is about the newest group. */
+  const ordinary = { id: A, title: 'ordinary topic', lastAt: 0, msgCount: 1, stage: 'idle' };
+  const heads = (h: Harness): HTMLElement[] =>
+    Array.from(h.doc.querySelectorAll('#sched-sessions .sess-group-head')) as HTMLElement[];
+  const names = (h: Harness): Array<string | null> =>
+    heads(h).map((n) => n.querySelector('.sess-group-name')?.textContent ?? null);
+  const expanded = (h: Harness): Array<string | null> => heads(h).map((n) => n.getAttribute('aria-expanded'));
+  const body = (h: Harness, head: HTMLElement): HTMLElement =>
+    h.doc.getElementById(head.getAttribute('aria-controls') ?? '') as HTMLElement;
+  const flags = (head: HTMLElement): string[] =>
+    Array.from(head.querySelectorAll('.sess-group-flag')).map((n) => n.textContent ?? '');
+  const stored = (h: Harness): Record<string, boolean> =>
+    JSON.parse(h.window.localStorage.getItem('aa_sched_groups') ?? '{}');
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('groups this month by day and older runs by month, folded except the newest', async () => {
+    const h = await open({ storage: { aa_reads: JSON.stringify({ [C]: 1, [E]: 0 }) } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: D, title: 'newest run', lastAt: TODAY, msgCount: 3, stage: 'idle', scheduled: true },
+        { id: C, title: 'yesterday run', lastAt: YESTERDAY, msgCount: 5, stage: 'idle', scheduled: true },
+        { id: F, title: 'last month, asking', lastAt: LAST_MONTH, msgCount: 2, stage: 'answer', asking: true, running: true, scheduled: true },
+        { id: E, title: 'the month before', lastAt: OLDER, msgCount: 2, stage: 'idle', running: true, scheduled: true },
+        ordinary,
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    // December 2026 under a January clock: the month group crosses the year boundary.
+    expect(names(h)).toEqual(['Today', 'Yesterday', 'December 2026', 'November 2026']);
+    expect(heads(h).map((n) => n.querySelector('.sess-group-count')?.textContent)).toEqual(['1', '1', '1', '1']);
+    // The newest group starts open; the rest are folded, and their headers carry what the rows
+    // underneath would have said. 5 messages against a mark of 1 is 4 unread; 2 against 0 is 2.
+    expect(expanded(h)).toEqual(['true', 'false', 'false', 'false']);
+    expect(flags(heads(h)[0]!)).toEqual([]);
+    expect(flags(heads(h)[1]!)).toEqual(['4 unread']);
+    expect(flags(heads(h)[2]!)).toEqual(['1 awaiting you']);
+    expect(flags(heads(h)[3]!)).toEqual(['2 unread', '1 running']);
+    expect(body(h, heads(h)[0]!).hidden).toBe(false);
+    expect(body(h, heads(h)[1]!).hidden).toBe(true);
+    expect(body(h, heads(h)[3]!).hidden).toBe(true);
+    expect(body(h, heads(h)[0]!).querySelector('.sess-item')?.textContent).toContain('newest run');
+    expect(body(h, heads(h)[1]!).querySelector('.sess-item')?.textContent).toContain('yesterday run');
+  });
+
+  it('puts an undated run in an Earlier group, last', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    // First in the list on purpose: the server sorts by lastAt, but the group has to be last
+    // whatever order the list arrives in.
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: E, title: 'no timestamp', lastAt: 0, msgCount: 2, stage: 'idle', scheduled: true },
+        { id: D, title: 'today run', lastAt: TODAY, msgCount: 1, stage: 'idle', scheduled: true },
+        ordinary,
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    expect(names(h)).toEqual(['Today', 'Earlier']);
+    expect(heads(h)[1]!.querySelector('.sess-group-count')?.textContent).toBe('1');
+    expect(body(h, heads(h)[1]!).querySelector('.sess-item')?.textContent).toContain('no timestamp');
+    // No "December 1969": a run with no timestamp has no date to name.
+    expect(h.el('sched-sessions').textContent).not.toContain('1969');
+  });
+
+  it('remembers a folded or opened group, and drops groups the list no longer has', async () => {
+    const sessions = (): Array<Record<string, unknown>> => [
+      { id: D, title: 'newest run', lastAt: TODAY, msgCount: 1, stage: 'idle', scheduled: true },
+      { id: C, title: 'yesterday run', lastAt: YESTERDAY, msgCount: 2, stage: 'idle', scheduled: true },
+      ordinary,
+    ];
+    const h = await open({ storage: { aa_sched_groups: JSON.stringify({ 'd:1999-01-01': true }) } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: sessions() });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    heads(h)[1]!.click();
+    await tick();
+    expect(expanded(h)).toEqual(['true', 'true']);
+    expect(body(h, heads(h)[1]!).hidden).toBe(false);
+    // The stale key is gone: only the groups the list still has are kept.
+    expect(stored(h)).toEqual({ 'd:2027-01-01': true });
+
+    const again = await open({ storage: { aa_sched_groups: JSON.stringify(stored(h)) } });
+    await again.emit(sync(A, [], [A]));
+    await again.emit({ t: 'topics', topics: sessions() });
+    await again.click('#schedules-toggle');
+    await again.click('#sched-tab-sessions');
+    expect(expanded(again)).toEqual(['true', 'true']);
+
+    // The newest group can be folded too, and that is remembered over its default.
+    heads(again)[0]!.click();
+    await tick();
+    expect(expanded(again)).toEqual(['false', 'true']);
+  });
+
+  it('keeps the group holding the open run unfolded over a manual fold, and restores focus', async () => {
+    const h = await open({
+      url: `http://localhost:8787/?t=${E}`,
+      storage: { aa_sched_groups: JSON.stringify({ 'm:2026-11': false }) },
+    });
+    await h.emit(sync(E, [], [E]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: D, title: 'newest run', lastAt: TODAY, msgCount: 1, stage: 'idle', scheduled: true },
+        { id: C, title: 'yesterday run', lastAt: YESTERDAY, msgCount: 1, stage: 'idle', scheduled: true },
+        { id: E, title: 'the one on screen', lastAt: OLDER, msgCount: 1, stage: 'idle', scheduled: true },
+        ordinary,
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    // Newest first, then the run on screen: two open, the day between them folded — and the
+    // run's group opens even though this browser folded it last time.
+    expect(names(h)).toEqual(['Today', 'Yesterday', 'November 2026']);
+    expect(expanded(h)).toEqual(['true', 'false', 'true']);
+    expect(body(h, heads(h)[2]!).querySelector('.sess-item')?.textContent).toContain('the one on screen');
+
+    // Folding it by hand does nothing while the run is on screen, and stores nothing.
+    heads(h)[2]!.click();
+    await tick();
+    expect(expanded(h)).toEqual(['true', 'false', 'true']);
+    expect(stored(h)).toEqual({ 'm:2026-11': false });
+
+    // A fold that does repaint puts the focus back on the header that was clicked.
+    heads(h)[1]!.click();
+    await tick();
+    expect(expanded(h)).toEqual(['true', 'true', 'true']);
+    expect(h.doc.activeElement?.getAttribute('data-sgroup')).toBe('d:2027-01-01');
+  });
+
+  it('marks every run read in one tap, badges and the daemon’s reply mark alike', async () => {
+    const h = await open({ storage: { aa_reads: JSON.stringify({ [C]: 0, [D]: 0 }) } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: C, title: 'finished run', lastAt: TODAY, msgCount: 3, stage: 'review', scheduled: true },
+        { id: D, title: 'working run', lastAt: TODAY - 1000, msgCount: 2, stage: 'idle', scheduled: true },
+        ordinary,
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+
+    const button = (): HTMLButtonElement => h.doc.querySelector('[data-readall]') as HTMLButtonElement;
+    expect(button().disabled).toBe(false);
+    expect(h.el('sched-sessions').querySelectorAll('.topic-badge')).toHaveLength(2);
+
+    button().click();
+    await until('the seen request', () => h.calls.some((c) => c.path === 'api/seen'));
+
+    // The badge is this page's count, so it goes at once; the green dot is the daemon's, and
+    // only the run that had one is reported.
+    expect(h.el('sched-sessions').querySelectorAll('.topic-badge')).toHaveLength(0);
+    expect(h.calls.filter((c) => c.path === 'api/seen').map((c) => c.body)).toEqual([{ topic: C }]);
+    expect(JSON.parse(h.window.localStorage.getItem('aa_reads') ?? '{}')).toMatchObject({ [C]: 3, [D]: 2 });
+
+    // Once the daemon's own list says the reply was seen, there is nothing left to mark.
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: C, title: 'finished run', lastAt: TODAY, msgCount: 3, stage: 'idle', scheduled: true },
+        { id: D, title: 'working run', lastAt: TODAY - 1000, msgCount: 2, stage: 'idle', scheduled: true },
+        ordinary,
+      ],
+    });
+    expect(button().disabled).toBe(true);
+  });
+
+  it('says so when the daemon refuses a mark, and sends them one at a time', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = await open({
+      held: { 'api/seen': gate },
+      status: { 'api/seen': 500 },
+      storage: { aa_reads: JSON.stringify({ [C]: 0, [D]: 0 }) },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: C, title: 'finished one', lastAt: TODAY, msgCount: 3, stage: 'review', scheduled: true },
+        { id: D, title: 'finished two', lastAt: YESTERDAY, msgCount: 2, stage: 'review', scheduled: true },
+        ordinary,
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+    (h.doc.querySelector('[data-readall]') as HTMLButtonElement).click();
+    await tick();
+
+    // One at a time: the second is not even sent until the first has answered.
+    expect(h.calls.filter((c) => c.path === 'api/seen')).toHaveLength(1);
+    release();
+    await until('both marks', () => h.calls.filter((c) => c.path === 'api/seen').length === 2);
+    await until('the note', () => h.el('schedules-note').textContent !== '');
+
+    expect(h.calls.filter((c) => c.path === 'api/seen').map((c) => c.body)).toEqual([{ topic: C }, { topic: D }]);
+    // A 4xx/5xx resolves, so the page has to look at r.ok; the note is how it says the daemon
+    // still counts both as finished.
+    expect(h.el('schedules-note').hidden).toBe(false);
+    expect(h.el('schedules-note').textContent).toContain('Could not mark 2 sessions read');
+    expect(h.el('sched-sessions').querySelectorAll('.topic-dot.review')).toHaveLength(2);
   });
 });
 
