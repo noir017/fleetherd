@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.56.0] - 2026-11-10
+
 ### Added
 
 - **The web UI's Sessions list groups runs by day and month, and marks them all read in one tap.**
