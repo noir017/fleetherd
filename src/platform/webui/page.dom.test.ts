@@ -2377,6 +2377,87 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
   });
 });
 
+describe('webui page: a topic held in memory', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  /** An event as a browser delivers one that carried an `id:` — a sync is numbered too. */
+  const numbered = async (h: Harness, ev: Record<string, unknown>, id: string): Promise<void> => {
+    h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
+    await tick();
+  };
+  const many = (n: number): Array<Record<string, unknown>> =>
+    Array.from({ length: n }, (_, i) => message(`w${i + 1}`, `<p>line ${i + 1}</p>`));
+
+  it('puts a topic back whole and resumes its stream, instead of being sent all of it again', async () => {
+    // Back and forth between two long topics was a full sync every time — 85 KB gzipped for 1000
+    // messages — because the cache keeps 200 and a switch empties memory.
+    const h = await open();
+    await numbered(h, sync(A, many(300), [A, B]), `${A}.run.300`);
+    await h.click(`[data-topic="${B}"]`);
+    await numbered(h, sync(B, [message('b1', '<p>in B</p>')], [A, B]), `${B}.run.1`);
+    expect(h.painted()).toBe(1);
+
+    await h.click(`[data-topic="${A}"]`);
+    // On screen at once, every one of them, before the stream has said anything.
+    expect(h.painted()).toBe(300);
+    expect(h.live().url).toBe(`api/events?t=${A}&last=${encodeURIComponent(`${A}.run.300`)}`);
+    expect(h.waiting()).not.toBeNull();
+    // What was said meanwhile is replayed; then the daemon says the catch-up is over.
+    await numbered(h, { t: 'msg', msg: message('w301', '<p>said while away</p>') }, `${A}.run.301`);
+    await h.emit({ t: 'resumed' });
+    expect(h.painted()).toBe(301);
+    expect(h.waiting()).toBeNull();
+    expect(h.el('log').lastElementChild?.textContent).toContain('said while away');
+  });
+
+  it('takes the whole topic as before when the daemon can no longer resume it', async () => {
+    const h = await open();
+    await numbered(h, sync(A, many(5), [A, B]), `${A}.run.5`);
+    await h.click(`[data-topic="${B}"]`);
+    await numbered(h, sync(B, [], [A, B]), `${B}.run.0`);
+    await h.click(`[data-topic="${A}"]`);
+    expect(h.painted()).toBe(5);
+    // The backlog did not reach that far: a sync, which is reconciled over what is on screen.
+    await numbered(h, sync(A, many(7).slice(2), [A, B]), `${A}.run.400`);
+    expect(h.painted()).toBe(5);
+    expect(h.waiting()).toBeNull();
+    expect(h.el('log').textContent).not.toContain('line 1');
+    expect(h.el('log').textContent).toContain('line 7');
+  });
+
+  it('holds nothing for a topic left before its stream said where it was', async () => {
+    const h = await open();
+    await numbered(h, sync(A, many(3), [A, B]), `${A}.run.3`);
+    await h.click(`[data-topic="${B}"]`);
+    // Left again before B's sync arrived: there is no position to resume B from.
+    await h.click(`[data-topic="${A}"]`);
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.live().url).toBe(`api/events?t=${B}`);
+  });
+
+  it('does not put back a topic held from a daemon that has since restarted', async () => {
+    const h = await open();
+    await numbered(h, sync(A, many(3), [A, B]), `${A}.run.3`);
+    await h.click(`[data-topic="${B}"]`);
+    await numbered(h, sync(B, [], [A, B], { epoch: 2 }), `${B}.other.0`);
+    await h.click(`[data-topic="${A}"]`);
+    expect(h.live().url).toBe(`api/events?t=${A}`);
+  });
+
+  it('forgets what it held for a topic the list no longer has', async () => {
+    const h = await open();
+    await numbered(h, sync(A, many(3), [A, B, 'c3d4e5f6']), `${A}.run.3`);
+    await h.click(`[data-topic="${B}"]`);
+    await numbered(h, sync(B, [], [A, B, 'c3d4e5f6']), `${B}.run.0`);
+    // A goes from the list (deleted in another tab): its held copy goes with it — memory nobody
+    // could read again. Listed once more, it is entered like any topic, not put back from memory.
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [], gone: [A] });
+    await h.emit({ t: 'topics', tv: 3, topics: (sync(B, [], [A, B, 'c3d4e5f6']).topics as unknown[]) });
+    await h.click(`[data-topic="${A}"]`);
+    expect(h.live().url).toBe(`api/events?t=${A}`);
+  });
+});
+
 describe('webui page: coming back to a topic', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';

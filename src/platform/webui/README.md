@@ -843,8 +843,8 @@ from another run, or from beyond anything this room has numbered, is now answere
 **A restart under an open page is ridden out, not reported.** `bye` used to stop the page for
 good with "Reload when it is back", which on a phone nobody read until they typed into a dead
 page. The page now closes the stream and opens a new one on a back-off (1 s doubling to 30 s,
-reset by a stream that opens); a new `EventSource` has no resume point, so the daemon that
-answers sends the whole topic. A stream refused for good (`readyState` 2) used to mean "show the
+reset by a stream that opens); the resume point it sends names the run that went away, so the
+daemon that answers sends the whole topic. A stream refused for good (`readyState` 2) used to mean "show the
 gate", but a proxy's 502 while the daemon restarts is refused the same way as a 401 — cloudflared
 answers so — so the page asks `api/push` first and shows the gate only for a 401. After a sync
 from a new run the page sends a HEAD for itself: the ETag is the page's build (`servePage`), the
@@ -880,8 +880,15 @@ never outlive an upgrade. It is now `private, no-cache` with an ETag that is a h
 bytes (`servedPage`): the browser keeps it and asks every time, and the answer is a 304 until
 anything that changes those bytes changes — an upgrade, the title, the terminal or the password
 door. The render and its gzip (20 ms on the event loop per load, before) are made once per set of
-inputs. Measured in Chromium at 400 ms / 500 kbps on 2026-11-10: a reload went from 134 KB and
-2.6 s to a 304.
+inputs. Measured in Chromium at 400 ms / 500 kbps and 800 ms / 200 kbps on 2026-11-10: a reload
+of an address the browser already loaded went from 134 KB to a 0.6 KB 304, and from 6.3 s to 1.0 s
+on the slower link (`project-scripts/talkcode-webui-net/reload-probe.mts`, `weak.mts` F).
+
+The browser keys its cache by the whole URL, and the page keeps the topic in the address
+(`?t=<id>`, so a reload and a shared link land on it). So the first reload after switching to a
+topic this browser has never loaded the page on still downloads it whole, once; after that, that
+address is a 304 too. Moving the topic out of the query string would make every reload a 304, but
+it is what links and notifications open, so it was left alone.
 
 **Sends are idempotent.** A POST can be accepted and still time out on a bad link, so the page
 retries — which is only safe because each send carries a nonce the server remembers. The
@@ -993,6 +1000,24 @@ refused for space drops everything but the topic being read and tries once befor
 written off for the session with one `console.warn`. Writes are coalesced into a 400ms window:
 a streamed reply upserts the same message every second or so and each one would otherwise
 re-serialise the whole topic.
+
+**Going back to a topic in the same tab resumes it from memory** (`held`, since this branch).
+Before, every switch was a full sync — up to 1000 messages, 85 KB gzipped and 3.4–3.7 s at
+500 kbps for a long topic — because this cache keeps 200 and a switch empties memory, so it saved
+nothing on the way back. Now the topic being left is kept in memory whole (every message on screen,
+the run it belongs to, and `lastEv`, the id of the last event that reached it), and coming back puts
+it up at once and opens the stream with `?last=` — the backlog replays what was said meanwhile,
+then a `resumed` event says the catch-up is over (there is no sync to say it), which takes the
+waiting line away. When the backlog no longer reaches, the daemon sends the whole topic as before
+and it is reconciled over what is on screen. Chosen over two alternatives: putting the whole ring in
+IndexedDB would mean re-serialising up to 1.5 MB every 400 ms while a long topic streams; a sync
+that sends only the tail and fetches the rest on scroll would change what every reader of a sync
+assumes (claiming echoes, settling unsure sends, landing on a message, the unread count). Bounded
+at 8 topics and 4000 messages between them, least recently left first; a topic left before its
+stream said where it was, or held from a daemon that has since restarted, is entered the old way.
+Measured in Chromium at 400 ms / 500 kbps on 2026-11-10: switching back to a 1000-message topic went
+from 85.0 KB and 3.7 s to a few hundred bytes and 1.4 s, which is the time it takes to draw 1000
+messages on that (loaded) machine; the first visit to that topic is unchanged, at 86 KB.
 
 **A browser with no IndexedDB is a supported configuration.** Private windows and old engines
 both produce one; the cache is the only thing that goes, and `page.dom.test.ts` holds that.

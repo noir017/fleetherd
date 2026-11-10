@@ -409,6 +409,22 @@ describe('WebRoom: the topic list reaching every client', () => {
     expect(kinds(moved)).not.toContain('sync');
     expect(lastOf(moved, 'topics')).toMatchObject({ t: 'topics', tv: tv + 1 });
   });
+
+  it('ends a resume with a marker, and a sync with none', () => {
+    // A page that entered a topic from memory has no sync coming to say it is caught up.
+    const { room, topic, seen, off } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id !== '').at(-1)?.id ?? '';
+    off();
+    room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
+    const resumed: Seen[] = [];
+    room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    expect(kinds(resumed).at(-1)).toBe('resumed');
+    expect(resumed.at(-1)?.id).toBe('');
+    const fresh: Seen[] = [];
+    room.subscribe(topic, (id, ev) => fresh.push({ id, ev }));
+    expect(kinds(fresh)).toEqual(['sync']);
+  });
 });
 
 describe('WebRoom: held edits', () => {

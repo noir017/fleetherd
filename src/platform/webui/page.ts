@@ -5153,6 +5153,35 @@ const SCRIPT = `
     });
   }
 
+  // ── Topics held in memory ────────────────────────────────────────────────────
+  // Switching back to a topic used to cost the whole of it again: the sync carries up to 1000
+  // messages (85 KB gzipped for a long topic, 3.4 s at 500 kbps), the cache keeps the last 200 and
+  // a switch empties memory — so going back and forth between two long topics was a full download
+  // every time, cache or no cache. Now the topic being left is kept here, every message it had and
+  // the id of the last event that reached it, and coming back puts the messages up at once and
+  // resumes the stream from that id: the daemon replays what was said meanwhile from its backlog,
+  // or sends the whole topic as before when the backlog no longer reaches. Memory only, so it is
+  // the same tab going back and forth that this helps, which is the case it was measured in.
+  // Bounded both ways: HELD_TOPICS topics, HELD_MSGS messages between them, least recent first.
+  var held={}, HELD_TOPICS=8, HELD_MSGS=4000;
+  function hold(id){
+    delete held[id];
+    // Only a topic whose stream has said where it got to (lastEv names this topic): the first
+    // thing a stream delivers is a sync or a replay, both numbered, so a page that has an id for
+    // the topic holds every message the daemon's ring had as of that id. Without one — left before
+    // the sync arrived — there is nothing a replay could be added to.
+    if(!id || !lastEv || lastEv.indexOf(id+'.') !== 0) return;
+    var msgs = cacheable();
+    if(!msgs.length) return;
+    held[id] = {msgs:msgs, last:lastEv, epoch:epoch, stale:stale, at:Date.now()};
+    var ids = Object.keys(held).sort(function(a, b){ return held[b].at - held[a].at; });
+    var total = 0;
+    for(var i=0;i<ids.length;i++){
+      total += held[ids[i]].msgs.length;
+      if(i >= HELD_TOPICS || (i > 0 && total > HELD_MSGS)) delete held[ids[i]];
+    }
+  }
+
   function switchTopic(id){
     if(!id || id===topic) return;
     // The settings page is bound to the topic it was opened in: its rows write that conversation's
@@ -5169,6 +5198,7 @@ const SCRIPT = `
     // Both read off the topic being left, so both before anything below takes it off screen.
     saveView(topic);
     stashDraft(topic);
+    hold(topic);
     topic = id;
     history.replaceState(null,'',urlNow());
     // Before the transcript work below, so the terminal follows the topic in the same frame
@@ -5211,11 +5241,25 @@ const SCRIPT = `
     // cache normally answers first and replaces it; nothing about that is guaranteed, which is
     // why the placeholders go in regardless.
     showSkeleton();
-    restore(id);
+    // A topic still held in memory from this daemon is put up whole, now, and its stream resumed
+    // from where it was left; otherwise the cache and a sync, as on any first visit.
+    var back = held[id];
+    delete held[id];
+    if(back && back.epoch === epoch){
+      stale = back.stale;
+      // Marked as read from the cache, so the sync that follows a resume the daemon could not
+      // honour does not read it in a second time.
+      restoreFor = id;
+      adopt(back.msgs);
+      lastEv = back.last;
+    } else {
+      back = null;
+      restore(id);
+    }
     // What was sent into this topic and not acknowledged — including a send still in flight from
     // before the switch, whose bubble went with the transcript it was in.
     showUnsent(id);
-    connect();
+    connect(Boolean(back));
   }
 
   function deleteTopic(delId){
@@ -5650,6 +5694,19 @@ const SCRIPT = `
       note.textContent='The daemon is restarting. Reconnecting...';
       reconnectLater();
     }
+    // The end of a resumed stream's catch-up. For a blip or a tab coming back there is nothing to
+    // finish; for a topic put back from memory (held) this is what a sync would have done: the
+    // waiting line goes, and what is on screen is the room from here on.
+    else if(ev.t==='resumed'){
+      if(synced) return;
+      synced = true;
+      entering = false;
+      clearSyncing();
+      placeDivider();
+      syncEmptyNote();
+      cacheSave();
+      note.textContent='';
+    }
   }
 
   // The version of the topic list on this page (the daemon's tv), sent on a resume so the list is
@@ -5701,7 +5758,7 @@ const SCRIPT = `
     retryTimer = setTimeout(function(){
       retryTimer=0;
       if(document.visibilityState === 'hidden'){ parked = true; return; }
-      connect(true);
+      connect(true, true);
     }, retryMs);
   }
 
@@ -5728,7 +5785,7 @@ const SCRIPT = `
       return;
     }
     clearTimeout(parkTimer); parkTimer=0;
-    if(parked){ parked=false; connect(true); }
+    if(parked){ parked=false; connect(true, true); }
   });
 
   /**
@@ -5763,12 +5820,13 @@ const SCRIPT = `
   /**
    * Open the event stream for the topic on screen.
    *
-   * resume carries the last event this page had, for a stream opened again on the same topic (a
-   * tab coming back, a retry after a refused stream); the daemon replays what came after it, or
-   * sends the whole topic when it cannot. Without it — a new topic, a fresh visit — there is
-   * nothing to resume from.
+   * resume carries the last event this page had (lastEv): for a stream opened again on the same
+   * topic (a tab coming back, a retry after a refused stream), or on a topic put back from memory
+   * (held). The daemon replays what came after it, or sends the whole topic when it cannot. Without
+   * it — a new topic, a fresh visit — there is nothing to resume from. quiet is for the same topic
+   * coming back: no focus taken, no side-panel lists asked for again.
    */
-  function connect(resume){
+  function connect(resume, quiet){
     if(stream) stream.close();
     clearTimeout(retryTimer); retryTimer=0;
     parked=false;
@@ -5791,11 +5849,11 @@ const SCRIPT = `
     };
     // Not focused on a phone: the keyboard would come up before a word has been read, and on
     // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
-    // Nor when the same topic's stream comes back (resume): a tab returning to the front
+    // Nor when the same topic's stream comes back (quiet): a tab returning to the front
     // reconnects, and the focus is wherever the person left it.
     es.onopen = function(){
       retryMs = 0;
-      var fresh = app.hidden || !resume;
+      var fresh = app.hidden || !quiet;
       gate.hidden=true; app.hidden=false; note.textContent=''; if(fresh && !narrow()) input.focus(); initNotify();
       // A panel opened (or restored from aa_sched_open) before the gate came down asked too
       // early (loadSchedules and loadReviews refuse while #app is hidden); this is the first
@@ -6271,6 +6329,7 @@ const SCRIPT = `
   function keepOnly(keep){
     var id;
     cacheKeep(keep);
+    for(id in held) if(!keep[id]) delete held[id];
     for(id in readCounts) if(!keep[id]) delete readCounts[id];
     saveReads();
     for(id in views) if(!keep[id]) delete views[id];
@@ -7201,6 +7260,7 @@ const SCRIPT = `
   /** Everything this page remembers about one topic, for a topic that no longer exists. */
   function forget(id){
     delete views[id];
+    delete held[id];
     for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === id) dropUnsent(n);
     if(!drafts[id]) return;
     delete drafts[id];
@@ -7218,6 +7278,7 @@ const SCRIPT = `
     var known={}, id;
     for(var i=0;i<topics.length;i++) known[topics[i].id]=1;
     for(id in views) if(!known[id]) delete views[id];
+    for(id in held) if(!known[id]) delete held[id];
     for(id in drafts) if(!known[id]) forget(id);
     for(id in unsent) if(Object.prototype.hasOwnProperty.call(unsent, id) && !known[unsent[id].t]) dropUnsent(id);
   }

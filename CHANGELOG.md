@@ -28,6 +28,12 @@ All notable changes to this project are documented here. The format is based on
   sent the rows that changed, the ids that went, and the order only when they could not work it out
   themselves: 0.07 KB for the same message. A page resuming its stream says which list it holds and
   is sent the whole list only if that moved.
+- **Going back to a web UI topic no longer downloads all of it again.** Every switch was a full
+  sync of up to 1000 messages — 85 KB gzipped and over three seconds at 500 kbps for a long topic —
+  even straight back to the topic just left, because the browser's cache keeps only the last 200
+  and a switch emptied memory. The page now keeps the last topics it left in memory (up to 8, 4000
+  messages between them) and resumes their stream from where it was: only what was said meanwhile
+  comes down, or the whole topic as before when the daemon's backlog no longer reaches that far.
 
 ### Fixed
 

@@ -1111,7 +1111,10 @@ export class WebRoom {
         // sidebar from before that would be wrong until something else was posted. Not when the
         // client says it holds this very version: that is most resumes, and the list is the
         // largest thing a resume would otherwise carry.
-        (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer }))
+        (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer })) &&
+        // Last, so the page knows the replay is over: a page that entered the topic from what it
+        // kept in memory has no sync coming to say it is caught up.
+        this.deliver(client, { t: 'resumed' })
       : // Numbered with the room's position, so the stream has a resume point from the start: a
         // blip straight after a sync — or a tab put away before anything else was said — resumes
         // from here instead of taking the whole topic again. The sync is the room's state as of
