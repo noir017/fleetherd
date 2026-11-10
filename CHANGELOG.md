@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI's Sessions list groups runs by day and month, and marks them all read in one tap.**
+  A daily task opens a topic per run, and the list had become one undifferentiated column: this
+  month's runs are now grouped by day and everything older by month, each group folded or opened
+  on its own and remembered in the browser — the newest group and the one holding the topic on
+  screen start open, and a folded header still says how many replies are unread and whether a run
+  is working or waiting on an answer. **Mark all read** clears every badge at once and reports the
+  replies the daemon still counted as unseen through the same `api/seen` the open topic uses, so
+  the green finished marks go with them.
+
 ### Changed
 
 - **Reloading the web UI is a 304, not 134 KB.** The page was served `no-store`, so every reload
@@ -48,6 +59,12 @@ All notable changes to this project are documented here. The format is based on
   the event loop, the first time a client that accepts it asks, and gzip is sent until then.
   Browsers ask for brotli only over https, so it reaches a page behind a TLS proxy that asks the
   daemon for it. The event stream stays gzip.
+- **The web UI's topic list puts a topic with no title yet at the top.** A new topic is named by
+  its first message, so until then it read as "Untitled" — and, with no agent behind it yet, sank
+  to the bottom of the column among the topics that are not doing anything, at the moment it was
+  the one the person had just opened. It now sits directly below the green needs-you group and
+  above every state; a sub-agent's topic keeps its place under its parent, and the filter bar
+  still counts it under the state its dot shows.
 
 ### Fixed
 
@@ -61,12 +78,6 @@ All notable changes to this project are documented here. The format is based on
   proxy's 502 while the daemon is down no longer puts up the sign-in gate — only a 401 does. When
   the daemon that comes back serves a different page, a line above the composer offers a
   **Reload** instead of reloading by itself over whatever was open.
-- **The web UI's topic list puts a topic with no title yet at the top.** A new topic is named by
-  its first message, so until then it read as "Untitled" — and, with no agent behind it yet, sank
-  to the bottom of the column among the topics that are not doing anything, at the moment it was
-  the one the person had just opened. It now sits directly below the green needs-you group and
-  above every state; a sub-agent's topic keeps its place under its parent, and the filter bar
-  still counts it under the state its dot shows.
 
 ## [2.55.0] - 2026-11-09
 

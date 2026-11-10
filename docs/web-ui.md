@@ -109,7 +109,12 @@ between **Status** (the default), **Next run**, **Last run** and **Created**, ei
 a task with nothing to sort by stays last. The keyword, the filters and the sort are kept in this
 browser, and **Showing N of M** with **Clear** says what survived. **Sessions** lists the
 topics a new-session run opened; those topics are kept out of the main topic list, so this is where
-they live, and tapping one opens it (the × deletes it). **Reviews** lists the automatic reviews of
+they live, and tapping one opens it (the × deletes it). The list groups this month's runs by day and
+older ones by month, each header folding on its own and the choice kept in this browser — the newest
+group and the one holding the topic on screen start open, and a folded header still says how many
+replies are unread and whether a run is working or waiting on an answer. **Mark all read** clears
+every run's unread badge at once and tells the daemon the replies it had not seen have been read.
+**Reviews** lists the automatic reviews of
 quiet conversations (see [skills](skills.md#auto-review)): what each one changed, what the store
 refused and why, the preferences it noticed, and the command that undoes each change. A review that
 changed nothing posts no line anywhere else, so this tab is its only home. Above the reviews,
