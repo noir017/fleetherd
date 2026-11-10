@@ -1683,6 +1683,58 @@ describe('webui page: the topic filter bar', () => {
     expect(JSON.parse(h.window.localStorage.getItem('aa_folded') || '{}')).toEqual({});
   });
 
+  it('keeps a matched root ahead of a parent drawn only as context for a matched child', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'hit: working', lastAt: 1000, msgCount: 0, running: true, live: true },
+        { id: P, title: 'parent', lastAt: 999, msgCount: 0, live: true },
+        { id: K, title: 'hit: child', lastAt: 998, msgCount: 0, parent: P, running: true, live: true },
+      ],
+    });
+    await type(h, 'hit');
+    // Both are working: the parent is kept only to show the child, and must not outrank the root
+    // that matched on its own.
+    expect(ids(h)).toEqual([A, P, K]);
+    expect(h.doc.querySelector(`[data-topic="${P}"]`)?.classList.contains('ctx')).toBe(true);
+  });
+
+  it('gives an untitled ancestor and an untitled root the same scale as the matches around them', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    const topics = [
+      { id: B, title: 'hit: root', lastAt: 1000, msgCount: 0, running: true, live: true },
+      { id: P, title: '', lastAt: 999, msgCount: 0, live: true },
+      { id: K, title: 'hit: child', lastAt: 998, msgCount: 0, parent: P, running: true, live: true },
+    ];
+    await h.emit({ t: 'topics', topics });
+    await type(h, 'hit');
+    // P's empty title is not a reason to lift it above B, which matched on its own.
+    expect(ids(h)).toEqual([B, P, K]);
+
+    // And a root with no title is the first ordinary row: P, kept only for K, does not press it
+    // down. Its empty title still matches through its directory.
+    const U = 'a9b8c7d6';
+    await h.emit({
+      t: 'topics',
+      topics: [
+        ...topics,
+        {
+          id: U,
+          title: '',
+          lastAt: 997,
+          msgCount: 0,
+          running: true,
+          live: true,
+          dir: { name: 'hit-checkout', path: '/w/hit-checkout' },
+        },
+      ],
+    });
+    expect(ids(h)).toEqual([U, B, P, K]);
+  });
+
   it('unions the values of one group and intersects across groups', async () => {
     const h = await open();
     await withFleet(h);

@@ -4220,10 +4220,12 @@ const SCRIPT = `
     // The rank a filtered root is ordered by: its own when it matched, otherwise the best of the
     // matches under it, so a hit is not buried under the state of a parent kept only for context.
     function bestRank(t, depth){
-      if(!keep) return listRank(t);
-      // Only a root gets the untitled lift: a sub-agent's topic stays under its parent, and an
-      // empty title down there must not pull the parent above roots that are themselves untitled.
-      var best = keep[t.id]===1 ? (depth===0 ? listRank(t) : stateRank(t)) : 9;
+      if(!keep) return listRank(t, true);
+      // One scale for every rank compared here: a matched node and the parent kept only for it
+      // both read needsYou 0, otherwise stateRank+1. Only a root with no title is lifted to 1 —
+      // the child's empty title must not pull its context parent above a real match of the same
+      // state, and a context parent must not sit above a matched untitled root either.
+      var best = keep[t.id]===1 ? listRank(t, depth===0) : 9;
       var ch = kids[t.id] || [];
       for(var k=0;k<ch.length && depth<32;k++){
         if(!keep[ch[k].id]) continue;
@@ -4323,16 +4325,20 @@ const SCRIPT = `
   }
 
   /**
-   * The rank the list itself is painted by: stateRank with a topic that has no title yet lifted
-   * above every state. A topic is named by its first message (topics.ts seed), so an empty title
-   * means nothing has been said in it yet — the conversation the person has just opened and is
-   * about to work in, which the state order otherwise left at the bottom among the topics with no
-   * agent behind them. It is a rank of the list, not a fifth state: the dot and the filter bar
-   * still read stateRank, so "No agent" keeps counting the new topic it is.
+   * The rank the list is painted by, on one scale above the decision group: stateRank's four
+   * states become 1–4 (needsYou stays 0), and a root that has no title yet is lifted to 1. A
+   * topic is named by its first message (topics.ts seed), so an empty title means nothing has
+   * been said in it yet — the conversation the person has just opened and is about to work in,
+   * which the state order otherwise left at the bottom among the topics with no agent behind
+   * them. The root flag is false for a node met while walking a parent's children: an empty
+   * title there must not lift the parent, which is only being kept to show that child.
+   *
+   * It is a rank of the list, not a fifth state: the dot is drawn from the same facts and the
+   * filter bar still counts by stateRank, so "No agent" keeps counting the new topic it is.
    */
-  function listRank(t){
+  function listRank(t, root){
     var r=stateRank(t);
-    return r===0 ? 0 : (t.title ? r+1 : 1);
+    return r===0 ? 0 : (root && !t.title ? 1 : r+1);
   }
 
   /**
