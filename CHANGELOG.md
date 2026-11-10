@@ -7,13 +7,15 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- **The web UI's page is a 304 after the first load, not 134 KB.** It was served `no-store`, so
-  every reload and every reopened tab downloaded the whole document again — 2.6 s on a 500 kbps
-  link, 6.3 s at 200 kbps — and the daemon rendered and gzipped it afresh each time (20 ms on the
-  event loop). The reason was that a stale page after an upgrade is a support question; that rules
-  out a cache used without asking, not one that asks. The page now carries an ETag that is a hash
-  of its rendered bytes and `private, no-cache`, so the browser asks every time and an upgrade, a
-  new title or a terminal turned on still reach the next load. It is rendered and compressed once.
+- **Reloading the web UI is a 304, not 134 KB.** The page was served `no-store`, so every reload
+  and every reopened tab downloaded the whole document again — 2.6 s on a 500 kbps link, 6.3 s at
+  200 kbps — and the daemon rendered and gzipped it afresh each time (20 ms on the event loop). The
+  reason was that a stale page after an upgrade is a support question; that rules out a cache used
+  without asking, not one that asks. The page now carries an ETag that is a hash of its rendered
+  bytes and `private, no-cache`, so the browser asks every time and an upgrade, a new title or a
+  terminal turned on still reach the next load; it is rendered and compressed once. A reload at
+  200 kbps went from 6.3 s to 1.0 s. The browser caches by address, and the address names the topic
+  (`?t=`), so the first load of each topic's address in a browser still downloads the page once.
 - **A web UI tab in the background stops receiving.** A phone on the table or a desktop tab behind
   others kept its event stream open and was sent every message in its topic and the whole topic
   list after every message posted anywhere — 2.5 KB per message at 200 topics. A tab hidden for
