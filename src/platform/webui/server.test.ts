@@ -1794,6 +1794,146 @@ describe('webui server: traffic', () => {
       expect((await fetch(`${base}/api/reviews`)).status).toBe(401);
     });
   });
+
+  describe('the history page', () => {
+    const session = {
+      id: 1,
+      key: 'webui#main#a1b2c3d4',
+      title: 'Deploy notes',
+      agent: 'cc',
+      platform: 'webui',
+      lastAt: 1762300000000,
+      messages: 3,
+      topic: 'a1b2c3d4',
+    };
+    const page = { enabled: true, sessions: [session], next: '1762300000000.1' };
+    const hit = {
+      session: 1,
+      message: 4,
+      at: 1762300000000,
+      title: 'Deploy notes',
+      agent: 'cc',
+      platform: 'webui',
+      role: 'user',
+      excerpt: 'the deployment finished',
+    };
+    const read = { session, messages: [{ id: 1, at: 1762300000000, role: 'user', kind: 'normal', text: 'hello' }], note: 'This conversation has more than 500 messages.' };
+
+    it('lists what the daemon handed the room, and says when it offered none', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      expect(await (await fetch(`${base}/api/history`, { headers: { cookie } })).json()).toEqual({
+        enabled: false,
+        sessions: [],
+      });
+
+      const asked: Array<{ before?: string; limit?: number }> = [];
+      room.useHistoryPanel({
+        list: (opts) => {
+          asked.push(opts ?? {});
+          return page;
+        },
+        search: () => ({ hits: [hit] }),
+        read: () => read,
+      });
+      const res = await fetch(`${base}/api/history?before=1762300000000.1&limit=20`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(page);
+      expect(asked).toEqual([{ before: '1762300000000.1', limit: 20 }]);
+    });
+
+    it('refuses a cursor or a limit it did not hand out', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const asked: unknown[] = [];
+      room.useHistoryPanel({ list: (opts) => (asked.push(opts), page), search: () => ({ hits: [] }), read: () => read });
+      for (const query of ['before=yesterday', 'before=1.2.3', 'before=-1.2', 'limit=0', 'limit=201', 'limit=abc', 'limit=1.5']) {
+        expect((await fetch(`${base}/api/history?${query}`, { headers: { cookie } })).status, query).toBe(400);
+      }
+      // Nothing malformed reached the store: a bad cursor is refused before it is compared.
+      expect(asked).toEqual([]);
+    });
+
+    it('searches through the daemon and refuses a query with nothing to look for', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const queries: string[] = [];
+      room.useHistoryPanel({
+        list: () => page,
+        search: (q) => {
+          queries.push(q);
+          return { hits: [hit], more: true };
+        },
+        read: () => read,
+      });
+      const res = await fetch(`${base}/api/history/search?q=${encodeURIComponent('deployment')}`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ enabled: true, hits: [hit], more: true });
+      expect(queries).toEqual(['deployment']);
+
+      for (const query of ['', 'q=', `q=${'x'.repeat(201)}`]) {
+        expect((await fetch(`${base}/api/history/search?${query}`, { headers: { cookie } })).status, query).toBe(400);
+      }
+      expect(queries).toEqual(['deployment']);
+    });
+
+    it('answers with the store\'s own sentence when the search cannot be made', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      room.useHistoryPanel({
+        list: () => page,
+        search: () => {
+          throw new Error('search needs a word to look for');
+        },
+        read: () => read,
+      });
+      const res = await fetch(`${base}/api/history/search?q=%21%21`, { headers: { cookie } });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'search needs a word to look for' });
+    });
+
+    it('reads one conversation, with the note that says the read was cut short', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const ids: number[] = [];
+      room.useHistoryPanel({
+        list: () => page,
+        search: () => ({ hits: [hit] }),
+        read: (id) => {
+          ids.push(id);
+          return read;
+        },
+      });
+      const res = await fetch(`${base}/api/history/read?id=1`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(read);
+      expect(ids).toEqual([1]);
+    });
+
+    it('refuses an id that is not one, and 404s one that names no conversation', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      room.useHistoryPanel({
+        list: () => page,
+        search: () => ({ hits: [hit] }),
+        read: () => {
+          throw new Error('no conversation "99"; `talkcode sessions list` shows the ids');
+        },
+      });
+      expect((await fetch(`${base}/api/history/read`, { headers: { cookie } })).status).toBe(400);
+      expect((await fetch(`${base}/api/history/read?id=abc`, { headers: { cookie } })).status).toBe(400);
+      const missing = await fetch(`${base}/api/history/read?id=99`, { headers: { cookie } });
+      expect(missing.status).toBe(404);
+      expect((await missing.json()).error).toMatch(/no conversation "99"/);
+    });
+
+    it('is behind the session like every other route', async () => {
+      const { base } = await boot();
+      for (const path of ['/api/history', '/api/history/search?q=x', '/api/history/read?id=1']) {
+        expect((await fetch(`${base}${path}`)).status, path).toBe(401);
+      }
+    });
+  });
 });
 
 describe('webui server: lifecycle', () => {

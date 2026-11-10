@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI can read every conversation the gateway ever recorded.** A button beside **Clear
+  all topics** in the sidebar header opens the conversation library: every agent, every platform,
+  including the topics cleared from the switcher and the ones that never had a topic here. It is
+  the same `history.db` `talkcode sessions list/search/read` reads, and it is read-only — a list
+  with each conversation's agent, platform, last activity and size; a keyword search over the whole
+  library; and a conversation opened from its first message. A read the library had to cut short
+  says so above the transcript rather than looking like the whole thing, and a conversation that
+  is still a topic here offers the way back to it. `HistoryStore.list` gained an all-time mode and
+  a keyset cursor, because "every conversation" cannot be the seven-day window `sessions list`
+  means.
+
 ### Changed
 
 - **The web UI's state filter is one row under the search, not a click inside Filter.** The topic

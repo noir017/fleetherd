@@ -249,6 +249,24 @@ carries the version the page read, so an edit made elsewhere is refused instead 
 The page writes through the same store as `talkcode skills`, and an archive made here still tells
 the conversation that created the skill.
 
+## History
+
+The clock-with-an-arrow button in the topic list's header, beside **Clear all topics**, opens every
+conversation the gateway has recorded — whichever agent and platform it ran on. It is the same
+library `talkcode sessions list/search/read` reads, and it is read-only: a list, a keyword search,
+and one conversation opened whole. A review's own session is left out; those are read on the
+Reviews tab.
+
+A row says the title, the agent, the platform, when it was last active and how many messages it
+holds. **Load older conversations** pages further back — as far as the gateway has been recording.
+Typing in the search field and pressing Enter searches every conversation at once; clearing the
+field puts the list back.
+
+Opening a conversation shows it from the start. A long one is cut at 500 messages and says so
+above the transcript: what you are reading is part of the conversation, not all of it. If the
+conversation is still a topic in this page, **Open the topic** switches to it. A topic cleared from
+the list is read here and cannot be brought back.
+
 ## Notifications
 
 **Notifications** in the **⚙ Menu** at the bottom of the topic list turns on push notifications

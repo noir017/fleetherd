@@ -689,6 +689,40 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* Sticky, because the switches are on every row of a long list: a refusal (a description too long
    for a resident skill) written above the first row would be out of sight of the row tapped. */
 #skills-note{position:sticky;top:-12px;z-index:1;margin:-12px -16px 10px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
+/* ── The history page ─────────────────────────────────────────────────────────
+   The conversation library as a window over the transcript, like the skills page: a list, a
+   search and a transcript need more width than a sidebar, and the conversation stays visible
+   around it. Every row here is a conversation this gateway recorded — not a topic it still has. */
+#history{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#history[hidden]{display:none}
+#history-box{display:flex;flex-direction:column;width:min(880px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#history-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
+#history-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+#history-count{flex:none;font-size:11.5px;color:var(--dim)}
+#history-close{font-size:18px;padding:6px 10px}
+#history-body{flex:1;min-height:0;overflow-y:auto;padding:10px 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px}
+/* The search row stays at the top of a list that can be scrolled far: it is the one control a
+   person reaches for again after reading a conversation. */
+#history-search{position:sticky;top:-10px;z-index:1;display:flex;gap:6px;padding:2px 0 6px;background:var(--bg)}
+#history-q{flex:1;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:13px;padding:7px 10px}
+#history-q:focus{outline:none;border-color:#3a3a3a}
+#history-go{flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:15px}
+#history-more{align-self:center;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:7px 14px;cursor:pointer;margin:4px 0 8px}
+#history-more:hover{border-color:#3a3a3a;background:#2a2a2a}
+.hist-note{font-size:12px;line-height:1.5;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:6px;padding:8px 10px;overflow-wrap:anywhere}
+.hist-note.bad{color:#f87171;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.25)}
+.hist-item{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:6px;padding:9px 11px;background:#1b1b1b;cursor:pointer}
+.hist-item:hover{background:#1e1e1e}
+.hist-title{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-meta{font-size:11px;color:var(--dim);overflow-wrap:anywhere}
+.hist-key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px}
+.hist-excerpt{font-size:12px;color:#c9c9c9;line-height:1.5;overflow-wrap:anywhere}
+.hist-head{display:flex;flex-direction:column;gap:4px;padding:2px 0 6px}
+.hist-msg{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding:8px 0}
+.hist-who{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+.hist-msg.user .hist-who{color:#93c5fd}
+.hist-msg.agent .hist-who{color:#4ade80}
+.hist-text{font-size:12.5px;line-height:1.55;color:#dcdcdc;white-space:pre-wrap;overflow-wrap:anywhere}
 /* /setting as a page of its own, opened from the Menu or by typing the command, rather
    than a screen inserted into the transcript. A window over the conversation like the reader and
    the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
@@ -1309,6 +1343,16 @@ button:disabled{opacity:.5;cursor:default}
   #skills-bar{padding:0 4px 0 12px;min-height:49px}
   #skills-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   #skills-new{min-height:44px;padding:0 14px}
+  /* The history window takes the whole screen for the same reason the skills page does. The field
+     is 16px here: Safari zooms a focused field under that and does not zoom back out. */
+  #history{padding:0}
+  #history-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #history-bar{padding:0 4px 0 12px;min-height:49px}
+  #history-close,#history-back{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  #history-go{min-width:44px;height:44px;font-size:18px}
+  #history-q{font-size:16px}
+  #history-more{min-height:44px;padding:0 16px}
+  .hist-item{padding:11px 12px}
   /* The page's own buttons at an ordinary height, not the bar's 44px: with two controls in every
      row of the list, 44px read as a page of slabs (2026-11-06). 32px is still a fair thumb target. */
   .skill-acts button,.skill-file{min-height:32px;padding:0 12px}
@@ -1439,6 +1483,13 @@ const SCRIPT = `
       skillsTitle=$('skills-title'), skillsCount=$('skills-count'), skillsNewBtn=$('skills-new'),
       skillsClose=$('skills-close'), skillsBody=$('skills-body'), skillsNote=$('skills-note'),
       skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
+      historyOpenBtn=$('history-open'), historyWin=$('history'), historyBack=$('history-back'),
+      historyTitleEl=$('history-title'), historyCountEl=$('history-count'), historyClose=$('history-close'),
+      historyBody=$('history-body'), historyQ=$('history-q'), historyGo=$('history-go'),
+      historySearchRow=$('history-search'),
+      historyNote=$('history-note'), historyErr=$('history-err'),
+      historyListEl=$('history-list'), historyDetailEl=$('history-detail'),
+      historyMore=$('history-more'),
       settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
@@ -1532,6 +1583,11 @@ const SCRIPT = `
   // persisted — a management surface is opened on purpose, and a window that came back on load
   // would sit over a conversation nobody asked it to cover.
   var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false, skillSearches=null;
+  // The history page's last answer, the cursor for the page after it, the search it is showing
+  // (empty for the plain list), and the conversation open on top of the list. histSeq is which
+  // request an answer belongs to: close the window or open another conversation before the first
+  // has answered, and without it the late answer would land in the new view.
+  var histSessions=[], histNext=null, histQuery='', histSeq=0;
   // The /setting page: the live settings message it draws, the topic it was opened in, and the
   // one message whose page the operator closed. A settings message is never a row in the
   // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
@@ -6802,6 +6858,281 @@ const SCRIPT = `
     lightboxImg.removeAttribute('src');
   }
   lightbox.addEventListener('click', closeShot);
+
+  // ── The history page ────────────────────────────────────────────────────────
+  // Every conversation the gateway recorded, whichever agent and platform it ran on — the same
+  // history.db the talkcode sessions command reads. Read-only: the list pages backwards through
+  // the library, the search asks the store's own keyword search, and a conversation opens whole.
+  // A read that was cut short says so (its note): half a log shown as the whole is the one thing
+  // this page must not do.
+
+  /** Absolute time, unlike the side panel's "3h ago": this list spans years, and a relative age
+      on a conversation from last spring says nothing about when it happened. */
+  function histWhen(at){
+    try { return new Date(at).toLocaleString(); }
+    catch(x){ return ''; }
+  }
+
+  function openHistory(){
+    if(!historyWin.hidden) return;
+    historyWin.hidden = false;
+    histQuery = '';
+    histSessions = [];
+    histNext = null;
+    historyQ.value = '';
+    historyNote.hidden = true;
+    historyNote.textContent = '';
+    historyErr.hidden = true;
+    historyErr.textContent = '';
+    historyDetailEl.hidden = true;
+    historyDetailEl.innerHTML = '';
+    historyListEl.hidden = false;
+    historyListEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
+    historySearchRow.hidden = false;
+    historyMore.hidden = true;
+    historyBack.hidden = true;
+    historyTitleEl.textContent = 'History';
+    historyTitleEl.title = '';
+    historyCountEl.textContent = '';
+    loadHistory();
+    historyClose.focus();
+  }
+  function closeHistory(){
+    if(historyWin.hidden) return;
+    historyWin.hidden = true;
+    // Any answer still on its way belongs to a window that is gone.
+    histSeq++;
+  }
+
+  /** One page of the library, or the page after the cursor appended to what is already shown. */
+  function loadHistory(before){
+    var seq = ++histSeq;
+    historyMore.disabled = true;
+    historyErr.hidden = true;
+    historyErr.textContent = '';
+    fetch('api/history' + (before ? '?before=' + encodeURIComponent(before) : ''), {credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      if(seq !== histSeq) return;
+      var page = d || {};
+      if(page.enabled === false){
+        historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
+        historyMore.hidden = true;
+        return;
+      }
+      var rows = page.sessions || [];
+      histSessions = before ? histSessions.concat(rows) : rows;
+      histNext = page.next || null;
+      renderHistory();
+    }).catch(function(e){
+      if(seq !== histSeq) return;
+      // What is already on screen stays: a page that could not be read is not a reason to throw
+      // away the ones that were. The error is its own line, and the button comes back so the same
+      // page can be asked for again.
+      historyErr.textContent = 'Could not read the conversation library: ' + ((e && e.message) || 'network error');
+      historyErr.hidden = false;
+      if(!histSessions.length) historyListEl.innerHTML = '';
+      historyMore.hidden = !histNext;
+      historyMore.disabled = false;
+      // The line took the button's place and pushed it down by its own height. The reader asked
+      // from the bottom, so both belong in view: keep them there rather than leave the retry
+      // half below the fold.
+      if(before) historyBody.scrollTop = historyBody.scrollHeight;
+    });
+  }
+
+  function renderHistory(){
+    histQuery = '';
+    historyErr.hidden = true;
+    historyErr.textContent = '';
+    var h = '';
+    if(!histSessions.length) h = '<div class="skills-empty">No conversations yet. Every conversation this gateway records appears here, whichever agent or platform it ran on.</div>';
+    for(var i=0;i<histSessions.length;i++) h += histRow(histSessions[i]);
+    historyListEl.innerHTML = h;
+    // The count is what is on screen, and a trailing + says the library goes further.
+    historyCountEl.textContent = histSessions.length ? String(histSessions.length) + (histNext ? '+' : '') : '';
+    historyMore.hidden = !histNext;
+    historyMore.disabled = false;
+    historyTitleEl.textContent = 'History';
+    historyTitleEl.title = '';
+  }
+
+  function histRow(s){
+    var meta = [s.agent || 'no agent', s.platform || 'unknown', histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
+    return '<div class="hist-item" data-hist="' + text(s.id) + '" role="button" tabindex="0">'
+      + '<div class="hist-title">' + text(s.title || '(untitled conversation)') + '</div>'
+      + '<div class="hist-meta">' + text(meta.join(' · ')) + '</div></div>';
+  }
+
+  function histHit(h){
+    var meta = [h.agent || 'no agent', h.platform || 'unknown', histWhen(h.at)];
+    return '<div class="hist-item" data-hist="' + text(h.session) + '" role="button" tabindex="0">'
+      + '<div class="hist-title">' + text(h.title || '(untitled conversation)') + '</div>'
+      + '<div class="hist-excerpt">' + text(h.excerpt) + '</div>'
+      + '<div class="hist-meta">' + text(meta.join(' · ')) + '</div></div>';
+  }
+
+  /**
+   * Search the whole library. Enter or the button, not every keystroke: each one is a request, and
+   * the store's keyword search is not a type-ahead. Clearing the field puts the list back.
+   */
+  function runHistorySearch(){
+    var q = historyQ.value.trim();
+    if(!q) return historyBackToList();
+    var seq = ++histSeq;
+    historyListEl.hidden = false;
+    historyDetailEl.hidden = true;
+    historyBack.hidden = true;
+    historyMore.hidden = true;
+    historySearchRow.hidden = false;
+    historyErr.hidden = true;
+    historyErr.textContent = '';
+    historyCountEl.textContent = '';
+    historyListEl.innerHTML = '<div class="skills-empty">Searching\\u2026</div>';
+    fetch('api/history/search?q=' + encodeURIComponent(q), {credentials:'same-origin'}).then(function(r){
+      return r.json().then(function(d){ return { ok:r.ok, d:d }; });
+    }).then(function(a){
+      if(seq !== histSeq) return;
+      if(!a.ok || !a.d || a.d.error){
+        historyListEl.innerHTML = '<div class="skills-empty">' + text((a.d && a.d.error) || 'could not search the library') + '</div>';
+        return;
+      }
+      if(a.d.enabled === false){
+        historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
+        return;
+      }
+      histQuery = q;
+      var hits = a.d.hits || [];
+      historyTitleEl.textContent = 'History · search';
+      if(!hits.length){
+        historyListEl.innerHTML = '<div class="skills-empty">Nothing matches “' + text(q) + '”.</div>';
+        return;
+      }
+      var h = '';
+      for(var i=0;i<hits.length;i++) h += histHit(hits[i]);
+      historyListEl.innerHTML = h;
+      // "30+" when the daemon says there are more: the number is the size of the answer.
+      historyCountEl.textContent = String(hits.length) + (a.d.more ? '+' : '');
+    }).catch(function(e){
+      if(seq !== histSeq) return;
+      historyListEl.innerHTML = '<div class="skills-empty">Could not search the library: ' + text((e && e.message) || 'network error') + '</div>';
+    });
+  }
+
+  /** One conversation, whole. The store bounds a read; its note says what was left out. */
+  function openHistorySession(id){
+    var seq = ++histSeq;
+    historyListEl.hidden = true;
+    historyMore.hidden = true;
+    // The search belongs to the list: reading a conversation with a query field above it says
+    // nothing and invites a search that would replace the page being read.
+    historySearchRow.hidden = true;
+    historyDetailEl.hidden = false;
+    historyDetailEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
+    historyNote.hidden = true;
+    historyErr.hidden = true;
+    historyErr.textContent = '';
+    historyBack.hidden = false;
+    historyTitleEl.textContent = 'Conversation';
+    historyTitleEl.title = '';
+    historyCountEl.textContent = '';
+    fetch('api/history/read?id=' + encodeURIComponent(id), {credentials:'same-origin'}).then(function(r){
+      return r.json().then(function(d){ return { ok:r.ok, d:d }; });
+    }).then(function(a){
+      if(seq !== histSeq) return;
+      if(!a.ok || !a.d || a.d.error){
+        historyDetailEl.innerHTML = '<div class="skills-empty">' + text((a.d && a.d.error) || 'could not read that conversation') + '</div>';
+        return;
+      }
+      paintHistorySession(a.d);
+    }).catch(function(e){
+      if(seq !== histSeq) return;
+      historyDetailEl.innerHTML = '<div class="skills-empty">Could not read that conversation: ' + text((e && e.message) || 'network error') + '</div>';
+    });
+  }
+
+  function paintHistorySession(d){
+    var s = d.session || {};
+    var title = s.title || '(untitled conversation)';
+    historyTitleEl.textContent = title;
+    historyTitleEl.title = title;
+    var meta = [s.agent || 'no agent', s.platform || 'unknown', histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
+    var h = '<div class="hist-head"><div class="hist-meta">' + text(meta.join(' · ')) + '</div>'
+      + '<div class="hist-meta hist-key">' + text(s.key || '') + '</div>';
+    // Only while the topic is still in the switcher: a button that opens nothing would look like
+    // one. A conversation cleared from the page is read here and nowhere else.
+    if(s.topic && topicExists(s.topic)) h += '<button type="button" class="rev-open" data-hist-topic="' + text(s.topic) + '">Open the topic</button>';
+    h += '</div>';
+    historyNote.hidden = !d.note;
+    historyNote.textContent = d.note || '';
+    var messages = d.messages || [];
+    for(var i=0;i<messages.length;i++) h += histMessage(messages[i]);
+    if(!messages.length) h += '<div class="skills-empty">This conversation has no recorded messages.</div>';
+    historyDetailEl.innerHTML = h;
+  }
+
+  function histMessage(m){
+    var who = m.role === 'user' ? 'you' : m.role === 'agent' ? 'agent' : (m.role || 'tool');
+    if(m.kind && m.kind !== 'normal') who += ' · ' + m.kind;
+    return '<div class="hist-msg ' + text(m.role) + '"><div class="hist-who">' + text(who + ' · ' + histWhen(m.at)) + '</div>'
+      + '<div class="hist-text">' + text(m.text) + '</div></div>';
+  }
+
+  /** Back to the list or to the search that was showing, whichever it was. */
+  function historyBackToList(){
+    histSeq++;
+    historyDetailEl.hidden = true;
+    historyDetailEl.innerHTML = '';
+    historyNote.hidden = true;
+    historyNote.textContent = '';
+    historyListEl.hidden = false;
+    historyBack.hidden = true;
+    historySearchRow.hidden = false;
+    // Only while the field still holds the query: clearing it is what puts the library back, and
+    // re-running a search the person has just emptied would put the results under an empty field.
+    if(histQuery && historyQ.value.trim() === histQuery) runHistorySearch();
+    else if(histSessions.length) renderHistory();
+    else loadHistory();
+  }
+
+  historyOpenBtn.addEventListener('click', function(){ openHistory(); });
+  historyClose.addEventListener('click', closeHistory);
+  historyWin.addEventListener('click', function(e){ if(e.target === historyWin) closeHistory(); });
+  historyBack.addEventListener('click', historyBackToList);
+  historyGo.addEventListener('click', runHistorySearch);
+  historyMore.addEventListener('click', function(){ if(histNext) loadHistory(histNext); });
+  historyQ.addEventListener('keydown', function(e){
+    // Mid-composition, Enter chooses an IME candidate — it is not a search. Same guard as the
+    // composer's: without it, picking 部署 from the candidate list would search for half of it.
+    if(e.key === 'Enter' && !e.isComposing){ e.preventDefault(); runHistorySearch(); }
+  });
+  historyQ.addEventListener('input', function(){
+    // The search field's own × (and a person deleting the query) puts the library back rather
+    // than leaving the last search's rows under an empty field.
+    if(historyQ.value.trim()) return;
+    histSeq++;
+    if(!historyWin.hidden && historyDetailEl.hidden) historyBackToList();
+  });
+  historyBody.addEventListener('click', function(e){
+    var topicBtn = e.target.closest ? e.target.closest('[data-hist-topic]') : null;
+    if(topicBtn){
+      var id = topicBtn.getAttribute('data-hist-topic');
+      closeHistory();
+      switchTopic(id);
+      return;
+    }
+    var row = e.target.closest ? e.target.closest('[data-hist]') : null;
+    if(row) openHistorySession(row.getAttribute('data-hist'));
+  });
+  historyBody.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    var row = e.target.closest ? e.target.closest('[data-hist]') : null;
+    if(!row) return;
+    e.preventDefault();
+    openHistorySession(row.getAttribute('data-hist'));
+  });
+
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
     // An IME uses Escape to cancel its candidate list. That keystroke belongs to the composition,
@@ -6815,8 +7146,8 @@ const SCRIPT = `
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
     var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !topicMenu.hidden
-      || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
-    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
+      || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !historyWin.hidden;
+    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings(); closeHistory();
     // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
     closeTopicMenu(true);
     if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
@@ -8587,7 +8918,7 @@ __GATE__
 <main id="app" hidden>
   <aside id="sidebar" class="panel panel-left">
     <div id="sidebar-header" class="panel-head">
-      <span class="panel-title"><span class="panel-title-text">Topics</span><button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button></span>
+      <span class="panel-title"><span class="panel-title-text">Topics</span><button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button><button type="button" class="btn-icon" id="history-open" title="All conversations" aria-label="All conversations">${icon('history')}</button></span>
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
       <button type="button" class="btn-icon panel-close" id="collapse-sidebar" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
@@ -8654,6 +8985,36 @@ __GATE__
         <div id="skills-note" hidden></div>
         <div id="skills-list"></div>
         <div id="skills-detail" hidden></div>
+      </div>
+    </div>
+  </div>
+  <!-- The conversation library, as a window over the transcript: every conversation this gateway
+       recorded, whichever agent and platform it ran on — the same history.db the talkcode sessions
+       command reads. Read-only: a list, a keyword search, and one conversation opened whole. A
+       cleared topic is still here; the only way back is the button, and only while the topic exists. -->
+  <div id="history" hidden role="dialog" aria-modal="true" aria-labelledby="history-title">
+    <div id="history-box">
+      <div id="history-bar">
+        <button type="button" class="btn-icon" id="history-back" title="Back to all conversations" aria-label="Back" hidden>${icon('chevronLeft')}</button>
+        <span id="history-title">History</span>
+        <span id="history-count"></span>
+        <button type="button" class="btn-icon" id="history-close" title="Close (Esc)" aria-label="Close">&times;</button>
+      </div>
+      <div id="history-body">
+        <div id="history-search">
+          <input id="history-q" type="search" autocomplete="off" placeholder="Search all conversations" aria-label="Search all conversations">
+          <button type="button" class="btn-icon" id="history-go" title="Search" aria-label="Search">${icon('search')}</button>
+        </div>
+        <div id="history-note" class="hist-note" hidden></div>
+        <div id="history-list"></div>
+        <div id="history-detail" hidden></div>
+        <!-- Below the list, not above it: a page that could not be read was asked for with the
+             button under the last row, and a list fifty rows long puts anything above it out of
+             view (measured 2026-11-10, 390×844: the error sat 2550px above the viewport). The
+             first page failing leaves the list empty, so there this element is still the first
+             thing under the search row. -->
+        <div id="history-err" class="hist-note bad" hidden></div>
+        <button type="button" id="history-more" hidden>Load older conversations</button>
       </div>
     </div>
   </div>

@@ -152,6 +152,29 @@ export interface HistorySessionRow {
   messages?: number;
 }
 
+/**
+ * Where a page of `list` resumes: the last row the page before it returned.
+ *
+ * Keyset rather than an offset because the library is written while it is read — a conversation
+ * that becomes active between two requests moves to the top, and an offset would then skip the row
+ * that fell past it. `lastAt` is the epoch ms `sessions.last_at` is stored as, `id` the tiebreak
+ * for two conversations last active in the same millisecond.
+ */
+export interface HistoryListCursor {
+  lastAt: number;
+  id: number;
+}
+
+export interface HistoryListOptions {
+  /** How far back to look, in days. Ignored when `all` is set. */
+  days?: number;
+  limit?: number;
+  /** Every conversation the library holds, however old — the web UI's history page. */
+  all?: boolean;
+  /** Resume after this row. A page and a cursor are the only way through a library older than `days`. */
+  before?: HistoryListCursor;
+}
+
 export interface HistoryHit {
   /** The session id `read` takes. */
   session: number;
@@ -248,11 +271,32 @@ export interface HistoryReadMessage {
   agent?: string;
 }
 
+/**
+ * Why a read is not the whole conversation.
+ *
+ * `note` says the same thing in the words of `sessions read` — flags included. A caller that
+ * draws its own sentence (the web UI's history page) needs the fact without the command's
+ * vocabulary, so the cut is recorded here as data and the note is written from it.
+ */
+export interface HistoryReadCut {
+  /** The row bound that cut it: that many messages are shown. */
+  rows?: number;
+  /** How many later messages the character budget left out. */
+  chars?: number;
+}
+
 export interface HistoryReadResult {
   session: HistorySessionRow;
   messages: HistoryReadMessage[];
   /** What was left out, when a bound cut it — said so nobody reads a partial log as whole. */
   note?: string;
+  /** Present when a bound cut the answer; absent means it is the whole conversation. */
+  truncated?: HistoryReadCut;
+  /**
+   * Tool runs were folded into one line each, so the rows are not one per call. The note explains
+   * it to a CLI reader; a page shows the folded lines and needs nothing said.
+   */
+  folded?: boolean;
 }
 
 /**
@@ -378,6 +422,44 @@ const TOOL_HEAD_CHARS = 300;
 
 /** Said once when a read folded tool calls, so an agent knows the rows are there and how to see them. */
 const FOLD_NOTE = 'Each run of tool calls is folded into one line; --role tool lists them with their arguments.';
+
+/**
+ * The cut a read took, or nothing when it took none. Both bounds can apply at once — 500 folded
+ * rows whose text still overruns the character budget — and each says its own part.
+ */
+function cutOf(rows: number | undefined, chars: number): HistoryReadCut | undefined {
+  const cut: HistoryReadCut = { ...(rows !== undefined ? { rows } : {}), ...(chars > 0 ? { chars } : {}) };
+  return cut.rows !== undefined || cut.chars !== undefined ? cut : undefined;
+}
+
+/** The cut a bounded selection took: `cap` rows when `more` says the selection had more. */
+function cutAt(more: boolean, cap: number | undefined, dropped: number): HistoryReadCut | undefined {
+  return cutOf(more ? (cap ?? READ_ALL_LIMIT) : undefined, dropped);
+}
+
+/** The first cap a filter applied, in the order they narrow: an explicit tail or limit, else 500. */
+function firstCap(caps: Array<number | undefined>): number | undefined {
+  return caps.find((cap) => cap !== undefined);
+}
+
+/** A read's answer with the two structured facts a caller can draw its own sentence from. */
+function withCut(result: HistoryReadResult, cut: HistoryReadCut | undefined, folded: boolean): HistoryReadResult {
+  return { ...result, ...(cut ? { truncated: cut } : {}), ...(folded ? { folded: true } : {}) };
+}
+
+/**
+ * What `sessions read` says about a whole-conversation answer that is not the whole conversation.
+ * Written from the same facts as `HistoryReadResult.truncated`; this is the command's wording, and
+ * it names the flag that shows the rest, which is the only way a CLI reader can act on it.
+ */
+function readAllNote(more: boolean, dropped: number, folded: boolean): string {
+  const notes = [
+    more ? `This conversation has more than ${READ_ALL_LIMIT} messages.` : '',
+    dropped > 0 ? `${dropped} later message(s) were left out of this answer.` : '',
+  ].filter(Boolean);
+  const tail = notes.length > 0 ? `${notes.join(' ')} Read a window with --around <message>.` : '';
+  return [tail, folded ? FOLD_NOTE : ''].filter(Boolean).join(' ');
+}
 
 /**
  * How many characters of text `read` returns in one answer.
@@ -889,13 +971,10 @@ export class HistoryStore {
     const more = scanned || folded.length > READ_ALL_LIMIT;
     const picked = folded.slice(0, READ_ALL_LIMIT);
     const { messages, dropped } = capRead(picked.map(messageRow));
-    const notes = [
-      more ? `This conversation has more than ${READ_ALL_LIMIT} messages.` : '',
-      dropped > 0 ? `${dropped} later message(s) were left out of this answer.` : '',
-    ].filter(Boolean);
-    const tail = notes.length > 0 ? `${notes.join(' ')} Read a window with --around <message>.` : '';
-    const note = [tail, anyFolded(picked.slice(0, messages.length)) ? FOLD_NOTE : ''].filter(Boolean).join(' ');
-    return { session, messages, ...(note ? { note } : {}) };
+    const wasFolded = anyFolded(picked.slice(0, messages.length));
+    const cut = cutAt(more, READ_ALL_LIMIT, dropped);
+    const note = readAllNote(more, dropped, wasFolded);
+    return withCut({ session, messages, ...(note ? { note } : {}) }, cut, wasFolded);
   }
 
   /** Messages on both sides of one id (`--around`), oldest first. */
@@ -920,12 +999,14 @@ export class HistoryStore {
       .all(session.id, anchor.ts, anchor.ts, anchor.id, window) as Array<Record<string, unknown>>;
     const all = [...before.reverse().map(messageRow), ...after.map(messageRow)];
     const { messages, dropped } = capRead(all);
+    const cut = cutOf(undefined, dropped);
     return {
       session,
       messages,
       ...(dropped > 0
         ? { note: `${dropped} message(s) of this window were left out to keep the answer under ${READ_CHAR_BUDGET} characters; narrow --window.` }
         : {}),
+      ...(cut ? { truncated: cut } : {}),
     };
   }
 
@@ -976,7 +1057,9 @@ export class HistoryStore {
     const notes = [scope?.note, readNote(more, dropped, newestFirst, resumeFrom), folded ? FOLD_NOTE : undefined].filter(
       (n): n is string => n !== undefined
     );
-    return { session, messages, ...(notes.length > 0 ? { note: notes.join(' ') } : {}) };
+    const cut = cutAt(more, firstCap([tail, limit]), dropped);
+    const answer: HistoryReadResult = { session, messages, ...(notes.length > 0 ? { note: notes.join(' ') } : {}) };
+    return withCut(answer, cut, folded);
   }
 
   /**
@@ -1220,20 +1303,38 @@ export class HistoryStore {
     return { ids: [Number(row.id)] };
   }
 
-  /** The most recently active conversations, newest first. */
-  list(opts: { days?: number; limit?: number } = {}): HistorySessionRow[] {
+  /**
+   * The most recently active conversations, newest first — the last `days` of them, or every one
+   * when `all` is set, a page at a time when `before` names where the last page ended.
+   *
+   * The id tiebreak in the ORDER BY is what makes the cursor sound: two conversations last active
+   * in the same millisecond would otherwise come back in an order SQLite is free to choose, and a
+   * page boundary between them could repeat or drop one.
+   */
+  list(opts: HistoryListOptions = {}): HistorySessionRow[] {
     const db = this.requireDb();
     const days = opts.days !== undefined && opts.days > 0 ? opts.days : DEFAULT_LIST_DAYS;
     const limit = Math.max(1, Math.min(opts.limit ?? DEFAULT_LIST_LIMIT, 200));
+    const where = ["s.kind != 'review'"];
+    const params: Array<string | number> = [];
+    if (!opts.all) {
+      where.push('s.last_at >= ?');
+      params.push(Date.now() - days * 86_400_000);
+    }
+    if (opts.before) {
+      where.push('(s.last_at < ? OR (s.last_at = ? AND s.id < ?))');
+      params.push(opts.before.lastAt, opts.before.lastAt, opts.before.id);
+    }
+    params.push(limit);
     const rows = db
       .prepare(
         `SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS messages
          FROM sessions s
-         WHERE s.last_at >= ? AND s.kind != 'review'
-         ORDER BY s.last_at DESC
+         WHERE ${where.join(' AND ')}
+         ORDER BY s.last_at DESC, s.id DESC
          LIMIT ?`
       )
-      .all(Date.now() - days * 86_400_000, limit) as Array<Record<string, unknown>>;
+      .all(...params) as Array<Record<string, unknown>>;
     return rows.map(sessionRow);
   }
 

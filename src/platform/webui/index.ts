@@ -679,6 +679,7 @@ function lifecycle(
   | 'useSchedulePanel'
   | 'useSkillsPanel'
   | 'useReviewPanel'
+  | 'useHistoryPanel'
   | 'useIdleReclaim'
   | 'useTopicKill'
   | 'useAgentCatalog'
@@ -726,6 +727,12 @@ function lifecycle(
      * This page has a column where the whole history can be read, including the quiet ones.
      */
     useReviewPanel: (panel) => room.useReviewPanel(panel),
+    /**
+     * The only implementor, and the same reason once more: `talkcode sessions list/search/read` is
+     * how a chat app reads the conversation library, and its answer is text in a message. This page
+     * has a window to put the list, the search and the transcript in.
+     */
+    useHistoryPanel: (panel) => room.useHistoryPanel(panel),
     /**
      * The only implementor because it is the only platform that lists its conversations' agents
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".

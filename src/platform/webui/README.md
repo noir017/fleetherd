@@ -639,6 +639,51 @@ and the open skill), opened from the sidebar footer and closed by the ×, Escape
 Nothing about it is persisted: a management surface is opened on purpose, and one restored on load
 would sit over a conversation nobody asked it to cover.
 
+## The history page
+
+The clock-with-an-arrow button beside **Clear all topics**, in the sidebar's own header, opens the
+conversation library: every conversation the gateway recorded, whichever agent and platform it ran
+on. It is the same `history.db` `talkcode sessions list/search/read` reads, and it is read-only —
+a list, a keyword search, and one conversation opened whole. A review's own session is not a
+conversation and is left out (`HistoryStore.list`); those are read on the Reviews tab.
+
+**Why a window and not the topic list.** The topic list is the conversations this page still has.
+The library is everything else: topics cleared from the switcher, conversations from Telegram and
+Slack and every other platform, sub-agent runs, sessions from before the browser existed. It is
+looked at rather than lived in, so it gets the same window as the skills page — over the
+transcript, full screen on a phone, closed by ×, Escape or the backdrop, and never restored on
+load.
+
+**What a row says, and what opening it shows.** A row is the title, the agent, the platform, when
+it was last active and how many messages it holds. Opening one shows the conversation oldest
+first, with each message's role and time, and the conversation's key. `HistoryStore.read` bounds
+an answer at 500 rows and a character budget, and the page shows its `note` above the transcript
+when that cut something off: half a log presented as the whole is the one thing this page must not
+do. The button that opens the conversation as a live topic appears only while the topic is still
+in this page's list (`session.topic`, decided by the daemon from the key's platform and thread,
+then checked against the live topics) — a cleared topic is read here and nowhere else, and there
+is no way to bring one back.
+
+**Data.** `useHistoryPanel` (`../adapter.ts`) hands the room `list({before, limit})`,
+`search(query)` and `read(id)`; `daemon/history-panel.ts` builds them from `HistoryStore`, and the
+instance id is only for the topic link. Three routes carry it: `GET api/history`,
+`GET api/history/search?q=` and `GET api/history/read?id=`. All three are reads behind the same
+session as everything else; nothing here writes a row. Every parameter is in the query string, so
+`server.ts` validates each by shape — a cursor it did not hand out, a limit outside 1–200, a query
+with no word in it and an id that is not one are refused before they reach the store.
+
+**Paging.** `HistoryStore.list` defaults to the last seven days and at most 200 rows, which is what
+`sessions list` means and is not what this page asks. `all: true` lifts the time bound and
+`before: {lastAt, id}` resumes after the last row of the page before it — a keyset cursor, not an
+offset, because the library is written while it is read and a conversation that becomes active
+between two requests would move to the top and make an offset skip a row. The ORDER BY carries
+`id` as a tiebreak for the same reason. The daemon asks for one row more than the page needs: its
+presence is what makes `next` — and the **Load older conversations** button — exist at all.
+
+**Search is Enter, not every keystroke.** Each search is a request, and the store's keyword search
+is not a type-ahead. Clearing the field (its own ×, or deleting the text) puts the library back
+rather than leaving the last search's rows under an empty field.
+
 ## Notifications
 
 A phone freezes the page the moment it is put down, so nothing the event stream carries reaches it
@@ -1740,7 +1785,12 @@ both close with the same ×, both go inert while shut, Escape puts away the righ
 left, each keeps its own width and clears it on a double-click, and the footer's two menus are
 checked by the items they hold and what each item does — All settings, Skills, Close idle. The
 pinned state row is driven on both lists: on screen with the panel shut, filtering from a chip
-without opening it, surviving a reload, and leaving the Filter dot to the panel's groups.
+without opening it, surviving a reload, and leaving the Filter dot to the panel's groups. The
+history page is driven there as well: the button's place beside the clear control, the list with
+its agent and platform, a second page appended from the cursor, a search and the list coming back
+when the field is cleared, a conversation opened with its truncation note and the link to a topic
+that still exists (and its absence when it does not), Escape and the backdrop, and the daemon with
+no library at all.
 
 Four things about it that are not obvious:
 

@@ -2488,6 +2488,21 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     expect(btn.getAttribute('aria-label')).toBe('Clear all topics');
   });
 
+  it('puts the history button in the same panel-title, right beside #clear-topics', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    const headerTitle = h.doc.querySelector('#sidebar-header .panel-title')!;
+    const btn = h.el('history-open');
+    expect(headerTitle.contains(btn)).toBe(true);
+    expect(btn.previousElementSibling).toBe(h.el('clear-topics'));
+    expect(btn.classList.contains('btn-icon')).toBe(true);
+    expect(btn.querySelector('svg.ic-history')).not.toBeNull();
+    expect(btn.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 24 24');
+    expect(btn.textContent).toBe('');
+    expect(btn.getAttribute('title')).toBe('All conversations');
+    expect(btn.getAttribute('aria-label')).toBe('All conversations');
+  });
+
   it('updates title and aria-label on #clear-topics as stars come and go', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A, B]));
@@ -5753,6 +5768,19 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(css).toContain('.skill-switch{min-height:32px}');
     expect(css).not.toMatch(/\.skill-[a-z-]+( button)?(,[^{]*)?\{min-height:44px/);
     expect(css).toContain('.skill-main{flex-basis:100%}');
+  });
+
+  it('makes the history window the whole phone screen, with a 16px field and 44px controls', () => {
+    const css = narrowBlock();
+    // Full screen, like the skills page: a list and a transcript need the width.
+    expect(css).toContain('#history{padding:0}');
+    expect(css).toContain('#history-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}');
+    // The two controls a thumb has to hit, and the field Safari must not zoom in on.
+    expect(css).toContain(
+      '#history-close,#history-back{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px'
+    );
+    expect(css).toContain('#history-q{font-size:16px}');
+    expect(css).toContain('#history-more{min-height:44px');
   });
 
   it('keeps fields at 16px so Safari does not zoom in and stay there', () => {
@@ -10006,5 +10034,345 @@ describe('webui page: the skills page', () => {
     await until('the disabled note', () => h.el('skills-list').textContent!.includes('not enabled'));
 
     expect(h.el('skills-list').textContent).toContain('Skills are not enabled in this daemon');
+  });
+});
+
+describe('webui page: the history page', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const at = Date.UTC(2026, 10, 9, 12, 0);
+  const row = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 1,
+    key: `webui#main#${A}`,
+    title: 'Deploy notes',
+    agent: 'cc',
+    platform: 'webui',
+    lastAt: at,
+    messages: 4,
+    topic: A,
+    ...over,
+  });
+  const page = (sessions: Array<Record<string, unknown>>, next?: string): Record<string, unknown> => ({
+    enabled: true,
+    sessions,
+    ...(next ? { next } : {}),
+  });
+  const read = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    session: row(),
+    messages: [
+      { id: 1, at, role: 'user', kind: 'normal', text: 'deploy it' },
+      { id: 2, at: at + 1_000, role: 'agent', kind: 'normal', text: 'deployed' },
+    ],
+    ...over,
+  });
+
+  /** Type a query and press Enter, the way a phone's search key does. */
+  async function search(h: Harness, q: string): Promise<void> {
+    const input = h.el('history-q') as HTMLInputElement;
+    input.value = q;
+    input.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick();
+  }
+
+  it('opens from the sidebar header and lists every conversation with its agent, platform and size', async () => {
+    const h = await open({
+      replies: {
+        'api/history': page([row(), row({ id: 2, key: 'telegram#chat#9', title: 'Phone chat', agent: 'oc', platform: 'telegram', messages: 1, topic: undefined })]),
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    expect(h.el('history').hidden).toBe(true);
+
+    await h.click('#history-open');
+    await until('the history list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+
+    expect(h.el('history').hidden).toBe(false);
+    expect(h.el('history-title').textContent).toBe('History');
+    expect(h.el('history-count').textContent).toBe('2');
+    const rows = [...h.doc.querySelectorAll('#history-list .hist-item')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain('Deploy notes');
+    expect(rows[0]!.textContent).toContain('cc · webui');
+    expect(rows[0]!.textContent).toContain('4 messages');
+    expect(rows[1]!.textContent).toContain('Phone chat');
+    expect(rows[1]!.textContent).toContain('oc · telegram');
+    expect(h.el('history-more').hidden).toBe(true);
+  });
+
+  it('pages backwards through the library from the button the daemon offers', async () => {
+    const h = await open({
+      replies: {
+        'api/history': page([row(), row({ id: 2, title: 'Second' })], '1762300000000.2'),
+        'api/history?before=1762300000000.2': page([row({ id: 3, title: 'Older still' })]),
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the first page', () => h.el('history-list').textContent!.includes('Second'));
+    expect(h.el('history-count').textContent).toBe('2+');
+    expect(h.el('history-more').hidden).toBe(false);
+
+    await h.click('#history-more');
+    await until('the second page', () => h.el('history-list').textContent!.includes('Older still'));
+
+    // Appended, not replaced, and the last page offers no further one.
+    expect([...h.doc.querySelectorAll('#history-list .hist-item')]).toHaveLength(3);
+    expect(h.el('history-more').hidden).toBe(true);
+    expect(h.calls.some((c) => c.path === 'api/history?before=1762300000000.2')).toBe(true);
+  });
+
+  it('ignores Enter mid-composition, which is a candidate being chosen and not a search', async () => {
+    const h = await open({ replies: { 'api/history': page([row()]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    const searches = (): number => h.calls.filter((c) => c.path.startsWith('api/history/search')).length;
+
+    const input = h.el('history-q') as HTMLInputElement;
+    input.value = '部署';
+    const ev = new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true });
+    input.dispatchEvent(ev);
+    await tick();
+
+    // The Enter that closes an IME candidate list is the composition's, not the field's.
+    expect(searches()).toBe(0);
+    expect(ev.defaultPrevented).toBe(false);
+
+    input.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await tick();
+    expect(searches()).toBe(1);
+  });
+
+  it('counts "30+" when the daemon says the search carried fewer matches than the library has', async () => {
+    const hits = Array.from({ length: 30 }, (_, i) => ({
+      session: 1,
+      message: i + 1,
+      at,
+      title: 'Deploy notes',
+      agent: 'cc',
+      platform: 'webui',
+      role: 'user',
+      excerpt: `deployment ${i}`,
+    }));
+    const h = await open({
+      replies: { 'api/history': page([row()]), 'api/history/search?q=deployment': { enabled: true, hits, more: true } },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+
+    await search(h, 'deployment');
+    await until('the hits', () => h.doc.querySelectorAll('#history-list .hist-item').length === 30);
+    // The number on screen is the size of the answer; the + says it is not the size of the result.
+    expect(h.el('history-count').textContent).toBe('30+');
+
+    // A search the daemon did not call a floor keeps the plain number.
+    const whole = await open({
+      replies: { 'api/history': page([row()]), 'api/history/search?q=deployment': { enabled: true, hits } },
+    });
+    await whole.emit(sync(A, [], [A]));
+    await whole.click('#history-open');
+    await until('the list', () => whole.el('history-list').textContent!.includes('Deploy notes'));
+    await search(whole, 'deployment');
+    await until('the hits', () => whole.doc.querySelectorAll('#history-list .hist-item').length === 30);
+    expect(whole.el('history-count').textContent).toBe('30');
+  });
+
+  it('keeps the page it already has when the next one cannot be read, and offers the button again', async () => {
+    const next = 'api/history?before=1762300000000.2';
+    const h = await open({
+      replies: {
+        'api/history': page([row(), row({ id: 2, title: 'Second' })], '1762300000000.2'),
+        [next]: page([row({ id: 3, title: 'Older still' })]),
+      },
+      status: { [next]: 500 },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the first page', () => h.el('history-list').textContent!.includes('Second'));
+
+    await h.click('#history-more');
+    await until('the error', () => !h.el('history-err').hidden);
+
+    // The rows already read stay: a page that failed is not a reason to throw them away.
+    expect(h.el('history-list').textContent).toContain('Deploy notes');
+    expect(h.el('history-list').textContent).toContain('Second');
+    expect(h.el('history-err').textContent).toMatch(/HTTP 500/);
+    expect(h.el('history-more').hidden).toBe(false);
+    expect((h.el('history-more') as HTMLButtonElement).disabled).toBe(false);
+
+    // And it works when the daemon answers: the same button, the page appended, the error gone.
+    h.status[next] = 200;
+    await h.click('#history-more');
+    await until('the second page', () => h.el('history-list').textContent!.includes('Older still'));
+    expect(h.el('history-err').hidden).toBe(true);
+    expect([...h.doc.querySelectorAll('#history-list .hist-item')]).toHaveLength(3);
+  });
+
+  it('puts a failed page under the list, beside the button that asked for it', async () => {
+    const next = 'api/history?before=1762300000000.2';
+    const h = await open({
+      replies: {
+        'api/history': page([row(), row({ id: 2, title: 'Second' })], '1762300000000.2'),
+        [next]: page([row({ id: 3, title: 'Older still' })]),
+      },
+      status: { [next]: 500 },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the first page', () => h.el('history-list').textContent!.includes('Second'));
+
+    await h.click('#history-more');
+    await until('the error', () => !h.el('history-err').hidden);
+
+    // jsdom does no layout, so the DOM order is the evidence: the error follows the list and sits
+    // immediately above the button. That is where a reader who tapped it at the bottom of fifty
+    // rows is looking; above the list, the same line was 2550px out of view on a phone.
+    const err = h.el('history-err');
+    expect(err.parentElement).toBe(h.el('history-body'));
+    expect(h.el('history-list').compareDocumentPosition(err) & h.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(err.nextElementSibling).toBe(h.el('history-more'));
+
+    // Failing twice changes nothing: the same line, and the button offers the same page again.
+    await h.click('#history-more');
+    await until('the second failure', () => !h.el('history-err').hidden && !(h.el('history-more') as HTMLButtonElement).disabled);
+    expect(err.textContent).toMatch(/HTTP 500/);
+  });
+
+  it('searches the library, and puts the list back when the field is cleared', async () => {
+    const h = await open({
+      replies: {
+        'api/history': page([row()]),
+        'api/history/search?q=deployment': {
+          enabled: true,
+          hits: [
+            {
+              session: 1,
+              message: 4,
+              at,
+              title: 'Deploy notes',
+              agent: 'cc',
+              platform: 'webui',
+              role: 'user',
+              excerpt: 'the deployment finished',
+            },
+          ],
+        },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+
+    await search(h, 'deployment');
+    await until('the hit', () => h.el('history-list').textContent!.includes('the deployment finished'));
+
+    expect(h.calls.some((c) => c.path === 'api/history/search?q=deployment')).toBe(true);
+    expect(h.el('history-title').textContent).toBe('History · search');
+    expect(h.el('history-count').textContent).toBe('1');
+    expect(h.doc.querySelector('#history-list .hist-excerpt')!.textContent).toBe('the deployment finished');
+
+    // The field's own × leaves an empty value: the library comes back, not the last search.
+    const input = h.el('history-q') as HTMLInputElement;
+    input.value = '';
+    input.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    await tick();
+    expect(h.el('history-title').textContent).toBe('History');
+    expect(h.doc.querySelector('#history-list .hist-excerpt')).toBeNull();
+    expect(h.el('history-list').textContent).toContain('Deploy notes');
+  });
+
+  it('opens one conversation whole, shows the note that says it was cut, and links back to its topic', async () => {
+    const h = await open({
+      replies: {
+        'api/history': page([row()]),
+        'api/history/read?id=1': read({ note: 'This conversation is longer than the 500 messages this page reads; only the first 500 are shown.' }),
+      },
+    });
+    await h.emit(sync(B, [], [A, B]));
+    await h.click('#history-open');
+    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+
+    (h.doc.querySelector('#history-list .hist-item') as HTMLElement).click();
+    await until('the conversation', () => h.el('history-detail').textContent!.includes('deployed'));
+
+    expect(h.calls.some((c) => c.path === 'api/history/read?id=1')).toBe(true);
+    expect(h.el('history-list').hidden).toBe(true);
+    expect(h.el('history-back').hidden).toBe(false);
+    // The search belongs to the list; a conversation is read without it above the text.
+    expect(h.el('history-search').hidden).toBe(true);
+    expect(h.el('history-title').textContent).toBe('Deploy notes');
+    const detail = h.el('history-detail');
+    expect(detail.textContent).toContain('deploy it');
+    expect(detail.textContent).toContain('cc · webui');
+    expect(detail.textContent).toContain(`webui#main#${A}`);
+
+    // The note is on screen, not swallowed: half a log read as the whole is the failure it prevents.
+    expect(h.el('history-note').hidden).toBe(false);
+    expect(h.el('history-note').textContent).toMatch(/only the first 500 are shown/);
+
+    // The conversation is still a topic here, so the page offers the way back to it.
+    const openTopic = detail.querySelector('[data-hist-topic]') as HTMLElement;
+    expect(openTopic).not.toBeNull();
+    openTopic.click();
+    await until('the switch', () => h.window.location.search.includes(A));
+    expect(h.el('history').hidden).toBe(true);
+  });
+
+  it('offers no link to a topic this page does not have, and goes back to the list', async () => {
+    const h = await open({
+      replies: {
+        'api/history': page([row({ topic: 'deadbeef' })]),
+        'api/history/read?id=1': read({ session: row({ topic: 'deadbeef' }), messages: [] }),
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    (h.doc.querySelector('#history-list .hist-item') as HTMLElement).click();
+    await until('the conversation', () => !h.el('history-detail').hidden && h.el('history-detail').textContent!.includes('webui#main'));
+
+    expect(h.doc.querySelector('#history-detail [data-hist-topic]')).toBeNull();
+    expect(h.el('history-detail').textContent).toContain('no recorded messages');
+
+    await h.click('#history-back');
+    expect(h.el('history-detail').hidden).toBe(true);
+    expect(h.el('history-list').hidden).toBe(false);
+    expect(h.el('history-back').hidden).toBe(true);
+    expect(h.el('history-search').hidden).toBe(false);
+    expect(h.el('history-title').textContent).toBe('History');
+  });
+
+  it('closes on Escape and on the backdrop, and forgets where it was', async () => {
+    const h = await open({ replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    (h.doc.querySelector('#history-list .hist-item') as HTMLElement).click();
+    await until('the conversation', () => h.el('history-detail').textContent!.includes('deployed'));
+
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(h.el('history').hidden).toBe(true);
+
+    // Reopened, it is the list again: nothing about a window opened on purpose is persisted.
+    await h.click('#history-open');
+    await until('the list again', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    expect(h.el('history-detail').hidden).toBe(true);
+    expect(h.el('history-back').hidden).toBe(true);
+
+    h.el('history').click();
+    await tick();
+    expect(h.el('history').hidden).toBe(true);
+  });
+
+  it('says when the daemon has no conversation library', async () => {
+    const h = await open({ replies: { 'api/history': { enabled: false, sessions: [] } } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#history-open');
+    await until('the disabled note', () => h.el('history-list').textContent!.includes('no conversation library'));
+
+    expect(h.el('history-count').textContent).toBe('');
+    expect(h.el('history-more').hidden).toBe(true);
   });
 });

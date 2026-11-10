@@ -139,6 +139,25 @@ describe('HistoryStore', () => {
     store.close();
   });
 
+  it('says in data why a read is not the whole conversation, and keeps the CLI note as it was', () => {
+    const { store } = tempStore();
+    const at = Date.now();
+    const id = seed(store);
+    const all = store.read(String(id));
+    // A tool row was folded: the page can see that without reading the CLI's sentence.
+    expect(all.folded).toBe(true);
+    expect(all.truncated).toBeUndefined();
+    expect(all.note).toBe('Each run of tool calls is folded into one line; --role tool lists them with their arguments.');
+
+    // One past the row bound: the cut is a fact, and the note still names the flag that shows more.
+    for (let i = 0; i < 500; i++) store.message(id, { ts: at + 10_000 + i, role: 'agent', kind: 'normal', text: `line ${i}` });
+    const long = store.read(String(id));
+    expect(long.truncated).toEqual({ rows: 500 });
+    expect(long.note).toContain('This conversation has more than 500 messages.');
+    expect(long.note).toContain('--around <message>');
+    store.close();
+  });
+
   it('lists recent conversations, newest first', () => {
     const { store } = tempStore();
     const at = Date.now();
@@ -148,6 +167,51 @@ describe('HistoryStore', () => {
     store.message(recent, { ts: at, role: 'user', kind: 'normal', text: 'recent' });
     expect(store.list({ days: 7 }).map((s) => s.key)).toEqual(['recent']);
     expect(store.list({ days: 30 }).map((s) => s.key)).toEqual(['recent', 'old']);
+    store.close();
+  });
+
+  it('lists the whole library when asked, not just the last week', () => {
+    const { store } = tempStore();
+    const at = Date.now();
+    const old = store.session({ key: 'old', platform: 'tg', title: 'old', at: at - 400 * 86_400_000 })!;
+    const recent = store.session({ key: 'recent', platform: 'tg', title: 'recent', at })!;
+    store.message(old, { ts: at - 400 * 86_400_000, role: 'user', kind: 'normal', text: 'old' });
+    store.message(recent, { ts: at, role: 'user', kind: 'normal', text: 'recent' });
+    // The default window is what `sessions list` means; `all` is the history page's question.
+    expect(store.list().map((s) => s.key)).toEqual(['recent']);
+    expect(store.list({ all: true }).map((s) => s.key)).toEqual(['recent', 'old']);
+    store.close();
+  });
+
+  it('pages with a cursor, without repeating or skipping a conversation', () => {
+    const { store } = tempStore();
+    const at = Date.now();
+    for (let i = 0; i < 5; i++) {
+      const id = store.session({ key: `k${i}`, platform: 'tg', title: `t${i}`, at: at - i * 1_000 })!;
+      store.message(id, { ts: at - i * 1_000, role: 'user', kind: 'normal', text: `m${i}` });
+    }
+    const first = store.list({ all: true, limit: 2 });
+    expect(first.map((s) => s.title)).toEqual(['t0', 't1']);
+    const last = first[1]!;
+    const second = store.list({ all: true, limit: 2, before: { lastAt: Date.parse(last.lastAt), id: last.id } });
+    expect(second.map((s) => s.title)).toEqual(['t2', 't3']);
+    const third = store.list({ all: true, limit: 2, before: { lastAt: Date.parse(second[1]!.lastAt), id: second[1]!.id } });
+    expect(third.map((s) => s.title)).toEqual(['t4']);
+    store.close();
+  });
+
+  it('breaks a tie on last_at by id, so a cursor between two of them is stable', () => {
+    const { store } = tempStore();
+    const at = Date.now();
+    const a = store.session({ key: 'a', platform: 'tg', title: 'a', at })!;
+    const b = store.session({ key: 'b', platform: 'tg', title: 'b', at })!;
+    const c = store.session({ key: 'c', platform: 'tg', title: 'c', at })!;
+    for (const id of [a, b, c]) store.message(id, { ts: at, role: 'user', kind: 'normal', text: 'same' });
+    // All three were last active in the same millisecond; only the id can order them, and it
+    // must be the same order in both queries or the page between b and c would lose one.
+    expect(store.list({ all: true }).map((s) => s.key)).toEqual(['c', 'b', 'a']);
+    const page = store.list({ all: true, limit: 1, before: { lastAt: at, id: c } });
+    expect(page.map((s) => s.key)).toEqual(['b']);
     store.close();
   });
 
