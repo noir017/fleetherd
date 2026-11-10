@@ -896,6 +896,20 @@ daemon's own inbound dedup cannot help here: it keys on a message id, and a retr
 one. That nonce comes back out on the echo (`WebMessage.nonce`), which is how the page knows
 which of its local bubbles the echo is.
 
+**Files go up as bytes, not as base64 in JSON.** A send that carries files is framed by the page
+(`framed`: a 4-byte length, the send as JSON with each file's `data` replaced by its `size`, then
+the files' bytes) and posted to the same `api/send` as `application/octet-stream`. `server.ts`
+`readFramedSend` checks that the sizes add up to the body exactly, turns it back into the JSON
+request — base64 and all, which is what `room.submit` and the daemon's `data:` URL path take — and
+validates that with `SendRequestSchema`, so the body cap, the per-file limits, the topic id and
+`.strict()` are the JSON form's, unchanged. Same route, same nonce, so a retry in either form is the
+same message. The type is not one a form can send, so a cross-site page cannot post it without a
+preflight; the origin check and the session apply as to any POST. Text alone stays JSON. Base64 is a
+third larger than the file, and on a slow uplink that third decided whether a send finished inside
+its limit at all: in Chromium at 250 kbps up (`project-scripts/talkcode-webui-net/upload.mts`,
+2026-11-10) a 1 MB file used to go up as 1.33 MB, outlast its 37 s limit, be retried twice from
+zero and fail after 110 s; as bytes it arrives in 33 s.
+
 **A message is on screen before the request leaves.** Waiting for the echo to draw it meant a
 visibly empty transcript for as long as the round trip took — and on a request that failed after
 its retries it meant the text was simply gone: out of the composer, never into the conversation,
@@ -1411,7 +1425,7 @@ or not, has a × (44px under the narrow-screen layout). Two things about it are 
   carrying one key too many. `page.dom.test.ts` pins both halves.
 
 **Once sent, the operator's own pictures show in their message too** (since 2.4.0; before, only
-their names did). The page drops the bytes once they are sent — they are base64 in a request
+their names did). The page drops the bytes once they are sent — they are in a request
 body, and the same reason means a failed message that carried them cannot be retried after a
 reload, see [built for a bad connection](#built-for-a-bad-connection) — so the daemon keeps the
 copy. `room.ts` `submit`

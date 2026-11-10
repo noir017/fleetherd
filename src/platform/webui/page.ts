@@ -3011,8 +3011,10 @@ const SCRIPT = `
   // different complaint from a message that looks sent and is not.
   function post(path, body, tries, limit){
     // Built first: JSON.stringify is the one thing here that can throw, and nothing is armed yet.
-    var init = {method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body),credentials:'same-origin'};
+    // Bytes (a send that carries files, see framed) go as they are.
+    var bytes = ArrayBuffer.isView(body);
+    var init = {method:'POST',headers:{'Content-Type': bytes ? 'application/octet-stream' : 'application/json'},
+      body: bytes ? body : JSON.stringify(body),credentials:'same-origin'};
     var expired = false, timer = 0;
     if(limit && typeof AbortController === 'function'){
       var ctl = new AbortController();
@@ -3046,6 +3048,36 @@ const SCRIPT = `
     var n = (body.text || '').length, f = body.files || [];
     for(var i=0;i<f.length;i++) n += f[i].data.length + f[i].name.length;
     return Math.min(300000, 15000 + Math.round(n / 65.536));
+  }
+
+  /**
+   * A send that carries files, as bytes rather than JSON: a 4-byte big-endian length, the send as
+   * JSON with each file's base64 data replaced by its size, then the files' bytes (server.ts
+   * readFramedSend). Base64 in JSON is a third larger than the file, and on the uplinks this page
+   * is used over that third is the difference between 33 and 44 seconds for one photo. Built as one
+   * Uint8Array from strings — atob, and UTF-8 through encodeURIComponent — so it needs nothing a
+   * browser might lack, and the same array is sent again by a retry.
+   */
+  function framed(body){
+    var meta = {topic:body.topic, text:body.text, files:[]}, parts = [], total = 0, i, j;
+    if(body.nonce) meta.nonce = body.nonce;
+    if(body.quiet) meta.quiet = true;
+    for(i=0;i<body.files.length;i++){
+      var f = body.files[i], bin = atob(f.data);
+      meta.files.push({name:f.name, mime:f.mime || '', size:bin.length});
+      parts.push(bin);
+      total += bin.length;
+    }
+    var head = unescape(encodeURIComponent(JSON.stringify(meta)));
+    var out = new Uint8Array(4 + head.length + total), at = 4;
+    out[0] = (head.length >>> 24) & 255; out[1] = (head.length >>> 16) & 255;
+    out[2] = (head.length >>> 8) & 255; out[3] = head.length & 255;
+    for(j=0;j<head.length;j++) out[at++] = head.charCodeAt(j);
+    for(i=0;i<parts.length;i++){
+      var p = parts[i];
+      for(j=0;j<p.length;j++) out[at++] = p.charCodeAt(j);
+    }
+    return out;
   }
 
   function atBottom(){ return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
@@ -8069,7 +8101,7 @@ const SCRIPT = `
     // nothing was attached that could ever change it; as a rejection it becomes a failure, with
     // Copy and Discard, like any other message that did not go.
     var sent;
-    try { sent = post('api/send', body, 2, sendLimit(body)); }
+    try { sent = post('api/send', body.files ? framed(body) : body, 2, sendLimit(body)); }
     catch(x){ sent = Promise.reject(x); }
     sent.then(function(r){
       setLocal(nonce, (r && r.ok) ? 'sent' : 'failed');

@@ -928,6 +928,120 @@ describe('webui server: built for a weak link', () => {
   });
 });
 
+describe('webui server: a send that carries its files as bytes', () => {
+  /** What page.ts `framed` sends: a 4-byte length, the JSON header, the files' bytes. */
+  const frame = (header: unknown, ...files: Buffer[]): Uint8Array<ArrayBuffer> => {
+    const head = Buffer.from(JSON.stringify(header), 'utf8');
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(head.length);
+    return new Uint8Array(Buffer.concat([len, head, ...files]));
+  };
+  const OCTETS = { 'content-type': 'application/octet-stream' };
+
+  it('takes the files as bytes and hands the daemon what the JSON form would have', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const heard: Array<{ text: string; files: Array<{ name?: string; url: string; mime?: string }> }> = [];
+    room.onMessage((m) => heard.push({ text: m.content, files: m.attachments ?? [] }));
+    const png = Buffer.from([137, 80, 78, 71, 0, 255, 10]);
+    const notes = Buffer.from('first line\nsecond — line\n', 'utf8');
+    const body = frame(
+      {
+        topic,
+        text: 'two files — ✓',
+        nonce: 'bin-1',
+        files: [
+          { name: 'shot.png', mime: 'image/png', size: png.length },
+          { name: 'notes.txt', mime: 'text/plain', size: notes.length },
+        ],
+      },
+      png,
+      notes
+    );
+    const res = await fetch(`${base}/api/send`, { method: 'POST', headers: { ...OCTETS, cookie }, body });
+    expect(res.status).toBe(202);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]!.text).toBe('two files — ✓');
+    expect(heard[0]!.files.map((f) => [f.name, f.mime, f.url])).toEqual([
+      ['shot.png', 'image/png', `data:image/png;base64,${png.toString('base64')}`],
+      ['notes.txt', 'text/plain', `data:text/plain;base64,${notes.toString('base64')}`],
+    ]);
+    // The same nonce as JSON is the same message: a retry in either form is answered, not repeated.
+    const again = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ topic, text: 'two files — ✓', nonce: 'bin-1' }),
+    });
+    expect(again.status).toBe(202);
+    expect(heard).toHaveLength(1);
+  });
+
+  it('refuses framing that does not add up, and says why', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { base, topic } = await boot();
+    const cookie = await signIn(base);
+    const post = (body: Uint8Array<ArrayBuffer>): Promise<Response> =>
+      fetch(`${base}/api/send`, { method: 'POST', headers: { ...OCTETS, cookie }, body });
+    const file = Buffer.from('abcdef');
+    const header = { topic, text: 'x', files: [{ name: 'a.bin', mime: '', size: file.length }] };
+    // A byte too many, a byte too few, a header longer than the body, no header at all.
+    for (const body of [
+      frame(header, file, Buffer.from('!')),
+      frame(header, file.subarray(1)),
+      new Uint8Array([0, 0, 1, 0, 123, 125]),
+      new Uint8Array([0, 0]),
+    ]) {
+      expect((await post(body)).status).toBe(400);
+    }
+    // A header the JSON form would refuse is refused here too: an extra key, and no files at all.
+    expect((await post(frame({ ...header, extra: 1 }, file))).status).toBe(400);
+    expect((await post(frame({ topic, text: 'x', files: [] })))).toMatchObject({ status: 400 });
+    expect(warn.mock.calls.flat().join('\n')).toMatch(/POST \/api\/send: refused — .*do not add up/);
+  });
+
+  it('keeps the JSON form’s limits: the body cap, and the topic and name rules', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { base, topic } = await boot();
+    const cookie = await signIn(base);
+    const big = Buffer.alloc(37 * 1024 * 1024);
+    const over = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...OCTETS, cookie },
+      body: frame({ topic, text: '', files: [{ name: 'big.bin', mime: '', size: big.length }] }, big),
+    }).catch(() => undefined);
+    // The server hangs up on an oversized body mid-send, so the client may see a reset instead.
+    if (over) expect(over.status).toBe(413);
+    const file = Buffer.from('x');
+    const named = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...OCTETS, cookie },
+      body: frame({ topic: 'not-a-topic', text: '', files: [{ name: 'a', mime: '', size: 1 }] }, file),
+    });
+    expect(named.status).toBe(400);
+  });
+
+  it('is a POST like any other: refused from another origin, and without a session', async () => {
+    const { base, topic } = await boot();
+    const cookie = await signIn(base);
+    const body = frame({ topic, text: '', files: [{ name: 'a', mime: '', size: 1 }] }, Buffer.from('x'));
+    const cross = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...OCTETS, cookie, origin: 'https://evil.example' },
+      body,
+    });
+    expect(cross.status).toBe(403);
+    const stranger = await fetch(`${base}/api/send`, { method: 'POST', headers: OCTETS, body });
+    expect(stranger.status).toBe(401);
+    // And a type a form CAN send is still not one this route reads.
+    const form = await fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain', cookie },
+      body,
+    });
+    expect(form.status).toBe(415);
+  });
+});
+
 describe('webui server: a send that does not arrive whole', () => {
   /** What the log was told, as one string. */
   const warned = (spy: ReturnType<typeof vi.spyOn>): string => spy.mock.calls.flat().join('\n');

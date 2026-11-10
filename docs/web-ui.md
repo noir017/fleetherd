@@ -212,7 +212,8 @@ about a quarter of the bytes. The page itself is downloaded once per version: a 
 only asks the daemon whether it changed, and the first reload after an upgrade gets the
 new one. A tab you are not looking at stops receiving after 15 seconds and catches up
 the moment you come back to it, and going back to a topic you just left fetches only
-what was said since. Sends carry a nonce, so the page retries safely on a
+what was said since. Attached files go up as they are, not in a text encoding a third
+larger. Sends carry a nonce, so the page retries safely on a
 link that drops them. A send that gets no answer at all does not stay grey: after 15
 seconds (longer for a big attachment, up to 5 minutes) it turns red with **Retry**,
 **Copy** and **Discard**. A message that is still grey after that has not left the

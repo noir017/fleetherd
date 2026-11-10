@@ -55,6 +55,7 @@ import {
   KillTopicRequestSchema,
   DeleteTopicRequestSchema,
   EndTerminalRequestSchema,
+  FramedSendHeaderSchema,
   LoginRequestSchema,
   MAX_BODY_BYTES,
   SendRequestSchema,
@@ -67,6 +68,7 @@ import {
   ReviewOpRequestSchema,
   StarTopicRequestSchema,
   parseBody,
+  type SendRequest,
   type WebEvent,
 } from './protocol.js';
 import { MAX_READ_BYTES, readableKind, renderReading } from './reading.js';
@@ -549,8 +551,9 @@ function servedPage(ctx: Ctx): ServedPage {
   if (ctx.page?.key === key) return ctx.page;
   const { html, build } = servePage(...args);
   const raw = Buffer.from(html, 'utf8');
-  ctx.page = { key, raw, gzip: gzipSync(raw), etag: `W/"${build}"` };
-  return ctx.page;
+  const page: ServedPage = { key, raw, gzip: gzipSync(raw), etag: `W/"${build}"` };
+  ctx.page = page;
+  return page;
 }
 
 /** Whether `If-None-Match` names this validator. Compared weakly, as RFC 9110 §13.1.2 says for it. */
@@ -737,8 +740,18 @@ function openStream(req: IncomingMessage, res: ServerResponse, instance: WebuiIn
   };
 }
 
+/**
+ * A message from the page: JSON, or — when it carries files — the same request framed as bytes.
+ *
+ * The files used to travel only as base64 inside the JSON, a third larger than they are: on a
+ * 250 kbps uplink a 1 MB photo took 44 s instead of 33. A send with files now comes as
+ * `application/octet-stream` (`readFramedSend`), and is turned back into the JSON request's shape
+ * — base64 and all, which is what `room.submit` and the daemon's `data:` URL path take — and then
+ * validated by the very same schema, so every limit and check is the JSON request's. Same route,
+ * same nonce: a retry of either form is the same message.
+ */
 async function submit({ req, res }: Req, ctx: Ctx): Promise<void> {
-  const parsed = await readBody(req, res, SendRequestSchema, true);
+  const parsed = isOctetStream(req) ? await readFramedSend(req, res) : await readBody(req, res, SendRequestSchema, true);
   if (!parsed) return;
   switch (ctx.room.submit(parsed)) {
     case 'unknown-topic':
@@ -1205,6 +1218,34 @@ async function readBody<T>(
     send(req, res, 415, { error: 'expected application/json' });
     return undefined;
   }
+  const body = await readRaw(req, res, refused);
+  if (!body) return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(body.toString('utf8')) as unknown;
+  } catch {
+    refused(`malformed JSON (${body.length} bytes)`);
+    send(req, res, 400, { error: 'malformed JSON' });
+    return undefined;
+  }
+  const parsed = parseBody(schema, raw);
+  if (!parsed.ok) {
+    refused(parsed.error);
+    send(req, res, 400, { error: parsed.error });
+    return undefined;
+  }
+  return parsed.value;
+}
+
+/**
+ * Read a whole body up to `MAX_BODY_BYTES`, answering the request itself when it is over that or
+ * the client goes away. `undefined` means "already answered (or nobody to answer), stop".
+ */
+async function readRaw(
+  req: IncomingMessage,
+  res: ServerResponse,
+  refused: (why: string) => void
+): Promise<Buffer | undefined> {
   const declared = req.headers['content-length'] ?? '?';
   const chunks: Buffer[] = [];
   let size = 0;
@@ -1228,20 +1269,59 @@ async function readBody<T>(
     refused(`the client hung up after ${size} of ${declared} bytes (${e instanceof Error ? e.message : String(e)})`);
     return undefined;
   }
-  let raw: unknown;
+  return Buffer.concat(chunks);
+}
+
+function isOctetStream(req: IncomingMessage): boolean {
+  return (req.headers['content-type'] ?? '').split(';')[0]?.trim() === 'application/octet-stream';
+}
+
+/**
+ * A send carrying files, as the page frames it: a 4-byte big-endian length, that many bytes of
+ * JSON — the send request with each file's `data` replaced by its `size` — then every file's bytes
+ * in order. Turned back into the JSON request (`data` as base64) and validated by its schema.
+ *
+ * As safe against a cross-site form as the JSON body is: `application/octet-stream` is not one of
+ * the three types a form or a simple request can send, so a cross-origin page cannot post it
+ * without a preflight, and `sameOrigin` and the cookie's `SameSite=Strict` apply as to any POST.
+ * The framing is checked exactly — the sizes must add up to the bytes that follow, to the byte — so
+ * nothing in the body goes unaccounted for.
+ */
+async function readFramedSend(req: IncomingMessage, res: ServerResponse): Promise<SendRequest | undefined> {
+  const refused = (why: string): void => logRefused(req, `refused — ${why}`);
+  const malformed = (why: string): undefined => {
+    refused(why);
+    send(req, res, 400, { error: `malformed upload: ${why}` });
+    return undefined;
+  };
+  const body = await readRaw(req, res, refused);
+  if (!body) return undefined;
+  if (body.length < 4) return malformed('no header');
+  const headerLength = body.readUInt32BE(0);
+  if (4 + headerLength > body.length) return malformed('the header runs past the body');
+  let header: unknown;
   try {
-    raw = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    header = JSON.parse(body.subarray(4, 4 + headerLength).toString('utf8')) as unknown;
   } catch {
-    refused(`malformed JSON (${size} bytes)`);
-    send(req, res, 400, { error: 'malformed JSON' });
-    return undefined;
+    return malformed('the header is not JSON');
   }
-  const parsed = parseBody(schema, raw);
-  if (!parsed.ok) {
-    refused(parsed.error);
-    send(req, res, 400, { error: parsed.error });
-    return undefined;
+  const shape = parseBody(FramedSendHeaderSchema, header);
+  if (!shape.ok) return malformed(shape.error);
+  const { files, ...rest } = shape.value;
+  let at = 4 + headerLength;
+  if (files.reduce((n, f) => n + f.size, 0) !== body.length - at) {
+    return malformed(`the files' sizes do not add up to the ${body.length - at} bytes sent`);
   }
+  const request = {
+    ...rest,
+    files: files.map((f) => {
+      const data = body.subarray(at, at + f.size).toString('base64');
+      at += f.size;
+      return { name: f.name, mime: f.mime, data };
+    }),
+  };
+  const parsed = parseBody(SendRequestSchema, request);
+  if (!parsed.ok) return malformed(parsed.error);
   return parsed.value;
 }
 

@@ -86,6 +86,29 @@ export const SendRequestSchema = z
   })
   .strict();
 
+/**
+ * The header of a send that carries its files as bytes (`server.ts` readFramedSend): the send
+ * request with each file's base64 `data` replaced by its byte `size`. Only the shape of the
+ * envelope is checked here; once the bytes are read the request is rebuilt and goes through
+ * `SendRequestSchema` like any other, so every limit there applies unchanged.
+ */
+export const FramedSendHeaderSchema = SendRequestSchema.omit({ files: true })
+  .extend({
+    files: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(255),
+            mime: z.string().max(255),
+            size: z.number().int().min(0).max(MAX_BODY_BYTES),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(10),
+  })
+  .strict();
+
 export const CreateTopicRequestSchema = z.object({ title: z.string().max(200).optional() }).strict();
 export const DeleteTopicRequestSchema = z.object({ topic: TopicId }).strict();
 /**

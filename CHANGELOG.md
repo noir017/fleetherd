@@ -34,6 +34,13 @@ All notable changes to this project are documented here. The format is based on
   and a switch emptied memory. The page now keeps the last topics it left in memory (up to 8, 4000
   messages between them) and resumes their stream from where it was: only what was said meanwhile
   comes down, or the whole topic as before when the daemon's backlog no longer reaches that far.
+- **The web UI uploads files as bytes, not as base64 in JSON.** Base64 is a third larger than the
+  file, and on a slow uplink that third decided whether a send finished inside its time limit at
+  all: at 250 kbps a 1 MB file went up as 1.33 MB, ran past its 37-second limit, was retried twice
+  from the start and failed after 110 s. A send that carries files is now posted to the same route
+  as `application/octet-stream` — the request's JSON with each file's size, then the files — and the
+  daemon turns it back into the same request and checks it with the same rules, size cap included.
+  The same file now arrives in 33 s. Text alone is still sent as JSON.
 
 ### Fixed
 

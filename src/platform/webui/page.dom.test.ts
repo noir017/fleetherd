@@ -41,6 +41,29 @@ interface Call {
   body: Record<string, unknown>;
   /** Absent for the page's ordinary GETs and POSTs (`post()` says POST); set for anything else. */
   method?: string;
+  /**
+   * The body went as bytes (a send carrying files, framed as server.ts readFramedSend reads it).
+   * `body` is then that request read back the way the server reads it — files' `data` as base64 —
+   * so an assertion about what was sent reads the same either way.
+   */
+  binary?: boolean;
+}
+
+/** A framed send (page.ts `framed`) read back as the server does, into the JSON request's shape. */
+function unframe(view: ArrayBufferView): Record<string, unknown> {
+  const b = Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+  const n = b.readUInt32BE(0);
+  const head = JSON.parse(b.subarray(4, 4 + n).toString('utf8')) as {
+    files: Array<{ name: string; mime: string; size: number }>;
+  } & Record<string, unknown>;
+  let at = 4 + n;
+  const files = head.files.map((f) => {
+    const data = b.subarray(at, at + f.size).toString('base64');
+    at += f.size;
+    return { name: f.name, mime: f.mime, data };
+  });
+  if (at !== b.length) throw new Error(`framed send: ${b.length - at} bytes unaccounted for`);
+  return { ...head, files };
 }
 
 /** The stub for the one browser API the whole page is built on. */
@@ -588,12 +611,14 @@ async function open(
           return real(fn, 30);
         };
       }
-      (w as any).fetch = (path: string, init: { body?: string; signal?: AbortSignal; method?: string } = {}) => {
+      (w as any).fetch = (path: string, init: { body?: unknown; signal?: AbortSignal; method?: string } = {}) => {
         // A GET (the file reader's) carries no body; recorded as an empty one.
+        const bytes = ArrayBuffer.isView(init.body);
         calls.push({
           path,
-          body: init.body === undefined ? {} : JSON.parse(init.body),
+          body: init.body === undefined ? {} : bytes ? unframe(init.body as ArrayBufferView) : JSON.parse(String(init.body)),
           ...(init.method && init.method !== 'POST' ? { method: init.method } : {}),
+          ...(bytes ? { binary: true } : {}),
         });
         if (hang.includes(path)) {
           return new Promise((_, reject) => {
@@ -4881,6 +4906,32 @@ describe('webui page: pasting', () => {
     expect(files[0]!.mime).toBe('image/png');
     // Base64 with the `data:` prefix cut off, which is what `api/send` accepts.
     expect(files[0]!.data).toBe('iVBORw==');
+  });
+
+  it('sends the files as bytes rather than as base64 in JSON, and text alone as JSON', async () => {
+    // Base64 is a third larger than the file: on a 250 kbps uplink a 1 MB photo went from 33 s to 44.
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    (h.el('input') as HTMLTextAreaElement).value = 'just words';
+    await h.click('#composer button[type="submit"]');
+    const words = h.calls.filter((c) => c.path === 'api/send');
+    expect(words).toHaveLength(1);
+    expect(words[0]!.binary).toBeUndefined();
+
+    h.el('input').dispatchEvent(pasteOf(h, [{ kind: 'file', type: 'image/png', file: image(h, 'image.png', 'image/png') }]));
+    await until('the chip is rendered', () => chipNames(h).length > 0);
+    (h.el('input') as HTMLTextAreaElement).value = 'and a picture — ✓';
+    await h.click('#composer button[type="submit"]');
+    const sent = h.calls.filter((c) => c.path === 'api/send')[1]!;
+    expect(sent.binary).toBe(true);
+    // Read back as the server reads it: the same request the JSON form carried, nonce and all —
+    // the text's UTF-8 intact, the file's four bytes exact.
+    expect(sent.body).toMatchObject({
+      topic: 'a1b2c3d4',
+      text: 'and a picture — ✓',
+      files: [{ name: 'pasted-1.png', mime: 'image/png', data: 'iVBORw==' }],
+    });
+    expect(typeof sent.body.nonce).toBe('string');
   });
 
   it('shows a sent screenshot in the transcript once the echo brings it, and opens it on a tap', async () => {
