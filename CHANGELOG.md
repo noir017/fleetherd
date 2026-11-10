@@ -43,6 +43,11 @@ All notable changes to this project are documented here. The format is based on
   as `application/octet-stream` — the request's JSON with each file's size, then the files — and the
   daemon turns it back into the same request and checks it with the same rules, size cap included.
   The same file now arrives in 33 s. Text alone is still sent as JSON.
+- **The web UI's page is sent as brotli to a browser that takes it.** 114 KB instead of 139 KB of
+  gzip, 18% less on a first load. Brotli at that ratio takes about a second, so it is made once, off
+  the event loop, the first time a client that accepts it asks, and gzip is sent until then.
+  Browsers ask for brotli only over https, so it reaches a page behind a TLS proxy that asks the
+  daemon for it. The event stream stays gzip.
 
 ### Fixed
 

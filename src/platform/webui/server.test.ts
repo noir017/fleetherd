@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { createGunzip, gunzipSync, inflateSync } from 'node:zlib';
+import { brotliDecompressSync, createGunzip, gunzipSync, inflateSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
@@ -236,6 +236,41 @@ describe('webui server: the page', () => {
     expect(plain.headers.vary).toBe('Accept-Encoding');
     expect(zipped.headers.etag).toBe(plain.headers.etag);
     expect(gunzipSync(zipped.body).equals(plain.body)).toBe(true);
+  });
+
+  it('serves brotli to a client that takes it, once it has been made, and gzip until then', async () => {
+    // Quality 11 is ~18% smaller than gzip and takes about a second, so it is made once, off the
+    // event loop, the first time someone could use it — never per request.
+    const { port } = await boot();
+    const plain = await rawGet(port, '/');
+    const first = await rawGet(port, '/', { 'accept-encoding': 'gzip, br' });
+    expect(first.headers['content-encoding']).toBe('gzip');
+    let br = first;
+    for (let i = 0; i < 100 && br.headers['content-encoding'] !== 'br'; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      br = await rawGet(port, '/', { 'accept-encoding': 'gzip, deflate, br' });
+    }
+    expect(br.headers['content-encoding']).toBe('br');
+    expect(br.headers.vary).toBe('Accept-Encoding');
+    expect(br.headers.etag).toBe(plain.headers.etag);
+    expect(brotliDecompressSync(br.body).equals(plain.body)).toBe(true);
+    expect(br.body.length).toBeLessThan(first.body.length);
+    // A client that says no to br, or never mentions it, is not sent it.
+    expect((await rawGet(port, '/', { 'accept-encoding': 'gzip, br;q=0' })).headers['content-encoding']).toBe('gzip');
+    expect((await rawGet(port, '/', { 'accept-encoding': 'gzip' })).headers['content-encoding']).toBe('gzip');
+    // The event stream stays gzip whatever the client takes: it is flushed per event.
+    const { base } = await boot();
+    const cookie = await signIn(base);
+    const ev = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port: Number(new URL(base).port), path: '/api/events', headers: { cookie, 'accept-encoding': 'br, gzip' } },
+        resolve
+      );
+      req.once('error', reject);
+      req.end();
+    });
+    expect(ev.headers['content-encoding']).toBe('gzip');
+    ev.destroy();
   });
 
   it('still renews a live session cookie on a 304', async () => {

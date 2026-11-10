@@ -890,6 +890,14 @@ topic this browser has never loaded the page on still downloads it whole, once; 
 address is a 304 too. Moving the topic out of the query string would make every reload a 304, but
 it is what links and notifications open, so it was left alone.
 
+**When the page is downloaded, it is brotli where the client takes it.** Quality 11 makes it 18%
+smaller than gzip (114 KB against 139 KB; DOMContentLoaded 2.65 s → 2.25 s at 500 kbps, Chromium,
+`br-probe.mts`) and takes about a second, so it is made once per cached page, on libuv's pool
+(`brotliPage`), the first time a client that takes `br` asks; until it lands that client is sent
+gzip. Browsers offer `br` only over https, so behind the TLS proxy this page is meant to sit behind
+— whether the proxy asks the daemon for it is the proxy's choice. The event stream stays gzip: it is
+flushed after every event, and that is where the trap is (above), not the ratio.
+
 **Sends are idempotent.** A POST can be accepted and still time out on a bad link, so the page
 retries — which is only safe because each send carries a nonce the server remembers. The
 daemon's own inbound dedup cannot help here: it keys on a message id, and a retry mints a fresh
