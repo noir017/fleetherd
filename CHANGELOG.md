@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.57.0] - 2026-11-10
+
 ### Added
 
 - **An agent can pin the harness's own session options, and Cursor finally exposes them.** Cursor's
