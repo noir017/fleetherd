@@ -4325,13 +4325,13 @@ const SCRIPT = `
   }
 
   /**
-   * The rank the list is painted by, on one scale above the decision group: stateRank's four
-   * states become 1–4 (needsYou stays 0), and a root that has no title yet is lifted to 1. A
-   * topic is named by its first message (topics.ts seed), so an empty title means nothing has
-   * been said in it yet — the conversation the person has just opened and is about to work in,
-   * which the state order otherwise left at the bottom among the topics with no agent behind
-   * them. The root flag is false for a node met while walking a parent's children: an empty
-   * title there must not lift the parent, which is only being kept to show that child.
+   * The rank the list is painted by: needsYou 0, a root that has no title yet 1, and stateRank's
+   * other three states shifted up to 2–4. A topic is named by its first message (topics.ts seed),
+   * so an empty title means nothing has been said in it yet — the conversation the person has just
+   * opened and is about to work in, which the state order otherwise left at the bottom among the
+   * topics with no agent behind them. The root flag is false for a node met while walking a
+   * parent's children: an empty title there must not lift the parent, which is only being kept to
+   * show that child.
    *
    * It is a rank of the list, not a fifth state: the dot is drawn from the same facts and the
    * filter bar still counts by stateRank, so "No agent" keeps counting the new topic it is.
