@@ -77,7 +77,8 @@ Three rules keep this from rotting:
 | `editButtons` | ✓ | ✓ | ✓ | ✓ | – | – | – | – | ✓ |
 | `slashCommands` | ✓ | ✓ | ✓ | – | – | – | – | – | ✓ |
 | `maxMessageLength` | 2000 | 4096 | 3000 | 10000 | 1000 | 5000 | 2000 | 3500 | 20000 |
-| `menuPageSize` | 12 | 12 | 12 | – | – | – | – | – | 12 |
+| `menuPageSize` | 12 | 12 | 12 | – | – | – | – | – | 24 |
+| `workdirPageSize` | – | – | – | – | – | – | – | – | 61 |
 | `toolPreviewLimit` | – | – | – | – | – | – | – | – | 2000 |
 
 **`editButtons` is not `editMessage && buttons`.** It is its own field because the
@@ -167,7 +168,16 @@ conservative `PAGE_SIZE` (6) rather than as "no limit" — the failure mode of g
 is the platform rejecting the whole message, so a platform nobody has measured stays small.
 Lark is a deliberate dash: its cards are hand-built here and it publishes no citable
 element cap for a card's action module. `core/paging.ts` clamps whatever is declared to
-what one Discord message can physically carry.
+`PAGE_SIZE_MAX` (24 — the largest page still one phone screen).
+
+**`workdirPageSize` is the same declaration for one menu.** `/cd` lists short directory
+names, so the number that keeps a page of long model ids to one screen is not its bound —
+its bound is the scan (`daemon/workdir-scan.ts` stops at 60 sub-directories and always
+prepends the root, so 61 options is the most a menu can hold). A platform declares it only
+when `/cd` can carry a bigger page than its other menus; absent means "same as
+`menuPageSize`", and core clamps it to `WORKDIR_PAGE_SIZE_MAX` (61). The web UI is the only
+declarer (61), where the transcript scrolls and paging a workspace it can show at once is
+cost with no cause.
 
 **`renameThread` is not `thread` either**, for the same shape of reason. Four platforms
 report `thread: true` and give four different answers to "can this lane be renamed":

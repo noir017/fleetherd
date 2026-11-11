@@ -999,6 +999,18 @@ export interface PlatformCapabilities {
    * declared number to what Discord can physically carry). Meaningless when buttons=false.
    */
   menuPageSize?: number;
+  /**
+   * How many directories one page of `/cd` may hold, when that differs from `menuPageSize`.
+   *
+   * The two menus are bounded by different things. `menuPageSize` is sized so a page of long model
+   * ids still fits one phone screen; a page of short directory names has no such cost, and its
+   * only real bound is the scan (`daemon/workdir-scan.ts` stops at 60 sub-directories and always
+   * prepends the root). The web UI declares the whole scan here (2026-11-11): a browser scrolls,
+   * so paging a workspace it could show at once was cost with no cause. Absent means "same as
+   * `menuPageSize`"; clamped to core/paging.ts WORKDIR_PAGE_SIZE_MAX. Meaningless when
+   * buttons=false.
+   */
+  workdirPageSize?: number;
   /** Slash commands (register + receive). */
   slashCommands: boolean;
   /**

@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WORKDIR_SCAN_MAX, isDirectory, scanWorkdirs } from './workdir-scan.js';
+import { WORKDIR_PAGE_SIZE_MAX } from '../core/paging.js';
 
 /**
  * The `/cd` option list, against a real filesystem.
@@ -78,6 +79,15 @@ describe('scanWorkdirs', () => {
       expect(many.truncated).toBe(3);
     }
     rmSync(big, { recursive: true, force: true });
+  });
+
+  // The web UI declares its /cd page as the workdir ceiling, whose whole point is that the menu
+  // never pages there. A scan is capped at WORKDIR_SCAN_MAX sub-directories but always prepends the
+  // agent's root, so the page must cover one more than the cap — if it ever stops doing so, the
+  // last directories page again, and that should be a test failure rather than "the menu has a
+  // Next button now".
+  it('scans no more directories than a page may hold', () => {
+    expect(WORKDIR_SCAN_MAX + 1).toBeLessThanOrEqual(WORKDIR_PAGE_SIZE_MAX);
   });
 });
 

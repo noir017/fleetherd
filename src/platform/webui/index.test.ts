@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
-import { PAGE_SIZE, PAGE_SIZE_MAX, resolvePageSize } from '../../core/paging.js';
+import { PAGE_SIZE, PAGE_SIZE_MAX, WORKDIR_PAGE_SIZE_MAX, resolvePageSize } from '../../core/paging.js';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import { createWebuiAdapter, diskTranscriptStore, diskUploadStore } from './index.js';
 import { CHANNEL, type Kept } from './room.js';
@@ -54,6 +54,16 @@ describe('webui adapter: what it says it can do', () => {
     expect(size).toBe(PAGE_SIZE_MAX);
     expect(size).toBeGreaterThan(PAGE_SIZE);
     expect(resolvePageSize(size)).toBe(size);
+  });
+
+  it('gives /cd the whole scan on one page, without raising the shared menu size', () => {
+    // The two menus are bounded by different things: 24 keeps a page of long model ids to one phone
+    // screen, while a list of short directory names only has the scan's 60. A browser scrolls, so
+    // paging a workspace it can show at once was cost with no cause.
+    const caps = adapter().capabilities;
+    expect(caps.workdirPageSize).toBe(WORKDIR_PAGE_SIZE_MAX);
+    expect(resolvePageSize(caps.workdirPageSize, WORKDIR_PAGE_SIZE_MAX)).toBe(caps.workdirPageSize);
+    expect(caps.menuPageSize).toBe(PAGE_SIZE_MAX);
   });
 
   it('asks the pacer for a budget per topic, not one for the whole page', () => {

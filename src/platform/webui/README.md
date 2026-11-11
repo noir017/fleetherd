@@ -761,6 +761,7 @@ never a permission prompt nobody asked for.
 | `buttons` / `editButtons` | ✓ | Both, or `/model`, `/cd` and `/setting` silently degrade to plain text |
 | `settingsScreen` | ✓ | The only platform that declares it: `/setting` is drawn as a settings page from the structured screen the daemon sends, not as the button grid. Every chat platform keeps the grid (see [Menus](#menus)) |
 | `menuPageSize` | 24 | Core's ceiling, twice the chat platforms' 12. The page draws a menu as a grid (`menu()` in `page.ts`), so 24 is fewer rows here than 12 is on Telegram, and a page of long model ids is still one phone screen |
+| `workdirPageSize` | 61 | `/cd` gets the whole scan on one page: 61 is `daemon/workdir-scan.ts`'s cap plus the root it always prepends, so this menu never pages here. `menuPageSize` stays 24 because that number is about long model ids fitting a phone screen; a list of short directory names has no such cost, and the transcript scrolls |
 | `paceByLane` | ✓ | The only platform that declares it: each topic gets its own outbound budget instead of queueing behind every other topic's streaming |
 | `slashCommands` | ✓ | *Received*, as ordinary text, exactly like Telegram — `registerCommands` only feeds the page's autocomplete |
 | `slashNeedsAck` | – | There is no interaction to close out |

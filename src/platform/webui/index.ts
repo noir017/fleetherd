@@ -26,6 +26,7 @@ import path from 'node:path';
 
 import { configDir } from '../../config/load.js';
 import type { ConversationAddress } from '../../core/conversation.js';
+import { WORKDIR_PAGE_SIZE_MAX } from '../../core/paging.js';
 import type { MessageRef, SettingsScreen, SlashCommandSpec } from '../../types.js';
 import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
 import { renderWebMarkdown } from '../web-markdown.js';
@@ -92,13 +93,22 @@ const CAPABILITIES: PlatformAdapter['capabilities'] = {
   settingsScreen: true,
   /**
    * The most core allows, and twice what the chat platforms declare. It was their 12, so that
-   * which client someone read from did not change how many directories `/cd` offered — until the
+   * which client someone read from did not change how many models `/model` offered — until the
    * operator asked this one for more (2026-10-31). The page draws a menu as a grid (page.ts
-   * menu()), several directories a row on a desktop and two on a phone, where a chat app gives a
-   * button a row or a slot of its own; so 24 costs fewer rows here than 12 does on Telegram, and
-   * a page of long model ids is still one phone screen (core/paging.ts PAGE_SIZE_MAX).
+   * menu()), several items a row on a desktop and two on a phone, where a chat app gives a button
+   * a row or a slot of its own; so 24 costs fewer rows here than 12 does on Telegram, and a page
+   * of long model ids is still one phone screen (core/paging.ts PAGE_SIZE_MAX). `/cd` is not
+   * bounded by that — it has a larger page of its own below.
    */
   menuPageSize: 24,
+  /**
+   * `/cd` gets the whole scan on one page — 61 is the scan's 60 sub-directories plus the root it
+   * always prepends, so this menu never pages here. `menuPageSize` above stays 24: that number is
+   * about a page of long model ids still fitting a phone screen, which a list of directory names
+   * does not share, and the transcript scrolls anyway (2026-11-11, operator's request: a
+   * 32-directory workspace was two pages for no reason a browser imposes).
+   */
+  workdirPageSize: WORKDIR_PAGE_SIZE_MAX,
   /**
    * Received, not registered in the platform's own UI — the same shape as Telegram, where a
    * slash command arrives as an ordinary message. `registerCommands` here only hands the page

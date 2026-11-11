@@ -132,7 +132,7 @@ import type { AgentFactory } from './agent.js';
 import { ConversationRegistry } from './conversation.js';
 import type { ConversationStore } from './conversation-store.js';
 import type { WorkdirUsageStore } from './workdir-usage.js';
-import { resolvePageSize } from '../core/paging.js';
+import { resolvePageSize, WORKDIR_PAGE_SIZE_MAX } from '../core/paging.js';
 import { IpcServer } from '../ipc/server.js';
 import { startSkillSweep } from './skill-lifecycle.js';
 import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
@@ -3153,7 +3153,13 @@ export class Daemon {
     const reqId = randomUUID().slice(0, 8);
     // Copied, not referenced: the scan's array must not be shared with a later scan's.
     const options = [...menu.options];
-    const pageSize = resolvePageSize(adapter.capabilities.menuPageSize);
+    // `/cd` may declare a page of its own (workdirPageSize) — a short-name list in a scrolling page
+    // has no reason to share the number that keeps a page of long model ids to one phone screen.
+    // Frozen with the snapshot below, like every other menu's.
+    const pageSize = resolvePageSize(
+      adapter.capabilities.workdirPageSize ?? adapter.capabilities.menuPageSize,
+      WORKDIR_PAGE_SIZE_MAX
+    );
     const pending: PendingWorkdirMenu = {
       conversationId,
       agentId,

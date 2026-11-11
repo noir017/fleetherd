@@ -772,8 +772,12 @@ each other: Discord allows 25 components per message, Telegram's inline keyboard
 effectively unbounded but costs one screen row per button, LINE bundles at most 4 per
 template. One shared number has to be the smallest of those, and the smallest is what made
 `/cd` page through a ten-project workspace two items at a time. `resolvePageSize` applies
-the default and clamps a declared number to `PAGE_SIZE_MAX` (22 — Discord's 25 minus the
-three buttons a menu adds beyond its items).
+the default and clamps a declared number to the ceiling passed with it — `PAGE_SIZE_MAX` (24,
+the largest page that is still one phone screen) for every menu, or `WORKDIR_PAGE_SIZE_MAX`
+(61 — the scan's 60 sub-directories plus the root it prepends) for `/cd` when a platform
+declares `workdirPageSize`. The two ceilings differ because the menus are bounded by
+different things: a page of long model ids must fit a phone screen, a page of short directory
+names only has the scan.
 
 Every function here takes the size as a parameter, and the daemon **freezes** the resolved
 number alongside the option snapshot when it posts a menu (`PendingModelMenu.pageSize` and

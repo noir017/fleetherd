@@ -44,15 +44,29 @@ export const PAGE_SIZE = 6;
 export const PAGE_SIZE_MAX = 24;
 
 /**
+ * Ceiling on a `/cd` page when a platform declares `workdirPageSize`.
+ *
+ * Higher than PAGE_SIZE_MAX because the two menus are bounded by different things. A page of model
+ * ids is a wall of long labels, and 24 is what still fits one phone screen; a page of directory
+ * names is short labels whose only real bound is the scan — daemon/workdir-scan.ts stops at 60
+ * sub-directories and always prepends the agent's root, so 61 options is the most a menu can ever
+ * hold. The web UI asked for it on 2026-11-11: a 32-directory workspace was two pages there for no
+ * reason a browser imposes, only the shared ceiling. Kept equal to that scan bound so the two
+ * numbers cannot drift into a page that pages nothing.
+ */
+export const WORKDIR_PAGE_SIZE_MAX = 61;
+
+/**
  * The page size to actually use, given what a platform declared (or didn't).
  *
  * One function so the default and the clamp are applied identically everywhere: a menu posted with
  * one size and paged with another turns to the wrong page, which is precisely the class of drift
- * this module exists to prevent.
+ * this module exists to prevent. `max` is the ceiling for the menu being resolved — the shared
+ * PAGE_SIZE_MAX unless a platform declared a `workdirPageSize`, which carries its own.
  */
-export function resolvePageSize(declared: number | undefined): number {
+export function resolvePageSize(declared: number | undefined, max: number = PAGE_SIZE_MAX): number {
   if (declared === undefined || !Number.isFinite(declared)) return PAGE_SIZE;
-  return Math.min(PAGE_SIZE_MAX, Math.max(1, Math.trunc(declared)));
+  return Math.min(max, Math.max(1, Math.trunc(declared)));
 }
 
 /** How many pages a list of this size needs (at least one, so an empty list still renders). */

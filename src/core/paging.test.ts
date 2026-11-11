@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PAGE_SIZE,
   PAGE_SIZE_MAX,
+  WORKDIR_PAGE_SIZE_MAX,
   pageCount,
   pageOf,
   pageSlice,
@@ -31,6 +32,21 @@ describe('resolvePageSize', () => {
   // typo'd size on a chat platform is a menu the platform rejects outright.
   it('clamps a declared size to the ceiling', () => {
     expect(resolvePageSize(100)).toBe(PAGE_SIZE_MAX);
+  });
+
+  // The workdir menu declares its own ceiling (web UI): a directory list is short labels, so the
+  // number that keeps /model to one screen is not its bound. Undeclared still means PAGE_SIZE —
+  // the ceiling changes, the "nobody checked this platform" default does not.
+  it('clamps to the ceiling the menu it belongs to carries', () => {
+    expect(resolvePageSize(WORKDIR_PAGE_SIZE_MAX, WORKDIR_PAGE_SIZE_MAX)).toBe(WORKDIR_PAGE_SIZE_MAX);
+    expect(resolvePageSize(100, WORKDIR_PAGE_SIZE_MAX)).toBe(WORKDIR_PAGE_SIZE_MAX);
+    expect(resolvePageSize(undefined, WORKDIR_PAGE_SIZE_MAX)).toBe(PAGE_SIZE);
+  });
+
+  it('keeps the workdir ceiling above the shared one', () => {
+    expect(WORKDIR_PAGE_SIZE_MAX).toBeGreaterThan(PAGE_SIZE_MAX);
+    // Its exact value is the scan's cap plus the root, pinned in daemon/workdir-scan.test.ts where
+    // both halves are visible — core cannot import the daemon.
   });
 
   it('refuses a size that would page forever', () => {

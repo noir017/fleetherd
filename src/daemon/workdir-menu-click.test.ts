@@ -64,7 +64,7 @@ const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 30));
 function rig(
   opts: {
     access?: string[];
-    caps?: { buttons?: boolean; editButtons?: boolean; menuPageSize?: number };
+    caps?: { buttons?: boolean; editButtons?: boolean; menuPageSize?: number; workdirPageSize?: number };
   } = {}
 ) {
   const sent: string[] = [];
@@ -120,6 +120,7 @@ function rig(
       // conservative platform; the page-size tests below pass one, and one of them mutates this
       // object mid-flight to prove a live menu is not resized underneath the user.
       ...(opts.caps?.menuPageSize !== undefined ? { menuPageSize: opts.caps.menuPageSize } : {}),
+      ...(opts.caps?.workdirPageSize !== undefined ? { workdirPageSize: opts.caps.workdirPageSize } : {}),
     },
     sendMessage: async (address: { channel: string }, text: string) => {
       sent.push(text);
@@ -258,6 +259,19 @@ describe('page size', () => {
     expect(r.pickIds()).toHaveLength(PROJECTS.length + 1); // every project, plus the root
     expect(r.navIds()).toEqual([]); // nothing to turn
     expect(r.menu().text).not.toContain('page 1/');
+  });
+
+  it('gives /cd its own page size, leaving the shared one to /model', async () => {
+    // The web UI declares both: 24 for /model, 60 for /cd. The shared size is one here, so a leak
+    // the other way is visible — /cd would page and /model would not.
+    const r = rig({ caps: { menuPageSize: 1, workdirPageSize: PROJECTS.length + 1 } });
+    await r.send('/oc');
+    expect(r.pickIds()).toHaveLength(PROJECTS.length + 1); // the whole workspace, one page
+    expect(r.navIds()).toEqual([]);
+
+    await r.send('/model');
+    expect(r.modelIds()).toHaveLength(1); // /model still pages at the shared size
+    expect(r.menu().text).toContain('page 1/2');
   });
 
   it('keeps a posted menu at the size it was drawn with, even if the platform changes its mind', async () => {

@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's `/cd` menu lists the whole workspace on one page.** It was paged at the shared menu
+  size — 24 — the number that keeps a page of long model ids to one phone screen; a list of short
+  directory names has no such cost, so a 32-directory workspace was two pages for no reason a
+  browser imposes. The web UI now declares `workdirPageSize` (61 — the scan's 60 sub-directories
+  plus the root it prepends) and `/cd` never pages there, while `/model` keeps its 24.
+
 ## [2.59.0] - 2026-11-11
 
 ### Added
