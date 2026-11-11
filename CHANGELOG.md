@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's conversation library is a History tab beside Topics, and a conversation opens where
+  a topic does.** In 2.58.0 it was a window over the page with a transcript of its own — role labels
+  over plain text — so a reply full of code, tables and tool calls read nothing like the same reply
+  in its topic. The sidebar's header is now two tabs; History holds the list, the search and Load
+  older, and a row opens in the transcript's place, drawn with the same bubbles, markdown and folded
+  tool lines (the daemon renders the read as a topic's messages). It is read-only, and says why
+  where the composer was — another platform, or a topic cleared from this page — with **Open the
+  topic** while the topic is still here and the note when a read was cut at 500 messages. The topic
+  underneath keeps its stream and its place: **Close**, the Topics tab or any topic puts it back,
+  and while it is covered nothing is marked seen and nothing pasted lands in its composer. On a phone
+  a picked conversation closes the drawer like a picked topic. Neither the tab nor the conversation
+  survives a reload, since `?t=` is what links and notifications open. At a sidebar under 232px the
+  two tabs show their icons instead of their words.
+
 ## [2.58.0] - 2026-11-10
 
 ### Added

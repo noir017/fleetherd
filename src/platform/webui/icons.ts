@@ -49,7 +49,10 @@ const PATHS = {
     '<path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/>' +
     '<path d="M14 3v5h5M8.5 12.5h7M8.5 16.5h5"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',
-  // The conversation library: a clock with an arrow running back round it.
+  // The sidebar's two tabs, where a narrow sidebar has no room for their words: the topics this
+  // page has (a speech bubble), and the conversation library (a clock with an arrow running back
+  // round it).
+  chat: '<path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9a1.5 1.5 0 0 1-1.5 1.5h-8.5L6 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5z"/>',
   history:
     '<path d="M3.5 12a8.5 8.5 0 1 0 8.5-8.5 9.2 9.2 0 0 0-6.36 2.59L3.5 8"/>' +
     '<path d="M3.5 3.5V8h4.5"/><path d="M12 7.5V12l3 1.8"/>',

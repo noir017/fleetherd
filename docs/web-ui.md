@@ -251,21 +251,29 @@ the conversation that created the skill.
 
 ## History
 
-The clock-with-an-arrow button in the topic list's header, beside **Clear all topics**, opens every
+The topic list has two tabs at its top: **Topics** and **History**. History lists every
 conversation the gateway has recorded — whichever agent and platform it ran on. It is the same
-library `talkcode sessions list/search/read` reads, and it is read-only: a list, a keyword search,
-and one conversation opened whole. A review's own session is left out; those are read on the
-Reviews tab.
+library `talkcode sessions list/search/read` reads. A review's own session is left out; those are
+read on the Reviews tab.
 
 A row says the title, the agent, the platform, when it was last active and how many messages it
 holds. **Load older conversations** pages further back — as far as the gateway has been recording.
 Typing in the search field and pressing Enter searches every conversation at once; clearing the
-field puts the list back.
+field puts the list back. The list is read again each time you open the tab.
 
-Opening a conversation shows it from the start. A long one is cut at 500 messages and says so
-above the transcript: what you are reading is part of the conversation, not all of it. If the
-conversation is still a topic in this page, **Open the topic** switches to it. A topic cleared from
-the list is read here and cannot be brought back.
+Clicking a row opens the conversation where a topic is read, drawn the same way: your messages,
+the agent's replies with their formatting, tool calls folded into lines. It is read-only — the
+composer is replaced by a line saying why nothing can be sent: the conversation may have run on
+another platform, or its topic may have been cleared from this page. If it is still a topic here,
+**Open the topic** switches to it. A long conversation is cut at 500 messages and says so beside
+the last one shown: what you are reading is part of the conversation, not all of it. The library
+keeps less than a topic did — a run of tool calls is one line, and there are no buttons, pictures
+or timings.
+
+**Close**, the **Topics** tab, or opening any topic puts the topic you were in back where you left
+it. On a phone, picking a conversation closes the drawer; open it again and tap **Topics** to go
+back. Neither the tab nor the conversation is remembered: a reload opens on Topics, on the topic in
+the address.
 
 ## Notifications
 

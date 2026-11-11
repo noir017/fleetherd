@@ -2476,8 +2476,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     await h.emit(sync(A, [], [A]));
     const headerTitle = h.doc.querySelector('#sidebar-header .panel-title');
     expect(headerTitle).not.toBeNull();
-    const titleText = headerTitle?.querySelector('.panel-title-text');
-    expect(titleText?.textContent).toBe('Topics');
+    expect(headerTitle?.querySelector('#sb-tab-topics')?.textContent).toBe('Topics');
     const btn = h.el('clear-topics');
     expect(headerTitle?.contains(btn)).toBe(true);
     expect(btn.classList.contains('btn-icon')).toBe(true);
@@ -2488,19 +2487,18 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     expect(btn.getAttribute('aria-label')).toBe('Clear all topics');
   });
 
-  it('puts the history button in the same panel-title, right beside #clear-topics', async () => {
+  it('puts Topics | History in the panel-title as two tabs, with #clear-topics after them', async () => {
     const h = await open();
     await h.emit(sync(A, [], [A]));
     const headerTitle = h.doc.querySelector('#sidebar-header .panel-title')!;
-    const btn = h.el('history-open');
-    expect(headerTitle.contains(btn)).toBe(true);
-    expect(btn.previousElementSibling).toBe(h.el('clear-topics'));
-    expect(btn.classList.contains('btn-icon')).toBe(true);
-    expect(btn.querySelector('svg.ic-history')).not.toBeNull();
-    expect(btn.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 24 24');
-    expect(btn.textContent).toBe('');
-    expect(btn.getAttribute('title')).toBe('All conversations');
-    expect(btn.getAttribute('aria-label')).toBe('All conversations');
+    const tabs = headerTitle.querySelector('[role="tablist"]')!;
+    expect([...tabs.querySelectorAll('[role="tab"]')].map((t) => t.id)).toEqual(['sb-tab-topics', 'sb-tab-history']);
+    expect(h.el('sb-tab-topics').getAttribute('aria-controls')).toBe('topics');
+    expect(h.el('sb-tab-history').getAttribute('aria-controls')).toBe('history-pane');
+    expect(tabs.nextElementSibling).toBe(h.el('clear-topics'));
+    // The old window's button is gone: History is a place in the sidebar now, not a window.
+    expect(h.doc.getElementById('history-open')).toBeNull();
+    expect(h.doc.getElementById('history')).toBeNull();
   });
 
   it('updates title and aria-label on #clear-topics as stars come and go', async () => {
@@ -5770,17 +5768,17 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(css).toContain('.skill-main{flex-basis:100%}');
   });
 
-  it('makes the history window the whole phone screen, with a 16px field and 44px controls', () => {
+  it('gives the History tab finger-sized rows and buttons, and the read-only bar the composer’s clearance', () => {
     const css = narrowBlock();
-    // Full screen, like the skills page: a list and a transcript need the width.
-    expect(css).toContain('#history{padding:0}');
-    expect(css).toContain('#history-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}');
-    // The two controls a thumb has to hit, and the field Safari must not zoom in on.
-    expect(css).toContain(
-      '#history-close,#history-back{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px'
-    );
-    expect(css).toContain('#history-q{font-size:16px}');
+    // The search field is the filter bar's, whose 16px rule keeps Safari from zooming in on it.
+    expect(renderPage('Chat', false)).toContain('<input id="history-q" class="fb-q"');
+    expect(css).toContain('.fb-q{font-size:16px}');
+    expect(css).toContain('.hist-item{padding:10px 9px}');
+    expect(css).toContain('#history-go{min-width:36px;height:36px');
     expect(css).toContain('#history-more{min-height:44px');
+    // Where the composer was, the bar's two buttons a thumb has to hit and the home indicator.
+    expect(css).toContain('.lib-acts button{min-height:44px');
+    expect(css).toContain('#lib-bar{padding:8px 12px calc(10px + env(safe-area-inset-bottom,0px))}');
   });
 
   it('keeps fields at 16px so Safari does not zoom in and stay there', () => {
@@ -10037,7 +10035,7 @@ describe('webui page: the skills page', () => {
   });
 });
 
-describe('webui page: the history page', () => {
+describe('webui page: the History tab', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
   const at = Date.UTC(2026, 10, 9, 12, 0);
@@ -10057,14 +10055,22 @@ describe('webui page: the history page', () => {
     sessions,
     ...(next ? { next } : {}),
   });
+  /** Two tool lines exactly as renderWebToolLines writes them. */
+  const TOOLS =
+    '<div class="tools"><div class="tl"><span class="tl-c">Bash: npm run deploy</span></div>' +
+    '<div class="tl"><span class="tl-c">Read: notes.md</span></div></div>';
+  /** A read in the shape room.ts historyMessages answers with: the transcript's own messages. */
   const read = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
     session: row(),
     messages: [
-      { id: 1, at, role: 'user', kind: 'normal', text: 'deploy it' },
-      { id: 2, at: at + 1_000, role: 'agent', kind: 'normal', text: 'deployed' },
+      { id: 'h1', own: true, html: '<div class="raw">deploy it</div>', at, buttons: [], reactions: [] },
+      { id: 'h2', own: false, html: TOOLS, at: at + 500, buttons: [], reactions: [], kind: 'tools' },
+      { id: 'h3', own: false, html: '<p>deployed <strong>v2</strong></p>', at: at + 1_000, buttons: [], reactions: [] },
     ],
     ...over,
   });
+  const topicList = (stages: Record<string, Record<string, unknown>> = {}): Array<Record<string, unknown>> =>
+    [A, B].map((id, i) => ({ id, title: `Topic ${id}`, lastAt: 1000 - i, running: false, msgCount: 0, ...stages[id] }));
 
   /** Type a query and press Enter, the way a phone's search key does. */
   async function search(h: Harness, q: string): Promise<void> {
@@ -10074,21 +10080,46 @@ describe('webui page: the history page', () => {
     await tick();
   }
 
-  it('opens from the sidebar header and lists every conversation with its agent, platform and size', async () => {
+  /** The History tab, its first page on screen. */
+  async function onHistory(h: Harness, until_ = 'Deploy notes'): Promise<void> {
+    await h.click('#sb-tab-history');
+    await until('the history list', () => h.el('history-list').textContent!.includes(until_));
+  }
+
+  /** One conversation opened from the list, read back into the transcript's place. */
+  async function openRow(h: Harness, n = 0): Promise<void> {
+    (h.doc.querySelectorAll('#history-list .hist-item')[n] as HTMLElement).click();
+    await until('the conversation', () => h.el('lib-log').querySelector('.lib-head, .hist-note') !== null);
+  }
+
+  const libOn = (h: Harness): boolean => h.el('chat').classList.contains('lib');
+
+  it('is a tab beside Topics in the sidebar header, and the list it shows replaces the topics', async () => {
     const h = await open({
       replies: {
         'api/history': page([row(), row({ id: 2, key: 'telegram#chat#9', title: 'Phone chat', agent: 'oc', platform: 'telegram', messages: 1, topic: undefined })]),
       },
     });
     await h.emit(sync(A, [], [A]));
-    expect(h.el('history').hidden).toBe(true);
+    const title = h.doc.querySelector('#sidebar-header .panel-title')!;
+    const tabs = [...title.querySelectorAll('[role="tab"]')].map((t) => t.textContent);
+    expect(tabs).toEqual(['Topics', 'History']);
+    expect(h.el('sb-tab-topics').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('history-pane').hidden).toBe(true);
+    // The page never asks the library for anything until the tab is chosen.
+    expect(h.calls.some((c) => c.path.startsWith('api/history'))).toBe(false);
 
-    await h.click('#history-open');
-    await until('the history list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    await onHistory(h);
 
-    expect(h.el('history').hidden).toBe(false);
-    expect(h.el('history-title').textContent).toBe('History');
-    expect(h.el('history-count').textContent).toBe('2');
+    expect(h.el('sb-tab-history').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sb-tab-history').classList.contains('on')).toBe(true);
+    expect(h.el('history-pane').hidden).toBe(false);
+    expect(h.el('topics').hidden).toBe(true);
+    expect(h.el('topics-filter').hidden).toBe(true);
+    // Clear all topics is about the other tab's list.
+    expect(h.el('sidebar').classList.contains('on-history')).toBe(true);
+    expect(renderPage('Chat', false)).toContain('#sidebar.on-history #clear-topics{display:none}');
+    expect(h.el('history-count').textContent).toBe('2 conversations');
     const rows = [...h.doc.querySelectorAll('#history-list .hist-item')];
     expect(rows).toHaveLength(2);
     expect(rows[0]!.textContent).toContain('Deploy notes');
@@ -10097,6 +10128,39 @@ describe('webui page: the history page', () => {
     expect(rows[1]!.textContent).toContain('Phone chat');
     expect(rows[1]!.textContent).toContain('oc · telegram');
     expect(h.el('history-more').hidden).toBe(true);
+
+    // Back on Topics, the list is the topics again; the transcript was never touched.
+    await h.click('#sb-tab-topics');
+    expect(h.el('history-pane').hidden).toBe(true);
+    expect(h.el('topics').hidden).toBe(false);
+    expect(h.el('sidebar').classList.contains('on-history')).toBe(false);
+  });
+
+  it('reads the library again each time the tab is chosen, keeping the rows it has until the answer', async () => {
+    const held: Record<string, Promise<void>> = {};
+    const h = await open({ replies: { 'api/history': page([row()]) }, held });
+    await h.emit(sync(A, [], [A]));
+    await onHistory(h);
+    const reads = (): number => h.calls.filter((c) => c.path === 'api/history').length;
+    expect(reads()).toBe(1);
+
+    // The second read is slow to answer.
+    let answer!: () => void;
+    held['api/history'] = new Promise<void>((r) => {
+      answer = r;
+    });
+    await h.click('#sb-tab-topics');
+    await h.click('#sb-tab-history');
+    await until('the second read', () => reads() === 2);
+    // No "Loading…" over a list that is already there: the old rows stand until the new ones land.
+    expect(h.el('history-list').textContent).toContain('Deploy notes');
+    expect(h.el('history-list').textContent).not.toContain('Loading');
+    answer();
+    await tick();
+    // Choosing the tab it is already on is not a reason to ask again.
+    await h.click('#sb-tab-history');
+    await tick();
+    expect(reads()).toBe(2);
   });
 
   it('pages backwards through the library from the button the daemon offers', async () => {
@@ -10107,9 +10171,8 @@ describe('webui page: the history page', () => {
       },
     });
     await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
-    await until('the first page', () => h.el('history-list').textContent!.includes('Second'));
-    expect(h.el('history-count').textContent).toBe('2+');
+    await onHistory(h, 'Second');
+    expect(h.el('history-count').textContent).toBe('2+ conversations');
     expect(h.el('history-more').hidden).toBe(false);
 
     await h.click('#history-more');
@@ -10117,6 +10180,7 @@ describe('webui page: the history page', () => {
 
     // Appended, not replaced, and the last page offers no further one.
     expect([...h.doc.querySelectorAll('#history-list .hist-item')]).toHaveLength(3);
+    expect(h.el('history-count').textContent).toBe('3 conversations');
     expect(h.el('history-more').hidden).toBe(true);
     expect(h.calls.some((c) => c.path === 'api/history?before=1762300000000.2')).toBe(true);
   });
@@ -10124,8 +10188,7 @@ describe('webui page: the history page', () => {
   it('ignores Enter mid-composition, which is a candidate being chosen and not a search', async () => {
     const h = await open({ replies: { 'api/history': page([row()]) } });
     await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
-    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    await onHistory(h);
     const searches = (): number => h.calls.filter((c) => c.path.startsWith('api/history/search')).length;
 
     const input = h.el('history-q') as HTMLInputElement;
@@ -10158,24 +10221,22 @@ describe('webui page: the history page', () => {
       replies: { 'api/history': page([row()]), 'api/history/search?q=deployment': { enabled: true, hits, more: true } },
     });
     await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
-    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    await onHistory(h);
 
     await search(h, 'deployment');
     await until('the hits', () => h.doc.querySelectorAll('#history-list .hist-item').length === 30);
     // The number on screen is the size of the answer; the + says it is not the size of the result.
-    expect(h.el('history-count').textContent).toBe('30+');
+    expect(h.el('history-count').textContent).toBe('30+ matches');
 
     // A search the daemon did not call a floor keeps the plain number.
     const whole = await open({
       replies: { 'api/history': page([row()]), 'api/history/search?q=deployment': { enabled: true, hits } },
     });
     await whole.emit(sync(A, [], [A]));
-    await whole.click('#history-open');
-    await until('the list', () => whole.el('history-list').textContent!.includes('Deploy notes'));
+    await onHistory(whole);
     await search(whole, 'deployment');
     await until('the hits', () => whole.doc.querySelectorAll('#history-list .hist-item').length === 30);
-    expect(whole.el('history-count').textContent).toBe('30');
+    expect(whole.el('history-count').textContent).toBe('30 matches');
   });
 
   it('keeps the page it already has when the next one cannot be read, and offers the button again', async () => {
@@ -10188,8 +10249,7 @@ describe('webui page: the history page', () => {
       status: { [next]: 500 },
     });
     await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
-    await until('the first page', () => h.el('history-list').textContent!.includes('Second'));
+    await onHistory(h, 'Second');
 
     await h.click('#history-more');
     await until('the error', () => !h.el('history-err').hidden);
@@ -10219,8 +10279,7 @@ describe('webui page: the history page', () => {
       status: { [next]: 500 },
     });
     await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
-    await until('the first page', () => h.el('history-list').textContent!.includes('Second'));
+    await onHistory(h, 'Second');
 
     await h.click('#history-more');
     await until('the error', () => !h.el('history-err').hidden);
@@ -10246,30 +10305,19 @@ describe('webui page: the history page', () => {
         'api/history/search?q=deployment': {
           enabled: true,
           hits: [
-            {
-              session: 1,
-              message: 4,
-              at,
-              title: 'Deploy notes',
-              agent: 'cc',
-              platform: 'webui',
-              role: 'user',
-              excerpt: 'the deployment finished',
-            },
+            { session: 1, message: 4, at, title: 'Deploy notes', agent: 'cc', platform: 'webui', role: 'user', excerpt: 'the deployment finished' },
           ],
         },
       },
     });
     await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
-    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    await onHistory(h);
 
     await search(h, 'deployment');
     await until('the hit', () => h.el('history-list').textContent!.includes('the deployment finished'));
 
     expect(h.calls.some((c) => c.path === 'api/history/search?q=deployment')).toBe(true);
-    expect(h.el('history-title').textContent).toBe('History · search');
-    expect(h.el('history-count').textContent).toBe('1');
+    expect(h.el('history-count').textContent).toBe('1 match');
     expect(h.doc.querySelector('#history-list .hist-excerpt')!.textContent).toBe('the deployment finished');
 
     // The field's own × leaves an empty value: the library comes back, not the last search.
@@ -10277,99 +10325,289 @@ describe('webui page: the history page', () => {
     input.value = '';
     input.dispatchEvent(new h.window.Event('input', { bubbles: true }));
     await tick();
-    expect(h.el('history-title').textContent).toBe('History');
     expect(h.doc.querySelector('#history-list .hist-excerpt')).toBeNull();
     expect(h.el('history-list').textContent).toContain('Deploy notes');
+    expect(h.el('history-count').textContent).toBe('1 conversation');
   });
 
-  it('opens one conversation whole, shows the note that says it was cut, and links back to its topic', async () => {
+  it('opens a conversation where the transcript is, drawn with the transcript’s own bubbles', async () => {
+    const h = await open({
+      replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() },
+    });
+    // The topic underneath holds a tool bubble of its own, the same two lines.
+    await h.emit(sync(B, [{ ...message('w1', TOOLS), kind: 'tools' }], [A, B]));
+    await onHistory(h);
+    await openRow(h);
+
+    expect(h.calls.some((c) => c.path === 'api/history/read?id=1')).toBe(true);
+    expect(libOn(h)).toBe(true);
+    expect(h.el('lib-title').textContent).toBe('Deploy notes');
+    expect(h.doc.querySelector('#history-list .hist-item')!.classList.contains('on')).toBe(true);
+    const head = h.el('lib-log').querySelector('.lib-head')!;
+    expect(head.textContent).toContain('cc · webui');
+    expect(head.textContent).toContain('4 messages');
+    expect(head.textContent).toContain(`webui#main#${A}`);
+
+    const bubbles = [...h.el('lib-log').querySelectorAll('.m')];
+    expect(bubbles).toHaveLength(3);
+    expect(bubbles[0]!.className).toBe('m own');
+    expect(bubbles[0]!.querySelector('.b .raw')!.textContent).toBe('deploy it');
+    expect(bubbles[2]!.querySelector('.b strong')!.textContent).toBe('v2');
+    // The same bubble as the transcript draws, from the same markup: class, body and folding.
+    const live = h.el('log').querySelector('[data-k="1:w1"]')!;
+    const lib = h.el('lib-log').querySelector('[data-k="h:h2"]')!;
+    expect(lib.className).toBe(live.className);
+    expect(lib.querySelector('.b')!.innerHTML).toBe(live.querySelector('.b')!.innerHTML);
+    expect(lib.querySelector('.tl-all')!.textContent).toBe('Show all');
+
+    // A line opens and folds as it does in a topic, and only this bubble's.
+    (lib.querySelector('.tl') as HTMLElement).click();
+    expect(h.el('lib-log').querySelector('[data-k="h:h2"] .tl')!.classList.contains('open')).toBe(true);
+    expect(h.el('log').querySelector('[data-k="1:w1"] .tl')!.classList.contains('open')).toBe(false);
+    (h.el('lib-log').querySelector('[data-k="h:h2"] .tl-all') as HTMLElement).click();
+    expect(h.el('lib-log').querySelector('[data-k="h:h2"] .tl-all')!.textContent).toBe('Collapse');
+
+    // The topic underneath is still there, untouched, for the way back.
+    expect(h.painted()).toBe(1);
+    // And the stylesheet takes the composer, the header's topic controls and the terminal away while
+    // it is up — as text, because jsdom's CSSOM is not to be trusted with this (see Testing).
+    expect(renderPage('Chat', false)).toContain(
+      '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,\n' +
+        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle{display:none}'
+    );
+  });
+
+  it('says a read was cut short where the reader lands, and says nothing when it was not', async () => {
+    const note = 'This conversation is longer than the 500 messages this page reads; only the first 500 are shown.';
     const h = await open({
       replies: {
-        'api/history': page([row()]),
-        'api/history/read?id=1': read({ note: 'This conversation is longer than the 500 messages this page reads; only the first 500 are shown.' }),
+        'api/history': page([row(), row({ id: 2, title: 'Whole' })]),
+        'api/history/read?id=1': read({ note }),
+        'api/history/read?id=2': read({ session: row({ id: 2, title: 'Whole' }) }),
       },
     });
     await h.emit(sync(B, [], [A, B]));
-    await h.click('#history-open');
-    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
+    await onHistory(h);
+    await openRow(h);
 
-    (h.doc.querySelector('#history-list .hist-item') as HTMLElement).click();
-    await until('the conversation', () => h.el('history-detail').textContent!.includes('deployed'));
+    // In the bar where the composer was, under the last message read — not above a transcript the
+    // reader lands at the bottom of.
+    expect(h.el('lib-note').hidden).toBe(false);
+    expect(h.el('lib-note').textContent).toBe(note);
+    expect(h.el('lib-note').parentElement).toBe(h.el('lib-bar'));
 
-    expect(h.calls.some((c) => c.path === 'api/history/read?id=1')).toBe(true);
-    expect(h.el('history-list').hidden).toBe(true);
-    expect(h.el('history-back').hidden).toBe(false);
-    // The search belongs to the list; a conversation is read without it above the text.
-    expect(h.el('history-search').hidden).toBe(true);
-    expect(h.el('history-title').textContent).toBe('Deploy notes');
-    const detail = h.el('history-detail');
-    expect(detail.textContent).toContain('deploy it');
-    expect(detail.textContent).toContain('cc · webui');
-    expect(detail.textContent).toContain(`webui#main#${A}`);
-
-    // The note is on screen, not swallowed: half a log read as the whole is the failure it prevents.
-    expect(h.el('history-note').hidden).toBe(false);
-    expect(h.el('history-note').textContent).toMatch(/only the first 500 are shown/);
-
-    // The conversation is still a topic here, so the page offers the way back to it.
-    const openTopic = detail.querySelector('[data-hist-topic]') as HTMLElement;
-    expect(openTopic).not.toBeNull();
-    openTopic.click();
-    await until('the switch', () => h.window.location.search.includes(A));
-    expect(h.el('history').hidden).toBe(true);
+    (h.doc.querySelectorAll('#history-list .hist-item')[1] as HTMLElement).click();
+    await until('the second conversation', () => h.el('lib-title').textContent === 'Whole');
+    expect(h.el('lib-note').hidden).toBe(true);
+    expect(h.doc.querySelectorAll('#history-list .hist-item.on')).toHaveLength(1);
   });
 
-  it('offers no link to a topic this page does not have, and goes back to the list', async () => {
+  it('says why nothing can be sent, and takes the reader into the topic while this page has it', async () => {
+    const h = await open({ replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() } });
+    await h.emit(sync(B, [], [A, B]));
+    await onHistory(h);
+    await openRow(h);
+
+    expect(h.el('lib-why').textContent).toMatch(/^Read-only: .*still a topic on this page/);
+    expect(h.el('lib-topic').hidden).toBe(false);
+
+    await h.click('#lib-topic');
+    await until('the switch', () => h.window.location.search.includes(A));
+    expect(libOn(h)).toBe(false);
+    // The sidebar follows: the row to come back to is in the Topics list.
+    expect(h.el('sb-tab-topics').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('history-pane').hidden).toBe(true);
+  });
+
+  it('takes the way into a topic away when the topic is gone, and names the other platform', async () => {
     const h = await open({
       replies: {
-        'api/history': page([row({ topic: 'deadbeef' })]),
-        'api/history/read?id=1': read({ session: row({ topic: 'deadbeef' }), messages: [] }),
+        'api/history': page([row(), row({ id: 2, key: 'telegram#chat#9', title: 'Phone chat', platform: 'telegram', topic: undefined })]),
+        'api/history/read?id=1': read(),
+        'api/history/read?id=2': read({ session: row({ id: 2, key: 'telegram#chat#9', title: 'Phone chat', platform: 'telegram', topic: undefined }) }),
       },
     });
-    await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
-    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
-    (h.doc.querySelector('#history-list .hist-item') as HTMLElement).click();
-    await until('the conversation', () => !h.el('history-detail').hidden && h.el('history-detail').textContent!.includes('webui#main'));
+    await h.emit(sync(B, [], [A, B]));
+    await onHistory(h);
+    await openRow(h);
+    expect(h.el('lib-topic').hidden).toBe(false);
 
-    expect(h.doc.querySelector('#history-detail [data-hist-topic]')).toBeNull();
-    expect(h.el('history-detail').textContent).toContain('no recorded messages');
+    // The topic is deleted while its record is on screen: the list changes, and the button goes.
+    await h.emit({ t: 'topics', topics: topicList().filter((t) => t.id !== A) });
+    expect(h.el('lib-topic').hidden).toBe(true);
+    expect(h.el('lib-why').textContent).toMatch(/cleared from this page/);
 
-    await h.click('#history-back');
-    expect(h.el('history-detail').hidden).toBe(true);
-    expect(h.el('history-list').hidden).toBe(false);
-    expect(h.el('history-back').hidden).toBe(true);
-    expect(h.el('history-search').hidden).toBe(false);
-    expect(h.el('history-title').textContent).toBe('History');
+    (h.doc.querySelectorAll('#history-list .hist-item')[1] as HTMLElement).click();
+    await until('the other platform', () => h.el('lib-title').textContent === 'Phone chat');
+    expect(h.el('lib-topic').hidden).toBe(true);
+    expect(h.el('lib-why').textContent).toMatch(/ran on telegram/);
   });
 
-  it('closes on Escape and on the backdrop, and forgets where it was', async () => {
+  it('goes back to the conversation underneath from Close, from the Topics tab and from any topic', async () => {
     const h = await open({ replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() } });
-    await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
-    await until('the list', () => h.el('history-list').textContent!.includes('Deploy notes'));
-    (h.doc.querySelector('#history-list .hist-item') as HTMLElement).click();
-    await until('the conversation', () => h.el('history-detail').textContent!.includes('deployed'));
+    await h.emit(sync(B, [message('w1', '<p>underneath</p>')], [A, B]));
+    await onHistory(h);
 
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await openRow(h);
+    await h.click('#lib-close');
+    expect(libOn(h)).toBe(false);
+    expect(h.el('lib-log').innerHTML).toBe('');
+    // Close leaves the list where it was; the row is no longer lit.
+    expect(h.el('history-pane').hidden).toBe(false);
+    expect(h.doc.querySelector('#history-list .hist-item.on')).toBeNull();
+
+    await openRow(h);
+    // A message that reaches the covered topic lands in it, for when it is shown again.
+    await h.emit({ t: 'msg', topic: B, msg: message('w2', '<p>meanwhile</p>') });
+    await h.click('#sb-tab-topics');
+    expect(libOn(h)).toBe(false);
+    expect(h.el('log').textContent).toContain('meanwhile');
+
+    // Into a topic from the record itself, even the one that was underneath all along.
+    await onHistory(h);
+    await openRow(h);
+    h.el('lib-topic').click();
     await tick();
-    expect(h.el('history').hidden).toBe(true);
+    expect(libOn(h)).toBe(false);
+    expect(h.window.location.search).toContain(A);
+  });
 
-    // Reopened, it is the list again: nothing about a window opened on purpose is persisted.
-    await h.click('#history-open');
-    await until('the list again', () => h.el('history-list').textContent!.includes('Deploy notes'));
-    expect(h.el('history-detail').hidden).toBe(true);
-    expect(h.el('history-back').hidden).toBe(true);
+  it('follows a link to a topic out of the conversation, including one to the topic underneath', async () => {
+    const link = (id: string): Record<string, unknown> =>
+      read({
+        messages: [{ id: 'h1', own: false, html: `<p>see <a href="?t=${id}" data-goto="${id}">the plan</a></p>`, at, buttons: [], reactions: [], kind: 'dispatch' }],
+      });
+    const h = await open({ replies: { 'api/history': page([row(), row({ id: 2, title: 'Second' })]), 'api/history/read?id=1': link(A), 'api/history/read?id=2': link(A) } });
+    await h.emit(sync(B, [], [A, B]));
+    await onHistory(h, 'Second');
 
-    h.el('history').click();
+    await openRow(h);
+    (h.el('lib-log').querySelector('a[data-goto]') as HTMLElement).click();
+    await until('the switch', () => h.window.location.search.includes(A));
+    expect(libOn(h)).toBe(false);
+
+    // A link to the topic already underneath: nothing to switch to, but the view still has to go.
+    await h.emit(sync(A, [message('w1', '<p>underneath</p>')], [A, B]));
+    const streams = h.streams.length;
+    (h.doc.querySelectorAll('#history-list .hist-item')[1] as HTMLElement).click();
+    await until('the second conversation', () => libOn(h) && h.el('lib-log').querySelector('a[data-goto]') !== null);
+    (h.el('lib-log').querySelector('a[data-goto]') as HTMLElement).click();
     await tick();
-    expect(h.el('history').hidden).toBe(true);
+    expect(libOn(h)).toBe(false);
+    expect(h.window.location.search).toBe(`?t=${A}`);
+    expect(h.el('log').textContent).toContain('underneath');
+    // Shown again, not entered again: the same stream, no new sync asked for.
+    expect(h.streams.length).toBe(streams);
+  });
+
+  it('keeps the title in a phone’s header: the tag is its icon there', () => {
+    const at640 = renderPage('Chat', false);
+    const block = at640.slice(at640.indexOf('@media(max-width:640px){'));
+    expect(block).toContain('.lib-tag-word{display:none}');
+  });
+
+  it('marks nothing seen and takes no paste for the topic it covers', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${B}`, replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() } });
+    await h.emit(sync(B, [], [A, B]));
+    await onHistory(h);
+    await openRow(h);
+    const seen = (): number => h.calls.filter((c) => c.path === 'api/seen').length;
+
+    // The topic underneath finishes a reply nobody can see.
+    await h.emit({ t: 'topics', topics: topicList({ [B]: { stage: 'review' } }) });
+    expect(seen()).toBe(0);
+
+    // A screenshot pasted now would go, unseen, into that topic's composer.
+    const file = new h.window.File([new Uint8Array([137, 80, 78, 71])], 'image.png', { type: 'image/png' });
+    const ev = new h.window.Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'clipboardData', { value: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] } });
+    h.doc.body.dispatchEvent(ev);
+    await tick();
+    expect(ev.defaultPrevented).toBe(false);
+    // Nor a file dropped on the page.
+    const drop = new h.window.Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', { value: { files: [file] } });
+    h.doc.body.dispatchEvent(drop);
+    // A file is read over several turns before its chip is drawn; give it them.
+    for (let i = 0; i < 20; i++) await tick();
+    expect(h.el('chips').children).toHaveLength(0);
+
+    // Uncovered, it is read — and only then.
+    await h.click('#lib-close');
+    expect(h.calls.filter((c) => c.path === 'api/seen').map((c) => c.body)).toEqual([{ topic: B }]);
+  });
+
+  it('on a phone: a picked conversation closes the drawer, and the drawer’s Topics tab brings the topic back', async () => {
+    const h = await open({ width: 390, height: 844, replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() } });
+    await h.emit(sync(B, [message('w1', '<p>underneath</p>')], [A, B]));
+    await h.click('#expand-sidebar');
+    await onHistory(h);
+    // The tab is chosen inside the drawer; the drawer stays out until something is picked.
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(false);
+
+    await openRow(h);
+    expect(libOn(h)).toBe(true);
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(true);
+    expect(h.el('app').classList.contains('sb-open')).toBe(false);
+
+    // Back in, the drawer is where it was left: on History, with the row lit.
+    await h.click('#expand-sidebar');
+    expect(h.el('history-pane').hidden).toBe(false);
+    expect(h.doc.querySelector('#history-list .hist-item.on')).not.toBeNull();
+    await h.click('#sb-tab-topics');
+    expect(libOn(h)).toBe(false);
+    expect(h.el('topics').hidden).toBe(false);
+    expect(h.el('log').textContent).toContain('underneath');
+  });
+
+  it('does not remember the tab or the conversation: a reload opens on Topics, on the topic in the address', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${B}`, replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() } });
+    await h.emit(sync(B, [], [A, B]));
+    await onHistory(h);
+    await openRow(h);
+    // The address still names the topic underneath: ?t= is what links and notifications open.
+    expect(h.window.location.search).toBe(`?t=${B}`);
+    const storage: Record<string, string> = {};
+    for (let i = 0; i < h.window.localStorage.length; i++) {
+      const k = h.window.localStorage.key(i)!;
+      storage[k] = h.window.localStorage.getItem(k)!;
+    }
+
+    const again = await open({ url: `http://localhost:8787/?t=${B}`, storage });
+    await again.emit(sync(B, [], [A, B]));
+    expect(again.el('sb-tab-topics').getAttribute('aria-selected')).toBe('true');
+    expect(again.el('history-pane').hidden).toBe(true);
+    expect(again.el('chat').classList.contains('lib')).toBe(false);
+  });
+
+  it('says a conversation could not be read, and keeps the way out', async () => {
+    const h = await open({
+      replies: { 'api/history': page([row()]), 'api/history/read?id=1': { error: 'no conversation "1"; `talkcode sessions list` shows the ids' } },
+      status: { 'api/history/read?id=1': 404 },
+    });
+    await h.emit(sync(B, [], [A, B]));
+    await onHistory(h);
+    await openRow(h);
+
+    expect(h.el('lib-log').querySelector('.hist-note.bad')!.textContent).toMatch(/no conversation "1"/);
+    expect(h.el('lib-topic').hidden).toBe(true);
+    await h.click('#lib-close');
+    expect(libOn(h)).toBe(false);
+  });
+
+  it('creates a new topic into the Topics tab', async () => {
+    const h = await open({ replies: { 'api/history': page([row()]) } });
+    await h.emit(sync(B, [], [A, B]));
+    await onHistory(h);
+    await h.click('#new-topic');
+    expect(h.el('sb-tab-topics').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('topics').hidden).toBe(false);
   });
 
   it('says when the daemon has no conversation library', async () => {
     const h = await open({ replies: { 'api/history': { enabled: false, sessions: [] } } });
     await h.emit(sync(A, [], [A]));
-    await h.click('#history-open');
+    await h.click('#sb-tab-history');
     await until('the disabled note', () => h.el('history-list').textContent!.includes('no conversation library'));
 
     expect(h.el('history-count').textContent).toBe('');

@@ -689,40 +689,63 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* Sticky, because the switches are on every row of a long list: a refusal (a description too long
    for a resident skill) written above the first row would be out of sight of the row tapped. */
 #skills-note{position:sticky;top:-12px;z-index:1;margin:-12px -16px 10px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
-/* ── The history page ─────────────────────────────────────────────────────────
-   The conversation library as a window over the transcript, like the skills page: a list, a
-   search and a transcript need more width than a sidebar, and the conversation stays visible
-   around it. Every row here is a conversation this gateway recorded — not a topic it still has. */
-#history{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
-#history[hidden]{display:none}
-#history-box{display:flex;flex-direction:column;width:min(880px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
-#history-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
-#history-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
-#history-count{flex:none;font-size:11.5px;color:var(--dim)}
-#history-close{font-size:18px;padding:6px 10px}
-#history-body{flex:1;min-height:0;overflow-y:auto;padding:10px 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px}
-/* The search row stays at the top of a list that can be scrolled far: it is the one control a
-   person reaches for again after reading a conversation. */
-#history-search{position:sticky;top:-10px;z-index:1;display:flex;gap:6px;padding:2px 0 6px;background:var(--bg)}
-#history-q{flex:1;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:13px;padding:7px 10px}
-#history-q:focus{outline:none;border-color:#3a3a3a}
-#history-go{flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:15px}
-#history-more{align-self:center;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:7px 14px;cursor:pointer;margin:4px 0 8px}
+/* ── History ──────────────────────────────────────────────────────────────────
+   The sidebar's second tab, and the conversation it opens in the transcript's place. Every row
+   is a conversation this gateway recorded — not a topic it still has — so it is a list beside the
+   topic list rather than a window over the page: one opened is read where a topic is read, with
+   the same bubbles, and the Topics tab is the way back. */
+/* Two tabs where the title was. In the case of the side panel's tabs rather than the title's small
+   capitals: two letter-spaced words beside the clear control, the + and the × needed a 238px
+   sidebar, against a default of 240 and a narrowest of 180, where both words were cut to "T…".
+   At 12.5px they fit from 225px, leaving 15px to spare at 240 for a wider system font (Chromium,
+   2026-11-11). Below 232px — 210px of header content, which is what a container query measures —
+   the words go and each tab keeps an icon, its name on the title and the label, as the footer's
+   buttons do. The one shown is in the foreground colour over a line. */
+.sb-tabs{display:flex;align-items:stretch;gap:2px;min-width:0;align-self:stretch}
+#sidebar-header>.panel-title{align-self:stretch}
+.sb-tab{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:5px;overflow:hidden;white-space:nowrap;background:none;border:0;border-radius:0;padding:0 5px;margin:0;color:var(--dim);font:inherit;font-size:12.5px;letter-spacing:0;text-transform:none;cursor:pointer;box-shadow:inset 0 -2px 0 transparent;transition:color .15s,box-shadow .15s}
+.sb-tab:first-child{margin-left:-5px}
+.sb-tab:hover{color:var(--fg);border:0}
+.sb-tab.on{color:var(--fg);box-shadow:inset 0 -2px 0 #38bdf8}
+.sb-tab .ic{display:none;width:15px;height:15px}
+#sidebar-header{container-type:inline-size}
+@container (max-width:210px){ .sb-tab .ic{display:block} .sb-word{display:none} .sb-tab{padding:0 9px} .sb-tab:first-child{margin-left:-9px} }
+#sidebar.on-history #clear-topics{display:none}
+#history-pane{flex:1;min-height:0;display:flex;flex-direction:column}
+#history-count:empty{display:none}
+#history-body{flex:1;min-height:0;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:3px}
+#history-more{align-self:center;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:7px 14px;cursor:pointer;margin:6px 0 8px}
 #history-more:hover{border-color:#3a3a3a;background:#2a2a2a}
+#history-list{display:flex;flex-direction:column;gap:3px}
+#history-list .skills-empty{padding:12px 4px;font-size:12px}
 .hist-note{font-size:12px;line-height:1.5;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:6px;padding:8px 10px;overflow-wrap:anywhere}
 .hist-note.bad{color:#f87171;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.25)}
-.hist-item{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:6px;padding:9px 11px;background:#1b1b1b;cursor:pointer}
-.hist-item:hover{background:#1e1e1e}
-.hist-title{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A row is drawn like a topic row — the same padding, radius and lit state — so the two tabs read
+   as one list of conversations in two scopes. */
+.hist-item{display:flex;flex-direction:column;gap:2px;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:#171717;cursor:pointer;transition:background .15s}
+.hist-item:hover{background:#222}
+.hist-item.on{background:#252525;border-color:var(--line)}
+.hist-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
 .hist-meta{font-size:11px;color:var(--dim);overflow-wrap:anywhere}
 .hist-key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px}
-.hist-excerpt{font-size:12px;color:#c9c9c9;line-height:1.5;overflow-wrap:anywhere}
-.hist-head{display:flex;flex-direction:column;gap:4px;padding:2px 0 6px}
-.hist-msg{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding:8px 0}
-.hist-who{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
-.hist-msg.user .hist-who{color:#93c5fd}
-.hist-msg.agent .hist-who{color:#4ade80}
-.hist-text{font-size:12.5px;line-height:1.55;color:#dcdcdc;white-space:pre-wrap;overflow-wrap:anywhere}
+.hist-excerpt{font-size:11.5px;color:#c9c9c9;line-height:1.45;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+/* The conversation in the transcript's place. #lib-log is #log's twin; #chat.lib swaps them, and the
+   composer for the read-only bar, the way #chat.term swaps in the terminal — and wins over it. */
+#lib-log,#lib-bar,#lib-title,#lib-tag{display:none}
+#lib-log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
+#chat.lib #lib-log{display:block}
+#chat.lib #lib-bar{display:block}
+#chat.lib #lib-title{display:block}
+#chat.lib #lib-tag{display:inline-flex;align-items:center;gap:5px;flex:none}
+#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,
+#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle{display:none}
+.lib-head{display:flex;flex-direction:column;gap:3px;margin:0 0 18px;padding:0 0 12px;border-bottom:1px solid var(--line)}
+#lib-bar{border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
+#lib-note{margin-bottom:8px}
+.lib-ro{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;font-size:12.5px;line-height:1.5;color:var(--dim)}
+#lib-why{flex:1 1 260px;min-width:0}
+.lib-acts{display:flex;gap:8px;flex:none;margin-left:auto}
+#lib-topic{color:#38bdf8}
 /* /setting as a page of its own, opened from the Menu or by typing the command, rather
    than a screen inserted into the transcript. A window over the conversation like the reader and
    the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
@@ -1343,16 +1366,19 @@ button:disabled{opacity:.5;cursor:default}
   #skills-bar{padding:0 4px 0 12px;min-height:49px}
   #skills-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
   #skills-new{min-height:44px;padding:0 14px}
-  /* The history window takes the whole screen for the same reason the skills page does. The field
-     is 16px here: Safari zooms a focused field under that and does not zoom back out. */
-  #history{padding:0}
-  #history-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
-  #history-bar{padding:0 4px 0 12px;min-height:49px}
-  #history-close,#history-back{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
-  #history-go{min-width:44px;height:44px;font-size:18px}
-  #history-q{font-size:16px}
+  /* The History tab in the drawer: the same finger-sized rows and 16px field as the topic list
+     beside it (the .filterbar rules above cover the search), and the read-only bar's two buttons
+     and its clearance of the home indicator, which is where the composer's were. */
+  .hist-item{padding:10px 9px}
+  #history-go{min-width:36px;height:36px;margin-right:-4px}
   #history-more{min-height:44px;padding:0 16px}
-  .hist-item{padding:11px 12px}
+  #lib-log{padding:14px 12px 6px}
+  #lib-bar{padding:8px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+  .lib-acts button{min-height:44px;padding:0 14px}
+  /* The header keeps the title: the tag's words would leave it "Release not…" at 390px, and the
+     bar at the bottom already says what this is and why. The icon stays as the mark. */
+  .lib-tag-word{display:none}
+  #lib-tag .ic{width:16px;height:16px}
   /* The page's own buttons at an ordinary height, not the bar's 44px: with two controls in every
      row of the list, 44px read as a page of slabs (2026-11-06). 32px is still a fair thumb target. */
   .skill-acts button,.skill-file{min-height:32px;padding:0 12px}
@@ -1483,13 +1509,12 @@ const SCRIPT = `
       skillsTitle=$('skills-title'), skillsCount=$('skills-count'), skillsNewBtn=$('skills-new'),
       skillsClose=$('skills-close'), skillsBody=$('skills-body'), skillsNote=$('skills-note'),
       skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
-      historyOpenBtn=$('history-open'), historyWin=$('history'), historyBack=$('history-back'),
-      historyTitleEl=$('history-title'), historyCountEl=$('history-count'), historyClose=$('history-close'),
+      sbTabTopics=$('sb-tab-topics'), sbTabHistory=$('sb-tab-history'), topicsFilterHost=$('topics-filter'),
+      historyPane=$('history-pane'), historyCountEl=$('history-count'),
       historyBody=$('history-body'), historyQ=$('history-q'), historyGo=$('history-go'),
-      historySearchRow=$('history-search'),
-      historyNote=$('history-note'), historyErr=$('history-err'),
-      historyListEl=$('history-list'), historyDetailEl=$('history-detail'),
-      historyMore=$('history-more'),
+      historyErr=$('history-err'), historyListEl=$('history-list'), historyMore=$('history-more'),
+      libLog=$('lib-log'), libTitle=$('lib-title'), libNote=$('lib-note'), libWhy=$('lib-why'),
+      libTopicBtn=$('lib-topic'), libCloseBtn=$('lib-close'),
       settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
@@ -1583,11 +1608,15 @@ const SCRIPT = `
   // persisted — a management surface is opened on purpose, and a window that came back on load
   // would sit over a conversation nobody asked it to cover.
   var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false, skillSearches=null;
-  // The history page's last answer, the cursor for the page after it, the search it is showing
-  // (empty for the plain list), and the conversation open on top of the list. histSeq is which
-  // request an answer belongs to: close the window or open another conversation before the first
-  // has answered, and without it the late answer would land in the new view.
-  var histSessions=[], histNext=null, histQuery='', histSeq=0;
+  // The History tab's last answer, the cursor for the page after it, and the search it is showing
+  // (empty for the plain list). histSeq is which list request an answer belongs to: leave the tab
+  // or start a search before the first has answered, and without it the late answer would land in
+  // the new view. sbTab is the sidebar's tab, never stored: the page always opens on Topics.
+  var histSessions=[], histNext=null, histQuery='', histSeq=0, sbTab='topics';
+  // The conversation open in the transcript's place (openLib): its library id while it is up, its
+  // messages under keys of their own ('h:' + id, which no live key can be), and where #log was
+  // being read when it was covered. libSeq does for the read what histSeq does for the list.
+  var libId=null, libSession=null, libData={}, libEls={}, libSeq=0, libSaved=null;
   // The /setting page: the live settings message it draws, the topic it was opened in, and the
   // one message whose page the operator closed. A settings message is never a row in the
   // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
@@ -3463,7 +3492,23 @@ const SCRIPT = `
       if(at) log.insertBefore(el, at); else log.appendChild(el);
       els[key]=el;
     }
-    var hist = isHistory(m);
+    var out = msgMarkup(key, m, isHistory(m));
+    // Write nothing when nothing changed. A sync re-paints every message it carries, and most of
+    // them are messages already on screen unchanged — rewriting innerHTML for those would drop
+    // the caret out of a selection, restart any <img> decode, and undo the enabled state of a
+    // button the click handler just disabled, all for identical markup.
+    if(sig[key]===out.h && el.className===out.cls) return;
+    el.className = out.cls;
+    el.innerHTML = out.h;
+    sig[key] = out.h;
+  }
+
+  /**
+   * One message's class and inner markup. Shared by the transcript (paint) and by a conversation
+   * opened from the History tab (paintLib), which is what makes the two look the same: one place
+   * decides what a bubble is.
+   */
+  function msgMarkup(key, m, hist){
     var kind = m.kind;
     // A report is a line-based bubble like a tool one: fold it and offer the same control. A
     // dispatch is prose (the card, or the task a sub-agent was handed), so it only takes the tag.
@@ -3501,14 +3546,7 @@ const SCRIPT = `
     if(stuck(m)) h += failedActions(m);
     var meta = text(clock(m.at)) + (m.reactions && m.reactions.length ? '  '+m.reactions.map(reactionMark).join(' ') : '');
     h += '<div class="t">'+meta+(folded ? allToggle(key) : '')+'</div>';
-    // Write nothing when nothing changed. A sync re-paints every message it carries, and most of
-    // them are messages already on screen unchanged — rewriting innerHTML for those would drop
-    // the caret out of a selection, restart any <img> decode, and undo the enabled state of a
-    // button the click handler just disabled, all for identical markup.
-    if(sig[key]===h && el.className===cls) return;
-    el.className = cls;
-    el.innerHTML = h;
-    sig[key] = h;
+    return { cls: cls, h: h };
   }
 
   /**
@@ -4014,10 +4052,10 @@ const SCRIPT = `
 
   /** Open every line of a tool bubble, or fold them all back. Either way, per-line choices go. */
   function toggleAll(key){
-    if(!data[key]) return;
+    if(!msgAt(key)) return;
     var st = opened[key];
     opened[key] = { all: !(st && st.all), lines: {} };
-    paint(key);
+    repaintKey(key);
   }
 
   /**
@@ -4030,12 +4068,16 @@ const SCRIPT = `
     if(sel && String(sel)) return;
     var host = line.closest('[data-k]');
     var key = host ? host.getAttribute('data-k') : null;
-    if(!key || !data[key]) return;
+    if(!key || !msgAt(key)) return;
     var i = line.getAttribute('data-i');
     var st = opened[key] || (opened[key] = { all: false, lines: {} });
     st.lines[i] = !lineOpen(st, i);
-    paint(key);
+    repaintKey(key);
   }
+
+  /** A message by key, in the transcript or in the conversation opened from History. */
+  function msgAt(key){ return data[key] || libData[key]; }
+  function repaintKey(key){ if(libData[key]) paintLib(key); else paint(key); }
 
   /**
    * What a message that never reached the daemon offers instead of silence.
@@ -5167,6 +5209,9 @@ const SCRIPT = `
   function paintTopics(){
     var h='';
     var cur=null;
+    // The way into a topic from a conversation opened in History is offered only while the topic is
+    // in this list, and the list just changed.
+    if(libSession) libReadOnly();
     // Before the rows, so a selected agent or host that has just disappeared is dropped from the
     // bar's state first and the list below is filtered by what the panel actually shows.
     var fg = topicFilterGroups();
@@ -5331,7 +5376,8 @@ const SCRIPT = `
    */
   var seenPosted={};
   function reportSeen(){
-    if(!topic || document.visibilityState==='hidden') return;
+    // A conversation from History covers the topic: it is underneath, not being read.
+    if(!topic || document.visibilityState==='hidden' || libOn()) return;
     var cur=null;
     for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
     if(!cur || cur.stage!=='review') return;
@@ -5564,7 +5610,11 @@ const SCRIPT = `
   }
 
   function switchTopic(id){
-    if(!id || id===topic) return;
+    if(!id) return;
+    // Any way into a topic — a row, a link, the side panel, a notification — is a way out of a
+    // conversation opened from History, including into the very topic it covers.
+    closeLib();
+    if(id===topic) return;
     // The settings page is bound to the topic it was opened in: its rows write that conversation's
     // agent and model, and its buttons name a message that topic holds. Following another topic
     // puts it away rather than leaving it pointing at the one being left.
@@ -6522,7 +6572,8 @@ const SCRIPT = `
   }
 
   // Not createTopic itself: a listener is handed the MouseEvent, which would arrive as a seed.
-  newTopicBtn.addEventListener('click', function(){ createTopic(); });
+  // A new topic is a row in the Topics list, so that is the tab it is created into.
+  newTopicBtn.addEventListener('click', function(){ setSbTab('topics'); createTopic(); });
 
   // Revealed only where there is something behind it. When the daemon serves no terminal the
   // button stays hidden and these listeners never have anything to toggle.
@@ -6859,49 +6910,57 @@ const SCRIPT = `
   }
   lightbox.addEventListener('click', closeShot);
 
-  // ── The history page ────────────────────────────────────────────────────────
-  // Every conversation the gateway recorded, whichever agent and platform it ran on — the same
-  // history.db the talkcode sessions command reads. Read-only: the list pages backwards through
-  // the library, the search asks the store's own keyword search, and a conversation opens whole.
-  // A read that was cut short says so (its note): half a log shown as the whole is the one thing
-  // this page must not do.
+  // ── History ─────────────────────────────────────────────────────────────────
+  // The sidebar's second tab: every conversation the gateway recorded, whichever agent and
+  // platform it ran on — the same history.db the talkcode sessions command reads. The list pages
+  // backwards through the library and the search asks the store's own keyword search. A row opens
+  // in the transcript's place (openLib), drawn with the transcript's own bubbles, and read-only:
+  // the library keeps what was said, and has no way to say anything back.
 
   /** Absolute time, unlike the side panel's "3h ago": this list spans years, and a relative age
-      on a conversation from last spring says nothing about when it happened. */
+      on a conversation from last spring says nothing about when it happened. The year only when it
+      is not this one, so a row in a 240px column still reads on one line where it can. */
   function histWhen(at){
-    try { return new Date(at).toLocaleString(); }
-    catch(x){ return ''; }
+    try {
+      var d = new Date(at);
+      var o = { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' };
+      if(d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+      return d.toLocaleString(undefined, o);
+    } catch(x){ return ''; }
   }
 
-  function openHistory(){
-    if(!historyWin.hidden) return;
-    historyWin.hidden = false;
-    histQuery = '';
-    histSessions = [];
-    histNext = null;
-    historyQ.value = '';
-    historyNote.hidden = true;
-    historyNote.textContent = '';
-    historyErr.hidden = true;
-    historyErr.textContent = '';
-    historyDetailEl.hidden = true;
-    historyDetailEl.innerHTML = '';
-    historyListEl.hidden = false;
-    historyListEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
-    historySearchRow.hidden = false;
-    historyMore.hidden = true;
-    historyBack.hidden = true;
-    historyTitleEl.textContent = 'History';
-    historyTitleEl.title = '';
-    historyCountEl.textContent = '';
-    loadHistory();
-    historyClose.focus();
-  }
-  function closeHistory(){
-    if(historyWin.hidden) return;
-    historyWin.hidden = true;
-    // Any answer still on its way belongs to a window that is gone.
-    histSeq++;
+  /**
+   * Topics or History. Not stored: the page opens on Topics as it always has, and a reload lands
+   * on the topic in the address — a conversation from the library is not in the address either,
+   * because ?t= is what links and notifications open, and a reload that reopened a read-only view
+   * over the topic they named would hide it.
+   *
+   * Leaving History is leaving what it opened: the Topics tab is the way back to the conversation
+   * underneath. Entering it reads the library again — or the search still in the field — as the side
+   * panel's Reviews tab is pulled on selection: the library is written as conversations happen.
+   */
+  function setSbTab(tab){
+    var hist = tab === 'history';
+    var was = sbTab;
+    sbTab = hist ? 'history' : 'topics';
+    sbTabTopics.classList.toggle('on', !hist);
+    sbTabHistory.classList.toggle('on', hist);
+    sbTabTopics.setAttribute('aria-selected', hist ? 'false' : 'true');
+    sbTabHistory.setAttribute('aria-selected', hist ? 'true' : 'false');
+    // Clear all topics is about the other tab's list, so it goes with it (a class, not hidden: the
+    // button is the header's, and nothing else should have to know this tab exists).
+    sidebar.classList.toggle('on-history', hist);
+    bar.hidden = hist;
+    topicsFilterHost.hidden = hist;
+    historyPane.hidden = !hist;
+    if(!hist){
+      // Any answer still on its way belongs to a list that is no longer on screen.
+      histSeq++;
+      closeLib();
+      return;
+    }
+    if(was === 'history') return;
+    if(historyQ.value.trim()) runHistorySearch(); else loadHistory();
   }
 
   /** One page of the library, or the page after the cursor appended to what is already shown. */
@@ -6910,6 +6969,12 @@ const SCRIPT = `
     historyMore.disabled = true;
     historyErr.hidden = true;
     historyErr.textContent = '';
+    // The rows already there stay until the answer replaces them: entering the tab again would
+    // otherwise blink the list away and back. Only a list with nothing to show says it is loading.
+    if(!before && (!histSessions.length || histQuery)){
+      historyListEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
+      historyCountEl.textContent = '';
+    }
     fetch('api/history' + (before ? '?before=' + encodeURIComponent(before) : ''), {credentials:'same-origin'}).then(function(r){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
@@ -6932,7 +6997,7 @@ const SCRIPT = `
       // page can be asked for again.
       historyErr.textContent = 'Could not read the conversation library: ' + ((e && e.message) || 'network error');
       historyErr.hidden = false;
-      if(!histSessions.length) historyListEl.innerHTML = '';
+      if(!histSessions.length || histQuery) historyListEl.innerHTML = '';
       historyMore.hidden = !histNext;
       historyMore.disabled = false;
       // The line took the button's place and pushed it down by its own height. The reader asked
@@ -6951,23 +7016,22 @@ const SCRIPT = `
     for(var i=0;i<histSessions.length;i++) h += histRow(histSessions[i]);
     historyListEl.innerHTML = h;
     // The count is what is on screen, and a trailing + says the library goes further.
-    historyCountEl.textContent = histSessions.length ? String(histSessions.length) + (histNext ? '+' : '') : '';
+    var n = histSessions.length;
+    historyCountEl.textContent = n ? n + (histNext ? '+' : '') + (n === 1 && !histNext ? ' conversation' : ' conversations') : '';
     historyMore.hidden = !histNext;
     historyMore.disabled = false;
-    historyTitleEl.textContent = 'History';
-    historyTitleEl.title = '';
   }
 
   function histRow(s){
     var meta = [s.agent || 'no agent', s.platform || 'unknown', histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
-    return '<div class="hist-item" data-hist="' + text(s.id) + '" role="button" tabindex="0">'
+    return '<div class="hist-item' + (libId !== null && String(s.id) === libId ? ' on' : '') + '" data-hist="' + text(s.id) + '" role="button" tabindex="0">'
       + '<div class="hist-title">' + text(s.title || '(untitled conversation)') + '</div>'
       + '<div class="hist-meta">' + text(meta.join(' · ')) + '</div></div>';
   }
 
   function histHit(h){
     var meta = [h.agent || 'no agent', h.platform || 'unknown', histWhen(h.at)];
-    return '<div class="hist-item" data-hist="' + text(h.session) + '" role="button" tabindex="0">'
+    return '<div class="hist-item' + (libId !== null && String(h.session) === libId ? ' on' : '') + '" data-hist="' + text(h.session) + '" role="button" tabindex="0">'
       + '<div class="hist-title">' + text(h.title || '(untitled conversation)') + '</div>'
       + '<div class="hist-excerpt">' + text(h.excerpt) + '</div>'
       + '<div class="hist-meta">' + text(meta.join(' · ')) + '</div></div>';
@@ -6979,13 +7043,9 @@ const SCRIPT = `
    */
   function runHistorySearch(){
     var q = historyQ.value.trim();
-    if(!q) return historyBackToList();
+    if(!q) return showHistoryList();
     var seq = ++histSeq;
-    historyListEl.hidden = false;
-    historyDetailEl.hidden = true;
-    historyBack.hidden = true;
     historyMore.hidden = true;
-    historySearchRow.hidden = false;
     historyErr.hidden = true;
     historyErr.textContent = '';
     historyCountEl.textContent = '';
@@ -7004,7 +7064,6 @@ const SCRIPT = `
       }
       histQuery = q;
       var hits = a.d.hits || [];
-      historyTitleEl.textContent = 'History · search';
       if(!hits.length){
         historyListEl.innerHTML = '<div class="skills-empty">Nothing matches “' + text(q) + '”.</div>';
         return;
@@ -7013,93 +7072,173 @@ const SCRIPT = `
       for(var i=0;i<hits.length;i++) h += histHit(hits[i]);
       historyListEl.innerHTML = h;
       // "30+" when the daemon says there are more: the number is the size of the answer.
-      historyCountEl.textContent = String(hits.length) + (a.d.more ? '+' : '');
+      historyCountEl.textContent = hits.length + (a.d.more ? '+' : '') + (hits.length === 1 && !a.d.more ? ' match' : ' matches');
     }).catch(function(e){
       if(seq !== histSeq) return;
       historyListEl.innerHTML = '<div class="skills-empty">Could not search the library: ' + text((e && e.message) || 'network error') + '</div>';
     });
   }
 
-  /** One conversation, whole. The store bounds a read; its note says what was left out. */
-  function openHistorySession(id){
-    var seq = ++histSeq;
-    historyListEl.hidden = true;
-    historyMore.hidden = true;
-    // The search belongs to the list: reading a conversation with a query field above it says
-    // nothing and invites a search that would replace the page being read.
-    historySearchRow.hidden = true;
-    historyDetailEl.hidden = false;
-    historyDetailEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
-    historyNote.hidden = true;
-    historyErr.hidden = true;
-    historyErr.textContent = '';
-    historyBack.hidden = false;
-    historyTitleEl.textContent = 'Conversation';
-    historyTitleEl.title = '';
-    historyCountEl.textContent = '';
+  /** The library again, after a search: the rows already read, or a first page when there are none. */
+  function showHistoryList(){
+    histSeq++;
+    if(histSessions.length) renderHistory(); else loadHistory();
+  }
+
+  // ── A conversation from History, in the transcript's place ──────────────────
+  // #lib-log is drawn with msgMarkup, the transcript's own bubbles, from messages the daemon
+  // rendered the way it renders a topic's (room.ts historyMessages). It covers #log rather than
+  // replacing it: the topic underneath keeps its stream, its messages and its place, so closing
+  // this is a class coming off, not a topic being entered again. While it is up nothing is sent,
+  // pasted or dropped into the topic it covers, and the topic is not reported as seen.
+
+  function libOn(){ return chat.classList.contains('lib'); }
+
+  /** Where #log is being read: its first message on screen and that message's offset, or null for the bottom. */
+  function logPlace(){
+    var el = (log.clientHeight && !atBottom()) ? firstVisible() : null;
+    return el ? { key: el.getAttribute('data-k'), off: el.getBoundingClientRect().top - log.getBoundingClientRect().top } : null;
+  }
+
+  /** Light the row of the conversation that is open, in whichever list is showing. */
+  function markLibRow(){
+    var rows = historyListEl.querySelectorAll('[data-hist]');
+    for(var i=0;i<rows.length;i++) rows[i].classList.toggle('on', libId !== null && rows[i].getAttribute('data-hist') === libId);
+  }
+
+  /** The lines a reader opened in a conversation that is no longer open. */
+  function forgetLibLines(){
+    for(var k in opened){ if(Object.prototype.hasOwnProperty.call(opened, k) && k.indexOf('h:') === 0) delete opened[k]; }
+  }
+
+  /**
+   * Open one conversation from the library where the transcript is. On a phone the drawer goes,
+   * as it does for a topic: the conversation is what was asked for, and the drawer covers it.
+   */
+  function openLib(id){
+    id = String(id);
+    var seq = ++libSeq;
+    if(!libOn()){
+      libSaved = logPlace();
+      // The composer's own overlays belong to the topic being covered.
+      closeModelPop();
+      if(!hints.hidden){ hints.hidden = true; hints.innerHTML = ''; }
+      chat.classList.add('lib');
+    }
+    libId = id;
+    libSession = null;
+    libData = {};
+    libEls = {};
+    forgetLibLines();
+    libTitle.textContent = 'Loading\\u2026';
+    libTitle.title = '';
+    libNote.hidden = true;
+    libNote.textContent = '';
+    libWhy.textContent = 'Read-only: a conversation from the library.';
+    libTopicBtn.hidden = true;
+    libLog.innerHTML = '<div class="empty">Loading\\u2026</div>';
+    markLibRow();
     fetch('api/history/read?id=' + encodeURIComponent(id), {credentials:'same-origin'}).then(function(r){
       return r.json().then(function(d){ return { ok:r.ok, d:d }; });
     }).then(function(a){
-      if(seq !== histSeq) return;
-      if(!a.ok || !a.d || a.d.error){
-        historyDetailEl.innerHTML = '<div class="skills-empty">' + text((a.d && a.d.error) || 'could not read that conversation') + '</div>';
-        return;
-      }
-      paintHistorySession(a.d);
+      if(seq !== libSeq || !libOn()) return;
+      if(!a.ok || !a.d || a.d.error) return libFailed((a.d && a.d.error) || 'could not read that conversation');
+      paintLibRead(a.d);
     }).catch(function(e){
-      if(seq !== histSeq) return;
-      historyDetailEl.innerHTML = '<div class="skills-empty">Could not read that conversation: ' + text((e && e.message) || 'network error') + '</div>';
+      if(seq !== libSeq || !libOn()) return;
+      libFailed('Could not read that conversation: ' + ((e && e.message) || 'network error'));
     });
   }
 
-  function paintHistorySession(d){
+  function libFailed(msg){
+    libTitle.textContent = 'History';
+    libLog.innerHTML = '<div class="hist-note bad">' + text(msg) + '</div>';
+    libWhy.textContent = 'Nothing could be read, so nothing is shown.';
+  }
+
+  function paintLibRead(d){
     var s = d.session || {};
     var title = s.title || '(untitled conversation)';
-    historyTitleEl.textContent = title;
-    historyTitleEl.title = title;
-    var meta = [s.agent || 'no agent', s.platform || 'unknown', histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
-    var h = '<div class="hist-head"><div class="hist-meta">' + text(meta.join(' · ')) + '</div>'
-      + '<div class="hist-meta hist-key">' + text(s.key || '') + '</div>';
-    // Only while the topic is still in the switcher: a button that opens nothing would look like
-    // one. A conversation cleared from the page is read here and nowhere else.
-    if(s.topic && topicExists(s.topic)) h += '<button type="button" class="rev-open" data-hist-topic="' + text(s.topic) + '">Open the topic</button>';
-    h += '</div>';
-    historyNote.hidden = !d.note;
-    historyNote.textContent = d.note || '';
-    var messages = d.messages || [];
-    for(var i=0;i<messages.length;i++) h += histMessage(messages[i]);
-    if(!messages.length) h += '<div class="skills-empty">This conversation has no recorded messages.</div>';
-    historyDetailEl.innerHTML = h;
+    libSession = s;
+    libTitle.textContent = title;
+    libTitle.title = title;
+    var meta = [s.agent || 'no agent', s.platform || 'unknown', 'last active ' + histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
+    var h = '<div class="lib-head"><div class="hist-meta">' + text(meta.join(' · ')) + '</div>'
+      + '<div class="hist-meta hist-key">' + text(s.key || '') + '</div></div>';
+    var list = d.messages || [];
+    var i;
+    for(i=0;i<list.length;i++){
+      var key = 'h:' + list[i].id;
+      libData[key] = list[i];
+      var out = msgMarkup(key, list[i], false);
+      h += '<div class="' + out.cls + '" data-k="' + text(key) + '">' + out.h + '</div>';
+    }
+    if(!list.length) h += '<div class="empty">This conversation has no recorded messages.</div>';
+    // One write for the whole conversation: it arrives whole, and up to 500 nodes appended one at a
+    // time would lay the page out 500 times.
+    libLog.innerHTML = h;
+    var nodes = libLog.querySelectorAll('[data-k]');
+    for(i=0;i<nodes.length;i++) libEls[nodes[i].getAttribute('data-k')] = nodes[i];
+    // A read the store cut short says so, beside where the reader lands: the bottom of what was
+    // read is not the end of the conversation, and half a log shown as the whole is the one thing
+    // this view must not do.
+    libNote.hidden = !d.note;
+    libNote.textContent = d.note || '';
+    libReadOnly();
+    // At the newest, where a topic is entered too.
+    libLog.scrollTop = libLog.scrollHeight;
   }
 
-  function histMessage(m){
-    var who = m.role === 'user' ? 'you' : m.role === 'agent' ? 'agent' : (m.role || 'tool');
-    if(m.kind && m.kind !== 'normal') who += ' · ' + m.kind;
-    return '<div class="hist-msg ' + text(m.role) + '"><div class="hist-who">' + text(who + ' · ' + histWhen(m.at)) + '</div>'
-      + '<div class="hist-text">' + text(m.text) + '</div></div>';
+  /** Repaint one message of the open conversation — a tool line opened or folded. */
+  function paintLib(key){
+    var m = libData[key], el = libEls[key];
+    if(!m || !el) return;
+    var out = msgMarkup(key, m, false);
+    el.className = out.cls;
+    el.innerHTML = out.h;
   }
 
-  /** Back to the list or to the search that was showing, whichever it was. */
-  function historyBackToList(){
-    histSeq++;
-    historyDetailEl.hidden = true;
-    historyDetailEl.innerHTML = '';
-    historyNote.hidden = true;
-    historyNote.textContent = '';
-    historyListEl.hidden = false;
-    historyBack.hidden = true;
-    historySearchRow.hidden = false;
-    // Only while the field still holds the query: clearing it is what puts the library back, and
-    // re-running a search the person has just emptied would put the results under an empty field.
-    if(histQuery && historyQ.value.trim() === histQuery) runHistorySearch();
-    else if(histSessions.length) renderHistory();
-    else loadHistory();
+  /**
+   * Why nothing can be sent here, where the composer was, and the way into the topic while this page
+   * still has it. Three cases, because the reason differs and so does what a person can do next.
+   * Asked again whenever the topic list changes, so a topic deleted meanwhile takes its button with it.
+   */
+  function libReadOnly(){
+    var s = libSession;
+    if(!s) return;
+    var here = Boolean(s.topic) && topicExists(s.topic);
+    libTopicBtn.hidden = !here;
+    libWhy.textContent = here
+      ? 'Read-only: this is the recorded copy. The conversation is still a topic on this page; open it to carry on.'
+      : s.topic
+        ? 'Read-only: its topic has been cleared from this page, so there is nowhere here to send a message.'
+        : 'Read-only: this conversation ran on ' + (s.platform || 'another platform') + ', not in a topic on this page, so nothing can be sent to it from here.';
   }
 
-  historyOpenBtn.addEventListener('click', function(){ openHistory(); });
-  historyClose.addEventListener('click', closeHistory);
-  historyWin.addEventListener('click', function(e){ if(e.target === historyWin) closeHistory(); });
-  historyBack.addEventListener('click', historyBackToList);
+  /** Back to the topic underneath, where it was being read. */
+  function closeLib(){
+    if(!libOn()) return;
+    libSeq++;
+    chat.classList.remove('lib');
+    libId = null;
+    libSession = null;
+    forgetLibLines();
+    libData = {};
+    libEls = {};
+    libLog.innerHTML = '';
+    libTitle.textContent = '';
+    markLibRow();
+    // #log was not laid out while it was covered, so the place it reports now is not where the
+    // reader left it; the one measured on the way in is.
+    var v = libSaved, el = v && els[v.key];
+    libSaved = null;
+    if(el) log.scrollTop += el.getBoundingClientRect().top - log.getBoundingClientRect().top - v.off;
+    else toBottom();
+    reportSeen();
+  }
+
+  sbTabTopics.addEventListener('click', function(){ setSbTab('topics'); });
+  sbTabHistory.addEventListener('click', function(){ setSbTab('history'); });
   historyGo.addEventListener('click', runHistorySearch);
   historyMore.addEventListener('click', function(){ if(histNext) loadHistory(histNext); });
   historyQ.addEventListener('keydown', function(e){
@@ -7111,26 +7250,50 @@ const SCRIPT = `
     // The search field's own × (and a person deleting the query) puts the library back rather
     // than leaving the last search's rows under an empty field.
     if(historyQ.value.trim()) return;
-    histSeq++;
-    if(!historyWin.hidden && historyDetailEl.hidden) historyBackToList();
+    if(sbTab === 'history') showHistoryList();
   });
-  historyBody.addEventListener('click', function(e){
-    var topicBtn = e.target.closest ? e.target.closest('[data-hist-topic]') : null;
-    if(topicBtn){
-      var id = topicBtn.getAttribute('data-hist-topic');
-      closeHistory();
-      switchTopic(id);
-      return;
-    }
+  function pickLib(row){
+    openLib(row.getAttribute('data-hist'));
+    if(narrow()) setSidebar(false);
+  }
+  historyListEl.addEventListener('click', function(e){
     var row = e.target.closest ? e.target.closest('[data-hist]') : null;
-    if(row) openHistorySession(row.getAttribute('data-hist'));
+    if(row) pickLib(row);
   });
-  historyBody.addEventListener('keydown', function(e){
+  historyListEl.addEventListener('keydown', function(e){
     if(e.key !== 'Enter' && e.key !== ' ') return;
     var row = e.target.closest ? e.target.closest('[data-hist]') : null;
     if(!row) return;
     e.preventDefault();
-    openHistorySession(row.getAttribute('data-hist'));
+    pickLib(row);
+  });
+  libTopicBtn.addEventListener('click', function(){
+    var id = libSession && libSession.topic;
+    if(!id || !topicExists(id)){ libReadOnly(); return; }
+    // Into the topic, and the sidebar with it: the row to come back to is in the Topics list.
+    setSbTab('topics');
+    switchTopic(id);
+  });
+  libCloseBtn.addEventListener('click', closeLib);
+  // The transcript's own reading controls, on the transcript's own markup: a picture full screen, a
+  // link to a topic, a tool line opened. Nothing here posts — there is nothing to post to.
+  libLog.addEventListener('click', function(e){
+    var shot = e.target.closest ? e.target.closest('img.shot') : null;
+    if(shot) return openShot(shot);
+    var go = e.target.closest ? e.target.closest('a[data-goto]') : null;
+    if(go){
+      e.preventDefault();
+      var goId = go.getAttribute('data-goto');
+      if(goId && topicExists(goId)){
+        switchTopic(goId);
+        if(narrow()) setSidebar(false);
+      }
+      return;
+    }
+    var all = e.target.closest ? e.target.closest('[data-tl-all]') : null;
+    if(all) return toggleAll(all.getAttribute('data-tl-all'));
+    var line = e.target.closest ? e.target.closest('.tl') : null;
+    if(line) return toggleLine(line);
   });
 
   document.addEventListener('keydown', function(e){
@@ -7146,8 +7309,8 @@ const SCRIPT = `
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
     var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !topicMenu.hidden
-      || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !historyWin.hidden;
-    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings(); closeHistory();
+      || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
+    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
     // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
     closeTopicMenu(true);
     if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
@@ -8353,6 +8516,9 @@ const SCRIPT = `
   document.addEventListener('dragover', function(e){ e.preventDefault(); });
   document.addEventListener('drop', function(e){
     e.preventDefault();
+    // Not while a conversation from History covers the composer: the file would go, unseen, to the
+    // topic underneath.
+    if(libOn()) return;
     if(e.dataTransfer && e.dataTransfer.files) take(e.dataTransfer.files);
   });
   // Ctrl-V of a screenshot, which is the thing most worth showing an agent and the slowest to
@@ -8366,7 +8532,7 @@ const SCRIPT = `
   // plain text paste must still land in the textarea the ordinary way.
   document.addEventListener('paste', function(e){
     var items = e.clipboardData && e.clipboardData.items;
-    if(!items) return;
+    if(!items || libOn()) return;
     var found = [];
     for(var i=0;i<items.length;i++){
       if(items[i].kind !== 'file') continue;
@@ -8918,14 +9084,40 @@ __GATE__
 <main id="app" hidden>
   <aside id="sidebar" class="panel panel-left">
     <div id="sidebar-header" class="panel-head">
-      <span class="panel-title"><span class="panel-title-text">Topics</span><button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button><button type="button" class="btn-icon" id="history-open" title="All conversations" aria-label="All conversations">${icon('history')}</button></span>
+      <!-- Topics | History: two tabs where the title was. History lists every conversation the
+           library recorded, and one opened from it takes the transcript's place (openLib). -->
+      <span class="panel-title"><span class="sb-tabs" role="tablist" aria-label="Topics and history"><button type="button" class="sb-tab on" id="sb-tab-topics" role="tab" aria-selected="true" aria-controls="topics" aria-label="Topics" title="Topics on this page">${icon('chat')}<span class="sb-word">Topics</span></button><button type="button" class="sb-tab" id="sb-tab-history" role="tab" aria-selected="false" aria-controls="history-pane" aria-label="History" title="Every conversation the gateway recorded">${icon('history')}<span class="sb-word">History</span></button></span><button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button></span>
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
       <button type="button" class="btn-icon panel-close" id="collapse-sidebar" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
     <!-- The topic list's search and filters. Built by makeFilterBar in the script; an empty host
          here so the markup and the component stay separate. -->
     <div id="topics-filter"></div>
-    <div id="topics"></div>
+    <div id="topics" role="tabpanel" aria-labelledby="sb-tab-topics"></div>
+    <!-- The History tab: the conversation library — the same history.db the talkcode sessions
+         command reads, whichever agent and platform a conversation ran on. A list, a keyword
+         search, and Load older; a row opens in the transcript's place, read-only. -->
+    <div id="history-pane" role="tabpanel" aria-labelledby="sb-tab-history" hidden>
+      <div id="history-search" class="filterbar">
+        <div class="fb-row">
+          <div class="fb-search">
+            <input id="history-q" class="fb-q" type="search" autocomplete="off" placeholder="Search all conversations" aria-label="Search all conversations">
+            <button type="button" class="fb-qclear" id="history-go" title="Search (Enter)" aria-label="Search">${icon('search')}</button>
+          </div>
+        </div>
+        <div class="fb-sum" id="history-count"></div>
+      </div>
+      <div id="history-body">
+        <div id="history-list"></div>
+        <!-- Below the list, not above it: a page that could not be read was asked for with the
+             button under the last row, and a list fifty rows long puts anything above it out of
+             view (measured 2026-11-10, 390×844: the error sat 2550px above the viewport). The
+             first page failing leaves the list empty, so there this element is still the first
+             thing under the search row. -->
+        <div id="history-err" class="hist-note bad" hidden></div>
+        <button type="button" id="history-more" hidden>Load older conversations</button>
+      </div>
+    </div>
     <!-- Two menus, one row. Menu holds what is set once per device or visited rarely; Manage
          holds Close idle, with the idle count on its face so the number is still seen without
          opening anything. Both open upward with the same box and the same dismissal (setMenu). -->
@@ -8988,36 +9180,6 @@ __GATE__
       </div>
     </div>
   </div>
-  <!-- The conversation library, as a window over the transcript: every conversation this gateway
-       recorded, whichever agent and platform it ran on — the same history.db the talkcode sessions
-       command reads. Read-only: a list, a keyword search, and one conversation opened whole. A
-       cleared topic is still here; the only way back is the button, and only while the topic exists. -->
-  <div id="history" hidden role="dialog" aria-modal="true" aria-labelledby="history-title">
-    <div id="history-box">
-      <div id="history-bar">
-        <button type="button" class="btn-icon" id="history-back" title="Back to all conversations" aria-label="Back" hidden>${icon('chevronLeft')}</button>
-        <span id="history-title">History</span>
-        <span id="history-count"></span>
-        <button type="button" class="btn-icon" id="history-close" title="Close (Esc)" aria-label="Close">&times;</button>
-      </div>
-      <div id="history-body">
-        <div id="history-search">
-          <input id="history-q" type="search" autocomplete="off" placeholder="Search all conversations" aria-label="Search all conversations">
-          <button type="button" class="btn-icon" id="history-go" title="Search" aria-label="Search">${icon('search')}</button>
-        </div>
-        <div id="history-note" class="hist-note" hidden></div>
-        <div id="history-list"></div>
-        <div id="history-detail" hidden></div>
-        <!-- Below the list, not above it: a page that could not be read was asked for with the
-             button under the last row, and a list fifty rows long puts anything above it out of
-             view (measured 2026-11-10, 390×844: the error sat 2550px above the viewport). The
-             first page failing leaves the list empty, so there this element is still the first
-             thing under the search row. -->
-        <div id="history-err" class="hist-note bad" hidden></div>
-        <button type="button" id="history-more" hidden>Load older conversations</button>
-      </div>
-    </div>
-  </div>
   <!-- /setting as a page rather than a message in the transcript. It is filled from the same
        structured screen the daemon already sends (settingsScreen), so the rows, the values and
        the write all stay on the daemon's side; this element only draws them. The bar says where
@@ -9060,6 +9222,10 @@ __GATE__
     <div id="chat-header">
       <button type="button" class="btn-icon" id="expand-sidebar" title="Show topics" aria-label="Show topics" hidden>${icon('menu')}</button>
       <span id="topic-title" class="chat-title"></span>
+      <!-- A conversation opened from the History tab: its title, and the word that says what it is.
+           Separate from #topic-title, which every topics event rewrites for the topic underneath. -->
+      <span id="lib-title" class="chat-title"></span>
+      <span id="lib-tag" class="chat-status" title="A conversation from History, read-only">${icon('history')}<span class="lib-tag-word">History · read-only</span></span>
       <!-- /kill, one tap away. Beside the title rather than beside Send because it is about the
            topic — the process behind it — and not about the message being written; shown only
            while there is a process to end, which is the same fact the sidebar dot is lit by.
@@ -9080,6 +9246,22 @@ __GATE__
       <button type="button" class="btn-icon" id="schedules-toggle" aria-expanded="false" aria-controls="schedules" title="Side tasks" aria-label="Side tasks"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="sched-alert" id="sched-alert" hidden></span></button>
     </div>
     <div id="log"></div>
+    <!-- A conversation from the History tab, in the transcript's place (openLib). Its own element
+         rather than #log: the topic underneath keeps its stream, its messages and its place, and is
+         simply shown again when this closes. Drawn with the same bubbles as #log. -->
+    <div id="lib-log" aria-label="Recorded conversation"></div>
+    <!-- Where the composer was: why nothing can be sent here, and the ways out. The note says what
+         the store's bound left out, and sits here because this is where the reader lands. -->
+    <div id="lib-bar" role="status">
+      <div id="lib-note" class="hist-note" hidden></div>
+      <div class="lib-ro">
+        <span id="lib-why"></span>
+        <span class="lib-acts">
+          <button type="button" id="lib-topic" hidden>Open the topic</button>
+          <button type="button" id="lib-close" title="Back to the conversation you were in">Close</button>
+        </span>
+      </div>
+    </div>
     <div id="typing" hidden>...</div>
     <div id="note"></div>
     <!-- A window, not a mode: the bar is what makes minimize and close two different things.

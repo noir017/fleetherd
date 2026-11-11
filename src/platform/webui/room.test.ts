@@ -9,6 +9,7 @@ import { WebuiConfigSchema } from '../config-schemas.js';
 import {
   CHANNEL,
   DIR_TTL_MS,
+  historyMessages,
   inlineImageType,
   isControlMenu,
   isControlMenuButton,
@@ -2393,5 +2394,80 @@ describe('WebRoom: the skills page', () => {
       skills: [{ ...skill, pinned: true }],
     });
     expect(ops).toEqual(['pin']);
+  });
+});
+
+describe('WebRoom: a conversation from the library, drawn as a topic', () => {
+  const at = 1762300000000;
+  const row = (id: number, role: string, text: string, kind = 'normal') => ({ id, at: at + id, role, kind, text });
+
+  it('makes the operator’s prompt their own bubble, a reply markdown, and a run of tool rows one tool bubble', () => {
+    const out = historyMessages([
+      row(1, 'user', 'deploy *it* <now>'),
+      row(2, 'tool', 'Bash: npm run deploy\n{"command":"npm run deploy"}'),
+      row(3, 'tool', '[37 tool calls: Read ×20, Edit ×17]'),
+      row(4, 'agent', 'deployed **v2**'),
+      row(5, 'tool', 'Read: notes.md'),
+    ]);
+    expect(out.map((m) => [m.id, m.own, m.kind ?? ''])).toEqual([
+      ['h1', true, ''],
+      ['h2', false, 'tools'],
+      ['h4', false, ''],
+      ['h5', false, 'tools'],
+    ]);
+    // What the operator typed is shown as typed, escaped and not rendered — as `record` posts it.
+    expect(out[0]!.html).toBe('<div class="raw">deploy *it* &lt;now&gt;</div>');
+    // Two rows, two lines: the arguments after a call's first line are the library's, not the bubble's.
+    expect(out[1]!.html.match(/class="tl"/g)).toHaveLength(2);
+    expect(out[1]!.html).toContain('Bash: npm run deploy');
+    expect(out[1]!.html).not.toContain('"command"');
+    expect(out[1]!.html).toContain('[37 tool calls: Read ×20, Edit ×17]');
+    expect(out[2]!.html).toContain('<strong>v2</strong>');
+    // Every message is a live one's shape: no buttons to answer, no reactions, a time.
+    for (const m of out) {
+      expect(m.buttons).toEqual([]);
+      expect(m.reactions).toEqual([]);
+      expect(typeof m.at).toBe('number');
+    }
+    expect(out[0]!.at).toBe(at + 1);
+    // A tool bubble takes the time and id of the first call in it.
+    expect(out[1]!.at).toBe(at + 2);
+  });
+
+  it('draws what the gateway wrote into a conversation as the bubble it was in the topic', () => {
+    const out = historyMessages([
+      row(1, 'user', '**↳ From [Plan](?t=a1b2c3d4)**\n\nWrite the tests.', 'subagent'),
+      row(2, 'user', '[sub-agent updates] 1 of 2 finished\n🔔 tests: done', 'subagent'),
+      row(3, 'user', 'a scheduled prompt', 'schedule'),
+    ]);
+    expect(out.map((m) => [m.own, m.kind ?? ''])).toEqual([
+      [false, 'dispatch'],
+      [false, 'report'],
+      [true, ''],
+    ]);
+    // A dispatch is prose, with its topic link kept for the page to follow; a report is a line each.
+    expect(out[0]!.html).toContain('data-goto="a1b2c3d4"');
+    expect(out[1]!.html.match(/class="tl"/g)).toHaveLength(2);
+  });
+
+  it('answers a read with those messages, the session and the note, and refuses without a library', () => {
+    const room = new WebRoom(instance(), new TopicStore(path.join(dir, `${Math.random()}.json`)));
+    expect(() => room.historyRead(1)).toThrow(/not enabled/);
+    const session = { id: 1, key: 'webui#main#a1b2c3d4', title: 'Deploy', agent: 'cc', platform: 'webui', lastAt: at, messages: 2, topic: 'a1b2c3d4' };
+    room.useHistoryPanel({
+      list: () => ({ enabled: true, sessions: [] }),
+      search: () => ({ hits: [] }),
+      read: () => ({ session, messages: [row(1, 'user', 'hi'), row(2, 'agent', 'hello')], note: 'cut' }),
+    });
+    const read = room.historyRead(1);
+    expect(read.session).toEqual(session);
+    expect(read.note).toBe('cut');
+    expect(read.messages.map((m) => m.id)).toEqual(['h1', 'h2']);
+    room.useHistoryPanel({
+      list: () => ({ enabled: true, sessions: [] }),
+      search: () => ({ hits: [] }),
+      read: () => ({ session, messages: [] }),
+    });
+    expect('note' in room.historyRead(1)).toBe(false);
   });
 });

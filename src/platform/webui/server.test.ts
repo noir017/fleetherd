@@ -1906,7 +1906,13 @@ describe('webui server: traffic', () => {
       });
       const res = await fetch(`${base}/api/history/read?id=1`, { headers: { cookie } });
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual(read);
+      // Drawn as a topic's messages are (room.ts historyMessages), so the page can show it with
+      // the transcript's own bubbles.
+      expect(await res.json()).toEqual({
+        session,
+        messages: [{ id: 'h1', own: true, html: '<div class="raw">hello</div>', at: 1762300000000, buttons: [], reactions: [] }],
+        note: read.note,
+      });
       expect(ids).toEqual([1]);
     });
 

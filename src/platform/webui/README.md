@@ -639,36 +639,68 @@ and the open skill), opened from the sidebar footer and closed by the ×, Escape
 Nothing about it is persisted: a management surface is opened on purpose, and one restored on load
 would sit over a conversation nobody asked it to cover.
 
-## The history page
+## The History tab
 
-The clock-with-an-arrow button beside **Clear all topics**, in the sidebar's own header, opens the
-conversation library: every conversation the gateway recorded, whichever agent and platform it ran
-on. It is the same `history.db` `talkcode sessions list/search/read` reads, and it is read-only —
-a list, a keyword search, and one conversation opened whole. A review's own session is not a
+The sidebar's header is two tabs, **Topics** and **History** (since 2026-11-11; 2.58.0 shipped the
+same library as a window opened from a button there). History lists the conversation library: every
+conversation the gateway recorded, whichever agent and platform it ran on. It is the same
+`history.db` `talkcode sessions list/search/read` reads, and it is read-only — a list, a keyword
+search, and one conversation opened where a topic is read. A review's own session is not a
 conversation and is left out (`HistoryStore.list`); those are read on the Reviews tab.
 
-**Why a window and not the topic list.** The topic list is the conversations this page still has.
-The library is everything else: topics cleared from the switcher, conversations from Telegram and
-Slack and every other platform, sub-agent runs, sessions from before the browser existed. It is
-looked at rather than lived in, so it gets the same window as the skills page — over the
-transcript, full screen on a phone, closed by ×, Escape or the backdrop, and never restored on
-load.
+**Why a tab and not the window it was.** The window put a second, plainer transcript renderer over
+the page — role labels and preformatted text — so a conversation read there looked nothing like the
+same conversation read as a topic, and a long agent reply with code and tables was unreadable in it.
+A tab keeps the list where conversations are listed, and opening one puts it where conversations
+are read.
 
-**What a row says, and what opening it shows.** A row is the title, the agent, the platform, when
-it was last active and how many messages it holds. Opening one shows the conversation oldest
-first, with each message's role and time, and the conversation's key. `HistoryStore.read` bounds
-an answer at 500 rows and a character budget, and the page shows its `note` above the transcript
-when that cut something off: half a log presented as the whole is the one thing this page must not
-do. The button that opens the conversation as a live topic appears only while the topic is still
-in this page's list (`session.topic`, decided by the daemon from the key's platform and thread,
-then checked against the live topics) — a cleared topic is read here and nowhere else, and there
-is no way to bring one back.
+**What a row says.** The title, the agent, the platform, when it was last active (absolute, and
+the year only when it is not this one) and how many messages it holds. The count above the list is
+what is on screen, with a `+` while the library goes further.
+
+**An opened conversation covers the topic; it does not replace it.** `openLib` reads it into
+`#lib-log`, a twin of `#log`, and `#chat.lib` swaps the two and the composer for a read-only bar,
+the way `#chat.term` swaps in the terminal. Decisions in it:
+
+- **The same bubbles.** The daemon renders the read as WebMessages (`room.ts` historyMessages): the
+  operator's prompt escaped and unrendered, as `record` posts it; a reply as markdown; consecutive
+  tool rows as one tool bubble, a line each; a gateway-written prompt as the dispatch or report it
+  was in the topic. The page draws them with `msgMarkup`, the function `paint` uses, so one place
+  decides what a bubble is. Rendering stays on the server because `web-markdown.ts` is the XSS
+  boundary. What the library never kept cannot come back: a run of tool calls is one line
+  (`ToolRunFolder`), and there is no ✓, timing, button or picture.
+- **The topic underneath is left alone.** Its stream, messages, draft and held state are untouched;
+  messages that arrive meanwhile land in the hidden `#log`. Closing is a class coming off, and the
+  place `#log` was being read is measured on the way in (`logPlace`) and put back on the way out,
+  because a log that was not laid out reports nothing useful. While it is covered the topic is not
+  reported seen (`reportSeen`), and a paste or a drop is refused rather than attached, unseen, to
+  its composer.
+- **The way out is the Topics tab, any topic, or Close.** `switchTopic` closes it first thing —
+  including into the topic it covers, which is otherwise a no-op — so a row, a `?t=` link in the
+  record, the side panel and a notification all lead out. **Open the topic** is offered only while
+  `session.topic` is in this page's list, and asked again whenever the list changes; it also turns
+  the sidebar to Topics, where that row is.
+- **Why nothing can be sent** is said where the composer was, in one of three sentences: still a
+  topic here, a topic cleared from this page, or a conversation from another platform. A read the
+  store cut short (`note`) is said in the same bar, beside the last message read: the reader lands
+  at the bottom, and the bottom of 500 rows is not the end of the conversation.
+- **Not remembered.** Neither the tab nor the open conversation is stored or put in the address:
+  `?t=` is what links and notifications open, and a reload that reopened a read-only view over the
+  topic they named would hide it. Entering the tab reads the list again (or the search still in the
+  field), as the Reviews tab is pulled on selection; the rows already there stay until the answer.
+
+**The header at a narrow sidebar.** Two words, the clear control, the + and the × fit from a 225px
+sidebar at 12.5px; under 232px (210px of header content — a container query measures the content
+box) each tab keeps only its icon (`chat`, `history`), with its name on the title and label, as the
+footer's buttons do. Measured in Chromium at 180–240px on 2026-11-11
+(`project-scripts/talkcode-history-tab/shoot.mts`).
 
 **Data.** `useHistoryPanel` (`../adapter.ts`) hands the room `list({before, limit})`,
 `search(query)` and `read(id)`; `daemon/history-panel.ts` builds them from `HistoryStore`, and the
 instance id is only for the topic link. Three routes carry it: `GET api/history`,
 `GET api/history/search?q=` and `GET api/history/read?id=`. All three are reads behind the same
-session as everything else; nothing here writes a row. Every parameter is in the query string, so
+session as everything else; nothing here writes a row. The read answers with the session, the note
+and the messages already rendered (`room.ts` historyRead), not the store's rows. Every parameter is in the query string, so
 `server.ts` validates each by shape — a cursor it did not hand out, a limit outside 1–200, a query
 with no word in it and an id that is not one are refused before they reach the store.
 
@@ -1786,11 +1818,15 @@ left, each keeps its own width and clears it on a double-click, and the footer's
 checked by the items they hold and what each item does — All settings, Skills, Close idle. The
 pinned state row is driven on both lists: on screen with the panel shut, filtering from a chip
 without opening it, surviving a reload, and leaving the Filter dot to the panel's groups. The
-history page is driven there as well: the button's place beside the clear control, the list with
-its agent and platform, a second page appended from the cursor, a search and the list coming back
-when the field is cleared, a conversation opened with its truncation note and the link to a topic
-that still exists (and its absence when it does not), Escape and the backdrop, and the daemon with
-no library at all.
+History tab is driven there as well: the two tabs and what each hides, the list read again on
+selection without blinking, a second page appended from the cursor, a failed page kept beside its
+button, an IME Enter, "30+", a search and the list coming back when the field is cleared; a
+conversation opened with the transcript's own markup (compared bubble for bubble with `#log`), its
+lines folding on their own, the cut note in the bar, the three read-only sentences and the topic
+link following the list, every way back (Close, the Topics tab, a link out of the record, the topic
+link), no seen mark and no paste or drop while covered, the phone drawer, nothing remembered over a
+reload, a failed read, and the daemon with no library at all. Sixteen mutations of page.ts, one per
+decision above, each fail a test there (`project-scripts/talkcode-history-tab/mutate.py`).
 
 Four things about it that are not obvious:
 
