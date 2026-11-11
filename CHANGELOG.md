@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.59.0] - 2026-11-11
+
 ### Added
 
 - **The web UI's skills window opens on the list it last saw.** `api/skills` is not a cheap read:
