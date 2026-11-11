@@ -32,7 +32,7 @@ platforms:
     host: 0.0.0.0                    # 发布的端口转到容器自己的网卡上，不是回环地址
 hosts:
   devbox:
-    ssh: me@10.0.0.5:22
+    ssh: me@192.0.2.5:22
 agents:
   - id: cc
     harness: claude

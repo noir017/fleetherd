@@ -35,12 +35,12 @@ Discord · Telegram · Slack · Lark · QQ · LINE · WeCom · DingTalk · Web U
      │                 │   routing · sessions      │
      │                 │   streaming · access      │
      │                 └─────────────┬─────────────┘
-     │                               │ one ssh link per host
+     │                               │ one ssh link per remote host
      │         ┌─────────────────────┼─────────────────────┐
      │         ▼                     ▼                     ▼
      │ ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
-     │ │ this machine  │     │ devbox (ssh)  │     │ buildbox (ssh)│
-     │ │ cc · oc · agy │     │ cc · cbc · oc │     │ cx · ag       │
+     │ │ this machine  │     │ devbox (ssh)  │     │ buildbox(ssh) │
+     │ │ cc · oc · agy │     │ cc · oc       │     │ cx · agy      │
      │ └───────┬───────┘     └───────┬───────┘     └───────┬───────┘
      └─────────┴─────────────────────┴─────────────────────┘   fleetherd CLI
        send-file / ask / react … — the agent's way back into the chat

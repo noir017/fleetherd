@@ -34,7 +34,7 @@ agents:                       # at least one; routing picks by id
 
 hosts:                        # optional; machines agents run on, reached over ssh
   devbox:
-    ssh: me@10.0.0.5:22
+    ssh: me@192.0.2.5:22
     # identityFile: ~/.config/fleetherd/ssh/id_ed25519   (default)
     # knownHostsFile: ~/.config/fleetherd/ssh/known_hosts (default)
 

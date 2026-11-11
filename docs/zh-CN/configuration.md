@@ -33,7 +33,7 @@ agents:                       # 至少一个；路由按 id 选取
 
 hosts:                        # 可选；智能体所在的机器，经 ssh 连接
   devbox:
-    ssh: me@10.0.0.5:22
+    ssh: me@192.0.2.5:22
     # identityFile: ~/.config/fleetherd/ssh/id_ed25519   （默认）
     # knownHostsFile: ~/.config/fleetherd/ssh/known_hosts （默认）
 

@@ -11,7 +11,7 @@ host and delivered when the connection is back.
 ```yaml
 hosts:
   devbox:
-    ssh: me@10.0.0.5:22           # user@host[:port]
+    ssh: me@192.0.2.5:22           # user@host[:port]
 agents:
   - id: cc-dev
     harness: claude
@@ -45,7 +45,7 @@ agents:
    with the one on the host (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`) before adding it:
 
    ```bash
-   ssh-keyscan -p 22 10.0.0.5 >> ~/.config/fleetherd/ssh/known_hosts   # [10.0.0.5]:2222 for another port
+   ssh-keyscan -p 22 192.0.2.5 >> ~/.config/fleetherd/ssh/known_hosts   # [192.0.2.5]:2222 for another port
    ```
 
    It is the host's plain key that is checked. Host certificates (a Teleport node's, for one) are
@@ -69,7 +69,7 @@ An agent can do steps 1–3 itself (`fleetherd help pods`):
 2. On the host, append that line to `~/.ssh/authorized_keys`, and read its host key there — say
    `/etc/ssh/ssh_host_ed25519_key.pub` — rather than with `ssh-keyscan`: it is what every connection
    will be checked against.
-3. `fleetherd pod-add devbox me@10.0.0.5:22 --host-key "ssh-ed25519 AAAA…"` adds `hosts.devbox` to
+3. `fleetherd pod-add devbox me@192.0.2.5:22 --host-key "ssh-ed25519 AAAA…"` adds `hosts.devbox` to
    config.yaml (comments kept), pins the key in the gateway's known_hosts, reloads, and answers with
    the agents it found there.
 
@@ -132,7 +132,7 @@ ssh devbox.pod            # a terminal; scp, rsync, git and -L/-R work as with a
 ```yaml
 # ~/.fleetherd/pod.yaml
 peer:                     # join the mesh
-  ssh: me@10.0.0.5:2222   # optional: how the other hosts reach this one, if not how the gateway does
+  ssh: me@192.0.2.5:2222   # optional: how the other hosts reach this one, if not how the gateway does
 ```
 
 The connections are plain OpenSSH between the hosts; the gateway carries none of it. What it does

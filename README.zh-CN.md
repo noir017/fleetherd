@@ -34,12 +34,12 @@ Discord · Telegram · Slack · 飞书 · QQ · LINE · 企业微信 · 钉钉 �
      │                 │   routing · sessions      │
      │                 │   streaming · access      │
      │                 └─────────────┬─────────────┘
-     │                               │ 每台主机一条 ssh
+     │                               │ 每台远程主机一条 ssh
      │         ┌─────────────────────┼─────────────────────┐
      │         ▼                     ▼                     ▼
      │ ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
-     │ │ this machine  │     │ devbox (ssh)  │     │ buildbox (ssh)│
-     │ │ cc · oc · agy │     │ cc · cbc · oc │     │ cx · ag       │
+     │ │ 本机          │     │ devbox (ssh)  │     │ buildbox(ssh) │
+     │ │ cc · oc · agy │     │ cc · oc       │     │ cx · agy      │
      │ └───────┬───────┘     └───────┬───────┘     └───────┬───────┘
      └─────────┴─────────────────────┴─────────────────────┘   fleetherd CLI
        send-file / ask / react …：智能体回到聊天的通道

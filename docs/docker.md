@@ -33,7 +33,7 @@ platforms:
     host: 0.0.0.0                    # a published port arrives on the container's own interface
 hosts:
   devbox:
-    ssh: me@10.0.0.5:22
+    ssh: me@192.0.2.5:22
 agents:
   - id: cc
     harness: claude

@@ -9,7 +9,7 @@
 ```yaml
 hosts:
   devbox:
-    ssh: me@10.0.0.5:22           # user@host[:port]
+    ssh: me@192.0.2.5:22           # user@host[:port]
 agents:
   - id: cc-dev
     harness: claude
@@ -41,7 +41,7 @@ agents:
    （`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`）：
 
    ```bash
-   ssh-keyscan -p 22 10.0.0.5 >> ~/.config/fleetherd/ssh/known_hosts   # 其他端口写成 [10.0.0.5]:2222
+   ssh-keyscan -p 22 192.0.2.5 >> ~/.config/fleetherd/ssh/known_hosts   # 其他端口写成 [192.0.2.5]:2222
    ```
 
    校验的是主机的普通密钥。主机证书（比如 Teleport 节点的）不会被使用，所以写 `@cert-authority` 行没有用。
@@ -62,7 +62,7 @@ agents:
    它带 `restrict`，`from=` 限定为私网地址段。
 2. 在那台主机上把这一行追加到 `~/.ssh/authorized_keys`，并在主机上读出它的主机公钥——比如
    `/etc/ssh/ssh_host_ed25519_key.pub`——而不是用 `ssh-keyscan` 去扫：以后每次连接都要拿它来核对。
-3. `fleetherd pod-add devbox me@10.0.0.5:22 --host-key "ssh-ed25519 AAAA…"` 会往 config.yaml 里加
+3. `fleetherd pod-add devbox me@192.0.2.5:22 --host-key "ssh-ed25519 AAAA…"` 会往 config.yaml 里加
    `hosts.devbox`（保留注释），把公钥钉进网关的 known_hosts，然后 reload，并回复在那台主机上找到了哪些智能体。
 
 `fleetherd pod-remove devbox` 把一台主机连同它的智能体一起移除。config.yaml 里还用到它时会被拒绝——那里写了跑在它上面的
@@ -118,7 +118,7 @@ ssh devbox.pod            # 交互终端；scp、rsync、git 和 -L/-R 都和普
 ```yaml
 # ~/.fleetherd/pod.yaml
 peer:                     # 加入互通
-  ssh: me@10.0.0.5:2222   # 可选：别的主机怎么连这台，和网关连它的方式不同时才写
+  ssh: me@192.0.2.5:2222   # 可选：别的主机怎么连这台，和网关连它的方式不同时才写
 ```
 
 连接是主机之间直连的普通 OpenSSH，网关一字节都不经手。它只负责配置：互通里的每台主机有一把自己的密钥
