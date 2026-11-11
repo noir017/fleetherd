@@ -14,8 +14,8 @@ All notable changes to this project are documented here. The format is based on
   conversations — a root and every sub-agent under it — and any match in the tree keeps all of it,
   drawn exactly as it is without a filter: the same fold and fold count, the same needs-you block
   and divider, the same order and stars, nothing dimmed. Because the unit is the conversation, the
-  chips and **Showing N of M** count trees rather than topics, and their numbers are the rows a
-  tap leaves.
+  chips and **Showing N of M** count conversations rather than topics, so a chip's number is the
+  number of conversations a tap on it leaves.
 
 ## [2.58.0] - 2026-11-10
 

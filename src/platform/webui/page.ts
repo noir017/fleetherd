@@ -4470,11 +4470,12 @@ const SCRIPT = `
    * The list's tree and its conversations, built from the topics in hand. A conversation is a
    * root and everything its agent opened under it — the unit the filter keeps or drops whole
    * (topicRows) and the unit the chips count (topicFilterGroups), so one tree is one result in
-   * both places. A parent that loops (only a hand-edited file could) leaves its topics
-   * unreachable from any root; they start conversations of their own, which is also how they are
-   * drawn. Scheduled runs are conversations, but not ones the person opened: the panel's Sessions
-   * tab is where they live, and leaving them out here also keeps their unread badges and "needs
-   * you" rows out of the switcher.
+   * both places. A parent that loops (only a hand-edited file could) gives the loop no root, so
+   * the first topic of it met in the list starts the conversation and the rest hang under it the
+   * way the walk reaches them — a two-topic loop is drawn as the first root with the second folded
+   * under it, and the conversation is exactly that pair. Scheduled runs are conversations, but not
+   * ones the person opened: the panel's Sessions tab is where they live, and leaving them out here
+   * also keeps their unread badges and "needs you" rows out of the switcher.
    *
    * Each conversation carries what the filter decides on: its most pressing state, whether any
    * topic in it is starred, and every agent and host it touches. State and star are whole-tree
@@ -4530,11 +4531,10 @@ const SCRIPT = `
    *
    * The topic on screen is never folded away: its ancestors are drawn open, without that being
    * saved, so a link into a sub-agent's topic lands on a row you can see. A parent field that loops
-   * (only a hand-edited file could) leaves its topics unreachable from any root; they are drawn as
-   * roots rather than not at all.
+   * (only a hand-edited file could) has no root to start from; the walk picks the first topic of
+   * the loop in the list order and draws the rest under it, rather than losing them.
    */
-  function topicRows(){
-    var forest=topicForest();
+  function topicRows(forest){
     var visible=forest.visible, byId=forest.byId, kids=forest.kids, roots=forest.roots, i;
     var open={}, up=byId[topic], hops=0;
     while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
@@ -4595,7 +4595,7 @@ const SCRIPT = `
     // starred row leads its unstarred peers there: a star is a promise not to forget a topic, not
     // a claim on the top of the column.
     var ordered=candidates.slice().sort(function(a,b){
-      var ra=listRank(a, true), rb=listRank(b, true), d=ra-rb;
+      var ra=listRank(a), rb=listRank(b), d=ra-rb;
       if(d) return d;
       if(ra===0) d=NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage];
       return d || (b.starred?1:0)-(a.starred?1:0);
@@ -4609,8 +4609,10 @@ const SCRIPT = `
       if(!seen[visible[i].id] && !hidden) walk(visible[i], 0);
     }
     if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
+    // Any starred topic counts, not just a starred root: the label decides whether Clear would
+    // spare anything, and the daemon spares a starred sub-agent too.
     var stars=0;
-    for(i=0;i<roots.length;i++) if(roots[i].starred) stars++;
+    for(i=0;i<visible.length;i++) if(visible[i].starred) stars++;
     // matched and total are conversations, not topics: one tree is one result, which is what
     // the chips count and what "Showing N of M" has to agree with.
     return {rows:rows, dividers:dividers, stars:stars, matched:matched, total:forest.convOrder.length, filtering:filtering};
@@ -4680,20 +4682,19 @@ const SCRIPT = `
   }
 
   /**
-   * The rank the list is painted by: needsYou 0, a root that has no title yet 1, and stateRank's
+   * The rank the list is painted by: needsYou 0, a topic that has no title yet 1, and stateRank's
    * other three states shifted up to 2–4. A topic is named by its first message (topics.ts seed),
    * so an empty title means nothing has been said in it yet — the conversation the person has just
    * opened and is about to work in, which the state order otherwise left at the bottom among the
-   * topics with no agent behind them. The root flag is false for a node met while walking a
-   * parent's children: an empty title there must not lift the parent, which is only being kept to
-   * show that child.
+   * topics with no agent behind them. Only roots are ordered by this, which is why the untitled
+   * lift needs no "is this a child" guard: a sub-agent's empty title never reaches a sort.
    *
    * It is a rank of the list, not a fifth state: the dot is drawn from the same facts and the
    * filter bar still counts by stateRank, so "No agent" keeps counting the new topic it is.
    */
-  function listRank(t, root){
+  function listRank(t){
     var r=stateRank(t);
-    return r===0 ? 0 : (root && !t.title ? 1 : r+1);
+    return r===0 ? 0 : (!t.title ? 1 : r+1);
   }
 
   /**
@@ -5099,9 +5100,10 @@ const SCRIPT = `
    * way to see why. Counted by conversation, because that is what the chips filter: a tree whose
    * sub-agent is the cbc one counts once under cbc, and the four state chips add up to the number
    * of trees in the list. Scheduled runs are left out for the same reason topicRows leaves them
-   * out — they are not rows in this list.
+   * out — they are not rows in this list. Takes the forest paintTopics already built, so the
+   * chips and the rows cannot disagree about what a conversation is.
    */
-  function topicFilterGroups(){
+  function topicFilterGroups(forest){
     var stateOpts = [
       {value:'needs', label:'Needs you', short:'Needs', icon:'bell', count:0},
       {value:'running', label:'Running', short:'Run', icon:'play', count:0},
@@ -5112,7 +5114,6 @@ const SCRIPT = `
       {value:'starred', label:'Starred', icon:'star', count:0},
       {value:'plain', label:'Unstarred', count:0}
     ];
-    var forest = topicForest();
     var agents = {}, agentOrder = [], hosts = {}, hostOrder = [], i;
     for(i=0;i<forest.visible.length;i++){
       var t = forest.visible[i];
@@ -5167,10 +5168,10 @@ const SCRIPT = `
    * keyword, an agent and a host match when any topic in the tree carries them — the person is
    * looking for the conversation that talks about this, and the sub-agents are part of it. State
    * and star are whole-tree properties (the most pressing state among its topics, and whether any
-   * topic in it is starred), so the state chips partition the conversations and their numbers are
-   * exactly the rows a tap on them leaves. Inside a group the values are a union, across groups an
-   * intersection. The keyword is split on whitespace and every word has to hit one topic, so
-   * "cbc parse" finds the parser topic of the cbc agent in either order.
+   * topic in it is starred), so the state chips partition the conversations and each chip's number
+   * is the number of conversations a tap on it leaves. Inside a group the values are a union,
+   * across groups an intersection. The keyword is split on whitespace and every word has to hit
+   * one topic, so "cbc parse" finds the parser topic of the cbc agent in either order.
    */
   function convMatch(conv, words, sel){
     var v = sel.state;
@@ -5201,11 +5202,14 @@ const SCRIPT = `
   function paintTopics(){
     var h='';
     var cur=null;
+    // One tree for the whole paint: the chips and the rows must count and draw the same
+    // conversations, and neither the groups nor the rows change the tree itself.
+    var forest = topicForest();
     // Before the rows, so a selected agent or host that has just disappeared is dropped from the
     // bar's state first and the list below is filtered by what the panel actually shows.
-    var fg = topicFilterGroups();
+    var fg = topicFilterGroups(forest);
     if(topicFilter) topicFilter.setGroups(fg.groups);
-    var painted=topicRows();
+    var painted=topicRows(forest);
     if(topicFilter) topicFilter.setCounts(painted.matched, painted.total);
     // The topic on screen may be a scheduled run, which topicRows leaves out of the list. The
     // header, Stop/power and the read marks still belong to it, so find it in the full list —

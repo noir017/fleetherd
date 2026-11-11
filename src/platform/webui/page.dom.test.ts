@@ -2117,6 +2117,109 @@ describe('webui page: the topic filter bar', () => {
     expect(ids(h)).toEqual([A, K]);
   });
 
+  it('draws a parent loop once, and keeps the pair together when either matches', async () => {
+    const h = await open();
+    await h.emit(sync(C, [], [C]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'loop one', lastAt: 1000, msgCount: 0, parent: B, live: true },
+        { id: B, title: 'loop two', lastAt: 999, msgCount: 0, parent: A, live: true },
+        { id: C, title: 'other', lastAt: 998, msgCount: 0, live: true },
+      ],
+    });
+    // No root to start from: the first of the loop in the list is drawn as the root, the other
+    // folded under it, and C (a real root) is drawn before the loop.
+    expect(ids(h)).toEqual([C, A]);
+    await type(h, 'loop two');
+    // B matched; A is the loop's root, so the pair survives as one conversation.
+    expect(ids(h)).toEqual([A]);
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 1 of 2');
+    await h.click(`#topics [data-fold="${A}"]`);
+    expect(ids(h)).toEqual([A, B]);
+  });
+
+  it('treats a topic whose parent is gone as a conversation of its own', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'orphan', lastAt: 1000, msgCount: 0, parent: 'ffffffff', live: true },
+        { id: B, title: 'other', lastAt: 999, msgCount: 0, live: true },
+      ],
+    });
+    // Its parent is not in the list, so it is a root like any other — and a conversation of one.
+    expect(ids(h)).toEqual([A, B]);
+    await type(h, 'orphan');
+    expect(ids(h)).toEqual([A]);
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 1 of 2');
+  });
+
+  it('keeps a three-level conversation whole when the deepest topic matches', async () => {
+    const D = 'd1d2d3d4';
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'root of all', lastAt: 1000, msgCount: 0, live: true },
+        { id: B, title: 'middle', lastAt: 999, msgCount: 0, parent: A, live: true },
+        { id: D, title: 'deep match', lastAt: 998, msgCount: 0, parent: B, live: true },
+        { id: C, title: 'other', lastAt: 997, msgCount: 0, live: true },
+      ],
+    });
+    await type(h, 'deep match');
+    // Only the deepest topic matches; the whole tree survives, folded a level at a time as usual.
+    expect(ids(h)).toEqual([A]);
+    expect(face(h.doc.querySelector(`#topics [data-fold="${A}"]`))).toBe('[chevronRight] 1');
+    await h.click(`#topics [data-fold="${A}"]`);
+    expect(ids(h)).toEqual([A, B]);
+    expect(face(h.doc.querySelector(`#topics [data-fold="${B}"]`))).toBe('[chevronRight] 1');
+    await h.click(`#topics [data-fold="${B}"]`);
+    expect(ids(h)).toEqual([A, B, D]);
+    expect(h.doc.querySelector('#topics .ctx')).toBeNull();
+  });
+
+  it('keeps the ancestors of the topic on screen open inside a filtered tree', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${B}` });
+    await h.emit(sync(B, [], [B]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'parent', lastAt: 1000, msgCount: 0, live: true },
+        { id: B, title: 'child on screen', lastAt: 999, msgCount: 0, parent: A, live: true },
+        { id: C, title: 'other', lastAt: 998, msgCount: 0, live: true },
+      ],
+    });
+    // Without a filter the ancestor is open because the topic on screen is under it; a filter
+    // must not fold it back over the row the person is reading.
+    expect(ids(h)).toEqual([A, B, C]);
+    await type(h, 'parent');
+    expect(ids(h)).toEqual([A, B]);
+    expect(face(h.doc.querySelector(`#topics [data-fold="${A}"]`))).toBe('[chevronDown] 1');
+  });
+
+  it('draws a needs-you sub-agent once when its own root also matches', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'unrelated', lastAt: 1000, msgCount: 0, live: true },
+        { id: P, title: 'parent hit', lastAt: 999, msgCount: 0, live: true },
+        { id: K, title: 'child asks', lastAt: 998, msgCount: 0, parent: P, stage: 'answer', asking: true, running: true, live: true },
+      ],
+    });
+    // Open the tree first, so the pinned row and the walk under P would both reach K.
+    await h.click(`#topics [data-fold="${P}"]`);
+    await type(h, 'hit');
+    // K is pinned above the block; P follows, and K is not drawn a second time under it.
+    expect(ids(h)).toEqual([K, P]);
+    expect(h.doc.querySelectorAll(`[data-topic="${K}"]`)).toHaveLength(1);
+    expect(h.doc.querySelector(`[data-topic="${P}"]`)?.classList.contains('after-needs')).toBe(true);
+  });
+
   it('drops a selected value the caller no longer offers, and says so by showing everything', async () => {
     const h = await open();
     await withFleet(h);
@@ -2447,6 +2550,22 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
       ],
     });
     expect(h.live().url).toBe(`api/events?t=${B}`);
+  });
+
+  it('says Clear unstarred topics when only a sub-agent is starred', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A, B]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'parent', lastAt: 1000, msgCount: 0 },
+        { id: B, title: 'child', lastAt: 999, msgCount: 0, parent: A, starred: true },
+      ],
+    });
+    // The daemon spares a starred sub-agent like any other topic, so the button must not promise
+    // to clear everything.
+    expect(h.el('clear-topics').getAttribute('title')).toBe('Clear unstarred topics');
+    expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear unstarred topics');
   });
 
   it('puts the star back and says so when the daemon refuses it', async () => {
