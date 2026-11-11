@@ -67,6 +67,7 @@ import type {
   HistoryPanelHit,
   HistoryPanelPage,
   HistoryPanelRead,
+  HistoryPanelSession,
   MessageKind,
   SchedulePanel,
   ModelPicker,
@@ -213,6 +214,73 @@ export function webMessageHtml(kind: MessageKind | undefined, text: string): str
   // Only a tool bubble's glyphs become icons: a report's lines are sub-agent updates, not tools.
   if (kind === 'tools') return renderWebToolLines(text, toolGlyph);
   return kind === 'report' ? renderWebToolLines(text) : renderWebMarkdown(text);
+}
+
+/** One conversation from the library, as the page opens it in the transcript's place. */
+export interface WebHistoryRead {
+  session: HistoryPanelSession;
+  messages: WebMessage[];
+  /** What the store's bound left out — see `HistoryPanelRead.note`. */
+  note?: string;
+}
+
+/** The card delegation.ts sends the agent that opened sub-agent topics; the library records it as a prompt. */
+const UPDATES_CARD = '[sub-agent updates]';
+
+/**
+ * A library read as the messages a topic would have shown, so the page draws a recorded
+ * conversation with the same bubbles, markdown and tool folding as a live one.
+ *
+ * Rendered here rather than in the page because this side is where markdown becomes markup: the
+ * escaping lives in `web-markdown.ts`, and a second renderer in the page would be a second XSS
+ * boundary. What the library keeps is less than a topic held, and the mapping says so in shape:
+ * - the operator's prompt is their own bubble, escaped and not rendered, as `record` posts it;
+ * - an agent reply is markdown;
+ * - consecutive tool rows are one tool bubble, a line each. The store has already folded a run
+ *   into one line (`[37 tool calls: Bash ×20, …]`) or cut a call to its first line, so a line is
+ *   all there is — there is no ✓ and no duration, because the library never kept them;
+ * - a prompt the gateway wrote rather than the person (`subagent`) is drawn as the bubble it was
+ *   in the topic: the updates card as a report, a task handed to a sub-agent as a dispatch. The
+ *   library tells the two apart only by its turn's trigger, which a read does not carry, so the
+ *   card is known by the words delegation.ts starts it with.
+ * Ids are `h<row id>`, which no live message can be (`nextId` writes `w<n>`).
+ */
+export function historyMessages(rows: HistoryPanelRead['messages']): WebMessage[] {
+  const out: WebMessage[] = [];
+  let run: { id: number; at: number; lines: string[] } | null = null;
+  const bubble = (id: number, at: number, own: boolean, html: string, kind?: MessageKind): WebMessage => ({
+    id: `h${id}`,
+    own,
+    html,
+    at,
+    buttons: [],
+    reactions: [],
+    ...(kind ? { kind } : {}),
+  });
+  const flush = (): void => {
+    if (!run) return;
+    out.push(bubble(run.id, run.at, false, webMessageHtml('tools', run.lines.join('\n')), 'tools'));
+    run = null;
+  };
+  for (const row of rows) {
+    if (row.role === 'tool') {
+      const line = row.text.split('\n', 1)[0] ?? '';
+      if (run) run.lines.push(line);
+      else run = { id: row.id, at: row.at, lines: [line] };
+      continue;
+    }
+    flush();
+    if (row.role === 'user' && row.kind === 'subagent') {
+      const kind: MessageKind = row.text.startsWith(UPDATES_CARD) ? 'report' : 'dispatch';
+      out.push(bubble(row.id, row.at, false, webMessageHtml(kind, row.text), kind));
+    } else if (row.role === 'user') {
+      out.push(bubble(row.id, row.at, true, renderBody(row.text, [])));
+    } else {
+      out.push(bubble(row.id, row.at, false, webMessageHtml(undefined, row.text)));
+    }
+  }
+  flush();
+  return out;
 }
 
 /**
@@ -827,10 +895,18 @@ export class WebRoom {
     return { enabled: true, ...this.historyPanel.search(query) };
   }
 
-  /** One conversation whole. The store's own sentence is thrown for an id that names none. */
-  historyRead(id: number): HistoryPanelRead {
+  /**
+   * One conversation whole, drawn as a topic is (`historyMessages`). The store's own sentence is
+   * thrown for an id that names none.
+   */
+  historyRead(id: number): WebHistoryRead {
     if (!this.historyPanel) throw new Error('the conversation library is not enabled in this daemon');
-    return this.historyPanel.read(id);
+    const read = this.historyPanel.read(id);
+    return {
+      session: read.session,
+      messages: historyMessages(read.messages),
+      ...(read.note ? { note: read.note } : {}),
+    };
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */
