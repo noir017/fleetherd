@@ -684,6 +684,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #skills-count{flex:none;font-size:11.5px;color:var(--dim)}
 #skills-new{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
 #skills-new:hover{border-color:#3a3a3a;background:#2a2a2a}
+#skills-refresh{font-size:15px}
+#skills-refresh:disabled{opacity:.45;cursor:default}
 #skills-close{font-size:18px;padding:6px 10px}
 #skills-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 /* Sticky, because the switches are on every row of a long list: a refusal (a description too long
@@ -756,6 +758,11 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .skill-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .skill-ctl{flex:none;display:flex;align-items:center;gap:10px}
 .skill-open{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;background:none;border:0;padding:0;color:inherit;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+/* The name is what an agent needs to be told in a chat, so the row and the skill's own page hand
+   it over in one tap. Small and quiet: it sits beside the name, not instead of it. */
+.skill-copy{flex:none;background:none;border:0;padding:2px 4px;color:var(--dim);font:inherit;font-size:13px;line-height:1;cursor:pointer;border-radius:4px}
+.skill-copy:hover{color:var(--fg);background:var(--field)}
+.skill-head .skill-copy{font-size:14px}
 .skill-group-head{display:flex;align-items:baseline;flex-wrap:wrap;column-gap:8px;margin:14px 0 6px}
 .skill-group-head .skill-section{margin:0}
 .skill-group-hint{font-size:11.5px;color:var(--dim)}
@@ -1341,7 +1348,9 @@ button:disabled{opacity:.5;cursor:default}
   #skills{padding:0}
   #skills-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
   #skills-bar{padding:0 4px 0 12px;min-height:49px}
-  #skills-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  #skills-refresh,#skills-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
+  #skills-refresh{font-size:17px}
+  #skills-close{font-size:20px}
   #skills-new{min-height:44px;padding:0 14px}
   /* The history window takes the whole screen for the same reason the skills page does. The field
      is 16px here: Safari zooms a focused field under that and does not zoom back out. */
@@ -1356,6 +1365,7 @@ button:disabled{opacity:.5;cursor:default}
   /* The page's own buttons at an ordinary height, not the bar's 44px: with two controls in every
      row of the list, 44px read as a page of slabs (2026-11-06). 32px is still a fair thumb target. */
   .skill-acts button,.skill-file{min-height:32px;padding:0 12px}
+  .skill-copy{display:inline-flex;align-items:center;justify-content:center;min-width:32px;min-height:32px;padding:0}
   /* The row's switches go under the text: beside it they would leave the description a third of
      a phone's width. */
   .skill-card{flex-wrap:wrap;row-gap:6px}
@@ -1481,6 +1491,7 @@ const SCRIPT = `
       reader=$('reader'), readerName=$('reader-name'), readerGet=$('reader-get'), readerBody=$('reader-body'),
       skillsWin=$('skills'), skillsToggle=$('skills-toggle'), skillsBack=$('skills-back'),
       skillsTitle=$('skills-title'), skillsCount=$('skills-count'), skillsNewBtn=$('skills-new'),
+      skillsRefreshBtn=$('skills-refresh'),
       skillsClose=$('skills-close'), skillsBody=$('skills-body'), skillsNote=$('skills-note'),
       skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
       historyOpenBtn=$('history-open'), historyWin=$('history'), historyBack=$('history-back'),
@@ -1579,10 +1590,14 @@ const SCRIPT = `
   // only. A message the daemon accepts that still carries the text dismisses the suggestion; a
   // reload forgets the link and leaves the suggestion pending, which is the safe direction.
   var revAdopted={};
-  // The skills window: its list, the skill open in it, and whether the New form is showing. Not
-  // persisted — a management surface is opened on purpose, and a window that came back on load
-  // would sit over a conversation nobody asked it to cover.
+  // The skills window: its list, the skill open in it, and whether the New form is showing. The
+  // window's own state is not persisted — a management surface is opened on purpose, and one
+  // restored on load would sit over a conversation nobody asked it to cover. The LIST is cached
+  // (aa_skills, read on the first open): the store reads and hashes every delivered file, so
+  // waiting for it every time the window opened was visible, and the answer is only a row per
+  // skill. See skillCacheLoad for why localStorage rather than IndexedDB.
   var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false, skillSearches=null;
+  var skillsCacheRead=false, skillsFetchedAt=0, skillSig='';
   // The history page's last answer, the cursor for the page after it, the search it is showing
   // (empty for the plain list), and the conversation open on top of the list. histSeq is which
   // request an answer belongs to: close the window or open another conversation before the first
@@ -7216,6 +7231,58 @@ const SCRIPT = `
     return at ? schedAgo(at) : '';
   }
 
+  /**
+   * The list's cache, and why it is localStorage rather than the IndexedDB the transcripts use.
+   *
+   * api/skills is not a cheap read: listSkills opens every delivered file of every skill,
+   * hashes them for the version and parses SKILL.md, and searches() reads the query log. The
+   * answer is still only a row per skill — a few kilobytes — so it fits where this page already
+   * keeps its drafts and read counts, and survives a reload without a database. A cached list is
+   * drawn before the request leaves and then corrected by a silent refresh, so the worst a stale
+   * one can do is be one open out of date. The version is checked on read: a page that stored a
+   * different shape is ignored rather than drawn as holes.
+   */
+  var SKILLS_CACHE = 'aa_skills', SKILLS_CACHE_V = 1;
+  function skillSigOf(){ return JSON.stringify([skillsEnabled, skillList, skillSearches]); }
+  function skillCacheLoad(){
+    var d = null;
+    try { d = JSON.parse(localStorage.getItem(SKILLS_CACHE) || 'null'); } catch(x){ return; }
+    if(!d || d.v !== SKILLS_CACHE_V || !Array.isArray(d.skills)) return;
+    skillsEnabled = d.enabled !== false;
+    skillList = d.skills;
+    skillSearches = d.searches || null;
+    skillsFetchedAt = Number(d.at) || 0;
+    skillSig = skillSigOf();
+  }
+  function skillCacheSave(){
+    try {
+      localStorage.setItem(SKILLS_CACHE, JSON.stringify({
+        v:SKILLS_CACHE_V, at:skillsFetchedAt, enabled:skillsEnabled, skills:skillList, searches:skillSearches
+      }));
+    } catch(x){}
+  }
+  /** After the daemon answered: remember what it said, both for the next open and as the baseline
+      a silent refresh compares against ("redraw only if this changed"). */
+  function skillRemember(){ skillSig = skillSigOf(); skillCacheSave(); }
+
+  /** One tap on the name, from a row or from the skill's own page. The button turns into a check
+      for a moment: a copy that only changed the clipboard looks like a tap that did nothing. */
+  function skillCopyName(name, btn){
+    if(!name) return;
+    copyText(name, function(ok){
+      if(!ok) return skillNote('Could not copy the name \u2014 select it instead.');
+      btn.innerHTML = IC.icon.check;
+      btn.title = 'Copied';
+      btn.setAttribute('aria-label', 'Copied');
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(function(){
+        btn.innerHTML = IC.icon.copy;
+        btn.title = 'Copy name';
+        btn.setAttribute('aria-label', 'Copy name');
+      }, 1200);
+    });
+  }
+
   /** On is everything still under skills/ — active, or expired and not yet archived — and so still
       delivered. Off is archived: the store's only way to stop delivering a skill without losing it. */
   function skillOn(s){ return s.status !== 'archived'; }
@@ -7305,6 +7372,7 @@ const SCRIPT = `
     skillList = skillList.slice();
     for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) skillList[i] = entry;
     if(skillSel && skillSel.skill.name === name) skillSel.skill = entry;
+    skillRemember();
   }
 
   function skillCard(s){
@@ -7315,7 +7383,8 @@ const SCRIPT = `
     // The row opens the skill, but is not itself a button: it holds the switches, and a button
     // inside a button is two controls a screen reader announces as one. The name is the button.
     var h = '<div class="skill-item skill-card' + (skillOn(s) ? '' : ' skill-off') + '" data-skill="' + text(s.name) + '">';
-    h += '<div class="skill-main"><div class="skill-row"><button type="button" class="skill-open" title="Open">' + text(s.name) + '</button>';
+    h += '<div class="skill-main"><div class="skill-row"><button type="button" class="skill-open" title="Open">' + text(s.name) + '</button>'
+      + '<button type="button" class="skill-copy" data-copy-skill="' + text(s.name) + '" title="Copy name" aria-label="Copy name">' + IC.icon.copy + '</button>';
     if(s.status === 'expired') h += '<span class="skill-state expired" title="' + SKILL_EXPIRED_TITLE + '">Expired</span>';
     if(s.pinned) h += '<span class="skill-pin">pinned</span>';
     if(s.category) h += '<span class="skill-cat">' + text(s.category) + '</span>';
@@ -7435,7 +7504,8 @@ const SCRIPT = `
     skillsNewBtn.hidden = true;
     skillsTitle.textContent = s.name;
     skillsCount.textContent = skillPlace(s);
-    var h = '<div class="skill-head"><span class="skill-name">' + text(s.name) + '</span>';
+    var h = '<div class="skill-head"><span class="skill-name">' + text(s.name) + '</span>'
+      + '<button type="button" class="skill-copy" data-copy-skill="' + text(s.name) + '" title="Copy name" aria-label="Copy name">' + IC.icon.copy + '</button>';
     h += '<div class="skill-acts">';
     h += '<button type="button" data-sop="pin">' + (s.pinned ? 'Unpin' : 'Pin') + '</button>';
     h += '</div><div class="skill-ctl">' + skillControls(s) + '</div></div>';
@@ -7471,19 +7541,81 @@ const SCRIPT = `
   }
   function skillClearNote(){ skillsNote.hidden = true; }
 
-  function loadSkills(){
+  /**
+   * The list from the daemon.
+   *
+   * manual is the refresh button: its failure is the person's to see, and a skill on screen is
+   * read again so its status is current. The other kind is the one every open makes, and it fails
+   * without a word — the cached list is still on screen and still usable. One request at a time:
+   * a second ask joins the one in flight (and makes it manual) rather than racing it, because the
+   * answers carry no sequence number and the older one landing last would put a stale list back.
+   */
+  var skillFetching = false, skillFetchManual = false;
+  function loadSkills(manual){
+    if(skillFetching){ skillFetchManual = skillFetchManual || !!manual; return; }
     if(app.hidden) return;
+    skillFetching = true;
+    skillFetchManual = !!manual;
+    if(skillsRefreshBtn) skillsRefreshBtn.disabled = true;
     fetch('api/skills', {credentials:'same-origin'}).then(function(r){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }).then(function(d){
+      var manualNow = skillFetchManual, was = skillSig;
+      skillFetching = false;
+      skillFetchManual = false;
+      if(skillsRefreshBtn) skillsRefreshBtn.disabled = false;
       skillsEnabled = d.enabled !== false;
       skillList = d.skills || [];
       skillSearches = d.searches || null;
-      renderSkillsList();
+      skillsFetchedAt = Date.now();
+      skillRemember();
+      skillRefreshDone(was !== skillSig, manualNow);
     }).catch(function(e){
-      skillNote('Could not load skills: ' + ((e && e.message) || 'network error'));
+      var manualNow = skillFetchManual;
+      skillFetching = false;
+      skillFetchManual = false;
+      if(skillsRefreshBtn) skillsRefreshBtn.disabled = false;
+      if(manualNow) skillNote((skillsFetchedAt ? 'Could not refresh skills: ' : 'Could not load skills: ') + ((e && e.message) || 'network error'));
     });
+  }
+
+  /**
+   * Where a refreshed list goes. On a skill's page it never draws the list — that would take the
+   * page away from under the reader — and only the record is updated in place. A typed-into New
+   * form is left alone for the same reason. The list itself is redrawn only when the answer
+   * differs from what is already on screen, and not while a switch's own write is still on its
+   * way: its answer draws the row, and drawing over it would put the old state back first.
+   */
+  function skillRefreshDone(changed, manual){
+    if(skillSel){
+      if(manual) skillRefreshDetail();
+      else {
+        var e = skillFind(skillSel.skill.name);
+        if(e){ skillSel.skill = e; skillPaint(skillSel.skill.name); }
+      }
+      return;
+    }
+    if(skillNewMode || !changed) return;
+    if(skillsBusy || skillPending()) return;
+    renderSkillsList();
+  }
+
+  /** The refresh button on a skill's page: read the skill again, unless the editor holds something
+      the person typed — the same rule skillReread follows after a switch. With unsaved text the
+      record is still refreshed in place; the text stays exactly where it is. */
+  function skillRefreshDetail(){
+    var name = skillSel.skill.name;
+    // A write in flight already re-reads the skill when it answers; a second show now could land
+    // out of order with it.
+    if(skillEditorClean() && !skillsBusy){ openSkill(name, skillSel.file.path); return; }
+    var e = skillFind(name);
+    if(e){ skillSel.skill = e; skillPaint(name); }
+  }
+
+  function skillPending(){
+    for(var k in skillQueue) if(skillQueue[k].pending) return true;
+    return false;
   }
 
   function openSkill(name, file){
@@ -7499,6 +7631,7 @@ const SCRIPT = `
         return skillNote((d && d.error) || 'Could not open that skill.');
       }
       skillList = d.skills || skillList;
+      skillRemember();
       skillSel = d.detail;
       skillNewMode = false;
       skillClearNote();
@@ -7527,6 +7660,7 @@ const SCRIPT = `
         return skillNote((d && d.error) || 'That did not work.');
       }
       skillList = d.skills || skillList;
+      skillRemember();
       if(d.detail) skillSel = d.detail;
       // Released BEFORE then(): that callback may start a show of its own (the page re-reads the
       // skill after every write), and clearing the flag after it would make the editor writable
@@ -7646,9 +7780,16 @@ const SCRIPT = `
       editor holds something unsaved, which a re-read would throw away. */
   function skillReread(name){
     if(!skillSel || skillSel.skill.name !== name || !skillSel.file) return;
-    var ta = $('skill-text'), pathEl = $('skill-path');
-    if(!ta || !pathEl || ta.value !== skillSel.file.content || pathEl.value !== skillSel.file.path) return;
+    if(!skillEditorClean()) return;
     openSkill(name, skillSel.file.path);
+  }
+
+  /** Whether the editor still holds exactly what the detail read: the condition under which a
+      re-read costs nothing. A path the person changed counts as unsaved work too. */
+  function skillEditorClean(){
+    if(!skillSel || !skillSel.file) return false;
+    var ta = $('skill-text'), pathEl = $('skill-path');
+    return !!(ta && pathEl && ta.value === skillSel.file.content && pathEl.value === skillSel.file.path);
   }
 
   function openSkills(){
@@ -7656,13 +7797,21 @@ const SCRIPT = `
     skillsWin.hidden = false;
     skillNewMode = false;
     skillClearNote();
-    skillsListEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
-    skillsDetailEl.hidden = true;
-    skillsListEl.hidden = false;
-    skillsBack.hidden = true;
-    skillsTitle.textContent = 'Skills';
-    skillsCount.textContent = '';
-    loadSkills();
+    if(!skillsCacheRead){ skillsCacheRead = true; skillCacheLoad(); }
+    // The cached list is drawn before the request leaves: the window opens on the skills the last
+    // answer named, and the silent refresh below corrects it only if the store has moved on. With
+    // no cache there is nothing to draw, so this is the one open that waits and says so.
+    if(skillsFetchedAt){
+      renderSkillsList();
+    } else {
+      skillsListEl.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
+      skillsDetailEl.hidden = true;
+      skillsListEl.hidden = false;
+      skillsBack.hidden = true;
+      skillsTitle.textContent = 'Skills';
+      skillsCount.textContent = '';
+    }
+    loadSkills(!skillsFetchedAt);
     skillsClose.focus();
   }
   function closeSkills(){
@@ -7671,6 +7820,7 @@ const SCRIPT = `
   }
 
   skillsToggle.addEventListener('click', function(){ setMenu(null, false); openSkills(); });
+  skillsRefreshBtn.addEventListener('click', function(){ loadSkills(true); });
   skillsClose.addEventListener('click', closeSkills);
   skillsWin.addEventListener('click', function(e){ if(e.target === skillsWin) closeSkills(); });
   skillsBack.addEventListener('click', function(){ skillClearNote(); renderSkillsList(); });
@@ -7691,6 +7841,12 @@ const SCRIPT = `
         tabs[ti].setAttribute('aria-selected', isOn ? 'true' : 'false');
       }
       for(var pi=0;pi<panes.length;pi++) panes[pi].hidden = panes[pi].getAttribute('data-pane') !== skillTab;
+      return;
+    }
+    var copyBtn = e.target.closest ? e.target.closest('[data-copy-skill]') : null;
+    if(copyBtn){
+      e.stopPropagation();
+      skillCopyName(copyBtn.getAttribute('data-copy-skill'), copyBtn);
       return;
     }
     var rev = e.target.closest ? e.target.closest('[data-revert]') : null;
@@ -8761,20 +8917,24 @@ const SCRIPT = `
   }
 
   /**
-   * Put the text of a failed message on the clipboard.
+   * Put text on the clipboard.
    *
    * With a fallback, because navigator.clipboard does not exist on an insecure origin and
-   * plain http is exactly how this page is expected to be reached on a LAN. The button says
-   * which way it went rather than reporting success it did not have.
+   * plain http is exactly how this page is expected to be reached on a LAN. done() is told
+   * which way it went, so the caller can say so rather than reporting success it did not have.
    */
-  function copyLocal(nonce, btn){
-    var m=data['p:'+nonce]; if(!m) return;
-    var said=function(ok){ btn.textContent = ok ? 'Copied' : 'Select it above'; };
+  function copyText(s, done){
     if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(m._text).then(function(){ said(true); }, function(){ said(fallbackCopy(m._text)); });
+      navigator.clipboard.writeText(s).then(function(){ done(true); }, function(){ done(fallbackCopy(s)); });
       return;
     }
-    said(fallbackCopy(m._text));
+    done(fallbackCopy(s));
+  }
+
+  /** The text of a failed message, on the clipboard. */
+  function copyLocal(nonce, btn){
+    var m=data['p:'+nonce]; if(!m) return;
+    copyText(m._text, function(ok){ btn.textContent = ok ? 'Copied' : 'Select it above'; });
   }
 
   function fallbackCopy(s){
@@ -8978,6 +9138,7 @@ __GATE__
         <button type="button" class="btn-icon" id="skills-back" title="Back to all skills" aria-label="Back" hidden>${icon('chevronLeft')}</button>
         <span id="skills-title">Skills</span>
         <span id="skills-count"></span>
+        <button type="button" class="btn-icon" id="skills-refresh" title="Refresh skills" aria-label="Refresh skills">${icon('refresh')}</button>
         <button type="button" id="skills-new" title="Create a skill">New</button>
         <button type="button" class="btn-icon" id="skills-close" title="Close (Esc)" aria-label="Close">&times;</button>
       </div>

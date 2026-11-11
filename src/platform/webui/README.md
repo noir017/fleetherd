@@ -636,8 +636,14 @@ no `delete` arm, so a body the page could not have sent is refused before it rea
 
 **The page is a window, not a column.** `#skills` is one node with two views inside it (the list
 and the open skill), opened from the sidebar footer and closed by the ×, Escape, or the backdrop.
-Nothing about it is persisted: a management surface is opened on purpose, and one restored on load
-would sit over a conversation nobody asked it to cover.
+The window's own state is not persisted: a management surface is opened on purpose, and one restored on load
+would sit over a conversation nobody asked it to cover. The list it last drew is — one row per skill, in
+`aa_skills` in localStorage, because `api/skills` reads and hashes every delivered file before it answers and
+that wait was visible on every open. It is painted before the request leaves, and a silent refresh redraws it
+only when the answer differs; a failure behind it is silent, and an open skill or a half-typed New form is never
+taken away. A refresh button asks by hand and reports a failure; on a skill's page it also re-reads the skill
+unless the editor holds unsaved text. Every name has a copy button, with the `execCommand` fallback a plain-http
+origin needs.
 
 ## The history page
 
@@ -1769,7 +1775,10 @@ events `room.ts` actually emits — asserting on what a person would see: messag
 drawer open or shut, where the URL points. Add to it whenever you touch `page.ts`; the string
 assertions in `page.test.ts` were green throughout the release that rendered nothing. The skills
 page is driven there too: the list, an editor save carrying the version the detail read, the New
-form, a revert, and the two-tap archive. So is the settings page — the menu's quiet request, a
+form, a revert, the two-tap archive, the copy mark on a row and on a skill's page (with and without
+`navigator.clipboard`), the cached open and its silent refresh (drawn once when the answer is the
+same, redrawn when it changed, quiet when it failed), the manual refresh over unsaved text, and a
+reload that starts from `aa_skills`. So is the settings page — the menu's quiet request, a
 typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
 drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
 it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review

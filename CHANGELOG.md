@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI's skills window opens on the list it last saw.** `api/skills` is not a cheap read:
+  the store opens and hashes every delivered file of every skill before it answers, so opening the
+  window meant staring at **Loading…** each time. The browser now keeps the last answer — a row per
+  skill, a few kilobytes, in the localStorage the page already uses for drafts — and paints it
+  before the request leaves, while a silent refresh corrects it; the list is redrawn only when the
+  answer differs, a failure behind it says nothing, and neither an open skill nor a half-typed New
+  form is taken away. A refresh button in the header asks by hand and reports a failure; on a
+  skill's page it also re-reads that skill unless the editor holds unsaved text. Each name can be
+  copied from its row or from the skill's page, with the old `execCommand` fallback that the
+  plain-http origins this page is often served from need.
+
 ## [2.58.0] - 2026-11-10
 
 ### Added
