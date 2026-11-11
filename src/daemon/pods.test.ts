@@ -9,7 +9,7 @@ import { readPods, writePods } from '../config/pods.js';
 import { hostsWithConfiguredAgents, readPod, refreshPods, type PodHost } from './pods.js';
 
 /**
- * Reading what a pod declares: its `~/.talkcode/pod.yaml`, or — without one, and with no agents for
+ * Reading what a pod declares: its `~/.fleetherd/pod.yaml`, or — without one, and with no agents for
  * it in config.yaml — the harness commands on its login PATH. A pod that cannot be read keeps what
  * was read before.
  */
@@ -19,9 +19,9 @@ let bin: string;
 let dir: string;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-pod-home-'));
-  bin = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-pod-bin-'));
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-pod-cfg-'));
+  home = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-pod-home-'));
+  bin = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-pod-bin-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-pod-cfg-'));
 });
 afterEach(() => {
   for (const d of [home, bin, dir]) fs.rmSync(d, { recursive: true, force: true });
@@ -55,8 +55,8 @@ function install(...commands: string[]): void {
 }
 
 function podFile(text: string): void {
-  fs.mkdirSync(path.join(home, '.talkcode'), { recursive: true });
-  fs.writeFileSync(path.join(home, '.talkcode', 'pod.yaml'), text);
+  fs.mkdirSync(path.join(home, '.fleetherd'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.fleetherd', 'pod.yaml'), text);
 }
 
 describe('readPod', () => {
@@ -81,7 +81,7 @@ describe('readPod', () => {
     const first = await readPod(h, false, 10_000);
     if (first.kind !== 'record') throw new Error(JSON.stringify(first));
     expect(first.record.peer).toEqual({ key: expect.stringMatching(/^ssh-ed25519 [A-Za-z0-9+/=]+$/), ssh: 'user@10.1.2.3:2222' });
-    expect(fs.statSync(path.join(home, '.talkcode/ssh')).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.join(home, '.fleetherd/ssh')).mode & 0o777).toBe(0o700);
     const again = await readPod(h, false, 10_000);
     expect(again.kind === 'record' && again.record.peer?.key).toBe(first.record.peer?.key);
   });

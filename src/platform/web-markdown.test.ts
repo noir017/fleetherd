@@ -311,7 +311,7 @@ describe('web-markdown: a tool bubble', () => {
 
 describe('renderWebMarkdown: links to another topic', () => {
   it('keeps `?t=<topic id>` as an in-page link the page switches to', () => {
-    expect(renderWebMarkdown('[quantlab](?t=3a9f0c12)')).toContain('<a href="?t=3a9f0c12" data-goto="3a9f0c12">quantlab</a>');
+    expect(renderWebMarkdown('[shop-api](?t=3a9f0c12)')).toContain('<a href="?t=3a9f0c12" data-goto="3a9f0c12">shop-api</a>');
   });
 
   it('drops every other relative link, keeping its label', () => {

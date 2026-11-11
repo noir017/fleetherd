@@ -14,7 +14,7 @@ import { configPath, readRawConfigIfExists, saveConfigPatch } from '../config/lo
  * the three files change together, and only at startup — a running daemon holds the stores in
  * memory and writes them back. The three are copied to `*.bak-renames-<time>` first.
  *
- * Written for moving to pod-declared agents (`oc2` → `oc@awsfree2`, see daemon/pods.ts), and just as
+ * Written for moving to pod-declared agents (`oc2` → `oc@buildbox`, see daemon/pods.ts), and just as
  * good for any other rename.
  */
 

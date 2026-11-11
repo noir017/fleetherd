@@ -1,5 +1,5 @@
 {
-  "name": "talkcode",
+  "name": "fleetherd",
   "version": "2.60.0",
   "license": "MIT",
   "comments": {
@@ -9,6 +9,7 @@
   "description": "Your coding agent in every chat app: a gateway daemon connecting Telegram, Discord, Slack, Lark and more, or its own web UI, to Claude Code, Codex, OpenCode or Antigravity",
   "type": "module",
   "bin": {
+    "fleetherd": "./dist/cli.js",
     "talkcode": "./dist/cli.js"
   },
   "files": [
@@ -73,11 +74,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/noir017/talkcode.git"
+    "url": "git+https://github.com/noir017/fleetherd.git"
   },
-  "homepage": "https://github.com/noir017/talkcode#readme",
+  "homepage": "https://github.com/noir017/fleetherd#readme",
   "bugs": {
-    "url": "https://github.com/noir017/talkcode/issues"
+    "url": "https://github.com/noir017/fleetherd/issues"
   },
   "keywords": [
     "claude-code",

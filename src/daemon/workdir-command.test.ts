@@ -35,8 +35,8 @@ import type { WorkdirOption } from '../core/workdir-menu.js';
  */
 
 const root = mkdtempSync(join(tmpdir(), 'workdir-cmd-'));
-for (const name of ['quantlab', 'gateway', 'uniagent']) mkdirSync(join(root, name));
-const QUANTLAB = join(root, 'quantlab');
+for (const name of ['shop-api', 'gateway', 'uniagent']) mkdirSync(join(root, name));
+const SHOP_API = join(root, 'shop-api');
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const parsed = parseConfig({
@@ -166,7 +166,7 @@ describe('when the directory question is asked', () => {
     expect(menus[0]!.options.map((o) => o.name)).toEqual([
       menus[0]!.options[0]!.name,
       'gateway',
-      'quantlab',
+      'shop-api',
       'uniagent',
     ]);
     expect(menus[0]!.options[0]).toMatchObject({ path: root, root: true });
@@ -229,7 +229,7 @@ describe('when the directory question is asked', () => {
     await send('/cd');
     expect(menus).toHaveLength(0);
     expect(replies().at(-1)).toContain('Working dir:');
-    expect(replies().at(-1)).toContain('/cd quantlab');
+    expect(replies().at(-1)).toContain('/cd shop-api');
   });
 });
 
@@ -241,8 +241,8 @@ describe('moving a conversation', () => {
     store.setAgentSession(key, 'oc', 'oc-1');
     disposed.length = 0;
 
-    await send('/cd quantlab');
-    expect(store.conversationCwd(key)).toBe(QUANTLAB);
+    await send('/cd shop-api');
+    expect(store.conversationCwd(key)).toBe(SHOP_API);
     // Every agent's, not just the bound one's: the directory belongs to the conversation.
     expect(store.agentSession(key, 'cc')).toBeUndefined();
     expect(store.agentSession(key, 'oc')).toBeUndefined();
@@ -252,21 +252,21 @@ describe('moving a conversation', () => {
 
   it('is what the runtimes will read at spawn', async () => {
     const { reg, send, key } = rig();
-    await send('/cd quantlab');
+    await send('/cd shop-api');
     // workdirOf is the same call the runtime makes (resolveConversationCwd), so this is the
     // directory the next child actually starts in — and what the footer reports.
-    expect(reg.workdirOf(key, 'cc')).toBe(QUANTLAB);
+    expect(reg.workdirOf(key, 'cc')).toBe(SHOP_API);
     // …for every agent that answers here, not only the one bound when the move was made.
-    expect(reg.workdirOf(key, 'oc')).toBe(QUANTLAB);
+    expect(reg.workdirOf(key, 'oc')).toBe(SHOP_API);
   });
 
   it('costs nothing when the directory picked is the one already in use', async () => {
     const { send, replies, disposed, store, key } = rig();
-    await send('/cd quantlab');
+    await send('/cd shop-api');
     store.setAgentSession(key, 'cc', 'acp-2');
     disposed.length = 0;
 
-    await send('/cd quantlab');
+    await send('/cd shop-api');
     expect(replies().at(-1)).toContain('nothing reset');
     expect(disposed).toEqual([]);
     expect(store.agentSession(key, 'cc')).toBe('acp-2');
@@ -274,15 +274,15 @@ describe('moving a conversation', () => {
 
   it('clears the override when the root is chosen, so config can still move it later', async () => {
     const { send, store, key } = rig();
-    await send('/cd quantlab');
-    expect(store.conversationCwd(key)).toBe(QUANTLAB);
+    await send('/cd shop-api');
+    expect(store.conversationCwd(key)).toBe(SHOP_API);
     await send(`/cd ${root}`);
     expect(store.conversationCwd(key)).toBeUndefined();
   });
 
   it('refuses to guess between two matches, and changes nothing', async () => {
     const { send, replies, store, key } = rig();
-    await send('/cd a'); // matches gateway and quantlab (both contain "a")
+    await send('/cd a'); // matches gateway and shop-api (both contain "a")
     expect(replies().at(-1)).toContain('matches');
     expect(store.conversationCwd(key)).toBeUndefined();
   });
@@ -296,15 +296,15 @@ describe('moving a conversation', () => {
 
   it('survives /new: a reset clears the context, not the place it happens in', async () => {
     const { send, store, key } = rig();
-    await send('/cd quantlab');
+    await send('/cd shop-api');
     await send('/new');
-    expect(store.conversationCwd(key)).toBe(QUANTLAB);
+    expect(store.conversationCwd(key)).toBe(SHOP_API);
   });
 
   it('never reaches the agent as a prompt', async () => {
     const { send, prompts } = rig();
     await send('/cd');
-    await send('/cd quantlab');
+    await send('/cd shop-api');
     expect(prompts).toEqual([]);
   });
 });
@@ -327,7 +327,7 @@ describe('ordering by use', () => {
     expect(menus[0]!.options.map((o) => o.name)).toEqual([
       menus[0]!.options[0]!.name,
       'gateway',
-      'quantlab',
+      'shop-api',
       'uniagent',
     ]);
   });
@@ -342,7 +342,7 @@ describe('ordering by use', () => {
     const names = menus[0]!.options.map((o) => o.name);
     expect(names[0]).toBe(menus[0]!.options[0]!.name);
     expect(menus[0]!.options[0]!.root).toBe(true);
-    expect(names.slice(1)).toEqual(['uniagent', 'gateway', 'quantlab']);
+    expect(names.slice(1)).toEqual(['uniagent', 'gateway', 'shop-api']);
   });
 
   it('carries the history across daemon restarts, into a conversation that never chose anything', async () => {
@@ -356,17 +356,17 @@ describe('ordering by use', () => {
     expect(menus[0]!.options.map((o) => o.name).slice(1)).toEqual([
       'uniagent',
       'gateway',
-      'quantlab',
+      'shop-api',
     ]);
   });
 
   it('does not count re-picking the directory already in use (that is how a menu is dismissed)', async () => {
     const usage = usageStore();
     const { send } = rig({ usage });
-    await send('/cd quantlab');
-    const after = usage.stat(QUANTLAB)!;
-    await send('/cd quantlab'); // `unchanged`: nothing moved, nothing reset
-    expect(usage.stat(QUANTLAB)).toEqual(after);
+    await send('/cd shop-api');
+    const after = usage.stat(SHOP_API)!;
+    await send('/cd shop-api'); // `unchanged`: nothing moved, nothing reset
+    expect(usage.stat(SHOP_API)).toEqual(after);
   });
 
   it('does not count a directory that turned out not to exist', async () => {
@@ -393,18 +393,18 @@ describe('ordering by use', () => {
 describe('applying a click', () => {  it('moves the conversation the menu was opened for', async () => {
     const { reg, send, store, key } = rig();
     await send('/cc');
-    expect(reg.applyWorkdirChoice(key, 'cc', QUANTLAB)).toEqual({
+    expect(reg.applyWorkdirChoice(key, 'cc', SHOP_API)).toEqual({
       kind: 'applied',
-      path: QUANTLAB,
+      path: SHOP_API,
     });
-    expect(store.conversationCwd(key)).toBe(QUANTLAB);
+    expect(store.conversationCwd(key)).toBe(SHOP_API);
   });
 
   it('refuses when another agent has taken over since the menu was posted', async () => {
     const { reg, send, key } = rig();
     await send('/cc');
     await send('/oc'); // rebind
-    const result = reg.applyWorkdirChoice(key, 'cc', QUANTLAB);
+    const result = reg.applyWorkdirChoice(key, 'cc', SHOP_API);
     expect(result.kind).toBe('rebound');
   });
 
@@ -433,8 +433,8 @@ describe('resolveConversationCwd (read by the runtime at spawn)', () => {
 
   it('honours the recorded directory', () => {
     const store = new ConversationStore(file());
-    store.setConversationCwd('k', 'cc', QUANTLAB);
-    expect(resolveConversationCwd(def, 'k', store)).toBe(QUANTLAB);
+    store.setConversationCwd('k', 'cc', SHOP_API);
+    expect(resolveConversationCwd(def, 'k', store)).toBe(SHOP_API);
   });
 
   // A spawn that died on a missing cwd would strand the conversation with an error nobody can act
@@ -470,8 +470,8 @@ describe('workdirForRef (what a platform is told to display)', () => {
 
   it('follows a /cd, so the label a page shows is the directory the child will start in', () => {
     const { reg, send } = rig();
-    return send('/cd quantlab').then(() => {
-      expect(reg.workdirForRef(ref())?.path).toBe(QUANTLAB);
+    return send('/cd shop-api').then(() => {
+      expect(reg.workdirForRef(ref())?.path).toBe(SHOP_API);
       // The same answer the runtimes read at spawn, by construction — one resolver, not two.
       expect(reg.workdirForRef(ref())?.path).toBe(reg.workdirOf('discord#c1#', 'cc'));
     });
@@ -479,10 +479,10 @@ describe('workdirForRef (what a platform is told to display)', () => {
 
   it('separates lanes, because under the default scope they are separate conversations', async () => {
     const { reg, send } = rig();
-    await send('/cd quantlab');
+    await send('/cd shop-api');
     // Same channel, a lane of its own: it has chosen nothing and must not inherit the move.
     expect(reg.workdirForRef(ref({ thread: 't7' }))?.path).toBe(root);
-    expect(reg.workdirForRef(ref())?.path).toBe(QUANTLAB);
+    expect(reg.workdirForRef(ref())?.path).toBe(SHOP_API);
   });
 
   it('answers for an address nothing has ever been said at', () => {
@@ -589,7 +589,7 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
 });
 
 /**
- * An agent on a host (talkcode 2.9.0): its directories can only be listed over the link, which is
+ * An agent on a host (fleetherd 2.9.0): its directories can only be listed over the link, which is
  * asynchronous, while the menu decides on the spot. Until 2.9.2 the menus on the side read ahead and
  * declined when nothing was listed yet — and the list lives in the process, so after every restart
  * a host's first new conversation got Claude's command list for `/cc` instead of the directory menu
@@ -655,7 +655,7 @@ describe('the directory question for an agent on a host', () => {
   it('reads a listing that failed again before answering, rather than answering from the failure', async () => {
     // 2.11.1: the reread behind the menu fixed only the next `/cc`, so this one got the command list.
     const { reg, send, menus, pickers } = rig({ config });
-    listDir.mockRejectedValueOnce(new Error('talkcode-remote on host "box" restarted'));
+    listDir.mockRejectedValueOnce(new Error('fleetherd-remote on host "box" restarted'));
     reg.warmRemoteScans();
     await drain();
     expect(listDir.mock.calls[0]![0]).toBe('/srv/work');

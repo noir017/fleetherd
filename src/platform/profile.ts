@@ -178,7 +178,7 @@ export interface PlatformProfile<P extends PlatformConfig = PlatformConfig> {
   ): Promise<MessageRef>;
   /**
    * Rendered length of `text` in the units the platform's message-length limit (capabilities
-   * .maxMessageLength) actually counts. talkcode chunks outbound text BEFORE the profile renders
+   * .maxMessageLength) actually counts. fleetherd chunks outbound text BEFORE the profile renders
    * it; markdown rendering can change the counted length (e.g. Telegram counts the entity-parsed
    * visible text and table→bullets expands it ~1.4x; WeCom counts UTF-8 bytes, not chars). The
    * StreamBuffer uses this to chunk by the real rendered size instead of raw char count, so a chunk

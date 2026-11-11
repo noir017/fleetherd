@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NAME_PATTERN } from '../legacy-name.js';
 
 /**
  * The review prompt, and the JSON it is asked to return.
@@ -68,7 +69,7 @@ export interface PromptInput {
    * person had asked the agent to write that very skill elsewhere, and did it. Quoted since
    * 2026-11-07: a review that day added a rule to server-ops' SKILL.md, twice, that the agent had
    * already written into one of its references during the conversation — the name alone did not
-   * stop it, and a path from `talkcode skills write-file` was not recognised at all.
+   * stop it, and a path from `fleetherd skills write-file` was not recognised at all.
    */
   written?: PromptWrittenFile[];
   /** The categories the library already uses, for a `create` to pick from. */
@@ -136,7 +137,7 @@ export function buildReviewPrompt(input: PromptInput): string {
     // The link is enforced (review.ts applyChange): on 2026-11-09 antigravity-config had four
     // references and a SKILL.md naming none of them, so no agent that loaded it could find them.
     '- write-file 只用来建新文件，而且 SKILL.md 里要有一句指向它（同一个回答里用 edit 加上，或写在 create 的 body 里），否则会被拒。',
-    '- 不要动 frontmatter 里的 metadata：talkcode-resident 只有人能改，改了会被拒。',
+    '- 不要动 frontmatter 里的 metadata：fleetherd-resident 只有人能改，改了会被拒。',
     '- 不要调用任何工具，直接输出 JSON。',
     '',
     '输出',
@@ -315,8 +316,10 @@ function extractJson(text: string): string | undefined {
   return start >= 0 && end > start ? text.slice(start, end + 1) : undefined;
 }
 
-/** `talkcode skills <verb> <name>` in a shell call's line: a read or a write of that skill. */
-const TALKCODE_SKILLS_CALL = /\btalkcode skills (?:show|patch|write-file|remove-file|history|revert) ([a-z0-9][a-z0-9-]*)/g;
+/** `fleetherd skills <verb> <name>` in a shell call's line (or `talkcode skills`): a read or a write of that skill. */
+const SKILLS_CALL = new RegExp(`\\b${NAME_PATTERN} skills (?:show|patch|write-file|remove-file|history|revert) ([a-z0-9][a-z0-9-]*)`, 'g');
+/** A path under `~/.fleetherd/skills/` (or `~/.talkcode/skills/`, the same directory through a link). */
+const SKILLS_PATH = new RegExp(`\\.${NAME_PATTERN}/skills/([a-z0-9][a-z0-9-]*)`, 'g');
 
 /** The native `skills` tool's row (ipc/tools.ts): `skills: {"action":"show","name":"sbox",…}`. */
 const NATIVE_SKILLS_CALL = /^(?:mcp__[\w-]+__)?skills:\s*\{/;
@@ -325,8 +328,8 @@ const NATIVE_SKILLS_CALL = /^(?:mcp__[\w-]+__)?skills:\s*\{/;
  * The managed skills a conversation used, in the order they first appear.
  *
  * The three signals are the ones `skill-usage.ts` counts, read back out of the library's tool
- * rows instead of live events: the `Skill` tool's own line, a path under `~/.talkcode/skills/`,
- * and a message the person started with `/<name>` — plus a read or write through `talkcode skills`
+ * rows instead of live events: the `Skill` tool's own line, a path under `~/.fleetherd/skills/`,
+ * and a message the person started with `/<name>` — plus a read or write through `fleetherd skills`
  * or the native `skills` tool, which is not a use but is about that skill. A tool row is one line,
  * so a path cut off by its 200-character preview is a miss — the skill may still be found by
  * review-related.ts, and an edit of a skill whose text the reviewer was not given is refused by
@@ -339,14 +342,14 @@ export function usedSkillNames(messages: Array<{ role: string; text: string }>, 
   };
   for (const message of messages) {
     if (message.role === 'tool') {
-      for (const match of message.text.matchAll(/\.talkcode\/skills\/([a-z0-9][a-z0-9-]*)/g)) add(match[1]);
+      for (const match of message.text.matchAll(SKILLS_PATH)) add(match[1]);
       for (const match of message.text.matchAll(/\bSkill:\s*\/?([a-z0-9][a-z0-9-]*)/g)) add(match[1]);
       for (const match of message.text.matchAll(/"skill"\s*:\s*"([a-z0-9][a-z0-9-]*)"/g)) add(match[1]);
-      // Reading or writing one through talkcode itself — not a use (skill-usage.ts does not count
+      // Reading or writing one through fleetherd itself — not a use (skill-usage.ts does not count
       // it), but what the conversation was doing with that skill. On 2026-11-08 an agent read
       // simular-box this way, tried to patch it, created sbox instead, and the review of it was
       // given sbox alone.
-      for (const match of message.text.matchAll(TALKCODE_SKILLS_CALL)) add(match[1]);
+      for (const match of message.text.matchAll(SKILLS_CALL)) add(match[1]);
       if (NATIVE_SKILLS_CALL.test(message.text) && /"action"\s*:\s*"show"/.test(message.text)) {
         add(/"name"\s*:\s*"([a-z0-9][a-z0-9-]*)"/.exec(message.text)?.[1]);
       }
@@ -378,7 +381,7 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
 
 /**
  * A path to a file in a skill: `…/skills/<name>/<file>`. `skills` must be a whole path segment
- * (`quantlab-skills/work/…` is not a skill), and the path stops at quotes and braces, because an
+ * (`shop-skills/work/…` is not a skill), and the path stops at quotes and braces, because an
  * agy edit's line is a JSON preview (`{"Path":"/…/skills/server-ops/…"`). Both cases were in the
  * library on 2026-11-06.
  */

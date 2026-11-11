@@ -130,14 +130,14 @@ describe('podModels: the gateway naming a pod agent’s model', () => {
 
 describe('readConfig with pods.json', () => {
   let dir: string;
-  const saved = process.env.TALKCODE_CONFIG_FILE;
+  const saved = process.env.FLEETHERD_CONFIG_FILE;
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-pods-'));
-    process.env.TALKCODE_CONFIG_FILE = path.join(dir, 'config.yaml');
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-pods-'));
+    process.env.FLEETHERD_CONFIG_FILE = path.join(dir, 'config.yaml');
   });
   afterEach(() => {
-    if (saved === undefined) delete process.env.TALKCODE_CONFIG_FILE;
-    else process.env.TALKCODE_CONFIG_FILE = saved;
+    if (saved === undefined) delete process.env.FLEETHERD_CONFIG_FILE;
+    else process.env.FLEETHERD_CONFIG_FILE = saved;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

@@ -1,4 +1,4 @@
-# talkcode config file reference
+# fleetherd config file reference
 
 Everything the operator can set lives in **one YAML file**. This document mirrors the
 validation schema in the source (`src/config/schema.ts`, `src/platform/config-schemas.ts`);
@@ -7,13 +7,13 @@ per-field error message, so don't invent keys.
 
 ## Location & lifecycle
 
-- Active file: `$TALKCODE_CONFIG_FILE` if set (you inherit the daemon's env, so
-  this is the file the daemon loaded); else `$TALKCODE_CONFIG_DIR/config.yaml`;
-  else `~/.config/talkcode/config.yaml`.
+- Active file: `$FLEETHERD_CONFIG_FILE` if set (you inherit the daemon's env, so
+  this is the file the daemon loaded); else `$FLEETHERD_CONFIG_DIR/config.yaml`;
+  else `~/.config/fleetherd/config.yaml`.
 - Every string supports `${VAR}` expansion from the environment, and a `.env` file next
   to the config is loaded first — prefer `token: ${DISCORD_TOKEN}` + `.env` over pasting
   secrets into the YAML.
-- After editing: run `talkcode reload`. It validates first (reporting *all* schema
+- After editing: run `fleetherd reload`. It validates first (reporting *all* schema
   errors at once) and applies nothing if the file does not load; otherwise everything
   but `platforms` takes effect at once. A `platforms` change needs the **user** to restart
   the daemon — never restart it yourself (you are its child process).
@@ -22,7 +22,7 @@ per-field error message, so don't invent keys.
 
 ```yaml
 version: 1          # literal 1 (v0 single-`platform:` files are auto-migrated;
-                    # `talkcode doctor --migrate-config` rewrites the file)
+                    # `fleetherd doctor --migrate-config` rewrites the file)
 
 platforms:          # map of instance-id -> platform entry; at least one required.
   discord-main:     # id: 1-32 chars [a-z0-9_-], starts alphanumeric. Routing and
@@ -152,7 +152,7 @@ DMs always get a response regardless of `requireMention` (frozen behavior).
   command: /path/bin    # required only when harness: custom (any ACP-speaking executable)
   args: []              # extra CLI args appended to the harness command
                         # (harness-specific switches go here, e.g. claude's --setting-sources)
-  cwd: ~/projects/main  # working dir; empty = auto workspace at ~/.talkcode/agents/<id>
+  cwd: ~/projects/main  # working dir; empty = auto workspace at ~/.fleetherd/agents/<id>
   model: <model-id>     # best-effort; whether it applies depends on the harness
   env:                  # env vars injected into the agent subprocess; ${VAR} expands
     ANTHROPIC_API_KEY: ${MY_KEY}
@@ -167,7 +167,7 @@ DMs always get a response regardless of `requireMention` (frozen behavior).
         message: continue              # (default) sent to the agent as the user's words
         max: 3                         # (default) in a row, 1-10
         backoffMs: 30000               # (default) first wait; doubles, capped at 10 min
-      command: notify-me.sh            # bash -lc after every failure; JSON in $TALKCODE_TURN_FAILURE
+      command: notify-me.sh            # bash -lc after every failure; JSON in $FLEETHERD_TURN_FAILURE
 ```
 
 Notes:
@@ -196,14 +196,14 @@ Notes:
 ```yaml
 hosts:
   devbox:
-    ssh: user@10.0.0.5:22022   # the gateway logs in with ~/.config/talkcode/ssh/id_ed25519
-                               # and checks the host against ~/.config/talkcode/ssh/known_hosts
+    ssh: user@192.0.2.5:22022   # the gateway logs in with ~/.config/fleetherd/ssh/id_ed25519
+                               # and checks the host against ~/.config/fleetherd/ssh/known_hosts
 ```
 
-Don't add one by hand: `talkcode pod-add` writes the entry and pins the host key together, and
-`talkcode pods` prints the line the machine needs in its authorized_keys (`talkcode help pods`).
-A host usually declares its own agents in `~/.talkcode/pod.yaml` on it — the gateway names them
-`<id>@<host>` and they are not in this file; edit that file and `talkcode reload`.
+Don't add one by hand: `fleetherd pod-add` writes the entry and pins the host key together, and
+`fleetherd pods` prints the line the machine needs in its authorized_keys (`fleetherd help pods`).
+A host usually declares its own agents in `~/.fleetherd/pod.yaml` on it — the gateway names them
+`<id>@<host>` and they are not in this file; edit that file and `fleetherd reload`.
 
 ## `routing`
 

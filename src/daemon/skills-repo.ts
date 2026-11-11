@@ -30,7 +30,7 @@ import { ARCHIVE_DIR, SKILLS_DIR, isSkillName, repoRoot, usagePath } from './ski
  * ── When the two sides disagree ──────────────────────────────────────────────────────────────────
  * The gateway's own commits are rebased onto the repository's. Two edits of the same file — a
  * person's push landing between the gateway's fetch and its push — cannot both win; the person's
- * does. The gateway's commits are kept on a branch named `talkcode-unpushed-<time>`, pushed when it
+ * does. The gateway's commits are kept on a branch named `fleetherd-unpushed-<time>`, pushed when it
  * can be, and the log says so. Nothing is dropped silently, and nothing is force-pushed.
  *
  * ── Unreachable ──────────────────────────────────────────────────────────────────────────────────
@@ -290,7 +290,7 @@ export class SkillsRepo {
       } catch {
         // nothing in progress to abort: the rebase refused before it started
       }
-      const branch = `talkcode-unpushed-${new Date(this.now()).toISOString().replace(/[-:]/g, '').replace(/\..*$/, '')}`;
+      const branch = `fleetherd-unpushed-${new Date(this.now()).toISOString().replace(/[-:]/g, '').replace(/\..*$/, '')}`;
       gitSync(root, ['branch', '-f', branch, 'HEAD']);
       gitSync(root, ['reset', '-q', '--hard', ref]);
       this.log(

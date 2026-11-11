@@ -1,5 +1,5 @@
 /**
- * The wire format shared with talkcode-remote (remote/frame.go — README.md there is the spec):
+ * The wire format shared with fleetherd-remote (remote/frame.go — README.md there is the spec):
  *
  *   u32 BE header length · u32 BE body length · header (JSON object) · body (raw bytes)
  *

@@ -9,7 +9,7 @@
  * SHOWN to the user — clearly labelled as a transcript — and, once they confirm it (or at once, with
  * `voice.confirm: false`), it re-enters the gateway exactly as if they had typed it. The agent never
  * learns that the words were spoken: no marker in the prompt, no attachment line, no hint. What it
- * can do, when a transcript reads oddly, is look it up (`talkcode voice-log`), because every
+ * can do, when a transcript reads oddly, is look it up (`fleetherd voice-log`), because every
  * transcription is logged with its audio file, model and outcome.
  *
  * ── Why a transcript is typed text, not an annotated attachment ───────────────
@@ -196,12 +196,13 @@ export function sniffAudio(bytes: Uint8Array): AudioFormat | undefined {
  * Without such a list the project's name at the time, "Agent Anywhere", came back as "Agent 或者
  * Anyway" and "agent or anyway"; with it, six runs out of six got it right (2026-09-25). These are
  * the names anyone using this gateway says out loud; "talkcode" took that entry's place in the
- * rename of 2026-10-10 without a transcript to check it against. Names that belong to one
+ * rename of 2026-10-10, and "fleetherd" took talkcode's in 3.0.0, neither with a transcript to check
+ * it against. Names that belong to one
  * deployment — its hosts, its services — are config, not code: "Unraid" came back as "安瑞" and
  * "昂立" on 2026-10-17 until the list named it.
  */
 export const BUILTIN_VOCABULARY: readonly string[] = [
-  'talkcode', 'Claude Code', 'Codex', 'OpenCode', 'Antigravity', 'agy', 'Telegram', '飞书', 'GitHub', 'PR', 'CI',
+  'fleetherd', 'Claude Code', 'Codex', 'OpenCode', 'Antigravity', 'agy', 'Telegram', '飞书', 'GitHub', 'PR', 'CI',
 ];
 
 /** The no-speech sentinel transcribeInstructions asks for. */

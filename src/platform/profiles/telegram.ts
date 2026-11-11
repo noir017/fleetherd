@@ -276,7 +276,7 @@ async function sendComposite(
  * `chat.type === 'private'` branch that returns `chat.id` and NEVER looks at
  * message_thread_id — the topic branch exists only for groups (lib/index.cjs). So for
  * Bot API 9.4 private-chat topics (Feb 2026: forum topics inside a 1-on-1 DM), every
- * topic collapses onto the same bare chat id and the thread is lost before talkcode
+ * topic collapses onto the same bare chat id and the thread is lost before fleetherd
  * sees it. Telegram does send the fields — verified against live getUpdates:
  *
  *   {"chat":{"id":5865716608,"type":"private"},
@@ -445,7 +445,7 @@ export function createTelegramProfile(): PlatformProfile<TelegramPlatformConfig>
   // reaction: adapter doesn't wrap setMessageReaction, but bot.http is exposed, so the profile
   //   POSTs raw http; emoji are mapped to the allow-set via mapTelegramReactionEmoji.
   // thread: Telegram topic (group forum or private chat). A topic isn't a standalone channelId
-  //   but a `chat + message_thread_id` pair, carried in talkcode's single-channelId model
+  //   but a `chat + message_thread_id` pair, carried in fleetherd's single-channelId model
   //   via the composite `<chatId>:<topicId>` (built by topicAwareChannelId, read by decodeChannel).
   // maxMessageLength=4096 (Telegram's real limit, counted on the ENTITY-PARSED visible text; HTML
   // tags do NOT count). renderTelegramMarkdown can expand the visible length (table -> bullets,

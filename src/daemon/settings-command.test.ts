@@ -68,12 +68,12 @@ let file: string;
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-setting-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-setting-'));
   file = path.join(dir, 'config.yaml');
-  savedEnv.TALKCODE_CONFIG_FILE = process.env.TALKCODE_CONFIG_FILE;
+  savedEnv.FLEETHERD_CONFIG_FILE = process.env.FLEETHERD_CONFIG_FILE;
   savedEnv.TG_TOKEN = process.env.TG_TOKEN;
   savedEnv.NEWAPI_API_KEY = process.env.NEWAPI_API_KEY;
-  process.env.TALKCODE_CONFIG_FILE = file;
+  process.env.FLEETHERD_CONFIG_FILE = file;
   process.env.TG_TOKEN = 'tok-from-env';
   process.env.NEWAPI_API_KEY = 'key-from-env';
   fs.writeFileSync(file, YAML_FILE);

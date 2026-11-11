@@ -17,7 +17,7 @@ import { PodAgentSchema, podAgentId } from './schema.js';
 
 /** One host's entry. `agents` is what the pod declared, by the pod's own ids (no `@host`). */
 export interface PodRecord {
-  /** `file`: its `~/.talkcode/pod.yaml`; `probe`: no such file, so the commands found on its PATH. */
+  /** `file`: its `~/.fleetherd/pod.yaml`; `probe`: no such file, so the commands found on its PATH. */
   source: 'file' | 'probe';
   agents: unknown[];
   /**

@@ -8,7 +8,7 @@ import { loadConfig, saveConfigPatch } from './load.js';
  * End-to-end file behavior of the new load/save pipeline:
  * - loadConfig: v0 in-memory migration + ${VAR} expansion (+ .env sidecar).
  * - saveConfigPatch: comment-preserving partial writes via the yaml Document API.
- * Each test points TALKCODE_CONFIG_FILE at a temp file.
+ * Each test points FLEETHERD_CONFIG_FILE at a temp file.
  */
 
 let dir: string;
@@ -16,11 +16,11 @@ let file: string;
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-cfg-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-cfg-'));
   file = path.join(dir, 'config.yaml');
-  savedEnv.TALKCODE_CONFIG_FILE = process.env.TALKCODE_CONFIG_FILE;
+  savedEnv.FLEETHERD_CONFIG_FILE = process.env.FLEETHERD_CONFIG_FILE;
   savedEnv.MY_TEST_TOKEN = process.env.MY_TEST_TOKEN;
-  process.env.TALKCODE_CONFIG_FILE = file;
+  process.env.FLEETHERD_CONFIG_FILE = file;
 });
 
 afterEach(() => {

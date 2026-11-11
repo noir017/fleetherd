@@ -53,7 +53,7 @@ describe('expandEnvVars', () => {
 
 describe('loadDotEnv', () => {
   it('fills gaps but never overrides existing process env; parses quotes/comments/export', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-dotenv-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-dotenv-'));
     fs.writeFileSync(
       path.join(dir, '.env'),
       [
@@ -79,14 +79,14 @@ describe('loadDotEnv', () => {
 
   it('is a no-op when no .env exists', () => {
     const env: NodeJS.ProcessEnv = {};
-    loadDotEnv(path.join(os.tmpdir(), 'talkcode-definitely-missing'), env);
+    loadDotEnv(path.join(os.tmpdir(), 'fleetherd-definitely-missing'), env);
     expect(env).toEqual({});
   });
 });
 
 describe('reloading .env (dotEnvDelta)', () => {
   it('updates and drops what the sidecar supplied, never what the process was started with', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-dotenv-reload-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-dotenv-reload-'));
     const file = path.join(dir, '.env');
     const env: NodeJS.ProcessEnv = { REAL: 'from-process' };
     fs.writeFileSync(file, 'A=one\nB=gone-soon\nREAL=from-file\n');

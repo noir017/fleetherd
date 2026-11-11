@@ -12,7 +12,7 @@ import {
  * use a skill is marked expired, after 30 it is moved into `archive/`. Pinned skills are left
  * alone, and so is every skill the gateway did not create (one with no source: a person committed
  * it to the repository or made it on the web UI's page) — nothing the gateway sees says whether a
- * hand-written skill is still read from a terminal. Nothing is ever deleted — `talkcode skills
+ * hand-written skill is still read from a terminal. Nothing is ever deleted — `fleetherd skills
  * restore <name>` brings an archived one back with its clock reset.
  *
  * An archive is a local commit; the skills repository's next cycle pushes it.

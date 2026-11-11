@@ -8,7 +8,7 @@ import type {
 } from '../platform/adapter.js';
 
 /**
- * The daemon's side of the web UI's history page: `history.db` read the way `talkcode sessions`
+ * The daemon's side of the web UI's history page: `history.db` read the way `fleetherd sessions`
  * reads it, for a browser.
  *
  * The page shows what the library holds, not what this daemon still has in memory: a topic that

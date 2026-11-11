@@ -19,7 +19,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `review-run.ts` | Who runs an automatic review and how: `review.api` (one `/chat/completions` request), an agy agent (`agy -p` with every class denied), or any other agent (one ACP session of its own, its tools switched off, every permission refused) |
 | `review-related.ts` | Pure: which skills beyond the used ones a review is given in full (description match on the person's words), and which of their reference files are quoted |
 | `model-catalog.ts` | Any agent's model list for the settings screen: from a live session, from what was learned, or from a session brought up just to ask |
-| `config-reload.ts` | `/reload` and `talkcode reload`: diff the re-read config against the live one, copy it in place, and say what changed. Which sections apply live and which need a restart is decided in its `RELOAD_KIND`; what happens to running agent processes is `ConversationRegistry.respawnAgents` |
+| `config-reload.ts` | `/reload` and `fleetherd reload`: diff the re-read config against the live one, copy it in place, and say what changed. Which sections apply live and which need a restart is decided in its `RELOAD_KIND`; what happens to running agent processes is `ConversationRegistry.respawnAgents` |
 | `turn-runner.ts` | One turn end to end: prompt, streaming, tools, footer, errors |
 | `paced-adapter.ts` | Wraps every `PlatformAdapter` in the shared per-chat write budget |
 | `agent.ts` | `AgentFactory` / `AgentSession` / `AgentStreamHandlers` interfaces. Dependency-free. |
@@ -30,7 +30,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
 | `agy-relay.ts` | agy behind a relay, for `contextBudget`: rewrites the compaction point in the model list Google sends it, and remembers what each model was told for the footer |
-| `relay.ts` | Relays: a loopback forwarder between an agent and its API that lets a harness's transform replace the responses on paths it names. Here for a local agent; on a host through talkcode-remote (`remote/relay.go`), which hands those responses back over the link. Which harness uses one, and for what, is `harnessRelay` |
+| `relay.ts` | Relays: a loopback forwarder between an agent and its API that lets a harness's transform replace the responses on paths it names. Here for a local agent; on a host through fleetherd-remote (`remote/relay.go`), which hands those responses back over the link. Which harness uses one, and for what, is `harnessRelay` |
 | `agy-transcript.ts` | agy's context after a turn that ran tools, read off agy's own transcript here or on a host (its prompt usage is a sum over the turn's calls) |
 | `status-board.ts` | Each conversation's live agent status, pushed (deduped, throttled) to a platform that can show one — the web UI's strip |
 | `claude-transcript.ts` | claude's prompt-cache expiry, read off Claude Code's own transcript (headless Claude Code runs no status line) |
@@ -48,8 +48,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `schedule-service.ts` | Scheduled tasks wired to the rest: a run as a bash process or a turn, the agent's `schedule` commands, the cards |
 | `schedule-bash.ts` | One `--bash` run: its own process group, a bounded output tail, the full log on disk. Also runs `preLaunch` hooks |
 | `restart-drain.ts` | A SIGTERM with turns or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
-| `reverse-cli-shim.ts` | Guarantees `talkcode` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
-| `skill-link.ts` | Links the bundled skills (`talkcode`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
+| `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
+| `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
 | `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
 | `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`, a git repository): names, paths and size rules, content versions, the usage file, `archive/`, and history and `revert` read from git |
 | `skills-git.ts` | The git under the store: commits with trailers, the log per skill, files at a commit — run with the machine's git config switched off |
@@ -58,17 +58,17 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `skill-index.ts` | BM25 over a skill's name, description, category and body, Chinese split into two-character words — pure, handed the skills |
 | `skill-queries.ts` | The search log (`skills-queries.jsonl`): searches that found nothing, hits nobody opened, and one conversation's misses for the review |
 | `skills-panel.ts` | The web UI's skills page: store records → the page's shape, every operation forwarded to `skills-store.ts`, and the archive notice the reverse command sends |
-| `skill-usage.ts` | What counts as using a managed skill — a `Skill` tool call, `/<name>`, a file under its directory — once per turn, with `talkcode skills` excluded |
+| `skill-usage.ts` | What counts as using a managed skill — a `Skill` tool call, `/<name>`, a file under its directory — once per turn, with `fleetherd skills` excluded |
 | `skill-lifecycle.ts` | The daily check (14 days expired, 30 archived; pinned and hand-written skills exempt) and its archive notice |
-| `managed-skills.ts` | Delivering active skills to `~/.talkcode/skills/` on an agent's machine and linking only links that point back there; taking an archived skill's links back |
+| `managed-skills.ts` | Delivering active skills to `~/.fleetherd/skills/` on an agent's machine and linking only links that point back there; taking an archived skill's links back |
 | `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
 | `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
 | `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on by default (or once per agent in the `first` tier, or the record card when it is off), and the `[sub-agent updates]` card |
-| `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `talkcode …` back here (the allowlisted bridge); placing the skill on a host |
-| `pods.ts` | What each host's pod declares: its `~/.talkcode/pod.yaml`, or the harness commands on its login PATH when it has none. Read at startup and on every `/reload` (`Daemon.reloadAll`) into `pods.json`, which `config/pods.ts` merges into `agents` as `<id>@<host>`. A host that cannot be read, or whose file does not validate, keeps what it had |
-| `pod-admin.ts` | `talkcode pod-add` / `pod-remove`: a `hosts:` entry in config.yaml and its pinned host key, changed together and refused before anything is written when either would end up wrong; and the authorized_keys line `talkcode pods` offers a new host |
-| `pod-peers.ts` | The pod-to-pod ssh mesh (`peer:` in pod.yaml): the `authorized_keys`, `known_hosts` and `config` it writes into each member's `~/.talkcode/ssh/` after every read of the pods. Host keys come from the gateway's own known_hosts, never the network |
-| `host-probe.ts` | The `command -v` script run on a host in the PATH an agent will have: `talkcode doctor`'s check of each host, and `pods.ts`'s look at a host with no `pod.yaml` |
+| `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `fleetherd …` back here (the allowlisted bridge); placing the skill on a host |
+| `pods.ts` | What each host's pod declares: its `~/.fleetherd/pod.yaml`, or the harness commands on its login PATH when it has none. Read at startup and on every `/reload` (`Daemon.reloadAll`) into `pods.json`, which `config/pods.ts` merges into `agents` as `<id>@<host>`. A host that cannot be read, or whose file does not validate, keeps what it had |
+| `pod-admin.ts` | `fleetherd pod-add` / `pod-remove`: a `hosts:` entry in config.yaml and its pinned host key, changed together and refused before anything is written when either would end up wrong; and the authorized_keys line `fleetherd pods` offers a new host |
+| `pod-peers.ts` | The pod-to-pod ssh mesh (`peer:` in pod.yaml): the `authorized_keys`, `known_hosts` and `config` it writes into each member's `~/.fleetherd/ssh/` after every read of the pods. Host keys come from the gateway's own known_hosts, never the network |
+| `host-probe.ts` | The `command -v` script run on a host in the PATH an agent will have: `fleetherd doctor`'s check of each host, and `pods.ts`'s look at a host with no `pod.yaml` |
 | `host-availability.ts` | Which hosts can be reached now: a TCP connect to each ssh port every minute (`remote/reachable.ts`), offline after two failures in a row, a live connection taken as proof. `Daemon.pushOfflineMachines` turns it into `OfflineMachine`s (`core/agent-menu.ts` offlinePlaces) for `PlatformAdapter.setOfflineMachines` and the `/agent` menu |
 | `agent-renames.ts` | `agent-renames.json`: new ids for agents, applied at startup to config.yaml, `conversations.json` and `schedules.json` together (after backing them up), because an id is also the key each conversation and task remembers its agent by |
 
@@ -181,7 +181,7 @@ Every step is logged: `[voice]` lines in daemon.log, and one JSON event per fact
 `<configDir>/voice-log.jsonl` (0600, rotated to `.1` past 5 MB) — the transcript and its
 cleaned-up version (or why there is none) with the audio path, model, latency and token counts,
 then its outcome. The agent reads its own conversation's
-entries with `talkcode voice-log`; nothing in its prompt says a message was spoken.
+entries with `fleetherd voice-log`; nothing in its prompt says a message was spoken.
 
 ## Routing, binding, and conversation keys
 
@@ -379,7 +379,7 @@ Four conditions, each protecting against a different way of being wrong:
 
 A reverse command also counts as activity (`handleReverse` → `registry.touch`), so an
 agent whose turn ended but whose background job is still reporting through
-`talkcode send` keeps its child. A session that reports `unresumable` is left
+`fleetherd send` keeps its child. A session that reports `unresumable` is left
 resident and said so once, not once a minute.
 
 Verified resumable on the three harnesses in use: `claude` (claude-agent-acp advertises
@@ -452,7 +452,7 @@ command (project-scripts/talkcode-review-tools):
   write tools ask nobody.
 - any other agent: one ACP session of its own (`runAcpReview`), spawned like a conversation's —
   here, or through `RemoteHost.spawn` on its host — but in an empty directory under the host's
-  `~/.talkcode/reviews`, with `mcpServers: []`, no talkcode token in its environment, and a client
+  `~/.fleetherd/reviews`, with `mcpServers: []`, no fleetherd token in its environment, and a client
   that advertises no fs, terminal or elicitation and refuses every `session/request_permission`
   (`refusePermission`). `acpReviewLaunch` adds the harness's own switches: claude
   `_meta.claudeCode.options {tools: [], settingSources: [], strictMcpConfig: true}`; opencode
@@ -477,13 +477,13 @@ mode: `--input-format=stream-json --output-format=stream-json -p=`, one NDJSON
 stdin, so the temporary directory stays empty.
 
 **What the prompt holds.** The rules, the skill catalog and the categories in use, the text of
-the skills the conversation used (a `talkcode skills` read or write and the native `skills` tool's
+the skills the conversation used (a `fleetherd skills` read or write and the native `skills` tool's
 `show` count), then of up to three more whose name, description or category best match the title
 and the person's messages, and the reference files of all of them that best match those, quoted
 within 30 000 characters beyond the used skills' `SKILL.md` (`ReviewService.skillsInFull`,
 `review-related.ts`: before 2026-11-09 three reviews wrote three references on one subject into
 antigravity-config, never having been shown the skill), the skill files the conversation wrote with what they hold now
-(`ReviewService.writtenFiles`: the skills repository's commits whose `Talkcode-Conversation` trailer
+(`ReviewService.writtenFiles`: the skills repository's commits whose `Fleetherd-Conversation` trailer
 names it — `conversationSkillFiles` — plus `writtenSkillFiles`, the write-type calls in
 `reviewWindow`'s `skillCalls`; quoted up to 8 000 characters a file and 20 000 in all), every file
 in `instructions/` (`standing`, read per review through `standingInstructions`; unreadable is
@@ -491,7 +491,7 @@ logged and the review goes on without it), and last the conversation — without
 `history/README.md#what-a-review-reads`). The written files are there because on 2026-11-06 a
 review created `vlt` an hour after the person had the agent write that very skill in another
 library, and on 2026-11-07 one added a rule to server-ops' `SKILL.md`, twice, that the agent had
-written into a reference with `talkcode skills write-file` — a Bash call the tool-row scan cannot
+written into a reference with `fleetherd skills write-file` — a Bash call the tool-row scan cannot
 read, and a name it would not have quoted anyway. The standing rules are there because two of the
 first thirteen suggestions were already in them; every file rather than `common.md`, because the
 review suggested `claude.md`'s rules back too.
@@ -533,8 +533,8 @@ names, and the page's Archive button posts to the Skills tab's own operation.
 
 ## Scheduled tasks
 
-An agent registers them (`talkcode schedule add …`, documented to it on demand by
-`talkcode help schedule`); the daemon keeps and runs them. The decisions are
+An agent registers them (`fleetherd schedule add …`, documented to it on demand by
+`fleetherd help schedule`); the daemon keeps and runs them. The decisions are
 [`core/schedule.ts`](../core/README.md) — when a task next runs, whether a late run is still worth
 making, every sentence said about one — and the files here do the timing and the IO.
 
@@ -871,7 +871,7 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   the sub-agent said — reply, question or error, line breaks kept — within `CARD_ITEM_CHARS` for
   one entry and `CARD_TOTAL_CHARS` for a burst, both hard limits, and the person's words within
   `CARD_SAID_CHARS`, attachments by name in the heading; one card lists at most
-  `CARD_MAX_ENTRIES` and folds the rest into a line pointing at `talkcode tasks`. A cut states its
+  `CARD_MAX_ENTRIES` and folds the rest into a line pointing at `fleetherd tasks`. A cut states its
   full length and where the rest is, by the turn's number: the card quotes `turns.seq` (carried from
   `TurnEnd.turn` into `KeptText.turn`), so `task-read <topic> --turn <n> --full` reads that reply
   back and `--turn <n>` reads a failed turn's whole error. By number, because a later background
@@ -885,7 +885,7 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   including the failure detail, which is why `history` is a Delegation dep.
 
 `/super` is not the daemon's: it is the bundled `super` skill (`skill-super/`), linked beside
-`talkcode` by `skill-link.ts`. The daemon's one concession to it is naming — `jobInCommand` seeds a
+`fleetherd` by `skill-link.ts`. The daemon's one concession to it is naming — `jobInCommand` seeds a
 `/super <job>` topic's name from the job, where every other command names nothing.
 
 ## The status strip (`status-board.ts`)
@@ -985,7 +985,7 @@ The `claude` adapter is **bundled** as a dependency and resolved via
 `codex` is the one worth explaining, because it used to be bundled too. Its adapter
 (`@agentclientprotocol/codex-acp`, replacing Zed's deprecated `@zed-industries/codex-acp`)
 declares `@openai/codex` as a regular dependency, whose platform binary is ~284 MB
-unpacked. Bundling that would tax every `npm i -g talkcode` for a harness most
+unpacked. Bundling that would tax every `npm i -g fleetherd` for a harness most
 operators never configure, while the operator who *does* configure it has already installed
 and logged into the codex CLI by hand. So it follows the opencode/dsh contract instead:
 install it alongside the daemon, and `doctor` names the package when it is missing.
@@ -1242,7 +1242,7 @@ them but hands them to the model as a question.
 
 Protocol-agnostic pieces every spawn must get *identically* right: the child
 environment, working-directory resolution (`agents[].cwd`, or an auto-created
-`~/.talkcode/agents/<id>`), tool-preview formatting, and child termination (SIGTERM, then
+`~/.fleetherd/agents/<id>`), tool-preview formatting, and child termination (SIGTERM, then
 SIGKILL after `KILL_GRACE_MS` — harness CLIs may ignore SIGTERM mid-turn).
 
 `buildAgentEnv` runs at every spawn, which makes it the one place that provisions
@@ -1290,7 +1290,7 @@ path.
 
 What replaced it:
 
-- **Native tools**, ACP only. `acpMcpServers` lists `talkcode mcp` — named `chat`, so Claude
+- **Native tools**, ACP only. `acpMcpServers` lists `fleetherd mcp` — named `chat`, so Claude
   Code shows `mcp__chat__send_file` — in `session/new` *and* `session/load`, as a stdio server the
   harness starts per session. Stdio because every ACP agent must support it (2026-10-09: cc, cx and
   oc also advertise http, which would mean a listening port where there is only a 0600 socket).
@@ -1305,7 +1305,7 @@ What replaced it:
   there never reached the model). The evidence is in the file header. A symlink into the installed package, so it is only on machines that run the
   daemon and always the running version's own. Linked only once the harness's own config
   directory exists; a real directory by that name is the operator's and is left alone.
-  `TALKCODE_NO_SKILL_LINK=1` turns it off — set it on a test daemon run from a checkout, or
+  `FLEETHERD_NO_SKILL_LINK=1` turns it off — set it on a test daemon run from a checkout, or
   it repoints the live daemon's link at the checkout until the live one next spawns an agent.
 - **agy gets the tools over ACP** like the others — `agy acp` takes stdio MCP servers in
   `session/new` and names them `mcp_chat_send_file` (probed 2026-11-06).
@@ -1397,10 +1397,10 @@ degradation that needs no code.
 ## Skills the gateway keeps
 
 `<configDir>/skills/` is a second kind of skill, beside the two the package bundles: one an agent
-writes through `talkcode skills` (`skills-store.ts`) or a person commits to the shared repository
+writes through `fleetherd skills` (`skills-store.ts`) or a person commits to the shared repository
 (`skills-repo.ts`), delivered to every agent on every host at
 spawn (`managed-skills.ts`, and `remote-hosts.ts` `placeManagedSkills` for an agent on another
-machine). The copy lives in `~/.talkcode/skills/<name>/` — never under a version directory — and is
+machine). The copy lives in `~/.fleetherd/skills/<name>/` — never under a version directory — and is
 read-only; the link into each harness's skill directory is made only when the harness's own config
 directory exists, and is repointed or removed only when it points back into that copy. A real
 directory, a real file, or the operator's own link at the same name is left alone and logged.
@@ -1408,8 +1408,8 @@ directory, a real file, or the operator's own link at the same name is left alon
 `SKILL.md` is capped at 64 KB and every write is validated (`skills-store.ts`), because the skill
 enters every agent's context. `show` prints a content hash; `patch` refuses unless it carries that
 hash, so a half-read edit cannot silently undo a newer one. Each change is one commit
-(`skills-git.ts`), its action and versions in `Talkcode-*` trailers, its author naming the writer
-(`talkcode`, `talkcode-review`, `talkcode-web`). `history` is `git log` over `skills/<name>` and
+(`skills-git.ts`), its action and versions in `Fleetherd-*` trailers, its author naming the writer
+(`fleetherd`, `fleetherd-review`, `fleetherd-web`). `history` is `git log` over `skills/<name>` and
 `archive/<name>`, so a person's commit is listed too, and `revert <id>` restores the files as they
 were at that commit's parent — whoever made it. `archive` moves the directory into `archive/`; the
 next spawn takes the copy and every link of ours back, and the conversation the skill came from
@@ -1422,16 +1422,18 @@ see a tree halfway through one. Fetch and push are asynchronous and time out. Ev
 through `SkillsRepo.write` — pull, the synchronous store call, push — serialized with the
 five-minute cycle, so the version a `patch` is checked against is the shared repository's newest.
 When both sides changed one file the repository wins and the gateway's commits go to a
-`talkcode-unpushed-*` branch; nothing is force-pushed. Every git call runs with the machine's
+`fleetherd-unpushed-*` branch; nothing is force-pushed. Every git call runs with the machine's
 config switched off (`GIT_CONFIG_GLOBAL=/dev/null`): a global hook, signing requirement or prompting
 credential helper of the operator's must not turn a skill write into a hang. The store directory
 became a repository in 2.42.0; `prepareSkillsRepo` moves an old one in as one commit at start and
 keeps it as `skills.pre-git`.
 
-**Resident and library.** A skill's tier is its frontmatter's `metadata.talkcode-resident`
+**Resident and library.** A skill's tier is its frontmatter's `metadata.fleetherd-resident`
 (`skillMetaOf`; the Agent Skills spec makes `metadata` strings to strings, so the gateway's keys are
-flat quoted strings). Delivery copies every skill that reaches the agent (`talkcode-hosts`,
-`talkcode-harnesses`, `deliveredTo`) but links only the resident ones; a skill moved to the library
+flat quoted strings; before 3.0.0 they were `talkcode-…`, and both spellings are read as one key,
+either `"true"` making a skill resident — see AGENTS.md, "Compatibility with the name talkcode").
+Delivery copies every skill that reaches the agent (`fleetherd-hosts`,
+`fleetherd-harnesses`, `deliveredTo`) but links only the resident ones; a skill moved to the library
 has its links taken back — on a remote host once per daemon instance, remembered as `absent`. A
 resident description is held to 120 characters on every gateway write; a person's commit over it
 is delivered with a `warning`. Only a person changes the tier: `patchSkill` refuses an agent's or
@@ -1450,7 +1452,7 @@ has none — its Delete is `archive`, and Restore is `restore`.
 
 Use is counted from events the gateway already has (`skill-usage.ts`): a `Skill` tool call naming
 the skill, a message starting with `/<name>`, or any tool call whose arguments mention
-`~/.talkcode/skills/<name>/`. A turn counts a skill once; `talkcode skills` is management and is
+`~/.fleetherd/skills/<name>/`. A turn counts a skill once; `fleetherd skills` is management and is
 excluded. `skill-lifecycle.ts` sweeps daily: 14 days unused marks expired, 30 archives; a pinned
 skill is exempt, and nothing is deleted.
 
@@ -1649,7 +1651,7 @@ registered token rather than a `Map.get`, so a timing side-channel cannot reveal
 leading characters of a guess are correct. Defense in depth — tokens are 122-bit UUIDs
 and the socket is `0600` — but cheap, since the live set is small.
 
-**`reverse-cli-shim.ts`** guarantees the skill's promise that `talkcode` is on PATH.
+**`reverse-cli-shim.ts`** guarantees the skill's promise that `fleetherd` is on PATH.
 Whether it actually is depends on how the daemon was launched: a global npm install puts
 it there, `node dist/cli.js start` or a `tsx` dev run does not, and a service manager may
 strip PATH entirely. So the daemon writes a two-line shim re-executing *exactly* the
@@ -1677,7 +1679,7 @@ because the failure it guards is a turn spent asking the model a question the CL
 than a wrong answer.
 
 `settings-command.test.ts` is the only suite here that asserts against a real file on disk
-(`TALKCODE_CONFIG_FILE` pointed at a tmp dir), and deliberately so: its most valuable
+(`FLEETHERD_CONFIG_FILE` pointed at a tmp dir), and deliberately so: its most valuable
 assertions are that a refusal leaves the file byte-identical, that clearing deletes a key
 rather than writing a `null`, that a `${VAR}` template is never expanded on the way through,
 and that `loadConfig()` still succeeds afterwards. Each of those, if it broke, would produce

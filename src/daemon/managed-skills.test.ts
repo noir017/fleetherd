@@ -32,7 +32,7 @@ beforeEach(() => {
 
 /** A new SKILL.md for deploy-check that keeps it resident: an agent's patch may not change that. */
 const residentMd = (description: string, body: string): string =>
-  `---\nname: deploy-check\ndescription: "${description}"\nmetadata:\n  talkcode-resident: "true"\n---\n\n${body}\n`;
+  `---\nname: deploy-check\ndescription: "${description}"\nmetadata:\n  fleetherd-resident: "true"\n---\n\n${body}\n`;
 
 afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true });
@@ -131,11 +131,11 @@ describe('the library tier and who a skill reaches', () => {
   });
 
   it('gives a skill with hosts or harnesses only to the agents they name', () => {
-    const md = (name: string, meta: string): string => `---\nname: ${name}\ndescription: "x"\nmetadata:\n  talkcode-resident: "true"\n${meta}---\n`;
+    const md = (name: string, meta: string): string => `---\nname: ${name}\ndescription: "x"\nmetadata:\n  fleetherd-resident: "true"\n${meta}---\n`;
     createSkill({ name: 'codex-only', description: 'x', now: T0 }, dir);
-    patchSkill({ name: 'codex-only', version: showSkill('codex-only', undefined, dir).version, content: md('codex-only', '  talkcode-harnesses: "codex, opencode"\n'), by: { kind: 'person' }, now: T0 + 1 }, dir);
-    createSkill({ name: 'on-awsfree2', description: 'x', now: T0 }, dir);
-    patchSkill({ name: 'on-awsfree2', version: showSkill('on-awsfree2', undefined, dir).version, content: md('on-awsfree2', '  talkcode-hosts: "awsfree2"\n'), by: { kind: 'person' }, now: T0 + 1 }, dir);
+    patchSkill({ name: 'codex-only', version: showSkill('codex-only', undefined, dir).version, content: md('codex-only', '  fleetherd-harnesses: "codex, opencode"\n'), by: { kind: 'person' }, now: T0 + 1 }, dir);
+    createSkill({ name: 'on-buildbox', description: 'x', now: T0 }, dir);
+    patchSkill({ name: 'on-buildbox', version: showSkill('on-buildbox', undefined, dir).version, content: md('on-buildbox', '  fleetherd-hosts: "buildbox"\n'), by: { kind: 'person' }, now: T0 + 1 }, dir);
     applyManagedSkills(claude, home, dir);
     const placed = fs.readdirSync(managedSkillsHome(home)).sort();
     expect(placed).toEqual(['deploy-check']);
@@ -202,20 +202,20 @@ describe('placeManagedSkills on a remote host', () => {
     const hosts = new RemoteHosts();
     const codex = { id: 'cx', harness: 'codex', env: {} } as unknown as AgentDef;
     await hosts.placeManagedSkills(host as unknown as RemoteHost, codex, '/home/u', welcome('i1'), dir);
-    expect(host.links.get('/home/u/.agents/skills/deploy-check')).toBe('/home/u/.talkcode/skills/deploy-check');
+    expect(host.links.get('/home/u/.agents/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
     expect(host.links.has('/home/u/.claude/skills/deploy-check')).toBe(false);
     // The files are already on the host for this instance; the claude link must still be made.
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
-    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.talkcode/skills/deploy-check');
+    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
   });
 
   it('writes once per version, and links into the harness directories with `owned`', async () => {
     const host = new FakeHost();
     const hosts = new RemoteHosts();
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
-    expect(host.writes).toContain('/home/u/.talkcode/skills/deploy-check/SKILL.md');
-    expect(host.writes).toContain('/home/u/.talkcode/skills/deploy-check/references/api.md');
-    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.talkcode/skills/deploy-check');
+    expect(host.writes).toContain('/home/u/.fleetherd/skills/deploy-check/SKILL.md');
+    expect(host.writes).toContain('/home/u/.fleetherd/skills/deploy-check/references/api.md');
+    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
     const written = host.writes.length;
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
     expect(host.writes).toHaveLength(written);
@@ -248,12 +248,12 @@ describe('placeManagedSkills on a remote host', () => {
     host.ops.length = 0;
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
     expect(host.removedPaths).toEqual([
-      { path: '/home/u/.talkcode/skills/deploy-check/references/api.md', owned: '/home/u/.talkcode/skills/deploy-check' },
+      { path: '/home/u/.fleetherd/skills/deploy-check/references/api.md', owned: '/home/u/.fleetherd/skills/deploy-check' },
     ]);
     // The write lands before the delete, so a reader never sees the skill half-deleted.
-    expect(host.ops.indexOf('write /home/u/.talkcode/skills/deploy-check/SKILL.md')).toBeGreaterThanOrEqual(0);
-    expect(host.ops.indexOf('write /home/u/.talkcode/skills/deploy-check/SKILL.md')).toBeLessThan(
-      host.ops.indexOf('remove /home/u/.talkcode/skills/deploy-check/references/api.md')
+    expect(host.ops.indexOf('write /home/u/.fleetherd/skills/deploy-check/SKILL.md')).toBeGreaterThanOrEqual(0);
+    expect(host.ops.indexOf('write /home/u/.fleetherd/skills/deploy-check/SKILL.md')).toBeLessThan(
+      host.ops.indexOf('remove /home/u/.fleetherd/skills/deploy-check/references/api.md')
     );
   });
 
@@ -261,7 +261,7 @@ describe('placeManagedSkills on a remote host', () => {
     const host = new FakeHost();
     const hosts = new RemoteHosts();
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
-    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.talkcode/skills/deploy-check');
+    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
     setResident('deploy-check', false, dir, T0 + 2);
     const logged = await takeBacks(() => hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir));
     expect(host.links.has('/home/u/.claude/skills/deploy-check')).toBe(false);
@@ -285,7 +285,7 @@ describe('placeManagedSkills on a remote host', () => {
     expect(logged.filter((l) => l.includes('library'))).toEqual([]);
     expect(host.removed).toContain('/home/u/.claude/skills/deploy-check');
     expect(host.removed).toContain('/home/u/.agents/skills/deploy-check');
-    expect(host.removedPaths).toContainEqual({ path: '/home/u/.talkcode/skills/deploy-check', owned: '/home/u/.talkcode/skills' });
+    expect(host.removedPaths).toContainEqual({ path: '/home/u/.fleetherd/skills/deploy-check', owned: '/home/u/.fleetherd/skills' });
     const removed = host.removed.length;
     const removedPaths = host.removedPaths.length;
     await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);

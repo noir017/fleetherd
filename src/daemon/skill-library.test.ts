@@ -28,7 +28,7 @@ beforeEach(() => {
   writeSkillFile({ name: 'deploy-check', file: 'scripts/check.sh', content: '#!/bin/sh\n', now: T0 }, dir);
   createSkill({ name: 'agy-only', description: 'Use when configuring the agy server gateway', now: T0 }, dir);
   const v = showSkill('agy-only', undefined, dir).version;
-  patchSkill({ name: 'agy-only', version: v, content: md('agy-only', 'Use when configuring the agy server gateway', '  talkcode-harnesses: "agy"\n  talkcode-category: "运维"\n', 'x'), now: T0 }, dir);
+  patchSkill({ name: 'agy-only', version: v, content: md('agy-only', 'Use when configuring the agy server gateway', '  fleetherd-harnesses: "agy"\n  fleetherd-category: "运维"\n', 'x'), now: T0 }, dir);
 });
 
 afterEach(() => {
@@ -44,7 +44,7 @@ describe('search', () => {
       name: 'deploy-check',
       description: '部署完成后检查服务是否正常时使用',
       resident: false,
-      path: '~/.talkcode/skills/deploy-check/SKILL.md',
+      path: '~/.fleetherd/skills/deploy-check/SKILL.md',
     });
   });
 
@@ -96,7 +96,7 @@ describe('categories', () => {
 describe('show', () => {
   it('gives SKILL.md whole with the other files, and counts a use', () => {
     const shown = library.show('deploy-check', undefined, codex, false, T0) as Record<string, unknown>;
-    expect(shown).toMatchObject({ name: 'deploy-check', file: 'SKILL.md', path: '~/.talkcode/skills/deploy-check', files: ['scripts/check.sh'] });
+    expect(shown).toMatchObject({ name: 'deploy-check', file: 'SKILL.md', path: '~/.fleetherd/skills/deploy-check', files: ['scripts/check.sh'] });
     expect(String(shown.content)).toContain('依次检查健康接口');
     expect(listSkills(dir).find((s) => s.name === 'deploy-check')).toMatchObject({ uses: 1, agents: ['cx'] });
   });

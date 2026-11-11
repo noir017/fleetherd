@@ -6,7 +6,7 @@ import { bumpedScore, type FrecencyStat } from '../core/frecency.js';
  * How often each directory has been chosen with `/cd` (`<configDir>/workdir-usage.json`).
  *
  * ── Why a file of its own ─────────────────────────────────────────────────────
- * This is the one piece of state here that is NOT per conversation. "quantlab is where I spend my
+ * This is the one piece of state here that is NOT per conversation. "shop-api is where I spend my
  * days" is a fact about the machine, and a brand-new topic should benefit from it on its very first
  * menu — which is exactly what folding it into conversations.json would prevent. That file is also
  * literally a map of conversation key → record, validated entry by entry, so a usage table living

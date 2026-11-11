@@ -30,7 +30,7 @@ Keep it narrow. A broader pattern here would kill the agent you are working in.
 ## `probe.mjs` — Discord gateway probe
 
 A diagnostic that connects to Discord with the token from
-`~/.config/talkcode/config.yaml` and prints what arrives: whether the gateway
+`~/.config/fleetherd/config.yaml` and prints what arrives: whether the gateway
 connects, whether messages are received, and whether the configured intents are
 sufficient. Useful when the bot is online but silent.
 
@@ -59,7 +59,7 @@ Pushing is opt-in on purpose: the tag push is the irreversible step.
 ## `verify-sso.mts` — drive the web UI's SSO door against a real provider
 
 ```bash
-TALKCODE_CONFIG_DIR=$(mktemp -d) npx tsx scripts/verify-sso.mts
+FLEETHERD_CONFIG_DIR=$(mktemp -d) npx tsx scripts/verify-sso.mts
 ```
 
 `sso.test.ts` and `server.test.ts` cover the verifier and the gate, but both inject `fetch`,

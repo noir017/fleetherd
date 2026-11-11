@@ -4775,7 +4775,7 @@ const SCRIPT = `
    *
    * The tag is the agent id, and for an agent on a host that id is "cbc@uniagent" — 15 characters
    * of a 240px column spent naming a machine the directory line repeats one line down, which left
-   * a whole row reading "[cbc@uniagent] Oracle A…" (reported 2026-11-03). What the operator types
+   * a whole row reading "[cbc@uniagent] Deploy A…" (reported 2026-11-03). What the operator types
    * to bind an agent is the part before the @, so that is what the row keeps, and the name it was
    * cut from goes on the tag's tooltip. A tag whose host the second line does not name — no
    * directory known yet, or a group standing in for the host — is left whole: dropping the host
@@ -6979,7 +6979,7 @@ const SCRIPT = `
 
   // ── History ─────────────────────────────────────────────────────────────────
   // The sidebar's second tab: every conversation the gateway recorded, whichever agent and
-  // platform it ran on — the same history.db the talkcode sessions command reads. The list pages
+  // platform it ran on — the same history.db the fleetherd sessions command reads. The list pages
   // backwards through the library and the search asks the store's own keyword search. A row opens
   // in the transcript's place (openLib), drawn with the transcript's own bubbles, and read-only:
   // the library keeps what was said, and has no way to say anything back.
@@ -7437,7 +7437,7 @@ const SCRIPT = `
   reader.addEventListener('click', function(e){ if(e.target === reader) closeReader(); });
 
   // ── The skills page ────────────────────────────────────────────────────────
-  // The gateway's managed skills (daemon/skills-store.ts), the same records the "talkcode skills"
+  // The gateway's managed skills (daemon/skills-store.ts), the same records the "fleetherd skills"
   // command reads and writes. This half is presentation only: every verb is posted to api/skills/op and
   // the store answers with its own sentence when it refuses — the version guard on patch, the
   // 64 KB and path rules, and the archive that is the only "delete" there is.
@@ -7719,7 +7719,9 @@ const SCRIPT = `
       the store says so in its own sentence when that commit is the one that created the skill. */
   function skillHistRow(e){
     var meta = skillAgo(e.at);
-    if(e.author && e.author.indexOf('talkcode') !== 0) meta += ' \\u00b7 ' + e.author;
+    // The gateway's own commits go unnamed: fleetherd, fleetherd-web, … and, made before 3.0.0,
+    // talkcode, talkcode-web, … (legacy-name.ts; the old name goes from here with it).
+    if(e.author && !/^(fleetherd|talkcode)(-|$)/.test(e.author)) meta += ' \\u00b7 ' + e.author;
     if(e.note) meta += ' \\u00b7 ' + e.note;
     if(e.beforeVersion) meta += ' \\u00b7 ' + e.beforeVersion + ' \\u2192 ' + (e.afterVersion || '(no version)');
     var h = '<div class="skill-hist"><div class="skill-hist-main">'
@@ -8722,7 +8724,7 @@ const SCRIPT = `
       return blob && blob.size < file.size ? {blob:blob} : null;
     }, function(x){
       closePhoto(photo);
-      console.warn('talkcode: could not shrink ' + (file.name || 'a picture') + '; sending the original', x);
+      console.warn('fleetherd: could not shrink ' + (file.name || 'a picture') + '; sending the original', x);
       return null;
     });
   }
@@ -8809,7 +8811,7 @@ const SCRIPT = `
                 noteOwner = null;
                 note.textContent = 'Could not read ' + name + '; it was not attached.';
               } else {
-                console.warn('talkcode: could not read ' + name + '; it was not attached');
+                console.warn('fleetherd: could not read ' + name + '; it was not attached');
               }
               return;
             }
@@ -8820,7 +8822,7 @@ const SCRIPT = `
           });
         }).then(function(){ settled(into, tookCanvas); }, function(x){
           // Nothing above is supposed to reject; if it ever does, the send must still be let go.
-          console.warn('talkcode: could not prepare ' + name + '; it was not attached', x);
+          console.warn('fleetherd: could not prepare ' + name + '; it was not attached', x);
           settled(into, tookCanvas);
         });
       })(list[i]);
@@ -9432,7 +9434,7 @@ __GATE__
          here so the markup and the component stay separate. -->
     <div id="topics-filter"></div>
     <div id="topics" role="tabpanel" aria-labelledby="sb-tab-topics"></div>
-    <!-- The History tab: the conversation library — the same history.db the talkcode sessions
+    <!-- The History tab: the conversation library — the same history.db the fleetherd sessions
          command reads, whichever agent and platform a conversation ran on. A list, a keyword
          search, and Load older; a row opens in the transcript's place, read-only. -->
     <div id="history-pane" role="tabpanel" aria-labelledby="sb-tab-history" hidden>
@@ -9501,7 +9503,7 @@ __GATE__
   <!-- The gateway's managed skills, as a window over the transcript. One node with two views
        inside it — the list and the open skill — because a skill is edited in place and going
        back is one tap, not a second window. Every write goes to api/skills/op; the store
-       behind it is the one the talkcode skills command uses, and turning a skill off is an archive. -->
+       behind it is the one the fleetherd skills command uses, and turning a skill off is an archive. -->
   <div id="skills" hidden role="dialog" aria-modal="true" aria-labelledby="skills-title">
     <div id="skills-box">
       <div id="skills-bar">
@@ -9622,7 +9624,7 @@ __GATE__
       <!-- The daemon came back from a restart serving a different page than this one (checkBuild).
            Above the composer, where a phone still shows it, and an offer rather than a reload:
            the page knows nothing about what a reload would throw away. -->
-      <div id="update" role="status" hidden>talkcode was updated while this page was open. <button type="button" id="update-reload">Reload</button></div>
+      <div id="update" role="status" hidden>fleetherd was updated while this page was open. <button type="button" id="update-reload">Reload</button></div>
       <div id="machine-note" role="status" hidden></div>
       <div id="status" hidden title="Tap for details"></div>
       <!-- The model switch's list, opened from the model in the status line (openModelPop). -->

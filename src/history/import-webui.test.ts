@@ -8,7 +8,7 @@ import { importWebuiTranscripts, toolLineFromRendered } from './import-webui.js'
 const dirs: string[] = [];
 
 function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-import-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-import-'));
   dirs.push(dir);
   return dir;
 }

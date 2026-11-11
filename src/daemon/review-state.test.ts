@@ -15,7 +15,7 @@ let file: string;
 let logs: string[];
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-review-state-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-review-state-'));
   file = path.join(dir, 'reviews.json');
   logs = [];
 });

@@ -4,9 +4,10 @@ import { callDaemon, clientTimeoutFor } from '../ipc/client.js';
 import type { IpcAction, IpcResponse } from '../ipc/protocol.js';
 import { findNativeTool, NATIVE_TOOLS, toolAction, toolInputSchema } from '../ipc/tools.js';
 import { friendlyError, normalizeActionPaths, renderResult } from './reverse.js';
+import { envOf } from '../legacy-name.js';
 
 /**
- * `talkcode mcp` — an MCP server on stdio that gives an agent `send_file`, `schedule` and `skills`
+ * `fleetherd mcp` — an MCP server on stdio that gives an agent `send_file`, `schedule` and `skills`
  * as native tools (see ipc/tools.ts for why those three). The daemon lists it in `session/new`'s
  * `mcpServers` for every ACP session, and the harness starts one per session as its own child.
  *
@@ -20,9 +21,9 @@ import { friendlyError, normalizeActionPaths, renderResult } from './reverse.js'
  * never from config.yaml: a harness may start MCP servers with an environment of its own choosing
  * (codex passes a short allowlist plus what the entry names), so neither the daemon's variables nor
  * the `${VAR}`s config.yaml expands can be assumed to be there.
- *  - TALKCODE_TURN_TOKEN — the session's token (read by callDaemon).
- *  - TALKCODE_SOCKET — the daemon's socket.
- *  - TALKCODE_CWD — the session's working directory, which relative paths are resolved
+ *  - FLEETHERD_TURN_TOKEN — the session's token (read by callDaemon).
+ *  - FLEETHERD_SOCKET — the daemon's socket.
+ *  - FLEETHERD_CWD — the session's working directory, which relative paths are resolved
  *    against. Not this process's CWD: ACP's stdio entry has no `cwd`, so where the harness starts
  *    the server is up to the harness.
  *
@@ -183,7 +184,7 @@ function initializeResult(params: unknown, version: string): unknown {
   return {
     protocolVersion,
     capabilities: { tools: { listChanged: false } },
-    serverInfo: { name: 'talkcode', version },
+    serverInfo: { name: 'fleetherd', version },
   };
 }
 
@@ -214,19 +215,19 @@ async function callTool(params: unknown, deps: McpDeps): Promise<Outcome> {
   return toolText([out.stdout, out.stderr].filter(Boolean).join('\n'));
 }
 
-/** Entry point for `talkcode mcp`: serve stdin → stdout until stdin closes. */
+/** Entry point for `fleetherd mcp`: serve stdin → stdout until stdin closes. */
 export async function runMcp(version: string): Promise<void> {
-  const socket = process.env.TALKCODE_SOCKET ?? '';
+  const socket = envOf('SOCKET') ?? '';
   const deps: McpDeps = {
     socket,
     version,
-    cwd: process.env.TALKCODE_CWD || process.cwd(),
+    cwd: envOf('CWD') || process.cwd(),
     call: (action) =>
       socket
         ? callDaemon(socket, action, undefined, clientTimeoutFor(action))
         : Promise.resolve({
             ok: false,
-            error: 'TALKCODE_SOCKET is not set: this server is started by a talkcode session, not by hand',
+            error: 'FLEETHERD_SOCKET is not set: this server is started by a fleetherd session, not by hand',
           }),
   };
   const write = (r: JsonRpcResponse | JsonRpcResponse[]): void => {

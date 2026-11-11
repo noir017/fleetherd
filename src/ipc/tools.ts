@@ -2,7 +2,7 @@ import type { IpcAction } from './protocol.js';
 import { CHANNEL_OPTION, REVERSE_COMMANDS, type ReverseCommandSpec, type ReverseOption } from './commands.js';
 
 /**
- * The reverse commands an agent gets as native tools — served over MCP by `talkcode mcp`
+ * The reverse commands an agent gets as native tools — served over MCP by `fleetherd mcp`
  * (commands/mcp.ts), which the daemon hands to every ACP session in `session/new`.
  *
  * ── Why three, and why these three ────────────────────────────────────────────────────────────

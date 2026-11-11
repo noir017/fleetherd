@@ -48,8 +48,8 @@ describe('the three signals', () => {
 
   it('counts a tool call that touches a file under the skill directory', () => {
     beginSkillTurn('c1', 'opencode', [], dir);
-    recordToolUse('c1', 'opencode', tool('Bash', { command: 'cat ~/.talkcode/skills/deploy-check/references/api.md' }), dir);
-    recordToolUse('c1', 'opencode', tool('Read', { file_path: '/home/u/.talkcode/skills/release-notes/scripts/run.sh' }), dir);
+    recordToolUse('c1', 'opencode', tool('Bash', { command: 'cat ~/.fleetherd/skills/deploy-check/references/api.md' }), dir);
+    recordToolUse('c1', 'opencode', tool('Read', { file_path: '/home/u/.fleetherd/skills/release-notes/scripts/run.sh' }), dir);
     expect(uses('deploy-check').uses).toBe(1);
     expect(uses('release-notes').uses).toBe(1);
   });
@@ -57,7 +57,7 @@ describe('the three signals', () => {
   it('counts one use per turn however many times the skill appears', () => {
     beginSkillTurn('c1', 'claude', [message('/deploy-check')], dir);
     recordToolUse('c1', 'claude', tool('Skill', { skill: 'deploy-check' }), dir);
-    recordToolUse('c1', 'claude', tool('Read', { file_path: '~/.talkcode/skills/deploy-check/SKILL.md' }), dir);
+    recordToolUse('c1', 'claude', tool('Read', { file_path: '~/.fleetherd/skills/deploy-check/SKILL.md' }), dir);
     expect(uses('deploy-check').uses).toBe(1);
     beginSkillTurn('c1', 'claude', [message('/deploy-check again')], dir);
     expect(uses('deploy-check').uses).toBe(2);
@@ -74,23 +74,26 @@ describe('the three signals', () => {
 });
 
 describe('what is not a use', () => {
-  it('does not count `talkcode skills` management, even when it reads a file', () => {
+  it('does not count `fleetherd skills` management, even when it reads a file', () => {
     beginSkillTurn('c1', 'claude', [], dir);
     recordToolUse(
       'c1',
       'claude',
-      tool('Bash', { command: 'talkcode skills show deploy-check; cat ~/.talkcode/skills/deploy-check/SKILL.md' }),
+      tool('Bash', { command: 'fleetherd skills show deploy-check; cat ~/.fleetherd/skills/deploy-check/SKILL.md' }),
       dir
     );
     expect(uses('deploy-check').uses).toBe(0);
-    expect(isAdmin(tool('Bash', { command: 'talkcode skills list' }))).toBe(true);
-    expect(isAdmin(tool('Bash', { command: 'echo talkcode skills' }))).toBe(true);
+    expect(isAdmin(tool('Bash', { command: 'fleetherd skills list' }))).toBe(true);
+    expect(isAdmin(tool('Bash', { command: 'echo fleetherd skills' }))).toBe(true);
     expect(isAdmin(tool('Bash', { command: 'echo hi' }))).toBe(false);
+    // The command's name before 3.0.0, still an alias (legacy-name.ts).
+    expect(isAdmin(tool('Bash', { command: 'talkcode skills list' }))).toBe(true);
+    expect(pathSkillNames(tool('Read', { file_path: '/home/u/.talkcode/skills/deploy-check/SKILL.md' }))).toEqual(['deploy-check']);
   });
 
   it('still counts a Skill tool call whose args mention the management command', () => {
     beginSkillTurn('c1', 'claude', [], dir);
-    recordToolUse('c1', 'claude', tool('Skill', { skill: 'deploy-check', args: 'talkcode skills list' }), dir);
+    recordToolUse('c1', 'claude', tool('Skill', { skill: 'deploy-check', args: 'fleetherd skills list' }), dir);
     expect(uses('deploy-check').uses).toBe(1);
   });
 });
@@ -114,7 +117,7 @@ describe('parsers', () => {
   it('finds every managed skill mentioned by path, once', () => {
     const names = pathSkillNames(
       tool('Bash', {
-        command: 'cat ~/.talkcode/skills/deploy-check/SKILL.md ~/.talkcode/skills/release-notes/references/a.md ~/.talkcode/skills/deploy-check/scripts/x.sh',
+        command: 'cat ~/.fleetherd/skills/deploy-check/SKILL.md ~/.fleetherd/skills/release-notes/references/a.md ~/.fleetherd/skills/deploy-check/scripts/x.sh',
       })
     );
     expect(names.sort()).toEqual(['deploy-check', 'release-notes']);

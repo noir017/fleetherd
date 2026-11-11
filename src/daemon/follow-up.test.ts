@@ -346,7 +346,7 @@ describe('a conversation reads as running while background output renders', () =
 
 describe('the lane survives the turn that established it', () => {
   // The reverse CLI's own version of the same bug: a background job calling
-  // `talkcode send-message` between turns used to be refused outright with "this conversation
+  // `fleetherd send-message` between turns used to be refused outright with "this conversation
   // has no active turn right now", so its whole report went nowhere.
   it('resolves a reverse-command address after the turn has ended', async () => {
     const h = rig();

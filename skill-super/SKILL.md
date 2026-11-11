@@ -9,8 +9,8 @@ description: >-
 
 # /super — hand the parts of a job to sub-agents
 
-You coordinate; the sub-agents do the work. Their commands are `talkcode task-*` — run
-`talkcode help tasks` once before the first one. Sub-agents open as topics nested under this
+You coordinate; the sub-agents do the work. Their commands are `fleetherd task-*` — run
+`fleetherd help tasks` once before the first one. Sub-agents open as topics nested under this
 one in the web UI; by default the person confirms every start, and can talk to any of them
 directly.
 
@@ -30,10 +30,10 @@ directly.
 
 - Unless the person named an agent, every part goes to the agent answering this conversation —
   you: leave `--agent` out. When they named one, or a part needs another machine (a repository or
-  a tool that only exists there), `talkcode task-agents` lists the agents and where each runs.
+  a tool that only exists there), `fleetherd task-agents` lists the agents and where each runs.
   Prefer `here=true` — your own machine, with the same checkouts and tools — and say why on the
   card's title when a part goes elsewhere.
-- One `talkcode task-new [--agent <id>] [--cwd <dir>] --title "<short name>" "<text>"` per part.
+- One `fleetherd task-new [--agent <id>] [--cwd <dir>] --title "<short name>" "<text>"` per part.
   With confirmation on, they all land on the card waiting for the person, however far apart you
   send them; only the first waits a few seconds for the rest. With it off where the person talks to
   you directly, each starts at once and the card lists what started.
@@ -61,14 +61,14 @@ directly.
 
 Updates arrive as messages beginning `[sub-agent updates]`, with how many are still working.
 
-- **While it works**, `talkcode tasks` shows what each one is running now: the tool, the step it is
-  on, how long the turn has gone and its context. `talkcode task-status <topic>` is one topic in
+- **While it works**, `fleetherd tasks` shows what each one is running now: the tool, the step it is
+  on, how long the turn has gone and its context. `fleetherd task-status <topic>` is one topic in
   detail, with its last three tool calls. `task-read <topic>` reads its messages from the
   conversation library, cut at 1500 characters each; `--reply` the last finished reply whole,
   `--tail 20` the newest lines, `--full` raises the per-message cut.
 - **Finished**: read its reply — the conclusion and the evidence it names. If it changed code,
   propose its review now, with `task-new`; do not read the diff or run the tests yourself. If it is
-  wrong or incomplete, `talkcode task-send <topic> "<what to fix>"`.
+  wrong or incomplete, `fleetherd task-send <topic> "<what to fix>"`.
 - **A question a part was sent to investigate**: do not answer it from your own impression, while
   it runs or after it reports — `task-send` it the question and use its answer. Only when no part
   covers the question do you investigate yourself.
@@ -80,7 +80,7 @@ Updates arrive as messages beginning `[sub-agent updates]`, with how many are st
   line.
 - **Going the wrong way**: `task-send` alone only reaches the turn on a harness that takes input
   mid-turn; the answer says whether it joined or is waiting behind it. To stop it now,
-  `talkcode task-send <topic> --interrupt "<what to do instead>"` — that ends the turn and sends
+  `fleetherd task-send <topic> --interrupt "<what to do instead>"` — that ends the turn and sends
   your correction as the next one, with its context kept.
 - **Anything the person has to decide** — scope, merging, releasing, deleting, spending — say it
   in one line here and stop. Do not decide it for them.
@@ -93,6 +93,6 @@ Updates arrive as messages beginning `[sub-agent updates]`, with how many are st
 
 When every part is done: one short summary — what changed and where, how you verified it, and
 what is left for the person. Link each topic as `[title](<link>)`, with the `link` the updates and
-`talkcode tasks` give (`?t=…`): that is what opens it in place.
+`fleetherd tasks` give (`?t=…`): that is what opens it in place.
 
 Do not do a sub-agent's part yourself, and do not quietly redo or discard its work.

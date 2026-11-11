@@ -87,7 +87,7 @@ describe('WebRoom: the stage of a topic', () => {
         html: '',
         buttons: [
           { id: 'wdr:ab12cd34:0', label: '● workspace' },
-          { id: 'wdr:ab12cd34:1', label: 'quantlab' },
+          { id: 'wdr:ab12cd34:1', label: 'shop-api' },
         ],
       },
       'Working dir: /home/user/workspace\n2 available — tap one to work there'

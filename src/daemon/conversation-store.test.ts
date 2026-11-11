@@ -128,13 +128,13 @@ describe('ConversationStore: working directory (/cd)', () => {
   it('records the directory and survives a reload', () => {
     const s = new ConversationStore(file);
     expect(s.conversationCwd('tg#c1#')).toBeUndefined();
-    s.setConversationCwd('tg#c1#', 'cc', '/home/u/workspace/quantlab');
-    expect(new ConversationStore(file).conversationCwd('tg#c1#')).toBe('/home/u/workspace/quantlab');
+    s.setConversationCwd('tg#c1#', 'cc', '/home/u/workspace/shop-api');
+    expect(new ConversationStore(file).conversationCwd('tg#c1#')).toBe('/home/u/workspace/shop-api');
   });
 
   it('clears the field when the choice goes back to the agent default', () => {
     const s = new ConversationStore(file);
-    s.setConversationCwd('tg#c1#', 'cc', '/home/u/workspace/quantlab');
+    s.setConversationCwd('tg#c1#', 'cc', '/home/u/workspace/shop-api');
     s.setConversationCwd('tg#c1#', 'cc', undefined);
     expect(s.conversationCwd('tg#c1#')).toBeUndefined();
     // Pinned as absent, not as a literal — a later edit to agents[].cwd must still move it.
@@ -144,10 +144,10 @@ describe('ConversationStore: working directory (/cd)', () => {
   it('outlives the binding it was recorded alongside: a rebind keeps the directory', () => {
     const s = new ConversationStore(file);
     s.bind('tg#c1#', 'cc');
-    s.setConversationCwd('tg#c1#', 'cc', '/home/u/workspace/quantlab');
+    s.setConversationCwd('tg#c1#', 'cc', '/home/u/workspace/shop-api');
     s.bind('tg#c1#', 'oc');
     // Asking a different agent about the same project is the point of asking it.
-    expect(s.conversationCwd('tg#c1#')).toBe('/home/u/workspace/quantlab');
+    expect(s.conversationCwd('tg#c1#')).toBe('/home/u/workspace/shop-api');
   });
 
   it('clearAgentSessions drops every session id while keeping the binding and the directory', () => {
@@ -155,7 +155,7 @@ describe('ConversationStore: working directory (/cd)', () => {
     s.bind('tg#c1#', 'cc');
     s.setAgentSession('tg#c1#', 'cc', 'cc-1');
     s.setAgentSession('tg#c1#', 'oc', 'oc-1');
-    s.setConversationCwd('tg#c1#', 'cc', '/home/u/workspace/quantlab');
+    s.setConversationCwd('tg#c1#', 'cc', '/home/u/workspace/shop-api');
 
     s.clearAgentSessions('tg#c1#');
 
@@ -164,7 +164,7 @@ describe('ConversationStore: working directory (/cd)', () => {
     expect(s.agentSession('tg#c1#', 'cc')).toBeUndefined();
     expect(s.agentSession('tg#c1#', 'oc')).toBeUndefined();
     expect(s.boundAgent('tg#c1#')).toBe('cc');
-    expect(s.conversationCwd('tg#c1#')).toBe('/home/u/workspace/quantlab');
+    expect(s.conversationCwd('tg#c1#')).toBe('/home/u/workspace/shop-api');
   });
 
   it('counts the generations a conversation has discarded, and survives a reload', () => {

@@ -6,7 +6,7 @@ import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
 import { saveConfig, saveConfigPatch, configPath, readRawConfigIfExists } from '../config/load.js';
 
 /**
- * `talkcode setup` — interactive wizard. Asks the minimal required items; everything
+ * `fleetherd setup` — interactive wizard. Asks the minimal required items; everything
  * else uses schema defaults. Experience params (throttle/threshold/emoji…) aren't
  * asked one by one — the defaults match hermes, and advanced users edit the yaml.
  *
@@ -232,5 +232,5 @@ export async function runSetup(): Promise<void> {
 
   console.log(`✅ Wrote ${configPath()}`);
   console.log('Multi-agent setups, routing pipelines, multi-instance platforms, and ${VAR} secrets are advanced features — edit the yaml directly (see the README).');
-  console.log('Next: run `talkcode doctor` to self-check, then `talkcode start` to launch the daemon.');
+  console.log('Next: run `fleetherd doctor` to self-check, then `fleetherd start` to launch the daemon.');
 }

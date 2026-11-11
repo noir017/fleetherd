@@ -1,11 +1,11 @@
 /**
- * What `talkcode doctor` runs on a host to see whether its agents can start there — and what the
+ * What `fleetherd doctor` runs on a host to see whether its agents can start there — and what the
  * daemon runs on a pod with no `pod.yaml` to see which agents it has (pods.ts): one lookup per
  * harness command, in the PATH that agent will actually have. In daemon/ rather than beside doctor
  * because both use it, and the daemon cannot import from commands/.
  *
  * That PATH is the host's login PATH (remote/shellenv.go) unless the agent's `env` sets PATH, in
- * which case it is exactly that value: remoteAgentEnv passes it through and talkcode-remote replaces
+ * which case it is exactly that value: remoteAgentEnv passes it through and fleetherd-remote replaces
  * the login PATH with it (agentEnv in remote/daemon.go). Checking every agent against the login
  * PATH reported "not on the login PATH" for a command the agent's own PATH did reach, and failed
  * doctor on a host that worked (armbox, 2026-10-29: node and claude-agent-acp under ~/tc-e2e,
@@ -23,7 +23,7 @@ export interface HostProbe {
 /**
  * The script travels inside single quotes (sshArgs) and runs inside the double quotes of a login
  * shell's -c within that, so only values that need no quoting at all are put in it. `~` is left
- * out of PATHs on purpose: a shell expands it in a PATH assignment, talkcode-remote's lookup does
+ * out of PATHs on purpose: a shell expands it in a PATH assignment, fleetherd-remote's lookup does
  * not, and checking with one rule would misreport the other.
  */
 const SAFE_COMMAND = /^[\w.~/+-]+$/;

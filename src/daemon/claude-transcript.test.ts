@@ -132,7 +132,7 @@ describe('cacheExpiryFromLines', () => {
 describe('locating the transcript', () => {
   it('files a directory the way Claude Code does — every non-alphanumeric becomes "-"', () => {
     // Both are directory names that exist under ~/.claude/projects on this machine.
-    expect(projectSlug('/home/user/workspace/talkcode')).toBe('-home-user-workspace-talkcode');
+    expect(projectSlug('/home/user/workspace/fleetherd')).toBe('-home-user-workspace-fleetherd');
     expect(projectSlug('/home/user/workspace/AutoAnything')).toBe('-home-user-workspace-AutoAnything');
   });
 

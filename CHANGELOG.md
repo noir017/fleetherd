@@ -5,6 +5,35 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **talkcode is now fleetherd.** Too many projects already go by names like talkcode — in
+  search results, on GitHub, as npm packages — for the name to say which one this is. Everything
+  carries the new name: the repository (noir017/fleetherd; noir017/talkcode is gone, not
+  redirected), the command, the release asset `fleetherd-X.Y.Z.tgz`, the image
+  `ghcr.io/noir017/fleetherd`, the config directory `~/.config/fleetherd`, the directory on each
+  host `~/.fleetherd` and its `fleetherd-remote`, the `FLEETHERD_*` variables, the bundled skill,
+  the skill keys `fleetherd-resident` / `-category` / `-hosts` / `-harnesses`, and the
+  skills-repository commits (`fleetherd`, `fleetherd-web`, `Fleetherd-` trailers).
+
+  Unlike the rename to talkcode at 2.0.0, what already runs keeps running: `talkcode` stays a
+  command — on the gateway, inside agents and on hosts; `TALKCODE_*` is read when the new variable
+  is unset, and agents get both, since a host may still carry an older CLI; an existing
+  `~/.config/talkcode` is used where it is, never moved, because it may be a bind mount and
+  config.yaml may hold absolute paths into it; each host's `~/.talkcode` is moved to `~/.fleetherd`
+  on the first connection, with a link left at the old name for sshd configs, ssh includes and the
+  skill links that point into it; skills with `talkcode-*` keys, commits by `talkcode*` and the old
+  bundled `talkcode` skill link are read or cleaned up as the gateway's own — with the resident
+  guard treating both spellings as one key, so an agent cannot promote a skill by writing the old
+  one. All of this goes in a later major.
+
+  One step is the operator's: the image and the container's home moved (`/home/fleetherd`), so a
+  compose file written for talkcode needs `image: ghcr.io/noir017/fleetherd` and its mounts under
+  `/home/fleetherd`, and the host wrapper is installed as `/usr/local/bin/fleetherd` with
+  `talkcode` linked to it. The new wrapper finds `~/apps/talkcode` and a container named talkcode,
+  and refuses to update a compose file that still names the old image or home rather than start a
+  gateway with no config.
+
 ## [2.60.0] - 2026-11-11
 
 ### Changed
@@ -755,7 +784,7 @@ spends its memory and its event loop on. Each item was measured before it was ch
 ### Fixed
 
 - **An automatic review no longer loses the batch when the model has no capacity.** 6 of 26 reviews
-  on 11-05/06 failed as `agy on awsfree2 timed out after 5 min`, and every one was Google queueing
+  on 11-05/06 failed as `agy on buildbox timed out after 5 min`, and every one was Google queueing
   `gemini-3.8-flash-high`: the request hangs for 2–4.5 minutes, answers `UNAVAILABLE (503): No
   capacity available for model gemini-3.8-flash-high`, and agy retries it itself after 4 s — the
   five-minute cap killed agy before those retries could finish. A review now gets 30 minutes
@@ -1403,7 +1432,7 @@ spends its memory and its event loop on. Each item was measured before it was ch
   on, so it no longer puts the topic in the needs-you list or notifies. A real question still does.
 - **The sidebar's agent tag no longer eats the topic's name.** A remote agent's id is `<id>@<host>`,
   and the tag in front of every title is that id — 15 characters of a 240px column spent naming a
-  machine the line below already names, which left rows reading `[cbc@uniagent] Oracle A…`. The row
+  machine the line below already names, which left rows reading `[cbc@uniagent] Deploy A…`. The row
   now shows just the agent's id, dimmed, and keeps the whole name on hover. A tag whose machine the
   directory line does not name keeps its host: it is the only place on the row that says it.
 
@@ -1651,7 +1680,7 @@ spends its memory and its event loop on. Each item was measured before it was ch
   the old answer was still remembered. It now follows within moments, and a change that lands
   late — a `/cd` on a remote host lists the folder first — shows within 20 seconds.
 - **A web UI topic is no longer named after a command.** An unnamed topic takes its name from the
-  first thing said in it, which for a topic set up with `/agent oc2` or `/cd quantlab` was that
+  first thing said in it, which for a topic set up with `/agent oc2` or `/cd shop-api` was that
   command. It is now named from the first message that is not a command.
 
 ## [2.16.0] - 2026-10-31
@@ -2279,7 +2308,8 @@ spends its memory and its event loop on. Each item was measured before it was ch
     and a global install lives at `$(npm root -g)/talkcode`;
   - the bundled skill and the MCP server, both now `talkcode`, which is also the name of the
     skill's link in each harness's skill directory;
-  - the repository, now [noir017/talkcode](https://github.com/noir017/talkcode). Releases up to
+  - the repository, now noir017/talkcode ([noir017/fleetherd](https://github.com/noir017/fleetherd)
+    since 3.0.0). Releases up to
     1.40.0 stay attached to `noir017/agent-anywhere`, which also still carries the branches of
     the pull requests open against upstream.
 

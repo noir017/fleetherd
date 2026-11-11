@@ -109,7 +109,7 @@ const SAID_ATTACHMENTS_SHOWN = 10;
 /**
  * How many sub-agents one card lists. A card has no fixed frame size — every entry's heading and
  * link is its own length — so an unbounded burst could spend the whole budget on headings. The
- * rest is one line pointing at `talkcode tasks`, where every topic is listed.
+ * rest is one line pointing at `fleetherd tasks`, where every topic is listed.
  */
 export const CARD_MAX_ENTRIES = 20;
 
@@ -1035,7 +1035,7 @@ export class Delegation {
     }
     const parent = address ? here.adapter.parentOf?.(address) : undefined;
     if (!address || !parent || parent.channel !== here.address.channel || parent.thread !== here.address.thread) {
-      throw new Error(`"${topic}" is not a topic this conversation opened; \`talkcode tasks\` lists the ones it did`);
+      throw new Error(`"${topic}" is not a topic this conversation opened; \`fleetherd tasks\` lists the ones it did`);
     }
     const conv = this.deps.registry.conversationAt(here.platformId, address);
     if (!conv?.agent) throw new Error(`nothing has happened in "${topic}" yet`);
@@ -1191,7 +1191,7 @@ export class Delegation {
     const visible = entries.slice(0, CARD_MAX_ENTRIES);
     const extra = entries.length - visible.length;
     const folded = shown.slice(0, CARD_MAX_ENTRIES);
-    if (extra) folded.push(`🔔 ${extra} more — see talkcode tasks`);
+    if (extra) folded.push(`🔔 ${extra} more — see fleetherd tasks`);
     this.tell(here, this.card(`[sub-agent updates] ${this.tally(here)}`, visible, extra), folded, entries.length);
   }
 
@@ -1242,7 +1242,7 @@ export class Delegation {
    *
    * Headings and links are the frame and are counted, but the frame is bounded: at most
    * CARD_MAX_ENTRIES entries are listed, and any beyond that are one line pointing at
-   * `talkcode tasks`. Within that frame, quote blocks share CARD_TOTAL_CHARS and one may take at
+   * `fleetherd tasks`. Within that frame, quote blocks share CARD_TOTAL_CHARS and one may take at
    * most CARD_ITEM_CHARS (CARD_SAID_CHARS for the person's words). Every later quote's notice is
    * reserved before an earlier one takes the rest — the result under the person's words as much as
    * the entries below — so a quote keeps at least its notice. The frame is not itself capped by
@@ -1251,7 +1251,7 @@ export class Delegation {
    */
   private card(header: string, entries: CardEntry[], extra: number): string[] {
     const lines = [header];
-    const tail = extra ? `- ${extra} more sub-agent${extra === 1 ? '' : 's'} — see talkcode tasks` : '';
+    const tail = extra ? `- ${extra} more sub-agent${extra === 1 ? '' : 's'} — see fleetherd tasks` : '';
     // Overcounts the joined string by one newline; the slack is what keeps it inside the budget.
     const frame = entries.reduce(
       (n, e) => n + e.head.length + 1 + (e.link ? `  link: ${e.link}`.length + 1 : 0),

@@ -21,7 +21,7 @@ export type { EffortSelector, ModelSelector, SteerOutcome };
 /**
  * Thin wrapper over the agent runtime (ACP implementation in agent-acp.ts). One AgentSession per session
  * key, context retained across turns. Under the ACP resident process the token is a per-session stable
- * value, injected into the child env at spawn so the session's reverse CLI (talkcode) can connect back to
+ * value, injected into the child env at spawn so the session's reverse CLI (fleetherd) can connect back to
  * the daemon and locate "current session → current channel".
  */
 
@@ -118,7 +118,7 @@ export interface AgentStreamHandlers {
  * in flight — stating outright that "the consumer keeps draining afterward (absorbing idle and
  * forwarding any background output)".
  *
- * talkcode used to break that contract: the read loop stopped at `stop`, so every character
+ * fleetherd used to break that contract: the read loop stopped at `stop`, so every character
  * the agent produced after a long script finished landed in the SDK's queue unread and was cleared
  * as residue at the start of the next turn. From the chat side the conversation simply went silent
  * after "I've started it in the background, I'll let you know" — the exact bug this seam exists for.
@@ -190,7 +190,7 @@ export interface RunTurnInput {
    */
   images?: TurnImage[];
   /**
-   * per-session stable token (injected into the agent child env as TALKCODE_TURN_TOKEN at spawn).
+   * per-session stable token (injected into the agent child env as FLEETHERD_TURN_TOKEN at spawn).
    * Reverse commands use it to connect back; the daemon resolves it to the current turn's channel. Same value every turn.
    */
   sessionToken: string;

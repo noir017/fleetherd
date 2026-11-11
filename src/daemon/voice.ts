@@ -743,7 +743,7 @@ export class VoiceIntake {
     }
   }
 
-  /** This conversation's recent transcripts (`talkcode voice-log`), newest last. */
+  /** This conversation's recent transcripts (`fleetherd voice-log`), newest last. */
   history(conversationId: ConversationId, limit: number): VoiceHistoryItem[] {
     const lines: string[] = [];
     for (const file of [`${this.logFile}.1`, this.logFile]) {

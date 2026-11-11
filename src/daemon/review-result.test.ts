@@ -98,10 +98,10 @@ describe('summaryOf', () => {
 
 describe('undoOf', () => {
   it('archives a create and reverts a patch or a file write', () => {
-    expect(undoOf({ name: 'a', action: 'created' })).toBe('talkcode skills archive a');
-    expect(undoOf({ name: 'b', action: 'patched', revertId: '0001-abc' })).toBe('talkcode skills revert b 0001-abc');
+    expect(undoOf({ name: 'a', action: 'created' })).toBe('fleetherd skills archive a');
+    expect(undoOf({ name: 'b', action: 'patched', revertId: '0001-abc' })).toBe('fleetherd skills revert b 0001-abc');
     expect(undoOf({ name: 'c', action: 'file', file: 'references/x.md', revertId: '0002-def' })).toBe(
-      'talkcode skills revert c 0002-def'
+      'fleetherd skills revert c 0002-def'
     );
   });
 

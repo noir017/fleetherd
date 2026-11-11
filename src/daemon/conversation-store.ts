@@ -13,7 +13,7 @@ import path from 'node:path';
  * (Plus bookkeeping — title, lane, generation — documented on the record below.)
  *
  * ── Why the cwd is persisted here ─────────────────────────────────────────────
- * It is a property of the CONVERSATION, like the binding — "this topic is about quantlab" outlives
+ * It is a property of the CONVERSATION, like the binding — "this topic is about shop-api" outlives
  * any one process, and the alternative (in-memory only) would silently move a topic back to the
  * agent's default root on the next daemon restart, which is the class of surprise this file exists
  * to prevent. It rides on the record rather than in a table of its own because it is read on the
@@ -103,7 +103,7 @@ export interface ConversationRecord {
   titlePinned?: boolean;
   /**
    * Where this conversation was last answered: the platform instance and the address its last turn
-   * ran at. What `talkcode channels` lists, so an agent can name a place to post to.
+   * ran at. What `fleetherd channels` lists, so an agent can name a place to post to.
    *
    * Persisted rather than parsed back out of the key, because a key is opaque by design (see
    * core/conversation.ts KEY_SEP) and under `per_user` / `shared` it names no place at all.

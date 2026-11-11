@@ -22,7 +22,7 @@ import { HistoryStore } from '../history/store.js';
 const dirs: string[] = [];
 
 function tempStore(): { store: HistoryStore; file: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-turn-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-turn-'));
   dirs.push(dir);
   const file = path.join(dir, 'history.db');
   return { store: new HistoryStore(file), file };
@@ -114,7 +114,7 @@ function rig(
   let sink: FollowUpSink | undefined;
   // The real store, in a temp dir: /new's generation lives there, and the registry already
   // expects one for its binding bookkeeping.
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-reg-'));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-reg-'));
   dirs.push(stateDir);
   const reg = new ConversationRegistry(
     cfg,

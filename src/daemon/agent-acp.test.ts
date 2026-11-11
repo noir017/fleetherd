@@ -759,7 +759,7 @@ describe('liveModelName label choice (real claude-agent-acp option list)', () =>
  * The dsh (DeepSeek Harness) preset and its model-value encoding.
  *
  * DSH's ACP bridge encodes a model selection as JSON.stringify([provider, model]) — see modelValue
- * in @deepseek-ai/dsh-acp lib/types/model-control.js — so talkcode's "provider/model" spelling
+ * in @deepseek-ai/dsh-acp lib/types/model-control.js — so fleetherd's "provider/model" spelling
  * must be JSON-encoded to cross the wire (a bare "provider/model" is "unknown model option") and
  * decoded again to present a readable /model menu.
  */
@@ -1038,9 +1038,9 @@ describe('what the agent is given', () => {
         command: '/usr/bin/node',
         args: ['--import', 'tsx', '/srv/aa/dist/cli.js', 'mcp'],
         env: [
-          { name: 'TALKCODE_TURN_TOKEN', value: 'tok-1' },
-          { name: 'TALKCODE_SOCKET', value: '/run/aa.sock' },
-          { name: 'TALKCODE_CWD', value: '/work/p' },
+          { name: 'FLEETHERD_TURN_TOKEN', value: 'tok-1' },
+          { name: 'FLEETHERD_SOCKET', value: '/run/aa.sock' },
+          { name: 'FLEETHERD_CWD', value: '/work/p' },
         ],
       },
     ]);

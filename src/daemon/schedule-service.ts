@@ -127,7 +127,7 @@ export class ScheduleService {
    */
   async edit(id: string, input: EditTaskInput, caller: ConversationId): Promise<ScheduleTaskView> {
     const task = this.scheduler.get(id);
-    if (!task) throw new Error(`no scheduled task #${id}; \`talkcode schedule list\` shows them all`);
+    if (!task) throw new Error(`no scheduled task #${id}; \`fleetherd schedule list\` shows them all`);
     // The run in flight is using the values as they were when it started, and a daily run writes
     // its day's topic back when it opens one — both would race the edit. Editing is quick to retry;
     // a run is not.
@@ -251,7 +251,7 @@ export class ScheduleService {
     );
   }
 
-  /** The host the caller's agent runs on, which is where its `talkcode` command ran. Undefined = here. */
+  /** The host the caller's agent runs on, which is where its `fleetherd` command ran. Undefined = here. */
   private hostOfCaller(caller: ConversationId): string | undefined {
     return findAgent(this.config, this.registry.boundAgentOf(caller) ?? this.config.routing.default)?.host;
   }
@@ -266,7 +266,7 @@ export class ScheduleService {
     const now = this.clock.now();
     if (id !== undefined) {
       const task = this.scheduler.get(id);
-      if (!task) throw new Error(`no scheduled task #${id}; \`talkcode schedule list\` shows them all`);
+      if (!task) throw new Error(`no scheduled task #${id}; \`fleetherd schedule list\` shows them all`);
       return { tasks: [taskView(task, now, { detail: true, here: caller })] };
     }
     return { tasks: this.scheduler.list().map((t) => taskView(t, now, { here: caller })) };

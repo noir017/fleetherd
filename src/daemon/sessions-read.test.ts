@@ -34,7 +34,7 @@ const factory: AgentFactory = {
 
 describe('sessions read over the daemon', () => {
   it('answers --turn done from conversations.json, not the newest library turn', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-sessions-read-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-sessions-read-'));
     dirs.push(dir);
     const history = new HistoryStore(path.join(dir, 'history.db'));
     const store = new ConversationStore(path.join(dir, 'conversations.json'));

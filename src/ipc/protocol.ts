@@ -431,7 +431,7 @@ type _AssertActionAligned = [
 const _assertActionAligned: _AssertActionAligned = [true, true];
 
 export interface IpcRequest {
-  /** From TALKCODE_TURN_TOKEN; used to authenticate and locate the current session/channel. */
+  /** From FLEETHERD_TURN_TOKEN; used to authenticate and locate the current session/channel. */
   token: string;
   action: IpcAction;
 }
@@ -537,7 +537,7 @@ export interface TaskRow {
   topic: string;
   title: string;
   agent: string;
-  /** The directory it works in, short (`~/workspace/talkcode`); empty when unknown. */
+  /** The directory it works in, short (`~/workspace/fleetherd`); empty when unknown. */
   cwd: string;
   /** TopicStage: answer | failed | review | retrying | working | idle. */
   stage: string;

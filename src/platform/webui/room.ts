@@ -823,7 +823,7 @@ export class WebRoom {
    *
    * A facade, like the schedule panel above: every write is `daemon/skills-store.ts`'s, so the
    * page gets the same name/path validation, the same version guard on `patch`, the same
-   * commit per change, and the same archive-instead-of-delete as `talkcode skills`.
+   * commit per change, and the same archive-instead-of-delete as `fleetherd skills`.
    */
   useSkillsPanel(panel: SkillsPanel): void {
     this.skillsPanel = panel;
@@ -851,7 +851,7 @@ export class WebRoom {
    * The list is rebuilt from `history.db` on every request. The one operation is dismissing a
    * preference suggestion from the pending list, which writes `reviews.json` and nothing else. No
    * operation here reaches a skill or starts a review — a review is written by the sweep, through
-   * the skill store's own rules, and undoing one is the `talkcode skills revert` command the row
+   * the skill store's own rules, and undoing one is the `fleetherd skills revert` command the row
    * names. A page that could trigger a review would be a second writer, which AGENTS.md invariant 8
    * does not allow.
    */
@@ -1860,7 +1860,7 @@ export class WebRoom {
     return true;
   }
 
-  /** Replay for `talkcode fetch-messages`, oldest first, in the shape history has. */
+  /** Replay for `fleetherd fetch-messages`, oldest first, in the shape history has. */
   history(topicId: string, opts: { limit?: number; before?: string }): InboundMessage[] {
     const all = [...this.roomOf(topicId).stored.values()];
     const cut = opts.before ? all.findIndex((s) => s.msg.id === opts.before) : -1;

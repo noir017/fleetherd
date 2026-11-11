@@ -5,6 +5,7 @@ import { TurnFailure } from './agent.js';
 import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
 import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './schedule-bash.js';
+import { withLegacyNames } from '../legacy-name.js';
 
 /**
  * The operator's agent hooks (`agents[].hooks` in config.yaml): commands the daemon runs at points in
@@ -115,7 +116,7 @@ export function tailReason(output: string): string {
  */
 export const TURN_FAILED_TIMEOUT_MS = 60_000;
 
-/** What `hooks.turnFailed.command` is told, as JSON in `TALKCODE_TURN_FAILURE`. */
+/** What `hooks.turnFailed.command` is told, as JSON in `FLEETHERD_TURN_FAILURE`. */
 export interface TurnFailedReport {
   agent: string;
   /** The conversation key (opaque, but stable: the same key every report from that conversation). */
@@ -153,8 +154,8 @@ export async function runTurnFailedHook(def: AgentDef, report: TurnFailedReport,
   const json = JSON.stringify(report);
   try {
     const r = host
-      ? await runRemoteBashCommand(host, { ...run, env: { ...remoteAgentEnv(def), TALKCODE_TURN_FAILURE: json } })
-      : await runBashCommand({ ...run, env: { ...buildHarnessEnv(def), TALKCODE_TURN_FAILURE: json }, settleOnExit: true });
+      ? await runRemoteBashCommand(host, { ...run, env: withLegacyNames({ ...remoteAgentEnv(def), FLEETHERD_TURN_FAILURE: json }) })
+      : await runBashCommand({ ...run, env: withLegacyNames({ ...buildHarnessEnv(def), FLEETHERD_TURN_FAILURE: json }), settleOnExit: true });
     const failure = r.spawnError ?? (r.timedOut ? 'timed out' : r.exitCode === 0 ? undefined : `exit ${r.exitCode ?? 'by a signal'}`);
     if (failure) console.warn(`[hook] agent "${def.id}": turnFailed command ${failure}${r.logFile ? `; output: ${r.logFile}` : ''}`);
     else console.log(`[hook] agent "${def.id}": turnFailed command ok${r.logFile ? `; output: ${r.logFile}` : ''}`);

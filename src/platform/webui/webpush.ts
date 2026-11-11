@@ -56,7 +56,7 @@ const MAX_SUBSCRIPTIONS = 20;
 const TTL_SECONDS = 24 * 3600;
 
 /** The `sub` claim RFC 8292 asks for: a contact for the push service. The project, not a person. */
-const VAPID_SUBJECT = 'https://github.com/noir017/talkcode';
+const VAPID_SUBJECT = 'https://github.com/noir017/fleetherd';
 
 /** One device's subscription, as `PushSubscription.toJSON()` gives it. */
 export interface PushSubscriptionRecord {

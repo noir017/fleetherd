@@ -341,12 +341,21 @@ func opWriteFileAtomic(path string, body []byte, mode uint32, appendMode bool) (
 }
 
 // under reports whether a symlink's destination lies inside `dir`. A relative destination is read
-// against the link's own directory, as the kernel reads it.
+// against the link's own directory, as the kernel reads it. A link made before 3.0.0 names the
+// directory by its old spelling (~/.talkcode/…, legacy.go), and is just as much ours.
 func under(link, dest, dir string) bool {
 	if !filepath.IsAbs(dest) {
 		dest = filepath.Join(filepath.Dir(link), dest)
 	}
-	return strings.HasPrefix(filepath.Clean(dest), filepath.Clean(dir)+string(os.PathSeparator))
+	if twin := legacyTwin(dir); twin != "" && within(dest, twin) {
+		return true
+	}
+	return within(dest, dir)
+}
+
+// within reports whether path lies strictly inside dir, as written.
+func within(path, dir string) bool {
+	return strings.HasPrefix(filepath.Clean(path), filepath.Clean(dir)+string(os.PathSeparator))
 }
 
 // opEnsureLink makes `link` a symlink to `target`, with the same rules as the gateway's local
@@ -354,7 +363,7 @@ func under(link, dest, dir string) bool {
 // file or directory (that is the operator's own copy), repointing a link that points elsewhere.
 //
 // With `owned`, a link is repointed only when it points inside that directory. The skill links have
-// names nobody else uses (`talkcode`, `super`); an instructions link sits at a harness's own global
+// names nobody else uses (`fleetherd`, `super`); an instructions link sits at a harness's own global
 // file (`~/.codex/AGENTS.md`), where a symlink is just as likely the operator's way of keeping their
 // own file somewhere else — that one is theirs, and is reported as occupied like a real file.
 func opEnsureLink(target, link, requires, owned string) (any, []byte, error) {
@@ -446,7 +455,7 @@ func opRemovePath(path, owned string) (any, []byte, error) {
 	if owned == "" {
 		return nil, nil, errors.New("removePath needs the directory the path must stay inside")
 	}
-	if !under(path, path, owned) {
+	if !within(path, owned) {
 		return nil, nil, fmt.Errorf("refusing to remove %s: not under %s", path, owned)
 	}
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
@@ -507,11 +516,12 @@ func opListFiles(path string) (any, []byte, error) {
 }
 
 // opSweepSkillLinks removes dangling skill links in `dir` that point into this host's version
-// directory (~/.talkcode/remote/<version>/…). An upgrade deletes the old version directory, and a
-// link into it is only repointed by a spawn of the harness it was made for — so one made for a
-// harness the gateway has since stopped mapping keeps pointing at a path that is gone, and every
-// agent of that harness runs without the skill. Nothing else is touched: a real directory, a file,
-// or a link pointing anywhere outside ~/.talkcode/remote belongs to the operator.
+// directory (~/.fleetherd/remote/<version>/…; ~/.talkcode/remote/… for one made before 3.0.0). An
+// upgrade deletes the old version directory, and a link into it is only repointed by a spawn of the
+// harness it was made for — so one made for a harness the gateway has since stopped mapping keeps
+// pointing at a path that is gone, and every agent of that harness runs without the skill. Nothing
+// else is touched: a real directory, a file, or a link pointing anywhere outside those two belongs
+// to the operator.
 func opSweepSkillLinks(dir string) (any, []byte, error) {
 	empty := map[string]any{"removed": []string{}}
 	entries, err := os.ReadDir(dir)
@@ -522,6 +532,7 @@ func opSweepSkillLinks(dir string) (any, []byte, error) {
 		return nil, nil, err
 	}
 	root := rootDir()
+	legacyRoot := legacyTwin(root)
 	removed := []string{}
 	for _, e := range entries {
 		if e.Type()&fs.ModeSymlink == 0 {
@@ -535,7 +546,7 @@ func opSweepSkillLinks(dir string) (any, []byte, error) {
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(dir, target)
 		}
-		if !strings.HasPrefix(target, root+string(os.PathSeparator)) {
+		if !within(target, root) && (legacyRoot == "" || !within(target, legacyRoot)) {
 			continue
 		}
 		if _, err := os.Stat(target); err == nil {

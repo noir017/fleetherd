@@ -411,11 +411,11 @@ class SlackSocketHook {
     const adapter = (bot as unknown as { adapter?: Record<string, unknown> }).adapter;
     if (!adapter) return;
     // Already wrapped: skip wrapping but still attach the current socket (a reconnect may have swapped it).
-    if ((adapter as { __talkcodeHooked?: boolean }).__talkcodeHooked) {
+    if ((adapter as { __fleetherdHooked?: boolean }).__fleetherdHooked) {
       this.attachFrameListener((adapter as { socket?: unknown }).socket);
       return;
     }
-    (adapter as { __talkcodeHooked?: boolean }).__talkcodeHooked = true;
+    (adapter as { __fleetherdHooked?: boolean }).__fleetherdHooked = true;
     const origAccept = (adapter as { accept?: (...a: unknown[]) => unknown }).accept;
     if (typeof origAccept === 'function') {
       // Capture the profile instance: the replacement `accept` is a classic function whose own

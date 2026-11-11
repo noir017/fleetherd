@@ -43,7 +43,7 @@ let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), 'aa-voice-route-'));
   // The transcript log is written under configDir(); never let a test reach the operator's real one.
-  vi.stubEnv('TALKCODE_CONFIG_DIR', dir);
+  vi.stubEnv('FLEETHERD_CONFIG_DIR', dir);
 });
 afterEach(() => {
   vi.unstubAllEnvs();

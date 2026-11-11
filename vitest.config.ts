@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     // Run only colocated unit tests under src/.
     include: ['src/**/*.test.ts'],
+    // A throwaway HOME per test file: see the file for what reached the real one.
+    setupFiles: ['./vitest.setup.ts'],
     /**
      * The 5 s default is too tight on a 2-vCPU container running 158 files: a few tests walk a
      * fake clock a minute at a time (~3000 timer turns) or wait on a spawned child, and finish in

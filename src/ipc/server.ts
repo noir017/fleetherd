@@ -228,7 +228,7 @@ export class IpcServer {
  *
  * Accepts `<channel>` or `<channel>/<thread>` so an agent can target a specific topic/thread, not
  * just a channel root — and either of those behind `<instance>:` to target another platform (the
- * ids `talkcode channels` prints). Malformed input throws here (the message reaches the
+ * ids `fleetherd channels` prints). Malformed input throws here (the message reaches the
  * agent as `ok:false, error`) rather than reaching a platform API as a garbled id.
  */
 function overrideTarget(action: IpcAction, instances: ReadonlySet<string>): ChannelTarget | undefined {

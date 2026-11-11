@@ -7,7 +7,7 @@
  * v1: `platforms:` map of typed instances (see platform/config-schemas.ts) + `version: 1`.
  *
  * loadConfig migrates IN MEMORY (with a one-line warning) so old files keep working;
- * `talkcode doctor --migrate-config` rewrites the file. This module is deliberately
+ * `fleetherd doctor --migrate-config` rewrites the file. This module is deliberately
  * self-contained and disposable — it will be deleted one major version after v1 lands
  * (the hermes-agent lesson: alias/migration layers that never die grow into a swamp).
  */

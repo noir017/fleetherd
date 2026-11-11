@@ -185,8 +185,9 @@ import {
   type ScheduleMenuAction,
   type ScheduleMenuClick,
 } from '../core/schedule-menu.js';
+import { envOf } from '../legacy-name.js';
 
-/** Transcripts `talkcode voice-log` lists when no `--limit` is given. */
+/** Transcripts `fleetherd voice-log` lists when no `--limit` is given. */
 const DEFAULT_VOICE_LOG_LIMIT = 10;
 
 /**
@@ -744,12 +745,12 @@ interface PendingAgentMenu {
 const SKILL_READS = ['list', 'search', 'categories', 'show', 'history'] as const;
 type SkillRead = (typeof SKILL_READS)[number];
 
-/** The `talkcode skills` actions that only read, which need no pull, no commit and no push. */
+/** The `fleetherd skills` actions that only read, which need no pull, no commit and no push. */
 function isSkillRead(action: Extract<IpcAction, { kind: 'skills' }>['action']): action is SkillRead {
   return (SKILL_READS as readonly string[]).includes(action);
 }
 
-/** Main daemon: wires platform, session registry, and IPC server together. `talkcode start` constructs and run()s it. */
+/** Main daemon: wires platform, session registry, and IPC server together. `fleetherd start` constructs and run()s it. */
 export class Daemon {
   private registry: ConversationRegistry;
   private ipc: IpcServer;
@@ -900,7 +901,7 @@ export class Daemon {
   private readonly socketPath: string;
   /** The last read of the pods, so the next one waits for it (refreshPods). */
   private podsRead: Promise<unknown> = Promise.resolve();
-  /** How each host's last read went, for `talkcode pods`: when, and why it kept its old entry. */
+  /** How each host's last read went, for `fleetherd pods`: when, and why it kept its old entry. */
   private readonly podReads = new Map<string, { at: Date; note?: string }>();
 
   /** Sub-agents: the task commands, their confirmation cards, and the updates (daemon/delegation.ts). */
@@ -921,7 +922,7 @@ export class Daemon {
      */
     schedules?: { store: ScheduleStore; runsDir: string },
     /**
-     * The conversation library (`<configDir>/history.db`): the `talkcode sessions` commands read
+     * The conversation library (`<configDir>/history.db`): the `fleetherd sessions` commands read
      * it, and the registry writes every turn into it. Optional so a test daemon need not open a
      * file; absent means the command answers that there is no library.
      */
@@ -995,7 +996,7 @@ export class Daemon {
       onModelSet: (id) => this.schedules?.notePersonModel(id),
       // A `/setting` on a platform that can carry (and later edit) buttons.
       onSettingMenuRequest: (id, msg, menu) => this.onSettingMenuRequest(id, msg, menu),
-      // `/reload`: the same entry `talkcode reload` uses, answered with the same sentence.
+      // `/reload`: the same entry `fleetherd reload` uses, answered with the same sentence.
       onReloadRequest: async () => (await this.reloadAll()).summary,
       // `/setting schedule …` — the tasks live here, not in the registry.
       onScheduleSetting: (id, msg, args, canMenu) => this.onScheduleSetting(id, msg, args, canMenu),
@@ -1144,7 +1145,7 @@ export class Daemon {
     this.reviews?.start();
     // The managed skills' daily check: 14 days marks one expired, 30 archives it. Not from a test
     // worker, which is not the CLI and must not touch the operator's config directory.
-    if (selfInvocation() && !process.env.TALKCODE_NO_SKILL_LINK) {
+    if (selfInvocation() && !envOf('NO_SKILL_LINK')) {
       this.skillSweepStop = startSkillSweep((skill, reason) => this.notifySkillArchived(skill, reason));
     }
     // What the hosts' pods declare now (pods.ts). Not awaited: until it answers, every pod keeps the
@@ -1357,7 +1358,7 @@ export class Daemon {
    *
    * An unqualified override still goes to the conversation's own instance, as it always has — an
    * address alone can't identify a platform. The qualified form (`tg:5865716608/8068`, what
-   * `talkcode channels` prints) is how an agent answering on the web UI posts to Telegram.
+   * `fleetherd channels` prints) is how an agent answering on the web UI posts to Telegram.
    * The instance was already checked against config when IPC parsed the value, so a miss here means
    * the conversation expired, not that the agent named a platform that does not exist.
    */
@@ -1391,7 +1392,7 @@ export class Daemon {
     const base = path.posix.basename(action.path) || 'file';
     const data = await host.readFile(action.path, this.config.attachments.maxDownloadBytes);
     console.log(`[remote] ${host.id}: fetched ${action.path} (${data.length} bytes) to send`);
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'talkcode-file-'));
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'fleetherd-file-'));
     try {
       const local = path.join(dir, base);
       await fs.promises.writeFile(local, data, { mode: 0o600 });
@@ -1531,7 +1532,7 @@ export class Daemon {
         return this.reloadAll().then((r) => ({
           summary: [
             `Added ${action.name} (${action.ssh}); its host key is pinned in the gateway's known_hosts.`,
-            `If it was not reached below, put this line in ~/.ssh/authorized_keys on ${action.name}, then \`talkcode reload\`:`,
+            `If it was not reached below, put this line in ~/.ssh/authorized_keys on ${action.name}, then \`fleetherd reload\`:`,
             gatewayKeyLine(),
             r.summary,
           ].join('\n'),
@@ -1592,7 +1593,7 @@ export class Daemon {
   }
 
   /**
-   * `talkcode sessions …`: the gateway's own library, not a chat. Every one is answered from
+   * `fleetherd sessions …`: the gateway's own library, not a chat. Every one is answered from
    * `<configDir>/history.db` — search is BM25 over the tokenised text, read is one conversation,
    * list is the recent ones. None takes a channel (there is nothing to target), and a daemon
    * started without a library says so rather than pretending the history is empty.
@@ -1669,7 +1670,7 @@ export class Daemon {
     };
   }
 
-  /** Who a `talkcode skills` write is from: the agent answering the conversation, for the commit. */
+  /** Who a `fleetherd skills` write is from: the agent answering the conversation, for the commit. */
   private skillChangeBy(conversationId: ConversationId | undefined): SkillChangeBy {
     if (!conversationId) return { kind: 'agent' };
     const agent = this.registry.boundAgentOf(conversationId) ?? this.config.routing.default;
@@ -1677,7 +1678,7 @@ export class Daemon {
   }
 
   /**
-   * `talkcode skills …` — the gateway's own skills (skills-store.ts). The store owns every rule
+   * `fleetherd skills …` — the gateway's own skills (skills-store.ts). The store owns every rule
    * and throws a message written for the agent; this only supplies what the request cannot: the
    * conversation that created a skill, so an archive notice has somewhere to go, and who made a
    * change, for its commit. Every write goes through the skills repository (skills-repo.ts), which
@@ -1739,7 +1740,7 @@ export class Daemon {
     }
   }
 
-  /** The `talkcode skills` actions that only read: the store's records, and the library's search and show. */
+  /** The `fleetherd skills` actions that only read: the store's records, and the library's search and show. */
   private readSkills(read: SkillRead, action: Extract<IpcAction, { kind: 'skills' }>, conversationId: ConversationId | undefined): unknown {
     const name = (): string => {
       if (!action.name) throw new Error(`skills ${read} needs a <name>`);
@@ -1778,7 +1779,7 @@ export class Daemon {
     }
     const why = reason === 'unused' ? 'was archived after 30 days unused' : 'was archived';
     void adapter
-      .sendMessage(source.address, `Skill "${skill.name}" ${why}. Restore it with \`talkcode skills restore ${skill.name}\`.`)
+      .sendMessage(source.address, `Skill "${skill.name}" ${why}. Restore it with \`fleetherd skills restore ${skill.name}\`.`)
       .catch((e: unknown) =>
         console.warn(`[skills] could not tell ${source.platform} about "${skill.name}":`, e instanceof Error ? e.message : e)
       );
@@ -1786,7 +1787,7 @@ export class Daemon {
 
   /**
    * `/reload` as a person or an agent asks for it: the pods are read again first (pods.ts), so an
-   * edited `~/.talkcode/pod.yaml` takes effect with the same command that applies config.yaml. The
+   * edited `~/.fleetherd/pod.yaml` takes effect with the same command that applies config.yaml. The
    * hosts are those of the file about to be applied — a host added with this reload is read too.
    * A file that does not load skips the pods and is reported by reloadConfig, as before.
    */
@@ -1837,7 +1838,7 @@ export class Daemon {
   }
 
   /**
-   * `/reload` and `talkcode reload`: re-read config.yaml and `.env` and apply what a running daemon
+   * `/reload` and `fleetherd reload`: re-read config.yaml and `.env` and apply what a running daemon
    * can take (see daemon/config-reload.ts for what that is and why it is done in place).
    *
    * Never throws: a file that does not load becomes the answer, and in that case NOTHING has
@@ -1896,7 +1897,7 @@ export class Daemon {
   }
 
   /**
-   * `talkcode pods`: every host, the agents it has and where they were read from, whether it is in
+   * `fleetherd pods`: every host, the agents it has and where they were read from, whether it is in
    * the ssh mesh, and how its last read went — plus the line a new host needs to let the gateway in.
    */
   private podList(): { gatewayKey: string; pods: Array<Record<string, string>> } {
@@ -1989,7 +1990,7 @@ export class Daemon {
    *
    * Tasks: the list and the five operations, from the same ScheduleService the agent's commands
    * and `/setting schedule` use. Skills: the store every write goes through, so the page and
-   * `talkcode skills` cannot disagree, and archiving here tells the creating conversation exactly
+   * `fleetherd skills` cannot disagree, and archiving here tells the creating conversation exactly
    * as the CLI path does. Reviews: read-only. History: the conversation library, read-only — every
    * agent and platform, including the topics this page has long forgotten. Then the agent catalog
    * an empty topic lays out, and the status line's model switch (`/model` as a control).
@@ -2040,7 +2041,7 @@ export class Daemon {
 
   /**
    * The web UI's history page, bound to one platform instance: the conversation library, read the
-   * way `talkcode sessions` reads it. Read-only by construction — see `useHistoryPanel`.
+   * way `fleetherd sessions` reads it. Read-only by construction — see `useHistoryPanel`.
    *
    * The instance id is only for the link back to a topic: a Telegram conversation has no topic in
    * this page, and a topic id from another instance would point at a lane it does not have.

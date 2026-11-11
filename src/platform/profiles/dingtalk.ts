@@ -72,9 +72,9 @@ export function deriveNotificationTitle(text: string): string {
       .split('\n')
       .find((l) => l.trim().length > 0)
       ?.trim();
-    return (line || 'talkcode').slice(0, 32);
+    return (line || 'fleetherd').slice(0, 32);
   } catch {
-    return 'talkcode';
+    return 'fleetherd';
   }
 }
 

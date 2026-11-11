@@ -1,27 +1,45 @@
 #!/usr/bin/env bash
-# talkcode (host side) — operate the gateway container from the machine that runs it
-# (docs/docker.md). Installed as /usr/local/bin/talkcode:
+# fleetherd (host side) — operate the gateway container from the machine that runs it
+# (docs/docker.md). Installed as /usr/local/bin/fleetherd, with `talkcode` — its name before
+# 3.0.0 — kept as a link to it:
 #
-#   sudo install -m 755 docker/talkcode-host /usr/local/bin/talkcode
+#   sudo install -m 755 docker/fleetherd-host /usr/local/bin/fleetherd
+#   sudo ln -sf fleetherd /usr/local/bin/talkcode
 #
-#   talkcode update [--dry-run] [--force]
+#   fleetherd update [--dry-run] [--force]
 #                     pull the image the compose file names; if it changed, recreate the
 #                     container, wait until every host is connected again, report the version,
 #                     and remove the image it replaced. With a turn or a scheduled run in
 #                     progress, the gateway finishes it first (at most 30 min) and the rest goes
-#                     on in the background: `talkcode status` shows it, update.log in the compose
+#                     on in the background: `fleetherd status` shows it, update.log in the compose
 #                     directory has it. --force restarts at once, cutting them off; --dry-run
 #                     only reports.
-#   talkcode restart [--force]   the same, without pulling
-#   talkcode logs [args]         docker logs -t (default: --tail 200)
-#   talkcode status              the container, its image, the gateway's version, what is in
+#   fleetherd restart [--force]   the same, without pulling
+#   fleetherd logs [args]         docker logs -t (default: --tail 200)
+#   fleetherd status              the container, its image, the gateway's version, what is in
 #                                progress, and whether a restart is waiting for it
-#   talkcode <anything else>     runs the talkcode CLI inside the container: `talkcode doctor`,
-#                                `talkcode --version`. update / restart / logs / status are not
+#   fleetherd <anything else>     runs the fleetherd CLI inside the container: `fleetherd doctor`,
+#                                `fleetherd --version`. update / restart / logs / status are not
 #                                CLI commands, so nothing is shadowed.
 #
-# The container's compose directory is $TALKCODE_APP_DIR, by default ~/apps/talkcode, and the
-# container is $TALKCODE_CONTAINER, by default talkcode (what docs/docker.md's compose names it).
+# The container's compose directory is $FLEETHERD_APP_DIR, by default ~/apps/fleetherd, and the
+# container is $FLEETHERD_CONTAINER, by default fleetherd (what docs/docker.md's compose names it).
+#
+# Until 3.0.0 all of this was named talkcode, and an upgraded host still has it so (AGENTS.md,
+# "Compatibility with the name talkcode"): TALKCODE_APP_DIR and TALKCODE_CONTAINER are read when
+# the FLEETHERD_ ones are unset, ~/apps/talkcode is the directory when ~/apps/fleetherd does not
+# exist, and a container named talkcode is the one when none is named fleetherd. What cannot carry
+# over is the compose file itself: the image moved to ghcr.io/noir017/fleetherd and its home to
+# /home/fleetherd, so update and restart refuse a compose file that still names either old one
+# rather than start a gateway that finds no config. The upgrade, once per host:
+#
+#   1. install this file as above (the `talkcode` link replaces the old wrapper);
+#   2. in the compose file: image ghcr.io/noir017/talkcode → ghcr.io/noir017/fleetherd, and every
+#      mount target under /home/talkcode → /home/fleetherd (the config:
+#      ./config:/home/fleetherd/.config/fleetherd). Keep the service's key as it is: a new key is a
+#      second gateway beside the old one. container_name may change to fleetherd;
+#   3. in config.yaml, every absolute path into /home/talkcode → /home/fleetherd;
+#   4. fleetherd update.
 #
 # Why update is a command and not just `docker compose pull && up -d`: recreating the container
 # restarts the gateway, and a restarting gateway stops the agents it started on its hosts (see
@@ -30,20 +48,37 @@
 # enough for the wait, says what is running before it does anything, and never runs on a timer.
 set -euo pipefail
 
-APP_DIR="${TALKCODE_APP_DIR:-$HOME/apps/talkcode}"
-CONTAINER="${TALKCODE_CONTAINER:-talkcode}"
-PKG=/usr/local/lib/node_modules/talkcode/package.json
+APP_DIR="${FLEETHERD_APP_DIR:-${TALKCODE_APP_DIR:-}}"
+if [ -z "${APP_DIR}" ]; then
+    APP_DIR="$HOME/apps/fleetherd"
+    if [ ! -d "${APP_DIR}" ] && [ -d "$HOME/apps/talkcode" ]; then APP_DIR="$HOME/apps/talkcode"; fi
+fi
 UPDATE_LOG="${APP_DIR}/update.log"
+
+# The container: named, or fleetherd, or — on a host not yet past the upgrade — talkcode. Picked
+# again after `compose up`, which may have renamed it.
+pick_container() {
+    CONTAINER="${FLEETHERD_CONTAINER:-${TALKCODE_CONTAINER:-}}"
+    [ -z "${CONTAINER}" ] || return 0
+    CONTAINER=fleetherd
+    if ! docker inspect fleetherd >/dev/null 2>&1 && docker inspect talkcode >/dev/null 2>&1; then CONTAINER=talkcode; fi
+}
 # How long docker waits for the gateway to stop: its own limit on waiting for work in progress
 # (DRAIN_LIMIT_MS in src/daemon/restart-drain.ts, 30 min) plus the time its shutdown takes, so the
 # gateway always stops itself and is never killed halfway through that shutdown.
 STOP_WAIT=1920
 
-die() { printf '%s\n' "talkcode: $*" >&2; exit 1; }
-say() { printf '%s\n' "talkcode: $*" >&2; }
+die() { printf '%s\n' "fleetherd: $*" >&2; exit 1; }
+say() { printf '%s\n' "fleetherd: $*" >&2; }
 short() { local id="${1#sha256:}"; printf '%s' "${id:0:12}"; }
 running() { [ "$(docker inspect -f '{{.State.Status}}' "${CONTAINER}" 2>/dev/null)" = running ]; }
-version() { docker exec "${CONTAINER}" node -p "require('${PKG}').version" 2>/dev/null || echo unknown; }
+version() {
+    local pkg
+    for pkg in fleetherd talkcode; do
+        docker exec "${CONTAINER}" node -p "require('/usr/local/lib/node_modules/${pkg}/package.json').version" 2>/dev/null && return 0
+    done
+    echo unknown
+}
 
 # What the gateway is doing right now, read from its own log since the container last started:
 # a turn is open from "starting turn" until "turn complete|stopped|failed", a scheduled run from
@@ -83,7 +118,7 @@ draining_since() {
 # One update or restart at a time: a second one while the first waits would stop the container
 # under it. The lock is fd 9, so the background half (in_background) holds it until it is done.
 take_lock() {
-    [ -d "${APP_DIR}" ] || die "no ${APP_DIR} (set TALKCODE_APP_DIR)"
+    [ -d "${APP_DIR}" ] || die "no ${APP_DIR} (set FLEETHERD_APP_DIR)"
     command -v flock >/dev/null || return 0
     exec 9>"${APP_DIR}/.update.lock"
     flock -n 9 || die "an update or restart is already under way — see ${UPDATE_LOG}"
@@ -94,7 +129,7 @@ take_lock() {
 # each would wait for the other. setsid, so a closed terminal or ssh session does not take it along.
 in_background() {
     say "the gateway finishes these first (at most 30 min), then restarts; this goes on in the background."
-    say "talkcode status shows it; the log is ${UPDATE_LOG}"
+    say "fleetherd status shows it; the log is ${UPDATE_LOG}"
     setsid "$(readlink -f "$0")" __switch "$@" >>"${UPDATE_LOG}" 2>&1 </dev/null &
 }
 
@@ -104,7 +139,7 @@ in_background() {
 stop_now() {
     running || return 0
     report_busy && say "--force: stopping now and cutting these off (the conversations are kept)"
-    docker stop --signal SIGINT -t 60 "${CONTAINER}" >/dev/null || die "stop failed: talkcode logs"
+    docker stop --signal SIGINT -t 60 "${CONTAINER}" >/dev/null || die "stop failed: fleetherd logs"
 }
 
 # Wait for the restarted gateway to be up and to have reached every host it had reached before,
@@ -125,14 +160,14 @@ settle() {
         for h in ${hosts}; do
             grep -q "^\[remote\] ${h}: connected" <<<"${log}" || missing="${missing} ${h}"
         done
-        if grep -q 'talkcode daemon is running' <<<"${log}"; then up=1; fi
+        if grep -qE '(fleetherd|talkcode) daemon is running' <<<"${log}"; then up=1; fi
         if [ "${up}" -eq 1 ] && [ -z "${missing}" ]; then break; fi
         sleep 1
     done
     grep -E '^(🚀|\[remote\] .*: (connected|connection attempt failed)|\[slash\] .*registered|\[daemon\] platform instance)' \
         <<<"${log}" | sed 's/^/    /' >&2 || true
-    [ "${up}" -eq 1 ] || die "the gateway has not reported running after 60s: talkcode logs"
-    [ -z "${missing}" ] || die "not connected after 60s:${missing} — talkcode logs"
+    [ "${up}" -eq 1 ] || die "the gateway has not reported running after 60s: fleetherd logs"
+    [ -z "${missing}" ] || die "not connected after 60s:${missing} — fleetherd logs"
 }
 
 previous_hosts() {
@@ -154,6 +189,19 @@ prune_old() {
     case "${freed}" in ''|0B) ;; *) say "removed the replaced image, ${freed} reclaimed" ;; esac
 }
 
+# A compose file written for talkcode would pull an image that no longer gets releases, or start
+# 3.0.0 with its config mounted where it no longer looks (/home/talkcode): refuse both, with the fix.
+check_compose() {
+    local f="${APP_DIR}/docker-compose.yml"
+    [ -f "${f}" ] || return 0
+    if grep -qE '^[[:space:]]*image:[[:space:]]*ghcr\.io/noir017/talkcode([:@]|[[:space:]]*$)' "${f}"; then
+        die "${f} names ghcr.io/noir017/talkcode, which ended at 2.60.0: change it to ghcr.io/noir017/fleetherd, and every mount under /home/talkcode to /home/fleetherd (fleetherd --help, step 2)"
+    fi
+    if grep -q '/home/talkcode/' "${f}"; then
+        die "${f} mounts into /home/talkcode, the container's home before 3.0.0; change it to /home/fleetherd (./config:/home/fleetherd/.config/fleetherd), and the same in config.yaml (fleetherd --help, steps 2-3)"
+    fi
+}
+
 do_update() {
     local force=0 dry=0 ref before after hosts
     while [ "$#" -gt 0 ]; do
@@ -163,7 +211,8 @@ do_update() {
         esac
         shift
     done
-    [ -f "${APP_DIR}/docker-compose.yml" ] || die "no ${APP_DIR}/docker-compose.yml (set TALKCODE_APP_DIR)"
+    [ -f "${APP_DIR}/docker-compose.yml" ] || die "no ${APP_DIR}/docker-compose.yml (set FLEETHERD_APP_DIR)"
+    check_compose
     # Read from the compose file, not hard-coded: pinning a version there is followed here.
     ref="$(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "${APP_DIR}/docker-compose.yml" | head -1)"
     [ -n "${ref}" ] || die "no image: in ${APP_DIR}/docker-compose.yml"
@@ -173,7 +222,7 @@ do_update() {
     (cd "${APP_DIR}" && docker compose pull -q) >&2 || die "pull failed"
     after="$(docker image inspect "${ref}" -f '{{.Id}}')" || die "pulled, but cannot inspect ${ref}"
     if [ "${before}" = "${after}" ]; then
-        say "already up to date ($(short "${after}"), talkcode $(version)); the container is left alone"
+        say "already up to date ($(short "${after}"), fleetherd $(version)); the container is left alone"
         [ "${dry}" -eq 1 ] || prune_old "${ref}"
         return 0
     fi
@@ -201,23 +250,25 @@ switch_over() {
     local how="$1" hosts="$2" ref="${3:-}"
     if [ "${how}" = up ]; then
         (cd "${APP_DIR}" && docker compose up -d -t "${STOP_WAIT}") >&2 || die "up -d failed: cd ${APP_DIR} && docker compose logs"
+        pick_container
     else
         (cd "${APP_DIR}" && docker compose restart -t "${STOP_WAIT}") >&2 || die "restart failed"
     fi
     settle "${hosts}"
     if [ -n "${ref}" ]; then prune_old "${ref}"; fi
-    say "$([ "${how}" = up ] && echo done || echo restarted): talkcode $(version)"
+    say "$([ "${how}" = up ] && echo done || echo restarted): fleetherd $(version)"
 }
 
 do_restart() {
     local force=0 hosts
     case "${1:-}" in --force) force=1 ;; '') ;; *) die "restart: unknown argument $1 (--force)" ;; esac
+    check_compose
     hosts="$(previous_hosts)"
     if [ "${force}" -eq 1 ] && running; then
         stop_now
-        docker start "${CONTAINER}" >/dev/null || die "start failed: talkcode logs"
+        docker start "${CONTAINER}" >/dev/null || die "start failed: fleetherd logs"
         settle "${hosts}"
-        say "restarted: talkcode $(version)"
+        say "restarted: fleetherd $(version)"
     elif report_busy; then
         in_background restart "${hosts}"
     else
@@ -226,6 +277,7 @@ do_restart() {
 }
 
 command -v docker >/dev/null || die "docker not found"
+pick_container
 case "${1:-}" in
     update)  shift; take_lock; do_update "$@" ;;
     restart) shift; take_lock; do_restart "$@" ;;
@@ -239,7 +291,7 @@ case "${1:-}" in
     status)
         docker ps -a --filter "name=^/${CONTAINER}$" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}'
         if running; then
-            printf 'talkcode %s, image %s\n' "$(version)" "$(short "$(docker inspect -f '{{.Image}}' "${CONTAINER}")")"
+            printf 'fleetherd %s, image %s\n' "$(version)" "$(short "$(docker inspect -f '{{.Image}}' "${CONTAINER}")")"
             busy="$(in_progress)"
             if [ -n "${busy}" ]; then printf 'in progress:\n'; printf '%s\n' "${busy}" | sed 's/^/    /'
             else printf 'in progress: nothing\n'; fi
@@ -250,7 +302,7 @@ case "${1:-}" in
         fi ;;
     -h|--help|'') awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0" ;;
     *)
-        running || die "the container is not running: talkcode status"
+        running || die "the container is not running: fleetherd status"
         flags=(-i); if [ -t 0 ] && [ -t 1 ]; then flags=(-i -t); fi
-        exec docker exec "${flags[@]}" "${CONTAINER}" talkcode "$@" ;;
+        exec docker exec "${flags[@]}" "${CONTAINER}" fleetherd "$@" ;;
 esac

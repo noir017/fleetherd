@@ -12,7 +12,7 @@ import type { AgentFactory, AgentSession, ReclaimState } from './agent.js';
 import type { InboundMessage, SlashCommandSpec } from '../types.js';
 
 /**
- * Reloading config.yaml into a running daemon (`/reload`, `talkcode reload`).
+ * Reloading config.yaml into a running daemon (`/reload`, `fleetherd reload`).
  *
  * The pure half is checked directly. The rest runs a real Daemon against a real file, because what
  * matters is what the RUNNING daemon does afterwards: who answers the next message, which agent
@@ -137,10 +137,10 @@ let file: string;
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-reload-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-reload-'));
   file = path.join(dir, 'config.yaml');
-  for (const k of ['TALKCODE_CONFIG_FILE', 'RELOAD_KEY']) savedEnv[k] = process.env[k];
-  process.env.TALKCODE_CONFIG_FILE = file;
+  for (const k of ['FLEETHERD_CONFIG_FILE', 'RELOAD_KEY']) savedEnv[k] = process.env[k];
+  process.env.FLEETHERD_CONFIG_FILE = file;
   delete process.env.RELOAD_KEY;
   fs.writeFileSync(file, FILE);
 });
@@ -298,7 +298,7 @@ describe('/reload in a running daemon', () => {
     expect(answer).toContain('was not reloaded — nothing changed');
     expect(answer).toContain('agents.1.harness');
     // Not the startup advice: the wizard is interactive, and neither a chat user nor an agent can run it.
-    expect(answer).not.toContain('talkcode setup');
+    expect(answer).not.toContain('fleetherd setup');
     expect(r.cfg.agents[1]!.harness).toBe('opencode');
   });
 
@@ -356,7 +356,7 @@ describe('/reload in a running daemon', () => {
   });
 });
 
-describe('talkcode reload', () => {
+describe('fleetherd reload', () => {
   // Answered once the hosts' pods have been read again (daemon.ts reloadAll), hence awaited.
   it('prints the same summary /reload posts', async () => {
     const r = rig();

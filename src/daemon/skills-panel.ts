@@ -32,7 +32,7 @@ import { configDir } from '../config/load.js';
 
 /**
  * The daemon's side of the web UI's skills page: `skills-store.ts` records → the flat shape the
- * page draws, and every operation forwarded to the store function `talkcode skills` calls.
+ * page draws, and every operation forwarded to the store function `fleetherd skills` calls.
  *
  * There is deliberately no `delete` here. The store has none — `archive` moves a skill into
  * `archive/` whole, and `restore` brings it back — so the page's "Off" switch is the archive and
@@ -77,7 +77,7 @@ export interface SkillsPanelOptions {
   write?: <T>(fn: () => T) => Promise<T>;
 }
 
-/** A change made on the page is a person's: the commit says `talkcode-web`. */
+/** A change made on the page is a person's: the commit says `fleetherd-web`. */
 const PERSON: SkillChangeBy = { kind: 'person' };
 
 /** Build the facade the web UI's `useSkillsPanel` seam expects. */

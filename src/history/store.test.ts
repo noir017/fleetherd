@@ -9,7 +9,7 @@ import type { HistoryOutcome, HistoryTrigger } from './store.js';
 const dirs: string[] = [];
 
 function tempStore(): { store: HistoryStore; file: string; logs: string[] } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-'));
   dirs.push(dir);
   const file = path.join(dir, 'history.db');
   const logs: string[] = [];
@@ -30,7 +30,7 @@ function seed(store: HistoryStore): number {
     title: '跨会话查询',
     agent: 'cc',
     host: '',
-    cwd: '/home/user/workspace/talkcode',
+    cwd: '/home/user/workspace/fleetherd',
     kind: 'normal',
     at,
   })!;
@@ -233,7 +233,7 @@ describe('HistoryStore', () => {
   });
 
   it('degrades to a silent store when the file cannot be opened', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-'));
     dirs.push(dir);
     // A directory where the file should be: DatabaseSync cannot open it.
     const file = path.join(dir, 'history.db');
@@ -328,14 +328,14 @@ describe('HistoryStore', () => {
       add(0, 'user', '整理成 skill');
       add(1, 'tool', 'Bash: ls');
       add(2, 'tool', 'Write: /w/agent-skills/skills/vlt/SKILL.md\n{"file_path":"/w/agent-skills/skills/vlt/SKILL.md"}');
-      add(3, 'tool', 'Read: /home/u/.talkcode/skills/email-reader/SKILL.md');
+      add(3, 'tool', 'Read: /home/u/.fleetherd/skills/email-reader/SKILL.md');
       add(4, 'agent', '写好了');
       const window = store.reviewWindow('web#main#vlt', 0, 10_000)!;
       expect(window.messages.map((m) => m.role)).toEqual(['user', 'agent']);
       expect(window.dropped).toBe(0);
       expect(window.skillCalls).toEqual([
         'Write: /w/agent-skills/skills/vlt/SKILL.md\n{"file_path":"/w/agent-skills/skills/vlt/SKILL.md"}',
-        'Read: /home/u/.talkcode/skills/email-reader/SKILL.md',
+        'Read: /home/u/.fleetherd/skills/email-reader/SKILL.md',
       ]);
       store.close();
     });
@@ -480,7 +480,7 @@ describe('HistoryStore', () => {
  */
 describe('HistoryStore turns', () => {
   it('adds the turn column to an old database, and old rows read as unknown', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-old-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-old-'));
     dirs.push(dir);
     const file = path.join(dir, 'history.db');
     const raw = new Sqlite(file);
@@ -897,7 +897,7 @@ describe('HistoryStore turns', () => {
   });
 
   it('plans the session list and the restart sweep on an index, also on a file that predates them', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-noindex-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-noindex-'));
     dirs.push(dir);
     const file = path.join(dir, 'history.db');
     const old = new Sqlite(file);
@@ -971,7 +971,7 @@ describe('HistoryStore tool calls', () => {
   });
 
   it('adds the call column to a file that predates it', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-nocall-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-nocall-'));
     dirs.push(dir);
     const file = path.join(dir, 'history.db');
     const raw = new Sqlite(file);

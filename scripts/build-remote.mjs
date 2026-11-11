@@ -1,4 +1,4 @@
-// Build talkcode-remote (remote/, Go) for every architecture a gateway may meet on a host, into
+// Build fleetherd-remote (remote/, Go) for every architecture a gateway may meet on a host, into
 // dist/remote-bin/ — part of `npm run build`, so the release tarball always carries both.
 //
 // Static (CGO_ENABLED=0) and stripped: a host needs nothing but the binary, which is the point of
@@ -25,7 +25,7 @@ const go = (args, env = {}) =>
 try {
   execFileSync('go', ['version'], { stdio: 'ignore' });
 } catch {
-  console.error('build-remote: the Go toolchain is required (https://go.dev/dl/) to build talkcode-remote');
+  console.error('build-remote: the Go toolchain is required (https://go.dev/dl/) to build fleetherd-remote');
   process.exit(1);
 }
 
@@ -39,7 +39,7 @@ const native = process.arch === 'arm64' ? 'arm64' : 'amd64';
 const arches = process.argv.includes('--native') ? [native] : ['amd64', 'arm64'];
 fs.mkdirSync(out, { recursive: true });
 for (const arch of arches) {
-  const target = path.join(out, `talkcode-remote-linux-${arch}`);
+  const target = path.join(out, `fleetherd-remote-linux-${arch}`);
   go(['build', '-trimpath', '-ldflags', `-s -w -X main.buildVersion=${version}`, '-o', target, '.'], {
     GOOS: 'linux',
     GOARCH: arch,

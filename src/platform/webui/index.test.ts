@@ -15,12 +15,12 @@ let dir = '';
 let saved: string | undefined;
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'webui-adapter-'));
-  saved = process.env.TALKCODE_CONFIG_DIR;
-  process.env.TALKCODE_CONFIG_DIR = dir;
+  saved = process.env.FLEETHERD_CONFIG_DIR;
+  process.env.FLEETHERD_CONFIG_DIR = dir;
 });
 afterEach(() => {
-  if (saved === undefined) delete process.env.TALKCODE_CONFIG_DIR;
-  else process.env.TALKCODE_CONFIG_DIR = saved;
+  if (saved === undefined) delete process.env.FLEETHERD_CONFIG_DIR;
+  else process.env.FLEETHERD_CONFIG_DIR = saved;
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -246,7 +246,7 @@ describe('webui adapter: outbound', () => {
     // temporary one and removes it as soon as sendFile returns (daemon.ts sendAgentFile).
     const a = adapter();
     const address = await somewhere(a);
-    const tmp = fs.mkdtempSync(path.join(dir, 'talkcode-file-'));
+    const tmp = fs.mkdtempSync(path.join(dir, 'fleetherd-file-'));
     const source = path.join(tmp, 'pushme.apk');
     fs.writeFileSync(source, 'apk bytes', { mode: 0o644 });
     await a.sendFile(address, { path: source, name: 'pushme.apk' });

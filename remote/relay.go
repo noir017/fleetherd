@@ -27,7 +27,7 @@ import (
 // brings back what to serve instead. What to change, and why, is the gateway's business (TypeScript);
 // this side knows nothing of agy or of any other harness.
 //
-// It is the one listening TCP socket talkcode-remote opens, and it is held to this: loopback only,
+// It is the one listening TCP socket fleetherd-remote opens, and it is held to this: loopback only,
 // forwarding only to the upstream the gateway named (https, or http on loopback — a local proxy to
 // chain to, or a test), carrying the agent's own requests as they are and adding nothing of its own.
 

@@ -7,7 +7,7 @@ name: Release
 # This workflow runs the same gates on a tag and attaches the tarball to a
 # permanent Release, so `npm i -g <release-url>` is a URL anyone can paste.
 #
-# That Release is the only distribution: talkcode is not on npm, and the
+# That Release is the only distribution: fleetherd is not on npm, and the
 # deployment image installs this tarball by URL, pinned by its SHA256SUMS line.
 
 on:
@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # talkcode-remote (remote/) is Go: its tests run here, and `npm run build` cross-compiles it.
+      # fleetherd-remote (remote/) is Go: its tests run here, and `npm run build` cross-compiles it.
       - uses: actions/setup-go@v5
         with:
           go-version-file: remote/go.mod
@@ -71,7 +71,7 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Test talkcode-remote
+      - name: Test fleetherd-remote
         run: npm run test:remote
 
       - name: Build

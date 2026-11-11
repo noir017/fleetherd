@@ -1,8 +1,8 @@
-# `remote/` — talkcode-remote
+# `remote/` — fleetherd-remote
 
-The half of talkcode that runs on a machine whose agents a gateway drives over ssh. Go, standard
+The half of fleetherd that runs on a machine whose agents a gateway drives over ssh. Go, standard
 library only, built as one static binary per architecture (`npm run build` →
-`dist/remote-bin/talkcode-remote-linux-{amd64,arm64}`, via `scripts/build-remote.mjs`). The user
+`dist/remote-bin/fleetherd-remote-linux-{amd64,arm64}`, via `scripts/build-remote.mjs`). The user
 documentation is [docs/remote-hosts.md](../docs/remote-hosts.md); the gateway side is
 [src/remote/](../src/remote/README.md). This file is the contract between them.
 
@@ -12,14 +12,14 @@ Running an agent over `ssh host claude-agent-acp` works — ACP is stdio — and
 (2026-10-28). Everything the gateway does *besides* piping the agent's stdio broke: it reads
 transcripts and logs off its own disk, writes inbound attachments there, lists `/cd` directories,
 links its skill, runs hooks, signals agy with SIGINT (which `ssh -T` does not forward), and its
-agents' `talkcode` command dials a local unix socket. And an ssh connection that drops takes the
+agents' `fleetherd` command dials a local unix socket. And an ssh connection that drops takes the
 agent with it.
 
 So a helper runs on the host: it owns the agents (a dropped connection costs them nothing), does
 the filesystem and command work locally, and carries everything over ONE connection per host. It is
 deliberately dumb: it knows how to start processes, move bytes and touch files, and nothing about
 ACP, agy, reverse commands or MCP. Those stay in TypeScript, defined once. In particular the
-`talkcode` command on a host is this binary under that name, and all it does is hand its argv,
+`fleetherd` command on a host is this binary under that name, and all it does is hand its argv,
 stdin and turn token back to the gateway, which runs its own CLI with them (`shim.go`). A relay
 (`relay.go`) is dumb the same way: it forwards an agent's API calls on the host and shows the
 gateway the responses it named; what to change in them is decided over there.
@@ -27,7 +27,7 @@ gateway the responses it named; what to change in them is decided over there.
 ## Processes on a host
 
 ```
-ssh ──► sh -c '<bootstrap>' ──► talkcode-remote attach ──unix socket──► talkcode-remote daemon
+ssh ──► sh -c '<bootstrap>' ──► fleetherd-remote attach ──unix socket──► fleetherd-remote daemon
          (picks the build)       (one per connection)                    (one per gateway+version)
                                                                            ├─ agent processes
                                                                            ├─ relays (127.0.0.1, when asked)
@@ -46,17 +46,24 @@ ssh ──► sh -c '<bootstrap>' ──► talkcode-remote attach ──unix so
   stops its agents and exits.
 - **Agents** get the user's LOGIN environment (`shellenv.go`: `$SHELL -i -l -c '<self> dumpenv'`,
   parsed between markers, re-read after a minute), the gateway's per-agent overlay, the shim's
-  directory first on PATH, `TALKCODE_REMOTE_SOCK`, and `TALKCODE_REMOTE_CLI` — the shim's absolute
+  directory first on PATH, `FLEETHERD_REMOTE_SOCK`, and `FLEETHERD_REMOTE_CLI` (each also under its
+  `TALKCODE_` name, for a Node CLI older than 3.0.0: `legacy.go`) — the shim's absolute
   path, for the full Node CLI a login shell's PATH reset can land on instead (`bash -lc` re-reads
   /etc/profile, which rebuilds PATH; the CLI then hands its argv to the shim rather than looking for
   a gateway config). Commands are looked up on that PATH, not the daemon's. Started from one locked
   OS thread with Pdeathsig, so a crashed daemon takes its agents with it.
 
-Layout, all owner-only: `~/.talkcode/remote/<version>/{talkcode-remote,bin/talkcode,skill/}`,
-`~/.talkcode/remote/run/<ns>/daemon.{sock,pid,lock,log}`. `<ns>` is the gateway's id
+Layout, all owner-only: `~/.fleetherd/remote/<version>/{fleetherd-remote,bin/fleetherd,bin/talkcode,skill/}`,
+`~/.fleetherd/remote/run/<ns>/daemon.{sock,pid,lock,log}`. `<ns>` is the gateway's id
 (`<configDir>/remote-id`), so two gateways on one account never share a daemon. `<version>` is the
 package version plus 12 hex of the binary's sha256 — a rebuild under an unchanged version number is
 still a new version.
+
+Before 3.0.0 all of this was `~/.talkcode/remote/…/talkcode-remote`. The gateway's bootstrap moves
+`~/.talkcode` to `~/.fleetherd` before anything runs (src/remote/connection.ts) and leaves a link
+at the old name; `legacy.go` holds what this side still accepts of the old name — `bin/talkcode`,
+the `TALKCODE_` variables, links that name `~/.talkcode/…`, and a `talkcode-remote` daemon or
+version directory to retire. All of it goes in the next major.
 
 ## Bootstrap (text, before `TCR-READY`)
 
@@ -126,7 +133,7 @@ Daemon → gateway:
 | `out` | `id fd` + body | fd 1 or 2 |
 | `exit` | `id code` or `signal`, or `error` | `error` = it never started (e.g. not on PATH) |
 | `rpc-ok` / `rpc-err` | `rid res` (+ body) / `rid error` | |
-| `cli-open` | `cid argv cwd token env` | an agent ran `talkcode …` (or its harness started `talkcode mcp`) |
+| `cli-open` | `cid argv cwd token env` | an agent ran `fleetherd …` (or its harness started `fleetherd mcp`) |
 | `cli-in` / `cli-in-end` | `cid` (+ body) | the shim's stdin |
 | `cli-gone` | `cid` | the shim went away before `cli-exit` |
 | `relay-req` | `id xid path` + body | a relay's response on a path the gateway named, uncompressed; served unchanged if no `relay-res` comes within 15 s |

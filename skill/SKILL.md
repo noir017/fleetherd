@@ -1,18 +1,18 @@
 ---
-name: talkcode
+name: fleetherd
 description: >-
   Send a file to the user; schedule a prompt or a bash command to run later or repeatedly,
   surviving restarts; post to another chat or topic; read earlier messages in the
   conversation; search earlier conversations (every agent, every platform); reply to, edit,
   react to or delete a message; open a thread; ask with buttons; check what a voice message
-  said; read, write and archive the skills every agent shares — all through the `talkcode`
-  command. Also for diagnosing or reconfiguring talkcode itself, and the machines its agents
+  said; read, write and archive the skills every agent shares — all through the `fleetherd`
+  command. Also for diagnosing or reconfiguring fleetherd itself, and the machines its agents
   run on.
 ---
 
-# talkcode
+# fleetherd
 
-The `talkcode` command on your PATH acts on the conversation you are answering in. It is
+The `fleetherd` command on your PATH acts on the conversation you are answering in. It is
 already authenticated for it, and every command targets it unless `--channel` names another.
 
 If you have `send_file`, `schedule` and `skills` tools, they are the `send-file`, `schedule` and
@@ -20,9 +20,9 @@ If you have `send_file`, `schedule` and `skills` tools, they are the `send-file`
 
 ## Commands, by topic
 
-Before using a topic, run `talkcode help <topic>`: it prints that topic's commands, their
+Before using a topic, run `fleetherd help <topic>`: it prints that topic's commands, their
 options and the rules that go with them, generated from the command itself, so it is always
-current. `talkcode help` lists the topics.
+current. `fleetherd help` lists the topics.
 
 | topic | for |
 |---|---|
@@ -46,38 +46,38 @@ Every command prints TOON on stdout, failures included (with exit code 1).
 
 - `unsupported operation: …` — this platform cannot do that (editing, threads and buttons vary).
   Don't retry; fall back to the nearest thing that works, such as a new message instead of an edit.
-- `TALKCODE_TURN_TOKEN is not set` — this shell is not inside a talkcode session, so
+- `FLEETHERD_TURN_TOKEN is not set` — this shell is not inside a fleetherd session, so
   these commands are unavailable here.
-- `cannot reach the daemon` — talkcode is not running; tell the user.
+- `cannot reach the daemon` — fleetherd is not running; tell the user.
 
 ## Skills for every agent
 
 A managed skill is one the gateway keeps and gives to every agent on every host. When the user
-says "remember this as a skill", write it with `talkcode skills create`; read it with `show`
+says "remember this as a skill", write it with `fleetherd skills create`; read it with `show`
 before changing it — `patch` needs the version `show` printed, so a stale edit is refused rather
 than silently undoing a newer one. Keep it about a kind of task, not about this conversation.
-`talkcode help skills` has the rules (names, size, the three file directories) and the history
+`fleetherd help skills` has the rules (names, size, the three file directories) and the history
 commands.
 
-## Diagnosing and configuring talkcode
+## Diagnosing and configuring fleetherd
 
-When the user reports talkcode itself misbehaving ("Slack stopped responding", "add my
+When the user reports fleetherd itself misbehaving ("Slack stopped responding", "add my
 Telegram bot", "why can't you edit messages here?"):
 
 ```bash
-talkcode doctor
+fleetherd doctor
 ```
 
 `doctor` is a read-only self-check — config validity, platform credentials, daemon socket, and
 whether each agent harness is installed and signed in. Run it first and report what it finds.
 
-- **Config file**: `$TALKCODE_CONFIG_FILE` if set (you inherit the daemon's environment, so
-  this is the file it loaded), else `~/.config/talkcode/config.yaml`. **Before writing any
+- **Config file**: `$FLEETHERD_CONFIG_FILE` if set (you inherit the daemon's environment, so
+  this is the file it loaded), else `~/.config/fleetherd/config.yaml`. **Before writing any
   config, read [references/config.md](references/config.md)**: it is the complete field reference,
-  and the loader rejects keys that are not in it. Validate with `talkcode doctor` afterwards.
-- **Apply an edit with `talkcode reload` — never restart the daemon yourself.** Reload applies
-  everything except `platforms` at once and prints what changed (`talkcode help config`). A
+  and the loader rejects keys that are not in it. Validate with `fleetherd doctor` afterwards.
+- **Apply an edit with `fleetherd reload` — never restart the daemon yourself.** Reload applies
+  everything except `platforms` at once and prints what changed (`fleetherd help config`). A
   platform change still needs a restart: you are running as a child of that daemon, so stopping it
   ends your own session mid-answer — tell the user to restart it.
-- **`talkcode setup`** is an interactive wizard for a person at a terminal. Don't run it — it
+- **`fleetherd setup`** is an interactive wizard for a person at a terminal. Don't run it — it
   waits for keyboard input you cannot give. Edit the config file instead.

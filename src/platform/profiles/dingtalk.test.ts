@@ -114,6 +114,6 @@ describe('deriveNotificationTitle', () => {
   });
 
   it('falls back to a static name for empty input', () => {
-    expect(deriveNotificationTitle('')).toBe('talkcode');
+    expect(deriveNotificationTitle('')).toBe('fleetherd');
   });
 });

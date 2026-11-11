@@ -1,4 +1,4 @@
-// talkcode-remote is the half of talkcode that runs on a machine whose agents a talkcode gateway
+// fleetherd-remote is the half of fleetherd that runs on a machine whose agents a fleetherd gateway
 // drives over ssh. See README.md for what it is, the protocol, and why it is shaped this way.
 package main
 
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // buildVersion is stamped by the build (-ldflags "-X main.buildVersion=…"); informational only —
@@ -13,8 +14,8 @@ import (
 var buildVersion = "dev"
 
 func main() {
-	// Invoked through the `talkcode` link: be the reverse CLI.
-	if filepath.Base(os.Args[0]) == "talkcode" {
+	// Invoked through the `fleetherd` link (or `talkcode`, legacy.go): be the reverse CLI.
+	if slices.Contains(cliNames, filepath.Base(os.Args[0])) {
 		os.Exit(runShim(os.Args[1:]))
 	}
 	if len(os.Args) < 2 {
@@ -32,7 +33,7 @@ func main() {
 	case "dumpenv":
 		os.Exit(runDumpEnvCommand())
 	case "version", "--version":
-		fmt.Printf("talkcode-remote %s (protocol %d)\n", buildVersion, protoVersion)
+		fmt.Printf("fleetherd-remote %s (protocol %d)\n", buildVersion, protoVersion)
 	default:
 		usage()
 		os.Exit(2)
@@ -40,6 +41,6 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: talkcode-remote attach|daemon|cli|dumpenv|version …\n"+
-		"Started by a talkcode gateway over ssh; not meant to be run by hand (except `version`).")
+	fmt.Fprintln(os.Stderr, "usage: fleetherd-remote attach|daemon|cli|dumpenv|version …\n"+
+		"Started by a fleetherd gateway over ssh; not meant to be run by hand (except `version`).")
 }

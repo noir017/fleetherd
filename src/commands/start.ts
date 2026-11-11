@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { loadConfig, resolveSocketPath, configDir, defaultSocketPath, readRawConfigIfExists } from '../config/load.js';
@@ -15,9 +16,10 @@ import { hostsWithConfiguredAgents, refreshPods } from '../daemon/pods.js';
 import { backUpForRenames, readAgentRenames, renameAgentsInConfig, setRenamesAside } from '../daemon/agent-renames.js';
 import { HistoryStore } from '../history/store.js';
 import { importWebuiTranscripts } from '../history/import-webui.js';
+import { legacyConfigDirNote, migrateHostDir } from '../legacy-name.js';
 
 /**
- * `talkcode start` — default command. Read config -> build platform adapter + agent factory -> start the daemon.
+ * `fleetherd start` — default command. Read config -> build platform adapter + agent factory -> start the daemon.
  */
 export async function runStart(): Promise<void> {
   // Long-running daemon backstop: an occasional network blip (e.g. a transient
@@ -29,6 +31,14 @@ export async function runStart(): Promise<void> {
   process.on('uncaughtException', (err) => {
     console.error('[uncaughtException]', err.stack ?? err.message);
   });
+
+  // This machine's ~/.talkcode (local agents' workspaces, their skills and instructions) becomes
+  // ~/.fleetherd before anything here can create the new one — what every remote host's bootstrap
+  // does on connect (remote/connection.ts). Not the config directory, which stays where it is.
+  const moved = migrateHostDir(os.homedir());
+  if (moved) console.log(`[home] ${moved}`);
+  const legacyConfig = legacyConfigDirNote(configDir(), os.homedir());
+  if (legacyConfig) console.warn(legacyConfig);
 
   // Agent renames first (daemon/agent-renames.ts): config.yaml has to carry the new ids before it is
   // validated, and the stores before anything reads them.
@@ -42,7 +52,7 @@ export async function runStart(): Promise<void> {
   const socket = resolveSocketPath(cfg);
 
   // Provision the reverse-CLI shim up front (agent-acp refreshes it per spawn): fail loudly at
-  // startup rather than on the agent's first `talkcode` call.
+  // startup rather than on the agent's first `fleetherd` call.
   ensureReverseCliShim();
 
   // One adapter per configured platform instance; the daemon drives them all.
@@ -77,7 +87,7 @@ export async function runStart(): Promise<void> {
   const daemon = new Daemon(cfg, platforms, agents, socket, store, workdirUsage, schedules, openHistory());
 
   await daemon.run();
-  console.log(`🚀 talkcode daemon is running (socket: ${socket})`);
+  console.log(`🚀 fleetherd daemon is running (socket: ${socket})`);
 
   // Don't register SIGINT/SIGTERM here: installSignalHandlers inside daemon.run()
   // already handles graceful shutdown (exit codes 130/143, cleanup, re-entrancy guard).

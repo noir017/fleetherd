@@ -22,6 +22,7 @@ import type {
 } from '../ipc/protocol.js';
 import { DEFAULT_ASK_TIMEOUT_MS } from '../ipc/protocol.js';
 import type { InboundMessage } from '../types.js';
+import { envOf } from '../legacy-name.js';
 
 /**
  * Per-row content truncation for fetch-messages (AXI §3): keeps a history dump token-bounded.
@@ -56,7 +57,7 @@ export interface ReverseOutput {
 function resolvePathArg(p: string, base: string): string {
   // An agent on a remote host runs this CLI through the gateway (daemon/remote-hosts.ts), so `~` is
   // that host's home, which the bridge passes in; locally it is ours.
-  const home = process.env.TALKCODE_REMOTE_HOME || os.homedir();
+  const home = envOf('REMOTE_HOME') || os.homedir();
   let expanded = p;
   if (p === '~') expanded = home;
   else if (p.startsWith('~/')) expanded = path.posix.join(home, p.slice(2));
@@ -80,7 +81,7 @@ export function normalizeActionPaths(action: IpcAction, base = process.cwd()): I
 
 /**
  * Unified execution for reverse commands: connect back to the daemon. Reused by the
- * cli.ts subcommands. Reached when the agent runs `talkcode send-file ./out.png` in a shell.
+ * cli.ts subcommands. Reached when the agent runs `fleetherd send-file ./out.png` in a shell.
  *
  * This function is the AXI output boundary: the daemon speaks plain JSON over IPC, and we
  * convert it to token-efficient TOON on stdout here (errors included, so the agent can read them).
@@ -91,8 +92,8 @@ export async function runReverse(rawAction: IpcAction): Promise<void> {
   // Resolve send-file paths to absolute here (CWD == agent CWD) to avoid the daemon building
   // file://./x.png (malformed) or a path relative to the daemon CWD (wrong). For an agent on a
   // remote host this process runs on the gateway, not in the agent's directory; the bridge passes
-  // that directory as TALKCODE_CWD (daemon/remote-hosts.ts).
-  const action = normalizeActionPaths(rawAction, process.env.TALKCODE_REMOTE_HOME ? process.env.TALKCODE_CWD : undefined);
+  // that directory as FLEETHERD_CWD (daemon/remote-hosts.ts).
+  const action = normalizeActionPaths(rawAction, envOf('REMOTE_HOME') ? envOf('CWD') : undefined);
 
   // A blocking command needs a longer wait than the client's default: `ask` until the person
   // answers, `schedule add` until a model list is read, `reload` until the pods are. See
@@ -577,7 +578,7 @@ export function friendlyError(error: string, socket: string): { error: string; h
   if (error.includes('ENOENT') || error.includes('ECONNREFUSED')) {
     return {
       error: `cannot reach the daemon (socket: ${socket}): ${error}`,
-      help: 'Make sure `talkcode start` is running, then retry.',
+      help: 'Make sure `fleetherd start` is running, then retry.',
     };
   }
   return { error };

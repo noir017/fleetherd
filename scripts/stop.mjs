@@ -1,4 +1,4 @@
-// Stop every running talkcode instance (daemon + agent subprocesses), whichever way it was started.
+// Stop every running fleetherd instance (daemon + agent subprocesses), whichever way it was started.
 //
 // Why this exists: the daemon is a long-lived process, and it is easy to end up with MORE THAN ONE
 // instance running at once (e.g. a `dist` daemon left over from before a rebuild, plus a fresh `tsx
@@ -8,8 +8,8 @@
 // that a killed daemon may have left behind.
 //
 // Matched, on purpose, narrowly enough to never hit your editor / Claude Code / unrelated node procs:
-//   - talkcode daemon started from dist:  node .../dist/cli.js start
-//   - talkcode daemon started from src:   tsx ... src/cli.ts start  (dev:watch)
+//   - fleetherd daemon started from dist:  node .../dist/cli.js start
+//   - fleetherd daemon started from src:   tsx ... src/cli.ts start  (dev:watch)
 //   - agent subprocesses:               claude-agent-acp
 import { execSync } from 'node:child_process';
 
@@ -47,6 +47,6 @@ for (const pid of pids) {
 
 console.log(
   pids.length
-    ? `stopped ${pids.length} talkcode process(es): ${pids.join(', ')}`
-    : 'no talkcode process was running'
+    ? `stopped ${pids.length} fleetherd process(es): ${pids.join(', ')}`
+    : 'no fleetherd process was running'
 );

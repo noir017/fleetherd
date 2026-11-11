@@ -142,7 +142,7 @@ describe('assertSafeAttachmentUrl', () => {
  */
 describe('createAttachmentIngestDeps · platform fetch first', () => {
   const config = {
-    attachments: { maxDownloadBytes: 100, cacheDir: '/tmp/talkcode-test' },
+    attachments: { maxDownloadBytes: 100, cacheDir: '/tmp/fleetherd-test' },
   } as unknown as Config;
   const LARK_URL = 'internal:lark/cli_x/im/v1/messages/om_1/resources/img_v2_a?type=image';
 
@@ -237,7 +237,7 @@ describe('decodeDataUrl', () => {
 
 describe('createAttachmentIngestDeps · inline data URLs', () => {
   const config = {
-    attachments: { maxDownloadBytes: 100, cacheDir: '/tmp/talkcode-test' },
+    attachments: { maxDownloadBytes: 100, cacheDir: '/tmp/fleetherd-test' },
   } as unknown as Config;
 
   beforeEach(() => {

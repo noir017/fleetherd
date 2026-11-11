@@ -127,7 +127,7 @@ describe('buildTranscribeRequest', () => {
   });
 
   it('adds the deployment vocabulary after the built-in names, each once', () => {
-    const body = buildTranscribeRequest('gemini-3-flash', one, { vocabulary: ['Unraid', ' OpenWrt ', 'talkcode', 'unraid', ''] });
+    const body = buildTranscribeRequest('gemini-3-flash', one, { vocabulary: ['Unraid', ' OpenWrt ', 'fleetherd', 'unraid', ''] });
     expect(prompt(body)).toContain(`Names that often come up: ${[...BUILTIN_VOCABULARY, 'Unraid', 'OpenWrt'].join(', ')}.`);
   });
 });

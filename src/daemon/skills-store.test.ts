@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { gitSync } from './skills-git.js';
+import { conversationCommitPaths, gitSync } from './skills-git.js';
 import {
   MAX_SKILL_BYTES,
   activeSkillFiles,
@@ -56,7 +56,7 @@ describe('rules', () => {
   });
 
   it('will not let a managed skill shadow the bundled two', () => {
-    for (const name of ['talkcode', 'super']) expect(() => validateSkillName(name)).toThrow(/bundled/);
+    for (const name of ['fleetherd', 'super']) expect(() => validateSkillName(name)).toThrow(/bundled/);
     expect(() => createSkill({ name: 'super', description: 'x', now: T0 }, dir)).toThrow(/bundled/);
   });
 
@@ -100,7 +100,7 @@ describe('create and show', () => {
   it('files a skill under the category it is created with, and refuses one that is not a short label', () => {
     createSkill({ name: 'agy-config', description: 'Use when configuring agy', category: ' 运维 ', now: T0 }, dir);
     const md = fs.readFileSync(path.join(skillDir('agy-config', dir), 'SKILL.md'), 'utf8');
-    expect(md).toBe('---\nname: agy-config\ndescription: "Use when configuring agy"\nmetadata:\n  talkcode-category: "运维"\n---\n\n');
+    expect(md).toBe('---\nname: agy-config\ndescription: "Use when configuring agy"\nmetadata:\n  fleetherd-category: "运维"\n---\n\n');
     expect(listSkills(dir).find((s) => s.name === 'agy-config')).toMatchObject({ category: '运维', resident: false });
     expect(() => createSkill({ name: 'b-skill', description: 'd', category: 'a, b', now: T0 }, dir)).toThrow(/may not contain/);
     expect(() => createSkill({ name: 'c-skill', description: 'd', category: 'x'.repeat(21), now: T0 }, dir)).toThrow(/too long/);
@@ -266,7 +266,7 @@ describe('a skill changed by hand in the repository', () => {
     byHand('skills/deploy-check/SKILL.md', '---\nname: deploy-check\ndescription: by hand\n---\n', 'docs: rewrite deploy-check');
     const history = skillHistory('deploy-check', dir);
     expect(history[0]).toMatchObject({ action: 'commit', author: 'person', note: 'docs: rewrite deploy-check' });
-    expect(history[1]).toMatchObject({ action: 'create', author: 'talkcode' });
+    expect(history[1]).toMatchObject({ action: 'create', author: 'fleetherd' });
 
     revertSkill('deploy-check', history[0]!.id, dir, T0 + 1);
     expect(skillVersion('deploy-check', dir)).toBe(first.version);
@@ -275,11 +275,11 @@ describe('a skill changed by hand in the repository', () => {
   it('is never delivered when it breaks the store\'s rules, and says why', () => {
     create();
     byHand('skills/broken-one/SKILL.md', 'no frontmatter at all\n', 'feat: broken');
-    byHand('skills/talkcode/SKILL.md', '---\nname: talkcode\ndescription: shadow\n---\n', 'feat: shadow');
+    byHand('skills/fleetherd/SKILL.md', '---\nname: fleetherd\ndescription: shadow\n---\n', 'feat: shadow');
     expect(activeSkillFiles(dir).map((s) => s.name)).toEqual(['deploy-check']);
     const listed = listSkills(dir);
     expect(listed.find((s) => s.name === 'broken-one')!.problem).toMatch(/frontmatter/);
-    expect(listed.find((s) => s.name === 'talkcode')!.problem).toMatch(/bundled/);
+    expect(listed.find((s) => s.name === 'fleetherd')!.problem).toMatch(/bundled/);
     expect(listed.find((s) => s.name === 'deploy-check')!.problem).toBeUndefined();
   });
 
@@ -323,15 +323,15 @@ describe('resident and library', () => {
     `---\nname: deploy-check\ndescription: "${description}"\n${meta}---\n\nbody\n`;
 
   it('reads the tier, category and conditions from the metadata block, skipping deeper maps', () => {
-    const text = md('metadata:\n  talkcode-resident: "true"\n  talkcode-category: "运维"\n  hermes:\n    tags: [a, b]\n  talkcode-hosts: "uniagent, awsfree2"\nversion: 1.0\n');
+    const text = md('metadata:\n  fleetherd-resident: "true"\n  fleetherd-category: "运维"\n  hermes:\n    tags: [a, b]\n  fleetherd-hosts: "uniagent, buildbox"\nversion: 1.0\n');
     expect(frontmatterMetadata(text)).toEqual(
       new Map([
-        ['talkcode-resident', 'true'],
-        ['talkcode-category', '运维'],
-        ['talkcode-hosts', 'uniagent, awsfree2'],
+        ['fleetherd-resident', 'true'],
+        ['fleetherd-category', '运维'],
+        ['fleetherd-hosts', 'uniagent, buildbox'],
       ])
     );
-    expect(skillMetaOf(new Map([['SKILL.md', Buffer.from(text)]]))).toEqual({ resident: true, category: '运维', hosts: ['uniagent', 'awsfree2'] });
+    expect(skillMetaOf(new Map([['SKILL.md', Buffer.from(text)]]))).toEqual({ resident: true, category: '运维', hosts: ['uniagent', 'buildbox'] });
     expect(skillMetaOf(new Map([['SKILL.md', Buffer.from(md(''))]]))).toEqual({ resident: false });
   });
 
@@ -340,8 +340,8 @@ describe('resident and library', () => {
     expect(skill.resident).toBe(false);
     const resident = setResident(skill.name, true, dir, T0 + 1);
     expect(resident.resident).toBe(true);
-    expect(showSkill(skill.name, undefined, dir).content).toMatch(/metadata:\n {2}talkcode-resident: "true"\n---/);
-    expect(skillHistory(skill.name, dir)[0]).toMatchObject({ action: 'resident', author: 'talkcode-web' });
+    expect(showSkill(skill.name, undefined, dir).content).toMatch(/metadata:\n {2}fleetherd-resident: "true"\n---/);
+    expect(skillHistory(skill.name, dir)[0]).toMatchObject({ action: 'resident', author: 'fleetherd-web' });
     const back = setResident(skill.name, false, dir, T0 + 2);
     expect(back.resident).toBe(false);
     // Absence is the library tier: the line goes, and an emptied block goes with it.
@@ -351,7 +351,7 @@ describe('resident and library', () => {
 
   it('keeps the rest of a metadata block when the tier changes', () => {
     const skill = create();
-    patchSkill({ name: skill.name, version: skill.version, content: md('metadata:\n  talkcode-category: "运维"\n'), now: T0 + 1 }, dir);
+    patchSkill({ name: skill.name, version: skill.version, content: md('metadata:\n  fleetherd-category: "运维"\n'), now: T0 + 1 }, dir);
     setResident(skill.name, true, dir, T0 + 2);
     expect(listSkills(dir)[0]).toMatchObject({ resident: true, category: '运维' });
     setResident(skill.name, false, dir, T0 + 3);
@@ -360,7 +360,7 @@ describe('resident and library', () => {
 
   it('refuses an agent\'s or the review\'s patch that changes the tier, and takes a person\'s', () => {
     const skill = create();
-    const promote = md('metadata:\n  talkcode-resident: "true"\n');
+    const promote = md('metadata:\n  fleetherd-resident: "true"\n');
     expect(() => patchSkill({ name: skill.name, version: skill.version, content: promote, now: T0 + 1 }, dir)).toThrow(/only a person/);
     expect(() =>
       patchSkill({ name: skill.name, version: skill.version, content: promote, by: { kind: 'review', agent: 'ag' }, now: T0 + 1 }, dir)
@@ -379,11 +379,89 @@ describe('resident and library', () => {
     expect(setResident(ok.name, true, dir, T0 + 1).resident).toBe(true);
     // A person's commit can still push a long one; it is delivered, with a warning to see.
     const file = path.join(skillDir('deploy-check', dir), 'SKILL.md');
-    fs.writeFileSync(file, md('metadata:\n  talkcode-resident: "true"\n', 'y'.repeat(130)));
+    fs.writeFileSync(file, md('metadata:\n  fleetherd-resident: "true"\n', 'y'.repeat(130)));
     gitSync(repoRoot(dir), ['add', '-A']);
     gitSync(repoRoot(dir), ['commit', '-q', '-m', 'by hand'], { GIT_AUTHOR_NAME: 'p', GIT_AUTHOR_EMAIL: 'p@x', GIT_COMMITTER_NAME: 'p', GIT_COMMITTER_EMAIL: 'p@x' });
     const listed = listSkills(dir).find((s) => s.name === 'deploy-check')!;
     expect(listed.problem).toBeUndefined();
     expect(listed.warning).toMatch(/130 characters/);
+  });
+});
+
+// 3.0.0 compatibility (legacy-name.ts): skills written before it carry `talkcode-*` keys. Both
+// spellings are read, and the resident guard (AGENTS.md security invariant 8) treats them as one key.
+describe('the metadata keys under their names before 3.0.0', () => {
+  const md = (meta: string): string => `---\nname: deploy-check\ndescription: "Use when checking a deployment"\n${meta}---\n\nbody\n`;
+  const metaOf = (text: string) => skillMetaOf(new Map([['SKILL.md', Buffer.from(text)]]));
+
+  it('reads talkcode-resident, -category, -hosts and -harnesses, the current spelling winning', () => {
+    expect(metaOf(md('metadata:\n  talkcode-resident: "true"\n  talkcode-category: "运维"\n  talkcode-hosts: "uniagent"\n  talkcode-harnesses: "codex"\n'))).toEqual({
+      resident: true,
+      category: '运维',
+      hosts: ['uniagent'],
+      harnesses: ['codex'],
+    });
+    expect(metaOf(md('metadata:\n  talkcode-category: "old"\n  fleetherd-category: "new"\n  talkcode-hosts: "a"\n  fleetherd-hosts: "b"\n'))).toEqual({
+      resident: false,
+      category: 'new',
+      hosts: ['b'],
+    });
+  });
+
+  it('refuses an agent promoting a skill with the old spelling, as with the new', () => {
+    const skill = create();
+    for (const promote of ['  talkcode-resident: "true"\n', '  fleetherd-resident: "true"\n', '  fleetherd-resident: "false"\n  talkcode-resident: "true"\n']) {
+      expect(() => patchSkill({ name: skill.name, version: skill.version, content: md(`metadata:\n${promote}`), now: T0 + 1 }, dir), promote).toThrow(/only a person/);
+      expect(() =>
+        patchSkill({ name: skill.name, version: skill.version, content: md(`metadata:\n${promote}`), by: { kind: 'review', agent: 'ag' }, now: T0 + 1 }, dir)
+      ).toThrow(/only a person/);
+    }
+    expect(listSkills(dir)[0]!.resident).toBe(false);
+  });
+
+  it('refuses an agent demoting a talkcode-resident skill by rewriting or contradicting the key', () => {
+    const skill = create();
+    patchSkill({ name: skill.name, version: skill.version, content: md('metadata:\n  talkcode-resident: "true"\n'), by: { kind: 'person' }, now: T0 + 1 }, dir);
+    const v = showSkill(skill.name, undefined, dir).version;
+    expect(listSkills(dir)[0]!.resident).toBe(true);
+    // Dropping the line, or turning it off under the other spelling, is a change of tier.
+    expect(() => patchSkill({ name: skill.name, version: v, content: md(''), now: T0 + 2 }, dir)).toThrow(/only a person/);
+    expect(() => patchSkill({ name: skill.name, version: v, content: md('metadata:\n  fleetherd-resident: "false"\n'), now: T0 + 2 }, dir)).toThrow(/only a person/);
+    // Renaming the key to the new spelling changes nothing, and is allowed.
+    expect(patchSkill({ name: skill.name, version: v, content: md('metadata:\n  fleetherd-resident: "true"\n'), now: T0 + 2 }, dir).resident).toBe(true);
+  });
+
+  it('writes only the current spelling when a person sets the tier, dropping the old line', () => {
+    const skill = create();
+    patchSkill({ name: skill.name, version: skill.version, content: md('metadata:\n  talkcode-resident: "true"\n  talkcode-category: "运维"\n'), by: { kind: 'person' }, now: T0 + 1 }, dir);
+    setResident(skill.name, false, dir, T0 + 2);
+    expect(showSkill(skill.name, undefined, dir).content).not.toMatch(/resident/);
+    expect(listSkills(dir)[0]).toMatchObject({ resident: false, category: '运维' });
+    setResident(skill.name, true, dir, T0 + 3);
+    expect(showSkill(skill.name, undefined, dir).content).toMatch(/metadata:\n {2}fleetherd-resident: "true"\n {2}talkcode-category: "运维"\n---/);
+  });
+
+  it('reads a commit made before 3.0.0 — Talkcode- trailers, author talkcode — as the gateway’s', () => {
+    const skill = create();
+    const file = path.join(skillDir(skill.name, dir), 'SKILL.md');
+    fs.appendFileSync(file, 'more\n');
+    gitSync(repoRoot(dir), ['add', '-A']);
+    const message = [
+      'skills: patch deploy-check',
+      '',
+      'Talkcode-Action: patch',
+      'Talkcode-Skill: deploy-check',
+      'Talkcode-Before: v1',
+      'Talkcode-After: v2',
+      'Talkcode-By: agent cc',
+      'Talkcode-Conversation: web:main/c1',
+    ].join('\n');
+    gitSync(repoRoot(dir), ['commit', '-q', '-m', message], { GIT_AUTHOR_NAME: 'talkcode', GIT_AUTHOR_EMAIL: 'talkcode@localhost', GIT_COMMITTER_NAME: 'talkcode', GIT_COMMITTER_EMAIL: 'talkcode@localhost' });
+    expect(skillHistory(skill.name, dir)[0]).toMatchObject({ action: 'patch', author: 'talkcode', beforeVersion: 'v1', afterVersion: 'v2' });
+    expect(conversationCommitPaths(repoRoot(dir), 'web:main/c1', 0).some((p) => p.endsWith('deploy-check/SKILL.md'))).toBe(true);
+  });
+
+  it('keeps the bundled skill’s old name reserved, since a link by that name is taken back', () => {
+    expect(() => validateSkillName('talkcode')).toThrow(/bundled/);
   });
 });

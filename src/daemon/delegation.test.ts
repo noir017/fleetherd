@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 function tempHistory(): HistoryStore {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-delegation-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-delegation-'));
   dirs.push(dir);
   return new HistoryStore(path.join(dir, 'history.db'));
 }
@@ -178,7 +178,7 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     progressOf: (k: string) => progress.get(k),
     runningSince: (k: string) => (busy.has(k) ? 1_000 : undefined),
     statusOf: (k: string) => status.get(k),
-    workdirChoices: (id: string) => ({ root: `/home/u/${id}`, dirs: [`/home/u/${id}/talkcode`] }),
+    workdirChoices: (id: string) => ({ root: `/home/u/${id}`, dirs: [`/home/u/${id}/fleetherd`] }),
     listChannels: (): ListChannelsResult => ({
       channels: [...bound.keys()].map((k) => ({
         id: `web:main/${addrOf(k).thread}`,
@@ -225,7 +225,7 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
       calls.push(['prompt', o]);
       return { kind: 'ran' };
     },
-    workdirOf: () => '/home/u/workspace/talkcode',
+    workdirOf: () => '/home/u/workspace/fleetherd',
     boundAgentOf: (k: string) => bound.get(k),
     // The store's record, which knows a name written before the topic's first turn; `listChannels`
     // below is the fallback `titleOf` uses when there is none.
@@ -310,7 +310,7 @@ describe('Delegation: where the commands run', () => {
       ['oc2', 'far', false],
       ['local', 'gateway', false],
     ]);
-    expect(res.agents[0]!.dirs).toEqual(['talkcode']);
+    expect(res.agents[0]!.dirs).toEqual(['fleetherd']);
   });
 });
 
@@ -318,7 +318,7 @@ describe('Delegation: proposing, and the card every start waits on', () => {
   it('gathers back-to-back task-new calls onto one card and starts nothing before it is answered', async () => {
     const r = rig({ answer: null });
     const first = (await r.d.handle(P, task('cc', 'Fix the bump workflow'))) as { item: number };
-    const second = (await r.d.handle(P, task('oc2', 'Check the arm64 build', { cwd: 'talkcode', title: 'arm64' }))) as { item: number };
+    const second = (await r.d.handle(P, task('oc2', 'Check the arm64 build', { cwd: 'fleetherd', title: 'arm64' }))) as { item: number };
     expect([first.item, second.item]).toEqual([1, 2]);
     expect(r.cards).toEqual([]);
     r.clock.advance(PROPOSAL_GATHER_MS);
@@ -327,7 +327,7 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     expect(r.cards[0]!.labels).toEqual(['Start all 2', 'Cancel']);
     expect(r.cards[0]!.text).toMatch(/cc wants to start 2 sub-agents/);
     expect(r.cards[0]!.text).toContain('1. **cc** @ near');
-    expect(r.cards[0]!.text).toContain('2. **oc2** @ far · `talkcode` — arm64');
+    expect(r.cards[0]!.text).toContain('2. **oc2** @ far · `fleetherd` — arm64');
     expect(r.cards[0]!.text).toContain('> Check the arm64 build');
     expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
   });
@@ -573,13 +573,13 @@ describe('Delegation: with confirmation off', () => {
   it('opens with the sub-agent’s name first and bold, and leaves it out of a lone row', async () => {
     const r = rig();
     r.deps.config.delegation.confirm = false;
-    await r.d.handle(P, task('oc2', 'Check the arm64 build', { cwd: 'talkcode', title: 'arm64', model: 'fast-model' }));
+    await r.d.handle(P, task('oc2', 'Check the arm64 build', { cwd: 'fleetherd', title: 'arm64', model: 'fast-model' }));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
     const card = recordCard(r)!;
     const [head, row] = card.text.split('\n');
     expect(head).toBe('**oc2** — a sub-agent started by cc, in a topic of its own under this one:');
-    expect(row).toBe('- [arm64](?t=c1000000) · model `fast-model` @ far · `talkcode` · web:main/c1000000');
+    expect(row).toBe('- [arm64](?t=c1000000) · model `fast-model` @ far · `fleetherd` · web:main/c1000000');
   });
 
   it('does not repeat a machine the agent’s own name already carries', async () => {
@@ -598,7 +598,7 @@ describe('Delegation: with confirmation off', () => {
     const r = rig();
     r.deps.config.delegation.confirm = false;
     await r.d.handle(P, task('cc', 'a'));
-    await r.d.handle(P, task('oc2', 'b', { cwd: 'talkcode' }));
+    await r.d.handle(P, task('oc2', 'b', { cwd: 'fleetherd' }));
     await r.d.handle(P, task('cc', 'c'));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
@@ -906,7 +906,7 @@ describe('Delegation: acting on the topics it opened, and only those', () => {
   it('lists, reads, sends to and stops its own sub-agents', async () => {
     const r = await withChild();
     const list = (await r.d.handle(P, { kind: 'task-list' })) as TaskListResult;
-    expect(list.tasks.map((t) => [t.topic, t.agent, t.cwd])).toEqual([['web:main/c1000000', 'cc @ near', '~/workspace/talkcode']]);
+    expect(list.tasks.map((t) => [t.topic, t.agent, t.cwd])).toEqual([['web:main/c1000000', 'cc @ near', '~/workspace/fleetherd']]);
     await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'also the docs' });
     expect(r.calls.find(([c]) => c === 'handTo')![1]).toEqual({
       key: 'web#main#c1000000',
@@ -1380,7 +1380,7 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(prompt.user).toBe(UPDATE_SENDER);
     expect(prompt.prompt.split('\n')).toEqual([
       '[sub-agent updates] 1 of 2 sub-agents have finished or stopped; 1 still working.',
-      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/talkcode · finished',
+      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/fleetherd · finished',
       '  reply: Done: all green, 12 tests.',
       '  link: ?t=c1000000',
     ]);
@@ -1493,7 +1493,7 @@ describe('Delegation: [sub-agent updates]', () => {
     r.clock.advance(CARD_DELAY_MS);
     const prompt = cardOf(r);
     expect(prompt.split('\n- topic ').slice(1)).toHaveLength(CARD_MAX_ENTRIES);
-    expect(prompt).toContain(`- 3 more sub-agents — see talkcode tasks`);
+    expect(prompt).toContain(`- 3 more sub-agents — see fleetherd tasks`);
     expect(prompt.length).toBeLessThanOrEqual(CARD_TOTAL_CHARS);
   });
 
@@ -1735,7 +1735,7 @@ describe('Delegation: what the person writes in a sub-agent’s topic', () => {
     expect(sent[1]!.key).toBe(P);
     expect(sent[1]!.prompt.split('\n')).toEqual([
       '[sub-agent updates] 1 of 1 sub-agent has finished or stopped.',
-      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/talkcode · finished',
+      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/fleetherd · finished',
       '  the person wrote to it directly: also cover the CLI,',
       '  not only the API',
       '  reply: Done: CLI covered too.',
@@ -1881,7 +1881,7 @@ describe('Delegation: what the person writes in a sub-agent’s topic', () => {
     ends(r, 'Seven, two of them blank.');
     r.clock.advance(CARD_DELAY_MS);
     expect(prompts(r)[0]!.prompt.split('\n').slice(1, 4)).toEqual([
-      '- topic web:main/c1000000 · "Count lines" · cc @ near in ~/workspace/talkcode · finished',
+      '- topic web:main/c1000000 · "Count lines" · cc @ near in ~/workspace/fleetherd · finished',
       '  the person wrote to it directly: and the blank ones too',
       '  reply: Seven, two of them blank.',
     ]);

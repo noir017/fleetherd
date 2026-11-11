@@ -709,7 +709,7 @@ export class ToolRenderer {
    *
    * Once per run rather than on every line: a subagent's tools usually come in a long unbroken
    * run, and repeating its name on each of them spent the width the commands needed. On
-   * 2026-10-10 a phone showed fifteen lines of one subagent's work as `↳ 接手修复 quantlab 存… ·
+   * 2026-10-10 a phone showed fifteen lines of one subagent's work as `↳ 接手修复 shop-api 存… ·
    * 💻 Bash: "cd /h…`, half of every row the same sixteen characters. The bare `↳` still marks
    * each line as not the main agent's, and a switch of owner — the main agent, or a parallel
    * subagent — puts the name back on the next line, as does the top of every bubble, so

@@ -204,7 +204,7 @@ export interface SkillPanelHistoryEntry {
   at: string;
   /** The gateway's action, or `commit` for a change made in the repository by hand. */
   action: string;
-  /** The commit's author: `talkcode`, `talkcode-review`, `talkcode-web`, or a person. */
+  /** The commit's author: `fleetherd`, `fleetherd-review`, `fleetherd-web`, or a person. */
   author?: string;
   beforeVersion?: string;
   afterVersion?: string;
@@ -374,7 +374,7 @@ export interface ReviewPanel {
  * What `useHistoryPanel` hands a platform: the conversation library, read-only — every conversation
  * ever recorded, a keyword search over them, and one conversation opened whole.
  *
- * It is the same `history.db` `talkcode sessions list/search/read` reads, with the same rules: a
+ * It is the same `history.db` `fleetherd sessions list/search/read` reads, with the same rules: a
  * review's own session is not a conversation and is left out of the list, a read is bounded (and
  * says so in `note` when it was), and nothing here writes.
  */
@@ -389,7 +389,7 @@ export interface HistoryPanel {
 
 /** One conversation, as the history page lists it. */
 export interface HistoryPanelSession {
-  /** The library's session id — what `talkcode sessions read` takes, and the page's key. */
+  /** The library's session id — what `fleetherd sessions read` takes, and the page's key. */
   id: number;
   /** The conversation key (`<platform>#<channel>#<thread>`). */
   key: string;
@@ -632,14 +632,14 @@ export interface PlatformAdapter {
    * Hand the platform the gateway's own skills, to list, read, edit, archive and roll back — the
    * web UI's skills page.
    *
-   * Every write goes through `daemon/skills-store.ts`, the same functions `talkcode skills` calls:
+   * Every write goes through `daemon/skills-store.ts`, the same functions `fleetherd skills` calls:
    * that module owns name and path validation, the version `patch` must carry, the commit each
    * change becomes, and the archive that is the only "delete" there is. The
    * daemon wraps it in `daemon/skills-panel.ts` and also tells the conversation that created a
    * skill when it is archived, exactly as the CLI path does.
    *
    * Optional and web-UI-only for the reason the seams above are: a chat app manages skills through
-   * `talkcode skills`, whose output is a message; a page has room for a file list and a history.
+   * `fleetherd skills`, whose output is a message; a page has room for a file list and a history.
    */
   useSkillsPanel?(panel: SkillsPanel): void;
 
@@ -649,7 +649,7 @@ export interface PlatformAdapter {
    *
    * Read-only on purpose. A review is not a control: the writer is the review sweep, held to the
    * skill store's own validation and history, and nothing a page sends can make one run or undo one.
-   * The page shows what happened and names the `talkcode skills revert` / `archive` command, which
+   * The page shows what happened and names the `fleetherd skills revert` / `archive` command, which
    * the person runs as they would any other command. An archive suggestion's button posts to the
    * Skills tab's own operation (`useSkillsPanel`), so nothing here gains a write.
    *
@@ -668,7 +668,7 @@ export interface PlatformAdapter {
    * Reviews tab is where those are read.
    *
    * Optional and web-UI-only for the reason the seams above are: a chat app already has
-   * `talkcode sessions list/search/read` for this, and no surface to draw a list on.
+   * `fleetherd sessions list/search/read` for this, and no surface to draw a list on.
    */
   useHistoryPanel?(panel: HistoryPanel): void;
 

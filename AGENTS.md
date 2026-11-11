@@ -23,16 +23,19 @@ live-edited message.
 
 Node ≥ 20, TypeScript ESM (`"type": "module"`, `module: NodeNext`), strict mode with
 `noUncheckedIndexedAccess`. Not published to npm: a release is a GitHub Release carrying
-`talkcode-X.Y.Z.tgz` and its `SHA256SUMS`, which is what the deployment images install —
-uniagent's, and `ghcr.io/noir017/talkcode` (`docker/Dockerfile`, built by `image.yml` from
+`fleetherd-X.Y.Z.tgz` and its `SHA256SUMS`, which is what the deployment images install —
+uniagent's, and `ghcr.io/noir017/fleetherd` (`docker/Dockerfile`, built by `image.yml` from
 `release.yml`), the gateway alone for a container of its own.
 
 The project was called `agent-anywhere` — a fork of
 [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere), whose maintainer asked
 for a distinct name — until 2.0.0 (2026-10-10), when the repository, package, command,
-config directory and `TALKCODE_*` variables were renamed in one step, with no compatibility
-shims. CHANGELOG entries before 2.0.0 and the history of `noir017/agent-anywhere` use the
-old names; read them as this project.
+config directory and `TALKCODE_*` variables were renamed to `talkcode` in one step, with no
+compatibility shims. It was `talkcode` until 3.0.0, renamed to `fleetherd` because too many
+projects already went by names like it; that rename kept what was already running working
+(see [Compatibility with the name talkcode](#compatibility-with-the-name-talkcode)). CHANGELOG
+entries before 3.0.0, and the history of `noir017/agent-anywhere` and of this repository before
+then, use the old names; read them as this project.
 
 ## Module map
 
@@ -48,9 +51,10 @@ it. Do not duplicate that content here.
 | `src/ipc/` | Reverse-command protocol over a unix socket (agent → daemon → chat) | [README](src/ipc/README.md) |
 | `src/history/` | The conversation library: every turn in `<configDir>/history.db`, searchable by keyword (Han bigrams in JS, BM25), plus the web UI transcript import | [README](src/history/README.md) |
 | `src/remote/` | The gateway's side of agents on other machines: one reliable link per host over ssh | [README](src/remote/README.md) |
-| `remote/` | talkcode-remote, the host side of that link — **Go**, a static binary per architecture, built by `npm run build` into `dist/remote-bin/` | [README](remote/README.md) |
+| `remote/` | fleetherd-remote, the host side of that link — **Go**, a static binary per architecture, built by `npm run build` into `dist/remote-bin/` | [README](remote/README.md) |
 | `src/commands/` | CLI entry points: `setup`, `doctor`, `start`, reverse commands | [README](src/commands/README.md) |
 | `src/types.ts` | Domain data shapes shared across modules. Types only, no behavior. | — |
+| `src/legacy-name.ts` | Everything 3.0.0 still reads or writes under the name `talkcode`; `remote/legacy.go` is its Go twin | [below](#compatibility-with-the-name-talkcode) |
 | `src/cli.ts` | Commander wiring. `start` is lazy-imported to keep `--help`/`doctor` fast. | — |
 | `scripts/` | Dev utilities (`stop.mjs` kills stray daemons, `probe.mjs` Discord gateway probe) | [README](scripts/README.md) |
 | `skill/` | The bundled agent skill: how an agent finds the reverse CLI. The daemon links it into each harness's skill directory (`daemon/skill-link.ts`) | [SKILL.md](skill/SKILL.md) |
@@ -85,12 +89,15 @@ Enforced facts, verifiable with grep:
 - `config/schema.ts` imports `platform/config-schemas.ts` (the per-platform credential
   schemas). That file is deliberately kept free of Satori imports so config loading
   never drags in the adapter chain.
-- `ipc/` imports nothing from other modules except `types.ts`.
+- `ipc/` imports nothing from other modules except `types.ts` and `legacy-name.ts`.
+- `legacy-name.ts` imports only Node built-ins, and any module but `core/` may import it: it is
+  where the old name is read (an environment variable, a directory, a metadata key), and those
+  reads happen at every layer. It goes in the next major (see below).
 - `history/` imports only Node built-ins — nothing from the rest of the project — and only
   `daemon/` and `commands/` import it. It is IO plus pure tokenising with its paths injected,
   which is what lets it be tested without a daemon.
 - `remote/` (the TypeScript one) imports nothing from other modules: it is transport. What is the
-  daemon's to decide about a remote agent — the namespace, how its `talkcode` command is run here,
+  daemon's to decide about a remote agent — the namespace, how its `fleetherd` command is run here,
   where the skill goes — lives in `daemon/remote-hosts.ts`. The one exception to "daemon only" is
   `commands/doctor.ts`, which uses its ssh argv to check hosts the way the daemon will reach them.
 - `daemon/` is the only module allowed to depend on everything.
@@ -114,7 +121,7 @@ get an explicit Hyrum's Law warning and a contract test.
 
 **Single sources of truth.** Several lists are deliberately defined once and consumed
 in many places. Extend the source, never a copy:
-- `ipc/commands.ts` `REVERSE_COMMANDS` → CLI registration, the `talkcode help` pages
+- `ipc/commands.ts` `REVERSE_COMMANDS` → CLI registration, the `fleetherd help` pages
   (`HELP_TOPICS`), the native tools' parameters and validation (`ipc/tools.ts`), the commands an
   agent on a remote host may run back here (`daemon/remote-hosts.ts`), docs.
 - `core/command-translate.ts` `GENERIC_COMMANDS` → the registered slash menu + translation.
@@ -177,13 +184,18 @@ npm run test:coverage # + v8 coverage with thresholds
 npm run test:remote   # go vet + go test in remote/ (a release gate)
 npm run typecheck     # tsc --noEmit
 npm run lint          # eslint (flat config)
-npm run build         # tsc → dist/, then talkcode-remote for amd64 + arm64 → dist/remote-bin/
+npm run build         # tsc → dist/, then fleetherd-remote for amd64 + arm64 → dist/remote-bin/
 ```
 
 While a branch is being worked on or reviewed, run typecheck, lint and the tests that cover the
 change — `npx vitest run <files>`, or `npx vitest related <changed files> --run` — not `npm test`.
 The whole suite takes minutes on a busy machine and `npm run release` runs it on the merged result
 anyway; run by every sub-agent and every review, it was half of an hour's wait (2026-11-06).
+
+Every test file runs with a HOME of its own (`vitest.setup.ts`): code under test makes directories
+under the home it finds, and the suite runs on machines whose home is live. A test gateway or CLI
+started from inside an agent must drop both `FLEETHERD_*` and `TALKCODE_*` of that agent's
+environment — 3.0.0 reads either, and a `TALKCODE_REMOTE_SOCK` makes the CLI act as a host's agent.
 
 Building, releasing and `src/remote/remote.integration.test.ts` need the Go toolchain (`go.mod`
 names the version; CI installs it with `setup-go`). The integration test skips itself without one;
@@ -239,7 +251,7 @@ Do not weaken these without saying so explicitly in the PR:
 5. **A remote host is reached only as configured, and reaches back only through the reverse
    commands.** ssh is pinned (`remote/binaries.ts` sshArgs: `-F none`, the gateway's own key and
    known_hosts, strict host key checking with host certificates refused — a changed host key fails
-   the connection). talkcode-remote
+   the connection). fleetherd-remote
    opens no network port of its own accord: ssh in, an owner-only unix socket out. The one listener
    it opens is a relay the gateway asked for (`remote/relay.go`, since 2.48.0, for an agy agent with
    `contextBudget`): on 127.0.0.1 only, forwarding only to the upstream the gateway named — https, or
@@ -279,7 +291,7 @@ Do not weaken these without saying so explicitly in the PR:
    chose, and the server sends to it; `webui/webpush.ts` allowedEndpoint holds it to HTTPS on the
    push services browsers use, at subscribe time and again before every send — the outbound twin
    of invariant 3.
-8. **Any agent may write a managed skill, and every agent reads it.** `talkcode skills` is not an
+8. **Any agent may write a managed skill, and every agent reads it.** `fleetherd skills` is not an
    operator-only command: an agent in any conversation can `create` or `patch` a skill, and at every
    agent start the gateway delivers the active ones to every host and links them into every
    harness's skill directory. So a skill is one agent writing instructions another agent will
@@ -328,7 +340,7 @@ Do not weaken these without saying so explicitly in the PR:
    repository is a gate on what every agent reads, beside `access.allowFrom`. It is held to the
    store's rules where it lands: a pulled skill that breaks them (`skillProblem` — no frontmatter, a
    name a harness would not list, over the size caps, a bundled skill's name) is not delivered, and
-   `list` says why; and a pulled change can be told apart (its author is not `talkcode*`) and
+   `list` says why; and a pulled change can be told apart (its author is not `fleetherd*`, nor `talkcode*` from before 3.0.0) and
    `revert`ed like any other. The gateway reaches the repository the way it reaches a host
    (invariant 5): its own key and known_hosts, `-F none`, strict host key checking — it never learns
    the repository's key, and it never force-pushes: when both sides changed one file the
@@ -336,7 +348,8 @@ Do not weaken these without saying so explicitly in the PR:
 
    **Only a person puts a skill into every agent's context** (since 2.42.0). A skill is resident —
    linked into every harness's skill directory — only when its frontmatter says
-   `talkcode-resident: "true"`, and the store refuses a write by an agent or the review that changes
+   `fleetherd-resident: "true"` (or `talkcode-resident`, read as the same key — either saying
+   `"true"` makes it resident), and the store refuses a write by an agent or the review that changes
    that line (`skills-store.ts` assertResidentUnchanged); the web UI's page (a person) and a commit
    to the repository are the only ways to set it. Everything an agent or the review creates lands in
    the library, reached only through a search an agent chose to run. Keep it that way: an agent
@@ -358,7 +371,7 @@ Do not weaken these without saying so explicitly in the PR:
   implementing `AgentFactory`, wired where `start.ts` builds the factory — nothing does today.
   See [src/daemon/README.md](src/daemon/README.md).
 - **A reverse command** → an arm in the `IpcAction` union + an entry in
-  `REVERSE_COMMANDS`, whose required `topic` puts it on an `talkcode help` page; CLI
+  `REVERSE_COMMANDS`, whose required `topic` puts it on a `fleetherd help` page; CLI
   registration and the help page follow automatically, and a missing `handleReverse` arm fails
   to compile. Do not make it a native tool (`NATIVE_TOOLS` in `ipc/tools.ts`) by default: every
   tool's schema rides along in every request on every harness, so a tool has to be something an
@@ -372,6 +385,29 @@ Do not weaken these without saying so explicitly in the PR:
   behavior cannot be left undecided. Only fields where a chat-side edit is *safe* belong
   there; the deliberate exclusions and their reasons are in the same file.
   See [src/core/README.md](src/core/README.md#settingsts).
+
+## Compatibility with the name talkcode
+
+3.0.0 renamed everything, but what already ran under the old name keeps running. Each shim below
+reads or writes the old name only through `src/legacy-name.ts` or `remote/legacy.go`; **the next
+major removes them** — delete both files, fix what stops compiling, delete the tests that name the
+old spelling, and drop the CHANGELOG/AGENTS notes that point here. Until then, a change that
+touches one of these places keeps both names working.
+
+| What | Old name still honoured | Where |
+|---|---|---|
+| CLI | `talkcode` as an alias of `fleetherd`: package `bin`, the reverse-CLI shim (`<configDir>/bin/talkcode`), the host-side link `<version>/bin/talkcode`, the host wrapper (`/usr/local/bin/talkcode` → `fleetherd`) | `package.json`, `daemon/reverse-cli-shim.ts`, `remote/attach.go`, `docker/fleetherd-host` |
+| Environment | `TALKCODE_*` read when `FLEETHERD_*` is unset; agents (local and remote), hooks and the host daemon's agents get both names, because a host may run a CLI older than 3.0.0 | `envOf` / `withLegacyNames`, `remote/legacy.go` |
+| Config directory | `~/.config/talkcode` used as it is when `~/.config/fleetherd` does not exist, logged once; never moved (a bind mount, absolute paths in config.yaml) | `defaultConfigDir`, `config/load.ts` |
+| Host directory | `~/.talkcode` moved to `~/.fleetherd` with a link left at the old name: on every host by the bootstrap, on the gateway's own machine at start; links that name the old path count as the gateway's own | `remote/connection.ts`, `migrateHostDir`, `isUnderEitherName`, `remote/ops.go` `under` |
+| Skill metadata | `talkcode-resident` / `-category` / `-hosts` / `-harnesses` read; the resident guard (invariant 8) treats both spellings as one key, either `"true"` meaning resident | `skills-store.ts` `metaValue` / `residentOf` |
+| Skills repository | commits authored `talkcode*` are the gateway's; `Talkcode-` trailers read like `Fleetherd-` ones | `skills-git.ts`, `webui/page.ts` skillHistRow |
+| Skill links | the bundled skill's old `talkcode` link is taken back where `fleetherd` is linked; `talkcode` stays a reserved skill name | `skill-link.ts`, `remote-hosts.ts`, `skills-store.ts` |
+| Transcripts | `talkcode skills …` and `~/.talkcode/skills/…` count as skill use and administration | `skill-usage.ts`, `review-prompt.ts` |
+| Remote host | a `talkcode-remote` daemon or version directory is retired like a `fleetherd-remote` one | `remote/attach.go` |
+| Host wrapper | `TALKCODE_APP_DIR`, `~/apps/talkcode`, a container named `talkcode`, either package's version | `docker/fleetherd-host` |
+
+Not compatibility but history: CHANGELOG entries before 3.0.0, and the name paragraph above.
 
 ## Git
 
@@ -394,16 +430,16 @@ you did before they can finish it.
 
 Deployment spans two repositories and three steps. **Do steps 1 and 2. Never do step 3.**
 
-Since 2026-10-29 the gateway runs in a container of its own (`talkcode`, from
-`ghcr.io/noir017/talkcode`) on the gateway host, and every agent runs in the `uniagent` container
+Since 2026-10-29 the gateway runs in a container of its own (`fleetherd`, from
+`ghcr.io/noir017/fleetherd`) on the gateway host, and every agent runs in the `uniagent` container
 beside it as a [remote host](docs/remote-hosts.md). The operator's notes for that pair are in
-`~/apps/talkcode/README.md` on the host.
+`~/apps/fleetherd/README.md` on the host (`~/apps/talkcode/` on a host set up before 3.0.0).
 
 | # | step | who |
 |---|---|---|
-| 1 | `npm run release -- X.Y.Z --push` → pushes `main` + the tag → `release.yml` publishes a GitHub Release (tarball + `SHA256SUMS`) and calls `image.yml`, which publishes `ghcr.io/noir017/talkcode:X.Y.Z` and `:latest` | **you** |
-| 2 | in the `uniagent` repo: `gh workflow run bump-talkcode.yml -f version=X.Y.Z` → multi-arch image to GHCR. The gateway no longer runs there, but the `claude-agent-acp` on that host's `PATH` is the one bundled in this package, so the bump keeps the adapter in step with the gateway's contract tests | **you** |
-| 3 | on the gateway host: `talkcode update` | **the operator, by hand** |
+| 1 | `npm run release -- X.Y.Z --push` → pushes `main` + the tag → `release.yml` publishes a GitHub Release (tarball + `SHA256SUMS`) and calls `image.yml`, which publishes `ghcr.io/noir017/fleetherd:X.Y.Z` and `:latest` | **you** |
+| 2 | in the `uniagent` repo: `gh workflow run bump-fleetherd.yml -f version=X.Y.Z` → multi-arch image to GHCR. The gateway no longer runs there, but the `claude-agent-acp` on that host's `PATH` is the one bundled in this package, so the bump keeps the adapter in step with the gateway's contract tests | **you** |
+| 3 | on the gateway host: `fleetherd update` | **the operator, by hand** |
 
 **Step 3 is not yours, and not because of caution.** The gateway in that container serves the
 conversation that asked for the change, and a restarting gateway stops the agents it started on
@@ -430,17 +466,27 @@ Notes that decide whether steps 1–2 are even correct:
   was checked.
 
 Report what you did in the order it happened, with the version, and end with the exact
-command the operator needs for step 3 — which is `talkcode update`, run on the gateway
-host, verbatim. It is the host-side wrapper in `docker/talkcode-host`, installed as
-`/usr/local/bin/talkcode`; do not expand it into the `docker compose pull && up -d` it runs,
+command the operator needs for step 3 — which is `fleetherd update`, run on the gateway
+host, verbatim. It is the host-side wrapper in `docker/fleetherd-host`, installed as
+`/usr/local/bin/fleetherd` (with `talkcode` linked to it); do not expand it into the `docker compose pull && up -d` it runs,
 and do not reconstruct some other invocation from memory. `uniagent update` is a separate
 command for the agents' container, which the operator runs on their own schedule; a release
 needs it only when it changed the `@agentclientprotocol/claude-agent-acp` dependency (step 2's
 note) — say so in the report when it did. If this line ever stops being true, fix it here
 rather than guessing at the call site.
 
+**The first release under this name, 3.0.0, needs the operator once more**, before step 3 works:
+the image and the container's home moved, so the compose file written for talkcode has to change.
+The steps are in `docker/fleetherd-host`'s header (`fleetherd --help` prints them): install the new
+wrapper and link `talkcode` to it; in the compose file, `ghcr.io/noir017/talkcode` →
+`ghcr.io/noir017/fleetherd` and every mount target under `/home/talkcode` → `/home/fleetherd`
+(`./config:/home/fleetherd/.config/fleetherd`), keeping the service's key; in config.yaml, every
+absolute path into `/home/talkcode` the same; then `fleetherd update`. The wrapper refuses to
+update or restart on a compose file that still names either old one, and a gateway that finds no
+config exits with an error rather than starting empty. Say so in the report of that release.
+
 > **Running the test suite touches this machine's live daemon.** `ensureReverseCliShim()`
-> writes `~/.config/talkcode/bin/talkcode`, a path shared with whatever daemon
+> writes `~/.config/fleetherd/bin/fleetherd` (and `bin/talkcode`), a path shared with whatever daemon
 > is actually running here, and that directory leads its agents' `PATH`. It now refuses to
 > write unless `argv[1]` really is this CLI (`isCliEntry`) — before that guard, a test run
 > repointed the shim at vitest's worker entry and every live `send-message` / `ask` /

@@ -1,6 +1,6 @@
 name: Image
 
-# Builds ghcr.io/noir017/talkcode — the gateway alone, for a container of its own (docs/docker.md)
+# Builds ghcr.io/noir017/fleetherd — the gateway alone, for a container of its own (docs/docker.md)
 # — from a published Release, for amd64 and arm64.
 #
 # Called by release.yml once the Release exists, and runnable by hand for a version already
@@ -48,9 +48,9 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --pattern SHA256SUMS --dir .
-          sha="$(awk -v f="talkcode-${VERSION}.tgz" '{ sub(/^\.\//, "", $2) } $2 == f { print $1 }' SHA256SUMS)"
+          sha="$(awk -v f="fleetherd-${VERSION}.tgz" '{ sub(/^\.\//, "", $2) } $2 == f { print $1 }' SHA256SUMS)"
           if [ "${#sha}" != 64 ]; then
-            echo "::error::no talkcode-${VERSION}.tgz line in the v${VERSION} SHA256SUMS"
+            echo "::error::no fleetherd-${VERSION}.tgz line in the v${VERSION} SHA256SUMS"
             exit 1
           fi
           echo "sha256=${sha}" >> "$GITHUB_OUTPUT"
@@ -100,8 +100,8 @@ jobs:
           context: docker
           platforms: ${{ matrix.platform }}
           build-args: |
-            TALKCODE_VERSION=${{ inputs.version }}
-            TALKCODE_SHA256=${{ needs.resolve.outputs.sha256 }}
+            FLEETHERD_VERSION=${{ inputs.version }}
+            FLEETHERD_SHA256=${{ needs.resolve.outputs.sha256 }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           provenance: false

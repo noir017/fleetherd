@@ -5,14 +5,14 @@ import { FrameDecoder, encodeFrame, type Frame, type FrameHeader } from './frame
 import { ReliableLink, type LinkTransport } from './link.js';
 
 /**
- * One gateway's connection to one remote host: the ssh process, the install of talkcode-remote,
+ * One gateway's connection to one remote host: the ssh process, the install of fleetherd-remote,
  * the handshake, the heartbeat, and reconnecting — everything below "send this frame, deliver me
  * those". The reliable link (link.ts) rides on top and survives every reconnect; RemoteHost
  * (host.ts) is what the daemon talks to.
  *
  * ── A connection, step by step ───────────────────────────────────────────────────────────────
  * The transport runs one POSIX `sh` script on the host (bootstrapScript). It picks this gateway's
- * build for the host's architecture and runs `talkcode-remote attach`, which prints TCR-READY and
+ * build for the host's architecture and runs `fleetherd-remote attach`, which prints TCR-READY and
  * turns the connection into frames. If the build is not installed (TCR-NEED) or is not the bytes
  * this gateway carries (attach prints TCR-BADSUM, the script then TCR-NEED), the gateway uploads
  * it over a second transport and tries again. Then: `hello` → `welcome`, and the link resends
@@ -29,10 +29,31 @@ import { ReliableLink, type LinkTransport } from './link.js';
 export const PROTO_VERSION = 1;
 
 /**
+ * Until 3.0.0 the host's directory was ~/.talkcode, and on a host that has one the gateway's first
+ * connection moves it to ~/.fleetherd and leaves a ~/.talkcode link in its place: everything in it
+ * (pod.yaml, the mesh's ssh files, skills, agents' workspaces, the old version's daemon and its
+ * socket) is found under the new name, and whatever points into the old path — sshd's
+ * AuthorizedKeysFile, an ssh Include, the skill links harnesses read — keeps working through the
+ * link. First in the script, before anything creates ~/.fleetherd and so rules the move out. Only a
+ * real directory moves, and only when ~/.fleetherd is not there; a move that fails (~/.talkcode is a
+ * mount point) links the new name to the old directory instead. Two gateways connecting to the
+ * same account at the same moment, the first time, can race here; the worst it leaves is a stray
+ * `.talkcode` link inside ~/.fleetherd (no `mv -T` / `ln -T`: not POSIX). TCR-MOVED is logged.
+ * Removed with the rest of the compatibility in the next major (legacy-name.ts).
+ */
+const LEGACY_HOST_DIR_MOVE = [
+  `o="$HOME/.talkcode"; n="$HOME/.fleetherd"`,
+  `if [ -d "$o" ] && [ ! -L "$o" ] && [ ! -e "$n" ] && [ ! -L "$n" ]; then`,
+  `  if mv "$o" "$n" 2>/dev/null; then ln -s .fleetherd "$o" && echo "TCR-MOVED ~/.talkcode to ~/.fleetherd, linked from the old name";`,
+  `  else ln -s .talkcode "$n" && echo "TCR-MOVED nothing: ~/.talkcode could not be moved, ~/.fleetherd links to it"; fi`,
+  `fi`,
+];
+
+/**
  * Heartbeat: a ping this often, and the connection is dead after this long with nothing heard.
  * Raised from 15s to 30s (2026-11-11): 15s was only 3 missed pings, and across a lossy cross-border
- * VPN link (Oracle to home LAN EasyTier with ~13% packet loss and Wi-Fi power-save sleep on a laptop),
- * brief bursts of dropped packets caused working connections to be dropped repeatedly.
+ * VPN link (~13% packet loss, and a laptop's Wi-Fi sleeping to save power), brief bursts of dropped
+ * packets caused working connections to be dropped repeatedly.
  */
 const PING_EVERY_MS = 5_000;
 const DEAD_AFTER_MS = 30_000;
@@ -231,7 +252,7 @@ export class HostConnection extends EventEmitter {
       if (r.kind === 'error') throw new Error(r.message);
       await this.upload(r.arch);
     }
-    throw new Error('talkcode-remote was uploaded but the host still does not run it');
+    throw new Error('fleetherd-remote was uploaded but the host still does not run it');
   }
 
   bootstrapScript(): string {
@@ -239,16 +260,17 @@ export class HostConnection extends EventEmitter {
       const b = this.opts.binary(arch);
       return b
         ? `v=${b.version}; s=${b.sha256}`
-        : `echo "TCR-ERROR this gateway carries no talkcode-remote build for ${arch}"; exit 0`;
+        : `echo "TCR-ERROR this gateway carries no fleetherd-remote build for ${arch}"; exit 0`;
     };
     // POSIX sh only, single-quote free (it is passed inside single quotes), and run through
     // `sh -c` so a user whose login shell is fish or zsh gets the same parse.
     return [
       `[ "$(uname -s)" = Linux ] || { echo "TCR-ERROR unsupported system: $(uname -s)"; exit 0; }`,
+      ...LEGACY_HOST_DIR_MOVE,
       `m=$(uname -m)`,
       `case "$m" in x86_64|amd64) ${arm('amd64')};; aarch64|arm64) ${arm('arm64')};;`,
       `*) echo "TCR-ERROR unsupported architecture: $m"; exit 0;; esac`,
-      `p="$HOME/.talkcode/remote/$v/talkcode-remote"`,
+      `p="$HOME/.fleetherd/remote/$v/fleetherd-remote"`,
       `if [ -x "$p" ]; then "$p" attach --ns ${this.opts.ns} --version "$v" --sha256 "$s"; rc=$?; [ $rc -eq 3 ] || exit $rc; fi`,
       `echo "TCR-NEED $m"`,
     ].join('\n');
@@ -284,9 +306,10 @@ export class HostConnection extends EventEmitter {
           if (line === 'TCR-READY') return finish({ kind: 'ready', proc, rest: Buffer.from(text) });
           if (line.startsWith('TCR-NEED')) return finish({ kind: 'need', arch: line.split(/\s+/)[1] ?? '' });
           if (line.startsWith('TCR-ERROR')) return finish({ kind: 'error', message: line.slice('TCR-ERROR'.length).trim() });
+          if (line.startsWith('TCR-MOVED')) console.log(`[remote] ${this.opts.hostId}: moved ${line.slice('TCR-MOVED'.length).trim()}`);
           // Anything else before the marker is the host's shell talking (a banner from an rc file).
         }
-        if (text.length > 64 << 10) finish({ kind: 'error', message: 'the host printed too much before talkcode-remote started' });
+        if (text.length > 64 << 10) finish({ kind: 'error', message: 'the host printed too much before fleetherd-remote started' });
       };
       proc.stdout?.on('data', onData);
       proc.stderr?.on('data', (d: Buffer) => {
@@ -304,12 +327,12 @@ export class HostConnection extends EventEmitter {
     const key: RemoteArch | undefined =
       arch === 'x86_64' || arch === 'amd64' ? 'amd64' : arch === 'aarch64' || arch === 'arm64' ? 'arm64' : undefined;
     const bin = key ? this.opts.binary(key) : undefined;
-    if (!bin) return Promise.reject(new Error(`this gateway carries no talkcode-remote build for ${arch}`));
-    console.log(`[remote] ${this.opts.hostId}: installing talkcode-remote ${bin.version} (${key})`);
+    if (!bin) return Promise.reject(new Error(`this gateway carries no fleetherd-remote build for ${arch}`));
+    console.log(`[remote] ${this.opts.hostId}: installing fleetherd-remote ${bin.version} (${key})`);
     const script = [
       `umask 077`,
-      `d="$HOME/.talkcode/remote/${bin.version}"`,
-      `mkdir -p "$d" && cat > "$d/.upload.$$" && chmod 700 "$d/.upload.$$" && mv -f "$d/.upload.$$" "$d/talkcode-remote" && echo TCR-UPLOADED`,
+      `d="$HOME/.fleetherd/remote/${bin.version}"`,
+      `mkdir -p "$d" && cat > "$d/.upload.$$" && chmod 700 "$d/.upload.$$" && mv -f "$d/.upload.$$" "$d/fleetherd-remote" && echo TCR-UPLOADED`,
     ].join('\n');
     return new Promise<void>((resolve, reject) => {
       const proc = this.opts.transport(script);
@@ -351,7 +374,7 @@ export class HostConnection extends EventEmitter {
         proc.kill('SIGKILL');
         reject(new Error(message));
       };
-      const timer = setTimeout(() => fail('no welcome from talkcode-remote'), ATTEMPT_TIMEOUT_MS);
+      const timer = setTimeout(() => fail('no welcome from fleetherd-remote'), ATTEMPT_TIMEOUT_MS);
       const onFrames = (frames: Frame[]): void => {
         for (const f of frames) {
           if (!welcomed) {
@@ -410,7 +433,7 @@ export class HostConnection extends EventEmitter {
     this.link.attach(transport, resumed ? (h.recv ?? 0) : 0);
     this.heartbeat = setInterval(() => this.beat(proc), PING_EVERY_MS);
     this.heartbeat.unref?.();
-    console.log(`[remote] ${this.opts.hostId}: connected (talkcode-remote ${this.welcomeInfo.version}, ${resumed ? 'resumed' : 'fresh'})`);
+    console.log(`[remote] ${this.opts.hostId}: connected (fleetherd-remote ${this.welcomeInfo.version}, ${resumed ? 'resumed' : 'fresh'})`);
     for (const w of this.waiters.splice(0)) w.resolve(this.welcomeInfo);
     this.emit('up', resumed);
     // A connection nobody is using yet (the daemon's first contact at startup) still closes.

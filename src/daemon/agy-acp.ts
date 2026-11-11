@@ -14,7 +14,7 @@ import { agentHome } from './skills-scan.js';
  * harness: `session/new` / `session/load`, the model and effort selectors, permissions, tool calls,
  * `session/cancel`, native tools over MCP. This file holds what `agy acp` 1.5.1 does its own way,
  * each measured with `project-scripts/talkcode-agy-acp/` (probe.mjs, run-probe.sh, run-fail.sh)
- * on this machine and on awsfree2.pod; a test gateway then ran turns, `/model`, `/stop` and a
+ * on this machine and on buildbox.pod; a test gateway then ran turns, `/model`, `/stop` and a
  * resume against 1.5.2, which agy updated itself to the same day:
  *
  *   - **Two spellings of a model.** `configOptions.model` offers bare ids (`gemini-3.8-flash`) with

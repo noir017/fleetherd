@@ -115,7 +115,7 @@ describe('prepareSkillsRepo', () => {
     ]);
     expect(listSkills(dir)[0]).toMatchObject({ uses: 2, source: { agent: 'ag' } });
     expect(JSON.parse(fs.readFileSync(usagePath(dir), 'utf8'))).toEqual(usage);
-    expect(skillHistory('email-reader', dir)).toEqual([expect.objectContaining({ action: 'import', author: 'talkcode' })]);
+    expect(skillHistory('email-reader', dir)).toEqual([expect.objectContaining({ action: 'import', author: 'fleetherd' })]);
     // The old store is set aside whole, `.history/` included.
     expect(fs.existsSync(path.join(dir, 'skills.pre-git', '.history', 'email-reader', '1'))).toBe(true);
     // Nothing of the old bookkeeping is in the repository.
@@ -150,7 +150,7 @@ describe('SkillsRepo with a remote', () => {
     await repo().sync();
 
     expect(listSkills(dir).map((s) => s.name)).toEqual(['email-reader', 'server-ops']);
-    expect(remoteLog()).toEqual(['talkcode|skills: import email-reader', 'person|feat: server-ops']);
+    expect(remoteLog()).toEqual(['fleetherd|skills: import email-reader', 'person|feat: server-ops']);
     // What is not a skill comes along untouched and is not listed.
     expect(fs.readFileSync(path.join(repoRoot(dir), 'README.md'), 'utf8')).toBe('generated\n');
   });
@@ -186,10 +186,10 @@ describe('SkillsRepo with a remote', () => {
         dir
       )
     );
-    expect(remoteLog()[0]).toBe('talkcode-review|skills: patch server-ops');
+    expect(remoteLog()[0]).toBe('fleetherd-review|skills: patch server-ops');
     const body = gitSync(bare, ['log', '-1', '--format=%b', 'main']);
-    expect(body).toMatch(/Talkcode-Action: patch/);
-    expect(body).toMatch(/Talkcode-By: review ag/);
+    expect(body).toMatch(/Fleetherd-Action: patch/);
+    expect(body).toMatch(/Fleetherd-By: review ag/);
   });
 
   it('lets the repository win when both sides changed one file, and keeps the gateway\'s on a branch', async () => {
@@ -207,18 +207,18 @@ describe('SkillsRepo with a remote', () => {
     await repo().sync();
 
     expect(showSkill('server-ops', undefined, dir).content).toContain('person');
-    expect(logs.some((l) => /kept on branch talkcode-unpushed-/.test(l))).toBe(true);
-    const branches = gitSync(repoRoot(dir), ['branch', '--list', 'talkcode-unpushed-*']);
+    expect(logs.some((l) => /kept on branch fleetherd-unpushed-/.test(l))).toBe(true);
+    const branches = gitSync(repoRoot(dir), ['branch', '--list', 'fleetherd-unpushed-*']);
     expect(branches.trim()).not.toBe('');
     // The kept branch is pushed in the background, not awaited by sync; wait for it to land — the
     // docs promise it reaches the repository, and a test that ends while that push is still
     // writing into .git races its own cleanup.
     await until('the kept branch on the repository', () =>
-      gitSync(bare, ['branch', '--list', 'talkcode-unpushed-*']).trim() !== ''
-      && !logs.some((l) => /could not push talkcode-unpushed-/.test(l))
+      gitSync(bare, ['branch', '--list', 'fleetherd-unpushed-*']).trim() !== ''
+      && !logs.some((l) => /could not push fleetherd-unpushed-/.test(l))
     );
     await until('the push to finish updating the local tracking ref', () =>
-      gitSync(repoRoot(dir), ['branch', '-r', '--list', 'origin/talkcode-unpushed-*']).trim() !== ''
+      gitSync(repoRoot(dir), ['branch', '-r', '--list', 'origin/fleetherd-unpushed-*']).trim() !== ''
     );
   });
 
@@ -237,7 +237,7 @@ describe('SkillsRepo with a remote', () => {
 
     fs.renameSync(away, bare);
     await r.sync();
-    expect(remoteLog()[0]).toBe('talkcode|skills: create deploy-check');
+    expect(remoteLog()[0]).toBe('fleetherd|skills: create deploy-check');
     expect(logs.some((l) => /answers again/.test(l))).toBe(true);
   });
 
@@ -251,7 +251,7 @@ describe('SkillsRepo with a remote', () => {
 
     await r.sync();
 
-    expect(remoteLog().slice(0, 2)).toEqual(['talkcode|skills: commit-stray skills/server-ops/SKILL.md', 'person|chore: readme']);
+    expect(remoteLog().slice(0, 2)).toEqual(['fleetherd|skills: commit-stray skills/server-ops/SKILL.md', 'person|chore: readme']);
   });
 
   it('follows the remote named in the config, so a reload can move it', async () => {

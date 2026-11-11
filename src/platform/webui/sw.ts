@@ -15,13 +15,13 @@ export const SERVICE_WORKER = `'use strict';
 self.addEventListener('push', function (e) {
   var d = {};
   try { d = e.data ? e.data.json() : {}; } catch (x) { d = {}; }
-  var title = typeof d.title === 'string' && d.title ? d.title : 'talkcode';
+  var title = typeof d.title === 'string' && d.title ? d.title : 'fleetherd';
   var body = typeof d.body === 'string' ? d.body : '';
   var topic = typeof d.topic === 'string' ? d.topic : '';
   // One notification per topic (the tag): a second update replaces the first instead of stacking.
   e.waitUntil(self.registration.showNotification(title, {
     body: body,
-    tag: topic || 'talkcode',
+    tag: topic || 'fleetherd',
     renotify: true,
     icon: 'icon.png',
     data: { topic: topic }

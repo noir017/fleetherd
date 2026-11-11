@@ -29,12 +29,12 @@ const hookDef = (preLaunch?: string, env: Record<string, string> = {}) =>
 // Hook output is logged under the config dir; keep every run in this file out of the operator's.
 let savedConfigDir: string | undefined;
 beforeEach(() => {
-  savedConfigDir = process.env.TALKCODE_CONFIG_DIR;
-  process.env.TALKCODE_CONFIG_DIR = scratch();
+  savedConfigDir = process.env.FLEETHERD_CONFIG_DIR;
+  process.env.FLEETHERD_CONFIG_DIR = scratch();
 });
 afterEach(() => {
-  if (savedConfigDir === undefined) delete process.env.TALKCODE_CONFIG_DIR;
-  else process.env.TALKCODE_CONFIG_DIR = savedConfigDir;
+  if (savedConfigDir === undefined) delete process.env.FLEETHERD_CONFIG_DIR;
+  else process.env.FLEETHERD_CONFIG_DIR = savedConfigDir;
 });
 
 describe('agents[].hooks in config', () => {
@@ -53,9 +53,9 @@ describe.skipIf(process.platform === 'win32')('runPreLaunchHook', () => {
 
   it("runs in the agent's directory with the agent's env, minus the reverse-command token", async () => {
     const dir = scratch();
-    const hook = hookDef('pwd > out; printf "%s|%s" "$GREETING" "${TALKCODE_TURN_TOKEN:-none}" >> out', {
+    const hook = hookDef('pwd > out; printf "%s|%s" "$GREETING" "${FLEETHERD_TURN_TOKEN:-none}" >> out', {
       GREETING: 'hi',
-      TALKCODE_TURN_TOKEN: 'leak',
+      FLEETHERD_TURN_TOKEN: 'leak',
     });
     await runPreLaunchHook(hook, { cwd: dir, signal: never() });
     expect(readFileSync(join(dir, 'out'), 'utf8')).toBe(`${realpathSync(dir)}\nhi|none`);
