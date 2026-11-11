@@ -1603,6 +1603,9 @@ const SCRIPT = `
   // put back (see loadSkills). skillShowSeq does the same between two shows. skillRefreshPending is
   // a refresh that arrived while a write was in flight, to be asked again once the writes are quiet.
   var skillEpoch=0, skillShowSeq=0, skillRefreshPending=false, skillRefreshPendingManual=false, skillRedrawPending=false;
+  // A show that a write made stale: the skill the person asked to open, to be opened again once
+  // the write's answer is in. One slot is enough — a newer open replaces it (openSkill clears it).
+  var skillShowPending=null;
   // The history page's last answer, the cursor for the page after it, the search it is showing
   // (empty for the plain list), and the conversation open on top of the list. histSeq is which
   // request an answer belongs to: close the window or open another conversation before the first
@@ -2399,14 +2402,21 @@ const SCRIPT = `
     var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
     if(!p || !p.archive) return;
     btn.disabled = true;
+    // The same write as a row's Off switch, so the skills cache must treat it as one: a list that
+    // is already on the wire describes the store before this archive.
+    skillEpoch++;
     post('api/skills/op', {action:'archive', name:p.archive.name}, 1).then(function(r){
       return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
     }).then(function(d){
       if(!d || !d.ok) throw new Error((d && d.error) || 'the archive was refused');
       loadReviews();
+      // Keep the skills list (and its cache) in step even though this window is not open.
+      skillRefreshPending = true;
+      skillAfterWrite();
     }).catch(function(e){
       btn.disabled = false;
       showSchedNote('Could not archive ' + p.archive.name + ': ' + ((e && e.message) || 'network error'));
+      skillAfterWrite();
     });
   }
 
@@ -7635,6 +7645,20 @@ const SCRIPT = `
     loadSkills(manual);
   }
 
+  /** Open the skill a write interrupted, once that write's answer is in. */
+  function skillReplayShow(){
+    if(!skillShowPending || skillsBusy || skillPending()) return;
+    var p = skillShowPending;
+    skillShowPending = null;
+    openSkill(p.name, p.file);
+  }
+
+  /** Both halves of what a finished write may have held back: a list refresh and an open skill. */
+  function skillAfterWrite(){
+    skillReplayShow();
+    skillReplayRefresh();
+  }
+
   /**
    * Where a refreshed list goes. On a skill's page it never draws the list — that would take the
    * page away from under the reader — and only the record is updated in place, and only when no
@@ -7645,7 +7669,16 @@ const SCRIPT = `
    */
   function skillRefreshDone(changed, manual){
     if(skillSel){
-      if(manual) skillRefreshDetail();
+      if(manual){
+        // A write owns the skill until it answers. Hold the refresh rather than dropping it: the
+        // list half has landed, and the re-read has to happen once the write is done.
+        if(skillsBusy || skillPending()){
+          skillRefreshPending = true;
+          skillRefreshPendingManual = true;
+          return;
+        }
+        skillRefreshDetail();
+      }
       else if(!skillsBusy && !skillPending()){
         var e = skillFind(skillSel.skill.name);
         if(e){ skillSel.skill = e; skillPaint(skillSel.skill.name); }
@@ -7686,6 +7719,8 @@ const SCRIPT = `
   function openSkill(name, file){
     var body = {action:'show', name:name};
     if(file) body.file = file;
+    // This open is newer than any retry that was waiting; it is the page the person wants now.
+    skillShowPending = null;
     var seq = ++skillShowSeq, epoch = skillEpoch;
     skillsBusy = true;
     skillClearNote();
@@ -7694,12 +7729,18 @@ const SCRIPT = `
     }).then(function(d){
       // A newer show owns the page and the busy flag; this answer is for a page already replaced.
       if(seq !== skillShowSeq) return;
-      // A write left after this show did: what it read is older than the write's answer.
-      if(epoch !== skillEpoch){ skillsBusy = false; skillReplayRefresh(); return; }
+      // A write left after this show did: what it read is older than the write's answer. Ask
+      // again once that write is done, or the open would vanish without a word.
+      if(epoch !== skillEpoch){
+        skillsBusy = false;
+        if(!skillsWin.hidden) skillShowPending = {name:name, file:file};
+        skillAfterWrite();
+        return;
+      }
       if(!d || !d.ok){
         skillsBusy = false;
         skillNote((d && d.error) || 'Could not open that skill.');
-        skillReplayRefresh();
+        skillAfterWrite();
         return;
       }
       skillList = d.skills || skillList;
@@ -7712,13 +7753,17 @@ const SCRIPT = `
       // every button silently drops the click.
       skillsBusy = false;
       renderSkillDetail();
-      skillReplayRefresh();
+      skillAfterWrite();
     }).catch(function(e){
       if(seq !== skillShowSeq) return;
       skillsBusy = false;
-      if(epoch !== skillEpoch){ skillReplayRefresh(); return; }
+      if(epoch !== skillEpoch){
+        if(!skillsWin.hidden) skillShowPending = {name:name, file:file};
+        skillAfterWrite();
+        return;
+      }
       skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
-      skillReplayRefresh();
+      skillAfterWrite();
     });
   }
 
@@ -7736,7 +7781,7 @@ const SCRIPT = `
       if(!d || !d.ok){
         skillsBusy = false;
         skillNote((d && d.error) || 'That did not work.');
-        skillReplayRefresh();
+        skillAfterWrite();
         return;
       }
       skillList = d.skills || skillList;
@@ -7749,11 +7794,11 @@ const SCRIPT = `
       if(then) then(d);
       else if(skillSel) renderSkillDetail();
       else renderSkillsList();
-      skillReplayRefresh();
+      skillAfterWrite();
     }).catch(function(e){
       skillsBusy = false;
       skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
-      skillReplayRefresh();
+      skillAfterWrite();
     });
   }
 
@@ -7837,7 +7882,7 @@ const SCRIPT = `
       });
     }).then(function(d){
       q.pending--;
-      if(d === null){ skillReplayRefresh(); return; }
+      if(d === null){ skillAfterWrite(); return; }
       if(!d || !d.ok){
         q.gen++;
         skillNote((d && d.error) || 'That did not work.');
@@ -7848,7 +7893,7 @@ const SCRIPT = `
       for(var i=0;i<list.length;i++) if(list[i].name === name) skillTake(name, list[i]);
       skillPaint(name);
       skillReread(name);
-      skillReplayRefresh();
+      skillAfterWrite();
     });
   }
 
@@ -7861,7 +7906,7 @@ const SCRIPT = `
       var list = (d && d.skills) || [];
       for(var i=0;i<list.length;i++) if(list[i].name === name) skillTake(name, list[i]);
       skillPaint(name);
-    }).catch(function(){}).then(skillReplayRefresh);
+    }).catch(function(){}).then(skillAfterWrite);
   }
 
   /** On the skill's own page, read it again once its taps are all answered — a tier change rewrote
@@ -7906,6 +7951,7 @@ const SCRIPT = `
   function closeSkills(){
     if(skillsWin.hidden) return;
     skillsWin.hidden = true;
+    skillShowPending = null;
   }
 
   skillsToggle.addEventListener('click', function(){ setMenu(null, false); openSkills(); });

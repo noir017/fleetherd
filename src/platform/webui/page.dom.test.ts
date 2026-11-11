@@ -9209,6 +9209,73 @@ describe('webui page: the Reviews tab', () => {
     await until('the refreshed list', () => h.doc.querySelector('.rev-pending') === null);
   });
 
+  it('keeps a list answer that predates an archive suggestion out of the skills cache', async () => {
+    const skill = {
+      name: 'simular-box',
+      description: 'the old name',
+      version: 'v1',
+      status: 'active',
+      pinned: false,
+      resident: false,
+      uses: 0,
+      agents: [],
+    };
+    const archived = { ...skill, status: 'archived' };
+    const pending = [
+      { text: 'Archive simular-box', archive: { name: 'simular-box' }, count: 1, at, from: [{ title: 'mcpmux' }] },
+    ];
+    const replies: Record<string, unknown> = {
+      'api/skills': { enabled: true, skills: [skill] },
+      'api/reviews': reply([review()], { pending }),
+      'api/skills/op': { ok: true, skills: [archived] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+
+    // Seed the cache, then open again with a list request held and close the window under it.
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('simular-box'));
+    await h.click('#skills-close');
+    const real = h.window.fetch;
+    let releaseOld!: () => void;
+    let held = false;
+    (h.window as any).fetch = (path: string, init?: any) => {
+      if (path === 'api/skills' && !held) {
+        held = true;
+        return new Promise((resolve) => {
+          releaseOld = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => null },
+              json: () => Promise.resolve({ enabled: true, skills: [skill] }),
+            });
+        });
+      }
+      return real(path, init);
+    };
+    await h.click('#skills-toggle');
+    await h.click('#skills-close');
+
+    // Archive from Reviews while that request is still in the air.
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the pending list', () => Boolean(h.doc.querySelector('.rev-pending')));
+    replies['api/skills'] = { enabled: true, skills: [archived] };
+    const reviews = (): number => h.calls.filter((c) => c.path === 'api/reviews').length;
+    const before = reviews();
+    (h.doc.querySelector('[data-rev-archive]') as HTMLElement).click();
+    // The archive has been answered and its own follow-ups have run.
+    await until('the archive answer', () => reviews() > before);
+
+    // The held answer is what the store said before the archive: it must not reach the cache.
+    releaseOld();
+    await until('the cache', () => {
+      const d = JSON.parse(h.window.localStorage.getItem('aa_skills') || '{}') as { skills?: Array<{ status?: string }> };
+      return d.skills?.[0]?.status === 'archived';
+    });
+  });
+
   it('keeps an archive suggestion and says why when the archive is refused', async () => {
     const pending = [
       { text: 'Archive simular-box', archive: { name: 'simular-box' }, count: 1, at, from: [{ title: 'mcpmux' }] },
@@ -10347,7 +10414,60 @@ describe('webui page: the skills page', () => {
     expect(shows()).toBe(1);
 
     release();
-    await until('the write\'s own reread', () => shows() === 2);
+    // The write's own reread, then the held refresh replayed: it is asked again and the page is
+    // read once more on its answer.
+    await until('the held refresh replayed', () => h.calls.filter((c) => c.path === 'api/skills').length >= 3);
+    await until('both rereads', () => shows() === 3);
+  });
+
+  it('opens the skill again when a switch made the first show stale', async () => {
+    const replies: Record<string, unknown> = {
+      'api/skills': list(),
+      'api/skills/op': { ok: true, skills: [entry({ status: 'archived' })] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    // The first show is held; the switch's answer arrives before it.
+    const real = h.window.fetch;
+    let releaseShow!: () => void;
+    let held = false;
+    (h.window as any).fetch = (path: string, init?: any) => {
+      const body = path === 'api/skills/op' && init?.body ? (JSON.parse(String(init.body)) as { action?: string }) : null;
+      if (body?.action === 'show' && !held) {
+        held = true;
+        return new Promise((resolve) => {
+          releaseShow = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => null },
+              // What the store said before the archive.
+              json: () => Promise.resolve({ ok: true, skills: [entry()], detail: detail() }),
+            });
+        });
+      }
+      return real(path, init);
+    };
+
+    (h.doc.querySelector('[data-skill="deploy-check"] .skill-open') as HTMLElement).click();
+    await tick();
+    (h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]') as HTMLElement).click();
+    await until('the archive', () => h.calls.some((c) => c.body?.action === 'archive'));
+
+    // The page the person asked for opens again once the write is done, with the write's state.
+    replies['api/skills/op'] = {
+      ok: true,
+      skills: [entry({ status: 'archived' })],
+      detail: detail({ skill: entry({ status: 'archived' }) }),
+    };
+    releaseShow();
+    await until('the reopened page', () => !h.el('skills-detail').hidden);
+    expect(h.el('skills-title').textContent).toBe('deploy-check');
+    expect(h.el('skills-count').textContent).toBe('Off');
+    expect(h.calls.filter((c) => c.body.action === 'show')).toHaveLength(1);
   });
 
   it('keeps the skill opened last when an older show answers after it', async () => {

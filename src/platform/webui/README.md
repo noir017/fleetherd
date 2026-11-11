@@ -1778,10 +1778,11 @@ page is driven there too: the list, an editor save carrying the version the deta
 form, a revert, the two-tap archive, the copy mark on a row and on a skill's page (with and without
 `navigator.clipboard`), the cached open and its silent refresh (drawn once when the answer is the
 same, redrawn when it changed, quiet when it failed), the manual refresh over unsaved text, a list
-answer a switch made stale (dropped and asked again), two shows racing, a refresh held behind a
-switch, the refresh button turning a silent request into a manual one, a cache of the wrong shape
-or a malformed row, a daemon with no store keeping no cache, and a reload that starts from
-`aa_skills`. So is the settings page — the menu's quiet request, a
+answer a switch made stale (dropped and asked again), an archive suggestion in Reviews doing the
+same with the window shut, a show re-opened after a switch interrupted it, two shows racing, a
+refresh held behind a switch, the refresh button turning a silent request into a manual one, a
+cache of the wrong shape or a malformed row, a daemon with no store keeping no cache, and a reload
+that starts from `aa_skills`. So is the settings page — the menu's quiet request, a
 typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
 drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
 it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review
