@@ -4,18 +4,19 @@ import type { AgentDef } from '../config/schema.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { allSkillDirs, linkSkill, removeSkillLink, skillHomes } from './skill-link.js';
 import { activeSkillFiles, archivedSkillNames, skillReaches, type SkillFileSet } from './skills-store.js';
+import { envOf } from '../legacy-name.js';
 
 /**
  * Delivering the gateway's managed skills to the machine an agent runs on.
  *
  * Each spawn (local `agent-common.ts` `buildAgentEnv`, remote `remote-hosts.ts` `placeManagedSkills`)
- * copies the active skills to `<home>/.talkcode/skills/<name>/` and links each one into the
+ * copies the active skills to `<home>/.fleetherd/skills/<name>/` and links each one into the
  * directories that harness reads skills from (`skill-link.ts`). The copy is read-only, so an agent
- * that wants a change has to go through `talkcode skills` — where it is versioned and can be
+ * that wants a change has to go through `fleetherd skills` — where it is versioned and can be
  * reverted — rather than editing the copy and having the next spawn silently overwrite it.
  *
  * ── What it will and will not touch ─────────────────────────────────────────────────────────────
- * The copy lives in a directory of the gateway's own (`~/.talkcode/skills`), so it is replaced
+ * The copy lives in a directory of the gateway's own (`~/.fleetherd/skills`), so it is replaced
  * whole when a version changes. A link is repointed only when it points inside that directory; a
  * real directory, a real file, or a link of the operator's own at `~/.claude/skills/<name>` is left
  * alone and logged. That is the same rule the bundled skills follow, tightened with `owned` because
@@ -30,21 +31,21 @@ import { activeSkillFiles, archivedSkillNames, skillReaches, type SkillFileSet }
  */
 
 /**
- * The harness as a skill's `talkcode-harnesses` names it: the harness, except CodeBuddy, which runs
+ * The harness as a skill's `fleetherd-harnesses` names it: the harness, except CodeBuddy, which runs
  * as a `custom` agent and is told apart by its command (the reading skillHomes gives it too).
  */
 export function skillHarnessOf(def: AgentDef): string {
   return def.harness === 'custom' && path.basename(def.command ?? '') === 'codebuddy' ? 'codebuddy' : def.harness;
 }
 
-/** Whether `def` gets `skill` at all — its `talkcode-hosts` / `talkcode-harnesses`, if any. */
+/** Whether `def` gets `skill` at all — its `fleetherd-hosts` / `fleetherd-harnesses`, if any. */
 export function deliveredTo(skill: SkillFileSet, def: AgentDef): boolean {
   return skillReaches(skill.meta, def.host ?? 'local', skillHarnessOf(def));
 }
 
 /** The directory on a host that holds the copies; also what makes a link "ours". */
 export function managedSkillsHome(home: string): string {
-  return path.join(home, '.talkcode', 'skills');
+  return path.join(home, '.fleetherd', 'skills');
 }
 
 export type ManagedOutcome = 'placed' | 'current' | 'linked' | 'relinked' | 'removed' | 'occupied' | 'skipped' | 'failed';
@@ -176,10 +177,10 @@ function report(r: ManagedResult): void {
 /**
  * Deliver the managed skills for one local agent's harness under `home`. Best-effort and guarded
  * like `placeInstructions`: it writes into the operator's directories, so a test worker must never
- * reach it, and TALKCODE_NO_SKILL_LINK=1 keeps a test daemon off the live files.
+ * reach it, and FLEETHERD_NO_SKILL_LINK=1 keeps a test daemon off the live files.
  */
 export function placeManagedSkills(def: AgentDef, home: string): ManagedResult[] {
-  if (process.env.TALKCODE_NO_SKILL_LINK) return [];
+  if (envOf('NO_SKILL_LINK')) return [];
   if (!selfInvocation()) return [];
   const results = applyManagedSkills(def, home);
   for (const r of results) report(r);

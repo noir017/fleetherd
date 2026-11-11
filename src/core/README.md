@@ -39,7 +39,7 @@ conversation, not part of its name — see [`daemon/README.md`](../daemon/README
 | File | Role |
 |---|---|
 | `conversation.ts` | Conversation identity: `ConversationRef` / `ConversationAddress`, the key function, the address parser, and the platform-qualified target (`tg:586/8068`) `--channel` accepts |
-| `channel-list.ts` | `talkcode channels` as data: the places a turn has run, in the qualified id form, roots first then recent topics |
+| `channel-list.ts` | `fleetherd channels` as data: the places a turn has run, in the qualified id form, roots first then recent topics |
 | `schedule.ts` | Scheduled tasks as data: building one from `schedule add`, changing one with `schedule edit`, when it runs next, catch-up and expiry, every sentence about one |
 | `schedule-menu.ts` | `/setting` → ⏰ Scheduled tasks: the list, one task, the delete confirmation, their button ids |
 | `inbound-gate.ts` | "Should we respond to this message?" — a pure decision tree |

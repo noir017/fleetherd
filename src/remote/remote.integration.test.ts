@@ -10,7 +10,7 @@ import type { RemoteArch, Transport } from './connection.js';
 import { RemoteHost, type CliBridge, type RemoteChild } from './host.js';
 
 /**
- * The gateway side against the real talkcode-remote binary, end to end — the contract test for the
+ * The gateway side against the real fleetherd-remote binary, end to end — the contract test for the
  * protocol both sides implement (remote/README.md). The "host" is a local `sh` with a HOME of its
  * own: what ssh would run on a remote machine runs here instead, so nothing but ssh itself is
  * stubbed. Builds the binary with the Go toolchain once; skipped where there is none.
@@ -34,7 +34,7 @@ beforeAll(() => {
   work = mkdtempSync(join(tmpdir(), 'tcr-it-'));
   binDir = join(work, 'bin');
   mkdirSync(binDir);
-  execFileSync('go', ['build', '-o', join(binDir, `talkcode-remote-linux-${nativeArch}`), '.'], {
+  execFileSync('go', ['build', '-o', join(binDir, `fleetherd-remote-linux-${nativeArch}`), '.'], {
     cwd: new URL('../../remote', import.meta.url).pathname,
     env: { ...process.env, CGO_ENABLED: '0' },
     stdio: 'inherit',
@@ -44,7 +44,7 @@ beforeAll(() => {
 afterAll(() => {
   if (!work) return;
   // The daemons outlive their connections by design; stop the ones these tests started.
-  const pidFiles = execFileSync('sh', ['-c', `ls ${work}/home-*/.talkcode/remote/run/*/daemon.pid 2>/dev/null || true`]);
+  const pidFiles = execFileSync('sh', ['-c', `ls ${work}/home-*/.fleetherd/remote/run/*/daemon.pid 2>/dev/null || true`]);
   for (const file of pidFiles.toString().split('\n').filter(Boolean)) {
     try {
       process.kill(Number(readFileSync(file, 'utf8').trim()), 'SIGTERM');
@@ -125,7 +125,7 @@ const pidAlive = (pid: number): boolean => {
   }
 };
 
-describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
+describe.skipIf(!hasGo)('fleetherd-remote, end to end', () => {
   it('installs itself on first contact, then runs an agent over stdio', async () => {
     const home = newHome();
     const host = makeHost(home);
@@ -137,14 +137,14 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
     expect(r).toEqual({ out: 'hello\n', code: 0, signal: null });
     const w = await host.ready();
     expect(w.home).toBe(home);
-    expect(existsSync(join(home, '.talkcode/remote', w.version, 'talkcode-remote'))).toBe(true);
-    expect(existsSync(join(home, '.talkcode/remote', w.version, 'bin/talkcode'))).toBe(true);
+    expect(existsSync(join(home, '.fleetherd/remote', w.version, 'fleetherd-remote'))).toBe(true);
+    expect(existsSync(join(home, '.fleetherd/remote', w.version, 'bin/fleetherd'))).toBe(true);
   }, 30_000);
 
   it('gives the agent its env on top of the login environment, and the shim first on PATH', async () => {
     const home = newHome();
     const host = makeHost(home);
-    const child = host.spawn('sh', ['-c', 'echo "$FOO|$PATH|$TALKCODE_REMOTE_SOCK"'], { env: { FOO: 'bar', SKIP: undefined } });
+    const child = host.spawn('sh', ['-c', 'echo "$FOO|$PATH|$FLEETHERD_REMOTE_SOCK"'], { env: { FOO: 'bar', SKIP: undefined } });
     const { out } = await collect(child);
     const [foo, path, sock] = out.trim().split('|');
     const w = await host.ready();
@@ -222,7 +222,7 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
       listing = host.listDir('~/ws', 15_000);
       fresh = host.spawn('sh', ['-c', 'echo hi']);
     });
-    const daemonPid = Number(readFileSync(join(home, '.talkcode/remote/run/gw1/daemon.pid'), 'utf8').trim());
+    const daemonPid = Number(readFileSync(join(home, '.fleetherd/remote/run/gw1/daemon.pid'), 'utf8').trim());
     process.kill(daemonPid, 'SIGTERM');
     await waitFor(() => !pidAlive(daemonPid));
     for (const p of transports) p.kill('SIGKILL');
@@ -248,7 +248,7 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
     expect(await host.listDir('~/ws')).toEqual([{ name: 'proj', dir: true }]);
 
     mkdirSync(join(home, '.claude'));
-    expect((await host.ensureLink('~/skill', '~/.claude/skills/talkcode', '~/.claude')).outcome).toBe('linked');
+    expect((await host.ensureLink('~/skill', '~/.claude/skills/fleetherd', '~/.claude')).outcome).toBe('linked');
 
     const r = await host.run({ bash: 'echo "$X"; echo err >&2; exit 2', env: { X: 'from-gateway' }, merge: true });
     expect(r.code).toBe(2);
@@ -263,12 +263,12 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
   it('places the operator\'s instructions: a whole read-only copy, a link only where it is ours', async () => {
     const home = newHome();
     const host = makeHost(home);
-    const owned = '~/.talkcode/instructions';
+    const owned = '~/.fleetherd/instructions';
     mkdirSync(join(home, '.codex'));
 
     for (const text of ['first\n', 'second\n']) {
       await host.writeFile(`${owned}/codex.md`, Buffer.from(text), 0o444, { atomic: true });
-      expect(readFileSync(join(home, '.talkcode', 'instructions', 'codex.md'), 'utf8')).toBe(text);
+      expect(readFileSync(join(home, '.fleetherd', 'instructions', 'codex.md'), 'utf8')).toBe(text);
     }
     expect((await host.ensureLink(`${owned}/codex.md`, '~/.codex/AGENTS.md', '~/.codex', owned)).outcome).toBe('linked');
     expect(readFileSync(join(home, '.codex', 'AGENTS.md'), 'utf8')).toBe('second\n');
@@ -280,7 +280,7 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
     expect(readFileSync(join(home, '.codex', 'AGENTS.md'), 'utf8')).toBe('mine');
   }, 30_000);
 
-  it('bridges an agent\'s `talkcode` command back to the gateway', async () => {
+  it('bridges an agent\'s `fleetherd` command back to the gateway', async () => {
     const seen: Array<{ argv: string[]; token: string; cwd: string }> = [];
     const cli: CliBridge = (req, io) => {
       seen.push({ argv: req.argv, token: req.token, cwd: req.cwd });
@@ -296,8 +296,8 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
     };
     const home = newHome();
     const host = makeHost(home, { cli });
-    const child = host.spawn('sh', ['-c', 'cd ~ && echo piped | talkcode send-message hi; echo "rc=$?"'], {
-      env: { TALKCODE_TURN_TOKEN: 'tok-1' },
+    const child = host.spawn('sh', ['-c', 'cd ~ && echo piped | fleetherd send-message hi; echo "rc=$?"'], {
+      env: { FLEETHERD_TURN_TOKEN: 'tok-1' },
     });
     const { out } = await collect(child);
     expect(out).toBe('ran send-message hi with "piped\n"\nrc=3\n');
@@ -331,8 +331,8 @@ describe.skipIf(!hasGo)('talkcode-remote, end to end', () => {
     expect(w2.version).toBe('test-v2');
     expect(w2.pid).not.toBe(w1.pid);
     await waitFor(() => !pidAlive(w1.pid) && !pidAlive(child.pid!));
-    expect(existsSync(join(home, '.talkcode/remote/test-v1'))).toBe(false);
-    expect(existsSync(join(home, '.talkcode/remote/test-v2/talkcode-remote'))).toBe(true);
+    expect(existsSync(join(home, '.fleetherd/remote/test-v1'))).toBe(false);
+    expect(existsSync(join(home, '.fleetherd/remote/test-v2/fleetherd-remote'))).toBe(true);
   }, 30_000);
 
   it('relays an agent\'s API calls on the host, showing the gateway only the paths it named', async () => {

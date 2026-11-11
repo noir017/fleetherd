@@ -16,7 +16,7 @@ import { workdirScanFrom } from './workdir-scan.js';
  * The daemon's side of agents on remote hosts, short of a connection: config, the namespace, and how
  * paths and environments are worked out for a machine that is not this one. The commands such an
  * agent may run back here are tested with the catalog that defines them (ipc/commands.test.ts); the
- * connection itself is covered end to end against the real talkcode-remote binary in
+ * connection itself is covered end to end against the real fleetherd-remote binary in
  * remote/remote.integration.test.ts.
  */
 
@@ -95,7 +95,7 @@ describe('the shim bridge', () => {
     // Past the gate the next refusal is about this process not being the CLI — under vitest it is
     // not — which is how we know the command was not turned away here.
     for (const argv of [['task-agents'], ['send-file', 'x'], ['mcp'], ['help']]) {
-      expect(run(argv).out).toContain('this gateway is not running as the talkcode CLI');
+      expect(run(argv).out).toContain('this gateway is not running as the fleetherd CLI');
     }
   });
 });
@@ -128,14 +128,15 @@ describe('remote paths and environment', () => {
 
   it("gives an agent without a cwd a workspace of its own on the host", () => {
     expect(remoteAgentRoot(def, '/home/me')).toBe('/home/me/work');
-    expect(remoteAgentRoot({ ...def, cwd: undefined }, '/home/me')).toBe('/home/me/.talkcode/agents/cc');
+    expect(remoteAgentRoot({ ...def, cwd: undefined }, '/home/me')).toBe('/home/me/.fleetherd/agents/cc');
   });
 
   it("sends only the agent's own env block and its token — never this daemon's environment", () => {
     process.env.TC_TEST_SECRET = 's3';
     try {
       const env = remoteAgentEnv({ ...def, env: { API_KEY: '${TC_TEST_SECRET}', HOME: '~/alt' } }, 'tok');
-      expect(env).toEqual({ API_KEY: 's3', HOME: '~/alt', TALKCODE_TURN_TOKEN: 'tok' });
+      // The token under its name before 3.0.0 too: the host may run a CLI that old (legacy-name.ts).
+      expect(env).toEqual({ API_KEY: 's3', HOME: '~/alt', FLEETHERD_TURN_TOKEN: 'tok', TALKCODE_TURN_TOKEN: 'tok' });
       expect(env.PATH).toBeUndefined();
     } finally {
       delete process.env.TC_TEST_SECRET;
@@ -175,11 +176,11 @@ describe('remote paths and environment', () => {
 
 describe('reverse paths from a remote agent', () => {
   afterEach(() => {
-    delete process.env.TALKCODE_REMOTE_HOME;
+    delete process.env.FLEETHERD_REMOTE_HOME;
   });
 
   it("resolves `~` against the agent's host home and relative paths against its directory", () => {
-    process.env.TALKCODE_REMOTE_HOME = '/home/me';
+    process.env.FLEETHERD_REMOTE_HOME = '/home/me';
     expect(normalizeActionPaths({ kind: 'send-file', path: '~/out.png' }, '/home/me/work')).toMatchObject({ path: '/home/me/out.png' });
     expect(normalizeActionPaths({ kind: 'send-file', path: 'out.png' }, '/home/me/work')).toMatchObject({ path: '/home/me/work/out.png' });
   });

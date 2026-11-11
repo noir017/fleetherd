@@ -8,7 +8,7 @@ import { PEER_DIR, type PodHost } from './pods.js';
  * Pod-to-pod ssh (`peer:` in a pod's pod.yaml): every pod in the mesh can `ssh <host>.pod` — and
  * scp, rsync, git, -L/-R — to every other, directly, as plain OpenSSH. The gateway carries none of
  * the traffic. All it does is what each pair of pods used to need done by hand: on every pod in the
- * mesh it writes `~/.talkcode/ssh/`
+ * mesh it writes `~/.fleetherd/ssh/`
  *
  *   authorized_keys   the other pods' mesh keys
  *   known_hosts       their host keys, under `<host>.pod`
@@ -19,7 +19,7 @@ import { PEER_DIR, type PodHost } from './pods.js';
  * or moves is known to the others at the next reload.
  *
  * For sshd and ssh to use those files, the pod's sshd has `AuthorizedKeysFile` include
- * `.talkcode/ssh/authorized_keys` and its ssh config includes `~/.talkcode/ssh/config`; the uniagent
+ * `.fleetherd/ssh/authorized_keys` and its ssh config includes `~/.fleetherd/ssh/config`; the uniagent
  * image ships both. Nothing here touches `~/.ssh`.
  *
  * ── Why the host keys are the gateway's ────────────────────────────────────────────────────────
@@ -53,12 +53,12 @@ export interface Peer {
   hostKey: string;
 }
 
-const HEADER = '# Written by the talkcode gateway for the pod-to-pod ssh mesh (peer: in ~/.talkcode/pod.yaml).\n# Rewritten on every gateway start and /reload — edit pod.yaml, not this.\n';
+const HEADER = '# Written by the fleetherd gateway for the pod-to-pod ssh mesh (peer: in ~/.fleetherd/pod.yaml).\n# Rewritten on every gateway start and /reload — edit pod.yaml, not this.\n';
 
 /** The three files for pod `self`, from every pod in the mesh (`self` included or not). */
 export function peerFiles(self: string, peers: readonly Peer[]): { authorizedKeys: string; knownHosts: string; config: string } {
   const others = peers.filter((p) => p.id !== self);
-  const authorizedKeys = others.map((p) => `from="${PRIVATE_SOURCES}" ${p.key} talkcode-peer@${p.id}\n`).join('');
+  const authorizedKeys = others.map((p) => `from="${PRIVATE_SOURCES}" ${p.key} fleetherd-peer@${p.id}\n`).join('');
   const knownHosts = others.map((p) => `${peerName(p.id)} ${p.hostKey}\n`).join('');
   const blocks = others.map((p) => {
     const { userHost, port } = parseDestination(p.ssh);
@@ -76,9 +76,9 @@ export function peerFiles(self: string, peers: readonly Peer[]): { authorizedKey
   // After the blocks: ssh takes the first value it finds for each option, so these are defaults.
   const shared = [
     'Host *.pod',
-    '  IdentityFile ~/.talkcode/ssh/id_ed25519',
+    '  IdentityFile ~/.fleetherd/ssh/id_ed25519',
     '  IdentitiesOnly yes',
-    '  UserKnownHostsFile ~/.talkcode/ssh/known_hosts',
+    '  UserKnownHostsFile ~/.fleetherd/ssh/known_hosts',
     '  StrictHostKeyChecking yes',
     // The pinned key is a plain host key; a host that also presents a certificate (a Teleport node)
     // would otherwise be checked by the certificate's key (see remote/binaries.ts sshArgs).

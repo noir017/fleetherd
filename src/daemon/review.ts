@@ -459,7 +459,7 @@ export class ReviewService {
   /**
    * The skill files this conversation wrote, with what they hold now. Two sources, because there
    * are two ways to write one: the skills repository's commits that name this conversation (an
-   * agent's `talkcode skills create|patch|write-file`, an earlier review of it), and the file-writing
+   * agent's `fleetherd skills create|patch|write-file`, an earlier review of it), and the file-writing
    * tool calls whose path is under some `skills/<name>/` (an agent editing a checkout of the
    * repository, or another library). A path that names one of the gateway's skills is quoted from
    * the store; any other is named only. Quoting stops at WRITTEN_FILE_CHARS a file and

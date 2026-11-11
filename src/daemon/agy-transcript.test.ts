@@ -8,7 +8,7 @@ import { agyContextFromLines, agyTranscriptPath, readAgyContext } from './agy-tr
 import { remoteHosts } from './remote-hosts.js';
 
 /**
- * Lines of agy 1.5.2's `transcript.jsonl` as written (2026-11-06, a running talkcode topic), with the
+ * Lines of agy 1.5.2's `transcript.jsonl` as written (2026-11-06, a running fleetherd topic), with the
  * model's text and tool arguments shortened. The token fields and their spelling are verbatim.
  */
 const CAPTURED = [

@@ -36,7 +36,7 @@ let now: number;
 const clock = { now: () => now, schedule: () => () => {} };
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-review-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-review-'));
   history = new HistoryStore(path.join(dir, 'history.db'), () => {});
   now = Date.UTC(2026, 10, 4, 12, 0);
 });
@@ -431,7 +431,7 @@ describe('ReviewService', () => {
     expect(readSkillFiles('deploy-check', dir).get('SKILL.md')!.toString()).toContain('先跑测试。');
     expect(h.notifications).toHaveLength(1);
     expect(h.notifications[0]!.text).toContain('新建技能 `deploy-check`');
-    expect(h.notifications[0]!.text).toContain('talkcode skills archive deploy-check');
+    expect(h.notifications[0]!.text).toContain('fleetherd skills archive deploy-check');
     expect(h.notifications[0]!.text).toContain('偏好建议：回答先给结论');
     expect(h.notifications[0]!.text).not.toContain('\n');
     // The source says where it came from: the reviewed conversation, marked as a review.
@@ -458,7 +458,7 @@ describe('ReviewService', () => {
     expect(readSkillFiles('deploy-check', dir).get('SKILL.md')!.toString()).toBe(
       '---\nname: deploy-check\ndescription: "部署前检查"\n---\n\n旧正文。\n新规则。\n第二行。\n'
     );
-    expect(h.notifications[0]!.text).toContain('talkcode skills revert deploy-check');
+    expect(h.notifications[0]!.text).toContain('fleetherd skills revert deploy-check');
 
     // The next review is handed a stale version (the skill moved underneath it): the edit is
     // dropped, the conversation is still marked reviewed, and nothing is posted.
@@ -881,7 +881,7 @@ describe('isCapacityFailure', () => {
   it('does not match a bare timeout, a dead host or an unrelated 503', () => {
     // The runners mark a timeout themselves (see the service tests); this check is only for what a
     // finished run wrote. Text alone must not turn an ssh failure into a capacity exemption.
-    expect(isCapacityFailure('agy on awsfree2 timed out after 30 min')).toBe(false);
+    expect(isCapacityFailure('agy on buildbox timed out after 30 min')).toBe(false);
     expect(isCapacityFailure('agy did not finish within 30 min')).toBe(false);
     expect(isCapacityFailure('ssh: connect to host box port 22: Connection timed out')).toBe(false);
     expect(isCapacityFailure('resource temporarily unavailable')).toBe(false);
@@ -937,7 +937,7 @@ describe('a review with no capacity', () => {
     seed('telegram:chat:1', 3);
     const h = harness({
       // The runner marks its own timeout; the sentence has no 503 to match.
-      run: async () => ({ ok: false, error: 'agy on awsfree2 timed out after 30 min', capacity: true }),
+      run: async () => ({ ok: false, error: 'agy on buildbox timed out after 30 min', capacity: true }),
     });
     await h.service.sweep();
     const mark = h.state.markOf('telegram:chat:1');
@@ -952,7 +952,7 @@ describe('a review with no capacity', () => {
     const h = harness({
       run: async () => {
         attempts += 1;
-        return { ok: false, error: 'agy on awsfree2 timed out after 30 min', capacity: true };
+        return { ok: false, error: 'agy on buildbox timed out after 30 min', capacity: true };
       },
     });
 
@@ -983,7 +983,7 @@ describe('a review with no capacity', () => {
       run: async () => {
         attempts += 1;
         now += 30 * 60_000; // a review that spent its whole timeout before returning
-        return { ok: false, error: 'agy on awsfree2 timed out after 30 min', capacity: true };
+        return { ok: false, error: 'agy on buildbox timed out after 30 min', capacity: true };
       },
     });
     await h.service.sweep();
@@ -1144,8 +1144,8 @@ describe('what a review is given', () => {
     expect(prompt).toContain('用户：第 3 句');
   });
 
-  it('quotes what the conversation already wrote through talkcode skills, from the repository', async () => {
-    // The 2026-11-07 case: the agent wrote a reference with `talkcode skills write-file` (a Bash
+  it('quotes what the conversation already wrote through fleetherd skills, from the repository', async () => {
+    // The 2026-11-07 case: the agent wrote a reference with `fleetherd skills write-file` (a Bash
     // call the tool-row scan cannot read), and the review, not shown it, wrote the rule again.
     const start = now - 2 * 3_600_000;
     seed('telegram:chat:1', 3, 'normal', start);
@@ -1310,7 +1310,7 @@ describe('review prompt', () => {
     });
     expect(prompt).toContain('智能体在技能库里搜过、没找到的\n- rotate the vpn certificate\n- 续证书');
     expect(prompt.indexOf('搜过、没找到')).toBeLessThan(prompt.indexOf('用户：续一下证书'));
-    expect(prompt).toContain('talkcode-resident 只有人能改');
+    expect(prompt).toContain('fleetherd-resident 只有人能改');
   });
 });
 
@@ -1320,22 +1320,22 @@ describe('writtenSkillFiles', () => {
       writtenSkillFiles([
         'Write: /w/agent-skills/skills/vlt/SKILL.md\n{"content":"x"}',
         'Edit: /w/agent-skills/skills/vlt/SKILL.md',
-        'reviewer · edit_file: /h/.talkcode/skills/mail/references/api.md',
-        'Read: /h/.talkcode/skills/email-reader/SKILL.md',
+        'reviewer · edit_file: /h/.fleetherd/skills/mail/references/api.md',
+        'Read: /h/.fleetherd/skills/email-reader/SKILL.md',
         'Bash: cat /h/.claude/skills/vlt/SKILL.md',
         'Write: /tmp/notes.md',
       ])
-    ).toEqual(['/w/agent-skills/skills/vlt/SKILL.md', '/h/.talkcode/skills/mail/references/api.md']);
+    ).toEqual(['/w/agent-skills/skills/vlt/SKILL.md', '/h/.fleetherd/skills/mail/references/api.md']);
   });
 
   it('reads a path out of a JSON preview, and does not take a directory named *-skills for one', () => {
     expect(
       writtenSkillFiles([
         'edit_file: {"Path":"/h/.gemini/config/skills/server-ops/references/a.md","Old":"x"}',
-        'Write: /w/quantlab-skills/work/trader/journal/2026-11-04.md',
-        'Write: /w/quantlab-skills/skills/trader/SKILL.md',
+        'Write: /w/shop-skills/work/trader/journal/2026-11-04.md',
+        'Write: /w/shop-skills/skills/trader/SKILL.md',
       ])
-    ).toEqual(['/h/.gemini/config/skills/server-ops/references/a.md', '/w/quantlab-skills/skills/trader/SKILL.md']);
+    ).toEqual(['/h/.gemini/config/skills/server-ops/references/a.md', '/w/shop-skills/skills/trader/SKILL.md']);
   });
 });
 
@@ -1343,7 +1343,7 @@ describe('skillFileOfPath', () => {
   it('maps a path under skills/<name>/ to one of the gateway skills, and nothing else', () => {
     const known = new Set(['vlt']);
     expect(skillFileOfPath('/w/agent-skills/skills/vlt/references/a.md', known)).toEqual({ name: 'vlt', file: 'references/a.md' });
-    expect(skillFileOfPath('/h/.talkcode/skills/vlt/SKILL.md', known)).toEqual({ name: 'vlt', file: 'SKILL.md' });
+    expect(skillFileOfPath('/h/.fleetherd/skills/vlt/SKILL.md', known)).toEqual({ name: 'vlt', file: 'SKILL.md' });
     expect(skillFileOfPath('/w/other/skills/mail/SKILL.md', known)).toBeUndefined();
   });
 });
@@ -1461,7 +1461,7 @@ describe('usedSkillNames', () => {
       usedSkillNames(
         [
           { role: 'tool', text: 'cc · Skill: deploy-check' },
-          { role: 'tool', text: 'Bash: cat ~/.talkcode/skills/other-skill/SKILL.md' },
+          { role: 'tool', text: 'Bash: cat ~/.fleetherd/skills/other-skill/SKILL.md' },
           { role: 'user', text: '/deploy-check 再跑一次' },
         ],
         known
@@ -1469,11 +1469,23 @@ describe('usedSkillNames', () => {
     ).toEqual(['deploy-check', 'other-skill']);
   });
 
-  it('counts a skill read or written through talkcode skills or the skills tool', () => {
+  it('reads the names before 3.0.0 the same: ~/.talkcode/skills/… and `talkcode skills`', () => {
     expect(
       usedSkillNames(
         [
-          { role: 'tool', text: 'Bash: talkcode skills show other-skill\n{"CommandLine":"talkcode skills show other-skill"}' },
+          { role: 'tool', text: 'Bash: cat ~/.talkcode/skills/other-skill/SKILL.md' },
+          { role: 'tool', text: 'Bash: talkcode skills show deploy-check' },
+        ],
+        known
+      )
+    ).toEqual(['other-skill', 'deploy-check']);
+  });
+
+  it('counts a skill read or written through fleetherd skills or the skills tool', () => {
+    expect(
+      usedSkillNames(
+        [
+          { role: 'tool', text: 'Bash: fleetherd skills show other-skill\n{"CommandLine":"fleetherd skills show other-skill"}' },
           { role: 'tool', text: 'skills: {"action":"show","name":"deploy-check","toolSummary":"Show"}' },
         ],
         known
@@ -1484,7 +1496,7 @@ describe('usedSkillNames', () => {
       usedSkillNames(
         [
           { role: 'tool', text: 'skills: {"action":"search","name":"deploy-check"}' },
-          { role: 'tool', text: 'Bash: talkcode skills list' },
+          { role: 'tool', text: 'Bash: fleetherd skills list' },
         ],
         known
       )
@@ -1515,9 +1527,9 @@ describe('noticeLine', () => {
       ],
       ['先给结论']
     );
-    expect(line).toContain('新建技能 `a-skill`（撤掉用 `talkcode skills archive a-skill`）');
-    expect(line).toContain('更新技能 `b-skill`（回滚 `talkcode skills revert b-skill 0001-abc`）');
-    expect(line).toContain('给 `c-skill` 写了 `references/x.md`（回滚 `talkcode skills revert c-skill 0002-def`）');
+    expect(line).toContain('新建技能 `a-skill`（撤掉用 `fleetherd skills archive a-skill`）');
+    expect(line).toContain('更新技能 `b-skill`（回滚 `fleetherd skills revert b-skill 0001-abc`）');
+    expect(line).toContain('给 `c-skill` 写了 `references/x.md`（回滚 `fleetherd skills revert c-skill 0002-def`）');
     expect(line).toContain('偏好建议：先给结论');
     expect(line).not.toContain('\n');
   });

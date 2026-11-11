@@ -18,9 +18,9 @@ import {
 /** A workspace of the shape this feature was built for: a root plus one directory per project. */
 const OPTIONS: WorkdirOption[] = [
   { path: '/home/u/workspace', name: 'workspace', root: true },
-  { path: '/home/u/workspace/talkcode', name: 'talkcode' },
-  { path: '/home/u/workspace/quantlab', name: 'quantlab' },
-  { path: '/home/u/workspace/quantlab-agents', name: 'quantlab-agents' },
+  { path: '/home/u/workspace/fleetherd', name: 'fleetherd' },
+  { path: '/home/u/workspace/shop-api', name: 'shop-api' },
+  { path: '/home/u/workspace/shop-api-web', name: 'shop-api-web' },
   { path: '/home/u/workspace/tools', name: 'tools' },
   { path: '/home/u/workspace/uniagent', name: 'uniagent' },
   { path: '/home/u/workspace/scratch', name: 'scratch' },
@@ -48,7 +48,7 @@ describe('page arithmetic', () => {
   });
 
   it('locates a path, and reports -1 for one that is not on offer', () => {
-    expect(workdirIndexOf(OPTIONS, '/home/u/workspace/quantlab')).toBe(2);
+    expect(workdirIndexOf(OPTIONS, '/home/u/workspace/shop-api')).toBe(2);
     expect(workdirIndexOf(OPTIONS, '/home/u/elsewhere')).toBe(-1);
     expect(workdirIndexOf(OPTIONS, undefined)).toBe(-1);
   });
@@ -83,8 +83,8 @@ describe('menu rendering', () => {
   });
 
   it('marks the current directory, and the root when it is not the current one', () => {
-    const labels = picks(menu(0, '/home/u/workspace/quantlab').buttons).map((b) => b.label);
-    expect(labels).toContain('● quantlab');
+    const labels = picks(menu(0, '/home/u/workspace/shop-api').buttons).map((b) => b.label);
+    expect(labels).toContain('● shop-api');
     expect(labels).toContain('⌂ workspace');
     // The root is not double-marked when it IS the current directory: ● wins, because "where am I"
     // is what the reader is looking for.
@@ -138,9 +138,9 @@ describe('button ids', () => {
 
 describe('matching a typed query', () => {
   it('prefers an exact path over the substring that also contains it', () => {
-    // The reason exact-first exists: quantlab's path is a prefix of quantlab-agents'.
-    const m = matchWorkdirs(OPTIONS, '/home/u/workspace/quantlab');
-    expect(m.kind === 'one' && m.option.name).toBe('quantlab');
+    // The reason exact-first exists: shop-api's path is a prefix of shop-api-web'.
+    const m = matchWorkdirs(OPTIONS, '/home/u/workspace/shop-api');
+    expect(m.kind === 'one' && m.option.name).toBe('shop-api');
   });
 
   it('matches on name or path, case-insensitively', () => {
@@ -149,7 +149,7 @@ describe('matching a typed query', () => {
   });
 
   it('never guesses between candidates', () => {
-    const m = matchWorkdirs(OPTIONS, 'quantlab');
+    const m = matchWorkdirs(OPTIONS, 'shop-api');
     expect(m.kind).toBe('many');
     expect(m.kind === 'many' && m.matches).toHaveLength(2);
   });
@@ -160,8 +160,8 @@ describe('matching a typed query', () => {
   });
 
   it('lists the candidates as paths, which are what disambiguates them', () => {
-    const text = workdirAmbiguousText('quantlab', OPTIONS.slice(2, 4));
-    expect(text).toContain('/home/u/workspace/quantlab-agents');
+    const text = workdirAmbiguousText('shop-api', OPTIONS.slice(2, 4));
+    expect(text).toContain('/home/u/workspace/shop-api-web');
   });
 });
 
@@ -183,7 +183,7 @@ describe('the text surface', () => {
   it('names the current directory and what else there is', () => {
     const text = workdirSummaryText('/home/u/workspace', OPTIONS);
     expect(text).toContain('Working dir: /home/u/workspace');
-    expect(text).toContain('/cd quantlab');
+    expect(text).toContain('/cd shop-api');
     expect(text).not.toContain('/cd workspace'); // the current one is not offered as a move
   });
 

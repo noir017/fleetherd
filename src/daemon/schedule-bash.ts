@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { RemoteHost } from '../remote/host.js';
+import { deleteEnv } from '../legacy-name.js';
 
 /**
  * The daemon running a scheduled `--bash` task: one `bash -lc`, its combined output captured twice —
@@ -78,7 +79,7 @@ export function runBashCommand(opts: {
   const logFile = openLog(opts.logDir, opts.stamp);
   const log = logFile ? fs.createWriteStream(logFile, { mode: 0o600 }) : undefined;
   const env: Record<string, string | undefined> = { ...(opts.env ?? process.env) };
-  delete env.TALKCODE_TURN_TOKEN;
+  deleteEnv(env, 'TURN_TOKEN');
 
   return new Promise((resolve) => {
     let tail = Buffer.alloc(0);
@@ -170,7 +171,7 @@ const REMOTE_OUTPUT_MAX = 4 << 20;
 
 /**
  * The same run on a remote host (a task or hook belonging to an agent that runs there): `bash -lc`
- * in its own process group on the host, killed whole on timeout or abort, by talkcode-remote
+ * in its own process group on the host, killed whole on timeout or abort, by fleetherd-remote
  * (remote/ops.go opRun) rather than here. The output comes back when the command ends — up to
  * REMOTE_OUTPUT_MAX of its end — and is written to the same local log a local run would write.
  *
@@ -184,7 +185,7 @@ export async function runRemoteBashCommand(
   opts: Omit<Parameters<typeof runBashCommand>[0], 'env' | 'settleOnExit'> & { env?: Record<string, string> }
 ): Promise<BashRunResult> {
   const env = { ...opts.env };
-  delete env.TALKCODE_TURN_TOKEN;
+  deleteEnv(env, 'TURN_TOKEN');
   let r;
   try {
     r = await host.run({ bash: opts.command, cwd: opts.cwd, env, timeoutMs: opts.timeoutMs, merge: true, max: REMOTE_OUTPUT_MAX }, opts.signal);

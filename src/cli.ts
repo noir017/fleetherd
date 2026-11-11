@@ -10,7 +10,7 @@ import { newProgram } from './commands/program.js';
 import { REVERSE_COMMANDS, renderHelpIndex, renderHelpTopic } from './ipc/commands.js';
 
 // Before commander sees anything: inside an agent on a host the gateway reaches over ssh, this
-// binary is not the CLI — it is a stand-in for the host's `talkcode` shim, which carries the command
+// binary is not the CLI — it is a stand-in for the host's `fleetherd` shim, which carries the command
 // back to the gateway (commands/remote-cli.ts says why). Nothing is parsed here, so a command that
 // is not the gateway's own never gets far enough to look for a config file on the wrong machine.
 const remoteExit = await handOffRemoteCli();
@@ -40,7 +40,7 @@ const program = newProgram(version);
 // Set the override before any subcommand action runs (setup/start/doctor/reverse all read it via configPath()).
 program.hook('preAction', (thisCommand) => {
   const file = thisCommand.opts().config as string | undefined;
-  if (file) process.env.TALKCODE_CONFIG_FILE = file;
+  if (file) process.env.FLEETHERD_CONFIG_FILE = file;
 });
 
 // AXI §6: agents read stdout, not stderr. Commander writes usage/validation errors to stderr by
@@ -49,7 +49,7 @@ program.configureOutput({ writeErr: (str) => process.stdout.write(str) });
 
 // --- Management commands ---
 program.command('setup').description('Interactive configuration wizard').action(runSetup);
-// doctor is the default: running `talkcode` with no args shows live state (AXI §8), and being
+// doctor is the default: running `fleetherd` with no args shows live state (AXI §8), and being
 // read-only it's safe to trigger accidentally — unlike starting a daemon.
 program
   .command('doctor', { isDefault: true })
@@ -58,7 +58,7 @@ program
   .action((opts: { migrateConfig?: boolean }) => runDoctor({ migrateConfig: opts.migrateConfig }));
 program.command('start').description('Start the daemon').action(runStart);
 
-// --- Reverse commands (run by the agent in a shell; located by TALKCODE_TURN_TOKEN) ---
+// --- Reverse commands (run by the agent in a shell; located by FLEETHERD_TURN_TOKEN) ---
 // All derived from the single REVERSE_COMMANDS source, keeping cli, help pages, tools and IPC protocol consistent.
 for (const spec of REVERSE_COMMANDS) {
   registerReverseCommand(program, spec, (action) => runReverse(action));
@@ -78,7 +78,7 @@ program
 program.helpCommand(false);
 program
   .command('help [topic]')
-  .description('talkcode commands by topic (schedule, channels, …); `help <command>` for one command')
+  .description('fleetherd commands by topic (schedule, channels, …); `help <command>` for one command')
   .action((topic?: string) => {
     if (!topic) {
       console.log(renderHelpIndex());
@@ -94,7 +94,7 @@ program
       console.log(cmd.helpInformation());
       return;
     }
-    console.log(encode({ error: `no help topic or command "${topic}"`, help: 'Run `talkcode help` for the topic list.' }));
+    console.log(encode({ error: `no help topic or command "${topic}"`, help: 'Run `fleetherd help` for the topic list.' }));
     process.exitCode = 1;
   });
 

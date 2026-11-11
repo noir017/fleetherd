@@ -186,8 +186,8 @@ describe('applyInstructions', () => {
 
 describe('placeInstructions', () => {
   it('does nothing from a test worker, even with instructions to deliver', () => {
-    const saved = process.env.TALKCODE_CONFIG_DIR;
-    process.env.TALKCODE_CONFIG_DIR = path.dirname(dir);
+    const saved = process.env.FLEETHERD_CONFIG_DIR;
+    process.env.FLEETHERD_CONFIG_DIR = path.dirname(dir);
     try {
       fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
       fs.mkdirSync(path.join(home, '.codex'));
@@ -195,8 +195,8 @@ describe('placeInstructions', () => {
       expect(placeInstructions(def, home)).toBeUndefined();
       expect(fs.existsSync(codex().file)).toBe(false);
     } finally {
-      if (saved === undefined) delete process.env.TALKCODE_CONFIG_DIR;
-      else process.env.TALKCODE_CONFIG_DIR = saved;
+      if (saved === undefined) delete process.env.FLEETHERD_CONFIG_DIR;
+      else process.env.FLEETHERD_CONFIG_DIR = saved;
     }
   });
 });
@@ -204,12 +204,12 @@ describe('placeInstructions', () => {
 describe('RemoteHosts.placeInstructions', () => {
   let saved: string | undefined;
   beforeEach(() => {
-    saved = process.env.TALKCODE_CONFIG_DIR;
-    process.env.TALKCODE_CONFIG_DIR = path.dirname(dir);
+    saved = process.env.FLEETHERD_CONFIG_DIR;
+    process.env.FLEETHERD_CONFIG_DIR = path.dirname(dir);
   });
   afterEach(() => {
-    if (saved === undefined) delete process.env.TALKCODE_CONFIG_DIR;
-    else process.env.TALKCODE_CONFIG_DIR = saved;
+    if (saved === undefined) delete process.env.FLEETHERD_CONFIG_DIR;
+    else process.env.FLEETHERD_CONFIG_DIR = saved;
     vi.restoreAllMocks();
   });
 
@@ -234,16 +234,16 @@ describe('RemoteHosts.placeInstructions', () => {
 
     await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
     expect(host.writeFile).toHaveBeenCalledWith(
-      '/home/u/.talkcode/instructions/codex.md',
+      '/home/u/.fleetherd/instructions/codex.md',
       Buffer.from('mine\n\ncodex only\n'),
       0o444,
       { atomic: true }
     );
     expect(host.ensureLink).toHaveBeenCalledWith(
-      '/home/u/.talkcode/instructions/codex.md',
+      '/home/u/.fleetherd/instructions/codex.md',
       '/home/u/.codex/AGENTS.md',
       '/home/u/.codex',
-      '/home/u/.talkcode/instructions'
+      '/home/u/.fleetherd/instructions'
     );
 
     await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
@@ -271,7 +271,7 @@ describe('RemoteHosts.placeInstructions', () => {
     await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
     await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
     expect(host.removeLink).toHaveBeenCalledTimes(1);
-    expect(host.removeLink).toHaveBeenCalledWith('/home/u/.codex/AGENTS.md', '/home/u/.talkcode/instructions');
+    expect(host.removeLink).toHaveBeenCalledWith('/home/u/.codex/AGENTS.md', '/home/u/.fleetherd/instructions');
     expect(host.writeFile).not.toHaveBeenCalled();
   });
 

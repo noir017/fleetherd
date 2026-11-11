@@ -409,7 +409,7 @@ const GUARDED: Route[] = [
   // Dismissing a preference suggestion — the Reviews tab's only write, to reviews.json alone.
   { method: 'POST', path: '/api/reviews/op', run: reviewsOp },
   // The history page: every conversation in the library, a keyword search over them, and one
-  // opened whole. Read-only, and the same store `talkcode sessions` reads. Every parameter is in
+  // opened whole. Read-only, and the same store `fleetherd sessions` reads. Every parameter is in
   // the query string rather than a body, so the checks are here — there is no schema to hold them.
   { method: 'GET', path: '/api/history', run: historyList },
   { method: 'GET', path: '/api/history/search', run: historySearch },
@@ -1006,7 +1006,7 @@ async function skillsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
  * still pending.
  *
  * A review is written by the sweep through the skill store's own rules, and the only way to undo
- * one is the `talkcode skills revert` / `archive` command the row names. Nothing the page posts
+ * one is the `fleetherd skills revert` / `archive` command the row names. Nothing the page posts
  * changes a review or a skill — see `useReviewPanel`.
  */
 function reviewsList({ req, res }: Req, ctx: Ctx): void {

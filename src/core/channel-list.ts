@@ -1,7 +1,7 @@
 import { formatTarget, type ConversationAddress } from './conversation.js';
 
 /**
- * `talkcode channels` as data: the places this gateway can post to, in the id form every
+ * `fleetherd channels` as data: the places this gateway can post to, in the id form every
  * reverse command's `--channel` (and a schedule's `--to`) accepts.
  *
  * ── Why the list is "what the daemon has seen" ────────────────────────────────────────────────

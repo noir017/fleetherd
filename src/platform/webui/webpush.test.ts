@@ -111,7 +111,7 @@ describe('vapidToken', () => {
       expect(JSON.parse(fromB64url(c!).toString())).toEqual({
         aud: 'https://fcm.googleapis.com',
         exp: 1_000_000_000 + 12 * 3600,
-        sub: 'https://github.com/noir017/talkcode',
+        sub: 'https://github.com/noir017/fleetherd',
       });
       const pub = createPublicKey({ key: priv as never });
       expect(verify('sha256', Buffer.from(`${h}.${c}`), { key: pub, dsaEncoding: 'ieee-p1363' }, fromB64url(s!))).toBe(true);

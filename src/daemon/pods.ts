@@ -8,7 +8,7 @@ import { hostProbeScript, readHostProbe } from './host-probe.js';
 /**
  * Reading what each host's pod declares (config/pods.ts holds it, and says how it joins config.yaml).
  *
- * A pod says which agents it has in `~/.talkcode/pod.yaml`. Without that file the gateway looks on
+ * A pod says which agents it has in `~/.fleetherd/pod.yaml`. Without that file the gateway looks on
  * the pod's login PATH — the PATH its agents start with (remote/shellenv.go) — for the harness
  * commands it knows, and offers each one it finds under a short id. A host whose agents are written
  * in config.yaml instead is left alone unless it has the file: looking there would offer every one
@@ -19,7 +19,7 @@ import { hostProbeScript, readHostProbe } from './host-probe.js';
  * agents away — and the reason goes into the reload's answer.
  */
 
-export const POD_FILE = '.talkcode/pod.yaml';
+export const POD_FILE = '.fleetherd/pod.yaml';
 /** A pod file larger than this is not a list of agents. */
 const POD_FILE_MAX = 64 << 10;
 
@@ -114,7 +114,7 @@ async function readPodUnbounded(host: PodHost, configured: boolean, signal: Abor
 }
 
 /** Where a pod keeps what the mesh needs (pod-peers.ts): its key, and the files the gateway writes. */
-export const PEER_DIR = '.talkcode/ssh';
+export const PEER_DIR = '.fleetherd/ssh';
 
 /**
  * The pod's mesh key, made on the pod the first time (so the private half never leaves it), as
@@ -124,7 +124,7 @@ async function peerKey(host: PodHost, signal: AbortSignal): Promise<string | { e
   const d = `"$HOME/${PEER_DIR}"`;
   const script =
     `mkdir -p ${d} && chmod 700 ${d} && ` +
-    `{ test -f ${d}/id_ed25519 || ssh-keygen -q -t ed25519 -N "" -C talkcode-peer@${host.id} -f ${d}/id_ed25519 </dev/null; } && ` +
+    `{ test -f ${d}/id_ed25519 || ssh-keygen -q -t ed25519 -N "" -C fleetherd-peer@${host.id} -f ${d}/id_ed25519 </dev/null; } && ` +
     `cat ${d}/id_ed25519.pub`;
   const r = await host.run({ argv: ['sh', '-c', script], timeoutMs: 15_000 }, signal);
   const key = /^(ssh-ed25519 [A-Za-z0-9+/=]+)/.exec(r.output.toString('utf8').trim())?.[1];

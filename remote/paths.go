@@ -10,10 +10,10 @@ import (
 
 // Where things live on the remote host, all under the user's home and all owner-only:
 //
-//	~/.talkcode/remote/<version>/talkcode-remote   this binary, one directory per version
-//	~/.talkcode/remote/<version>/bin/talkcode      symlink to it: the reverse CLI agents call
-//	~/.talkcode/remote/run/<ns>/daemon.sock        the resident daemon of one gateway
-//	~/.talkcode/remote/run/<ns>/daemon.{pid,lock,log}
+//	~/.fleetherd/remote/<version>/fleetherd-remote   this binary, one directory per version
+//	~/.fleetherd/remote/<version>/bin/fleetherd      symlink to it: the reverse CLI agents call
+//	~/.fleetherd/remote/run/<ns>/daemon.sock        the resident daemon of one gateway
+//	~/.fleetherd/remote/run/<ns>/daemon.{pid,lock,log}
 //
 // <ns> is the gateway's own id, so two gateways reaching the same account (a live one and a test
 // one) never share a daemon or each other's agents. <version> is the gateway's package version
@@ -28,7 +28,7 @@ func homeDir() string {
 	return "/"
 }
 
-func rootDir() string              { return filepath.Join(homeDir(), ".talkcode", "remote") }
+func rootDir() string              { return filepath.Join(homeDir(), ".fleetherd", "remote") }
 func versionDir(v string) string   { return filepath.Join(rootDir(), v) }
 func runDirFor(ns string) string   { return filepath.Join(rootDir(), "run", ns) }
 func binDirFor(v string) string    { return filepath.Join(versionDir(v), "bin") }

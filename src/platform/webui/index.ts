@@ -725,7 +725,7 @@ function lifecycle(
      */
     useSchedulePanel: (panel) => room.useSchedulePanel(panel),
     /**
-     * Likewise the only implementor, and for the same kind of reason: `talkcode skills` is how a
+     * Likewise the only implementor, and for the same kind of reason: `fleetherd skills` is how a
      * chat app manages these, and its answer is a message. This page has room for a file list, an
      * editor and a history, so the daemon hands it the store's operations instead of a transcript
      * of them.
@@ -738,7 +738,7 @@ function lifecycle(
      */
     useReviewPanel: (panel) => room.useReviewPanel(panel),
     /**
-     * The only implementor, and the same reason once more: `talkcode sessions list/search/read` is
+     * The only implementor, and the same reason once more: `fleetherd sessions list/search/read` is
      * how a chat app reads the conversation library, and its answer is text in a message. This page
      * has a window to put the list, the search and the transcript in.
      */

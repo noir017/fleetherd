@@ -16,7 +16,7 @@ import { WORKDIR_PAGE_SIZE_MAX } from '../core/paging.js';
 const root = mkdtempSync(join(tmpdir(), 'workdir-scan-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-mkdirSync(join(root, 'quantlab'));
+mkdirSync(join(root, 'shop-api'));
 mkdirSync(join(root, 'gateway'));
 mkdirSync(join(root, 'node_modules'));
 mkdirSync(join(root, '.git'));
@@ -41,7 +41,7 @@ describe('scanWorkdirs', () => {
     expect(scan.options.slice(1).map((o) => o.name)).toEqual([
       'gateway',
       'mounted',
-      'quantlab',
+      'shop-api',
     ]);
   });
 
@@ -93,7 +93,7 @@ describe('scanWorkdirs', () => {
 
 describe('isDirectory', () => {
   it('answers the click-time re-check: a directory, a file, and one that is gone', () => {
-    expect(isDirectory(join(root, 'quantlab'))).toBe(true);
+    expect(isDirectory(join(root, 'shop-api'))).toBe(true);
     expect(isDirectory(join(root, 'README.md'))).toBe(false);
     expect(isDirectory(join(root, 'not-here'))).toBe(false);
   });

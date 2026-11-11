@@ -2,7 +2,7 @@
  * Waiting out the work in progress before the gateway stops.
  *
  * A SIGTERM is how a container is stopped, and so how the gateway is restarted and updated
- * (docker/talkcode-host). Stopping at once cuts off every turn in progress — the agents on the hosts
+ * (docker/fleetherd-host). Stopping at once cuts off every turn in progress — the agents on the hosts
  * go down with the gateway that started them (docs/remote-hosts.md) — so a SIGTERM that finds work
  * in progress waits for it first: the daemon stops taking new turns and new scheduled runs, lets the
  * running ones finish, and stops when none are left (Daemon.beginDrain). This file is the waiting.

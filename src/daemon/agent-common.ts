@@ -11,6 +11,7 @@ import { placeInstructions } from './instructions.js';
 import { placeManagedSkills } from './managed-skills.js';
 import { ensureReverseCliShim } from './reverse-cli-shim.js';
 import { ensureSkillLink } from './skill-link.js';
+import { withLegacyNames } from '../legacy-name.js';
 
 /**
  * Helpers shared by the agent runtime and by the harness CLIs it runs beside a session.
@@ -48,8 +49,8 @@ export function expandHome(p: string): string {
  *
  * - Explicit config `cwd`: used as-is (after ~ expansion) — the project you want the agent to act on;
  *   not auto-created (a missing dir likely means a typo, better surfaced than silently masked).
- * - Unset: each agent gets an isolated, auto-created workspace at ~/.talkcode/agents/<id>. This keeps an
- *   unconfigured agent out of talkcode's own source tree (the previous fallback) and gives it a clean,
+ * - Unset: each agent gets an isolated, auto-created workspace at ~/.fleetherd/agents/<id>. This keeps an
+ *   unconfigured agent out of fleetherd's own source tree (the previous fallback) and gives it a clean,
  *   per-agent home that's stable across this agent's sessions.
  */
 export function resolveAgentCwd(def: AgentDef): string {
@@ -58,7 +59,7 @@ export function resolveAgentCwd(def: AgentDef): string {
   const host = remoteHosts.hostFor(def);
   if (host) return remoteAgentRoot(def, host.conn.welcome?.home);
   if (def.cwd) return resolve(expandHome(def.cwd));
-  const dir = join(homedir(), '.talkcode', 'agents', def.id);
+  const dir = join(homedir(), '.fleetherd', 'agents', def.id);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -125,7 +126,7 @@ export function buildHarnessEnv(def: AgentDef): Record<string, string | undefine
  * Build the environment for an agent child process: merged process.env + expanded def.env +
  * the per-session reverse-command wiring.
  *
- * Shared by every spawn so the reverse CLI (`talkcode …`) behaves the same whichever harness is
+ * Shared by every spawn so the reverse CLI (`fleetherd …`) behaves the same whichever harness is
  * running. Called at every spawn, which also makes it the one place the runtime provisions what
  * that CLI depends on: the shim on PATH, and the skill that names it.
  */
@@ -135,10 +136,12 @@ export function buildAgentEnv(
   socketPath: string
 ): Record<string, string | undefined> {
   const env = buildHarnessEnv(def);
-  env.TALKCODE_TURN_TOKEN = sessionToken;
-  env.TALKCODE_SOCKET = socketPath;
+  env.FLEETHERD_TURN_TOKEN = sessionToken;
+  env.FLEETHERD_SOCKET = socketPath;
+  // And each FLEETHERD_ variable under its name before 3.0.0, for a CLI that old (legacy-name.ts).
+  withLegacyNames(env);
   // Guarantee the reverse CLI the skill promises: prepend the self-provisioned shim dir so
-  // `talkcode` resolves to THIS daemon's own entry regardless of launch mode (see reverse-cli-shim).
+  // `fleetherd` resolves to THIS daemon's own entry regardless of launch mode (see reverse-cli-shim).
   const shimDir = ensureReverseCliShim();
   if (shimDir) env.PATH = `${shimDir}${delimiter}${env.PATH ?? ''}`;
   // The skill goes under the home THIS agent runs as — an `env.HOME` override included — because
@@ -176,7 +179,7 @@ export function expandRemoteHome(p: string, home: string | undefined): string {
 
 /** A remote agent's own directory: its `cwd`, or a workspace of its own like a local agent gets. */
 export function remoteAgentRoot(def: AgentDef, home: string | undefined): string {
-  return expandRemoteHome(def.cwd ?? `~/.talkcode/agents/${def.id}`, home);
+  return expandRemoteHome(def.cwd ?? `~/.fleetherd/agents/${def.id}`, home);
 }
 
 /** The home a remote agent runs as: an `env.HOME` override, else the account's own. */
@@ -187,14 +190,15 @@ export function remoteAgentHome(def: AgentDef, w: Welcome): string {
 
 /**
  * A remote agent's environment, as an overlay: its `env` block and, for a session, the turn token
- * its `talkcode` command identifies itself with. The rest is the HOST's login environment
+ * its `fleetherd` command identifies itself with. The rest is the HOST's login environment
  * (remote/shellenv.go) — never this daemon's, which describes the wrong machine.
  */
 export function remoteAgentEnv(def: AgentDef, sessionToken?: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(def.env)) env[k] = expandEnv(v);
-  if (sessionToken) env.TALKCODE_TURN_TOKEN = sessionToken;
-  return env;
+  if (sessionToken) env.FLEETHERD_TURN_TOKEN = sessionToken;
+  // An agent on a host may run the CLI an image installed, older than 3.0.0 (legacy-name.ts).
+  return withLegacyNames(env);
 }
 
 /**

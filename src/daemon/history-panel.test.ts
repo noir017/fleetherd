@@ -16,7 +16,7 @@ import { buildHistoryPanel, cursorOf, HISTORY_PAGE_LIMIT, HISTORY_SEARCH_LIMIT }
 const dirs: string[] = [];
 
 function tempStore(): HistoryStore {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-history-panel-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-panel-'));
   dirs.push(dir);
   return new HistoryStore(path.join(dir, 'history.db'));
 }

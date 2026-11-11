@@ -150,11 +150,17 @@ report.
 
 `configDir()` / `configPath()` resolve, highest first:
 
-1. `TALKCODE_CONFIG_FILE` — an explicit file; its parent is the dir.
-2. `TALKCODE_CONFIG_DIR` — a directory containing `config.yaml`.
-3. `~/.config/talkcode/`.
+1. `FLEETHERD_CONFIG_FILE` — an explicit file; its parent is the dir.
+2. `FLEETHERD_CONFIG_DIR` — a directory containing `config.yaml`.
+3. `~/.config/fleetherd/` — or, where only that exists, `~/.config/talkcode/`, the directory's
+   name before 3.0.0, used where it is and logged once (`legacy-name.ts` defaultConfigDir). It is
+   never moved: in the container it is a bind mount, and config.yaml may hold absolute paths into
+   it. The `TALKCODE_` names of both variables are read when the `FLEETHERD_` ones are unset.
 
-The `--config <path>` flag works by *setting* `TALKCODE_CONFIG_FILE` on
+Nothing may create `~/.config/fleetherd` by spelling it out: on an install still on the old
+directory that would make the next start find an empty one. Everything goes under `configDir()`.
+
+The `--config <path>` flag works by *setting* `FLEETHERD_CONFIG_FILE` on
 `process.env` (see `cli.ts`), so the agent subprocess inherits it and its reverse
 commands resolve the same config and socket. That is why the env var exists rather than
 threading a parameter.
@@ -224,7 +230,7 @@ v0 files had a single `platform:` object with Discord fields on the top level an
 platforms' credentials in an untyped `options` pocket. v1 is the typed `platforms:` map.
 
 `loadConfig` migrates **in memory** with a one-line warning, so old files keep working.
-`talkcode doctor --migrate-config` rewrites the file (backing up to
+`fleetherd doctor --migrate-config` rewrites the file (backing up to
 `config.yaml.bak` first).
 
 This module is deliberately self-contained and **disposable**: delete it one major

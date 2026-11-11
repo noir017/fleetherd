@@ -7,7 +7,7 @@ import type { PodsState } from '../config/pods.js';
 import { leaveMesh, peerFiles, pinnedHostKey, syncPeers, PRIVATE_SOURCES, type Peer } from './pod-peers.js';
 
 /**
- * The pod-to-pod ssh mesh: what each pod gets in ~/.talkcode/ssh/, where host keys come from (the
+ * The pod-to-pod ssh mesh: what each pod gets in ~/.fleetherd/ssh/, where host keys come from (the
  * gateway's own known_hosts), and who gets the files written.
  */
 
@@ -23,8 +23,8 @@ describe('peerFiles', () => {
   it('trusts every other pod’s key, from private addresses only, and not its own', () => {
     const lines = f.authorizedKeys.split('\n').filter((l) => l && !l.startsWith('#'));
     expect(lines).toEqual([
-      `from="${PRIVATE_SOURCES}" ssh-ed25519 AAAAaws talkcode-peer@aws`,
-      `from="${PRIVATE_SOURCES}" ssh-ed25519 AAAAplain talkcode-peer@plain`,
+      `from="${PRIVATE_SOURCES}" ssh-ed25519 AAAAaws fleetherd-peer@aws`,
+      `from="${PRIVATE_SOURCES}" ssh-ed25519 AAAAplain fleetherd-peer@plain`,
     ]);
     // Full ssh is the point: no restrict.
     expect(f.authorizedKeys).not.toContain('restrict');
@@ -41,7 +41,7 @@ describe('peerFiles', () => {
     expect(f.config).not.toContain('Host uniagent.pod');
     const shared = f.config.indexOf('Host *.pod');
     expect(shared).toBeGreaterThan(f.config.lastIndexOf('HostKeyAlias'));
-    expect(f.config.slice(shared)).toMatch(/UserKnownHostsFile ~\/\.talkcode\/ssh\/known_hosts\n[\s\S]*StrictHostKeyChecking yes/);
+    expect(f.config.slice(shared)).toMatch(/UserKnownHostsFile ~\/\.fleetherd\/ssh\/known_hosts\n[\s\S]*StrictHostKeyChecking yes/);
   });
 
   it('is empty, header aside, for a pod outside the mesh', () => {
@@ -56,7 +56,7 @@ describe('pinnedHostKey', () => {
     '@cert-authority *.example ssh-ed25519 CA',
     'uniagent ssh-ed25519 KEY22',
     '[192.0.2.35]:22022 ssh-ed25519 KEYA',
-    'other,[10.0.0.108]:22022 ssh-ed25519 KEYB extra',
+    'other,[192.0.2.108]:22022 ssh-ed25519 KEYB extra',
     '',
   ].join('\n');
 
@@ -64,7 +64,7 @@ describe('pinnedHostKey', () => {
     ['user@uniagent:22', 'ssh-ed25519 KEY22'],
     ['user@uniagent', 'ssh-ed25519 KEY22'],
     ['user@192.0.2.35:22022', 'ssh-ed25519 KEYA'],
-    ['user@10.0.0.108:22022', 'ssh-ed25519 KEYB'],
+    ['user@192.0.2.108:22022', 'ssh-ed25519 KEYB'],
     ['user@192.0.2.35:22023', undefined],
     ['user@example', undefined],
   ])('%s → %s', (dest, key) => {
@@ -75,7 +75,7 @@ describe('pinnedHostKey', () => {
 describe('syncPeers', () => {
   let home: string;
   beforeEach(() => {
-    home = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-peers-'));
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-peers-'));
   });
   afterEach(() => fs.rmSync(home, { recursive: true, force: true }));
 
@@ -95,7 +95,7 @@ describe('syncPeers', () => {
       },
     };
   }
-  const file = (id: string, name: string): string => fs.readFileSync(path.join(home, id, '.talkcode/ssh', name), 'utf8');
+  const file = (id: string, name: string): string => fs.readFileSync(path.join(home, id, '.fleetherd/ssh', name), 'utf8');
 
   const hosts = {
     a: { ssh: 'user@10.0.0.1:2201' },
@@ -116,14 +116,29 @@ describe('syncPeers', () => {
       knownHostsText: () => known,
     });
     expect(notes).toEqual([expect.stringMatching(/^nokey: left out .* no plain host key/)]);
-    expect(file('a', 'authorized_keys')).toContain('ssh-ed25519 KB talkcode-peer@b');
+    expect(file('a', 'authorized_keys')).toContain('ssh-ed25519 KB fleetherd-peer@b');
     expect(file('a', 'authorized_keys')).not.toContain('KN');
     expect(file('a', 'known_hosts')).toContain('b.pod ssh-ed25519 HB');
     expect(file('a', 'config')).toContain('Host b.pod\n  HostName 10.9.9.9\n  Port 22\n');
     expect(file('b', 'config')).toContain('Host a.pod\n  HostName 10.0.0.1\n  Port 2201\n');
-    expect(fs.statSync(path.join(home, 'a', '.talkcode/ssh/authorized_keys')).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.join(home, 'a', '.fleetherd/ssh/authorized_keys')).mode & 0o777).toBe(0o600);
     // Not in the mesh and never was: nothing written.
-    expect(fs.existsSync(path.join(home, 'c', '.talkcode/ssh'))).toBe(false);
+    expect(fs.existsSync(path.join(home, 'c', '.fleetherd/ssh'))).toBe(false);
+  });
+
+  // 3.0.0 compatibility: a host's files written by talkcode carry `talkcode-peer@<id>` lines, in
+  // ~/.talkcode/ssh — after the bootstrap's move, the same files as ~/.fleetherd/ssh.
+  it('replaces the talkcode-peer@ lines of a file written before 3.0.0, never adding beside them', async () => {
+    const all = { a: host('a'), b: host('b') };
+    const ssh = path.join(home, 'a', '.fleetherd', 'ssh');
+    fs.mkdirSync(ssh, { recursive: true });
+    fs.writeFileSync(path.join(ssh, 'authorized_keys'), '# Written by the talkcode gateway …\nfrom="10.0.0.0/8" ssh-ed25519 KB talkcode-peer@b\n');
+    fs.symlinkSync('.fleetherd', path.join(home, 'a', '.talkcode'));
+    await syncPeers({ pods: { a: rec('ssh-ed25519 KA'), b: rec('ssh-ed25519 KB') }, hosts, reachable: ['a', 'b'], host: (id) => all[id as 'a'], knownHostsText: () => known });
+    const keys = fs.readFileSync(path.join(home, 'a', '.talkcode', 'ssh', 'authorized_keys'), 'utf8');
+    expect(keys).not.toContain('talkcode-peer@');
+    expect(keys.match(/ssh-ed25519 KB /g)).toHaveLength(1);
+    expect(keys).toContain('ssh-ed25519 KB fleetherd-peer@b');
   });
 
   it('empties a removed pod’s files on its way out, and says so when it cannot', async () => {

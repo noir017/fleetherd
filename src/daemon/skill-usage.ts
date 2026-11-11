@@ -1,5 +1,6 @@
 import type { InboundMessage, ToolEvent } from '../types.js';
 import { activeSkillNames, recordSkillUse, type SkillSignal } from './skills-store.js';
+import { NAME_PATTERN } from '../legacy-name.js';
 
 /**
  * How a managed skill is counted as used, from events the gateway already receives.
@@ -7,7 +8,7 @@ import { activeSkillNames, recordSkillUse, type SkillSignal } from './skills-sto
  * The three signals, because harnesses differ in how a skill reaches the model:
  *  - a `Skill` tool call naming it (Claude Code, CodeBuddy) — the tool's input, not its preview;
  *  - a user message that starts with `/name` — the person asked for it by name;
- *  - any tool call whose arguments or path mention `~/.talkcode/skills/<name>/` — Codex, OpenCode,
+ *  - any tool call whose arguments or path mention `~/.fleetherd/skills/<name>/` — Codex, OpenCode,
  *    agy and AtomCode read the file directly, and a reference or script under it counts too.
  *
  * One turn counts a skill once however many times it appears: an agent that reads SKILL.md and
@@ -15,7 +16,7 @@ import { activeSkillNames, recordSkillUse, type SkillSignal } from './skills-sto
  * which the registry calls before every turn it starts; out-of-turn (follow-up) tool events share
  * the set of the turn they follow.
  *
- * `talkcode skills …` is administration, not use: an agent listing or patching skills is not
+ * `fleetherd skills …` is administration, not use: an agent listing or patching skills is not
  * learning from them, and counting it would keep every skill alive forever.
  */
 
@@ -41,7 +42,7 @@ export function recordToolUse(conversationId: string, agentId: string | undefine
   const byTool = skillToolName(evt);
   if (byTool && names.has(byTool)) use(byTool, agentId, 'skill-tool', seen, dir);
   // A Skill tool call is never the management command, whatever its args say; the path signal can
-  // be, because `talkcode skills …` often reads a file while it works.
+  // be, because `fleetherd skills …` often reads a file while it works.
   if (isAdmin(evt)) return;
   for (const name of pathSkillNames(evt)) {
     if (names.has(name)) use(name, agentId, 'path', seen, dir);
@@ -97,13 +98,14 @@ export function pathSkillNames(evt: ToolEvent): string[] {
     text = evt.inputPreview;
   }
   const out = new Set<string>();
-  for (const match of text.matchAll(/\.talkcode\/skills\/([a-z0-9][a-z0-9-]*)(?=[/\s"'`]|$)/g)) {
+  // `~/.talkcode/skills/` is the same directory on a host moved past 3.0.0 (legacy-name.ts).
+  for (const match of text.matchAll(new RegExp(`\\.${NAME_PATTERN}/skills/([a-z0-9][a-z0-9-]*)(?=[/\\s"'\`]|$)`, 'g'))) {
     if (match[1]) out.add(match[1]);
   }
   return [...out];
 }
 
-/** `talkcode skills …` is the management command, not a use of what it manages. */
+/** `fleetherd skills …` is the management command, not a use of what it manages. */
 export function isAdmin(evt: ToolEvent): boolean {
   let text: string;
   try {
@@ -111,5 +113,5 @@ export function isAdmin(evt: ToolEvent): boolean {
   } catch {
     text = evt.inputPreview;
   }
-  return /\btalkcode\s+skills(?=[\s"'`;|&)]|$)/.test(text);
+  return new RegExp(`\\b${NAME_PATTERN}\\s+skills(?=[\\s"'\`;|&)]|$)`).test(text);
 }

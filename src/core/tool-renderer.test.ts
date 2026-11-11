@@ -745,20 +745,20 @@ describe('subagent tools', () => {
     // The 2026-10-10 phone screenshot: fifteen of one subagent's lines, each repeating its name.
     const { sink, edits, flush } = makeSink({ withEdit: true });
     const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
-    const agent = '接手修复 quantlab 存量数据';
+    const agent = '接手修复 shop-api 存量数据';
 
     r.onToolStart(start('Task', agent, 0));
-    r.onToolStart({ ...start('Bash', 'cd /home/user/workspace/quantlab', 1), agent });
-    r.onToolStart({ ...start('Read', '/home/user/workspace/quantlab/a.py', 2), agent });
+    r.onToolStart({ ...start('Bash', 'cd /home/user/workspace/shop-api', 1), agent });
+    r.onToolStart({ ...start('Read', '/home/user/workspace/shop-api/a.py', 2), agent });
     r.onToolFinish(finish('Bash', true, 97, 1));
     r.onToolStart({ ...start('Bash', 'ls /tmp', 3), agent });
     await flush();
 
     expect(edits[edits.length - 1]!.text).toBe(
       [
-        '⚙️ Task: "接手修复 quantlab 存量数据"',
-        '↳ 接手修复 quantlab 存… · 💻 Bash: "cd /home/user/workspace/quantlab" ✓ 97ms',
-        '↳ 📖 Read: "/home/user/workspace/quantlab/a.py"',
+        '⚙️ Task: "接手修复 shop-api 存量数据"',
+        '↳ 接手修复 shop-api 存… · 💻 Bash: "cd /home/user/workspace/shop-api" ✓ 97ms',
+        '↳ 📖 Read: "/home/user/workspace/shop-api/a.py"',
         '↳ 💻 Bash: "ls /tmp"',
       ].join('\n')
     );

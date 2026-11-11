@@ -17,7 +17,7 @@ let history: HistoryStore;
 const now = Date.UTC(2026, 10, 5, 12, 34);
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-review-panel-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-review-panel-'));
   history = new HistoryStore(path.join(dir, 'history.db'), () => {});
 });
 
@@ -88,7 +88,7 @@ describe('buildReviewPanel', () => {
       action: 'patch',
       name: 'deploy-check',
       applied: true,
-      undo: 'talkcode skills revert deploy-check 0001-abc',
+      undo: 'fleetherd skills revert deploy-check 0001-abc',
     });
     // A refused change has no undo command: there is nothing to undo.
     expect(entry!.changes[1]).toMatchObject({ applied: false, error: 'files may only go in references/' });
@@ -111,7 +111,7 @@ describe('buildReviewPanel', () => {
     });
     const [entry] = panel().list().reviews;
     expect(entry!.summary).toBe('created deploy-check');
-    expect(entry!.changes[0]!.undo).toBe('talkcode skills archive deploy-check');
+    expect(entry!.changes[0]!.undo).toBe('fleetherd skills archive deploy-check');
   });
 
   it('offers no topic link for a review of another platform', () => {
@@ -269,7 +269,7 @@ describe('the pending preference list', () => {
         ],
       },
     ]);
-    expect(list.reviews[0]!.changes[0]).toMatchObject({ suggested: true, command: 'talkcode skills archive simular-box' });
+    expect(list.reviews[0]!.changes[0]).toMatchObject({ suggested: true, command: 'fleetherd skills archive simular-box' });
     expect(list.reviews[0]!.summary).toBe('1 archive suggestion');
     // Archived since, or the skill to merge into is gone: dealt with either way.
     expect(panel({ activeSkills: () => new Set(['sbox']) }).list().pending).toEqual([]);

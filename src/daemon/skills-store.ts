@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { configDir } from '../config/load.js';
+import { LEGACY_SKILL_LINK, metaKeys } from '../legacy-name.js';
 import {
   commitPaths,
   conversationCommitPaths,
@@ -15,7 +16,7 @@ import {
 } from './skills-git.js';
 
 /**
- * The gateway's own skills — the ones every agent is given, written through `talkcode skills`
+ * The gateway's own skills — the ones every agent is given, written through `fleetherd skills`
  * rather than by hand on each machine.
  *
  * ── What is on disk ──────────────────────────────────────────────────────────────────────────────
@@ -73,11 +74,14 @@ export const EXTRA_DIRS = ['references', 'templates', 'scripts'] as const;
  * The gateway's keys under a skill's frontmatter `metadata:`. The Agent Skills spec makes
  * `metadata` a map of strings to strings, so each is a flat, quoted string — a harness that
  * validates the spec lists the skill unchanged, and one that does not ignores the block.
+ *
+ * Until 3.0.0 each was spelled `talkcode-…`, and skills written then still are. Both spellings are
+ * read, as one key (metaValue); the gateway writes only the current one.
  */
-export const META_RESIDENT = 'talkcode-resident';
-export const META_CATEGORY = 'talkcode-category';
-export const META_HOSTS = 'talkcode-hosts';
-export const META_HARNESSES = 'talkcode-harnesses';
+export const META_RESIDENT = 'fleetherd-resident';
+export const META_CATEGORY = 'fleetherd-category';
+export const META_HOSTS = 'fleetherd-hosts';
+export const META_HARNESSES = 'fleetherd-harnesses';
 
 /**
  * A resident skill's description is in every agent's context on every request, so it is held to
@@ -113,8 +117,12 @@ export function isSkillName(name: string): boolean {
   return SKILL_NAME_RE.test(name) && name.length <= 64;
 }
 
-/** The two skills the package ships; a managed skill may not shadow either. */
-export const RESERVED_NAMES: ReadonlySet<string> = new Set(['talkcode', 'super']);
+/**
+ * The two skills the package ships; a managed skill may not shadow either. Nor take the bundled
+ * one's name before 3.0.0: a link by that name is taken back as the old bundled one (skill-link.ts
+ * removeLegacySkillLink).
+ */
+export const RESERVED_NAMES: ReadonlySet<string> = new Set(['fleetherd', 'super', LEGACY_SKILL_LINK]);
 
 export const EXPIRY_DAYS = 14;
 export const ARCHIVE_DAYS = 30;
@@ -125,7 +133,7 @@ export type SkillStatus = 'active' | 'expired' | 'archived';
 export type SkillSignal = 'skill-tool' | 'slash' | 'path' | 'read';
 export type { SkillChangeBy } from './skills-git.js';
 
-/** A change with no `by` was made by an agent through `talkcode skills`. */
+/** A change with no `by` was made by an agent through `fleetherd skills`. */
 const AGENT: SkillChangeBy = { kind: 'agent' };
 
 /**
@@ -201,7 +209,7 @@ export interface SkillHistoryEntry {
   at: string;
   /** The gateway's action, or `commit` for a change someone made in the repository by hand. */
   action: string;
-  /** The commit's author: `talkcode`, `talkcode-review`, `talkcode-web`, or a person. */
+  /** The commit's author: `fleetherd`, `fleetherd-review`, `fleetherd-web`, or a person. */
   author?: string;
   beforeVersion?: string;
   afterVersion?: string;
@@ -370,15 +378,32 @@ function listOf(value: string | undefined): string[] | undefined {
   return items && items.length > 0 ? items : undefined;
 }
 
+/** One of the gateway's metadata keys, under its current spelling or, when that is absent, its old one. */
+function metaValue(meta: Map<string, string>, key: string): string | undefined {
+  return metaKeys(key)
+    .map((k) => meta.get(k))
+    .find((v) => v !== undefined);
+}
+
+/**
+ * Whether a skill is resident. Either spelling saying "true" is enough: read as "the current one
+ * wins", a skill carrying `talkcode-resident: "true"` could be promoted past assertResidentUnchanged
+ * by an agent that adds `fleetherd-resident: "false"` beside it — unchanged here, resident to any
+ * gateway older than 3.0.0 sharing the repository.
+ */
+function residentOf(meta: Map<string, string>): boolean {
+  return metaKeys(META_RESIDENT).some((k) => meta.get(k)?.trim().toLowerCase() === 'true');
+}
+
 /** A skill's tier, category and conditions, from its SKILL.md. */
 export function skillMetaOf(files: Map<string, Buffer>): SkillMeta {
   const md = files.get(SKILL_FILE);
   const meta = md ? frontmatterMetadata(md.toString('utf8')) : new Map<string, string>();
-  const category = meta.get(META_CATEGORY)?.trim();
-  const hosts = listOf(meta.get(META_HOSTS));
-  const harnesses = listOf(meta.get(META_HARNESSES));
+  const category = metaValue(meta, META_CATEGORY)?.trim();
+  const hosts = listOf(metaValue(meta, META_HOSTS));
+  const harnesses = listOf(metaValue(meta, META_HARNESSES));
   return {
-    resident: meta.get(META_RESIDENT)?.trim().toLowerCase() === 'true',
+    resident: residentOf(meta),
     ...(category ? { category } : {}),
     ...(hosts ? { hosts } : {}),
     ...(harnesses ? { harnesses } : {}),
@@ -430,15 +455,16 @@ function assertResidentDescription(meta: SkillMeta, content: string): void {
 }
 
 /**
- * SKILL.md with `talkcode-resident` set or removed. Removed rather than set to "false": absence is
- * the library tier, so a skill that was never promoted and one that was demoted read the same.
+ * SKILL.md with `fleetherd-resident` set or removed. Removed rather than set to "false": absence is
+ * the library tier, so a skill that was never promoted and one that was demoted read the same. The
+ * old spelling, `talkcode-resident`, is removed either way: the line written is the only one left.
  */
 export function withResident(content: string, resident: boolean): string {
   const match = /^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(content);
   if (!match) throw new Error('SKILL.md has no frontmatter to set the tier in');
   const lines = match[2]!.split(/\r?\n/);
   const start = lines.findIndex((l) => /^metadata:\s*$/.test(l));
-  const isResidentLine = (l: string): boolean => new RegExp(`^\\s+${META_RESIDENT}:`).test(l);
+  const isResidentLine = (l: string): boolean => metaKeys(META_RESIDENT).some((k) => new RegExp(`^\\s+${k}:`).test(l));
   let next: string[];
   if (start < 0) {
     next = resident ? [...lines, 'metadata:', `  ${META_RESIDENT}: "true"`] : lines;
@@ -554,7 +580,7 @@ export function listSkillFiles(name: string, dir = configDir()): Array<{ path: s
   const active = fs.existsSync(skillDir(clean, dir));
   const archived = archivedDir(clean, dir);
   if (!active && !fs.existsSync(archived)) {
-    throw new Error(`no skill named "${clean}"; \`talkcode skills list\` shows them`);
+    throw new Error(`no skill named "${clean}"; \`fleetherd skills list\` shows them`);
   }
   const files = active ? readSkillFiles(clean, dir) : readDeliveredFiles(archived);
   return [...files]
@@ -795,8 +821,8 @@ export function activeSkillStamp(dir = configDir()): string {
 function requireActive(name: string, dir: string): string {
   const root = skillDir(name, dir);
   if (!fs.existsSync(root)) {
-    if (fs.existsSync(archivedDir(name, dir))) throw new Error(`"${name}" is archived; restore it first with \`talkcode skills restore ${name}\``);
-    throw new Error(`no skill named "${name}"; \`talkcode skills list\` shows them`);
+    if (fs.existsSync(archivedDir(name, dir))) throw new Error(`"${name}" is archived; restore it first with \`fleetherd skills restore ${name}\``);
+    throw new Error(`no skill named "${name}"; \`fleetherd skills list\` shows them`);
   }
   return root;
 }
@@ -822,7 +848,7 @@ export function skillHistory(name: string, dir = configDir()): SkillHistoryEntry
 
 /**
  * The active skills' files that one conversation's commits changed since `sinceMs`, newest first:
- * whatever an agent there wrote through `talkcode skills`, and what an earlier review of it wrote,
+ * whatever an agent there wrote through `fleetherd skills`, and what an earlier review of it wrote,
  * since both name the conversation in a trailer. A file deleted since, or a skill archived since,
  * is left out — there is nothing of it to show.
  */
@@ -845,12 +871,12 @@ export interface CreateSkillInput {
   name: string;
   description: string;
   body?: string;
-  /** `talkcode-category`, the group the `skills` tool lists it under; uncategorized when absent. */
+  /** `fleetherd-category`, the group the `skills` tool lists it under; uncategorized when absent. */
   category?: string;
   source?: SkillSource;
   /** A line for the commit — the review's reason, when there is one. */
   note?: string;
-  /** Who is writing; an agent through `talkcode skills` when absent. */
+  /** Who is writing; an agent through `fleetherd skills` when absent. */
   by?: SkillChangeBy;
   now?: number;
 }
@@ -859,9 +885,9 @@ export interface CreateSkillInput {
 export function createSkill(input: CreateSkillInput, dir = configDir()): SkillRecord {
   const name = validateSkillName(input.name);
   const root = skillDir(name, dir);
-  if (fs.existsSync(root)) throw new Error(`a skill named "${name}" already exists; use \`talkcode skills show ${name}\` and patch it`);
+  if (fs.existsSync(root)) throw new Error(`a skill named "${name}" already exists; use \`fleetherd skills show ${name}\` and patch it`);
   if (fs.existsSync(archivedDir(name, dir))) {
-    throw new Error(`"${name}" is archived; restore it with \`talkcode skills restore ${name}\`, or pick another name`);
+    throw new Error(`"${name}" is archived; restore it with \`fleetherd skills restore ${name}\`, or pick another name`);
   }
   const description = input.description.replace(/\s+/g, ' ').trim();
   if (!description) throw new Error('create needs --description: one line on when to use the skill');
@@ -905,7 +931,7 @@ export function patchSkill(input: PatchSkillInput, dir = configDir()): SkillReco
   const current = skillVersionOf(files);
   if (input.version !== current) {
     throw new Error(
-      `version mismatch: "${name}" is at ${current}, not ${input.version}. Run \`talkcode skills show ${name}\` and pass the version it prints.`
+      `version mismatch: "${name}" is at ${current}, not ${input.version}. Run \`fleetherd skills show ${name}\` and pass the version it prints.`
     );
   }
   assertSkillMd(input.content, name);
@@ -1109,7 +1135,7 @@ export function revertSkill(name: string, id: string, dir = configDir(), now = D
   const history = skillHistory(clean, dir);
   const full = isRepo(root) ? resolveCommit(root, id.trim()) : undefined;
   const entry = full ? history.find((e) => full.startsWith(e.id)) : undefined;
-  if (!full || !entry) throw new Error(`"${clean}" has no history entry ${id}; \`talkcode skills history ${clean}\` lists them`);
+  if (!full || !entry) throw new Error(`"${clean}" has no history entry ${id}; \`fleetherd skills history ${clean}\` lists them`);
   const parent = parentOf(root, full);
   const target = parent ? beforeFiles(root, parent, clean) : new Map<string, Buffer>();
   if (!target.has(SKILL_FILE)) {
@@ -1158,7 +1184,7 @@ export function showSkill(name: string, file: string | undefined, dir = configDi
   const clean = validateSkillName(name);
   const active = fs.existsSync(skillDir(clean, dir));
   const root = active ? skillDir(clean, dir) : archivedDir(clean, dir);
-  if (!active && !fs.existsSync(root)) throw new Error(`no skill named "${clean}"; \`talkcode skills list\` shows them`);
+  if (!active && !fs.existsSync(root)) throw new Error(`no skill named "${clean}"; \`fleetherd skills list\` shows them`);
   const rel = file === undefined || file === SKILL_FILE ? SKILL_FILE : validateFilePath(file);
   const target = path.join(root, ...rel.split('/'));
   let content: string;

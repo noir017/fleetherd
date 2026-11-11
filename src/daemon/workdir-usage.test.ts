@@ -20,21 +20,21 @@ function tempFile(): string {
 describe('WorkdirUsageStore', () => {
   it('starts empty when the file does not exist', () => {
     const store = new WorkdirUsageStore(tempFile());
-    expect(store.stat('/w/quantlab')).toBeUndefined();
+    expect(store.stat('/w/shop-api')).toBeUndefined();
   });
 
   it('records a use and reads it back through a fresh instance', () => {
     const file = tempFile();
-    new WorkdirUsageStore(file).record('/w/quantlab', 1000);
-    expect(new WorkdirUsageStore(file).stat('/w/quantlab')).toEqual({ score: 1, last: 1000 });
+    new WorkdirUsageStore(file).record('/w/shop-api', 1000);
+    expect(new WorkdirUsageStore(file).stat('/w/shop-api')).toEqual({ score: 1, last: 1000 });
   });
 
   it('accumulates repeat uses of the same directory', () => {
     const file = tempFile();
     const store = new WorkdirUsageStore(file);
-    store.record('/w/quantlab', 1000);
-    store.record('/w/quantlab', 2000);
-    const stat = store.stat('/w/quantlab')!;
+    store.record('/w/shop-api', 1000);
+    store.record('/w/shop-api', 2000);
+    const stat = store.stat('/w/shop-api')!;
     // Two visits a second apart: the first has decayed, but only by ~6e-7 of itself, so ~2.
     expect(stat.score).toBeCloseTo(2, 5);
     expect(stat.score).toBeLessThan(2); // it IS decayed, not merely counted
@@ -92,9 +92,9 @@ describe('WorkdirUsageStore', () => {
 
   it('writes only the two numbers, keyed by absolute path', () => {
     const file = tempFile();
-    new WorkdirUsageStore(file).record('/w/quantlab', 42);
+    new WorkdirUsageStore(file).record('/w/shop-api', 42);
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
-      '/w/quantlab': { score: 1, last: 42 },
+      '/w/shop-api': { score: 1, last: 42 },
     });
   });
 });

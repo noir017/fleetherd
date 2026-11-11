@@ -1,7 +1,7 @@
 # `src/history/` — the conversation library
 
 Every turn the gateway carries, in `<configDir>/history.db`, so an agent can search what was
-said before — in another topic, on another platform, with another agent. The `talkcode
+said before — in another topic, on another platform, with another agent. The `fleetherd
 sessions` commands read it (`ipc/commands.ts`), and so does `task-read` for a sub-agent's topic
 (`daemon/delegation.ts`); `TurnRunner` writes it through one optional `recordHistory` dep
 (`daemon/turn-runner.ts`, enriched in `daemon/conversation.ts`).

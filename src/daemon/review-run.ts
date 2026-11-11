@@ -51,7 +51,7 @@ import { remoteHosts } from './remote-hosts.js';
  * spend a long time waiting on the provider.
  *
  * Thirty minutes, not five, measured on 2026-11-05/06: of 26 reviews, the 6 failures were all
- * `agy on awsfree2 timed out after 5 min`, and every one was Google queueing
+ * `agy on buildbox timed out after 5 min`, and every one was Google queueing
  * `gemini-3.8-flash-high` — the request hangs for 2–4.5 minutes, then answers `UNAVAILABLE (503):
  * No capacity available for model gemini-3.8-flash-high`. agy 1.5.1 retries that itself after 4 s
  * (`attempt 1 failed … retrying in 4s`; a recovery after attempt 3 was seen on 11-04), so the old
@@ -315,7 +315,7 @@ export function refusePermission(params: Pick<RequestPermissionRequest, 'options
   return reject ? { outcome: { outcome: 'selected', optionId: reject.optionId } } : { outcome: { outcome: 'cancelled' } };
 }
 
-/** Where a review runs: an empty directory here, or one under the host's `~/.talkcode/reviews`. */
+/** Where a review runs: an empty directory here, or one under the host's `~/.fleetherd/reviews`. */
 interface ReviewPlace {
   dir: string;
   host?: RemoteHost;
@@ -334,7 +334,7 @@ async function inReviewDir(def: AgentDef, name: string, fn: (place: ReviewPlace)
   // wrong account and the wrong quota.
   if (def.host && !host) return { ok: false, error: `host "${def.host}" is not registered` };
   if (!host) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-review-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-review-'));
     try {
       return await fn({ dir, label: name });
     } finally {
@@ -343,7 +343,7 @@ async function inReviewDir(def: AgentDef, name: string, fn: (place: ReviewPlace)
   }
   try {
     const welcome = await host.ready();
-    const root = path.posix.join(welcome.home, '.talkcode', 'reviews');
+    const root = path.posix.join(welcome.home, '.fleetherd', 'reviews');
     const dir = path.posix.join(root, `r${Date.now().toString(36)}${randomBytes(3).toString('hex')}`);
     await host.mkdirp(dir, 0o700);
     try {

@@ -67,7 +67,7 @@ func runAttach(args []string) int {
 		}
 	}
 	if err := ensureShimLink(*version); err != nil {
-		return fail("cannot create the talkcode shim: %v", err)
+		return fail("cannot create the fleetherd shim: %v", err)
 	}
 	sock, err := ensureDaemon(self, *ns, *version)
 	if err != nil {
@@ -117,19 +117,25 @@ func fileSHA256(p string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// ensureShimLink makes <version>/bin/talkcode a relative link to the binary beside it — the command
-// the bundled skill tells agents to run, and the native-tools server the gateway registers.
+// ensureShimLink makes <version>/bin/fleetherd a relative link to the binary beside it — the command
+// the bundled skill tells agents to run, and the native-tools server the gateway registers — and
+// <version>/bin/talkcode another, the name it had before 3.0.0 (legacy.go).
 func ensureShimLink(version string) error {
 	bin := binDirFor(version)
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		return err
 	}
-	link := filepath.Join(bin, "talkcode")
-	if target, err := os.Readlink(link); err == nil && target == "../talkcode-remote" {
-		return nil
+	for _, name := range cliNames {
+		link := filepath.Join(bin, name)
+		if target, err := os.Readlink(link); err == nil && target == "../fleetherd-remote" {
+			continue
+		}
+		_ = os.Remove(link)
+		if err := os.Symlink("../fleetherd-remote", link); err != nil {
+			return err
+		}
 	}
-	_ = os.Remove(link)
-	return os.Symlink("../talkcode-remote", link)
+	return nil
 }
 
 // ensureDaemon returns the socket of this gateway's daemon at `version`, starting it if needed and
@@ -198,7 +204,8 @@ func isOurDaemon(pid int) bool {
 		return false
 	}
 	args := strings.Split(string(b), "\x00")
-	return len(args) > 1 && strings.Contains(args[0], "talkcode-remote") && args[1] == "daemon"
+	// Either name: the daemon an upgrade from 2.x replaces is still talkcode-remote (legacy.go).
+	return len(args) > 1 && isRemoteBinary(filepath.Base(args[0])) && args[1] == "daemon"
 }
 
 func daemonStatus(sock string) (*Header, error) {
@@ -268,12 +275,21 @@ func removeUnusedVersions(current string) {
 		if !e.IsDir() || name == "run" || inUse[name] || !safeName.MatchString(name) {
 			continue
 		}
-		// Only what looks like one of ours: a directory holding this program.
-		if _, err := os.Stat(filepath.Join(root, name, "talkcode-remote")); err != nil {
+		// Only what looks like one of ours: a directory holding this program, under either name.
+		if !holdsRemoteBinary(filepath.Join(root, name)) {
 			continue
 		}
 		_ = os.RemoveAll(filepath.Join(root, name))
 	}
+}
+
+func holdsRemoteBinary(dir string) bool {
+	for _, name := range []string{"fleetherd-remote", legacyName + "-remote"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // lockFile takes an exclusive flock, polling until `wait` runs out.

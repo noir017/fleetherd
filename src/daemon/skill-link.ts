@@ -3,10 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentDef } from '../config/schema.js';
 import { selfInvocation } from './reverse-cli-shim.js';
+import { LEGACY_SKILL_LINK, envOf, isUnderEitherName } from '../legacy-name.js';
 
 /**
  * Puts the bundled skill (`skill/` at the package root) where each harness looks for skills, as a
- * symlink named `talkcode`.
+ * symlink named `fleetherd`.
  *
  * ── Why the daemon does this ──────────────────────────────────────────────────────────────────
  * The skill is how an agent learns what the gateway can do beyond its two native tools — posting to
@@ -14,7 +15,7 @@ import { selfInvocation } from './reverse-cli-shim.js';
  * by the harness's own skill mechanism rather than by text the gateway writes into the conversation.
  * Shipping it inside the package and linking it from here means:
  *  - it appears only on machines that run this daemon (a shared skill repo would put it in front of
- *    agents on every machine that syncs the repo, where the `talkcode` command does not exist);
+ *    agents on every machine that syncs the repo, where the `fleetherd` command does not exist);
  *  - its content is always the running daemon's own — the link points into the installed package,
  *    so an upgrade updates the skill with nothing to re-copy.
  *
@@ -42,8 +43,8 @@ import { selfInvocation } from './reverse-cli-shim.js';
  * `.agents/skills` is the cross-vendor location, so one link serves codex and opencode.
  *
  * CodeBuddy used to be left out entirely, and the operator linked it by hand into
- * `~/.talkcode/remote/<version>/skill` — a path this daemon deletes on upgrade. Nothing repointed
- * it, so the link died at the next upgrade and stayed dead (`~/.codebuddy/skills/talkcode` on both
+ * `~/.fleetherd/remote/<version>/skill` — a path this daemon deletes on upgrade. Nothing repointed
+ * it, so the link died at the next upgrade and stayed dead (`~/.codebuddy/skills/fleetherd` on both
  * hosts, 2026-11-03). It is mapped here now, which is also what makes the next spawn repoint it.
  *
  * Only for a harness that has been run here: the link is made when the harness's own config
@@ -57,12 +58,12 @@ import { selfInvocation } from './reverse-cli-shim.js';
  * install, or a test daemon run from a checkout. A real directory or file by that name is the
  * operator's, and is left alone with a warning: they may be maintaining their own copy on purpose.
  * Like the reverse-CLI shim it writes to a SHARED path, so it carries the same guard: nothing happens
- * unless this process really is the CLI (a vitest worker is not), and TALKCODE_NO_SKILL_LINK=1
+ * unless this process really is the CLI (a vitest worker is not), and FLEETHERD_NO_SKILL_LINK=1
  * turns it off for a test daemon that must not repoint the live one's link.
  */
 
 /** The link's name, which is also the name harnesses list the skill under. */
-export const SKILL_LINK_NAME = 'talkcode';
+export const SKILL_LINK_NAME = 'fleetherd';
 
 /**
  * Every skill the package ships: the link name each is listed under, and its directory at the
@@ -136,8 +137,9 @@ export interface SkillLinkResult {
   detail?: string;
 }
 
+/** Inside `dir`, under its current or its pre-3.0.0 spelling (legacy-name.ts). */
 function isUnder(dest: string, dir: string): boolean {
-  return path.resolve(dest).startsWith(path.resolve(dir) + path.sep);
+  return isUnderEitherName(dest, dir);
 }
 
 /**
@@ -198,7 +200,7 @@ const warned = new Set<string>();
  * or silent, never thrown — an agent without the skills still has its tools and its shell.
  */
 export function ensureSkillLink(harness: AgentDef['harness'], home: string, command?: string): SkillLinkResult[] {
-  if (process.env.TALKCODE_NO_SKILL_LINK) return [];
+  if (envOf('NO_SKILL_LINK')) return [];
   if (!selfInvocation()) return [];
   const results: SkillLinkResult[] = [];
   for (const skill of BUNDLED_SKILLS) {
@@ -213,7 +215,32 @@ export function ensureSkillLink(harness: AgentDef['harness'], home: string, comm
       report(r, source);
     }
   }
+  for (const h of skillHomes(harness, home, command)) {
+    const r = removeLegacySkillLink(h);
+    if (r) {
+      results.push(r);
+      console.log(`[skill] removed ${r.link}, the skill's link before 3.0.0 (was ${r.detail})`);
+    }
+  }
   return results;
+}
+
+/**
+ * Take back `<home.dir>/talkcode`, the bundled skill's link before it was renamed (legacy-name.ts):
+ * left there, a harness lists the same skill twice, the old copy naming a command by its old name.
+ * Like the link itself, a symlink by that name is ours and anything else the operator's. A managed
+ * skill cannot have the name (skills-store.ts RESERVED_NAMES), so nothing else made it.
+ */
+export function removeLegacySkillLink(home: SkillHome): SkillLinkResult | undefined {
+  const link = path.join(home.dir, LEGACY_SKILL_LINK);
+  try {
+    if (!fs.lstatSync(link).isSymbolicLink()) return undefined;
+    const previous = fs.readlinkSync(link);
+    fs.unlinkSync(link);
+    return { link, outcome: 'removed', detail: previous };
+  } catch {
+    return undefined;
+  }
 }
 
 /** Say what one link came to: a change once, a problem once per link, an unchanged link not at all. */

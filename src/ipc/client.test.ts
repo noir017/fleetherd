@@ -16,7 +16,7 @@ describe('clientTimeoutFor', () => {
   it('gives task-new, reload and pod-add the same, since each can outlast 10 s on a cold host', () => {
     expect(clientTimeoutFor({ kind: 'task-new', text: 'check it', agent: 'oc@laptop', model: 'newapi/x' })).toBe(60_000);
     expect(clientTimeoutFor({ kind: 'reload-config' })).toBe(60_000);
-    expect(clientTimeoutFor({ kind: 'pod-add', name: 'laptop', ssh: 'user@10.0.0.9:10022', hostKey: 'ssh-ed25519 AAAA' })).toBe(60_000);
+    expect(clientTimeoutFor({ kind: 'pod-add', name: 'laptop', ssh: 'user@192.0.2.9:10022', hostKey: 'ssh-ed25519 AAAA' })).toBe(60_000);
   });
 
   it('keeps the ask wait tied to its own timeout plus the margin', () => {

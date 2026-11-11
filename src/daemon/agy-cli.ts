@@ -77,7 +77,7 @@ export async function runAgyCliCommand(
 
 /**
  * One agy invocation on a remote host — `agy -p=/usage` and the rest of the one-shots — run there
- * through talkcode-remote with the agent's environment, answered in AgyCliResult's terms. The host
+ * through fleetherd-remote with the agent's environment, answered in AgyCliResult's terms. The host
  * is the one the agent runs on, because that is where agy is signed in.
  */
 export async function runAgyOnHost(host: RemoteHost, def: AgentDef, argv: string[], cwd?: string): Promise<AgyCliResult> {

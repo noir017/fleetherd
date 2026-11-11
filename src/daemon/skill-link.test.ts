@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, ensureSkillLink, linkSkill, removeSkillLink, skillHomes } from './skill-link.js';
+import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, ensureSkillLink, linkSkill, removeLegacySkillLink, removeSkillLink, skillHomes } from './skill-link.js';
 
 /**
  * The skill link writes into SHARED directories (the operator's own `~/.claude/skills`), so these
@@ -17,7 +17,7 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-link-'));
   source = path.join(home, 'pkg', 'skill');
   fs.mkdirSync(source, { recursive: true });
-  fs.writeFileSync(path.join(source, 'SKILL.md'), '---\nname: talkcode\n---\n');
+  fs.writeFileSync(path.join(source, 'SKILL.md'), '---\nname: fleetherd\n---\n');
 });
 
 afterEach(() => {
@@ -72,14 +72,14 @@ describe('linkSkill', () => {
 
   it('repoints its own link when it points elsewhere (an older install, a test daemon)', () => {
     fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
-    const link = path.join(home, '.claude', 'skills', 'talkcode');
+    const link = path.join(home, '.claude', 'skills', 'fleetherd');
     fs.symlinkSync('/old/install/skill', link);
     expect(linkSkill(source, claude())).toEqual({ link, outcome: 'relinked', detail: '/old/install/skill' });
     expect(fs.readlinkSync(link)).toBe(source);
   });
 
   it('never replaces a real directory: that is the operator\'s own copy', () => {
-    const own = path.join(home, '.claude', 'skills', 'talkcode');
+    const own = path.join(home, '.claude', 'skills', 'fleetherd');
     fs.mkdirSync(own, { recursive: true });
     expect(linkSkill(source, claude())).toMatchObject({ outcome: 'occupied', detail: 'a directory' });
     expect(fs.lstatSync(own).isDirectory()).toBe(true);
@@ -89,7 +89,7 @@ describe('linkSkill', () => {
     fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
     const link = path.join(home, '.claude', 'skills', 'mine');
     fs.symlinkSync('/somewhere/else', link);
-    expect(linkSkill(source, claude(), 'mine', path.join(home, '.talkcode', 'skills'))).toMatchObject({
+    expect(linkSkill(source, claude(), 'mine', path.join(home, '.fleetherd', 'skills'))).toMatchObject({
       outcome: 'occupied',
       detail: 'a link to /somewhere/else',
     });
@@ -99,7 +99,7 @@ describe('linkSkill', () => {
 
 describe('removeSkillLink', () => {
   it('removes a link that points into the owned directory, and nothing else', () => {
-    const owned = path.join(home, '.talkcode', 'skills');
+    const owned = path.join(home, '.fleetherd', 'skills');
     fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
     const ours = path.join(home, '.claude', 'skills', 'ours');
     const theirs = path.join(home, '.claude', 'skills', 'theirs');
@@ -143,5 +143,39 @@ describe('BUNDLED_SKILLS', () => {
     const r = linkSkill(source, { dir: path.join(home, '.claude', 'skills'), requires: path.join(home, '.claude') }, 'super');
     expect(r).toEqual({ link: path.join(home, '.claude', 'skills', 'super'), outcome: 'linked' });
     expect(fs.realpathSync(r.link)).toBe(fs.realpathSync(source));
+  });
+});
+
+// 3.0.0 compatibility (legacy-name.ts): the bundled skill was linked as `talkcode`, and managed
+// skills' links name ~/.talkcode/skills/… — the same directory as ~/.fleetherd/skills/ after the move.
+describe('links made before 3.0.0', () => {
+  const claude = () => skillHomes('claude', home)[0]!;
+
+  it('takes back the old bundled link, and only a link', () => {
+    const skills = path.join(home, '.claude', 'skills');
+    fs.mkdirSync(skills, { recursive: true });
+    fs.symlinkSync('/usr/lib/node_modules/talkcode/skill', path.join(skills, 'talkcode'));
+    expect(removeLegacySkillLink(claude())).toEqual({ link: path.join(skills, 'talkcode'), outcome: 'removed', detail: '/usr/lib/node_modules/talkcode/skill' });
+    expect(fs.existsSync(path.join(skills, 'talkcode'))).toBe(false);
+    expect(removeLegacySkillLink(claude())).toBeUndefined();
+    fs.mkdirSync(path.join(skills, 'talkcode'));
+    expect(removeLegacySkillLink(claude())).toBeUndefined(); // a real directory is the operator's
+    expect(fs.existsSync(path.join(skills, 'talkcode'))).toBe(true);
+  });
+
+  it('counts a managed link into ~/.talkcode/skills as its own, to repoint and to take back', () => {
+    fs.mkdirSync(path.join(home, '.claude', 'skills'), { recursive: true });
+    const owned = path.join(home, '.fleetherd', 'skills');
+    const copy = path.join(owned, 'foo');
+    fs.mkdirSync(copy, { recursive: true });
+    const link = path.join(home, '.claude', 'skills', 'foo');
+    fs.symlinkSync(path.join(home, '.talkcode', 'skills', 'foo'), link);
+    expect(linkSkill(copy, claude(), 'foo', owned).outcome).toBe('relinked');
+    fs.unlinkSync(link);
+    fs.symlinkSync(path.join(home, '.talkcode', 'skills', 'foo'), link);
+    expect(removeSkillLink(link, owned).outcome).toBe('removed');
+    // The operator's own link elsewhere stays theirs.
+    fs.symlinkSync(path.join(home, 'talkcode-notes', 'foo'), link);
+    expect(linkSkill(copy, claude(), 'foo', owned).outcome).toBe('occupied');
   });
 });

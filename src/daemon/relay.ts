@@ -12,7 +12,7 @@ import { agyRelay } from './agy-relay.js';
  * relay is for, and what its transform changes, is the harness's file (agy-relay.ts).
  *
  * Where the agent runs decides where the relay runs, so its model calls never leave that machine:
- * on this one, the listener below; on a remote host, talkcode-remote's (remote/relay.go), which hands
+ * on this one, the listener below; on a remote host, fleetherd-remote's (remote/relay.go), which hands
  * the named responses back here over the link and so keeps every transform in this one place.
  *
  * A relay that cannot be opened is said in the log and the agent starts without one, on its

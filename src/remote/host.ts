@@ -61,10 +61,10 @@ export interface RunResult {
 
 export interface CliRequest {
   argv: string[];
-  /** The directory the agent ran `talkcode` in, on the host. */
+  /** The directory the agent ran `fleetherd` in, on the host. */
   cwd: string;
   token: string;
-  /** TALKCODE_CWD / TALKCODE_IPC_TIMEOUT_MS from the caller's environment, when set. */
+  /** FLEETHERD_CWD / FLEETHERD_IPC_TIMEOUT_MS from the caller's environment, when set. */
   env: Record<string, string>;
   host: RemoteHost;
 }
@@ -81,8 +81,8 @@ export interface CliSession {
 }
 
 /**
- * Runs a reverse command an agent on the host invoked (its `talkcode …`, or the native-tools server
- * `talkcode mcp`). Supplied by the daemon, which owns the CLI it runs it with.
+ * Runs a reverse command an agent on the host invoked (its `fleetherd …`, or the native-tools server
+ * `fleetherd mcp`). Supplied by the daemon, which owns the CLI it runs it with.
  */
 export type CliBridge = (req: CliRequest, io: CliIO) => CliSession;
 
@@ -164,9 +164,9 @@ export class RemoteHost extends EventEmitter {
 
   /** Where things are on the host; needs its welcome (ready()). */
   paths(w: Welcome): { binDir: string; shim: string; socket: string; home: string } {
-    const root = `${w.home}/.talkcode/remote`;
+    const root = `${w.home}/.fleetherd/remote`;
     const binDir = `${root}/${w.version}/bin`;
-    return { binDir, shim: `${binDir}/talkcode`, socket: `${root}/run/${this.opts.ns}/daemon.sock`, home: w.home };
+    return { binDir, shim: `${binDir}/fleetherd`, socket: `${root}/run/${this.opts.ns}/daemon.sock`, home: w.home };
   }
 
   close(): void {
@@ -360,7 +360,7 @@ export class RemoteHost extends EventEmitter {
 
   /**
    * Remove skill links of ours under `dir` that point into a version directory this host no longer
-   * has (remote/ops.go sweepSkillLinks). Only symlinks into `~/.talkcode/remote` are touched; a
+   * has (remote/ops.go sweepSkillLinks). Only symlinks into `~/.fleetherd/remote` are touched; a
    * real directory or a link pointing anywhere else is the operator's and stays. Answers with what
    * it removed, so the gateway can say so.
    */
@@ -469,7 +469,7 @@ export class RemoteHost extends EventEmitter {
       },
     };
     if (!this.opts.cli) {
-      this.conn.send({ t: 'cli-out', cid, fd: 2 }, Buffer.from('talkcode: reverse commands are not available on this gateway\n'));
+      this.conn.send({ t: 'cli-out', cid, fd: 2 }, Buffer.from('fleetherd: reverse commands are not available on this gateway\n'));
       this.conn.send({ t: 'cli-exit', cid, code: 1 });
       return;
     }
@@ -489,13 +489,13 @@ export class RemoteHost extends EventEmitter {
     const gone = [...this.children].filter(([, c]) => c.isOpen).map(([id]) => id);
     const lost = [...this.rpcs].filter(([, p]) => p.sent);
     if (gone.length > 0 || lost.length > 0) {
-      console.warn(`[remote] ${this.id}: talkcode-remote restarted; ${gone.length} process(es) on it are gone`);
+      console.warn(`[remote] ${this.id}: fleetherd-remote restarted; ${gone.length} process(es) on it are gone`);
     }
     for (const id of gone) this.finishChild(id, null, 'SIGKILL');
     for (const [rid, p] of lost) {
       this.rpcs.delete(rid);
       this.conn.release();
-      p.reject(new Error(`talkcode-remote on host "${this.id}" restarted`));
+      p.reject(new Error(`fleetherd-remote on host "${this.id}" restarted`));
     }
     for (const [cid, s] of [...this.clis]) {
       this.clis.delete(cid);

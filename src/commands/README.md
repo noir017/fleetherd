@@ -1,6 +1,6 @@
 # `src/commands/` — CLI entry points
 
-What `talkcode` can do. `cli.ts` (one level up) wires these into
+What `fleetherd` can do. `cli.ts` (one level up) wires these into
 commander; this module implements them.
 
 | Command | File | Purpose |
@@ -9,14 +9,14 @@ commander; this module implements them.
 | `doctor` | `doctor.ts` | Environment self-check — **the default command**. its probe of each remote host, in the PATH each agent will really have, is `daemon/host-probe.ts` (the daemon reads pods with it too) |
 | `start` | `start.ts` | Run the daemon |
 | *(reverse)* | `reverse.ts` | The agent-facing chat actions |
-| *(top level)* | `program.ts` | The `talkcode` command and its global options, read only before the subcommand — two subcommand options share their names |
+| *(top level)* | `program.ts` | The `fleetherd` command and its global options, read only before the subcommand — two subcommand options share their names |
 | *(reverse wiring)* | `reverse-cli.ts` | Registers `REVERSE_COMMANDS` on commander — the one place an omitted optional positional's `undefined` is filtered out before `build()` |
 | `mcp` *(hidden)* | `mcp.ts` | The same actions as native tools: an MCP server on stdio, started by the agent's harness |
-| *(on a host)* | `remote-cli.ts` | Not a command: what `cli.ts` does first when an agent on a remote host runs this binary — hand argv to the host's `talkcode` shim, or refuse a management command. See its header. |
+| *(on a host)* | `remote-cli.ts` | Not a command: what `cli.ts` does first when an agent on a remote host runs this binary — hand argv to the host's `fleetherd` shim, or refuse a management command. See its header. |
 
 ## `doctor` is the default
 
-Running `talkcode` with no arguments runs `doctor`, not `start`. It is read-only,
+Running `fleetherd` with no arguments runs `doctor`, not `start`. It is read-only,
 so triggering it accidentally is safe — unlike starting a daemon. It also means a bare
 invocation shows live state, which is what someone typing the command blind usually
 wants.
@@ -71,7 +71,7 @@ instance → open the session store → build the agent factory → run the daem
 Two deliberate choices:
 
 - **The shim is provisioned up front**, before anything else, so a problem fails loudly
-  at startup rather than on the agent's first `talkcode` call mid-conversation.
+  at startup rather than on the agent's first `fleetherd` call mid-conversation.
   (`agent-acp` refreshes it per spawn as well.)
 - **`unhandledRejection` and `uncaughtException` are logged, never fatal.** This is a
   long-running daemon; an occasional network blip — a transient TLS drop while sending a
@@ -107,14 +107,14 @@ Two details that exist for correctness, not style:
 
 ## `mcp.ts`
 
-`talkcode mcp` is an MCP server on stdio serving `send_file`, `schedule` and `skills`
+`fleetherd mcp` is an MCP server on stdio serving `send_file`, `schedule` and `skills`
 ([`src/ipc/README.md`](../ipc/README.md#why-exactly-these-three-tools) says why those three). The daemon
 lists it in every ACP session, and the harness starts one per session as its own child.
 
 - **Hand-rolled**, not `@modelcontextprotocol/sdk`: four stateless methods (`initialize`, `ping`,
   `tools/list`, `tools/call`), and `handleMcpMessage` stays a pure function the tests drive.
-- **Configured by its environment only** — `TALKCODE_TURN_TOKEN`, `TALKCODE_SOCKET`,
-  `TALKCODE_CWD`, all written into the server's ACP entry by the daemon. It never loads
+- **Configured by its environment only** — `FLEETHERD_TURN_TOKEN`, `FLEETHERD_SOCKET`,
+  `FLEETHERD_CWD`, all written into the server's ACP entry by the daemon. It never loads
   config.yaml: a harness may start MCP servers with an environment of its own choosing, so the
   `${VAR}`s the config expands may simply not be there.
 - **No `instructions`** in `initialize`. Claude Code would put them in the system prompt, which is

@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # talkcode-remote (remote/) is Go: its tests run here, and `npm run build` cross-compiles it.
+      # fleetherd-remote (remote/) is Go: its tests run here, and `npm run build` cross-compiles it.
       - uses: actions/setup-go@v5
         with:
           go-version-file: remote/go.mod
@@ -38,7 +38,7 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Test talkcode-remote
+      - name: Test fleetherd-remote
         run: npm run test:remote
 
       - name: Build
@@ -61,6 +61,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: talkcode-tarball
+          name: fleetherd-tarball
           path: dist-pack/*.tgz
           if-no-files-found: error

@@ -29,7 +29,7 @@ function parse(argv: string[], spec = sessionsSpec): IpcAction {
   registerReverseCommand(program, spec, (a) => {
     action = a;
   });
-  program.parse(['node', 'talkcode', ...argv]);
+  program.parse(['node', 'fleetherd', ...argv]);
   if (!action) throw new Error('the action was not run');
   return action;
 }
@@ -125,7 +125,7 @@ describe('global options beside a command\'s own', () => {
       action = a;
     });
     try {
-      program.parse(['node', 'talkcode', ...argv]);
+      program.parse(['node', 'fleetherd', ...argv]);
     } catch (e) {
       if ((e as { code?: string }).code !== 'commander.version') throw e;
     }

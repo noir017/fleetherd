@@ -706,10 +706,10 @@ function editRefusal(task: ScheduleTask, input: EditTaskInput): string | undefin
     return 'give at most one of --prompt <text> or --bash <command>';
   }
   if (task.run.kind === 'bash' && input.prompt !== undefined) {
-    return `#${task.id} is a --bash task, and edit does not change a task's kind; \`talkcode schedule rm ${task.id}\` and add the prompt task instead`;
+    return `#${task.id} is a --bash task, and edit does not change a task's kind; \`fleetherd schedule rm ${task.id}\` and add the prompt task instead`;
   }
   if (task.run.kind === 'agent' && input.bash !== undefined) {
-    return `#${task.id} is a --prompt task, and edit does not change a task's kind; \`talkcode schedule rm ${task.id}\` and add the bash task instead`;
+    return `#${task.id} is a --prompt task, and edit does not change a task's kind; \`fleetherd schedule rm ${task.id}\` and add the bash task instead`;
   }
   return undefined;
 }
@@ -746,7 +746,7 @@ function fixedWindowProblem(task: ScheduleTask, now: number): string | undefined
   if (first !== undefined && first <= task.expiresAt) return undefined;
   return (
     `a fixed-session task lives until ${formatInZone(task.expiresAt, task.when.tz)} ${task.when.tz} (24h from registration) and the new schedule has no run before then; ` +
-    `\`talkcode schedule rm ${task.id}\` and add it again with --session new for a longer-lived one`
+    `\`fleetherd schedule rm ${task.id}\` and add it again with --session new for a longer-lived one`
   );
 }
 
@@ -903,7 +903,7 @@ export function taskCardText(task: ScheduleTask, verb: string, now: number): str
 /** One line per task, for `/setting schedule` where there are no buttons. */
 export function taskListText(tasks: readonly ScheduleTask[], now: number): string {
   if (tasks.length === 0) {
-    return 'No scheduled tasks. An agent registers one with `talkcode schedule add` — ask for "every morning at 8, …" in any conversation.';
+    return 'No scheduled tasks. An agent registers one with `fleetherd schedule add` — ask for "every morning at 8, …" in any conversation.';
   }
   return ['**Scheduled tasks**', ...tasks.map((t) => taskLine(t, now))].join('\n');
 }

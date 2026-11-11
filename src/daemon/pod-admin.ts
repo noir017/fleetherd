@@ -8,8 +8,8 @@ import { pinnedHostKey, PRIVATE_SOURCES, readKnownHosts } from './pod-peers.js';
 import { defaultIdentityFile, defaultKnownHostsFile } from './remote-hosts.js';
 
 /**
- * Adding and removing hosts (pods) from a chat, as an agent would: `talkcode pod-add`, `pod-remove`
- * and the line `talkcode pods` prints for a new host's authorized_keys. Everything a person did by
+ * Adding and removing hosts (pods) from a chat, as an agent would: `fleetherd pod-add`, `pod-remove`
+ * and the line `fleetherd pods` prints for a new host's authorized_keys. Everything a person did by
  * hand on the gateway for a new machine — a `hosts:` entry, a pinned host key, the key the gateway
  * logs in with — in one command whose output says what is left to do on the host.
  *
@@ -32,7 +32,7 @@ const HOST_KEY = /^(ssh-ed25519|ecdsa-sha2-nistp(?:256|384|521)|ssh-rsa) ([A-Za-
 export function gatewayKeyLine(identityFile = defaultIdentityFile()): string {
   if (!fs.existsSync(identityFile)) {
     fs.mkdirSync(path.dirname(identityFile), { recursive: true, mode: 0o700 });
-    const made = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'talkcode-gateway', '-f', identityFile], { encoding: 'utf8' });
+    const made = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'fleetherd-gateway', '-f', identityFile], { encoding: 'utf8' });
     if (made.status !== 0) throw new Error(`could not make the gateway's ssh key ${identityFile}: ${made.stderr || made.error?.message}`);
   }
   const pub = fs.existsSync(`${identityFile}.pub`)
@@ -40,7 +40,7 @@ export function gatewayKeyLine(identityFile = defaultIdentityFile()): string {
     : spawnSync('ssh-keygen', ['-y', '-f', identityFile], { encoding: 'utf8' }).stdout;
   const [type, b64] = pub.trim().split(/\s+/);
   if (!type || !b64) throw new Error(`no public key for ${identityFile}`);
-  return `restrict,from="${PRIVATE_SOURCES}" ${type} ${b64} talkcode-gateway`;
+  return `restrict,from="${PRIVATE_SOURCES}" ${type} ${b64} fleetherd-gateway`;
 }
 
 /** `host` for port 22, `[host]:port` otherwise — how known_hosts names an address. */
@@ -60,7 +60,7 @@ export function addPod(name: string, ssh: string, hostKey: string, knownHostsFil
   const pinned = `${key[1]} ${key[2]}`;
   const raw = readRawConfigIfExists() ?? {};
   const hosts = (raw.hosts && typeof raw.hosts === 'object' ? raw.hosts : {}) as Record<string, { ssh?: string }>;
-  if (hosts[name]) throw new Error(`host "${name}" already exists (ssh: ${hosts[name].ssh ?? '?'}); \`talkcode pod-remove ${name}\` first to replace it`);
+  if (hosts[name]) throw new Error(`host "${name}" already exists (ssh: ${hosts[name].ssh ?? '?'}); \`fleetherd pod-remove ${name}\` first to replace it`);
   const text = readKnownHosts(knownHostsFile);
   const already = pinnedHostKey(text, ssh);
   if (already && already !== pinned) {

@@ -12,25 +12,30 @@ import {
 import { applyDotEnvDelta, dotEnvDelta, expandEnvVars } from './env-expand.js';
 import { isLegacyConfig, migrateLegacyConfig } from './migrate.js';
 import { mergePodAgents, readPods } from './pods.js';
+import { defaultConfigDir, envOf } from '../legacy-name.js';
 
 /**
  * Directory that holds the config file, socket, and other per-instance state.
  * Precedence (highest first):
- *   1. TALKCODE_CONFIG_FILE — an explicit config file path; its parent dir is used here.
- *   2. TALKCODE_CONFIG_DIR  — a config directory (config.yaml lives inside).
- *   3. default ~/.config/talkcode/
- * The `--config <path>` CLI flag is plumbed through by setting TALKCODE_CONFIG_FILE on
+ *   1. FLEETHERD_CONFIG_FILE — an explicit config file path; its parent dir is used here.
+ *   2. FLEETHERD_CONFIG_DIR  — a config directory (config.yaml lives inside).
+ *   3. default ~/.config/fleetherd/ — or ~/.config/talkcode/ where only that exists (legacy-name.ts).
+ * Each FLEETHERD_ variable is also read by its name before 3.0.0, TALKCODE_.
+ * The `--config <path>` CLI flag is plumbed through by setting FLEETHERD_CONFIG_FILE on
  * process.env, so it is inherited by the agent subprocess (and thus by reverse commands).
+ *
+ * Everything the gateway keeps goes under this, never under a spelled-out ~/.config/fleetherd: a
+ * directory created there would turn an install still on ~/.config/talkcode into one without config.
  */
 export function configDir(): string {
-  const file = process.env.TALKCODE_CONFIG_FILE;
+  const file = envOf('CONFIG_FILE');
   if (file) return path.dirname(path.resolve(expandHome(file)));
-  return process.env.TALKCODE_CONFIG_DIR ?? path.join(os.homedir(), '.config', 'talkcode');
+  return envOf('CONFIG_DIR') ?? defaultConfigDir(os.homedir());
 }
 
-/** Absolute path of the active config file. TALKCODE_CONFIG_FILE overrides the default config.yaml. */
+/** Absolute path of the active config file. FLEETHERD_CONFIG_FILE overrides the default config.yaml. */
 export function configPath(): string {
-  const file = process.env.TALKCODE_CONFIG_FILE;
+  const file = envOf('CONFIG_FILE');
   if (file) return path.resolve(expandHome(file));
   return path.join(configDir(), 'config.yaml');
 }
@@ -58,7 +63,7 @@ export function loadConfig(): Config {
   } catch (e) {
     // At startup the wizard is the way out; a reload's caller is told what is wrong and nothing else
     // (an agent must not run the interactive wizard, and a chat user cannot).
-    if (e instanceof ConfigValidationError) throw new Error(`${e.message}\nrun \`talkcode setup\``);
+    if (e instanceof ConfigValidationError) throw new Error(`${e.message}\nrun \`fleetherd setup\``);
     throw e;
   }
   const { config, commitEnv } = read;
@@ -99,7 +104,7 @@ export interface ReadConfig {
 export function readConfig(): ReadConfig {
   const p = configPath();
   if (!fs.existsSync(p)) {
-    throw new Error(`config not found at ${p}; run \`talkcode setup\` first`);
+    throw new Error(`config not found at ${p}; run \`fleetherd setup\` first`);
   }
   let raw: unknown;
   try {
@@ -109,7 +114,7 @@ export function readConfig(): ReadConfig {
     throw new Error(`failed to parse config file (YAML) ${p}: ${msg}`);
   }
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`config file is empty or malformed ${p}; run \`talkcode setup\` to regenerate it`);
+    throw new Error(`config file is empty or malformed ${p}; run \`fleetherd setup\` to regenerate it`);
   }
 
   // v0 (single `platform:` object) → v1 in memory; the file itself is left untouched.
@@ -117,7 +122,7 @@ export function readConfig(): ReadConfig {
     raw = migrateLegacyConfig(raw as Record<string, unknown>).config;
     console.warn(
       `[config] ⚠️  ${p} uses the old single-platform format; it was migrated in memory. ` +
-        'Run `talkcode doctor --migrate-config` to rewrite the file to the v1 `platforms:` map.'
+        'Run `fleetherd doctor --migrate-config` to rewrite the file to the v1 `platforms:` map.'
     );
   }
 

@@ -76,7 +76,7 @@ async function checkRemoteHost(def: HostDef, probes: HostProbe[]): Promise<{ ok:
   const { missing, unchecked } = readHostProbe(probes, r.stdout);
   const supported = /^Linux (x86_64|amd64|aarch64|arm64)$/.test(system);
   const parts = [`connected (${system})`];
-  if (!supported) parts.push('✗ talkcode-remote runs on Linux x86_64/arm64 only');
+  if (!supported) parts.push('✗ fleetherd-remote runs on Linux x86_64/arm64 only');
   if (missing.length) parts.push(`✗ not found there: ${missing.join(', ')}`);
   if (unchecked.length) parts.push(`not checked: ${unchecked.join(', ')}`);
   return { ok: supported && missing.length === 0, detail: parts.join(', ') };
@@ -130,7 +130,7 @@ function authNote(def: import('../config/schema.js').AgentDef): string {
 }
 
 /**
- * `talkcode doctor` — self-check. Each item reports ✅/⚠️/❌; doesn't exit on the first
+ * `fleetherd doctor` — self-check. Each item reports ✅/⚠️/❌; doesn't exit on the first
  * failure, summarizes after running all.
  */
 interface Check {
@@ -194,7 +194,7 @@ function tildify(p: string): string {
 
 /** AXI §10: identify the tool before the live data — absolute bin path + one-line description. */
 function printIdentity(): void {
-  console.log(`bin: ${tildify(process.argv[1] ?? 'talkcode')}`);
+  console.log(`bin: ${tildify(process.argv[1] ?? 'fleetherd')}`);
   console.log(`config: ${tildify(configPath())}`);
   console.log('description: Gateway connecting IM platforms to coding agents; this is its self-check.');
 }
@@ -459,7 +459,7 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
       /**
        * Each `hosts:` entry: the key and known_hosts the gateway pins, a real connection, and the
        * harness commands of the agents placed there — looked up on the host's LOGIN PATH, which is
-       * the environment talkcode-remote starts agents in (remote/shellenv.go), not the bare one a
+       * the environment fleetherd-remote starts agents in (remote/shellenv.go), not the bare one a
        * non-interactive ssh command gets; or in the agent's own PATH when its `env` sets one
        * (doctor-hosts.ts).
        */

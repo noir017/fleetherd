@@ -30,7 +30,7 @@ import (
 //
 // Three kinds of connection arrive on its socket, told apart by their first frame:
 //   hello — the gateway, through attach (the link)
-//   cli   — the `talkcode` shim an agent ran (a reverse command or the native-tools server)
+//   cli   — the `fleetherd` shim an agent ran (a reverse command or the native-tools server)
 //   ctl   — attach asking about or stopping this daemon (status / shutdown)
 
 const (
@@ -144,12 +144,12 @@ func startDaemon(ns, version string) (*daemon, error) {
 }
 
 // agentEnv is the environment for anything this daemon starts: the login environment, the
-// gateway's per-agent overrides, the `talkcode` shim leading PATH, the socket the shim dials, and
+// gateway's per-agent overrides, the `fleetherd` shim leading PATH, the socket the shim dials, and
 // the shim's own path.
 //
-// TALKCODE_REMOTE_CLI exists because PATH is not reliable where an agent runs commands: codex runs
+// FLEETHERD_REMOTE_CLI exists because PATH is not reliable where an agent runs commands: codex runs
 // them with `bash -lc`, and a login shell re-reads /etc/profile, which rebuilds PATH from the
-// system default — so `talkcode` there is whatever the image installed (the full Node CLI in
+// system default — so `fleetherd` there is whatever the image installed (the full Node CLI in
 // uniagent) rather than the shim this daemon put first. The Node CLI cannot work out where the
 // shim is from the socket alone (the socket is per gateway, the shim per version), so the daemon
 // says it: with this variable set the Node CLI hands its argv straight to the shim instead of
@@ -163,11 +163,12 @@ func (d *daemon) agentEnv(set map[string]string, unset []string) []string {
 	} else {
 		path = d.binDir + string(os.PathListSeparator) + path
 	}
-	return envMerge(env, map[string]string{
-		"PATH":                 path,
-		"TALKCODE_REMOTE_SOCK": d.sockPath,
-		"TALKCODE_REMOTE_CLI":  filepath.Join(d.binDir, "talkcode"),
-	}, nil)
+	// Both names of each (legacy.go): the Node CLI an image installed may be older than 3.0.0.
+	return envMerge(env, withLegacyNames(map[string]string{
+		"PATH":                  path,
+		"FLEETHERD_REMOTE_SOCK": d.sockPath,
+		"FLEETHERD_REMOTE_CLI":  filepath.Join(d.binDir, "fleetherd"),
+	}), nil)
 }
 
 func (d *daemon) acceptLoop() {
@@ -379,7 +380,7 @@ func (d *daemon) resetAll(epoch, why string) {
 	d.closeRelays()
 }
 
-// ── the `talkcode` shim ───────────────────────────────────────────────────────────────────────
+// ── the `fleetherd` shim ───────────────────────────────────────────────────────────────────────
 
 func (d *daemon) serveCli(conn net.Conn, r *bufio.Reader, first *Header) {
 	defer conn.Close()

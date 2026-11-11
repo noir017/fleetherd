@@ -81,7 +81,7 @@ type Header struct {
 	Merge     bool            `json:"merge,omitempty"`
 	Res       json.RawMessage `json:"res,omitempty"`
 
-	// reverse commands (the `talkcode` shim)
+	// reverse commands (the `fleetherd` shim)
 	Cid   string `json:"cid,omitempty"`
 	Token string `json:"token,omitempty"`
 

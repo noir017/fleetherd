@@ -92,7 +92,7 @@ export interface Topic {
    */
   dir?: { name: string; path: string; host?: string };
   /**
-   * The topic whose agent opened this one (`talkcode task-new`, started once the operator confirmed
+   * The topic whose agent opened this one (`fleetherd task-new`, started once the operator confirmed
    * it — daemon/delegation.ts). The switcher nests it there, and the daemon reads it back to know
    * whom to tell when this topic's agent finishes (`PlatformAdapter.parentOf`), so this field is the
    * one record of the relation. Persisted, and dropped when the parent goes — deleted, evicted or
@@ -363,7 +363,7 @@ export class TopicStore {
    * harness's own name does not arrive until a turn has finished (and never at all when
    * `title.llm` is unconfigured). Only ever fills a blank — it must not overwrite a real name.
    *
-   * Not from a slash command: `/agent oc2`, `/cd quantlab` and a bare `/cc` say what the topic is
+   * Not from a slash command: `/agent oc2`, `/cd shop-api` and a bare `/cc` say what the topic is
    * set up WITH, not what it is about, and since a new topic's choice of agent is a tap that types
    * `/agent <id>` (2026-11-02), seeding from them named most new topics after a command. The next
    * thing said seeds it instead.

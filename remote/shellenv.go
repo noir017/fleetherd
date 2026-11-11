@@ -30,8 +30,8 @@ import (
 const (
 	envTTL          = time.Minute
 	envCaptureLimit = 10 * time.Second
-	envBegin        = "__TALKCODE_REMOTE_ENV_BEGIN__"
-	envEnd          = "__TALKCODE_REMOTE_ENV_END__"
+	envBegin        = "__FLEETHERD_REMOTE_ENV_BEGIN__"
+	envEnd          = "__FLEETHERD_REMOTE_ENV_END__"
 )
 
 // Variables that describe the ssh connection or the capturing shell itself, not the user's setup:
@@ -39,6 +39,8 @@ const (
 var envDrop = []string{
 	"SSH_CLIENT", "SSH_CONNECTION", "SSH_TTY", "SSH_AUTH_SOCK", "SSH_ORIGINAL_COMMAND",
 	"SHLVL", "PWD", "OLDPWD", "_", "PS1", "PROMPT_COMMAND",
+	"FLEETHERD_REMOTE_SOCK", "FLEETHERD_REMOTE_CLI", "FLEETHERD_TURN_TOKEN", "FLEETHERD_SOCKET",
+	// and the same under the names they had before 3.0.0 (legacy.go)
 	"TALKCODE_REMOTE_SOCK", "TALKCODE_REMOTE_CLI", "TALKCODE_TURN_TOKEN", "TALKCODE_SOCKET",
 }
 
@@ -141,7 +143,7 @@ func cleanEnv(env []string) []string {
 	return out
 }
 
-// runDumpEnvCommand is `talkcode-remote dumpenv`: print this process's environment between the
+// runDumpEnvCommand is `fleetherd-remote dumpenv`: print this process's environment between the
 // markers, for captureLoginEnv to read back.
 func runDumpEnvCommand() int {
 	b, err := json.Marshal(os.Environ())

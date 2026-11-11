@@ -21,8 +21,8 @@ export interface AppliedChange {
 
 /** The command that undoes one applied change, or nothing when it cannot be undone by name. */
 export function undoOf(change: AppliedChange): string | undefined {
-  if (change.action === 'created') return `talkcode skills archive ${change.name}`;
-  return change.revertId ? `talkcode skills revert ${change.name} ${change.revertId}` : undefined;
+  if (change.action === 'created') return `fleetherd skills archive ${change.name}`;
+  return change.revertId ? `fleetherd skills revert ${change.name} ${change.revertId}` : undefined;
 }
 
 /**
@@ -102,7 +102,7 @@ export function recordedChange(
 
 /** The command that carries out a suggested change — what the person runs, or the Skills tab does. */
 export function commandOf(change: HistoryReviewChange): string | undefined {
-  return change.suggested && change.action === 'archive' ? `talkcode skills archive ${change.name}` : undefined;
+  return change.suggested && change.action === 'archive' ? `fleetherd skills archive ${change.name}` : undefined;
 }
 
 /** The row's one line: what happened, short enough to scan. */

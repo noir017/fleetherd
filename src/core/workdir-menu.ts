@@ -7,7 +7,7 @@ import { PAGE_SIZE, pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from
  * ── Why this module exists ────────────────────────────────────────────────────
  * An agent's working directory was a deployment decision (`agents[].cwd`) and nothing else, so a
  * phone user driving a machine with a dozen projects on it could reach exactly one of them. The
- * missing half is per-CONVERSATION: "this topic is about quantlab, that one about the gateway".
+ * missing half is per-CONVERSATION: "this topic is about shop-api, that one about the gateway".
  *
  * Harness-agnostic on purpose. Every runtime this gateway drives takes a working directory at
  * startup — ACP passes it to `session/new`, agy takes it as the child's cwd and its `--add-dir`
@@ -23,7 +23,7 @@ import { PAGE_SIZE, pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from
  *
  * Everything here is pure: the scan lives in daemon/workdir-scan.ts (it needs fs), the posting and
  * clicking in daemon/, and the two surfaces — menu and text — are built from these same functions
- * so a tap and a typed `/cd quantlab` cannot describe the same outcome differently.
+ * so a tap and a typed `/cd shop-api` cannot describe the same outcome differently.
  */
 
 /** One selectable directory. `path` is absolute; `name` is what a human calls it. */
@@ -180,7 +180,7 @@ export type WorkdirMatch =
  * name.
  *
  * Exact-first for the reason matchModels documents: one project's path is routinely a prefix of
- * another's (`~/workspace/quantlab` inside `~/workspace/quantlab-agents`), so a user who typed a
+ * another's (`~/workspace/shop-api` inside `~/workspace/shop-api-web`), so a user who typed a
  * full path correctly must not be answered with an ambiguity prompt.
  */
 export function matchWorkdirs(options: WorkdirOption[], query: string): WorkdirMatch {

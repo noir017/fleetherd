@@ -5,7 +5,7 @@
  * the JWKS endpoint (and the timeout/abort plumbing around it). Everything here is the shipped
  * code path: config schema → createWebuiAdapter → node:http server → WebSso.
  *
- * Run: TALKCODE_CONFIG_DIR=$(mktemp -d) npx tsx scripts/verify-sso.mts
+ * Run: FLEETHERD_CONFIG_DIR=$(mktemp -d) npx tsx scripts/verify-sso.mts
  */
 import { createServer } from 'node:http';
 import { createSign, generateKeyPairSync } from 'node:crypto';

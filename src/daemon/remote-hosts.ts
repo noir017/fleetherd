@@ -20,15 +20,16 @@ import {
   type InstructionsResult,
 } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes } from './skill-link.js';
+import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes, type SkillHome } from './skill-link.js';
 import { deliveredTo, managedSkillsHome } from './managed-skills.js';
 import { activeSkillFiles, archivedSkillNames } from './skills-store.js';
+import { LEGACY_SKILL_LINK, envOf } from '../legacy-name.js';
 
 /**
  * The daemon's remote hosts (`hosts:` in config.yaml): one RemoteHost per entry, shared by every
  * agent whose `host` names it, and the pieces of "an agent on another machine" that are the
  * daemon's to decide rather than the transport's — the namespace this gateway uses on every host,
- * how an agent's `talkcode` command is run back here, and where the bundled skill goes over there.
+ * how an agent's `fleetherd` command is run back here, and where the bundled skill goes over there.
  *
  * A module-level registry, configured once at start and again on `/reload`, because the runtimes
  * that need it are built by factories far from the daemon's constructor, and a host must be ONE
@@ -179,8 +180,8 @@ export class RemoteHosts {
    * would repoint it — so one made for a harness this build no longer maps would stay dead forever.
    */
   async placeSkill(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<void> {
-    if (process.env.TALKCODE_NO_SKILL_LINK) return;
-    const base = `${w.home}/.talkcode/remote/${w.version}`;
+    if (envOf('NO_SKILL_LINK')) return;
+    const base = `${w.home}/.fleetherd/remote/${w.version}`;
     const key = `${host.id}@${w.version}@${w.instance}`;
     const homes = skillHomes(def.harness, home, def.command);
     try {
@@ -206,8 +207,21 @@ export class RemoteHosts {
           else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[skill] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
         }
       }
+      await this.removeLegacySkillLinks(host, homes, w);
     } catch (e) {
       console.warn(`[skill] ${host.id}: could not place the skill:`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  /**
+   * The bundled skill's link before 3.0.0, `talkcode` → ~/.talkcode/remote/<version>/skill, taken
+   * back where `fleetherd` is now linked — only when it points into this gateway's own directory
+   * (remote/legacy.go reads that under both spellings), as the local twin does (skill-link.ts).
+   */
+  private async removeLegacySkillLinks(host: RemoteHost, homes: SkillHome[], w: Welcome): Promise<void> {
+    for (const h of homes) {
+      const r = await host.removeLink(`${h.dir}/${LEGACY_SKILL_LINK}`, `${w.home}/.fleetherd/remote`);
+      if (r.outcome === 'removed') console.log(`[skill] ${host.id}: removed ${r.link}, the skill's link before 3.0.0`);
     }
   }
 
@@ -223,7 +237,7 @@ export class RemoteHosts {
    * warned about once. Best-effort like the skill.
    */
   async placeInstructions(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<void> {
-    if (process.env.TALKCODE_NO_SKILL_LINK) return;
+    if (envOf('NO_SKILL_LINK')) return;
     const where = instructionsHome(def.harness, home, def.command);
     if (!where) return;
     const key = `${host.id}@${w.instance}@${where.file}`;
@@ -252,7 +266,7 @@ export class RemoteHosts {
   /**
    * Put the gateway's managed skills where `def` reads skills on the host — the remote twin of
    * managed-skills.ts `placeManagedSkills`, which says where and under what rules. The copy goes to
-   * `<home>/.talkcode/skills/<name>/`; each skill is linked into the harness's directories with
+   * `<home>/.fleetherd/skills/<name>/`; each skill is linked into the harness's directories with
    * `owned` set, so a link of the operator's own is never repointed.
    *
    * The files and the links are remembered separately. The files are one copy per skill, so a
@@ -269,7 +283,7 @@ export class RemoteHosts {
    * puts it back through the active path. Best-effort like the bundled skill.
    */
   async placeManagedSkills(host: RemoteHost, def: AgentDef, home: string, w: Welcome, dir?: string): Promise<void> {
-    if (process.env.TALKCODE_NO_SKILL_LINK) return;
+    if (envOf('NO_SKILL_LINK')) return;
     const owned = managedSkillsHome(home);
     await this.placeActiveManagedSkills(host, def, home, owned, w, dir);
     await this.retireManagedSkills(host, home, owned, w, dir);
@@ -381,7 +395,7 @@ export class RemoteHosts {
   }
 
   /**
-   * Run one `talkcode …` an agent on a host invoked, as this gateway's own CLI — the same program a
+   * Run one `fleetherd …` an agent on a host invoked, as this gateway's own CLI — the same program a
    * local agent's command runs, so parsing, validation and output are the same — with the turn
    * token the agent holds, this daemon's socket, and the agent's directory and home, which is what
    * its relative and `~` paths mean (commands/reverse.ts resolvePathArg).
@@ -391,32 +405,33 @@ export class RemoteHosts {
    */
   runCli(req: Parameters<CliBridge>[0], io: Parameters<CliBridge>[1]): CliSession {
     const refuse = (message: string): CliSession => {
-      io.out(2, Buffer.from(`talkcode: ${message}\n`));
+      io.out(2, Buffer.from(`fleetherd: ${message}\n`));
       io.exit(2);
       return { write: () => {}, end: () => {}, kill: () => {} };
     };
     // The command is judged before this process's own shape: a forbidden command is forbidden
     // whatever the gateway runs as, and the message about it is the useful one.
     if (!isBridgedCommand(req.argv)) {
-      return refuse(`"${req.argv[0] ?? ''}" is not a command an agent can run here; \`talkcode help\` lists them`);
+      return refuse(`"${req.argv[0] ?? ''}" is not a command an agent can run here; \`fleetherd help\` lists them`);
     }
     const self = selfInvocation();
-    if (!self) return refuse('this gateway is not running as the talkcode CLI, so it cannot run reverse commands');
+    if (!self) return refuse('this gateway is not running as the fleetherd CLI, so it cannot run reverse commands');
     const env: Record<string, string | undefined> = {
       ...process.env,
-      TALKCODE_TURN_TOKEN: req.token,
-      TALKCODE_SOCKET: this.socketPath,
-      TALKCODE_CWD: req.env.TALKCODE_CWD || req.cwd,
-      TALKCODE_REMOTE_HOME: req.host.conn.welcome?.home || '/',
-      TALKCODE_REMOTE_HOST: req.host.id,
+      FLEETHERD_TURN_TOKEN: req.token,
+      FLEETHERD_SOCKET: this.socketPath,
+      FLEETHERD_CWD: envOf('CWD', req.env) || req.cwd,
+      FLEETHERD_REMOTE_HOME: req.host.conn.welcome?.home || '/',
+      FLEETHERD_REMOTE_HOST: req.host.id,
     };
-    if (req.env.TALKCODE_IPC_TIMEOUT_MS) env.TALKCODE_IPC_TIMEOUT_MS = req.env.TALKCODE_IPC_TIMEOUT_MS;
+    const timeout = envOf('IPC_TIMEOUT_MS', req.env);
+    if (timeout) env.FLEETHERD_IPC_TIMEOUT_MS = timeout;
     const child = spawn(self.command, [...self.args, ...req.argv], { env, cwd: os.tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] });
     child.stdout.on('data', (d: Buffer) => io.out(1, d));
     child.stderr.on('data', (d: Buffer) => io.out(2, d));
     child.stdin.on('error', () => {}); // the command finished without reading what was piped to it
     child.on('error', (e) => {
-      io.out(2, Buffer.from(`talkcode: ${e.message}\n`));
+      io.out(2, Buffer.from(`fleetherd: ${e.message}\n`));
       io.exit(127);
     });
     child.on('close', (code) => io.exit(code ?? 1));

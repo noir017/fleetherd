@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
 import { selfInvocation } from './reverse-cli-shim.js';
+import { envOf, isUnderEitherName } from '../legacy-name.js';
 
 /**
  * The operator's standing instructions — how they want to be worked with — placed where each
@@ -46,14 +47,14 @@ import { selfInvocation } from './reverse-cli-shim.js';
  * `env.HOME` override is, by the caller, as for the skill.
  *
  * ── What it will and will not touch ──────────────────────────────────────────────────────────────
- * The text goes to `<home>/.talkcode/instructions/<name>.md` — a fixed path, never under a version
+ * The text goes to `<home>/.fleetherd/instructions/<name>.md` — a fixed path, never under a version
  * directory (an upgrade deletes those, and a link into one dies: skill-link.ts, CodeBuddy,
  * 2026-11-03) — written read-only and replaced in one rename, since agents may be starting and
  * reading it as it changes; read-only so an agent that wants to change it finds out it should not
  * (the next spawn would overwrite it). The harness's file becomes a symlink to that copy, under the
  * skill link's rules: only where the harness's config directory exists, never over a real file (the
  * operator's own, left alone with a warning) — and, stricter than the skill, a symlink is repointed
- * only when it points into `~/.talkcode/instructions`, because at a harness's global file a symlink
+ * only when it points into `~/.fleetherd/instructions`, because at a harness's global file a symlink
  * is as likely the operator's own way of keeping that file elsewhere.
  *
  * Nothing to deliver — no `instructions/` directory, or neither file for this agent — takes a link
@@ -127,7 +128,7 @@ export function instructionsDir(): string {
 
 /** The directory the copies live in on a host, which is also what makes a link "ours". */
 export function ownedDir(home: string): string {
-  return path.join(home, '.talkcode', INSTRUCTIONS_DIR);
+  return path.join(home, '.fleetherd', INSTRUCTIONS_DIR);
 }
 
 /** What there is to deliver to one kind of agent. */
@@ -203,8 +204,9 @@ export interface InstructionsResult {
 /** Outcomes after which the same text needs nothing more on that host until it changes. */
 export const SETTLED: ReadonlySet<string> = new Set(['linked', 'relinked', 'current', 'removed', 'absent', 'kept', 'too-big']);
 
+/** Inside `dir`, under its current or its pre-3.0.0 spelling (legacy-name.ts). */
 function isUnder(dest: string, dir: string): boolean {
-  return path.resolve(dest).startsWith(path.resolve(dir) + path.sep);
+  return isUnderEitherName(dest, dir);
 }
 
 /** Replace `file` with `text` in one rename, read-only — unless it already says exactly that. */
@@ -304,10 +306,10 @@ export function reportInstructions(r: InstructionsResult, where = ''): void {
  * Deliver the instructions for one local agent's harness under `home`. Best-effort: every outcome
  * is logged or silent, never thrown — an agent without them still works. Guarded like the skill
  * link (skill-link.ts), for the same reason: it writes to the operator's own directories, so a test
- * worker must never reach it, and TALKCODE_NO_SKILL_LINK=1 keeps a test daemon off the live files.
+ * worker must never reach it, and FLEETHERD_NO_SKILL_LINK=1 keeps a test daemon off the live files.
  */
 export function placeInstructions(def: AgentDef, home: string): InstructionsResult | undefined {
-  if (process.env.TALKCODE_NO_SKILL_LINK) return undefined;
+  if (envOf('NO_SKILL_LINK')) return undefined;
   if (!selfInvocation()) return undefined;
   const where = instructionsHome(def.harness, home, def.command);
   if (!where) return undefined;

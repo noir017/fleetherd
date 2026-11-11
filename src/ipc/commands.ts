@@ -6,7 +6,7 @@ import { DEFAULT_ASK_TIMEOUT_MS, DEFAULT_CHANNEL_LIMIT } from './protocol.js';
  *
  * One spec drives every place a command surfaces, avoiding scattered lists and silent drift:
  *  - `cli.ts`: registers commander subcommands from it.
- *  - `talkcode help <topic>`: renders each spec onto the page its `topic` names.
+ *  - `fleetherd help <topic>`: renders each spec onto the page its `topic` names.
  *  - `tools.ts`: the few commands an agent gets as native tools take their parameters and their
  *    validation (`build`) from here.
  *  - Execution dispatch stays in `daemon.ts` handleReverse (with exhaustive type guard).
@@ -32,7 +32,7 @@ export interface ReverseCommandSpec {
   /** Build one IpcAction from positionals + options. */
   build(positionals: string[], opts: Record<string, unknown>): IpcAction;
   /**
-   * Which `talkcode help <topic>` page documents this command. Required, so a new command
+   * Which `fleetherd help <topic>` page documents this command. Required, so a new command
    * cannot be added without deciding where an agent will find it — the help pages, reached from the
    * bundled skill, are how every command that is not a native tool gets discovered (see HELP_TOPICS).
    */
@@ -40,7 +40,7 @@ export interface ReverseCommandSpec {
 }
 
 /**
- * The pages of `talkcode help`: the reference an agent loads when it needs one.
+ * The pages of `fleetherd help`: the reference an agent loads when it needs one.
  *
  * ── Nothing about the gateway is put in the agent's prompt ────────────────────────────────────
  * The gateway aims to be invisible to the agent: no text of its own in the conversation, ever. What
@@ -100,7 +100,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '--model names the model a --session new or daily task\'s conversations use. A fixed-session task runs in this conversation and keeps the model /model set here, so --model there is refused. The id must be in the agent\'s own /model list: a name it does not offer is refused when the task is added, with the list, and a run that cannot apply the model fails with the reason instead of quietly using another.',
       '--bash: the gateway runs the command with `bash -lc` in --cwd (default: your working directory) and posts the exit code, duration and the end of the output; long output is attached as a file. --timeout defaults to 10m, at most 6h.',
       '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday). Both are read in --tz, default the gateway\'s own zone.',
-      '--channel is where output goes (ids from `talkcode channels`); default this conversation.',
+      '--channel is where output goes (ids from `fleetherd channels`); default this conversation.',
       'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped.',
       '`add` and `show` print the task id; `list` shows every task with its next run and last result; pause / resume / run (run it now, once) / rm take the id.',
       '--tag labels a task for the web UI\'s task list: one comma-separated list, at most 5 tags of up to 24 characters each. A tag is letters (Chinese included), digits and - _ . / — no spaces or commas; it is trimmed and lowercased. edit replaces the whole set; --tag "" clears it.',
@@ -128,7 +128,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'sessions',
     summary: 'Search every earlier conversation the gateway has carried — all agents, all platforms',
     notes: [
-      'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through talkcode, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
+      'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through fleetherd, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
       'search "<words>" returns the conversation id, the message id, the title, the agent and a matching excerpt. Quote a multi-word query — it is one argument. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations. Tool calls are left out; --tools searches them too, arguments included.',
       'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail), --grep or --tail selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --role tool lists the calls with their arguments. list [--days <n>] is the recent conversations.',
       'Pass the ids exactly as printed: session and message are numbers, with or without the leading #.',
@@ -159,7 +159,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'config',
     summary: 'Apply an edited config.yaml without restarting the gateway',
     notes: [
-      'The config is `config.yaml` in the gateway\'s config directory (`~/.config/talkcode/` unless TALKCODE_CONFIG_FILE or TALKCODE_CONFIG_DIR says otherwise), with secrets in `.env` beside it. Edit the file, then run reload — the user can do the same with /reload.',
+      'The config is `config.yaml` in the gateway\'s config directory (`~/.config/fleetherd/` unless FLEETHERD_CONFIG_FILE or FLEETHERD_CONFIG_DIR says otherwise), with secrets in `.env` beside it. Edit the file, then run reload — the user can do the same with /reload.',
       'Nothing is applied when the file does not load: the error says what is wrong and the gateway keeps running on the old config. Fix it and reload again.',
       'Agents, routing, access, session, display, title and voice apply at once. A changed agent restarts its process on the conversation\'s next message and resumes its session — including the agent you are, if you change your own definition. A turn already running finishes on the old definition. A new `model` only applies to new sessions (/new).',
       'platforms (credentials, instances) only change on a daemon restart, which ends every conversation\'s agent process, yours included; reload says when one is needed. Restarting is the user\'s call, not yours.',
@@ -171,8 +171,8 @@ export const HELP_TOPICS: HelpTopic[] = [
     notes: [
       'A pod is a machine the gateway reaches over ssh to run agents (the `hosts:` of its config). `pods` lists them with their agents, and prints `gatewayKey` — the line a new machine needs in its ~/.ssh/authorized_keys.',
       'Adding one: on the machine, append `gatewayKey` to ~/.ssh/authorized_keys and read its host key there (`cat /etc/ssh/ssh_host_ed25519_key.pub`, or wherever its sshd keeps it) — read it on the machine, not with ssh-keyscan, since this is what every connection will be checked against. Then `pod-add <name> <user@address[:port]> --host-key "<that line>"`. It answers with the agents found there.',
-      'Its agents: ~/.talkcode/pod.yaml on the machine lists them (`agents:`, the fields of a config.yaml agent without `host`); the gateway names them `<id>@<name>`. Without the file it offers each harness command it finds on the login PATH (claude-agent-acp, codex-acp, opencode, agy, codebuddy). After editing the file, `reload`. Values are used as written: ${VAR} is refused.',
-      'Pod-to-pod ssh: `peer:` in a machine\'s pod.yaml puts it in the mesh — after a `reload`, every pod with `peer:` can `ssh <name>.pod` (and scp, rsync, git) to every other. `peer: { ssh: user@address:port }` when the others reach it differently from the gateway. Needs the machine\'s sshd to read ~/.talkcode/ssh/authorized_keys and its ssh to include ~/.talkcode/ssh/config (uniagent images do).',
+      'Its agents: ~/.fleetherd/pod.yaml on the machine lists them (`agents:`, the fields of a config.yaml agent without `host`); the gateway names them `<id>@<name>`. Without the file it offers each harness command it finds on the login PATH (claude-agent-acp, codex-acp, opencode, agy, codebuddy). After editing the file, `reload`. Values are used as written: ${VAR} is refused.',
+      'Pod-to-pod ssh: `peer:` in a machine\'s pod.yaml puts it in the mesh — after a `reload`, every pod with `peer:` can `ssh <name>.pod` (and scp, rsync, git) to every other. `peer: { ssh: user@address:port }` when the others reach it differently from the gateway. Needs the machine\'s sshd to read ~/.fleetherd/ssh/authorized_keys and its ssh to include ~/.fleetherd/ssh/config (uniagent images do).',
       '`pod-remove <name>` takes a machine out (its agents go with it). Refused while config.yaml itself still names it.',
     ],
   },
@@ -181,12 +181,12 @@ export const HELP_TOPICS: HelpTopic[] = [
     summary: "The skills the gateway keeps for every agent: read, write, archive, restore, roll back",
     notes: [
       'These are the gateway\'s own skills, not the harness\'s installed ones. Each one is delivered to every agent on every host, so what you write here reaches all of them: keep it about a kind of task, not about one conversation. It acts on the whole gateway, so --channel does not apply.',
-      'Most skills are in the library, not in your skill list: `search <what you need>` finds them (up to 5), and `show <name>` reads one — SKILL.md whole, with the list of its other files. A skill already in your list says so; use it from there. `show` of a version this conversation already read answers "unchanged"; add --again if it is no longer in your context. Resident skills — the ones in every agent\'s list — are chosen by a person; a patch that changes `talkcode-resident` in the frontmatter is refused.',
-      'Names are lowercase words joined by hyphens (a-z, 0-9). `talkcode` and `super` are the bundled skills and cannot be reused. `SKILL.md` is at most 64 KB and must begin with frontmatter naming the skill and a one-line description of when to use it; files beyond it go only in references/, templates/ or scripts/.',
+      'Most skills are in the library, not in your skill list: `search <what you need>` finds them (up to 5), and `show <name>` reads one — SKILL.md whole, with the list of its other files. A skill already in your list says so; use it from there. `show` of a version this conversation already read answers "unchanged"; add --again if it is no longer in your context. Resident skills — the ones in every agent\'s list — are chosen by a person; a patch that changes `fleetherd-resident` in the frontmatter is refused.',
+      'Names are lowercase words joined by hyphens (a-z, 0-9). `fleetherd` and `super` are the bundled skills and cannot be reused. `SKILL.md` is at most 64 KB and must begin with frontmatter naming the skill and a one-line description of when to use it; files beyond it go only in references/, templates/ or scripts/.',
       'Read before you write: `show <name>` prints the content and a version. `patch <name> --version <that version> --content <full SKILL.md>` is refused if the skill has changed since — run show again, re-apply your edit, and patch with the new version.',
       '`create <name> --description "<when to use it>" [--body <markdown>]` starts a skill; `write-file` and `remove-file` add or remove a reference, template or script. Every change is a commit in the skills repository, a person\'s included; `history <name>` lists them and `revert <name> <id>` puts back the files as they were before that one.',
       '14 days without a use marks a skill an agent created expired; 30 days moves it to the archive and takes it off every agent at its next start. A skill a person wrote is never expired. `pin` keeps a skill out of that check; `restore` brings an archived one back. Nothing is deleted.',
-      'A skill counts as used when an agent calls it as a Skill tool, when a message starts with /<name>, or when a tool call touches a file under ~/.talkcode/skills/<name>/. Running `talkcode skills` itself does not count.',
+      'A skill counts as used when an agent calls it as a Skill tool, when a message starts with /<name>, or when a tool call touches a file under ~/.fleetherd/skills/<name>/. Running `fleetherd skills` itself does not count.',
     ],
   },
   {
@@ -214,24 +214,24 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
 ];
 
-/** `talkcode help`: one line per topic. */
+/** `fleetherd help`: one line per topic. */
 export function renderHelpIndex(): string {
   const width = Math.max(...HELP_TOPICS.map((t) => t.name.length));
   return [
-    'talkcode commands, by topic.',
-    'Run `talkcode help <topic>` for a topic\'s commands and rules.',
+    'fleetherd commands, by topic.',
+    'Run `fleetherd help <topic>` for a topic\'s commands and rules.',
     '',
     ...HELP_TOPICS.map((t) => `  ${t.name.padEnd(width)}  ${t.summary}`),
   ].join('\n');
 }
 
-/** `talkcode help <topic>`: its commands, rendered from the specs, then its notes. */
+/** `fleetherd help <topic>`: its commands, rendered from the specs, then its notes. */
 export function renderHelpTopic(name: string): string | undefined {
   const topic = HELP_TOPICS.find((t) => t.name === name.toLowerCase());
   if (!topic) return undefined;
   const lines = [`${topic.name} — ${topic.summary}`, ''];
   for (const spec of REVERSE_COMMANDS.filter((c) => c.topic === topic.name)) {
-    lines.push(`  talkcode ${spec.usage}`, `    ${spec.description}`);
+    lines.push(`  fleetherd ${spec.usage}`, `    ${spec.description}`);
     for (const opt of [...spec.options, CHANNEL_OPTION]) lines.push(`      ${opt.flags}${opt.description ? `  ${opt.description}` : ''}`);
     lines.push('');
   }
@@ -248,7 +248,7 @@ export function renderHelpTopic(name: string): string | undefined {
  */
 export const CHANNEL_OPTION: ReverseOption = {
   flags: '-c, --channel <id>',
-  description: 'where to post, as an id from `talkcode channels` (default: this conversation)',
+  description: 'where to post, as an id from `fleetherd channels` (default: this conversation)',
 };
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
@@ -512,12 +512,12 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
  */
 function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcAction {
   const taskId = p[1]?.replace(/^#/, '');
-  if (!taskId) throw new Error('schedule edit needs a task id (`talkcode schedule list` shows them)');
+  if (!taskId) throw new Error('schedule edit needs a task id (`fleetherd schedule list` shows them)');
   if (str(opts.session) !== undefined) {
-    throw new Error('--session cannot be changed by edit: a task keeps its session and its kind; `talkcode schedule rm <id>` and add a new one');
+    throw new Error('--session cannot be changed by edit: a task keeps its session and its kind; `fleetherd schedule rm <id>` and add a new one');
   }
   if (str(opts.channel) !== undefined) {
-    throw new Error('--channel cannot be changed by edit: where a task posts is part of the task; `talkcode schedule rm <id>` and add a new one there');
+    throw new Error('--channel cannot be changed by edit: where a task posts is part of the task; `fleetherd schedule rm <id>` and add a new one there');
   }
   if (str(opts.prompt) !== undefined && str(opts.bash) !== undefined) {
     throw new Error('give at most one of --prompt <text> or --bash <command>');
@@ -565,7 +565,7 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
   if (str(opts.channel) !== undefined) throw new Error(`--channel only applies to \`schedule add\` (where output goes)`);
   const id = (): string => {
     const v = p[1]?.replace(/^#/, '');
-    if (!v) throw new Error(`schedule ${action} needs a task id (\`talkcode schedule list\` shows them)`);
+    if (!v) throw new Error(`schedule ${action} needs a task id (\`fleetherd schedule list\` shows them)`);
     return v;
   };
   switch (action) {
@@ -723,7 +723,7 @@ function buildSkillsRead(action: string, p: string[], opts: Record<string, unkno
     case 'categories':
       return { kind: 'skills', action };
     case 'search': {
-      // The rest of the line is the query, so `talkcode skills search deploy check` needs no quotes.
+      // The rest of the line is the query, so `fleetherd skills search deploy check` needs no quotes.
       const query = p.slice(1).join(' ').trim();
       if (!query) throw new Error('skills search needs what you are looking for, in a few words');
       return { kind: 'skills', action, query };
@@ -1133,7 +1133,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
 /**
  * The commands an agent on a host the gateway reaches over ssh may run back here: the reverse
  * commands, the native-tools server, and help. Nothing else — the process on the other end is the
- * gateway, and `talkcode start` or `setup` run by a remote agent would be that agent running the
+ * gateway, and `fleetherd start` or `setup` run by a remote agent would be that agent running the
  * gateway's own administration.
  *
  * Defined here, beside the catalog it is derived from, because two sides refuse with it: the gateway,

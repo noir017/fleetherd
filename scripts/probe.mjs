@@ -10,7 +10,7 @@ import HttpNS from '@cordisjs/plugin-http';
 const DiscordBot = DiscordAdapterNS.default ?? DiscordAdapterNS;
 const HTTP = HttpNS.default ?? HttpNS;
 
-const cfgPath = path.join(os.homedir(), '.config', 'talkcode', 'config.yaml');
+const cfgPath = path.join(os.homedir(), '.config', 'fleetherd', 'config.yaml');
 const cfg = parse(fs.readFileSync(cfgPath, 'utf8'));
 const token = cfg.platform.token;
 

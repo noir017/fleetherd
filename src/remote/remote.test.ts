@@ -1,4 +1,9 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { HostConnection } from './connection.js';
 import { FrameDecoder, encodeFrame } from './frame.js';
 import { ReliableLink } from './link.js';
 import { parseDestination, sshArgs } from './binaries.js';
@@ -93,5 +98,48 @@ describe('ssh', () => {
     expect(args).toContain('IdentityFile=/k');
     expect(args).toContain('UserKnownHostsFile=/kh');
     expect(args.slice(-5)).toEqual(['-p', '2200', '--', 'u@h', `sh -c 'echo hi'`]);
+  });
+});
+
+// 3.0.0 compatibility (legacy-name.ts): the bootstrap moves a host's ~/.talkcode to ~/.fleetherd
+// before anything else, leaving a link at the old name. Run as the host runs it, with `sh` and a
+// throwaway HOME — never this machine's, which is a live host of a talkcode gateway.
+describe('the bootstrap on a host set up before 3.0.0', () => {
+  const script = new HostConnection({ hostId: 'h', ns: 'ns', transport: () => { throw new Error('unused'); }, binary: () => undefined }, 'e').bootstrapScript();
+  const run = (home: string): string => {
+    const r = spawnSync('sh', ['-c', script], { env: { PATH: process.env.PATH, HOME: home }, encoding: 'utf8' });
+    return r.stdout;
+  };
+  const withHome = (f: (home: string) => void): void => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-boot-'));
+    try {
+      f(home);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  };
+
+  it('moves ~/.talkcode to ~/.fleetherd and links the old name to it, once', () => {
+    withHome((home) => {
+      fs.mkdirSync(path.join(home, '.talkcode', 'ssh'), { recursive: true });
+      fs.writeFileSync(path.join(home, '.talkcode', 'pod.yaml'), 'agents: []\n');
+      expect(run(home)).toMatch(/^TCR-MOVED ~\/\.talkcode to ~\/\.fleetherd/m);
+      expect(fs.lstatSync(path.join(home, '.fleetherd')).isDirectory()).toBe(true);
+      expect(fs.readlinkSync(path.join(home, '.talkcode'))).toBe('.fleetherd');
+      expect(fs.readFileSync(path.join(home, '.talkcode', 'pod.yaml'), 'utf8')).toBe('agents: []\n');
+      // The next connection finds the link and says nothing about it.
+      expect(run(home)).not.toMatch(/TCR-MOVED/);
+    });
+  });
+
+  it('leaves a host alone that has ~/.fleetherd already, or never had ~/.talkcode', () => {
+    withHome((home) => {
+      expect(run(home)).not.toMatch(/TCR-MOVED/);
+      expect(fs.existsSync(path.join(home, '.fleetherd'))).toBe(false);
+      fs.mkdirSync(path.join(home, '.talkcode'));
+      fs.mkdirSync(path.join(home, '.fleetherd'));
+      expect(run(home)).not.toMatch(/TCR-MOVED/);
+      expect(fs.lstatSync(path.join(home, '.talkcode')).isDirectory()).toBe(true);
+    });
   });
 });

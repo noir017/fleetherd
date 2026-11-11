@@ -259,7 +259,7 @@ describe('the acp route, against a fake agent', () => {
   let dir: string;
   let fake: string;
   beforeAll(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-review-run-'));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-review-run-'));
     fake = path.join(dir, 'fake-agent.cjs');
     fs.writeFileSync(fake, FAKE_AGENT);
   });

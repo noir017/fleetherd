@@ -34,7 +34,7 @@ describe('doctor host probe', () => {
 
   it('reports what it cannot put in the script as unchecked rather than found', () => {
     // The script rides inside two layers of quotes; a value needing quotes is left out, and `~` is
-    // expanded by a shell but not by talkcode-remote's lookup.
+    // expanded by a shell but not by fleetherd-remote's lookup.
     const probes: HostProbe[] = [
       { command: 'sh', path: '/opt/my tools/bin' },
       { command: 'sh', path: '~/bin:/bin' },

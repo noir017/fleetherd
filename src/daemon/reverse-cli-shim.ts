@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { configDir } from '../config/load.js';
+import { CLI_NAMES } from '../legacy-name.js';
 
 /**
- * Self-provisioned `talkcode` shim for agent subprocesses.
+ * Self-provisioned `fleetherd` shim for agent subprocesses.
  *
- * The bundled skill tells the agent that `talkcode` is on PATH, but whether that
+ * The bundled skill tells the agent that `fleetherd` is on PATH, but whether that
  * is true depends on how the daemon was launched: a global npm install puts it on PATH, while
  * `node dist/cli.js start` or a tsx dev run does not (and a service manager like launchd may strip
  * PATH entirely). Instead of gambling, the daemon writes a two-line shim that re-executes exactly
@@ -20,19 +21,23 @@ export function ensureReverseCliShim(): string | null {
   const self = selfInvocation();
   if (!self) return null;
   const dir = path.join(configDir(), 'bin');
-  const shim = path.join(dir, 'talkcode');
   const script = [
     '#!/bin/sh',
     `exec ${[self.command, ...self.args].map(shellQuote).join(' ')} "$@"`,
     '',
   ].join('\n');
   try {
-    // Idempotent: rewrite only when the content drifts (entry moved, node upgraded).
-    if (!fs.existsSync(shim) || fs.readFileSync(shim, 'utf8') !== script) {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(shim, script, { mode: 0o755 });
-    } else {
-      fs.chmodSync(shim, 0o755);
+    // One shim under each of the CLI's names: `talkcode` is the one an agent learned before 3.0.0
+    // (legacy-name.ts), and an older skill copy or a scheduled bash task may still call it.
+    for (const name of CLI_NAMES) {
+      const shim = path.join(dir, name);
+      // Idempotent: rewrite only when the content drifts (entry moved, node upgraded).
+      if (!fs.existsSync(shim) || fs.readFileSync(shim, 'utf8') !== script) {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(shim, script, { mode: 0o755 });
+      } else {
+        fs.chmodSync(shim, 0o755);
+      }
     }
     return dir;
   } catch (e) {
@@ -62,13 +67,13 @@ export function selfInvocation(): { command: string; args: string[] } | null {
 /**
  * Whether `entry` looks like this CLI's own entry point.
  *
- * The three real launch shapes: a global install (`/usr/bin/talkcode`, a symlink node is
- * handed by name), `node dist/cli.js`, and `tsx src/cli.ts`. Anything else — a test runner, a
+ * The three real launch shapes: a global install (`/usr/bin/fleetherd`, or `/usr/bin/talkcode`, its
+ * name before 3.0.0 — a symlink node is handed by name), `node dist/cli.js`, and `tsx src/cli.ts`. Anything else — a test runner, a
  * REPL, an embedding host — means this process is not the CLI and must not claim to be one.
  */
 export function isCliEntry(entry: string): boolean {
   const base = path.basename(entry);
-  return base === 'talkcode' || /^cli\.(js|mjs|cjs|ts)$/.test(base);
+  return (CLI_NAMES as readonly string[]).includes(base) || /^cli\.(js|mjs|cjs|ts)$/.test(base);
 }
 
 function shellQuote(s: string): string {

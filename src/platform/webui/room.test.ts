@@ -1107,15 +1107,15 @@ describe('WebRoom: inbound', () => {
     const { room } = attached();
     const uploads = fakeUploads();
     room.useUploads(uploads);
-    const url = await room.publishCopy('/tmp/talkcode-file-x/report.pdf', 'report.pdf');
-    expect(uploads.copied).toEqual(['/tmp/talkcode-file-x/report.pdf']);
+    const url = await room.publishCopy('/tmp/fleetherd-file-x/report.pdf', 'report.pdf');
+    expect(uploads.copied).toEqual(['/tmp/fleetherd-file-x/report.pdf']);
     expect(room.resolveDownload(url.slice(2))).toMatchObject({ path: '/uploads/copy-1', name: 'report.pdf', owned: true });
     for (let i = 0; i < 200; i++) room.publish(`/work/f${i}.txt`, `f${i}.txt`);
     await Promise.resolve();
     await Promise.resolve();
     expect(uploads.discarded).toEqual(['/uploads/copy-1']);
     // The agent's own file was only ever read.
-    expect(uploads.discarded).not.toContain('/tmp/talkcode-file-x/report.pdf');
+    expect(uploads.discarded).not.toContain('/tmp/fleetherd-file-x/report.pdf');
   });
 
   it('refuses a file the agent sent that cannot be read, rather than publishing a link to nothing', async () => {
@@ -1418,11 +1418,11 @@ describe('WebRoom: which directory a topic is working in', () => {
 
   it('labels each topic with the last segment, keeping the full path for the tooltip', () => {
     const { room, topic } = attached();
-    room.useWorkdirLookup((ref) => (ref.thread === topic ? { path: '/home/user/workspace/talkcode' } : undefined));
+    room.useWorkdirLookup((ref) => (ref.thread === topic ? { path: '/home/user/workspace/fleetherd' } : undefined));
 
     expect(room.topicList().find((t) => t.id === topic)?.dir).toEqual({
-      name: 'talkcode',
-      path: '/home/user/workspace/talkcode',
+      name: 'fleetherd',
+      path: '/home/user/workspace/fleetherd',
     });
   });
 
@@ -1510,16 +1510,16 @@ describe('WebRoom: which directory a topic is working in', () => {
     room.topicList();
 
     room.submit({ topic, text: '/agent oc2' });
-    where = { path: '/home/u/workspace', host: 'awsfree2' }; // what the daemon did with it
+    where = { path: '/home/u/workspace', host: 'buildbox' }; // what the daemon did with it
     room.post(topic, { own: false, html: '<p>ack</p>' }, '▸ opencode is answering');
-    expect(sentDir(list(), topic)).toBe('awsfree2·workspace');
+    expect(sentDir(list(), topic)).toBe('buildbox·workspace');
 
     // And a tap, the other way the operator moves a topic: a `/cd` menu pick.
-    const menu = room.post(topic, { own: false, html: '', buttons: [{ id: 'wdr:r:1', label: 'quantlab' }] }, 'Working dir:');
+    const menu = room.post(topic, { own: false, html: '', buttons: [{ id: 'wdr:r:1', label: 'shop-api' }] }, 'Working dir:');
     room.click({ topic, messageId: menu.id, buttonId: 'wdr:r:1' });
-    where = { path: '/home/u/workspace/quantlab', host: 'awsfree2' };
-    room.revise(topic, menu.id, 'Now working in quantlab', []);
-    expect(sentDir(list(), topic)).toBe('awsfree2·quantlab');
+    where = { path: '/home/u/workspace/shop-api', host: 'buildbox' };
+    room.revise(topic, menu.id, 'Now working in shop-api', []);
+    expect(sentDir(list(), topic)).toBe('buildbox·shop-api');
   });
 
   it('is corrected by the liveness poll when a move lands after its own announcement', () => {

@@ -366,7 +366,7 @@ interface ConversationState {
    * Bumped by an accepted inbound message, by the end of a turn (the merger's onIdle), and by a
    * reverse command arriving over IPC. That third source is the one that is easy to miss and the
    * reason the field is not simply "time of last message": an agent that finished its turn and left
-   * a background job reporting through `talkcode send` is still working here, and reclaiming
+   * a background job reporting through `fleetherd send` is still working here, and reclaiming
    * its child would cut the job off from the chat it is talking to.
    *
    * Ignored while the merger is busy — a turn in flight is not idle no matter what this says.
@@ -405,7 +405,7 @@ interface ConversationState {
    *  - background output the harness produces once the turn has settled (TurnRunner.followUpSink);
    *  - a harness title, which claude-agent-acp generates in a background task and reports from its
    *    turn-end idle handler;
-   *  - a reverse command from a job the agent left running (`talkcode send-message`), which
+   *  - a reverse command from a job the agent left running (`fleetherd send-message`), which
    *    was refused outright with "this conversation has no active turn right now".
    *
    * So it is no longer cleared: a conversation does not stop being in a place just because nothing
@@ -800,7 +800,7 @@ export class ConversationRegistry {
             state.lane = address;
             state.lanePlatform = platformId;
           }
-          // Persisted too, once per turn: it is what `talkcode channels` lists (see
+          // Persisted too, once per turn: it is what `fleetherd channels` lists (see
           // ConversationRecord.lane), and the in-memory copy dies with the process.
           this.store?.recordLane?.(id, this.agentIdOf(id), platformId, address, this.clock.now());
         },
@@ -3331,7 +3331,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
    *
    * A failed listing waits like a missing one because answering from it is answering without a menu:
    * the reread behind it fixed only the NEXT `/cc`, so a host that once failed to answer (a link that
-   * came back to a restarted talkcode-remote, 2026-10-30) cost the user one command list per failure.
+   * came back to a restarted fleetherd-remote, 2026-10-30) cost the user one command list per failure.
    */
   private afterRemoteListing(def: AgentDef | undefined, then: () => void): void {
     if (!def?.host) {
@@ -3425,7 +3425,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
    *
    * The three shapes mirror `/model` deliberately: a bare `/cd` on a platform that can carry a menu
    * gets one, because "where can I work" is a question a phone user cannot answer by typing; a bare
-   * `/cd` anywhere else gets the same list as text; and `/cd quantlab` resolves by substring on
+   * `/cd` anywhere else gets the same list as text; and `/cd shop-api` resolves by substring on
    * every platform, buttons or not.
    */
   private applyWorkdirCommand(
@@ -3609,7 +3609,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
    *
    * Resolved through the LANE (see laneOf), not the running turn's address, and that difference is
    * load-bearing: an agent that finished its turn and left a background job reporting through
-   * `talkcode send-message` is the normal case, not an error. It used to be refused with
+   * `fleetherd send-message` is the normal case, not an error. It used to be refused with
    * "this conversation has no active turn right now", which meant the job's whole report went
    * nowhere — the same class of bug as background output being dropped by the update reader.
    *
@@ -3656,7 +3656,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
-   * `talkcode channels`: every place this deployment has answered in, as `--channel` ids.
+   * `fleetherd channels`: every place this deployment has answered in, as `--channel` ids.
    *
    * Read from the store, not from `conversations`: the map holds only what THIS process has seen,
    * and a list that forgot every topic on each restart would be no list at all. The shaping is
@@ -3963,7 +3963,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
 
   /**
    * A task's directory as the asking agent named it: absolute, `~`-relative, or a name inside the
-   * agent's own root (`talkcode` for `<root>/talkcode` — what task-agents lists).
+   * agent's own root (`fleetherd` for `<root>/fleetherd` — what task-agents lists).
    */
   private taskDirectory(def: AgentDef, given: string): string {
     if (given.startsWith('/') || given === '~' || given.startsWith('~/')) {

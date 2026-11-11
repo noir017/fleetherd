@@ -180,9 +180,9 @@ export function deferUntilLogin(
   // is attached only once and, when fired, runs every queued fn that isReady (prevents stacking
   // listeners across calls).
   const store = ctx as unknown as {
-    __talkcodeDeferPending?: Array<(bot: Bot) => void | Promise<void>>;
+    __fleetherdDeferPending?: Array<(bot: Bot) => void | Promise<void>>;
   };
-  if (!store.__talkcodeDeferPending) store.__talkcodeDeferPending = [];
+  if (!store.__fleetherdDeferPending) store.__fleetherdDeferPending = [];
 
   // Try fetch + readiness immediately: on success run synchronously, no listener needed.
   try {
@@ -196,7 +196,7 @@ export function deferUntilLogin(
   }
 
   // Not ready (getBot threw or isReady false): enqueue for post-login registration.
-  store.__talkcodeDeferPending.push(fn);
+  store.__fleetherdDeferPending.push(fn);
   if (!deferHookCtxs.has(ctx as object)) {
     deferHookCtxs.add(ctx as object);
     ctx.on('login-updated', (session: Session) => {
@@ -206,9 +206,9 @@ export function deferUntilLogin(
       const status = (session as { event?: { login?: { status?: unknown } } })?.event?.login
         ?.status;
       if (status !== 1) return;
-      const pending = store.__talkcodeDeferPending ?? [];
+      const pending = store.__fleetherdDeferPending ?? [];
       if (pending.length === 0) return;
-      store.__talkcodeDeferPending = [];
+      store.__fleetherdDeferPending = [];
       for (const pendingFn of pending) {
         // Re-fetch the handle after login (now ready) and run the pending fn; fn is best-effort.
         void Promise.resolve()

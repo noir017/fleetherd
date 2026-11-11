@@ -1,6 +1,7 @@
 import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { TRAILER_PREFIXES } from '../legacy-name.js';
 
 /**
  * The git underneath the managed skills: every change the store makes is a commit, and a skill's
@@ -33,10 +34,10 @@ export interface GitIdentity {
 
 /** Who a commit is from. A separate name per writer, so `git log --author` tells them apart. */
 export const SKILL_AUTHORS = {
-  agent: { name: 'talkcode', email: 'talkcode@localhost' },
-  gateway: { name: 'talkcode', email: 'talkcode@localhost' },
-  person: { name: 'talkcode-web', email: 'talkcode-web@localhost' },
-  review: { name: 'talkcode-review', email: 'talkcode-review@localhost' },
+  agent: { name: 'fleetherd', email: 'fleetherd@localhost' },
+  gateway: { name: 'fleetherd', email: 'fleetherd@localhost' },
+  person: { name: 'fleetherd-web', email: 'fleetherd-web@localhost' },
+  review: { name: 'fleetherd-review', email: 'fleetherd-review@localhost' },
 } as const satisfies Record<string, GitIdentity>;
 
 export type SkillAuthorKind = keyof typeof SKILL_AUTHORS;
@@ -197,7 +198,12 @@ export function commitPaths(root: string, paths: string[], info: CommitInfo): st
   return gitSync(root, ['rev-parse', 'HEAD']).trim();
 }
 
-const TRAILER_PREFIX = 'Talkcode-';
+/**
+ * The trailers' prefix. Commits made before 3.0.0 carry `Talkcode-` instead, and are read the same
+ * (legacy-name.ts TRAILER_PREFIXES): their actions, versions and conversations are still history.
+ */
+const TRAILER_PREFIX = TRAILER_PREFIXES[0];
+const TRAILER_RE = new RegExp(`^(?:${TRAILER_PREFIXES.join('|')})([A-Za-z]+): (.*)$`);
 
 function commitMessage(info: CommitInfo): string {
   const subject = `skills: ${info.action} ${info.skill}`;
@@ -214,7 +220,7 @@ function commitMessage(info: CommitInfo): string {
   const note = info.note
     ?.split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith(TRAILER_PREFIX))
+    .filter((l) => l && !TRAILER_PREFIXES.some((p) => l.startsWith(p)))
     .join(' ');
   return [subject, ...(note ? ['', note] : []), '', ...trailers].join('\n');
 }
@@ -245,7 +251,7 @@ function parseLogRecord(rec: string): LogEntry {
   const trailers = new Map<string, string>();
   const noteLines: string[] = [];
   for (const line of body.split('\n')) {
-    const m = new RegExp(`^${TRAILER_PREFIX}([A-Za-z]+): (.*)$`).exec(line.trim());
+    const m = TRAILER_RE.exec(line.trim());
     if (m) trailers.set(m[1]!, m[2]!.trim());
     else if (line.trim()) noteLines.push(line.trim());
   }
@@ -263,27 +269,27 @@ function parseLogRecord(rec: string): LogEntry {
 }
 
 /**
- * The repository paths changed by commits whose `Talkcode-Conversation` trailer names exactly
+ * The repository paths changed by commits whose `Fleetherd-Conversation` trailer names exactly
  * `conversation`, committed at or after `sinceMs`, newest first and each once. `--grep` only
  * narrows: it matches a substring, and `telegram#1` is a prefix of `telegram#12`, so each hit's
  * trailer is compared whole before its paths count.
  */
 export function conversationCommitPaths(root: string, conversation: string, sinceMs: number): string[] {
   if (!hasHead(root)) return [];
-  const needle = `${TRAILER_PREFIX}Conversation: ${conversation}`;
+  const needles = TRAILER_PREFIXES.map((p) => `${p}Conversation: ${conversation}`);
   const log = gitSync(root, [
     'log',
     '-z',
     `--since=@${Math.floor(sinceMs / 1000)}`,
     '--fixed-strings',
-    `--grep=${needle}`,
+    ...needles.map((n) => `--grep=${n}`),
     '--format=%H%x1f%B',
     'HEAD',
   ]);
   const out: string[] = [];
   for (const rec of log.split('\0')) {
     const [hash = '', body = ''] = rec.replace(/^\n+/, '').split('\x1f');
-    if (!hash || !body.split('\n').some((line) => line.trim() === needle)) continue;
+    if (!hash || !body.split('\n').some((line) => needles.includes(line.trim()))) continue;
     const changed = gitSync(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--root', hash]);
     for (const p of changed.split('\0')) if (p && !out.includes(p)) out.push(p);
   }

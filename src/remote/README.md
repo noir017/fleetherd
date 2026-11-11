@@ -1,7 +1,7 @@
 # `src/remote/` — the gateway's side of remote hosts
 
 How the gateway reaches a machine that runs its agents: one reliable link per host over ssh, to
-talkcode-remote on the other end. The protocol, and why the host side is shaped the way it is, are
+fleetherd-remote on the other end. The protocol, and why the host side is shaped the way it is, are
 in [remote/README.md](../../remote/README.md); the user docs in
 [docs/remote-hosts.md](../../docs/remote-hosts.md).
 
@@ -13,7 +13,7 @@ skill); the runtimes reach a host through `daemon/agent-common.ts`.
 |---|---|
 | `frame.ts` | The frame codec, incremental decoder. |
 | `link.ts` | `ReliableLink`: sequence, keep, acknowledge, resend — the mirror of `remote/link.go`. Survives every reconnect. |
-| `connection.ts` | `HostConnection`: the ssh process, bootstrap and upload, handshake, heartbeat, reconnect with back-off, and the `up`/`down`/`reset` events. |
+| `connection.ts` | `HostConnection`: the ssh process, bootstrap and upload, handshake, heartbeat, reconnect with back-off, and the `up`/`down`/`reset` events. The bootstrap also moves a host's `~/.talkcode` (the directory's name before 3.0.0) to `~/.fleetherd`, leaving a link. |
 | `host.ts` | `RemoteHost` (processes, operations, the shim bridge, relays and the transforms that answer them) and `RemoteChild`, a process shaped like the parts of `ChildProcess` the runtimes use. |
 | `binaries.ts` | Where the builds are (`dist/remote-bin/`), their version names, and the pinned ssh argv. |
 
@@ -45,7 +45,7 @@ skill); the runtimes reach a host through `daemon/agent-common.ts`.
 ## Testing
 
 `remote.test.ts` covers the codec, the link and the ssh argv as units.
-`remote.integration.test.ts` builds the real talkcode-remote and drives it through a transport that
+`remote.integration.test.ts` builds the real fleetherd-remote and drives it through a transport that
 runs the host script under a local `sh` with its own HOME — everything but ssh itself: the install,
 agents over stdio, a connection killed mid-run and resumed with input typed during the outage, a
 daemon that restarted during an outage (what it ran is gone, what was asked for meanwhile runs on

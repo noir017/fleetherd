@@ -1,7 +1,7 @@
 # `src/platform/webui/` — the built-in web UI
 
 A browser chat page the daemon serves itself, wired in as a ninth platform. No account, no
-bot token, no upstream service: `talkcode start`, open the page, type.
+bot token, no upstream service: `fleetherd start`, open the page, type.
 
 It exists because every other way into this gateway needs a chat platform configured first.
 When there isn't one — or when a browser is simply the place you want to be — this is the
@@ -557,7 +557,7 @@ Tags (every tag in use, plus Untagged) stay in the panel.
 
 **Reviews** is the automatic review of quiet conversations (`daemon/review.ts`). A review that
 changed nothing posts no line in any chat, so this is the only place it can be read. Nothing on the
-tab changes a review or a skill: undoing a change is the `talkcode skills revert` / `archive`
+tab changes a review or a skill: undoing a change is the `fleetherd skills revert` / `archive`
 command the detail shows, not a button. Its writes are **Adopt**, which opens a topic with a draft
 through the same `POST api/topics` the + makes, and **Dismiss** on the pending list described
 below, which touches `reviews.json` alone. A row is the
@@ -615,7 +615,7 @@ sentence rather than a generic failure.
 ## The skills page
 
 **Skills** in the ⚙ Menu at the foot of the topic list opens the gateway's managed skills — the
-records `daemon/skills-store.ts` keeps and `talkcode skills` writes. It is a window over the
+records `daemon/skills-store.ts` keeps and `fleetherd skills` writes. It is a window over the
 transcript, like the reader, rather than a third column: an editor and a history row need more
 width than a sidebar, and the conversation stays visible around it. On a phone it takes the whole
 screen.
@@ -650,7 +650,7 @@ origin needs.
 The sidebar's header is two tabs, **Topics** and **History** (since 2026-11-11; 2.58.0 shipped the
 same library as a window opened from a button there). History lists the conversation library: every
 conversation the gateway recorded, whichever agent and platform it ran on. It is the same
-`history.db` `talkcode sessions list/search/read` reads, and it is read-only — a list, a keyword
+`history.db` `fleetherd sessions list/search/read` reads, and it is read-only — a list, a keyword
 search, and one conversation opened where a topic is read. A review's own session is not a
 conversation and is left out (`HistoryStore.list`); those are read on the Reviews tab.
 
@@ -1368,7 +1368,7 @@ platforms:
     terminal:
       enabled: true
       # Defaults to webui-term-<instance>.sock beside the daemon's own state.
-      socket: /home/user/.config/talkcode/webui-term-web.sock
+      socket: /home/user/.config/fleetherd/webui-term-web.sock
       # Optional. Without it there is no close button — only minimize.
       # argv, never a shell string; {topic} is substituted into each element.
       endCommand: ["tmux", "-L", "aa-web", "kill-session", "-t", "aa-{topic}"]

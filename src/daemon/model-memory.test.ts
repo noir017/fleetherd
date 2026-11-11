@@ -25,7 +25,7 @@ import type { InboundMessage } from '../types.js';
  */
 
 const root = mkdtempSync(join(tmpdir(), 'model-memory-'));
-mkdirSync(join(root, 'quantlab'));
+mkdirSync(join(root, 'shop-api'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const parsed = parseConfig({
@@ -129,7 +129,7 @@ describe('the model and effort a person chose', () => {
     await send('/model kimi');
     await send('/effort low');
     await send('/new');
-    await send('/cd quantlab');
+    await send('/cd shop-api');
     expect(store.conversationChoice(key, 'oc', 'model')).toBe('newapi/kimi-k3');
     expect(store.conversationChoice(key, 'oc', 'effort')).toBe('low');
     await send('hello');

@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// TestMain lets the test binary stand in for talkcode-remote: attach and the env capture re-run
+// TestMain lets the test binary stand in for fleetherd-remote: attach and the env capture re-run
 // "this binary" with a subcommand, and under `go test` this binary is the test binary.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
@@ -150,7 +150,14 @@ func quickEnv(t *testing.T) {
 
 func testDaemon(t *testing.T, ns string) *daemon {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	// Not t.TempDir(): it carries the test's name, and the socket path under it
+	// (~/.fleetherd/remote/run/<ns>/daemon.sock) has to fit a unix socket's 108 bytes.
+	home, err := os.MkdirTemp("", "fhr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Setenv("HOME", home)
 	quickEnv(t)
 	d, err := startDaemon(ns, "v1")
 	if err != nil {
@@ -261,13 +268,13 @@ func TestSpawnEchoAndExit(t *testing.T) {
 func TestAgentGetsShimOnPathAndSocket(t *testing.T) {
 	d := testDaemon(t, "env")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)
-	g.send(&Header{T: "spawn", ID: "p1", Cmd: "sh", Args: []string{"-c", `echo "$PATH|$TALKCODE_REMOTE_SOCK|$TALKCODE_REMOTE_CLI|$FOO"`}, Env: map[string]string{"FOO": "bar"}}, nil)
+	g.send(&Header{T: "spawn", ID: "p1", Cmd: "sh", Args: []string{"-c", `echo "$PATH|$FLEETHERD_REMOTE_SOCK|$FLEETHERD_REMOTE_CLI|$FOO"`}, Env: map[string]string{"FOO": "bar"}}, nil)
 	_, _, out := g.until("exit", "p1", 5*time.Second)
 	parts := strings.Split(strings.TrimSpace(out), "|")
-	// TALKCODE_REMOTE_CLI is the absolute path of the shim, for the Node CLI that a login shell's
+	// FLEETHERD_REMOTE_CLI is the absolute path of the shim, for the Node CLI that a login shell's
 	// PATH reset can land on instead (remote/README.md, "Agents").
 	if len(parts) != 4 || !strings.HasPrefix(parts[0], binDirFor("v1")+":") || parts[1] != d.sockPath ||
-		parts[2] != filepath.Join(binDirFor("v1"), "talkcode") || parts[3] != "bar" {
+		parts[2] != filepath.Join(binDirFor("v1"), "fleetherd") || parts[3] != "bar" {
 		t.Fatalf("env seen by the agent: %q", out)
 	}
 }
@@ -372,12 +379,12 @@ func TestReverseCommandRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer shim.Close()
-	_ = writeFrame(shim, &Header{T: "cli", Argv: []string{"send-message", "hi"}, Cwd: "/w", Token: "tok", Env: map[string]string{"TALKCODE_CWD": "/w"}}, nil)
+	_ = writeFrame(shim, &Header{T: "cli", Argv: []string{"send-message", "hi"}, Cwd: "/w", Token: "tok", Env: map[string]string{"FLEETHERD_CWD": "/w"}}, nil)
 	_ = writeFrame(shim, &Header{T: "in"}, []byte("stdin-bytes"))
 	_ = writeFrame(shim, &Header{T: "in-end"}, nil)
 
 	open, _ := g.next(5 * time.Second)
-	if open.T != "cli-open" || open.Token != "tok" || strings.Join(open.Argv, " ") != "send-message hi" || open.Env["TALKCODE_CWD"] != "/w" {
+	if open.T != "cli-open" || open.Token != "tok" || strings.Join(open.Argv, " ") != "send-message hi" || open.Env["FLEETHERD_CWD"] != "/w" {
 		t.Fatalf("cli-open: %+v", open)
 	}
 	in, body := g.next(5 * time.Second)
@@ -499,7 +506,7 @@ func TestEnsureLink(t *testing.T) {
 	d := testDaemon(t, "link")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)
 	link := func() string {
-		_, res, _ := rpc(t, g, &Header{Op: "ensureLink", Target: "~/skill", Path: "~/.claude/skills/talkcode", Requires: "~/.claude"}, nil)
+		_, res, _ := rpc(t, g, &Header{Op: "ensureLink", Target: "~/skill", Path: "~/.claude/skills/fleetherd", Requires: "~/.claude"}, nil)
 		return res["outcome"].(string)
 	}
 	if got := link(); got != "skipped" {
@@ -512,8 +519,8 @@ func TestEnsureLink(t *testing.T) {
 	if got := link(); got != "current" {
 		t.Fatalf("second link: %s", got)
 	}
-	_ = os.Remove(filepath.Join(homeDir(), ".claude", "skills", "talkcode"))
-	_ = os.MkdirAll(filepath.Join(homeDir(), ".claude", "skills", "talkcode"), 0o755)
+	_ = os.Remove(filepath.Join(homeDir(), ".claude", "skills", "fleetherd"))
+	_ = os.MkdirAll(filepath.Join(homeDir(), ".claude", "skills", "fleetherd"), 0o755)
 	if got := link(); got != "occupied" {
 		t.Fatalf("over a real directory: %s", got)
 	}
@@ -528,20 +535,20 @@ func TestEnsureLinkOwnedLeavesTheOperatorsLink(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(home, ".codex"), 0o755)
 	agents := filepath.Join(home, ".codex", "AGENTS.md")
 	link := func(target string) map[string]any {
-		_, res, _ := rpc(t, g, &Header{Op: "ensureLink", Target: target, Path: "~/.codex/AGENTS.md", Requires: "~/.codex", Owned: "~/.talkcode/instructions"}, nil)
+		_, res, _ := rpc(t, g, &Header{Op: "ensureLink", Target: target, Path: "~/.codex/AGENTS.md", Requires: "~/.codex", Owned: "~/.fleetherd/instructions"}, nil)
 		return res
 	}
 
 	_ = os.Symlink(filepath.Join(home, "notes", "codex.md"), agents)
-	if res := link("~/.talkcode/instructions/codex.md"); res["outcome"] != "occupied" || !strings.Contains(res["detail"].(string), "notes") {
+	if res := link("~/.fleetherd/instructions/codex.md"); res["outcome"] != "occupied" || !strings.Contains(res["detail"].(string), "notes") {
 		t.Fatalf("over the operator's link: %v", res)
 	}
 	_ = os.Remove(agents)
-	_ = os.Symlink(filepath.Join(home, ".talkcode", "instructions", "old.md"), agents)
-	if res := link("~/.talkcode/instructions/codex.md"); res["outcome"] != "relinked" {
+	_ = os.Symlink(filepath.Join(home, ".fleetherd", "instructions", "old.md"), agents)
+	if res := link("~/.fleetherd/instructions/codex.md"); res["outcome"] != "relinked" {
 		t.Fatalf("over a link of ours: %v", res)
 	}
-	if dest, _ := os.Readlink(agents); dest != filepath.Join(home, ".talkcode", "instructions", "codex.md") {
+	if dest, _ := os.Readlink(agents); dest != filepath.Join(home, ".fleetherd", "instructions", "codex.md") {
 		t.Fatalf("points at %s", dest)
 	}
 }
@@ -553,7 +560,7 @@ func TestRemoveLinkTakesBackOnlyItsOwn(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(home, ".codex"), 0o755)
 	agents := filepath.Join(home, ".codex", "AGENTS.md")
 	remove := func() string {
-		_, res, _ := rpc(t, g, &Header{Op: "removeLink", Path: "~/.codex/AGENTS.md", Owned: "~/.talkcode/instructions"}, nil)
+		_, res, _ := rpc(t, g, &Header{Op: "removeLink", Path: "~/.codex/AGENTS.md", Owned: "~/.fleetherd/instructions"}, nil)
 		return res["outcome"].(string)
 	}
 
@@ -570,7 +577,7 @@ func TestRemoveLinkTakesBackOnlyItsOwn(t *testing.T) {
 		t.Fatalf("the operator's link: %s", got)
 	}
 	_ = os.Remove(agents)
-	_ = os.Symlink(filepath.Join(home, ".talkcode", "instructions", "codex.md"), agents)
+	_ = os.Symlink(filepath.Join(home, ".fleetherd", "instructions", "codex.md"), agents)
 	if got := remove(); got != "removed" {
 		t.Fatalf("a link of ours: %s", got)
 	}
@@ -587,9 +594,9 @@ func TestRemoveLinkTakesBackOnlyItsOwn(t *testing.T) {
 func TestWriteFileAtomicReplacesAReadOnlyFile(t *testing.T) {
 	d := testDaemon(t, "atomic")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)
-	file := filepath.Join(homeDir(), ".talkcode", "instructions", "codex.md")
+	file := filepath.Join(homeDir(), ".fleetherd", "instructions", "codex.md")
 	write := func(text string) *Header {
-		r, _, _ := rpc(t, g, &Header{Op: "writeFile", Path: "~/.talkcode/instructions/codex.md", Mode: 0o444, Atomic: true}, []byte(text))
+		r, _, _ := rpc(t, g, &Header{Op: "writeFile", Path: "~/.fleetherd/instructions/codex.md", Mode: 0o444, Atomic: true}, []byte(text))
 		return r
 	}
 
@@ -607,7 +614,7 @@ func TestWriteFileAtomicReplacesAReadOnlyFile(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("left something behind: %v", entries)
 	}
-	if r, _, _ := rpc(t, g, &Header{Op: "writeFile", Path: "~/.talkcode/instructions/codex.md", Atomic: true, Append: true}, []byte("x")); r.T != "rpc-err" {
+	if r, _, _ := rpc(t, g, &Header{Op: "writeFile", Path: "~/.fleetherd/instructions/codex.md", Atomic: true, Append: true}, []byte("x")); r.T != "rpc-err" {
 		t.Fatalf("an atomic append must be refused: %+v", r)
 	}
 }
@@ -618,7 +625,7 @@ func TestRemovePathStaysInRoot(t *testing.T) {
 	d := testDaemon(t, "removepath")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)
 	home := homeDir()
-	copyDir := filepath.Join(home, ".talkcode", "skills", "foo")
+	copyDir := filepath.Join(home, ".fleetherd", "skills", "foo")
 	_ = os.MkdirAll(filepath.Join(copyDir, "references"), 0o755)
 	_ = os.WriteFile(filepath.Join(copyDir, "SKILL.md"), []byte("x"), 0o600)
 	_ = os.WriteFile(filepath.Join(copyDir, "references", "a.md"), []byte("a"), 0o600)
@@ -627,20 +634,20 @@ func TestRemovePathStaysInRoot(t *testing.T) {
 		return r, res
 	}
 
-	r, res := remove("~/.talkcode/skills/foo/references/a.md", "~/.talkcode/skills/foo")
+	r, res := remove("~/.fleetherd/skills/foo/references/a.md", "~/.fleetherd/skills/foo")
 	if r.T != "rpc-ok" || res["removed"] != true {
 		t.Fatalf("remove a file: %+v %v", r, res)
 	}
 	if _, err := os.Lstat(filepath.Join(copyDir, "references", "a.md")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("file still there: %v", err)
 	}
-	if r, res := remove("~/.talkcode/skills/foo/references/missing.md", "~/.talkcode/skills/foo"); res["removed"] != false {
+	if r, res := remove("~/.fleetherd/skills/foo/references/missing.md", "~/.fleetherd/skills/foo"); res["removed"] != false {
 		t.Fatalf("missing file: %+v %v", r, res)
 	}
-	if r, _ := remove("~/.talkcode/skills/foo", "~/.talkcode/skills/foo"); r.T != "rpc-err" {
+	if r, _ := remove("~/.fleetherd/skills/foo", "~/.fleetherd/skills/foo"); r.T != "rpc-err" {
 		t.Fatalf("the root itself must be refused: %+v", r)
 	}
-	if r, _ := remove("~/.talkcode/elsewhere", "~/.talkcode/skills/foo"); r.T != "rpc-err" {
+	if r, _ := remove("~/.fleetherd/elsewhere", "~/.fleetherd/skills/foo"); r.T != "rpc-err" {
 		t.Fatalf("outside the root must be refused: %+v", r)
 	}
 
@@ -649,7 +656,7 @@ func TestRemovePathStaysInRoot(t *testing.T) {
 	_ = os.MkdirAll(outside, 0o755)
 	_ = os.WriteFile(filepath.Join(outside, "keep"), []byte("keep"), 0o600)
 	_ = os.Symlink(outside, filepath.Join(copyDir, "sub"))
-	if r, _ := remove("~/.talkcode/skills/foo/sub/keep", "~/.talkcode/skills/foo"); r.T != "rpc-err" {
+	if r, _ := remove("~/.fleetherd/skills/foo/sub/keep", "~/.fleetherd/skills/foo"); r.T != "rpc-err" {
 		t.Fatalf("a symlinked parent must be refused: %+v", r)
 	}
 	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
@@ -657,7 +664,7 @@ func TestRemovePathStaysInRoot(t *testing.T) {
 	}
 
 	// The copy itself goes when its parent is the root.
-	if r, res := remove("~/.talkcode/skills/foo", "~/.talkcode/skills"); r.T != "rpc-ok" || res["removed"] != true {
+	if r, res := remove("~/.fleetherd/skills/foo", "~/.fleetherd/skills"); r.T != "rpc-ok" || res["removed"] != true {
 		t.Fatalf("remove the copy: %+v %v", r, res)
 	}
 	if _, err := os.Lstat(copyDir); !errors.Is(err, fs.ErrNotExist) {
@@ -669,13 +676,13 @@ func TestListFilesRelative(t *testing.T) {
 	d := testDaemon(t, "listfiles")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)
 	home := homeDir()
-	dir := filepath.Join(home, ".talkcode", "skills", "foo")
+	dir := filepath.Join(home, ".fleetherd", "skills", "foo")
 	_ = os.MkdirAll(filepath.Join(dir, "references"), 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("x"), 0o600)
 	_ = os.WriteFile(filepath.Join(dir, "references", "a.md"), []byte("a"), 0o600)
 	_ = os.Symlink(filepath.Join(home, "outside"), filepath.Join(dir, "outside-link"))
 
-	_, res, _ := rpc(t, g, &Header{Op: "listFiles", Path: "~/.talkcode/skills/foo"}, nil)
+	_, res, _ := rpc(t, g, &Header{Op: "listFiles", Path: "~/.fleetherd/skills/foo"}, nil)
 	files, _ := res["files"].([]any)
 	got := make([]string, 0, len(files))
 	for _, f := range files {
@@ -686,7 +693,7 @@ func TestListFilesRelative(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("files %v, want %v", got, want)
 	}
-	if _, res, _ := rpc(t, g, &Header{Op: "listFiles", Path: "~/.talkcode/skills/none"}, nil); len(res["files"].([]any)) != 0 {
+	if _, res, _ := rpc(t, g, &Header{Op: "listFiles", Path: "~/.fleetherd/skills/none"}, nil); len(res["files"].([]any)) != 0 {
 		t.Fatalf("a missing directory: %v", res)
 	}
 }
@@ -697,16 +704,16 @@ func TestSweepSkillLinks(t *testing.T) {
 	home := homeDir()
 	skills := filepath.Join(home, ".codebuddy", "skills")
 	_ = os.MkdirAll(skills, 0o755)
-	_ = os.MkdirAll(filepath.Join(home, ".talkcode", "remote", "2.22.0-live", "skill"), 0o755)
+	_ = os.MkdirAll(filepath.Join(home, ".fleetherd", "remote", "2.22.0-live", "skill"), 0o755)
 
 	// What an upgrade leaves behind: a link into a version directory that no longer exists. The
 	// other two are the ones it must not touch — a link into the running version, and the
 	// operator's own link somewhere else.
-	dead := filepath.Join(skills, "talkcode")
+	dead := filepath.Join(skills, "fleetherd")
 	live := filepath.Join(skills, "super")
 	mine := filepath.Join(skills, "notes")
-	_ = os.Symlink(filepath.Join(home, ".talkcode", "remote", "2.17.0-gone", "skill"), dead)
-	_ = os.Symlink(filepath.Join(home, ".talkcode", "remote", "2.22.0-live", "skill"), live)
+	_ = os.Symlink(filepath.Join(home, ".fleetherd", "remote", "2.17.0-gone", "skill"), dead)
+	_ = os.Symlink(filepath.Join(home, ".fleetherd", "remote", "2.22.0-live", "skill"), live)
 	_ = os.Symlink(filepath.Join(home, "elsewhere"), mine)
 
 	_, res, _ := rpc(t, g, &Header{Op: "sweepSkillLinks", Path: "~/.codebuddy/skills"}, nil)
@@ -771,7 +778,7 @@ func TestANewVersionRetiresTheOldDaemonAndItsDirectory(t *testing.T) {
 	}
 	for _, v := range []string{"v1", "v2", "v0"} {
 		_ = os.MkdirAll(versionDir(v), 0o700)
-		_ = os.WriteFile(filepath.Join(versionDir(v), "talkcode-remote"), nil, 0o700)
+		_ = os.WriteFile(filepath.Join(versionDir(v), "fleetherd-remote"), nil, 0o700)
 	}
 	sock, err := ensureDaemon(self, "ns1", "v1")
 	if err != nil {
@@ -826,8 +833,8 @@ func TestCaptureLoginEnvReadsTheShell(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("SHELL", "/bin/bash")
-	// Whatever started the daemon must not decide where an agent's talkcode is; agentEnv sets it.
-	t.Setenv("TALKCODE_REMOTE_CLI", "/opt/stale/bin/talkcode")
+	// Whatever started the daemon must not decide where an agent's fleetherd is; agentEnv sets it.
+	t.Setenv("FLEETHERD_REMOTE_CLI", "/opt/stale/bin/fleetherd")
 	if _, err := os.Stat("/bin/bash"); err != nil {
 		t.Skip("no bash")
 	}
@@ -840,8 +847,8 @@ func TestCaptureLoginEnvReadsTheShell(t *testing.T) {
 	if envGet(env, "SSH_CONNECTION") != "" || envGet(env, "SHLVL") != "" {
 		t.Fatal("connection and shell bookkeeping must be dropped")
 	}
-	if envGet(env, "TALKCODE_REMOTE_CLI") != "" {
-		t.Fatalf("a talkcode variable inherited from the daemon must be dropped, got %q", envGet(env, "TALKCODE_REMOTE_CLI"))
+	if envGet(env, "FLEETHERD_REMOTE_CLI") != "" {
+		t.Fatalf("a fleetherd variable inherited from the daemon must be dropped, got %q", envGet(env, "FLEETHERD_REMOTE_CLI"))
 	}
 }
 

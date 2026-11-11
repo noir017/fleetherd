@@ -213,7 +213,7 @@ export interface HistoryReviewChange {
   suggested?: boolean;
   /** Why the store refused it, or why its shape was rejected. */
   error?: string;
-  /** The history entry (a commit) `talkcode skills revert` names, when there is one. */
+  /** The history entry (a commit) `fleetherd skills revert` names, when there is one. */
   revertId?: string;
 }
 
@@ -912,7 +912,7 @@ export class HistoryStore {
   read(sessionRef: string, opts: HistoryReadOptions = {}): HistoryReadResult {
     // Counted: the result's session is what `sessions read` prints, count included.
     const session = this.findSession(sessionRef, true);
-    if (!session) throw new Error(`no conversation "${sessionRef}"; \`talkcode sessions list\` shows the ids`);
+    if (!session) throw new Error(`no conversation "${sessionRef}"; \`fleetherd sessions list\` shows the ids`);
     if (opts.around !== undefined) {
       if (hasReadFilter(opts)) {
         throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail');
@@ -934,7 +934,7 @@ export class HistoryStore {
    */
   turnRecord(key: string, which: string, current?: HistoryReadOptions['current']): HistoryTurnRow | undefined {
     const session = this.findSession(key);
-    if (!session) throw new Error(`no conversation "${key}"; \`talkcode sessions list\` shows the ids`);
+    if (!session) throw new Error(`no conversation "${key}"; \`fleetherd sessions list\` shows the ids`);
     // `turnScope` throws for a conversation with no turns at all, which for a sub-agent topic just
     // means nothing has run yet — an empty answer, not a broken request.
     if (this.turnCount(session) === 0) return undefined;

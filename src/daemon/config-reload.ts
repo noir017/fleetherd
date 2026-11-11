@@ -1,7 +1,7 @@
 import type { Config, UserConfig } from '../config/schema.js';
 
 /**
- * Applying an edited config.yaml to the running daemon (`/reload`, `talkcode reload`) — the pure
+ * Applying an edited config.yaml to the running daemon (`/reload`, `fleetherd reload`) — the pure
  * half: what changed, which of it can take effect now, and the sentence that says so. The daemon
  * (Daemon.reloadConfig) reads the files and drives the side effects; the registry decides what
  * happens to the agent processes already running (ConversationRegistry.respawnAgents).
@@ -117,7 +117,7 @@ export interface RespawnCounts {
   kept: number;
 }
 
-/** The reply to `/reload` and the output of `talkcode reload`. */
+/** The reply to `/reload` and the output of `fleetherd reload`. */
 export function describeReload(
   d: ConfigDiff,
   respawn: RespawnCounts,

@@ -16,7 +16,7 @@ import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-
  *
  * Written by the setup wizard (slim), validated by doctor, read by the daemon (full).
  * v0 files (single `platform:` object) are auto-migrated in memory at load
- * (config/migrate.ts); `talkcode doctor --migrate-config` rewrites the file.
+ * (config/migrate.ts); `fleetherd doctor --migrate-config` rewrites the file.
  */
 
 // Authoritative type lives in types.ts; here we only build the validation enum from it.
@@ -69,7 +69,7 @@ const AgentDefFields = z
     command: z.string().optional(),
     /** Extra args appended to the harness command (harness-specific switches go here). */
     args: z.array(z.string()).default([]),
-    /** Working dir (passed as ACP session/new cwd); empty = an auto-created per-agent workspace at ~/.talkcode/agents/<id>. */
+    /** Working dir (passed as ACP session/new cwd); empty = an auto-created per-agent workspace at ~/.fleetherd/agents/<id>. */
     cwd: z.string().optional(),
     /** Model (best-effort via newSession; whether it takes effect depends on the harness). */
     model: z.string().optional(),
@@ -151,7 +151,7 @@ const AgentDefFields = z
               .optional(),
             /**
              * A `bash -lc` command run after every failed turn, on the agent's own machine, with
-             * the failure as JSON in `TALKCODE_TURN_FAILURE` — to alert someone, write a log, page
+             * the failure as JSON in `FLEETHERD_TURN_FAILURE` — to alert someone, write a log, page
              * a phone. It only reports: whether the turn continues is `continue`'s decision.
              * Bounded at a minute, and its outcome is logged, never shown in the chat.
              */
@@ -174,7 +174,7 @@ const AgentDefFields = z
     permissions: z.enum(['auto', 'ask']).default('auto'),
     /**
      * The `hosts:` entry this agent runs on; absent = this machine. Over there the gateway starts
-     * the harness through talkcode-remote (see remote/README.md), so `command`, `cwd`, `env` and
+     * the harness through fleetherd-remote (see remote/README.md), so `command`, `cwd`, `env` and
      * `hooks.preLaunch` all mean that host's: its PATH, its directories, its shell.
      */
     host: z.string().min(1).optional(),
@@ -204,7 +204,7 @@ export const AgentDefSchema = agentRules(AgentDefFields);
 export type AgentDef = z.infer<typeof AgentDefSchema>;
 
 /**
- * An agent as a pod declares it, in `~/.talkcode/pod.yaml` on the host (daemon/pods.ts). The
+ * An agent as a pod declares it, in `~/.fleetherd/pod.yaml` on the host (daemon/pods.ts). The
  * gateway names it `<id>@<host>` — so a pod cannot take an id config.yaml or another pod uses — and
  * runs it on that host, so there is no `host` to give.
  *
@@ -233,7 +233,7 @@ export type PodAgent = z.infer<typeof PodAgentSchema>;
 const SSH_DESTINATION = z.string().regex(/^[^\s'"]+$/, 'ssh must be user@host[:port], with no spaces or quotes');
 
 /**
- * `~/.talkcode/pod.yaml` on a host. No `agents:` (or an empty list) = no agents there.
+ * `~/.fleetherd/pod.yaml` on a host. No `agents:` (or an empty list) = no agents there.
  *
  * `peer:` joins the pod-to-pod ssh mesh (daemon/pod-peers.ts): every pod that has it can ssh to every
  * other as `<host>.pod`, with keys and host keys the gateway puts in place. Asked for by the pod
@@ -469,7 +469,7 @@ const ExperienceSchema = z.object({
   attachments: z
     .object({
       enabled: z.boolean().default(true),
-      /** Cache dir for downloads; default decided by the daemon (~/.config/talkcode/attachments). */
+      /** Cache dir for downloads; default decided by the daemon (~/.config/fleetherd/attachments). */
       cacheDir: z.string().optional(),
       /** Inline readable text into the prompt only if <= this many bytes (else write to disk, pass path). 100KB. */
       maxInjectBytes: z.number().int().positive().default(100_000),
@@ -478,7 +478,7 @@ const ExperienceSchema = z.object({
     })
     .default({}),
 
-  /** IPC socket. socketPath default ~/.config/talkcode/daemon.sock (resolveSocketPath). */
+  /** IPC socket. socketPath default ~/.config/fleetherd/daemon.sock (resolveSocketPath). */
   ipc: z
     .object({
       socketPath: z.string().optional(),
@@ -531,7 +531,7 @@ export const ConfigSchema = z
 
     /**
      * The default model of an agent a host's pod declares, set from the gateway: `<id>@<host>` → a
-     * model name. Outranks that agent's `model:` in its `~/.talkcode/pod.yaml`, and is outranked by a
+     * model name. Outranks that agent's `model:` in its `~/.fleetherd/pod.yaml`, and is outranked by a
      * conversation's `/model`. `/setting model.<id>@<host>` writes it; clearing it there falls back
      * to the pod's own value.
      *
@@ -639,7 +639,7 @@ export const ConfigSchema = z
      *    `url` is the base up to and including the version segment (`http://newapi:3000/v1`), like
      *    `title.llm.baseUrl`; `${VAR}` in `url` and `key` is expanded at load like any field.
      * Either way the reviewer never touches a file itself — the gateway applies what it returns
-     * through the same rules as `talkcode skills`.
+     * through the same rules as `fleetherd skills`.
      */
     review: z
       .object({
@@ -853,7 +853,7 @@ export const ConfigSchema = z
      * is transcribed, the transcript is shown in the chat labelled as one, and — once confirmed — it
      * goes to the agent as if the user had typed it. The agent is not told the words were spoken;
      * every transcription is logged to `<configDir>/voice-log.jsonl` with its audio file, and the
-     * agent can read its conversation's entries with `talkcode voice-log`. See core/voice.ts.
+     * agent can read its conversation's entries with `fleetherd voice-log`. See core/voice.ts.
      */
     voice: z
       .object({
@@ -887,7 +887,7 @@ export const ConfigSchema = z
         cleanup: z.boolean().default(true),
         /**
          * Names the transcriber should expect — hosts, services, people, jargon this deployment says
-         * out loud — added to a built-in list of the gateway's own (talkcode, Claude Code, Codex…).
+         * out loud — added to a built-in list of the gateway's own (fleetherd, Claude Code, Codex…).
          * The cleanup is given the same list, to fix what was misheard.
          *
          * A name the model has not been told is spelled by ear: on 2026-10-17 "Unraid" came back as

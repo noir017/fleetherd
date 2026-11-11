@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { RemoteArch, RemoteBinary, Transport } from './connection.js';
 
 /**
- * Where this gateway's talkcode-remote builds are, and how a connection reaches a host.
+ * Where this gateway's fleetherd-remote builds are, and how a connection reaches a host.
  *
  * The builds are produced by `npm run build` (scripts/build-remote.mjs) into `dist/remote-bin/`, one
  * static binary per architecture, and ship inside the release tarball — a host never downloads
@@ -26,7 +26,7 @@ const cache = new Map<string, RemoteBinary | null>();
  * lands in a new directory, and still retires the daemon of the old one.
  */
 export function remoteBinary(arch: RemoteArch, packageVersion: string, dir = remoteBinDir()): RemoteBinary | undefined {
-  const path = `${dir}/talkcode-remote-linux-${arch}`;
+  const path = `${dir}/fleetherd-remote-linux-${arch}`;
   const key = `${path}@${packageVersion}`;
   if (!cache.has(key)) {
     if (!existsSync(path)) cache.set(key, null);

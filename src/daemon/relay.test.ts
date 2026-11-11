@@ -7,7 +7,7 @@ import { harnessRelay, openLocalRelay, relayEnv, type RelaySpec } from './relay.
 
 /**
  * The local relay against a stand-in upstream on loopback: what an agent on this machine gets. The
- * relay on a remote host is talkcode-remote's (remote/relay_test.go, and the contract test in
+ * relay on a remote host is fleetherd-remote's (remote/relay_test.go, and the contract test in
  * remote.integration.test.ts).
  */
 

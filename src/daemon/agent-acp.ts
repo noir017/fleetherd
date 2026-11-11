@@ -91,7 +91,7 @@ import { relayEnv } from './relay.js';
 /**
  * AgentFactory's ACP (Agent Client Protocol) implementation on the official @agentclientprotocol/sdk.
  *
- * talkcode daemon = ACP "client/host". Each (conversationId, agentId) spawns a resident ACP agent child
+ * fleetherd daemon = ACP "client/host". Each (conversationId, agentId) spawns a resident ACP agent child
  * (claude-agent-acp / codex-acp / opencode acp / agy acp / any custom), translating ACP session/update stream
  * notifications back to the existing AgentStreamHandlers, reusing all outbound rendering (StreamBuffer / ToolRenderer).
  *
@@ -106,7 +106,7 @@ import { relayEnv } from './relay.js';
  *   session/request_permission ↔ permission policy (bypass/deny implemented; ask/acceptEdits see seam)
  *
  * TOKEN model (per-session): ACP is a resident process, env fixed at spawn. So the daemon gives each
- * session a stable token (RunTurnInput.sessionToken, same every turn), injected as TALKCODE_TURN_TOKEN.
+ * session a stable token (RunTurnInput.sessionToken, same every turn), injected as FLEETHERD_TURN_TOKEN.
  * Reverse commands use it to connect back; the daemon resolves "token → session → current turn channel" (see session.ts).
  */
 
@@ -144,7 +144,7 @@ export function promptBlocks(turn: Pick<RunTurnInput, 'prompt' | 'images'>, take
 export const NATIVE_TOOLS_SERVER = 'chat';
 
 /**
- * MCP servers handed to the agent in `session/new` and `session/load`: `talkcode mcp`, which
+ * MCP servers handed to the agent in `session/new` and `session/load`: `fleetherd mcp`, which
  * serves `send_file` and `schedule` as native tools (commands/mcp.ts, ipc/tools.ts).
  *
  * Stdio, because it is the one transport every ACP agent MUST support — probed 2026-10-09, the
@@ -175,18 +175,18 @@ export function acpMcpServers(
       command: self.command,
       args: [...self.args, 'mcp'],
       env: [
-        { name: 'TALKCODE_TURN_TOKEN', value: sessionToken },
-        { name: 'TALKCODE_SOCKET', value: socketPath },
-        { name: 'TALKCODE_CWD', value: cwd },
+        { name: 'FLEETHERD_TURN_TOKEN', value: sessionToken },
+        { name: 'FLEETHERD_SOCKET', value: socketPath },
+        { name: 'FLEETHERD_CWD', value: cwd },
       ],
     },
   ];
 }
 
 /**
- * The same server for an agent on a remote host: the host's `talkcode` shim (on PATH there, but
+ * The same server for an agent on a remote host: the host's `fleetherd` shim (on PATH there, but
  * named absolutely — a harness may start MCP servers with a stripped environment), which carries
- * the session back to this gateway's own `talkcode mcp` (remote-hosts.ts runCli). The socket it
+ * the session back to this gateway's own `fleetherd mcp` (remote-hosts.ts runCli). The socket it
  * dials is passed explicitly for the same reason.
  */
 export function remoteMcpServers(sessionToken: string, paths: { shim: string; socket: string }, cwd: string): McpServer[] {
@@ -196,9 +196,9 @@ export function remoteMcpServers(sessionToken: string, paths: { shim: string; so
       command: paths.shim,
       args: ['mcp'],
       env: [
-        { name: 'TALKCODE_TURN_TOKEN', value: sessionToken },
-        { name: 'TALKCODE_REMOTE_SOCK', value: paths.socket },
-        { name: 'TALKCODE_CWD', value: cwd },
+        { name: 'FLEETHERD_TURN_TOKEN', value: sessionToken },
+        { name: 'FLEETHERD_REMOTE_SOCK', value: paths.socket },
+        { name: 'FLEETHERD_CWD', value: cwd },
       ],
     },
   ];
@@ -241,7 +241,7 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
       // A PATH command, NOT a bundled dependency, which is the opposite of the claude arm above
       // and deliberate: the adapter declares `@openai/codex` as a regular dependency, whose
       // platform binary is ~284 MB unpacked. Bundling that taxes every `npm i -g
-      // talkcode` for a harness most operators never configure, and the operator who
+      // fleetherd` for a harness most operators never configure, and the operator who
       // does configure it already had to install and log into the codex CLI by hand. So codex
       // follows the same contract as gemini/opencode/dsh — the image (or the operator) installs
       // `@agentclientprotocol/codex-acp` globally, and doctor reports a missing one.
@@ -419,7 +419,7 @@ export const TOOL_SILENCE_FACTOR = 2;
  * autonomous, and never settles the prompt. `session/prompt` does not return until something else
  * releases it: the next prompt, or a cancel.
  *
- * Seen live 2026-09-29 (web topic, quantlab): the answer streamed in full, then nothing, and the
+ * Seen live 2026-09-29 (web topic, shop-api): the answer streamed in full, then nothing, and the
  * silence watchdog failed the turn ten minutes later as "hung". Most occurrences never got that
  * far — `inbound.interruptOnNewMessage` (removed after 2.0.0) cancelled the stuck turn as soon as the
  * user said anything — which is why thirty-odd folds in a week surfaced as one failure. Without it,
@@ -725,7 +725,7 @@ const MODEL_CONFIG_ID = 'model';
  * DSH's model selector value: JSON.stringify([provider, model]) — see `modelValue` in
  * @deepseek-ai/dsh-acp (lib/types/model-control.js), where the option's `currentValue` and every
  * choice value carry that exact string and `set` looks the incoming value up in a map keyed by it.
- * talkcode spells models "provider/model" (the opencode convention), so the pair must be
+ * fleetherd spells models "provider/model" (the opencode convention), so the pair must be
  * JSON-encoded to cross the wire — a bare "provider/model" is rejected as "unknown model option" —
  * and decoded again to present a readable /model menu (see dshModelDisplayValue).
  */
@@ -835,7 +835,7 @@ export async function applyModelPreference(
 }
 
 /**
- * Pin `agents[].options` on a started session — the harness's own config options that talkcode has
+ * Pin `agents[].options` on a started session — the harness's own config options that fleetherd has
  * no menu for, e.g. cursor's `context` (`256k` / `500k`) and `fast`.
  *
  * Why this exists: an option the client cannot render is one the person cannot choose, and a
@@ -1497,7 +1497,7 @@ function createAcpSession(
 
   /**
    * The child, here or on its host, and the native-tools server its sessions are given. That server
-   * is started BY the harness, so on a remote host it is the host's `talkcode` shim, which hands the
+   * is started BY the harness, so on a remote host it is the host's `fleetherd` shim, which hands the
    * session back to this gateway (remote/shim.go).
    */
   function spawnChild(
@@ -1619,7 +1619,7 @@ function createAcpSession(
     const startup = (async () => {
       const initResult = await ctx.request('initialize', {
         protocolVersion: ACP_PROTOCOL_VERSION,
-        // Don't advertise fs/terminal: let the agent use its own tools (Bash → talkcode); the client only receives the stream + answers permission.
+        // Don't advertise fs/terminal: let the agent use its own tools (Bash → fleetherd); the client only receives the stream + answers permission.
         //
         // `elicitation.form` IS advertised, and it is load-bearing rather than decorative: the
         // claude adapter gates the model's own AskUserQuestion tool on it
@@ -2219,7 +2219,7 @@ function createAcpSession(
   }
 
   /**
-   * Mid-turn, after a model call that asked for a tool: the strip and `talkcode tasks` follow a long
+   * Mid-turn, after a model call that asked for a tool: the strip and `fleetherd tasks` follow a long
    * agy turn the way they follow one that sends `usage_update`. Not waited for, and at most one read
    * per AGY_CONTEXT_REFRESH_MS — a burst of tools is a burst of calls to this.
    */

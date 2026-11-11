@@ -38,7 +38,7 @@ describe('initialize', () => {
     const r = await result(req('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't' } }));
     expect(r.protocolVersion).toBe('2025-06-18');
     expect(r.capabilities).toEqual({ tools: { listChanged: false } });
-    expect(r.serverInfo).toEqual({ name: 'talkcode', version: '9.9.9' });
+    expect(r.serverInfo).toEqual({ name: 'fleetherd', version: '9.9.9' });
   });
 
   it('offers its newest revision for one it does not know', async () => {

@@ -1131,7 +1131,7 @@ describe('webui page: closing the idle agents', () => {
   const fleet = (): Array<Record<string, unknown>> => [
     { id: A, title: 'asking', lastAt: 1000, running: true, asking: true, live: true, msgCount: 0 },
     { id: 'b2c3d4e5', title: 'working', lastAt: 999, running: true, live: true, msgCount: 0 },
-    { id: 'c3d4e5f6', title: 'resident', lastAt: 998, live: true, msgCount: 0, dir: { name: 'talkcode', path: '/w/talkcode', host: 'uniagent' } },
+    { id: 'c3d4e5f6', title: 'resident', lastAt: 998, live: true, msgCount: 0, dir: { name: 'fleetherd', path: '/w/fleetherd', host: 'uniagent' } },
     { id: 'd4e5f6a7', title: 'cold', lastAt: 997, live: false, msgCount: 0 },
     { id: 'e5f6a7b8', title: 'kept warm', lastAt: 996, live: true, starred: true, msgCount: 0 },
   ];
@@ -1170,7 +1170,7 @@ describe('webui page: closing the idle agents', () => {
     expect(h.el('idle-title').textContent).toBe('Close 2 idle agents?');
     expect(rows(h)).toEqual([
       { id: 'e5f6a7b8', text: 'kept warm', out: '' },
-      { id: 'c3d4e5f6', text: 'resident | uniagent · talkcode', out: '' },
+      { id: 'c3d4e5f6', text: 'resident | uniagent · fleetherd', out: '' },
     ]);
     // Cancel holds the focus, so an Enter out of habit changes nothing.
     expect(h.doc.activeElement).toBe(h.el('idle-cancel'));
@@ -1610,16 +1610,16 @@ describe('webui page: topics', () => {
     await h.emit({
       t: 'topics',
       topics: [
-        { id: 'a1b2c3d4', title: 'fix the parser', lastAt: 1000, msgCount: 0, dir: { name: 'talkcode', path: '/home/user/workspace/talkcode' } },
+        { id: 'a1b2c3d4', title: 'fix the parser', lastAt: 1000, msgCount: 0, dir: { name: 'fleetherd', path: '/home/user/workspace/fleetherd' } },
         { id: 'b2c3d4e5', title: 'bump the image', lastAt: 999, msgCount: 0, dir: { name: 'uniagent', path: '/home/user/workspace/uniagent' } },
       ],
     });
 
     const dirs = Array.from(h.doc.querySelectorAll('.topic-dir'));
-    expect(dirs.map((d) => d.textContent)).toEqual(['talkcode', 'uniagent']);
+    expect(dirs.map((d) => d.textContent)).toEqual(['fleetherd', 'uniagent']);
     // The column is 240px wide, so the row shows the last segment and the tooltip carries the
     // path that tells two checkouts of one project apart.
-    expect(dirs[0]!.getAttribute('title')).toBe('/home/user/workspace/talkcode');
+    expect(dirs[0]!.getAttribute('title')).toBe('/home/user/workspace/fleetherd');
   });
 
   it('names the machine ahead of the directory for an agent on a host', async () => {
@@ -1633,24 +1633,24 @@ describe('webui page: topics', () => {
       topics: [
         { id: 'a1b2c3d4', title: '[ag] 开工', lastAt: 1000, msgCount: 0, dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' } },
         { id: 'b2c3d4e5', title: '[ag2] 你好', lastAt: 999, msgCount: 0, dir: { name: 'workspace', path: '/home/user/workspace', host: 'devbox' } },
-        { id: 'c3d4e5f6', title: '[cc] local', lastAt: 998, msgCount: 0, dir: { name: 'talkcode', path: '/srv/talkcode' } },
+        { id: 'c3d4e5f6', title: '[cc] local', lastAt: 998, msgCount: 0, dir: { name: 'fleetherd', path: '/srv/fleetherd' } },
       ],
     });
 
     const dirs = Array.from(h.doc.querySelectorAll('.topic-dir'));
-    expect(dirs.map((d) => d.textContent)).toEqual(['uniagent · workspace', 'devbox · workspace', 'talkcode']);
+    expect(dirs.map((d) => d.textContent)).toEqual(['uniagent · workspace', 'devbox · workspace', 'fleetherd']);
     // The tooltip is the whole address, in the form scp and ssh already taught everyone to read.
     expect(dirs.map((d) => d.getAttribute('title'))).toEqual([
       'uniagent:/home/user/workspace',
       'devbox:/home/user/workspace',
-      '/srv/talkcode',
+      '/srv/fleetherd',
     ]);
   });
 
   it('shortens a host-qualified agent tag once the row already names the machine', async () => {
     // A remote agent's id is `<id>@<host>`, and `formatLaneTitle` puts that id in front of every
     // topic name. Left whole it is 15 characters of a 240px column spent on a machine the
-    // directory line repeats, which left rows reading "[cbc@uniagent] Oracle A…" (reported
+    // directory line repeats, which left rows reading "[cbc@uniagent] Deploy A…" (reported
     // 2026-11-03). The part before the `@` is what the operator types to bind the agent.
     const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
@@ -1658,7 +1658,7 @@ describe('webui page: topics', () => {
     await h.emit({
       t: 'topics',
       topics: [
-        { id: 'a1b2c3d4', title: '[cbc@uniagent] Oracle A…', lastAt: 1000, msgCount: 0, dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' } },
+        { id: 'a1b2c3d4', title: '[cbc@uniagent] Deploy A…', lastAt: 1000, msgCount: 0, dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' } },
         // No directory known, so the second line cannot say which machine this is: the tag keeps
         // its host, because it is the only place on the row that names it.
         { id: 'b2c3d4e5', title: '[ag@devbox] 你好', lastAt: 999, msgCount: 0 },
@@ -1666,10 +1666,10 @@ describe('webui page: topics', () => {
     });
 
     const titles = Array.from(h.doc.querySelectorAll('.topic-title'));
-    expect(titles.map((t) => t.textContent)).toEqual(['[cbc] Oracle A…', '[ag@devbox] 你好']);
+    expect(titles.map((t) => t.textContent)).toEqual(['[cbc] Deploy A…', '[ag@devbox] 你好']);
     // Nothing is lost: the name the tag was cut from is on the tag itself, where the abbreviation
     // is, so the row's own tooltip (what a needs-you row says) still covers the rest of the row.
-    expect(titles[0]!.querySelector('.topic-tag')?.getAttribute('title')).toBe('[cbc@uniagent] Oracle A…');
+    expect(titles[0]!.querySelector('.topic-tag')?.getAttribute('title')).toBe('[cbc@uniagent] Deploy A…');
     expect(titles[1]!.querySelector('.topic-tag')?.getAttribute('title')).toBeNull();
   });
 
@@ -1683,7 +1683,7 @@ describe('webui page: topics', () => {
         { id: 'a1b2c3d4', title: 'on screen', lastAt: 1000, msgCount: 0 },
         {
           id: 'b2c3d4e5',
-          title: '[cbc@uniagent] Oracle A…',
+          title: '[cbc@uniagent] Deploy A…',
           lastAt: 999,
           msgCount: 0,
           stage: 'answer',
@@ -3145,7 +3145,7 @@ describe('webui page: choosing an agent for a new topic', () => {
         ],
       },
       {
-        name: 'awsfree2',
+        name: 'buildbox',
         agents: [
           { id: 'oc2', harness: 'opencode', kind: 'OpenCode' },
           { id: 'cb', harness: 'custom', kind: 'codebuddy' },
@@ -3164,7 +3164,7 @@ describe('webui page: choosing an agent for a new topic', () => {
     expect(h.painted()).toBe(0);
     expect(Array.from(launch(h)!.querySelectorAll('.launch-host')).map((e) => e.firstChild?.textContent?.trim())).toEqual([
       'uniagent',
-      'awsfree2',
+      'buildbox',
     ]);
     expect(cards(h).map((c) => c.getAttribute('data-agent'))).toEqual(['cc', 'oc', 'cx', 'oc2', 'cb']);
     // What each one IS, not only its id — and the model, where one is configured.
@@ -3294,8 +3294,8 @@ describe('webui page: a machine the gateway cannot reach', () => {
   const placed = (current: string, messages: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}): Record<string, unknown> =>
     sync(current, messages, [], {
       topics: [
-        { id: 'a1b2c3d4', title: 'Fix the build', lastAt: 1000, running: false, msgCount: current === 'a1b2c3d4' ? messages.length : 0, dir: { name: 'quantlab', path: '/home/user/work/quantlab', host: 'laptop' } },
-        { id: 'b2c3d4e5', title: 'Docs', lastAt: 999, running: false, msgCount: 0, dir: { name: 'talkcode', path: '/home/user/workspace/talkcode', host: 'uniagent' } },
+        { id: 'a1b2c3d4', title: 'Fix the build', lastAt: 1000, running: false, msgCount: current === 'a1b2c3d4' ? messages.length : 0, dir: { name: 'shop-api', path: '/home/user/work/shop-api', host: 'laptop' } },
+        { id: 'b2c3d4e5', title: 'Docs', lastAt: 999, running: false, msgCount: 0, dir: { name: 'fleetherd', path: '/home/user/workspace/fleetherd', host: 'uniagent' } },
       ],
       ...extra,
     });
@@ -3343,12 +3343,12 @@ describe('webui page: a machine the gateway cannot reach', () => {
     expect(face(off)).toBe('[offline]laptop');
     expect(off?.getAttribute('title')).toContain(`offline since ${at(since)}`);
     // The line still says where the topic is.
-    expect(face(row(h, 'a1b2c3d4').querySelector('.topic-dir'))).toBe('[offline]laptop · quantlab');
+    expect(face(row(h, 'a1b2c3d4').querySelector('.topic-dir'))).toBe('[offline]laptop · shop-api');
     expect(row(h, 'b2c3d4e5').querySelector('.topic-off')).toBeNull();
 
     await h.emit({ t: 'machines', offline: [] });
     expect(h.el('topics').querySelector('.topic-off')).toBeNull();
-    expect(row(h, 'a1b2c3d4').querySelector('.topic-dir')?.textContent).toBe('laptop · quantlab');
+    expect(row(h, 'a1b2c3d4').querySelector('.topic-dir')?.textContent).toBe('laptop · shop-api');
   });
 
   it('says above the composer why the topic on screen will not be answered', async () => {
@@ -3396,7 +3396,7 @@ describe('webui page: menus', () => {
     ...message('m1', '<p>Working dir</p>'),
     buttons: [
       { id: 'wdr:r:0', label: '⌂ workspace' },
-      { id: 'wdr:r:1', label: '● talkcode' },
+      { id: 'wdr:r:1', label: '● fleetherd' },
       { id: 'wdr:r:2', label: 'uniagent' },
       { id: 'wdr:r:3', label: '项目报告归档' },
       { id: 'wdp:r:1', label: '◀ Prev' },
@@ -3411,7 +3411,7 @@ describe('webui page: menus', () => {
 
     // Direct children of .btns are the choices; the controls are inside .nav, after them. Paging
     // used to sit in the middle of the list as two more things to pick.
-    expect(cells(h, '.btns > button')).toEqual(['[home] workspace', '[dot] talkcode', 'uniagent', '项目报告归档']);
+    expect(cells(h, '.btns > button')).toEqual(['[home] workspace', '[dot] fleetherd', 'uniagent', '项目报告归档']);
     expect(cells(h, '.btns > .nav > button')).toEqual(['[chevronLeft] Prev', 'Next [chevronRight]']);
     expect(h.doc.querySelector('.btns > :last-child')?.className).toBe('nav');
   });
@@ -3430,7 +3430,7 @@ describe('webui page: menus', () => {
     await h.emit(sync('a1b2c3d4', [menu()], ['a1b2c3d4']));
 
     const lit = h.doc.querySelectorAll('.btns button.on');
-    expect(Array.from(lit).map(face)).toEqual(['[dot] talkcode']);
+    expect(Array.from(lit).map(face)).toEqual(['[dot] fleetherd']);
     // The mark is its own element so it can be coloured — and the root's ⌂ is a mark, not a choice.
     expect(face(lit[0]?.querySelector('.mk'))).toBe('[dot]');
     expect(face(h.doc.querySelector('button[data-btn="wdr:r:0"] .mk'))).toBe('[home]');
@@ -7559,7 +7559,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
   it('switches to a topic a message links to, in place', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${D}` });
     await h.emit(
-      sync(D, [message('w1', `<p>Done in <a href="?t=${C}" data-goto="${C}">quantlab</a>.</p>`)], [D, A, C])
+      sync(D, [message('w1', `<p>Done in <a href="?t=${C}" data-goto="${C}">shop-api</a>.</p>`)], [D, A, C])
     );
     const before = h.streams.length;
     await h.click('#log a[data-goto]');
@@ -9238,7 +9238,7 @@ describe('webui page: the Reviews tab', () => {
         name: 'deploy-check',
         reason: 'two runs forgot the tests',
         applied: true,
-        undo: 'talkcode skills revert deploy-check 0001-abc',
+        undo: 'fleetherd skills revert deploy-check 0001-abc',
       },
       {
         action: 'write-file',
@@ -9348,7 +9348,7 @@ describe('webui page: the Reviews tab', () => {
           name: 'simular-box',
           into: 'sbox',
           suggested: true,
-          command: 'talkcode skills archive simular-box',
+          command: 'fleetherd skills archive simular-box',
         },
       ],
       preferences: [],
@@ -9372,7 +9372,7 @@ describe('webui page: the Reviews tab', () => {
     const change = h.doc.querySelector('.rev-change')!;
     expect(change.textContent).toContain('Archive simular-box into sbox');
     expect(change.querySelector('.rev-status')!.textContent).toBe('suggested');
-    expect(change.querySelector('.rev-undo')!.textContent).toBe('talkcode skills archive simular-box');
+    expect(change.querySelector('.rev-undo')!.textContent).toBe('fleetherd skills archive simular-box');
 
     replies['api/reviews'] = reply([suggestion], { pending: [] });
     (h.doc.querySelector('[data-rev-archive]') as HTMLElement).click();
@@ -9681,7 +9681,7 @@ describe('webui page: the Reviews tab', () => {
     expect(detail.textContent).toContain('applied');
     expect(detail.textContent).toContain('refused');
     expect(detail.textContent).toContain('files may only go in references/');
-    expect(detail.textContent).toContain('talkcode skills revert deploy-check 0001-abc');
+    expect(detail.textContent).toContain('fleetherd skills revert deploy-check 0001-abc');
     expect(detail.textContent).toContain('answers lead with the conclusion');
   });
 
@@ -10044,7 +10044,9 @@ describe('webui page: the skills page', () => {
     const handMade = detail({
       history: [
         { id: 'abcdef123456', at: '2026-11-02T00:00:00.000Z', action: 'commit', author: 'noir', note: 'docs: rewrite by hand' },
-        { id: '0123456789ab', at: '2026-11-01T00:00:00.000Z', action: 'create', author: 'talkcode' },
+        { id: '0123456789ab', at: '2026-11-01T00:00:00.000Z', action: 'create', author: 'fleetherd' },
+        // Before 3.0.0 the gateway's commits were authored talkcode*: still its own, still unnamed.
+        { id: '00000000abcd', at: '2026-10-01T00:00:00.000Z', action: 'patch', author: 'talkcode-web' },
       ],
     });
     const replies = { 'api/skills': list(), 'api/skills/op': opReply([entry()], handMade) };
@@ -10060,8 +10062,9 @@ describe('webui page: the skills page', () => {
     expect(rows[0]!.textContent).toContain('docs: rewrite by hand');
     expect(rows[0]!.querySelector('[data-revert="abcdef123456"]')).not.toBeNull();
     // The gateway's own name is not repeated on every row, and a first version has nothing to restore.
-    expect(rows[1]!.textContent).not.toContain('talkcode');
+    expect(rows[1]!.textContent).not.toContain('fleetherd');
     expect(rows[1]!.querySelector('[data-revert]')).toBeNull();
+    expect(rows[2]!.textContent).not.toContain('talkcode');
   });
 
   it('saves SKILL.md with the version the detail carried', async () => {
@@ -11309,7 +11312,7 @@ describe('webui page: the History tab', () => {
 
   it('says a conversation could not be read, and keeps the way out', async () => {
     const h = await open({
-      replies: { 'api/history': page([row()]), 'api/history/read?id=1': { error: 'no conversation "1"; `talkcode sessions list` shows the ids' } },
+      replies: { 'api/history': page([row()]), 'api/history/read?id=1': { error: 'no conversation "1"; `fleetherd sessions list` shows the ids' } },
       status: { 'api/history/read?id=1': 404 },
     });
     await h.emit(sync(B, [], [A, B]));

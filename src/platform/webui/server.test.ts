@@ -1227,7 +1227,7 @@ describe('webui server: traffic', () => {
     // got a 404 JSON body, which a `download` link saves as `<token>.json`.
     const { base, room } = await boot();
     const cookie = await signIn(base);
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'talkcode-file-'));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-file-'));
     const kept = fs.mkdtempSync(path.join(os.tmpdir(), 'webui-kept-'));
     try {
       room.useUploads(diskUploadStore(kept));
@@ -1722,7 +1722,7 @@ describe('webui server: traffic', () => {
           name: 'deploy-check',
           reason: 'two runs forgot the tests',
           applied: true,
-          undo: 'talkcode skills revert deploy-check 0001-abc',
+          undo: 'fleetherd skills revert deploy-check 0001-abc',
         },
       ],
       preferences: ['answers lead with the conclusion'],
@@ -1923,7 +1923,7 @@ describe('webui server: traffic', () => {
         list: () => page,
         search: () => ({ hits: [hit] }),
         read: () => {
-          throw new Error('no conversation "99"; `talkcode sessions list` shows the ids');
+          throw new Error('no conversation "99"; `fleetherd sessions list` shows the ids');
         },
       });
       expect((await fetch(`${base}/api/history/read`, { headers: { cookie } })).status).toBe(400);

@@ -13,7 +13,7 @@ import { skillDir, type SkillRecord } from './skills-store.js';
  * The store's own rules are `skills-store.test.ts`'s; what is pinned here is the seam: the page's
  * shape, the store's sentence handed back unchanged when it refuses, and the archive notice — the
  * one thing the panel adds over calling the store, because a skill archived from a page must tell
- * the conversation that created it exactly as `talkcode skills archive` does.
+ * the conversation that created it exactly as `fleetherd skills archive` does.
  */
 
 let dir: string;
@@ -160,7 +160,7 @@ describe('skills panel', () => {
     const made = await panel.op({ action: 'resident', name: 'deploy-check', resident: true });
     expect(made).toMatchObject({ ok: true, skills: [expect.objectContaining({ name: 'deploy-check', resident: true })] });
     const history = detail(await panel.op({ action: 'show', name: 'deploy-check' })).history;
-    expect(history[0]).toMatchObject({ action: 'resident', author: 'talkcode-web' });
+    expect(history[0]).toMatchObject({ action: 'resident', author: 'fleetherd-web' });
     expect(await panel.op({ action: 'resident', name: 'deploy-check', resident: false })).toMatchObject({
       ok: true,
       skills: [expect.objectContaining({ resident: false })],

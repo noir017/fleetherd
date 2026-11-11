@@ -16,8 +16,8 @@ import {
 /**
  * The `skills` tool's two actions — search and show — as an agent in a conversation sees them.
  *
- * What it adds over the store: only skills that reach the asking agent (`talkcode-hosts`,
- * `talkcode-harnesses`) are searched; a resident hit says it is already in the agent's list, so the
+ * What it adds over the store: only skills that reach the asking agent (`fleetherd-hosts`,
+ * `fleetherd-harnesses`) are searched; a resident hit says it is already in the agent's list, so the
  * agent uses it from there instead of reading it again through the tool; and `show` of a version
  * this conversation already read answers "unchanged" instead of the whole text again — Hermes
  * Agent's skill_view does the same, for the same reason (a skill re-read every few turns is context
@@ -35,7 +35,7 @@ export interface LibraryAsker {
   agent?: string;
   /** The agent's `host:`, or `local`. */
   host: string;
-  /** As `talkcode-harnesses` names it (managed-skills.ts skillHarnessOf). */
+  /** As `fleetherd-harnesses` names it (managed-skills.ts skillHarnessOf). */
   harness: string;
 }
 
@@ -60,7 +60,7 @@ export interface SearchAnswer {
 /** The maximum a search returns. Each result is a description the agent reads, so a few. */
 export const SEARCH_LIMIT = 5;
 
-const SKILLS_HOME = '~/.talkcode/skills';
+const SKILLS_HOME = '~/.fleetherd/skills';
 
 export class SkillLibrary {
   private cached: { stamp: string; index: SkillIndex; skills: Map<string, SkillFileSet> } | undefined;

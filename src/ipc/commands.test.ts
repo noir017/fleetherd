@@ -5,7 +5,7 @@ import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, isBridgedCommand, r
 import type { IpcAction } from './protocol.js';
 
 /**
- * The catalog as the agent meets it: through `talkcode help`, and through commander parsing
+ * The catalog as the agent meets it: through `fleetherd help`, and through commander parsing
  * `schedule …` into an action. The help pages are the only place the commands that are not native
  * tools are documented to the agent (the skill points here), so "every command is on a page" is a
  * property worth pinning.
@@ -44,7 +44,7 @@ describe('help topics', () => {
 
   it('a topic page carries its commands, their flags and its rules', () => {
     const page = renderHelpTopic('schedule')!;
-    expect(page).toContain('talkcode schedule <action> [id]');
+    expect(page).toContain('fleetherd schedule <action> [id]');
     expect(page).toContain('--cron <expr>');
     expect(page).toContain('-c, --channel <id>');
     // The rule that makes the whole feature worth having must be on the page the agent reads.

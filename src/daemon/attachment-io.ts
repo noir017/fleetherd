@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { Config } from '../config/schema.js';
+import { configDir } from '../config/load.js';
 import type { AttachmentIngestDeps } from '../core/attachment-ingest.js';
 import type { RemoteHost } from '../remote/host.js';
 
@@ -13,7 +13,7 @@ import type { RemoteHost } from '../remote/host.js';
  *  - download: the platform's own fetcher when it claims the URL, else Node global fetch with an
  *    AbortController timeout and a content-length early-exit over maxDownloadBytes; returns bytes
  *    plus whatever was learned about them (content-type header, filename).
- *  - save: write to the cache dir (config.cacheDir defaults to ~/.config/talkcode/attachments); filename
+ *  - save: write to the cache dir (config.cacheDir defaults to `attachments` in the config directory); filename
  *    sanitized against traversal, short hash prefix to avoid overwrite; mkdir recursive + writeFile.
  *
  * `fetchPlatform` is the adapter's `fetchAttachment` (absent for platforms whose media URLs are
@@ -26,8 +26,7 @@ export function createAttachmentIngestDeps(
   ) => Promise<{ bytes: Uint8Array; mime?: string; name?: string } | undefined>
 ): AttachmentIngestDeps {
   const maxDownloadBytes = config.attachments.maxDownloadBytes;
-  const cacheDir =
-    config.attachments.cacheDir ?? path.join(homedir(), '.config/talkcode/attachments');
+  const cacheDir = config.attachments.cacheDir ?? path.join(configDir(), 'attachments');
 
   return {
     download: async (url) => {
@@ -124,7 +123,7 @@ export function createAttachmentIngestDeps(
 }
 
 /**
- * `save` for an agent on a remote host: the file goes to THAT host — `~/.talkcode/attachments`,
+ * `save` for an agent on a remote host: the file goes to THAT host — `~/.fleetherd/attachments`,
  * owner-only, named the same way as a local save — and the path the prompt names is the one the
  * agent can open there. The download itself still happens here, behind the same SSRF guards.
  */
@@ -132,7 +131,7 @@ export function remoteAttachmentSave(host: RemoteHost): AttachmentIngestDeps['sa
   return async (name, bytes) => {
     const w = await host.ready();
     const hash = createHash('sha1').update(bytes).digest('hex').slice(0, 8);
-    const dest = `${w.home}/.talkcode/attachments/${hash}-${sanitizeFilename(name)}`;
+    const dest = `${w.home}/.fleetherd/attachments/${hash}-${sanitizeFilename(name)}`;
     await host.writeFile(dest, bytes, 0o600);
     return dest;
   };

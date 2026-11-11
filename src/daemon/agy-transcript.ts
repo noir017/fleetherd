@@ -14,7 +14,7 @@ import { agentHome } from './skills-scan.js';
  * call the turn made (agy-acp.ts contextTokensOf). That is the context only for a turn of one call;
  * a turn that ran a tool made several, and almost every turn an agent works through runs one. From
  * 2.40.0 to here such a turn therefore showed no context at all — in the footer, the status strip
- * and `talkcode tasks` — which for agy was nearly always.
+ * and `fleetherd tasks` — which for agy was nearly always.
  *
  * agy's hooks do not carry tokens (`SessionStart`, `Pre/PostToolUse`, `Pre/PostInvocation`, `Stop`:
  * conversation id, workspace, model, `transcriptPath` — agy's bundled
