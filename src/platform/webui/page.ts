@@ -236,9 +236,6 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 @container (max-width:308px){
   .fb-pin .fb-chip-label{display:none}
 }
-/* A row kept only because a topic under it matched is context, not a result: it is
-   drawn so the hierarchy still reads, and dimmed so the matches themselves stand out. */
-#topics .topic-item.ctx{opacity:.5}
 /* What the list says instead of rows when a search or a filter matches nothing. */
 .topics-empty{display:flex;align-items:center;gap:8px;padding:14px 4px;color:var(--dim);font-size:12px}
 .topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
@@ -4470,6 +4467,54 @@ const SCRIPT = `
   }
 
   /**
+   * The list's tree and its conversations, built from the topics in hand. A conversation is a
+   * root and everything its agent opened under it — the unit the filter keeps or drops whole
+   * (topicRows) and the unit the chips count (topicFilterGroups), so one tree is one result in
+   * both places. A parent that loops (only a hand-edited file could) leaves its topics
+   * unreachable from any root; they start conversations of their own, which is also how they are
+   * drawn. Scheduled runs are conversations, but not ones the person opened: the panel's Sessions
+   * tab is where they live, and leaving them out here also keeps their unread badges and "needs
+   * you" rows out of the switcher.
+   *
+   * Each conversation carries what the filter decides on: its most pressing state, whether any
+   * topic in it is starred, and every agent and host it touches. State and star are whole-tree
+   * properties, so the four state chips partition the conversations; agents and hosts are a
+   * union, because a root and a sub-agent may well run on different ones.
+   */
+  function topicForest(){
+    var visible=[], byId={}, kids={}, roots=[], i;
+    for(i=0;i<topics.length;i++) if(!topics[i].scheduled) visible.push(topics[i]);
+    for(i=0;i<visible.length;i++) byId[visible[i].id]=visible[i];
+    for(i=0;i<visible.length;i++){
+      var p=visible[i].parent;
+      if(p && p!==visible[i].id && byId[p]) (kids[p]=kids[p]||[]).push(visible[i]); else roots.push(visible[i]);
+    }
+    var convs={}, convOrder=[], seenC={};
+    function mark(t, id){
+      if(seenC[t.id]) return;
+      seenC[t.id]=true;
+      var c=convs[id], rank=stateRank(t);
+      c.members.push(t);
+      if(rank<c.rank) c.rank=rank;
+      if(t.starred) c.starred=true;
+      var named=splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
+      if(named.tag) c.agents[named.tag.slice(1, -1)]=true;
+      c.hosts[t.dir && t.dir.host ? t.dir.host : '__local']=true;
+      var ch=kids[t.id]||[];
+      for(var k=0;k<ch.length;k++) mark(ch[k], id);
+    }
+    function start(t){
+      if(seenC[t.id]) return;
+      convs[t.id]={members:[], rank:3, starred:false, agents:{}, hosts:{}};
+      convOrder.push(t.id);
+      mark(t, t.id);
+    }
+    for(i=0;i<roots.length;i++) start(roots[i]);
+    for(i=0;i<visible.length;i++) start(visible[i]);
+    return {visible:visible, byId:byId, kids:kids, roots:roots, convs:convs, convOrder:convOrder};
+  }
+
+  /**
    * The rows in the order they are painted: what needs a decision first (needsYou, most pressing
    * first), then every root by state — a topic with no title yet (Untitled) ahead of every
    * state, then working, resident and idle, no agent — with a starred row ahead of its unstarred
@@ -4479,30 +4524,25 @@ const SCRIPT = `
    * daemon's order, because topics[0] is read elsewhere as "the most recent topic" — where to land
    * when the one on screen goes away.
    *
+   * A filter picks conversations, not rows: one survives when the conversation as a whole
+   * matches (convMatch), and is then drawn by this same order, with its own fold state, its own
+   * fold count and the needs-you block — there is no second way of drawing a result.
+   *
    * The topic on screen is never folded away: its ancestors are drawn open, without that being
    * saved, so a link into a sub-agent's topic lands on a row you can see. A parent field that loops
    * (only a hand-edited file could) leaves its topics unreachable from any root; they are drawn as
    * roots rather than not at all.
    */
   function topicRows(){
-    // Scheduled runs are conversations, but not ones the person opened: the panel's Sessions tab
-    // is where they live. Filtering here, rather than at paint time, also keeps their unread
-    // badges and "needs you" rows out of the switcher — the same rooms must not appear twice.
-    var visible=[];
-    for(var v=0;v<topics.length;v++) if(!topics[v].scheduled) visible.push(topics[v]);
-    var byId={}, kids={}, roots=[], i;
-    for(i=0;i<visible.length;i++) byId[visible[i].id]=visible[i];
-    for(i=0;i<visible.length;i++){
-      var p=visible[i].parent;
-      if(p && p!==visible[i].id && byId[p]) (kids[p]=kids[p]||[]).push(visible[i]); else roots.push(visible[i]);
-    }
+    var forest=topicForest();
+    var visible=forest.visible, byId=forest.byId, kids=forest.kids, roots=forest.roots, i;
     var open={}, up=byId[topic], hops=0;
     while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
-    // The bar's state, read once: which topics match, and which are drawn only as the ancestor of
-    // one that does. A matching sub-agent's parent has to stay above it — drawn as a root, the
-    // child would read as a conversation of its own — and is dimmed so the match still stands out.
+    // The bar's state, read once: which conversations match. A match keeps the whole tree, so
+    // every row under a surviving root is drawn exactly as it is without a filter — nothing is
+    // dimmed, and no child is dropped for failing a search its parent answered.
     var fs = topicFilter ? topicFilter.state() : null;
-    var keep=null, faded={}, matched=visible.length, words=[], filtering=false;
+    var keep=null, matched=forest.convOrder.length, words=[], filtering=false;
     if(fs){
       var anySel=false;
       for(var gk in fs.sel) if(fs.sel[gk] && fs.sel[gk].length){ anySel=true; break; }
@@ -4510,18 +4550,11 @@ const SCRIPT = `
         filtering=true;
         words=fs.q.trim().toLowerCase().split(/\\s+/);
         keep={}; matched=0;
-        var hits=[];
-        for(i=0;i<visible.length;i++){
-          if(topicMatch(visible[i], words, fs.sel)){ keep[visible[i].id]=1; hits.push(visible[i].id); }
-        }
-        matched=hits.length;
-        for(i=0;i<hits.length;i++){
-          var anc=byId[hits[i]], n=0;
-          while(anc && anc.parent && byId[anc.parent] && n++<32){
-            anc=byId[anc.parent];
-            if(keep[anc.id]===1) break;
-            if(!keep[anc.id]){ keep[anc.id]=2; faded[anc.id]=true; }
-          }
+        for(i=0;i<forest.convOrder.length;i++){
+          var conv=forest.convs[forest.convOrder[i]];
+          if(!convMatch(conv, words, fs.sel)) continue;
+          matched++;
+          for(var m=0;m<conv.members.length;m++) keep[conv.members[m].id]=1;
         }
       }
     }
@@ -4540,43 +4573,21 @@ const SCRIPT = `
     function walk(t, depth){
       if(seen[t.id]) return;
       seen[t.id]=true;
-      var all=kids[t.id]||[], ch=all;
-      if(keep){
-        ch=[];
-        for(var c=0;c<all.length;c++) if(keep[all[c].id]) ch.push(all[c]);
-      }
-      // A search or a filter opens every parent on the way to a match, without writing that to
-      // the folded map: folding is how the whole list is browsed, not a property of a result.
-      var shut=!keep && ch.length>0 && folded[t.id]!==false && !open[t.id];
-      rows.push({t:t, depth:depth, kids:keep?0:ch.length, shut:shut, under:shut?state(t, 0):'', dim:Boolean(keep && faded[t.id])});
+      var ch=kids[t.id]||[];
+      // Folded means folded with a filter on as well: the pill and its count are how the whole
+      // conversation is browsed, and a result must not open a tree the person keeps shut.
+      var shut=ch.length>0 && folded[t.id]!==false && !open[t.id];
+      rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
       if(shut) return;
       for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
     }
     // What needs the person first (needsYou), most pressing first, each with the topics it
-    // opened. Not while filtering: a result is read as a tree under its parent, and pulling a
-    // matching child out to the top would cut it from the row that says what it belongs to.
-    if(!keep){
-      var pinned=visible.filter(needsYou).sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
-      for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
-    }
+    // opened. A filtered list keeps the block: a conversation that waits on an answer belongs
+    // at the top of the list whether or not the bar is in use.
+    var pinned=visible.filter(function(t){ return (!keep || keep[t.id]) && needsYou(t); })
+      .sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+    for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
     var afterPinned=rows.length;
-    // The rank a filtered root is ordered by: its own when it matched, otherwise the best of the
-    // matches under it, so a hit is not buried under the state of a parent kept only for context.
-    function bestRank(t, depth){
-      if(!keep) return listRank(t, true);
-      // One scale for every rank compared here: a matched node and the parent kept only for it
-      // both read needsYou 0, otherwise stateRank+1. Only a root with no title is lifted to 1 —
-      // the child's empty title must not pull its context parent above a real match of the same
-      // state, and a context parent must not sit above a matched untitled root either.
-      var best = keep[t.id]===1 ? listRank(t, depth===0) : 9;
-      var ch = kids[t.id] || [];
-      for(var k=0;k<ch.length && depth<32;k++){
-        if(!keep[ch[k].id]) continue;
-        var r=bestRank(ch[k], depth+1);
-        if(r<best) best=r;
-      }
-      return best;
-    }
     var candidates = keep ? roots.filter(function(r){ return Boolean(keep[r.id]); }) : roots;
     // Then everything else in the order the list is read: a topic with no title yet, working, a
     // resident agent with nothing to do, and no agent at all (the decision group is already drawn
@@ -4584,7 +4595,7 @@ const SCRIPT = `
     // starred row leads its unstarred peers there: a star is a promise not to forget a topic, not
     // a claim on the top of the column.
     var ordered=candidates.slice().sort(function(a,b){
-      var ra=bestRank(a, 0), rb=bestRank(b, 0), d=ra-rb;
+      var ra=listRank(a, true), rb=listRank(b, true), d=ra-rb;
       if(d) return d;
       if(ra===0) d=NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage];
       return d || (b.starred?1:0)-(a.starred?1:0);
@@ -4592,18 +4603,17 @@ const SCRIPT = `
     for(i=0;i<ordered.length;i++) walk(ordered[i], 0);
     for(i=0;i<visible.length;i++){
       if(keep && !keep[visible[i].id]) continue;
-      // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen. A filtered
-      // list has no folded parents (walk opened them), so every kept row is reachable.
+      // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
       var hidden=false, a=visible[i], n2=0;
-      if(!keep){
-        while(a && a.parent && byId[a.parent] && n2++<32){ if(seen[a.parent] && folded[a.parent]!==false && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
-      }
+      while(a && a.parent && byId[a.parent] && n2++<32){ if(seen[a.parent] && folded[a.parent]!==false && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
       if(!seen[visible[i].id] && !hidden) walk(visible[i], 0);
     }
-    if(afterPinned && afterPinned<rows.length && !keep) dividers[afterPinned]=true;
+    if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
     var stars=0;
     for(i=0;i<roots.length;i++) if(roots[i].starred) stars++;
-    return {rows:rows, dividers:dividers, stars:stars, matched:keep?matched:visible.length, total:visible.length, filtering:filtering};
+    // matched and total are conversations, not topics: one tree is one result, which is what
+    // the chips count and what "Showing N of M" has to agree with.
+    return {rows:rows, dividers:dividers, stars:stars, matched:matched, total:forest.convOrder.length, filtering:filtering};
   }
 
   /** Whether a topic this one opened, or one of theirs, is working or asking. */
@@ -4637,6 +4647,8 @@ const SCRIPT = `
 
   var NEEDS_ORDER = {answer:0, failed:1, review:2};
   var NEEDS_WHAT = {answer:'Waiting on your answer', failed:'Failed', review:'Finished'};
+  // stateRank's four values in its own order, as the filter chips name them.
+  var STATE_KEYS = ['needs', 'running', 'idle', 'none'];
   /**
    * What needs the person: every topic but the one on screen whose stage is a question, a failure,
    * or a reply not yet read — the daemon decides the stage (core/topic-stage.ts) and sends it with
@@ -5084,8 +5096,10 @@ const SCRIPT = `
   /**
    * The topic list's filter groups, rebuilt from the topics in hand on every paint: agents and
    * hosts come and go, and a chip whose value is gone would filter the list to nothing with no
-   * way to see why. Scheduled runs are left out for the same reason topicRows leaves them out —
-   * they are not rows in this list.
+   * way to see why. Counted by conversation, because that is what the chips filter: a tree whose
+   * sub-agent is the cbc one counts once under cbc, and the four state chips add up to the number
+   * of trees in the list. Scheduled runs are left out for the same reason topicRows leaves them
+   * out — they are not rows in this list.
    */
   function topicFilterGroups(){
     var stateOpts = [
@@ -5098,22 +5112,26 @@ const SCRIPT = `
       {value:'starred', label:'Starred', icon:'star', count:0},
       {value:'plain', label:'Unstarred', count:0}
     ];
-    var agents = {}, agentOrder = [], hosts = {}, hostOrder = [], total = 0, i;
-    for(i=0;i<topics.length;i++){
-      var t = topics[i];
-      if(t.scheduled) continue;
-      total++;
-      stateOpts[stateRank(t)].count++;
-      if(t.starred) starredOpts[0].count++; else starredOpts[1].count++;
+    var forest = topicForest();
+    var agents = {}, agentOrder = [], hosts = {}, hostOrder = [], i;
+    for(i=0;i<forest.visible.length;i++){
+      var t = forest.visible[i];
       var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
       if(named.tag){
         var agent = named.tag.slice(1, -1);
         if(agents[agent] === undefined){ agents[agent] = 0; agentOrder.push(agent); }
-        agents[agent]++;
       }
       var host = t.dir && t.dir.host ? t.dir.host : '__local';
       if(hosts[host] === undefined){ hosts[host] = 0; hostOrder.push(host); }
-      hosts[host]++;
+    }
+    // One pass per conversation, not per topic: every value it carries gets one, however many
+    // of its topics carry it.
+    for(i=0;i<forest.convOrder.length;i++){
+      var c = forest.convs[forest.convOrder[i]];
+      stateOpts[c.rank].count++;
+      if(c.starred) starredOpts[0].count++; else starredOpts[1].count++;
+      for(var a in c.agents) agents[a]++;
+      for(var h in c.hosts) hosts[h]++;
     }
     agentOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
     hostOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
@@ -5132,35 +5150,51 @@ const SCRIPT = `
     ];
     if(agentOpts.length) groups.push({id:'agent', label:'Agent', options:agentOpts});
     groups.push({id:'host', label:'Host', options:hostOpts});
-    return {groups:groups, total:total};
+    return {groups:groups, total:forest.convOrder.length};
+  }
+
+  /** Everything a keyword is matched against on one topic: its title, its agent tag, and the
+      second line — directory name, full path and host. */
+  function topicHay(t){
+    var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
+    var hay = (t.title || '') + ' ' + named.tag;
+    if(t.dir) hay += ' ' + (t.dir.name || '') + ' ' + (t.dir.path || '') + ' ' + (t.dir.host || '');
+    return hay.toLowerCase();
   }
 
   /**
-   * Whether a topic survives the bar. Inside a group the selected values are a union (either
-   * agent), across groups an intersection (that agent, on that host). The keyword is split on
-   * whitespace and every word has to hit somewhere — title, agent tag, directory name, full path
-   * or host — so "cbc parse" finds the parser topic of the cbc agent in either order.
+   * Whether a conversation survives the bar. The unit is the conversation, not the row: the
+   * keyword, an agent and a host match when any topic in the tree carries them — the person is
+   * looking for the conversation that talks about this, and the sub-agents are part of it. State
+   * and star are whole-tree properties (the most pressing state among its topics, and whether any
+   * topic in it is starred), so the state chips partition the conversations and their numbers are
+   * exactly the rows a tap on them leaves. Inside a group the values are a union, across groups an
+   * intersection. The keyword is split on whitespace and every word has to hit one topic, so
+   * "cbc parse" finds the parser topic of the cbc agent in either order.
    */
-  function topicMatch(t, words, sel){
-    var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
-    if(words.length){
-      var hay = (t.title || '') + ' ' + named.tag;
-      if(t.dir) hay += ' ' + (t.dir.name || '') + ' ' + (t.dir.path || '') + ' ' + (t.dir.host || '');
-      hay = hay.toLowerCase();
-      for(var w=0;w<words.length;w++) if(hay.indexOf(words[w]) < 0) return false;
-    }
+  function convMatch(conv, words, sel){
     var v = sel.state;
-    if(v && v.length){
-      var rank = stateRank(t);
-      var key = rank === 0 ? 'needs' : rank === 1 ? 'running' : rank === 2 ? 'idle' : 'none';
-      if(v.indexOf(key) < 0) return false;
-    }
+    if(v && v.length && v.indexOf(STATE_KEYS[conv.rank]) < 0) return false;
     v = sel.starred;
-    if(v && v.length && v.indexOf(t.starred ? 'starred' : 'plain') < 0) return false;
-    v = sel.agent;
-    if(v && v.length && v.indexOf(named.tag ? named.tag.slice(1, -1) : '') < 0) return false;
-    v = sel.host;
-    if(v && v.length && v.indexOf(t.dir && t.dir.host ? t.dir.host : '__local') < 0) return false;
+    if(v && v.length && v.indexOf(conv.starred ? 'starred' : 'plain') < 0) return false;
+    if(sel.agent && sel.agent.length){
+      var hitAgent = false;
+      for(var a in conv.agents) if(sel.agent.indexOf(a) >= 0){ hitAgent = true; break; }
+      if(!hitAgent) return false;
+    }
+    if(sel.host && sel.host.length){
+      var hitHost = false;
+      for(var h in conv.hosts) if(sel.host.indexOf(h) >= 0){ hitHost = true; break; }
+      if(!hitHost) return false;
+    }
+    if(words.length){
+      for(var i=0;i<conv.members.length;i++){
+        var hay = topicHay(conv.members[i]), all = true;
+        for(var w=0;w<words.length;w++) if(hay.indexOf(words[w]) < 0){ all = false; break; }
+        if(all) return true;
+      }
+      return false;
+    }
     return true;
   }
 
@@ -5198,7 +5232,6 @@ const SCRIPT = `
       var cls='topic-item '+(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
         +(t.starred?' starred':'')+(painted.dividers[i]?' after-needs':'')
         +(row.depth?' sub d'+Math.min(row.depth,3):'')
-        +(row.dim?' ctx':'')
         +(needsYou(t)?' needs':'');
       var isFailed=t.stage==='failed';
       // A sub-agent's finished turn is news for the agent that opened it, not for the person

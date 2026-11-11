@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's topic filter now keeps or drops whole conversations.** Filtering used to work on
+  single rows: a matching sub-agent kept its parent only as dimmed context, the tree was forced
+  open without its fold control, and the result was ordered by the match rather than by the list,
+  so a search made the same conversation look like a different thing. A filter now picks
+  conversations — a root and every sub-agent under it — and any match in the tree keeps all of it,
+  drawn exactly as it is without a filter: the same fold and fold count, the same needs-you block
+  and divider, the same order and stars, nothing dimmed. Because the unit is the conversation, the
+  chips and **Showing N of M** count trees rather than topics, and their numbers are the rows a
+  tap leaves.
+
 ## [2.58.0] - 2026-11-10
 
 ### Added

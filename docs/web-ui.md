@@ -71,9 +71,11 @@ path and the machine, word by word, and a row of four state chips under the sear
 you**, **Running**, **Idle**, **No agent** — is always on screen. **Filter** holds the rest: star,
 agent and host. Several values in one group widen the result, values in different groups narrow
 it. When the column is too narrow for the state words, the chips keep their icon and count and
-the full name moves to the hover text. A parent
-stays on screen dimmed when a sub-agent under it matches, and **Showing N of M** with **Clear**
-says what survived. The keyword and the filters are kept in this browser. The × in its header closes it at any
+the full name moves to the hover text. Filtering keeps or drops a whole conversation — the root
+and every sub-agent under it — so a match anywhere in it keeps all of it, drawn exactly as it is
+without a filter: the same fold and fold count, the same needs-you block and order, nothing
+dimmed. The chips and **Showing N of M** count conversations, one tree each. **Clear** puts the
+whole list back. The keyword and the filters are kept in this browser. The × in its header closes it at any
 width, and the same × closes the task panel on the right: the two are one component, with the
 same header and footer rows, the same slide and the same dimmed backdrop.
 

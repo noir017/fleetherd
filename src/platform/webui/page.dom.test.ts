@@ -1932,7 +1932,12 @@ describe('webui page: the topic filter bar', () => {
 
     // The bracketed agent is searchable, and so is everything the second line shows.
     await type(h, 'cbc');
-    expect(new Set(ids(h))).toEqual(new Set([P, K, B]));
+    // B matches on its own; K matches under P, which brings its whole conversation — folded,
+    // exactly as it is without a filter.
+    expect(ids(h)).toEqual([B, P]);
+    await h.click(`#topics [data-fold="${P}"]`);
+    expect(ids(h)).toEqual([B, P, K]);
+    await h.click(`#topics [data-fold="${P}"]`);
     await type(h, 'devbox');
     expect(ids(h)).toEqual([B]);
     await type(h, 'srv/uniagent');
@@ -1941,29 +1946,39 @@ describe('webui page: the topic filter bar', () => {
     expect(ids(h)).toEqual([H]);
   });
 
-  it('keeps a matched child under its parent, dimmed, and opens the fold only for the result', async () => {
+  it('keeps a matched sub-agent’s whole conversation, folded exactly as the list has it', async () => {
     const h = await open();
     await withFleet(h);
     // Folded by default: the child is not in the list.
     expect(ids(h)).not.toContain(K);
 
     await type(h, 'parser part');
-    expect(ids(h)).toEqual([P, K]);
+    // K is the only match, and the conversation it belongs to is what survives: P, still folded.
+    expect(ids(h)).toEqual([P]);
     const parent = h.doc.querySelector(`[data-topic="${P}"]`)!;
-    const child = h.doc.querySelector(`[data-topic="${K}"]`)!;
-    expect(parent.classList.contains('ctx')).toBe(true);
-    expect(child.classList.contains('ctx')).toBe(false);
-    // The parent's own fold control is not on the filtered row: it could not close what the
-    // search opened anyway.
-    expect(parent.querySelector('[data-fold]')).toBeNull();
-
+    expect(parent.classList.contains('ctx')).toBe(false);
+    expect(face(parent.querySelector('[data-fold]'))).toBe('[chevronRight] 1');
+    await h.click(`#topics [data-fold="${P}"]`);
+    expect(ids(h)).toEqual([P, K]);
+    expect(h.doc.querySelector(`[data-topic="${K}"]`)!.classList.contains('ctx')).toBe(false);
+    // The fold is the person's, not the search's: clearing leaves the tree open in the whole list.
     await type(h, '');
-    expect(ids(h)).not.toContain(K);
-    // The temporary expansion was not written down as an operator's choice.
-    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') || '{}')).toEqual({});
+    expect(ids(h)).toEqual([N, B, A, P, K, H, C]);
   });
 
-  it('keeps a matched root ahead of a parent drawn only as context for a matched child', async () => {
+  it('keeps every sub-agent when the root is the one that matches', async () => {
+    const h = await open();
+    await withFleet(h);
+    await type(h, 'split the refactor');
+    expect(ids(h)).toEqual([P]);
+    await h.click(`#topics [data-fold="${P}"]`);
+    expect(ids(h)).toEqual([P, K]);
+    // The sibling row is not dimmed and the fold count is the tree's own.
+    expect(h.doc.querySelector('#topics .ctx')).toBeNull();
+    expect(face(h.doc.querySelector(`#topics [data-fold="${P}"]`))).toBe('[chevronDown] 1');
+  });
+
+  it('keeps a conversation whole when only its sub-agent matches', async () => {
     const h = await open();
     await h.emit(sync(A, [], [A]));
     await h.emit({
@@ -1975,44 +1990,22 @@ describe('webui page: the topic filter bar', () => {
       ],
     });
     await type(h, 'hit');
-    // Both are working: the parent is kept only to show the child, and must not outrank the root
-    // that matched on its own.
+    // A matched on its own; K matched under P, and P's whole conversation comes with it.
+    expect(ids(h)).toEqual([A, P]);
+    expect(h.doc.querySelector(`[data-topic="${P}"]`)?.classList.contains('ctx')).toBe(false);
+    await h.click(`#topics [data-fold="${P}"]`);
     expect(ids(h)).toEqual([A, P, K]);
-    expect(h.doc.querySelector(`[data-topic="${P}"]`)?.classList.contains('ctx')).toBe(true);
   });
 
-  it('gives an untitled ancestor and an untitled root the same scale as the matches around them', async () => {
+  it('orders a filtered list by the list’s own rule, not by what matched', async () => {
     const h = await open();
-    await h.emit(sync(A, [], [A]));
-    const topics = [
-      { id: B, title: 'hit: root', lastAt: 1000, msgCount: 0, running: true, live: true },
-      { id: P, title: '', lastAt: 999, msgCount: 0, live: true },
-      { id: K, title: 'hit: child', lastAt: 998, msgCount: 0, parent: P, running: true, live: true },
-    ];
-    await h.emit({ t: 'topics', topics });
-    await type(h, 'hit');
-    // P's empty title is not a reason to lift it above B, which matched on its own.
-    expect(ids(h)).toEqual([B, P, K]);
-
-    // And a root with no title is the first ordinary row: P, kept only for K, does not press it
-    // down. Its empty title still matches through its directory.
-    const U = 'a9b8c7d6';
-    await h.emit({
-      t: 'topics',
-      topics: [
-        ...topics,
-        {
-          id: U,
-          title: '',
-          lastAt: 997,
-          msgCount: 0,
-          running: true,
-          live: true,
-          dir: { name: 'hit-checkout', path: '/w/hit-checkout' },
-        },
-      ],
-    });
-    expect(ids(h)).toEqual([U, B, P, K]);
+    await withFleet(h);
+    // The whole list, so the filtered one can be compared with it: the decision first, then
+    // working, then the resident ones, then no agent.
+    expect(ids(h)).toEqual([N, B, A, P, H, C]);
+    await type(h, 'parser');
+    // The survivors keep the places they hold in the whole list.
+    expect(ids(h)).toEqual([B, P]);
   });
 
   it('unions the values of one group and intersects across groups', async () => {
@@ -2023,7 +2016,9 @@ describe('webui page: the topic filter bar', () => {
     await toggle(h, 'agent', 'cc');
     expect(new Set(ids(h))).toEqual(new Set([A, P, C]));
     await toggle(h, 'agent', 'cbc');
-    expect(new Set(ids(h))).toEqual(new Set([A, P, K, C, B]));
+    // P's conversation contains K, the cbc sub-agent, so it matches both agents and comes whole
+    // (K is folded under P, as it is without a filter).
+    expect(new Set(ids(h))).toEqual(new Set([A, P, C, B]));
 
     // The two agents are a union; a host narrows the same rows to an intersection.
     await toggle(h, 'host', 'devbox');
@@ -2036,7 +2031,7 @@ describe('webui page: the topic filter bar', () => {
     expect(new Set(ids(h))).toEqual(new Set([B, H]));
   });
 
-  it('counts every option from the topics it has, and says what survived', async () => {
+  it('counts every option by conversation, and says what survived', async () => {
     const h = await open();
     await withFleet(h);
     await openPanel(h);
@@ -2046,21 +2041,80 @@ describe('webui page: the topic filter bar', () => {
       chips
         .find((c) => c.getAttribute('data-fb-group') === group && c.getAttribute('data-fb-value') === value)
         ?.querySelector('.fb-count')?.textContent ?? undefined;
+    // Six conversations, seven topics: P and K are one conversation, so the state chips add up
+    // to six and K does not count again under its own agent beyond the tree that holds it.
     expect(count('state', 'needs')).toBe('1');
     expect(count('state', 'running')).toBe('1');
-    expect(count('state', 'idle')).toBe('4');
+    expect(count('state', 'idle')).toBe('3');
     expect(count('state', 'none')).toBe('1');
     expect(count('agent', 'cc')).toBe('3');
     expect(count('agent', 'cbc')).toBe('2');
     expect(count('agent', 'ag')).toBe('2');
-    expect(count('host', '__local')).toBe('5');
+    expect(count('host', '__local')).toBe('4');
     expect(count('host', 'devbox')).toBe('1');
     expect(count('host', 'uniagent')).toBe('1');
 
     await type(h, 'parser');
-    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 2 of 7');
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 2 of 6');
     expect((h.doc.querySelector('.fb-sum') as HTMLElement).hidden).toBe(false);
-    // The matched rows, not the parent kept for context, are what the line counts.
+    // Two conversations — B, and P with K folded under it — not the two matching topics plus
+    // the parent that carries them.
+  });
+
+  it('counts a conversation once however many of its topics match', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'parser root', lastAt: 1000, msgCount: 0, live: true },
+        { id: K, title: 'parser child', lastAt: 999, msgCount: 0, parent: A, live: true },
+        { id: B, title: 'parser other', lastAt: 998, msgCount: 0, live: true },
+        { id: C, title: 'unrelated', lastAt: 997, msgCount: 0, live: true },
+      ],
+    });
+    await type(h, 'parser');
+    // Three matching topics, two conversations: the tree counts once, the line says two of the
+    // three conversations in the list.
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 2 of 3');
+    expect(ids(h)).toEqual([A, B]);
+    await h.click(`#topics [data-fold="${A}"]`);
+    expect(ids(h)).toEqual([A, K, B]);
+  });
+
+  it('keeps the needs-you block and its divider while a filter is on', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'plain root', lastAt: 1000, msgCount: 0, live: true },
+        { id: B, title: 'match one', lastAt: 999, msgCount: 0, live: true },
+        { id: N, title: 'match needs', lastAt: 998, msgCount: 0, stage: 'answer', asking: true, running: true, live: true },
+      ],
+    });
+    await type(h, 'match');
+    expect(ids(h)).toEqual([N, B]);
+    expect(h.doc.querySelector(`[data-topic="${B}"]`)?.classList.contains('after-needs')).toBe(true);
+  });
+
+  it('treats a starred sub-agent as a starred conversation', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'root', lastAt: 1000, msgCount: 0, live: true },
+        { id: K, title: 'kid', lastAt: 999, msgCount: 0, parent: A, live: true, starred: true },
+        { id: B, title: 'other', lastAt: 998, msgCount: 0, live: true },
+      ],
+    });
+    await openPanel(h);
+    await toggle(h, 'starred', 'starred');
+    // The star is on K; the conversation is A's, and it comes whole.
+    expect(ids(h)).toEqual([A]);
+    await h.click(`#topics [data-fold="${A}"]`);
+    expect(ids(h)).toEqual([A, K]);
   });
 
   it('drops a selected value the caller no longer offers, and says so by showing everything', async () => {
@@ -2093,6 +2147,8 @@ describe('webui page: the topic filter bar', () => {
     expect((again.doc.querySelector('.fb-q') as HTMLInputElement).value).toBe('parser');
     expect((again.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(false);
     expect(again.doc.querySelector('.fb-chip[data-fb-value="cbc"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(ids(again)).toEqual([B, P]);
+    await again.click(`#topics [data-fold="${P}"]`);
     expect(ids(again)).toEqual([B, P, K]);
   });
 
@@ -2214,10 +2270,10 @@ describe('webui page: the topic filter bar', () => {
     expect(chips[0]!.querySelector('.fb-chip-label')?.textContent).toBe('Needs');
 
     await toggle(h, 'state', 'idle');
-    expect(ids(h)).toEqual([A, P, K, H]);
+    expect(ids(h)).toEqual([A, P, H]);
     // Filtering from the row does not open the panel, and the line says what survived.
     expect((h.doc.querySelector('.fb-panel') as HTMLElement).hidden).toBe(true);
-    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 4 of 7');
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 3 of 6');
   });
 
   it('restores a State choice after a reload, with the row still on the bar', async () => {
@@ -2235,7 +2291,7 @@ describe('webui page: the topic filter bar', () => {
     await withFleet(h);
 
     await toggle(h, 'state', 'idle');
-    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 4 of 7');
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 3 of 6');
     // A pinned chip is not hidden state: the dot points at the panel, and the panel has nothing on.
     expect((h.doc.querySelector('.fb-dot') as HTMLElement).hidden).toBe(true);
     expect(h.doc.querySelector('.fb-filter')!.classList.contains('on')).toBe(false);
@@ -2255,10 +2311,10 @@ describe('webui page: the topic filter bar', () => {
     expect(h.doc.querySelector('.fb-chip[data-fb-value="zz"]')).toBeNull();
     const count = (v: string): string | undefined =>
       h.doc.querySelector(`.fb-chip[data-fb-group="state"][data-fb-value="${v}"] .fb-count`)?.textContent ?? undefined;
-    expect([count('needs'), count('running'), count('idle'), count('none')]).toEqual(['1', '1', '4', '1']);
+    expect([count('needs'), count('running'), count('idle'), count('none')]).toEqual(['1', '1', '3', '1']);
 
     await type(h, 'parser');
-    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 2 of 7');
+    expect(h.doc.querySelector('.fb-sumtext')?.textContent).toBe('Showing 2 of 6');
   });
 
   it('does not prune a restored selection before the first list has arrived', async () => {
