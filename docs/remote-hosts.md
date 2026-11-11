@@ -199,7 +199,7 @@ refused there.
 - The agent keeps working on the host. What it writes is kept there (up to 64 MiB per gateway,
   far more than a long turn) and delivered, in order, when the connection is back. Messages you
   send meanwhile, and `/stop`, are delivered the same way.
-- A lost connection is noticed within about 15 seconds and retried with a growing pause (1 second
+- A lost connection is noticed within about 30 seconds and retried with a growing pause (1 second
   up to 30). If it lasts longer than 10 seconds the conversation says so, and says so again when it
   is back. The turn is not failed for the silence.
 - Restarting the gateway stops the agents it had started on the hosts. Stopped with SIGTERM, as a

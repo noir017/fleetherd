@@ -7,12 +7,15 @@ import { parseDestination } from './binaries.js';
  * tell a machine that is asleep or off the network from one that is merely idle: a laptop under
  * WSL2 that went to sleep answers nothing at all (laptop, 2026-11-09), and a probe that waited on
  * ssh's own ConnectTimeout (15 s, sshArgs) would hold a check that long for every such host.
+ * Eight seconds allows for up to two Linux TCP SYN retransmissions (RTO 1s + 2s + RTT) across
+ * lossy cross-border VPN links (e.g. EasyTier to a laptop on Wi-Fi, 2026-11-11) while still
+ * failing well before ssh's 15s timeout.
  *
  * A port that answers is not proof that ssh will work — a wrong key or a changed host key still
  * fails the connection — and that is deliberate: the question here is "is it there", and those
  * failures are already reported where a connection is attempted, with their reason.
  */
-export function canReach(destination: string, timeoutMs = 3_000): Promise<boolean> {
+export function canReach(destination: string, timeoutMs = 8_000): Promise<boolean> {
   const { userHost, port } = parseDestination(destination);
   const host = userHost.slice(userHost.lastIndexOf('@') + 1);
   return new Promise((resolve) => {

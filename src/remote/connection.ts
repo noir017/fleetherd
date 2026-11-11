@@ -28,9 +28,14 @@ import { ReliableLink, type LinkTransport } from './link.js';
 
 export const PROTO_VERSION = 1;
 
-/** Heartbeat: a ping this often, and the connection is dead after this long with nothing heard. */
+/**
+ * Heartbeat: a ping this often, and the connection is dead after this long with nothing heard.
+ * Raised from 15s to 30s (2026-11-11): 15s was only 3 missed pings, and across a lossy cross-border
+ * VPN link (Oracle to home LAN EasyTier with ~13% packet loss and Wi-Fi power-save sleep on a laptop),
+ * brief bursts of dropped packets caused working connections to be dropped repeatedly.
+ */
 const PING_EVERY_MS = 5_000;
-const DEAD_AFTER_MS = 15_000;
+const DEAD_AFTER_MS = 30_000;
 /**
  * One attempt, from starting ssh to `welcome` (starting the daemon included). Short, because a dead
  * route rarely fails fast: through a black hole the TCP connect succeeds and the ssh handshake then

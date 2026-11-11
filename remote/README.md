@@ -99,7 +99,7 @@ until the peer acknowledges it. `a` on any frame acknowledges the peer's frames 
 - Back-pressure: past 64 MiB unacknowledged, the daemon stops reading agents' output, so agents
   block on a full pipe rather than anything being dropped. Only process output waits; the reader
   that processes acks never does.
-- The gateway pings every 5 s and drops a connection silent for 15 s.
+- The gateway pings every 5 s and drops a connection silent for 30 s.
 
 ## Sequenced frames
 
