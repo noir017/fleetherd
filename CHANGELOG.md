@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [2.60.0] - 2026-11-11
+
 ### Changed
 
 - **The web UI's `/cd` menu lists the whole workspace on one page.** It was paged at the shared menu
