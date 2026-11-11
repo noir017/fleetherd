@@ -7,7 +7,7 @@ Some jobs split: two repositories to change, a fix and its review, three questio
 in parallel, and come back with one report — so you follow one topic instead of four.
 
 ```
-/super upgrade the API client in quantlab and quantlab-agents, and have cx review both
+/super upgrade the API client in shop-api and shop-web, and have cx review both
 ```
 
 ## What happens
@@ -42,7 +42,7 @@ in parallel, and come back with one report — so you follow one topic instead o
    as the turn's record — because the ❌ notice in the topic carries only its opening. Reading by
    turn number, not "the last one", is what keeps a later background burst from taking its place. A
    burst longer than 20 sub-agents is one card with the rest folded into a line pointing at
-   `talkcode tasks`. The agent reads each reply's conclusion and the review part's verdict, and
+   `fleetherd tasks`. The agent reads each reply's conclusion and the review part's verdict, and
    sends fixes where needed; it does not read the diff itself. When every part is done, it writes
    one summary with a link to each topic.
 
@@ -119,7 +119,7 @@ input mid-turn; elsewhere it waits for the turn to end, and the agent is told wh
 - With agents on several [machines](remote-hosts.md), a part goes to another machine only when it
   needs that machine; otherwise it stays on the agent's own, which has the same checkouts and tools.
   A part that runs elsewhere shows `@ <host>` on the card.
-- `/super` is a skill the gateway links into each agent's skill directory, next to the `talkcode`
+- `/super` is a skill the gateway links into each agent's skill directory, next to the `fleetherd`
   one. Claude Code offers it as a command; Codex, OpenCode and Antigravity pick it up from its
   description. The `gemini` and `dsh` harnesses get no skills from the gateway, so `/super` there
   says it is not supported.

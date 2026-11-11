@@ -2,7 +2,7 @@
 
 English | [简体中文](zh-CN/configuration.md)
 
-`~/.config/talkcode/config.yaml`, or `--config <path>`. `talkcode setup` writes a working one;
+`~/.config/fleetherd/config.yaml`, or `--config <path>`. `fleetherd setup` writes a working one;
 this page covers what the wizard does not ask about — several agents, routing, more than one
 account per platform.
 
@@ -34,9 +34,9 @@ agents:                       # at least one; routing picks by id
 
 hosts:                        # optional; machines agents run on, reached over ssh
   devbox:
-    ssh: me@10.0.0.5:22
-    # identityFile: ~/.config/talkcode/ssh/id_ed25519   (default)
-    # knownHostsFile: ~/.config/talkcode/ssh/known_hosts (default)
+    ssh: me@192.0.2.5:22
+    # identityFile: ~/.config/fleetherd/ssh/id_ed25519   (default)
+    # knownHostsFile: ~/.config/fleetherd/ssh/known_hosts (default)
 
 routing:
   default: claude
@@ -81,7 +81,7 @@ restart — see [Settings from chat](settings.md).
 ## Changing it while the daemon runs
 
 Edit the file, then send `/reload` in any chat. An agent that made the edit can run
-`talkcode reload` instead (a reverse command, so only from inside a conversation). The daemon re-reads
+`fleetherd reload` instead (a reverse command, so only from inside a conversation). The daemon re-reads
 `config.yaml` and `.env` and replies with what changed:
 
 ```
@@ -110,6 +110,6 @@ config.yaml reloaded.
 | `start` | run the daemon |
 | `<reverse-command>` | chat actions for the agent — see [Acting in the chat](agent-actions.md#acting-in-the-chat) |
 
-All commands accept `-c, --config <path>` before the command (`talkcode -c <path> start`) and
+All commands accept `-c, --config <path>` before the command (`fleetherd -c <path> start`) and
 print structured output to stdout. After the command, `-c` is that command's own: `--channel` for
 the chat actions.

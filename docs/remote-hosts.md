@@ -11,7 +11,7 @@ host and delivered when the connection is back.
 ```yaml
 hosts:
   devbox:
-    ssh: me@10.0.0.5:22           # user@host[:port]
+    ssh: me@192.0.2.5:22           # user@host[:port]
 agents:
   - id: cc-dev
     harness: claude
@@ -23,29 +23,29 @@ agents:
 
 ## Setting up a host
 
-1. **A key for the gateway.** By default the gateway uses `~/.config/talkcode/ssh/id_ed25519`
+1. **A key for the gateway.** By default the gateway uses `~/.config/fleetherd/ssh/id_ed25519`
    (`identityFile` changes it):
 
    ```bash
-   mkdir -p ~/.config/talkcode/ssh && chmod 700 ~/.config/talkcode/ssh
-   ssh-keygen -t ed25519 -N '' -f ~/.config/talkcode/ssh/id_ed25519 -C talkcode
+   mkdir -p ~/.config/fleetherd/ssh && chmod 700 ~/.config/fleetherd/ssh
+   ssh-keygen -t ed25519 -N '' -f ~/.config/fleetherd/ssh/id_ed25519 -C fleetherd
    ```
 
 2. **Let it in on the host**, in `~/.ssh/authorized_keys`, limited to the gateway's address:
 
    ```
-   restrict,from="203.0.113.7" ssh-ed25519 AAAA… talkcode
+   restrict,from="203.0.113.7" ssh-ed25519 AAAA… fleetherd
    ```
 
    `restrict` turns off port forwarding, agent forwarding and terminals. The gateway needs none of
    them: everything goes over the one command it runs.
 
-3. **Trust the host's key** in `~/.config/talkcode/ssh/known_hosts` (`knownHostsFile` changes it).
+3. **Trust the host's key** in `~/.config/fleetherd/ssh/known_hosts` (`knownHostsFile` changes it).
    The gateway checks it strictly and never learns a new one by itself. Compare the fingerprint
    with the one on the host (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`) before adding it:
 
    ```bash
-   ssh-keyscan -p 22 10.0.0.5 >> ~/.config/talkcode/ssh/known_hosts   # [10.0.0.5]:2222 for another port
+   ssh-keyscan -p 22 192.0.2.5 >> ~/.config/fleetherd/ssh/known_hosts   # [192.0.2.5]:2222 for another port
    ```
 
    It is the host's plain key that is checked. Host certificates (a Teleport node's, for one) are
@@ -56,33 +56,33 @@ agents:
    its own machine), `npm i -g @agentclientprotocol/codex-acp` for `codex`, the OpenCode or
    Antigravity CLI for `opencode` and `agy`.
 
-5. **Check it:** `talkcode doctor` connects to every host and looks for the agents' commands there.
+5. **Check it:** `fleetherd doctor` connects to every host and looks for the agents' commands there.
 
 The host must be Linux on x86-64 or arm64, with a POSIX `sh`. Nothing else is needed on it.
 
-### From a chat: `talkcode pod-add`
+### From a chat: `fleetherd pod-add`
 
-An agent can do steps 1–3 itself (`talkcode help pods`):
+An agent can do steps 1–3 itself (`fleetherd help pods`):
 
-1. `talkcode pods` prints `gatewayKey`, the authorized_keys line for the new host (the gateway makes
+1. `fleetherd pods` prints `gatewayKey`, the authorized_keys line for the new host (the gateway makes
    its key the first time). It carries `restrict` and a `from=` of private address ranges.
 2. On the host, append that line to `~/.ssh/authorized_keys`, and read its host key there — say
    `/etc/ssh/ssh_host_ed25519_key.pub` — rather than with `ssh-keyscan`: it is what every connection
    will be checked against.
-3. `talkcode pod-add devbox me@10.0.0.5:22 --host-key "ssh-ed25519 AAAA…"` adds `hosts.devbox` to
+3. `fleetherd pod-add devbox me@192.0.2.5:22 --host-key "ssh-ed25519 AAAA…"` adds `hosts.devbox` to
    config.yaml (comments kept), pins the key in the gateway's known_hosts, reloads, and answers with
    the agents it found there.
 
-`talkcode pod-remove devbox` takes a host out, with its agents. It is refused while config.yaml still
+`fleetherd pod-remove devbox` takes a host out, with its agents. It is refused while config.yaml still
 names it — agents written for it there, or routing that names one of its agents.
 
-## Agents the host declares: `~/.talkcode/pod.yaml`
+## Agents the host declares: `~/.fleetherd/pod.yaml`
 
 A host can say which agents it has, instead of config.yaml listing them. Then `hosts:` is all
 config.yaml needs:
 
 ```yaml
-# ~/.talkcode/pod.yaml, on the host
+# ~/.fleetherd/pod.yaml, on the host
 agents:
   - id: oc
     harness: opencode
@@ -95,7 +95,7 @@ agents:
 ```
 
 - Each one is named `<id>@<host>`: `oc` on `devbox` is `oc@devbox`, so routing, `/agent` and
-  `talkcode task-new` use that. A host cannot take an id config.yaml or another host uses.
+  `fleetherd task-new` use that. A host cannot take an id config.yaml or another host uses.
 - The fields are an agent's fields from config.yaml, without `host`. Values are used as written:
   `${VAR}` is refused, because it would be filled in from the gateway's environment, which holds
   its tokens. A variable the agent needs belongs in the host's login environment.
@@ -103,7 +103,7 @@ agents:
   `opencode`, `agy` and `codebuddy`, and offers the ones it finds as `cc`, `cx`, `oc`, `ag` and
   `cbc`, with default settings. An empty file means no agents. A host that config.yaml already
   places agents on is not looked at unless it has the file — it would offer each of them again.
-- **When it is read:** when the gateway starts, and on every `/reload` (or `talkcode reload`).
+- **When it is read:** when the gateway starts, and on every `/reload` (or `fleetherd reload`).
   Change the file, then reload. What was read is kept in `pods.json` in the config directory, so
   a host that is down keeps its agents; so does a host whose file is wrong, and the reload's answer
   says what is wrong with it.
@@ -130,14 +130,14 @@ ssh devbox.pod            # a terminal; scp, rsync, git and -L/-R work as with a
 ```
 
 ```yaml
-# ~/.talkcode/pod.yaml
+# ~/.fleetherd/pod.yaml
 peer:                     # join the mesh
-  ssh: me@10.0.0.5:2222   # optional: how the other hosts reach this one, if not how the gateway does
+  ssh: me@192.0.2.5:2222   # optional: how the other hosts reach this one, if not how the gateway does
 ```
 
 The connections are plain OpenSSH between the hosts; the gateway carries none of it. What it does
 is the setup: each host in the mesh gets a key of its own (made on the host, in
-`~/.talkcode/ssh/id_ed25519`), and the gateway writes, beside it, the other hosts' keys
+`~/.fleetherd/ssh/id_ed25519`), and the gateway writes, beside it, the other hosts' keys
 (`authorized_keys`, usable only from private address ranges), their host keys under `<host>.pod`
 (`known_hosts`, taken from the gateway's own known_hosts — what it already checks them against) and
 a `Host <host>.pod` block for each (`config`). Rewritten on every gateway start and `/reload`.
@@ -147,10 +147,10 @@ For a host to use those files, its sshd has to read the second `authorized_keys`
 
 ```
 # sshd_config
-AuthorizedKeysFile .ssh/authorized_keys .talkcode/ssh/authorized_keys
+AuthorizedKeysFile .ssh/authorized_keys .fleetherd/ssh/authorized_keys
 AllowTcpForwarding yes        # for -L/-R; keys with `restrict` stay without it
-# ssh_config (e.g. /etc/ssh/ssh_config.d/20-talkcode-pods.conf)
-Include /home/<user>/.talkcode/ssh/config
+# ssh_config (e.g. /etc/ssh/ssh_config.d/20-fleetherd-pods.conf)
+Include /home/<user>/.fleetherd/ssh/config
 ```
 
 Every host in the mesh can log in to every other: joining is the host's own decision (`peer:` is in
@@ -177,18 +177,18 @@ the config.yaml entry and `/reload`.
 
 | | For an agent with `host:` |
 |---|---|
-| The agent process | on the host, in its `cwd` (default `~/.talkcode/agents/<id>` there) |
+| The agent process | on the host, in its `cwd` (default `~/.fleetherd/agents/<id>` there) |
 | Its environment | the host account's **login** environment (what `bash -il` sets up, `.bashrc` included) plus the agent's `env`. Nothing from the gateway's own environment is passed. |
 | `hooks.preLaunch` | on the host |
-| Files you send it | copied to `~/.talkcode/attachments/` on the host, and named by that path |
-| Files it sends you (`send_file`, `talkcode send-file`) | fetched from the host |
-| `talkcode …` commands it runs | on the host's `PATH`, carried back to the gateway |
+| Files you send it | copied to `~/.fleetherd/attachments/` on the host, and named by that path |
+| Files it sends you (`send_file`, `fleetherd send-file`) | fetched from the host |
+| `fleetherd …` commands it runs | on the host's `PATH`, carried back to the gateway |
 | A `--bash` task it schedules | on the host |
 | `/cd`, `/skills` | list the host's directories and skills |
-| The `talkcode` skill | placed in the harness's skill directory on the host |
+| The `fleetherd` skill | placed in the harness's skill directory on the host |
 
-`talkcode` works from a login shell too. Agents often run shell commands with `bash -lc` (codex
-does), and a login shell rebuilds `PATH` from `/etc/profile` — so `talkcode` there is whatever the
+`fleetherd` works from a login shell too. Agents often run shell commands with `bash -lc` (codex
+does), and a login shell rebuilds `PATH` from `/etc/profile` — so `fleetherd` there is whatever the
 machine installed, not the helper's copy. That one hands the command to the helper instead of
 looking for a gateway config that is not on this machine. Only the reverse commands and `mcp` are
 handed over: `help` and `--version` are answered on the host, and `start`, `setup` and `doctor` are
@@ -224,12 +224,12 @@ there (`group`, else `host`) runs on a host that is down.
 
 ## Versions
 
-Each gateway version installs its own helper on a host, under `~/.talkcode/remote/<version>/`.
+Each gateway version installs its own helper on a host, under `~/.fleetherd/remote/<version>/`.
 When an upgraded gateway connects, the previous version's helper is stopped, and its directory is
 removed once no gateway uses it. The helper is about 4 MiB; a gateway brings both builds with it
 and downloads nothing.
 
-The `talkcode` on the machine's own `PATH` (in the uniagent image, for one) is a separate install
+The `fleetherd` on the machine's own `PATH` (in the uniagent image, for one) is a separate install
 from the helper the gateway puts on the host. The login-shell handoff needs both halves to come
 from a release that has it: with only the image updated, the old helper cannot say where its shim
 is and the CLI answers that the helper is too old; with only the gateway updated, the old CLI still
@@ -262,9 +262,9 @@ The web UI's sidebar uses the same name, in front of the directory under each to
 
 ## Security
 
-The key in `~/.config/talkcode/ssh/` opens a shell on every host it is authorized on. That is the
+The key in `~/.config/fleetherd/ssh/` opens a shell on every host it is authorized on. That is the
 same thing an agent on that host can do for anyone in `access.allowFrom`, so protect the gateway the
 way you already must. The helper opens no network port: it talks over ssh and an owner-only socket
-under `~/.talkcode/remote/run/`. The one exception is an agy agent's relay, when it has a
+under `~/.fleetherd/remote/run/`. The one exception is an agy agent's relay, when it has a
 [`contextBudget`](agents.md#antigravity-agy): a listener on 127.0.0.1 that forwards that agent's API
 calls to where they were going anyway.

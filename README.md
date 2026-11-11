@@ -1,71 +1,94 @@
 <div align="center">
 
-# talkcode
+# fleetherd
 
-**Your coding agent, in every chat app.**
+**One gateway for the coding agents on all your machines — from chat apps or its own web UI.**
 
-[![CI](https://github.com/noir017/talkcode/actions/workflows/ci.yml/badge.svg)](https://github.com/noir017/talkcode/actions/workflows/ci.yml)
+[![CI](https://github.com/noir017/fleetherd/actions/workflows/ci.yml/badge.svg)](https://github.com/noir017/fleetherd/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
 
 </div>
 
-A gateway daemon that connects chat platforms to your coding agent — Claude Code,
-Codex, OpenCode (via the [Agent Client Protocol](https://agentclientprotocol.com)),
-or Google's Antigravity CLI. Message the bot; the agent runs on your machine and
-streams its answer into a single, live-edited message.
+A gateway daemon. The agents — Claude Code, Codex, OpenCode, Antigravity, or any other
+[ACP](https://agentclientprotocol.com) agent — run on the gateway's machine or on any Linux host it
+reaches over ssh, and each host can declare its own agents in a `pod.yaml`
+([Remote hosts](docs/remote-hosts.md)). Talk to them from the [web UI](docs/web-ui.md) the gateway
+serves itself, or from eight chat platforms; `/super` splits one job across several agents working
+in parallel.
 
-Forked from [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere); this project
-was called `agent-anywhere` until 2.0.0.
+It began as a fork of [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere), was
+called `agent-anywhere` until 2.0.0 and `talkcode` until 3.0.0; the `talkcode` command still works
+as an alias.
 
 ![The built-in web UI: Claude Code finding and fixing a failing test, with its tool calls, its answer, and the context and cost footer](docs/images/webui.png)
 
 <p align="center"><sub>The built-in web UI — no chat platform needed. The same conversation works in Telegram, Discord, Slack, Lark and the rest.</sub></p>
 
 ```text
- Discord ───┐
- Telegram ──┤     ┌──────────────────────┐
- Slack ─────┤     │        daemon        │       ┌─► claude
- Lark ──────┤     │  routing · sessions  │◄─────►├─► codex
- QQ ────────┼────►│  streaming · access  │       ├─► opencode
- LINE ──────┤     └──────────▲───────────┘       ├─► agy
- WeCom ─────┤                │ unix socket       └─► custom
- DingTalk ──┤                └─ talkcode CLI (send-file / ask / react …)
- Web UI ────┘  (a browser page the daemon serves itself — no bot, no account)
+Discord · Telegram · Slack · Lark · QQ · LINE · WeCom · DingTalk · Web UI
+                                     │
+                                     ▼
+                       ┌───────────────────────────┐
+     ┌────────────────►│         fleetherd         │
+     │                 │   routing · sessions      │
+     │                 │   streaming · access      │
+     │                 └─────────────┬─────────────┘
+     │                               │ one ssh link per remote host
+     │         ┌─────────────────────┼─────────────────────┐
+     │         ▼                     ▼                     ▼
+     │ ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
+     │ │ this machine  │     │ devbox (ssh)  │     │ buildbox(ssh) │
+     │ │ cc · oc · agy │     │ cc · oc       │     │ cx · agy      │
+     │ └───────┬───────┘     └───────┬───────┘     └───────┬───────┘
+     └─────────┴─────────────────────┴─────────────────────┘   fleetherd CLI
+       send-file / ask / react … — the agent's way back into the chat
 ```
 
 ## Features
 
-- **Eight platforms, one daemon** — Discord, Telegram, Slack, Lark, QQ, LINE, WeCom, DingTalk; multi-account. [→](docs/platforms.md)
+### Entry points
+
 - **Or no platform at all** — the [web UI](docs/web-ui.md) above, behind one shared token or your SSO, with an optional terminal.
+- **Eight platforms, one daemon** — Discord, Telegram, Slack, Lark, QQ, LINE, WeCom, DingTalk; multi-account. [→](docs/platforms.md)
+- **Voice messages** — transcribed, shown to you, and sent on once you confirm. [→](docs/voice.md)
+
+### Many machines, many agents
+
 - **Any ACP agent** — Claude Code, Codex, OpenCode, Antigravity, or `custom`; routed by platform, channel, user or command. [→](docs/agents.md)
+- **Agents on other machines** — an agent can run on any Linux host the gateway reaches over ssh, and a host can declare its own agents in a `pod.yaml`; it keeps working through a dropped connection, and `/agent` picks one by machine. [→](docs/remote-hosts.md)
+- **Sub-agents, and a list of what needs you** — `/super <job>`: the agent splits a job, hands the parts to other agents that work in parallel in topics nested under it — once you confirm — then checks and reports. The web UI lists what is waiting on you and can notify your phone. [→](docs/sub-agents.md)
+
+### Shared and accumulated
+
+- **Skills that write themselves** — say "remember this as a skill" and the agent creates one the gateway keeps, delivers to every agent on every host, versions, and archives when it goes unused. Name a reviewer agent and quiet conversations are reviewed on their own. [→](docs/skills.md)
+- **Your instructions, for every agent** — write once how you want to be worked with; every agent on every host reads it, plus a file per agent for what only suits one. [→](docs/instructions.md)
+- **Scheduled tasks** — "every morning at 8, …" becomes a task the gateway keeps, surviving restarts. [→](docs/scheduled-tasks.md)
+- **Every conversation, searchable** — each turn is kept in a local library, and `fleetherd sessions` searches it by keyword, by agent, or by day. [→](docs/conversation-history.md)
+
+### Day to day
+
 - **Native streaming** — in-place edits, live tool-call bubbles, lifecycle reactions.
 - **Send while it works** — a message sent mid-turn joins the running turn instead of stopping it, as typing into Claude Code's own CLI does; `/stop` stops. [→](docs/chat-commands.md#sending-while-the-agent-works)
-- **Attachments** — images and files you send are downloaded and handed to the agent.
-- **Agents on other machines** — an agent can run on any Linux host the gateway reaches over ssh; it keeps working through a dropped connection, and `/agent` picks one by machine. [→](docs/remote-hosts.md)
 - **Topics are conversations** — a Telegram or Feishu topic, a Slack or Discord thread, each with its own agent, its own [directory](docs/working-directory.md) and an [automatic name](docs/topic-names.md).
 - **Persistent** — conversations survive restarts; `/new`, `/stop`, `/kill`; idle agents are released and resumed on the next message. [→](docs/chat-commands.md)
-- **The agent acts in the chat** — sends files, asks with buttons, replies, reacts, reads history. [→](docs/agent-actions.md)
-- **Sub-agents, and a list of what needs you** — `/super <job>`: the agent splits a job, hands the parts to other agents that work in parallel in topics nested under it — once you confirm — then checks and reports. The web UI lists what is waiting on you and can notify your phone. [→](docs/sub-agents.md)
 - **Failed turns can carry on** — continue automatically after an upstream outage, with your own words, and run a command to alert you. [→](docs/agents.md#when-a-turn-fails)
-- **Scheduled tasks** — "every morning at 8, …" becomes a task the gateway keeps, surviving restarts. [→](docs/scheduled-tasks.md)
-- **Your instructions, for every agent** — write once how you want to be worked with; every agent on every host reads it, plus a file per agent for what only suits one. [→](docs/instructions.md)
-- **Skills that write themselves** — say "remember this as a skill" and the agent creates one the gateway keeps, delivers to every agent on every host, versions, and archives when it goes unused. Name a reviewer agent and quiet conversations are reviewed on their own. [→](docs/skills.md)
-- **Voice messages** — transcribed, shown to you, and sent on once you confirm. [→](docs/voice.md)
+- **Attachments** — images and files you send are downloaded and handed to the agent.
+- **The agent acts in the chat** — sends files, asks with buttons, replies, reacts, reads history. [→](docs/agent-actions.md)
 - **Small config** — five sections, `${VAR}` and `.env` expansion; [`/setting`](docs/settings.md) edits the fields worth changing from chat.
 
 ## Quick start
 
-talkcode is not on npm. Install the tarball attached to the
-[latest release](https://github.com/noir017/talkcode/releases/latest), with `X.Y.Z` its version:
+fleetherd is not on npm. Install the tarball attached to the
+[latest release](https://github.com/noir017/fleetherd/releases/latest), with `X.Y.Z` its version:
 
 ```bash
-npm install -g https://github.com/noir017/talkcode/releases/download/vX.Y.Z/talkcode-X.Y.Z.tgz
+npm install -g https://github.com/noir017/fleetherd/releases/download/vX.Y.Z/fleetherd-X.Y.Z.tgz
 
-talkcode setup    # wizard: platform, credentials, agent
-talkcode doctor   # self-check
-talkcode start    # message your bot
+fleetherd setup    # wizard: platform, credentials, agent
+fleetherd doctor   # self-check
+fleetherd start    # message your bot
 ```
 
 `harness: claude` reuses this machine's `claude /login` session — no API key
@@ -77,16 +100,16 @@ needed for personal use.
 Paste into Claude Code (or any coding agent):
 
 ```text
-Set up https://github.com/noir017/talkcode for me: install the CLI
-from the latest GitHub release's talkcode-X.Y.Z.tgz (npm i -g <its URL>;
+Set up https://github.com/noir017/fleetherd for me: install the CLI
+from the latest GitHub release's fleetherd-X.Y.Z.tgz (npm i -g <its URL>;
 it is not on npm), then follow the skill bundled in the installed
-package (skill/SKILL.md, under `npm root -g`/talkcode) to configure
+package (skill/SKILL.md, under `npm root -g`/fleetherd) to configure
 and start it.
 ```
 
 </details>
 
-The smallest useful `~/.config/talkcode/config.yaml` is the web UI and one agent:
+The smallest useful `~/.config/fleetherd/config.yaml` is the web UI and one agent:
 
 ```yaml
 version: 1
@@ -117,22 +140,26 @@ is in [Configuration](docs/configuration.md).
 
 | | |
 |---|---|
-| [Configuration](docs/configuration.md) | config.yaml in full, `${VAR}` and `.env`, the CLI |
-| [Agents](docs/agents.md) | the harnesses, what each needs installed, how Antigravity is driven |
-| [Platforms](docs/platforms.md) | what each chat platform can and cannot do |
+| **Entry points** | |
 | [Web UI](docs/web-ui.md) | topics, the terminal, exposing it safely, single sign-on |
-| [Chat commands](docs/chat-commands.md) | `/new` `/stop` `/kill`, agent commands, `/model`, `/effort` |
+| [Platforms](docs/platforms.md) | what each chat platform can and cannot do |
+| [Voice messages](docs/voice.md) | transcription and confirmation |
+| **Many machines, many agents** | |
+| [Agents](docs/agents.md) | the harnesses, what each needs installed, how Antigravity is driven |
 | [Remote hosts](docs/remote-hosts.md) | agents on other machines over ssh, `/agent`, what happens when the network drops |
+| [Sub-agents](docs/sub-agents.md) | `/super`: split a job across agents working in parallel |
 | [Running in a container](docs/docker.md) | the gateway-only image, with every agent on a host |
+| **Shared and accumulated** | |
+| [Skills the gateway keeps](docs/skills.md) | skills every agent shares: write, version, archive, restore |
+| [Your instructions](docs/instructions.md) | one set of standing instructions for every agent, plus one per agent |
+| [Scheduled tasks](docs/scheduled-tasks.md) | prompts and commands on a schedule |
+| [Past conversations](docs/conversation-history.md) | `fleetherd sessions`: search every conversation the gateway carried |
+| **Day to day** | |
+| [Chat commands](docs/chat-commands.md) | `/new` `/stop` `/kill`, agent commands, `/model`, `/effort` |
 | [Working directory](docs/working-directory.md) | `/cd`: one topic per project |
 | [Topic names](docs/topic-names.md) | `/title` and automatic naming |
 | [Settings from chat](docs/settings.md) | `/setting`: editing config.yaml without a restart |
-| [Voice messages](docs/voice.md) | transcription and confirmation |
-| [Scheduled tasks](docs/scheduled-tasks.md) | prompts and commands on a schedule |
-| [Sub-agents](docs/sub-agents.md) | `/super`: split a job across agents working in parallel |
-| [Past conversations](docs/conversation-history.md) | `talkcode sessions`: search every conversation the gateway carried |
-| [Skills the gateway keeps](docs/skills.md) | skills every agent shares: write, version, archive, restore |
-| [Your instructions](docs/instructions.md) | one set of standing instructions for every agent, plus one per agent |
+| [Configuration](docs/configuration.md) | config.yaml in full, `${VAR}` and `.env`, the CLI |
 | [What the agent can do](docs/agent-actions.md) | button questions, sending files, the bundled skill |
 
 ## Contributing

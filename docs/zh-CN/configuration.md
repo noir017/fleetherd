@@ -2,7 +2,7 @@
 
 [English](../configuration.md) | 简体中文
 
-`~/.config/talkcode/config.yaml`，或用 `--config <path>` 指定。`talkcode setup` 会写出一份能用的；
+`~/.config/fleetherd/config.yaml`，或用 `--config <path>` 指定。`fleetherd setup` 会写出一份能用的；
 本页讲向导不问的那些——多个智能体、路由、同一平台多个账号。
 
 ```yaml
@@ -33,9 +33,9 @@ agents:                       # 至少一个；路由按 id 选取
 
 hosts:                        # 可选；智能体所在的机器，经 ssh 连接
   devbox:
-    ssh: me@10.0.0.5:22
-    # identityFile: ~/.config/talkcode/ssh/id_ed25519   （默认）
-    # knownHostsFile: ~/.config/talkcode/ssh/known_hosts （默认）
+    ssh: me@192.0.2.5:22
+    # identityFile: ~/.config/fleetherd/ssh/id_ed25519   （默认）
+    # knownHostsFile: ~/.config/fleetherd/ssh/known_hosts （默认）
 
 routing:
   default: claude
@@ -75,7 +75,7 @@ skills:                       # 可选；自管技能共用的 git 仓库
 
 ## 守护进程运行时改配置
 
-改完文件，在任意聊天里发 `/reload`。如果是智能体改的配置，它也可以执行 `talkcode reload`（这是反向命令，
+改完文件，在任意聊天里发 `/reload`。如果是智能体改的配置，它也可以执行 `fleetherd reload`（这是反向命令，
 只能在会话里用）。守护进程会重新读取 `config.yaml` 和 `.env`，并回复改了什么：
 
 ```
@@ -101,4 +101,4 @@ config.yaml reloaded.
 | `start` | 运行守护进程 |
 | `<反向命令>` | 供智能体使用的聊天操作，见[在聊天中行动](agent-actions.md#在聊天中行动) |
 
-所有命令均接受写在命令之前的 `-c, --config <path>`（`talkcode -c <path> start`），并将结构化输出写到 stdout。写在命令之后的 `-c` 归该命令自己：聊天动作里是 `--channel`。
+所有命令均接受写在命令之前的 `-c, --config <path>`（`fleetherd -c <path> start`），并将结构化输出写到 stdout。写在命令之后的 `-c` 归该命令自己：聊天动作里是 `--channel`。

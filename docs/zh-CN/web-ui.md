@@ -42,9 +42,9 @@ harness 不提供模型选择时会直接说明。话题一有智能体，这个
 **话题。** 左侧边栏列出并行的会话、在它们之间切换，和 Telegram 的论坛话题、飞书的话题群是同一种
 形状：每个话题有自己的 agent session、自己的上下文，并且会根据聊下来的内容被自动命名。
 标题开头方括号里是回答这个话题的智能体——只写 id，因为机器名在下一行——鼠标悬停标题能看到完整名称。
-点 `+` 新建；agent 自己也可以用 `talkcode create-thread` 开一个，用
+点 `+` 新建；agent 自己也可以用 `fleetherd create-thread` 开一个，用
 `--channel main/<话题 id>` 往指定话题里写。每个标题下面是这个话题的工作目录；智能体跑在
-[远程主机](remote-hosts.md)上时前面还会带上机器名（`devbox · talkcode`），鼠标悬停能看到完整路径。
+[远程主机](remote-hosts.md)上时前面还会带上机器名（`devbox · fleetherd`），鼠标悬停能看到完整路径。
 网关连不上的机器会在这里、新话题里它那组智能体的标题上、以及输入框上方标出来（见[主机离线时](remote-hosts.md#主机离线时)）。
 每行末尾的 **⋯** 按钮（悬停或键盘聚焦时出现，触屏上常显）打开这个话题的菜单，不会切换话题：
 **Star**/**Unstar**、**End agent**、**Delete topic**（红色，确认框和以前一样）。**End agent**
@@ -155,7 +155,7 @@ Office 文档和其他二进制文件没有预览，仍然只能下载。和下�
 （见[网关自己维护的技能](skills.md)）。页面列出每个技能的状态（在用、过期或已归档）、是否钉住和最后使用时间。
 **New** 新建；点开一个技能能看到它的文件、`SKILL.md` 编辑器和每次改动记录；**Delete** 是归档而不是删除，
 **Restore** 可以拿回来。保存 `SKILL.md` 会带上页面读到的版本号，别处改过就会拒绝而不是覆盖。
-页面和 `talkcode skills` 写的是同一套存储；从这里归档，同样会通知创建这个技能的会话。
+页面和 `fleetherd skills` 写的是同一套存储；从这里归档，同样会通知创建这个技能的会话。
 
 要让智能体用上某个技能，在对话里说的就是它的名称，所以列表每一行和技能自己的页面上都有一个复制按钮。
 窗口会在当前浏览器里记住上一次画出的列表：下次打开立刻显示，同时在后台再问一次 daemon，只有结果变了才重画；
@@ -165,7 +165,7 @@ Office 文档和其他二进制文件没有预览，仍然只能下载。和下�
 ## 历史
 
 话题列表顶部有两个标签页：**Topics** 和 **History**。History 列出网关记录过的全部对话——不分智能体和平台，
-和 `talkcode sessions list/search/read` 读的是同一个库。复盘自己的会话不在这里，在侧栏的 Reviews 里。
+和 `fleetherd sessions list/search/read` 读的是同一个库。复盘自己的会话不在这里，在侧栏的 Reviews 里。
 
 一行显示标题、智能体、平台、最后活动时间和消息条数。**Load older conversations** 继续往前翻，
 库记录到多早就能翻到多早。在搜索框里输入后按回车，一次搜遍所有对话；清空输入框就回到列表。
@@ -193,7 +193,7 @@ Topics，停在地址里的那个话题。
 - 页面必须通过 HTTPS 访问（或者 `localhost`）。局域网里普通的 `http://` 地址无法请求通知。
 - 通知经过浏览器厂商的推送服务（Google、Mozilla 或 Apple），网关要能通过 HTTPS 访问到它。
   内容是加密给你这台设备的，而且只有话题名和一行字。
-- 密钥和设备列表保存在 `~/.config/talkcode/webui-push-<instance>/`。删掉这个目录会忘掉所有设备，
+- 密钥和设备列表保存在 `~/.config/fleetherd/webui-push-<instance>/`。删掉这个目录会忘掉所有设备，
   每台设备都要重新打开通知。
 
 ## 终端
@@ -212,7 +212,7 @@ platforms:
     token: ${WEB_TOKEN}
     terminal:
       enabled: true
-      socket: ~/.config/talkcode/webui-term-web.sock   # 你的 ttyd 监听在哪
+      socket: ~/.config/fleetherd/webui-term-web.sock   # 你的 ttyd 监听在哪
       # 可选：怎么「结束一个会话」。不配的话窗口上就没有关闭按钮，只有最小化——
       # 因为会话能在断线之后活下来是你那边的安排，不是这个守护进程的。
       # 是 argv 数组，不是 shell 字符串。
@@ -224,7 +224,7 @@ platforms:
 # 里面正在跑的东西会跟着被 SIGHUP 掉。
 printf '#!/bin/sh\nexec tmux -L aa-web new -A -s "aa-$1"\n' > /usr/local/bin/aa-terminal.sh
 chmod +x /usr/local/bin/aa-terminal.sh
-ttyd -i ~/.config/talkcode/webui-term-web.sock -b /term -W -a -O \
+ttyd -i ~/.config/fleetherd/webui-term-web.sock -b /term -W -a -O \
      -T xterm-256color /usr/local/bin/aa-terminal.sh
 ```
 
@@ -268,7 +268,7 @@ platforms:
 
 `from` 是必填的：签名本身已经让伪造请求头没有意义，`from` 保的是上面四个字段里写
 错一个也不至于致命。被拒的请求会把来源地址打进日志——那行就是你该往 `from` 里填
-什么的答案。`talkcode doctor` 会去拉一次 JWKS 并报告拿到几把钥匙，**在设
+什么的答案。`fleetherd doctor` 会去拉一次 JWKS 并报告拿到几把钥匙，**在设
 `password: false` 之前先跑一次**：老门关掉之后，IdP 一挂就没人打得开这个页面了。
 
 ## 要有的预期

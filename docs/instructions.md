@@ -9,7 +9,7 @@ OpenCode, Antigravity, CodeBuddy and AtomCode, on this machine and on every
 gateway moves it.
 
 ```text
-<config dir>/instructions/        (~/.config/talkcode/instructions/)
+<config dir>/instructions/        (~/.config/fleetherd/instructions/)
   common.md      every agent
   claude.md      Claude Code only
   codex.md       Codex only
@@ -25,7 +25,7 @@ There is no setting: the directory existing turns it on, and deleting it turns i
 ## How it reaches the agent
 
 Each time an agent starts, the gateway writes the joined text, read-only, to
-`~/.talkcode/instructions/<agent>.md` on the machine the agent runs on, and links the harness's
+`~/.fleetherd/instructions/<agent>.md` on the machine the agent runs on, and links the harness's
 own user-level instruction file to it:
 
 | agent | its file |

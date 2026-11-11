@@ -71,7 +71,7 @@ agents:
 - `/stop` while it runs cancels it.
 - Anything it leaves running in the background (`ssh -fN`, `cmd &`) keeps running.
   The daemon does not wait for it.
-- The full output of the last 20 runs is kept in `~/.config/talkcode/hooks/<agent-id>/`.
+- The full output of the last 20 runs is kept in `~/.config/fleetherd/hooks/<agent-id>/`.
 - `${VAR}` is expanded when the config loads, like every other string. Write `$VAR`
   for the shell to expand when the hook runs.
 
@@ -95,7 +95,7 @@ agents:
           message: 继续          # sent to the agent as if you typed it (default: continue)
           max: 3                # in a row (default 3)
           backoffMs: 30000      # first wait; doubles each time, at most 10 minutes
-        command: curl -s -d "$TALKCODE_TURN_FAILURE" https://ntfy.sh/my-topic
+        command: curl -s -d "$FLEETHERD_TURN_FAILURE" https://ntfy.sh/my-topic
 ```
 
 What `on` can name:
@@ -117,9 +117,9 @@ What `on` can name:
 - `access` and `request` are not in the default list, because continuing does not fix a missing
   sign-in or a request the provider refuses — including a refusal that names no cause.
 - `command` runs after every failure, on the agent's own machine, under `bash -lc`. The failure is
-  in `$TALKCODE_TURN_FAILURE` as JSON: `agent`, `conversation`, `reason`, `message`, `at` and, when a
+  in `$FLEETHERD_TURN_FAILURE` as JSON: `agent`, `conversation`, `reason`, `message`, `at` and, when a
   continue was scheduled, `continuing`. It does not affect the turn, and its output is kept in
-  `~/.config/talkcode/hooks/<agent-id>/`.
+  `~/.config/fleetherd/hooks/<agent-id>/`.
 - A turn cut off by a restart is said in its topic when the gateway is back (`⚠️ The gateway
   restarted before this turn finished`), whether or not anything continues it.
 

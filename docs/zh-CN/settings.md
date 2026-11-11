@@ -60,7 +60,7 @@ config.yaml 的 `podModels`，优先于主机 pod.yaml 里的 `model:`；那一�
 设的，清掉就回到 pod 的值。会话启动时用哪个模型，从高到低：它的 `/model` → `podModels` → pod.yaml →
 harness 默认。
 
-**自动复盘**也在这里设置。`/setting review.agent ag@uniagent` 打开它，`/setting review.agent off`
+**自动复盘**也在这里设置。`/setting review.agent ag@buildbox` 打开它，`/setting review.agent off`
 关掉；这一行列出所有智能体 —— 复盘者能做什么由复盘决定、不由智能体决定：能关的工具都关掉，提出的
 每个权限请求都拒绝。选了智能体会替换掉 `review.api`，而 `review.api` 只能在 config.yaml 里和密钥
 一起写。`/setting review.model` 给复盘单独指定模型；不设就是跟随复盘者自己的模型，行上显示

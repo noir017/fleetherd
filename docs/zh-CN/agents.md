@@ -66,7 +66,7 @@ agents:
   下一条消息会重新尝试。
 - 钩子运行期间发 `/stop` 会取消它。
 - 它留在后台的进程（`ssh -fN`、`cmd &`）会继续运行，守护进程不会等它们。
-- 最近 20 次的完整输出保存在 `~/.config/talkcode/hooks/<agent-id>/`。
+- 最近 20 次的完整输出保存在 `~/.config/fleetherd/hooks/<agent-id>/`。
 - `${VAR}` 和其他配置字符串一样，在加载配置时展开。想让 shell 在运行钩子时再展开，
   就写 `$VAR`。
 
@@ -88,7 +88,7 @@ agents:
           message: 继续          # 像你亲手输入一样发给智能体（默认：continue）
           max: 3                # 最多连续几次（默认 3）
           backoffMs: 30000      # 第一次等多久；每次翻倍，最多 10 分钟
-        command: curl -s -d "$TALKCODE_TURN_FAILURE" https://ntfy.sh/my-topic
+        command: curl -s -d "$FLEETHERD_TURN_FAILURE" https://ntfy.sh/my-topic
 ```
 
 `on` 可以写的原因：
@@ -108,8 +108,8 @@ agents:
 - 一轮正常结束会把计数清零。连续失败 `max` 次后，聊天里会说明不再继续，这个话题会被列为失败。
 - 默认列表里没有 `access` 和 `request`，因为没登录、请求被拒（包括没写原因的拒答），继续多少次也没用。
 - `command` 在每次失败后运行，在智能体自己的机器上用 `bash -lc` 执行。失败信息以 JSON 放在
-  `$TALKCODE_TURN_FAILURE` 里：`agent`、`conversation`、`reason`、`message`、`at`，安排了自动继续时还有
-  `continuing`。它不影响这一轮，输出保存在 `~/.config/talkcode/hooks/<agent-id>/`。
+  `$FLEETHERD_TURN_FAILURE` 里：`agent`、`conversation`、`reason`、`message`、`at`，安排了自动继续时还有
+  `continuing`。它不影响这一轮，输出保存在 `~/.config/fleetherd/hooks/<agent-id>/`。
 - 被重启打断的一轮，网关回来后会在它的话题里说明（`⚠️ The gateway restarted before this turn
   finished`），不管有没有自动继续。
 
