@@ -9382,6 +9382,73 @@ describe('webui page: the Reviews tab', () => {
     await until('the refreshed list', () => h.doc.querySelector('.rev-pending') === null);
   });
 
+  it('keeps a list answer that predates an archive suggestion out of the skills cache', async () => {
+    const skill = {
+      name: 'simular-box',
+      description: 'the old name',
+      version: 'v1',
+      status: 'active',
+      pinned: false,
+      resident: false,
+      uses: 0,
+      agents: [],
+    };
+    const archived = { ...skill, status: 'archived' };
+    const pending = [
+      { text: 'Archive simular-box', archive: { name: 'simular-box' }, count: 1, at, from: [{ title: 'mcpmux' }] },
+    ];
+    const replies: Record<string, unknown> = {
+      'api/skills': { enabled: true, skills: [skill] },
+      'api/reviews': reply([review()], { pending }),
+      'api/skills/op': { ok: true, skills: [archived] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+
+    // Seed the cache, then open again with a list request held and close the window under it.
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('simular-box'));
+    await h.click('#skills-close');
+    const real = h.window.fetch;
+    let releaseOld!: () => void;
+    let held = false;
+    (h.window as any).fetch = (path: string, init?: any) => {
+      if (path === 'api/skills' && !held) {
+        held = true;
+        return new Promise((resolve) => {
+          releaseOld = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => null },
+              json: () => Promise.resolve({ enabled: true, skills: [skill] }),
+            });
+        });
+      }
+      return real(path, init);
+    };
+    await h.click('#skills-toggle');
+    await h.click('#skills-close');
+
+    // Archive from Reviews while that request is still in the air.
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-reviews');
+    await until('the pending list', () => Boolean(h.doc.querySelector('.rev-pending')));
+    replies['api/skills'] = { enabled: true, skills: [archived] };
+    const reviews = (): number => h.calls.filter((c) => c.path === 'api/reviews').length;
+    const before = reviews();
+    (h.doc.querySelector('[data-rev-archive]') as HTMLElement).click();
+    // The archive has been answered and its own follow-ups have run.
+    await until('the archive answer', () => reviews() > before);
+
+    // The held answer is what the store said before the archive: it must not reach the cache.
+    releaseOld();
+    await until('the cache', () => {
+      const d = JSON.parse(h.window.localStorage.getItem('aa_skills') || '{}') as { skills?: Array<{ status?: string }> };
+      return d.skills?.[0]?.status === 'archived';
+    });
+  });
+
   it('keeps an archive suggestion and says why when the archive is refused', async () => {
     const pending = [
       { text: 'Archive simular-box', archive: { name: 'simular-box' }, count: 1, at, from: [{ title: 'mcpmux' }] },
@@ -10207,6 +10274,491 @@ describe('webui page: the skills page', () => {
     await until('the disabled note', () => h.el('skills-list').textContent!.includes('not enabled'));
 
     expect(h.el('skills-list').textContent).toContain('Skills are not enabled in this daemon');
+  });
+
+  it('copies the name from a row and from the skill page, with a moment of feedback', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    const rowCopy = h.doc.querySelector('[data-skill="deploy-check"] [data-copy-skill]')!;
+    expect(face(rowCopy)).toBe('[copy]');
+    (rowCopy as HTMLElement).click();
+    await tick();
+    expect(h.clipboard).toEqual(['deploy-check']);
+    expect(face(rowCopy)).toBe('[check]');
+    // Copying is not opening: the row stayed on screen and the page did not move.
+    expect(h.el('skills-detail').hidden).toBe(true);
+    // The mark is a moment, not a new state: it goes back on its own.
+    await within('the copy mark back', 3000, () => face(rowCopy) === '[copy]');
+
+    (h.doc.querySelector('[data-skill="deploy-check"] .skill-open') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+    const headCopy = h.el('skills-detail').querySelector('.skill-head [data-copy-skill]')!;
+    (headCopy as HTMLElement).click();
+    await tick();
+    expect(h.clipboard).toEqual(['deploy-check', 'deploy-check']);
+    // Copying is not opening: the row stayed put and the page did not move.
+    expect(h.el('skills-detail').hidden).toBe(false);
+  });
+
+  it('falls back to the old copy command when the page has no clipboard API', async () => {
+    const h = await open({ replies: { 'api/skills': list() } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    // A plain-http origin, which is exactly how this page is reached on a LAN.
+    Object.defineProperty(h.window.navigator, 'clipboard', { configurable: true, value: undefined });
+    let copied = '';
+    (h.doc as unknown as { execCommand: (cmd: string) => boolean }).execCommand = (cmd: string) => {
+      copied = (h.doc.querySelector('textarea[readonly]') as HTMLTextAreaElement | null)?.value ?? '';
+      return cmd === 'copy';
+    };
+
+    const rowCopy = h.doc.querySelector('[data-skill="deploy-check"] [data-copy-skill]') as HTMLElement;
+    rowCopy.focus();
+    rowCopy.click();
+    await tick();
+    expect(copied).toBe('deploy-check');
+    expect(h.clipboard).toEqual([]);
+    expect(face(rowCopy)).toBe('[check]');
+    // The temporary field is not left in the page, and the focus went back where it was.
+    expect(h.doc.querySelector('textarea[readonly]')).toBeNull();
+    expect(h.doc.activeElement).toBe(rowCopy);
+  });
+
+  it('says the copy failed when the fallback cannot copy, and leaves no field or focus behind', async () => {
+    const h = await open({ replies: { 'api/skills': list() } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    Object.defineProperty(h.window.navigator, 'clipboard', { configurable: true, value: undefined });
+    (h.doc as unknown as { execCommand: () => boolean }).execCommand = () => false;
+    const rowCopy = h.doc.querySelector('[data-skill="deploy-check"] [data-copy-skill]') as HTMLElement;
+    rowCopy.focus();
+    rowCopy.click();
+    await tick();
+    expect(h.el('skills-note').hidden).toBe(false);
+    expect(h.el('skills-note').textContent).toContain('Could not copy the name');
+    expect(h.doc.querySelector('textarea[readonly]')).toBeNull();
+    expect(h.doc.activeElement).toBe(rowCopy);
+
+    // The same when the command throws: the field still goes, and the page says why.
+    (h.doc as unknown as { execCommand: () => boolean }).execCommand = () => {
+      throw new Error('execCommand refused');
+    };
+    rowCopy.click();
+    await tick();
+    expect(h.doc.querySelector('textarea[readonly]')).toBeNull();
+    expect(h.doc.activeElement).toBe(rowCopy);
+  });
+
+  it('opens on the cached list and redraws it only when the store moved on', async () => {
+    const held: Record<string, Promise<void>> = {};
+    const replies: Record<string, unknown> = { 'api/skills': list() };
+    const h = await open({ replies, held });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    await h.click('#skills-close');
+
+    // The second open's refresh is held: what is on screen before it answers is the cache.
+    let release!: () => void;
+    held['api/skills'] = new Promise<void>((r) => { release = r; });
+    await h.click('#skills-toggle');
+    expect(h.el('skills-list').textContent).toContain('deploy-check');
+    expect(h.el('skills-list').textContent).not.toContain('Loading');
+    const row = h.doc.querySelector('[data-skill="deploy-check"]');
+
+    // The same answer is not a change: the row drawn from the cache is left alone.
+    release();
+    await until('the silent refresh', () => !(h.el('skills-refresh') as HTMLButtonElement).disabled);
+    expect(h.doc.querySelector('[data-skill="deploy-check"]')).toBe(row);
+
+    // A different answer is, and the list is drawn again from it.
+    await h.click('#skills-close');
+    replies['api/skills'] = list([entry(), entry({ name: 'second-skill' })]);
+    let release2!: () => void;
+    held['api/skills'] = new Promise<void>((r) => { release2 = r; });
+    await h.click('#skills-toggle');
+    expect(h.el('skills-list').textContent).not.toContain('second-skill');
+    release2();
+    await until('the changed list', () => h.el('skills-list').textContent!.includes('second-skill'));
+  });
+
+  it('keeps a silent refresh quiet when it fails, and says so when the button asks', async () => {
+    const replies = { 'api/skills': list() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    await h.click('#skills-close');
+
+    h.status['api/skills'] = 500;
+    await h.click('#skills-toggle');
+    await until('the failed refresh', () => !(h.el('skills-refresh') as HTMLButtonElement).disabled);
+    expect(h.el('skills-note').hidden).toBe(true);
+    expect(h.el('skills-list').textContent).toContain('deploy-check');
+
+    await h.click('#skills-refresh');
+    await until('the failure note', () => !h.el('skills-note').hidden);
+    expect(h.el('skills-note').textContent).toContain('Could not refresh skills');
+    // The list the cache drew is still there to use.
+    expect(h.el('skills-list').textContent).toContain('deploy-check');
+  });
+
+  it('refreshes the open skill from the button, but never over unsaved text', async () => {
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"] .skill-open') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+
+    // Nothing typed: the page reads the skill again, and stays on it.
+    await h.click('#skills-refresh');
+    await until('the re-read', () => h.calls.filter((c) => c.body.action === 'show').length === 2);
+    expect(h.el('skills-detail').hidden).toBe(false);
+
+    // Typed into: the same button refreshes the list behind, and the text is not touched.
+    (h.el('skill-text') as HTMLTextAreaElement).value = 'an unsaved draft';
+    await h.click('#skills-refresh');
+    await until('the second refresh', () => !(h.el('skills-refresh') as HTMLButtonElement).disabled);
+    expect(h.calls.filter((c) => c.body.action === 'show')).toHaveLength(2);
+    expect((h.el('skill-text') as HTMLTextAreaElement).value).toBe('an unsaved draft');
+    expect(h.el('skills-detail').hidden).toBe(false);
+  });
+
+  it('refreshes behind an open skill without taking the page away', async () => {
+    const held: Record<string, Promise<void>> = {};
+    const replies: Record<string, unknown> = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies, held });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    await h.click('#skills-close');
+
+    let release!: () => void;
+    held['api/skills'] = new Promise<void>((r) => { release = r; });
+    await h.click('#skills-toggle');
+    (h.doc.querySelector('[data-skill="deploy-check"] .skill-open') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+    const editor = h.el('skill-text');
+
+    // The background answer names another skill: the list's data changes, the page does not.
+    replies['api/skills'] = list([entry(), entry({ name: 'new-one' })]);
+    release();
+    await until('the refresh', () => !(h.el('skills-refresh') as HTMLButtonElement).disabled);
+    expect(h.el('skills-detail').hidden).toBe(false);
+    expect(h.el('skill-text')).toBe(editor);
+    expect((h.el('skill-text') as HTMLTextAreaElement).value).toBe(MD);
+
+    // It is there when the person goes back, because the data behind the page did change.
+    await h.click('#skills-back');
+    expect(h.el('skills-list').textContent).toContain('new-one');
+  });
+
+  it('carries the list across a reload, so the first open after one is not a wait', async () => {
+    const h = await open({ replies: { 'api/skills': list() } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    const saved = h.window.localStorage.getItem('aa_skills');
+    expect(saved).toContain('deploy-check');
+    expect((JSON.parse(saved!) as { searches?: unknown }).searches).toBeUndefined();
+    await h.click('#skills-close');
+
+    // A new page, with the daemon slow to answer: the list is drawn from what the last page kept.
+    const held: Record<string, Promise<void>> = {};
+    let release!: () => void;
+    held['api/skills'] = new Promise<void>((r) => { release = r; });
+    const again = await open({ replies: {}, held, storage: { aa_skills: saved! } });
+    await again.emit(sync(A, [], [A]));
+    await again.click('#skills-toggle');
+    expect(again.el('skills-list').textContent).toContain('deploy-check');
+    expect(again.el('skills-list').textContent).not.toContain('Loading');
+
+    // And the refresh still wins: this daemon has no skills store.
+    release();
+    await until('the answer', () => again.el('skills-list').textContent!.includes('No managed skills yet'));
+  });
+
+  it('drops a list answer a write made stale, and asks again once the write is done', async () => {
+    const replies: Record<string, unknown> = {
+      'api/skills': list(),
+      'api/skills/op': { ok: true, skills: [entry({ status: 'archived' })] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    await h.click('#skills-close');
+
+    // The next list request is answered with what the store said before the tap, after the tap.
+    const real = h.window.fetch;
+    let releaseOld!: () => void;
+    let held = false;
+    (h.window as any).fetch = (path: string, init?: any) => {
+      if (path === 'api/skills' && !held) {
+        held = true;
+        return new Promise((resolve) => {
+          releaseOld = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => null },
+              json: () => Promise.resolve(list()),
+            });
+        });
+      }
+      return real(path, init);
+    };
+
+    await h.click('#skills-toggle'); // cached list; its refresh is the held one
+    const sw = (): HTMLElement => h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]') as HTMLElement;
+    sw().click();
+    await until('the archive answer', () => h.calls.some((c) => c.body?.action === 'archive'));
+    expect(sw().getAttribute('aria-checked')).toBe('false');
+
+    // The store now has the archive; the held answer is what it said before the tap. The marker
+    // row can only come from the replay, so it proves the stale answer was not applied.
+    replies['api/skills'] = list([entry({ status: 'archived' }), entry({ name: 'after-write' })]);
+    releaseOld();
+    await until('the list asked again', () => h.el('skills-list').textContent!.includes('after-write'));
+    const after = h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]') as HTMLElement;
+    expect(after.getAttribute('aria-checked')).toBe('false');
+    const saved = JSON.parse(h.window.localStorage.getItem('aa_skills') || '{}') as { skills?: Array<{ name?: string; status?: string }> };
+    expect(saved.skills?.find((s) => s.name === 'deploy-check')?.status).toBe('archived');
+  });
+
+  it('draws a refresh that arrived during a switch once the switch is done', async () => {
+    const held: Record<string, Promise<void>> = {};
+    const replies: Record<string, unknown> = {
+      'api/skills': list(),
+      'api/skills/op': { ok: true, skills: [entry({ status: 'archived' })] },
+    };
+    const h = await open({ replies, held });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    let release!: () => void;
+    held['api/skills/op'] = new Promise<void>((r) => { release = r; });
+    (h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]') as HTMLElement).click();
+    await until('the switch sent', () => h.calls.some((c) => c.body?.action === 'archive'));
+
+    // The refresh names a row the page has not drawn yet, and it must not draw it over the tap.
+    replies['api/skills'] = list([entry({ status: 'archived' }), entry({ name: 'after-write' })]);
+    await h.click('#skills-refresh');
+    await until('the refresh answered', () => !(h.el('skills-refresh') as HTMLButtonElement).disabled);
+    expect(h.el('skills-list').textContent).not.toContain('after-write');
+
+    // Once the tap's own answer is in, the held-back refresh is asked again and lands.
+    release();
+    await until('the replay', () => h.el('skills-list').textContent!.includes('after-write'));
+    const sw = h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]') as HTMLElement;
+    expect(sw.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('does not re-read a skill while its switch is still being written', async () => {
+    const held: Record<string, Promise<void>> = {};
+    const replies = { 'api/skills': list(), 'api/skills/op': opReply() };
+    const h = await open({ replies, held });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    (h.doc.querySelector('[data-skill="deploy-check"] .skill-open') as HTMLElement).click();
+    await until('the detail', () => !h.el('skills-detail').hidden);
+    const shows = (): number => h.calls.filter((c) => c.body.action === 'show').length;
+    expect(shows()).toBe(1);
+
+    // The switch is in flight; a refresh now must not start a show beside the write's own reread.
+    let release!: () => void;
+    held['api/skills/op'] = new Promise<void>((r) => { release = r; });
+    (h.el('skills-detail').querySelector('[data-sop="tier"][data-resident="1"]') as HTMLElement).click();
+    await until('the switch sent', () => h.calls.some((c) => c.body.action === 'resident'));
+    await h.click('#skills-refresh');
+    await until('the refresh', () => !(h.el('skills-refresh') as HTMLButtonElement).disabled);
+    expect(shows()).toBe(1);
+
+    release();
+    // The write's own reread, then the held refresh replayed: it is asked again and the page is
+    // read once more on its answer.
+    await until('the held refresh replayed', () => h.calls.filter((c) => c.path === 'api/skills').length >= 3);
+    await until('both rereads', () => shows() === 3);
+  });
+
+  it('opens the skill again when a switch made the first show stale', async () => {
+    const replies: Record<string, unknown> = {
+      'api/skills': list(),
+      'api/skills/op': { ok: true, skills: [entry({ status: 'archived' })] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    // The first show is held; the switch's answer arrives before it.
+    const real = h.window.fetch;
+    let releaseShow!: () => void;
+    let held = false;
+    (h.window as any).fetch = (path: string, init?: any) => {
+      const body = path === 'api/skills/op' && init?.body ? (JSON.parse(String(init.body)) as { action?: string }) : null;
+      if (body?.action === 'show' && !held) {
+        held = true;
+        return new Promise((resolve) => {
+          releaseShow = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => null },
+              // What the store said before the archive.
+              json: () => Promise.resolve({ ok: true, skills: [entry()], detail: detail() }),
+            });
+        });
+      }
+      return real(path, init);
+    };
+
+    (h.doc.querySelector('[data-skill="deploy-check"] .skill-open') as HTMLElement).click();
+    await tick();
+    (h.doc.querySelector('[data-skill="deploy-check"] [data-sop="enabled"]') as HTMLElement).click();
+    await until('the archive', () => h.calls.some((c) => c.body?.action === 'archive'));
+
+    // The page the person asked for opens again once the write is done, with the write's state.
+    replies['api/skills/op'] = {
+      ok: true,
+      skills: [entry({ status: 'archived' })],
+      detail: detail({ skill: entry({ status: 'archived' }) }),
+    };
+    releaseShow();
+    await until('the reopened page', () => !h.el('skills-detail').hidden);
+    expect(h.el('skills-title').textContent).toBe('deploy-check');
+    expect(h.el('skills-count').textContent).toBe('Off');
+    expect(h.calls.filter((c) => c.body.action === 'show')).toHaveLength(1);
+  });
+
+  it('keeps the skill opened last when an older show answers after it', async () => {
+    const a = entry({ name: 'a-skill' });
+    const b = entry({ name: 'b-skill' });
+    const da = detail({ skill: a, file: { path: 'SKILL.md', content: 'A', version: 'a' } });
+    const db = detail({ skill: b, file: { path: 'SKILL.md', content: 'B', version: 'b' } });
+    const replies: Record<string, unknown> = {
+      'api/skills': list([a, b]),
+      'api/skills/op': { ok: true, skills: [a, b], detail: db },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('a-skill'));
+
+    const real = h.window.fetch;
+    let releaseA!: () => void;
+    let held = false;
+    (h.window as any).fetch = (path: string, init?: any) => {
+      const body = path === 'api/skills/op' && init?.body ? (JSON.parse(String(init.body)) as { action?: string; name?: string }) : null;
+      if (body?.action === 'show' && body.name === 'a-skill' && !held) {
+        held = true;
+        return new Promise((resolve) => {
+          releaseA = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => null },
+              json: () => Promise.resolve({ ok: true, skills: [a, b], detail: da }),
+            });
+        });
+      }
+      return real(path, init);
+    };
+
+    (h.doc.querySelector('[data-skill="a-skill"] .skill-open') as HTMLElement).click();
+    await tick();
+    (h.doc.querySelector('[data-skill="b-skill"] .skill-open') as HTMLElement).click();
+    await until('b opened', () => h.el('skills-title').textContent === 'b-skill');
+    releaseA();
+    await tick();
+    await tick();
+    expect(h.el('skills-title').textContent).toBe('b-skill');
+    expect((h.el('skill-text') as HTMLTextAreaElement).value).toBe('B');
+  });
+
+  it('ignores a cache written by another shape, and a cached row that is not a skill', async () => {
+    const held: Record<string, Promise<void>> = {};
+    let release!: () => void;
+    held['api/skills'] = new Promise<void>((r) => { release = r; });
+    const h = await open({
+      replies: { 'api/skills': list() },
+      held,
+      storage: { aa_skills: JSON.stringify({ v: 99, at: Date.now(), enabled: true, skills: [entry()] }) },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    expect(h.el('skills-list').textContent).toContain('Loading');
+    expect(h.el('skills-list').textContent).not.toContain('deploy-check');
+    release();
+    await until('the list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+
+    const held2: Record<string, Promise<void>> = {};
+    let release2!: () => void;
+    held2['api/skills'] = new Promise<void>((r) => { release2 = r; });
+    const again = await open({
+      replies: { 'api/skills': list() },
+      held: held2,
+      storage: { aa_skills: JSON.stringify({ v: 1, at: Date.now(), enabled: true, skills: [{ name: 'deploy-check' }] }) },
+    });
+    await again.emit(sync(A, [], [A]));
+    await again.click('#skills-toggle');
+    expect(again.el('skills-list').textContent).toContain('Loading');
+    release2();
+    await until('the list', () => again.el('skills-list').textContent!.includes('deploy-check'));
+  });
+
+  it('keeps no cached list when the daemon has no skills store', async () => {
+    const h = await open({ replies: { 'api/skills': { enabled: false, skills: [] } } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the disabled note', () => h.el('skills-list').textContent!.includes('not enabled'));
+    expect(h.window.localStorage.getItem('aa_skills')).toBeNull();
+    await h.click('#skills-close');
+
+    const held: Record<string, Promise<void>> = {};
+    let release!: () => void;
+    held['api/skills'] = new Promise<void>((r) => { release = r; });
+    const again = await open({ replies: { 'api/skills': { enabled: false, skills: [] } }, held });
+    await again.emit(sync(A, [], [A]));
+    await again.click('#skills-toggle');
+    expect(again.el('skills-list').textContent).toContain('Loading');
+    release();
+    await until('the note again', () => again.el('skills-list').textContent!.includes('not enabled'));
+  });
+
+  it('leaves the refresh button live during a silent refresh, and a tap makes it manual', async () => {
+    const held: Record<string, Promise<void>> = {};
+    const h = await open({ replies: { 'api/skills': list() }, held });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#skills-toggle');
+    await until('the skill list', () => h.el('skills-list').textContent!.includes('deploy-check'));
+    await h.click('#skills-close');
+
+    // The status is read when the request is made, so set it before the silent one leaves.
+    h.status['api/skills'] = 500;
+    let release!: () => void;
+    held['api/skills'] = new Promise<void>((r) => { release = r; });
+    await h.click('#skills-toggle');
+    const btn = h.el('skills-refresh') as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+
+    await h.click('#skills-refresh');
+    expect(btn.disabled).toBe(true);
+    release();
+    await until('the failure', () => !h.el('skills-note').hidden);
+    expect(h.el('skills-note').textContent).toContain('Could not refresh skills');
   });
 });
 

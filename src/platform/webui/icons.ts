@@ -69,6 +69,10 @@ const PATHS = {
   arrowDown: '<path d="M12 5v14M6 13l6 6 6-6"/>',
   more: '<circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
   power: '<path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/>',
+  copy:
+    '<rect x="9" y="9" width="11" height="11" rx="2"/>' +
+    '<path d="M5 15h-.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/>',
+  refresh: '<path d="M20.5 12a8.5 8.5 0 1 1-2.49-6.01"/><path d="M20.5 3.5V9H15"/>',
   trash: '<path d="M4 6.5h16M9.5 6.5v-2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2M6 6.5l.9 12.6a1.5 1.5 0 0 0 1.5 1.4h7.2a1.5 1.5 0 0 0 1.5-1.4L18 6.5M10 10.5v6M14 10.5v6"/>',
   tag: '<path d="M3.5 4.5v7.3l9 9a1.5 1.5 0 0 0 2.1 0l6.2-6.2a1.5 1.5 0 0 0 0-2.1l-9-9H4.5a1 1 0 0 0-1 1z"/><circle cx="8" cy="8" r="1.6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
