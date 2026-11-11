@@ -250,7 +250,7 @@ The page writes through the same store as `talkcode skills`, and an archive made
 the conversation that created the skill.
 
 The name is what an agent is told in a chat, so every row and the skill's own page carry a copy
-button for it. The window keeps the list it last drew: the next open shows it at once and asks the
+button for it. The window keeps the list it last drew in this browser: the next open shows it at once and asks the
 daemon again behind it, and the list is redrawn only if the answer changed. A failure behind it
 says nothing; the refresh button in the window's header asks by hand and reports one. On a skill's
 page that button also re-reads the skill — unless the editor holds unsaved text, which it never

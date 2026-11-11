@@ -16,7 +16,9 @@ All notable changes to this project are documented here. The format is based on
   form is taken away. A refresh button in the header asks by hand and reports a failure; on a
   skill's page it also re-reads that skill unless the editor holds unsaved text. Each name can be
   copied from its row or from the skill's page, with the old `execCommand` fallback that the
-  plain-http origins this page is often served from need.
+  plain-http origins this page is often served from need. A list answer that a switch has made
+  stale is dropped rather than drawn, and the list is asked for again once the switch is done, so
+  a refresh can never put the old state back.
 
 ## [2.58.0] - 2026-11-10
 

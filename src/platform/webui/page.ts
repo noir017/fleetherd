@@ -1598,6 +1598,11 @@ const SCRIPT = `
   // skill. See skillCacheLoad for why localStorage rather than IndexedDB.
   var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false, skillSearches=null;
   var skillsCacheRead=false, skillsFetchedAt=0, skillSig='';
+  // A read of the list or of one skill is only as new as the last write this page sent: skillEpoch
+  // is bumped whenever a write leaves, and an answer that started before it is dropped rather than
+  // put back (see loadSkills). skillShowSeq does the same between two shows. skillRefreshPending is
+  // a refresh that arrived while a write was in flight, to be asked again once the writes are quiet.
+  var skillEpoch=0, skillShowSeq=0, skillRefreshPending=false, skillRefreshPendingManual=false, skillRedrawPending=false;
   // The history page's last answer, the cursor for the page after it, the search it is showing
   // (empty for the plain list), and the conversation open on top of the list. histSeq is which
   // request an answer belongs to: close the window or open another conversation before the first
@@ -7237,33 +7242,52 @@ const SCRIPT = `
    * api/skills is not a cheap read: listSkills opens every delivered file of every skill,
    * hashes them for the version and parses SKILL.md, and searches() reads the query log. The
    * answer is still only a row per skill — a few kilobytes — so it fits where this page already
-   * keeps its drafts and read counts, and survives a reload without a database. A cached list is
-   * drawn before the request leaves and then corrected by a silent refresh, so the worst a stale
-   * one can do is be one open out of date. The version is checked on read: a page that stored a
-   * different shape is ignored rather than drawn as holes.
+   * keeps its drafts and read counts, and survives a reload without a database. It is this
+   * browser's copy, not the daemon's: another browser has its own, and every open refreshes it.
+   * A cached list is drawn before the request leaves and then corrected by a silent refresh, so
+   * the worst a stale one can do is be one open out of date. The version is checked on read, and
+   * so is every row: a page that stored a different shape is ignored rather than drawn as holes.
+   * The searches are not kept — they are a note about what agents looked for, not the list.
    */
   var SKILLS_CACHE = 'aa_skills', SKILLS_CACHE_V = 1;
   function skillSigOf(){ return JSON.stringify([skillsEnabled, skillList, skillSearches]); }
+  function skillEntryOk(e){
+    return !!e && typeof e === 'object'
+      && typeof e.name === 'string' && e.name !== ''
+      && typeof e.description === 'string'
+      && typeof e.version === 'string'
+      && typeof e.status === 'string'
+      && typeof e.pinned === 'boolean'
+      && typeof e.resident === 'boolean'
+      && typeof e.uses === 'number'
+      && Array.isArray(e.agents);
+  }
   function skillCacheLoad(){
     var d = null;
     try { d = JSON.parse(localStorage.getItem(SKILLS_CACHE) || 'null'); } catch(x){ return; }
-    if(!d || d.v !== SKILLS_CACHE_V || !Array.isArray(d.skills)) return;
-    skillsEnabled = d.enabled !== false;
+    if(!d || d.v !== SKILLS_CACHE_V || d.enabled === false || !Array.isArray(d.skills)) return;
+    for(var i=0;i<d.skills.length;i++) if(!skillEntryOk(d.skills[i])) return;
+    skillsEnabled = true;
     skillList = d.skills;
-    skillSearches = d.searches || null;
+    skillSearches = null;
     skillsFetchedAt = Number(d.at) || 0;
     skillSig = skillSigOf();
   }
   function skillCacheSave(){
     try {
       localStorage.setItem(SKILLS_CACHE, JSON.stringify({
-        v:SKILLS_CACHE_V, at:skillsFetchedAt, enabled:skillsEnabled, skills:skillList, searches:skillSearches
+        v:SKILLS_CACHE_V, at:skillsFetchedAt, enabled:true, skills:skillList
       }));
     } catch(x){}
   }
   /** After the daemon answered: remember what it said, both for the next open and as the baseline
-      a silent refresh compares against ("redraw only if this changed"). */
-  function skillRemember(){ skillSig = skillSigOf(); skillCacheSave(); }
+      a silent refresh compares against ("redraw only if this changed"). A daemon with no skills
+      store keeps no list to open on, so its answer takes the cache away. */
+  function skillRemember(){
+    skillSig = skillSigOf();
+    if(!skillsEnabled){ try { localStorage.removeItem(SKILLS_CACHE); } catch(x){} return; }
+    skillCacheSave();
+  }
 
   /** One tap on the name, from a row or from the skill's own page. The button turns into a check
       for a moment: a copy that only changed the clipboard looks like a tap that did nothing. */
@@ -7442,6 +7466,7 @@ const SCRIPT = `
   }
 
   function renderSkillsList(){
+    skillRedrawPending = false;
     skillSel = null;
     skillsBack.hidden = true;
     skillsDetailEl.hidden = true;
@@ -7546,17 +7571,29 @@ const SCRIPT = `
    *
    * manual is the refresh button: its failure is the person's to see, and a skill on screen is
    * read again so its status is current. The other kind is the one every open makes, and it fails
-   * without a word — the cached list is still on screen and still usable. One request at a time:
-   * a second ask joins the one in flight (and makes it manual) rather than racing it, because the
-   * answers carry no sequence number and the older one landing last would put a stale list back.
+   * without a word — the cached list is still on screen and still usable. One request at a time: a
+   * silent one in flight is upgraded to manual by a tap on the button rather than raced, and the
+   * button stays live until that happens.
+   *
+   * An answer is only applied if no write left while it was in flight. The page sends a switch and
+   * its answer can beat a list that was already on the wire; applying that list would put the old
+   * switch back, and save it to the cache. When that happens the answer is dropped and the list is
+   * asked for again once the writes are quiet (skillReplayRefresh).
    */
   var skillFetching = false, skillFetchManual = false;
   function loadSkills(manual){
-    if(skillFetching){ skillFetchManual = skillFetchManual || !!manual; return; }
+    if(skillFetching){
+      if(manual){
+        skillFetchManual = true;
+        if(skillsRefreshBtn) skillsRefreshBtn.disabled = true;
+      }
+      return;
+    }
     if(app.hidden) return;
     skillFetching = true;
     skillFetchManual = !!manual;
-    if(skillsRefreshBtn) skillsRefreshBtn.disabled = true;
+    if(manual && skillsRefreshBtn) skillsRefreshBtn.disabled = true;
+    var epoch = skillEpoch;
     fetch('api/skills', {credentials:'same-origin'}).then(function(r){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
@@ -7565,6 +7602,7 @@ const SCRIPT = `
       skillFetching = false;
       skillFetchManual = false;
       if(skillsRefreshBtn) skillsRefreshBtn.disabled = false;
+      if(epoch !== skillEpoch) return skillRefreshStale(manualNow);
       skillsEnabled = d.enabled !== false;
       skillList = d.skills || [];
       skillSearches = d.searches || null;
@@ -7576,39 +7614,66 @@ const SCRIPT = `
       skillFetching = false;
       skillFetchManual = false;
       if(skillsRefreshBtn) skillsRefreshBtn.disabled = false;
+      if(epoch !== skillEpoch) return skillRefreshStale(manualNow);
       if(manualNow) skillNote((skillsFetchedAt ? 'Could not refresh skills: ' : 'Could not load skills: ') + ((e && e.message) || 'network error'));
     });
   }
 
+  /** An answer that a write has made stale: ask again after the writes are quiet, not now. */
+  function skillRefreshStale(manual){
+    skillRefreshPending = true;
+    skillRefreshPendingManual = skillRefreshPendingManual || !!manual;
+    skillReplayRefresh();
+  }
+
+  /** Ask for the list again, once nothing this page sent is still waiting to change it. */
+  function skillReplayRefresh(){
+    if(!skillRefreshPending || skillFetching || skillsBusy || skillPending()) return;
+    var manual = skillRefreshPendingManual;
+    skillRefreshPending = false;
+    skillRefreshPendingManual = false;
+    loadSkills(manual);
+  }
+
   /**
    * Where a refreshed list goes. On a skill's page it never draws the list — that would take the
-   * page away from under the reader — and only the record is updated in place. A typed-into New
-   * form is left alone for the same reason. The list itself is redrawn only when the answer
-   * differs from what is already on screen, and not while a switch's own write is still on its
-   * way: its answer draws the row, and drawing over it would put the old state back first.
+   * page away from under the reader — and only the record is updated in place, and only when no
+   * write of this page is in flight (the write's own answer knows better). A typed-into New form
+   * is left alone for the same reason. The list itself is redrawn only when the answer differs
+   * from what is already on screen, and not while a switch's own write is still on its way: its
+   * answer draws the row, and drawing over it would put the old state back first.
    */
   function skillRefreshDone(changed, manual){
     if(skillSel){
       if(manual) skillRefreshDetail();
-      else {
+      else if(!skillsBusy && !skillPending()){
         var e = skillFind(skillSel.skill.name);
         if(e){ skillSel.skill = e; skillPaint(skillSel.skill.name); }
       }
       return;
     }
-    if(skillNewMode || !changed) return;
-    if(skillsBusy || skillPending()) return;
+    if(skillNewMode) return;
+    if(skillsBusy || skillPending()){
+      skillRefreshPending = true;
+      skillRedrawPending = true;
+      skillRefreshPendingManual = skillRefreshPendingManual || manual;
+      return;
+    }
+    // The data may already be the answer's (an earlier refresh applied it while a tap was in
+    // flight, only the drawing was held back), so a pending redraw forces one even if it matches.
+    if(!changed && !skillRedrawPending) return;
     renderSkillsList();
   }
 
   /** The refresh button on a skill's page: read the skill again, unless the editor holds something
       the person typed — the same rule skillReread follows after a switch. With unsaved text the
-      record is still refreshed in place; the text stays exactly where it is. */
+      record is still refreshed in place; the text stays exactly where it is. While a write is in
+      flight the page leaves the skill alone: that write re-reads it when it answers, and a show
+      started now could land after that one with the pre-write file. */
   function skillRefreshDetail(){
+    if(skillsBusy || skillPending()) return;
     var name = skillSel.skill.name;
-    // A write in flight already re-reads the skill when it answers; a second show now could land
-    // out of order with it.
-    if(skillEditorClean() && !skillsBusy){ openSkill(name, skillSel.file.path); return; }
+    if(skillEditorClean()){ openSkill(name, skillSel.file.path); return; }
     var e = skillFind(name);
     if(e){ skillSel.skill = e; skillPaint(name); }
   }
@@ -7621,14 +7686,21 @@ const SCRIPT = `
   function openSkill(name, file){
     var body = {action:'show', name:name};
     if(file) body.file = file;
+    var seq = ++skillShowSeq, epoch = skillEpoch;
     skillsBusy = true;
     skillClearNote();
     post('api/skills/op', body, 1).then(function(r){
       return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
     }).then(function(d){
+      // A newer show owns the page and the busy flag; this answer is for a page already replaced.
+      if(seq !== skillShowSeq) return;
+      // A write left after this show did: what it read is older than the write's answer.
+      if(epoch !== skillEpoch){ skillsBusy = false; skillReplayRefresh(); return; }
       if(!d || !d.ok){
         skillsBusy = false;
-        return skillNote((d && d.error) || 'Could not open that skill.');
+        skillNote((d && d.error) || 'Could not open that skill.');
+        skillReplayRefresh();
+        return;
       }
       skillList = d.skills || skillList;
       skillRemember();
@@ -7640,9 +7712,13 @@ const SCRIPT = `
       // every button silently drops the click.
       skillsBusy = false;
       renderSkillDetail();
+      skillReplayRefresh();
     }).catch(function(e){
+      if(seq !== skillShowSeq) return;
       skillsBusy = false;
+      if(epoch !== skillEpoch){ skillReplayRefresh(); return; }
       skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+      skillReplayRefresh();
     });
   }
 
@@ -7651,13 +7727,17 @@ const SCRIPT = `
   function skillOp(body, then){
     if(skillsBusy) return;
     skillsBusy = true;
+    // Anything already on the wire describes the store before this write.
+    skillEpoch++;
     skillClearNote();
     post('api/skills/op', body, 1).then(function(r){
       return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
     }).then(function(d){
       if(!d || !d.ok){
         skillsBusy = false;
-        return skillNote((d && d.error) || 'That did not work.');
+        skillNote((d && d.error) || 'That did not work.');
+        skillReplayRefresh();
+        return;
       }
       skillList = d.skills || skillList;
       skillRemember();
@@ -7669,9 +7749,11 @@ const SCRIPT = `
       if(then) then(d);
       else if(skillSel) renderSkillDetail();
       else renderSkillsList();
+      skillReplayRefresh();
     }).catch(function(e){
       skillsBusy = false;
       skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+      skillReplayRefresh();
     });
   }
 
@@ -7743,6 +7825,9 @@ const SCRIPT = `
     var q = skillQueue[name] || (skillQueue[name] = {chain: Promise.resolve(), pending: 0, gen: 0});
     var gen = q.gen;
     q.pending++;
+    // The tap is a write the moment it is made, even while it waits behind this skill's earlier
+    // ones: a list that was already on the wire describes the store before it.
+    skillEpoch++;
     q.chain = q.chain.then(function(){
       if(q.gen !== gen) return null;
       return post('api/skills/op', body, 1).then(function(r){
@@ -7752,7 +7837,7 @@ const SCRIPT = `
       });
     }).then(function(d){
       q.pending--;
-      if(d === null) return;
+      if(d === null){ skillReplayRefresh(); return; }
       if(!d || !d.ok){
         q.gen++;
         skillNote((d && d.error) || 'That did not work.');
@@ -7763,16 +7848,20 @@ const SCRIPT = `
       for(var i=0;i<list.length;i++) if(list[i].name === name) skillTake(name, list[i]);
       skillPaint(name);
       skillReread(name);
+      skillReplayRefresh();
     });
   }
 
-  /** After a refusal: the store's own state for this skill, read fresh, drawn in place. */
+  /** After a refusal: the store's own state for this skill, read fresh, drawn in place. A later
+      write makes this answer stale too, and that write's own answer draws the row. */
   function skillResync(name){
+    var epoch = skillEpoch;
     return fetch('api/skills', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+      if(epoch !== skillEpoch) return;
       var list = (d && d.skills) || [];
       for(var i=0;i<list.length;i++) if(list[i].name === name) skillTake(name, list[i]);
       skillPaint(name);
-    }).catch(function(){});
+    }).catch(function(){}).then(skillReplayRefresh);
   }
 
   /** On the skill's own page, read it again once its taps are all answered — a tier change rewrote
@@ -8938,18 +9027,24 @@ const SCRIPT = `
   }
 
   function fallbackCopy(s){
+    // The temporary field takes the selection, and with it the focus. Keep what had it, take the
+    // field out on every path (an execCommand that throws must not leave it in the page), and put
+    // the focus back where the person left it.
+    var prev = document.activeElement, ta = null;
     try {
-      var ta=document.createElement('textarea');
-      ta.value=s;
-      ta.setAttribute('readonly','');
-      ta.style.position='fixed';
-      ta.style.top='-1000px';
+      ta = document.createElement('textarea');
+      ta.value = s;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
       document.body.appendChild(ta);
       ta.select();
-      var ok=document.execCommand('copy');
-      document.body.removeChild(ta);
-      return Boolean(ok);
+      return Boolean(document.execCommand('copy'));
     } catch(x){ return false; }
+    finally {
+      if(ta && ta.parentNode) ta.parentNode.removeChild(ta);
+      if(prev && prev.focus){ try { prev.focus(); } catch(x){} }
+    }
   }
 
   function discardLocal(nonce){

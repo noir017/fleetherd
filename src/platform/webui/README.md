@@ -637,7 +637,7 @@ no `delete` arm, so a body the page could not have sent is refused before it rea
 **The page is a window, not a column.** `#skills` is one node with two views inside it (the list
 and the open skill), opened from the sidebar footer and closed by the ×, Escape, or the backdrop.
 The window's own state is not persisted: a management surface is opened on purpose, and one restored on load
-would sit over a conversation nobody asked it to cover. The list it last drew is — one row per skill, in
+would sit over a conversation nobody asked it to cover. The list it last drew is kept per browser — one row per skill, in
 `aa_skills` in localStorage, because `api/skills` reads and hashes every delivered file before it answers and
 that wait was visible on every open. It is painted before the request leaves, and a silent refresh redraws it
 only when the answer differs; a failure behind it is silent, and an open skill or a half-typed New form is never
@@ -1777,8 +1777,11 @@ assertions in `page.test.ts` were green throughout the release that rendered not
 page is driven there too: the list, an editor save carrying the version the detail read, the New
 form, a revert, the two-tap archive, the copy mark on a row and on a skill's page (with and without
 `navigator.clipboard`), the cached open and its silent refresh (drawn once when the answer is the
-same, redrawn when it changed, quiet when it failed), the manual refresh over unsaved text, and a
-reload that starts from `aa_skills`. So is the settings page — the menu's quiet request, a
+same, redrawn when it changed, quiet when it failed), the manual refresh over unsaved text, a list
+answer a switch made stale (dropped and asked again), two shows racing, a refresh held behind a
+switch, the refresh button turning a silent request into a manual one, a cache of the wrong shape
+or a malformed row, a daemon with no store keeping no cache, and a reload that starts from
+`aa_skills`. So is the settings page — the menu's quiet request, a
 typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
 drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
 it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review
