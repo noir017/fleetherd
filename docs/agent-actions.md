@@ -44,7 +44,7 @@ it can do beyond answering reaches it the way any capability does, through its o
   reads skills — `~/.claude/skills` for Claude Code, `~/.agents/skills` for Codex and OpenCode,
   `~/.gemini/config/skills` for Antigravity — once that harness has been run on the machine. Until it is
   needed, it costs the one line of description every skill costs. Its body points at
-  `talkcode help <topic>` — `files`, `schedule`, `channels`, `history`, `messages`,
+  `fleetherd help <topic>` — `files`, `schedule`, `channels`, `history`, `messages`,
   `threads`, `ask`, `voice`, `tasks` — which prints that topic's commands and rules. A second
   skill, `super`, is linked beside it: how to split a job across [sub-agents](sub-agents.md) when
   you write `/super`.

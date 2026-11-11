@@ -61,13 +61,13 @@ agent 里说过的事，隔几天几周都行。这是网关自己的记录，�
 ## 读其中一部分
 
 ```bash
-talkcode sessions read '#12' --turn last
-talkcode sessions read '#12' --turn done
-talkcode sessions read '#12' --turns 3
-talkcode sessions read '#12' --turn 2 --role agent
-talkcode sessions read '#12' --since '#87'
-talkcode sessions read '#12' --grep 超时
-talkcode sessions read '#12' --role tool --tail 20
+fleetherd sessions read '#12' --turn last
+fleetherd sessions read '#12' --turn done
+fleetherd sessions read '#12' --turns 3
+fleetherd sessions read '#12' --turn 2 --role agent
+fleetherd sessions read '#12' --since '#87'
+fleetherd sessions read '#12' --grep 超时
+fleetherd sessions read '#12' --role tool --tail 20
 ```
 
 - `--role user|agent|tool`：只看这个角色的行。
@@ -102,11 +102,11 @@ talkcode sessions read '#12' --role tool --tail 20
 ## 怎么查
 
 ```bash
-talkcode sessions search 跨会话查询
-talkcode sessions search 部署 --agent cc --days 30 --limit 20
-talkcode sessions search 'git push' --tools
-talkcode sessions read '#12' --around '#87' --window 10
-talkcode sessions list --days 7
+fleetherd sessions search 跨会话查询
+fleetherd sessions search 部署 --agent cc --days 30 --limit 20
+fleetherd sessions search 'git push' --tools
+fleetherd sessions read '#12' --around '#87' --window 10
+fleetherd sessions list --days 7
 ```
 
 `search` 返回会话 id、消息 id、日期、标题、agent、平台和命中的片段。它搜的是人和 agent 说的话；

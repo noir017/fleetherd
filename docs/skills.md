@@ -7,7 +7,7 @@ Claude Code, Codex, OpenCode, Antigravity, CodeBuddy and AtomCode, local or remo
 write one when you say "remember this as a skill", and every agent reads it from its next start.
 
 ```text
-<config dir>/skills/                 (~/.config/talkcode/skills/) — a git repository
+<config dir>/skills/                 (~/.config/fleetherd/skills/) — a git repository
   skills/
     deploy-check/
       SKILL.md                       the skill: frontmatter (name, description) + body
@@ -23,8 +23,8 @@ repository — a README, scripts of its own, `skills-alone/` — is left alone a
 
 ## The command
 
-`talkcode skills <action>` is a reverse command, so an agent finds it through the bundled
-`talkcode` skill and `talkcode help skills`. It is gateway-wide: `--channel` does not apply.
+`fleetherd skills <action>` is a reverse command, so an agent finds it through the bundled
+`fleetherd` skill and `fleetherd help skills`. It is gateway-wide: `--channel` does not apply.
 
 | action | what it does |
 |---|---|
@@ -43,7 +43,7 @@ repository — a README, scripts of its own, `skills-alone/` — is left alone a
 
 ### Rules
 
-- **Names** are lowercase words joined by hyphens (`a-z`, `0-9`), at most 64 characters. `talkcode`
+- **Names** are lowercase words joined by hyphens (`a-z`, `0-9`), at most 64 characters. `fleetherd`
   and `super` are the bundled skills and cannot be reused.
 - **`SKILL.md`** is at most 64 KB and must start with `---` frontmatter naming the skill and giving a
   non-empty one-line description. That is what a harness lists in its skill menu.
@@ -71,21 +71,21 @@ skills:
 - **Fetched** every five minutes and before every write, so a `patch` is checked against the
   newest version — a person's commit refuses a stale edit exactly as another agent's would.
 - **Pushed** after every write, while the turn that made it is still waiting. The author says who
-  wrote it: `talkcode` for an agent, `talkcode-review` for the [automatic review](#auto-review),
-  `talkcode-web` for the web UI's page. The commit's trailers name the agent and the conversation.
+  wrote it: `fleetherd` for an agent, `fleetherd-review` for the [automatic review](#auto-review),
+  `fleetherd-web` for the web UI's page. The commit's trailers name the agent and the conversation.
 - **Edited by hand** like any repository: commit and push, and the gateway picks it up within five
   minutes. A hand-written skill that breaks the rules below is not delivered; `list` says why.
 - **Unreachable**: a write still lands locally and is pushed later; the log says once when the
   repository stops answering and once when it answers again.
 - **Both sides changed one file**: the repository's version wins. The gateway's commits are kept on
-  a branch named `talkcode-unpushed-<time>` and pushed there, and the log names it. Nothing is
+  a branch named `fleetherd-unpushed-<time>` and pushed there, and the log names it. Nothing is
   force-pushed.
 
 An ssh URL is reached the way a [remote host](remote-hosts.md) is: the gateway's own key
 (`<config dir>/ssh/id_ed25519`) and known_hosts (`<config dir>/ssh/known_hosts`), no ssh config of
 the machine's, and strict host key checking — put the repository host's key in that known_hosts
 first; the gateway never learns one. `identityFile` and `knownHostsFile` under `skills:` point
-elsewhere. `talkcode doctor` checks git and the repository. A `/reload` that changes `skills:`
+elsewhere. `fleetherd doctor` checks git and the repository. A `/reload` that changes `skills:`
 takes effect at the next fetch.
 
 The gateway needs `git` (the container image has it). The first start with this version moves an
@@ -98,12 +98,12 @@ A skill is in one of two tiers, set in its own frontmatter:
 ```yaml
 ---
 name: server-ops
-description: Use when operating a fleet server — SSH, EasyTier, backups.
+description: Use when operating a build server — deploys, backups, log rotation.
 metadata:
-  talkcode-resident: "true"        # absent: the library
-  talkcode-category: "运维"
-  talkcode-hosts: "uniagent, awsfree2"   # optional: only agents on these hosts get it
-  talkcode-harnesses: "claude, codex"    # optional: only these harnesses get it
+  fleetherd-resident: "true"        # absent: the library
+  fleetherd-category: "运维"
+  fleetherd-hosts: "uniagent, buildbox"   # optional: only agents on these hosts get it
+  fleetherd-harnesses: "claude, codex"    # optional: only these harnesses get it
 ---
 ```
 
@@ -111,7 +111,7 @@ metadata:
   name and description on every request. That is why the description is held to **120
   characters** — written as "Use when …" — and why only a person makes a skill resident: the web
   UI's **Resident** / **Library** switch, or a commit. A `patch` from an agent or from the
-  review that changes `talkcode-resident` is refused.
+  review that changes `fleetherd-resident` is refused.
 - **Library** skills are everything else. They are delivered to every host like a resident one but
   linked nowhere, so they cost no context until an agent looks one up with the `skills` tool. A
   skill an agent or the review creates starts here.
@@ -129,7 +129,7 @@ a harness that checks the spec lists the skill unchanged.
 ## Finding a skill: the `skills` tool
 
 Every agent has a `skills` tool beside `send_file` and `schedule` (an agent without native tools
-runs `talkcode skills search` / `show`, which is the same thing):
+runs `fleetherd skills search` / `show`, which is the same thing):
 
 - **search** — what it needs, in a few words, in any language. Up to five skills come back, best
   first, without the tail that scores under 40% of the best one: name, description, category, tier, and where the files are on its machine. A resident hit
@@ -177,7 +177,7 @@ opens the skill for editing, with the same two switches beside **Pin**:
 - **History** lists every commit that touched the skill; **Restore this version** is `revert`, and
   is itself recorded as a new change.
 
-It is the same store and the same rules as `talkcode skills`, because every write goes through
+It is the same store and the same rules as `fleetherd skills`, because every write goes through
 `skills-store.ts`. Turning a skill off from the page also tells the conversation that created it,
 exactly as archiving from a chat does. A commit someone made by hand shows its author, and can be
 restored too.
@@ -185,7 +185,7 @@ restored too.
 ## How it reaches an agent
 
 At every agent start the gateway copies each active skill that reaches the agent to
-`~/.talkcode/skills/<name>/` on the machine the agent runs on, then links each **resident** one into
+`~/.fleetherd/skills/<name>/` on the machine the agent runs on, then links each **resident** one into
 the directory that harness reads (a library skill stays a copy, for the `skills` tool to point at):
 
 | agent | its skills directory |
@@ -195,11 +195,11 @@ the directory that harness reads (a library skill stays a copy, for the `skills`
 | Antigravity (agy) | `~/.gemini/config/skills` |
 | CodeBuddy Code | `~/.codebuddy/skills` |
 
-The copy is read-only, so an agent that wants to change a skill has to use `talkcode skills` —
+The copy is read-only, so an agent that wants to change a skill has to use `fleetherd skills` —
 where the change is versioned and can be reverted — instead of editing the copy that the next
 start would overwrite.
 
-Only a link pointing into `~/.talkcode/skills` is ever repointed or removed. A real directory, a
+Only a link pointing into `~/.fleetherd/skills` is ever repointed or removed. A real directory, a
 real file, or a link of your own at `~/.claude/skills/<name>` stays as it is, and the log says that
 agent does not get the managed copy. An unchanged version is not written again. An archived skill
 has its copy and every link of the gateway's taken back at the next start; a skill moved to the
@@ -211,13 +211,13 @@ Four signals, all from events the gateway already receives:
 
 1. an agent calls the skill as a `Skill` tool (Claude Code, CodeBuddy);
 2. a message starts with `/<name>`;
-3. any tool call mentions a file under `~/.talkcode/skills/<name>/` — how Codex, OpenCode, agy and
+3. any tool call mentions a file under `~/.fleetherd/skills/<name>/` — how Codex, OpenCode, agy and
    AtomCode read a skill, and how a reference or script under it counts;
-4. an agent reads it with `show` (the `skills` tool, or `talkcode skills show`) — how a library
+4. an agent reads it with `show` (the `skills` tool, or `fleetherd skills show`) — how a library
    skill is used.
 
 A turn counts a skill once however many times it appears through the first three. The rest of
-`talkcode skills` is management, not use, and does not count.
+`fleetherd skills` is management, not use, and does not count.
 
 ## Expiry and archive
 
@@ -247,7 +247,7 @@ agent, on any host:
 
 ```yaml
 review:
-  agent: ag@uniagent             # off unless a reviewer is named
+  agent: ag@buildbox             # off unless a reviewer is named
   model: gemini-3.8-flash-high   # optional; the agent's own model otherwise
 ```
 
@@ -281,7 +281,7 @@ to the command for reviews only, and is refused for any other harness. A review 
 conversation: it opens no topic, and it is filed only as the `review` session described below.
 
 `review.agent` and `review.model` are also [settings from chat](settings.md):
-`/setting review.agent ag@uniagent` turns it on, `/setting review.agent off` turns it off, and
+`/setting review.agent ag@buildbox` turns it on, `/setting review.agent off` turns it off, and
 `/setting review.model` chooses a model for reviews alone. The row offers every agent; naming one
 replaces a `review.api` endpoint, which itself is set only in config.yaml, beside its key. A
 change is read at the start of the next sweep, within a minute, without a restart.
@@ -297,7 +297,7 @@ are never reviewed.
 The reviewer gets the conversation without its tool calls — every message you sent, then the
 agent's replies newest first up to the cap — the skill list with versions and the categories in
 use, the full text of the skills that conversation used (a skill it read or wrote through
-`talkcode skills` or the `skills` tool counts) and of up to three more whose description best
+`fleetherd skills` or the `skills` tool counts) and of up to three more whose description best
 matches what you wrote, with the reference files of those skills that best match it quoted in
 full — so it extends the reference that already covers a subject instead of writing a second one
 beside it — the skill files that conversation already
@@ -321,13 +321,13 @@ noticed:
 It is told to record only what the conversation actually did and verified — not a plan nobody
 ran, a guess, or something later overturned — and to say each thing in one place. Preferences are
 held to what you said yourself and would want in any project. The gateway applies the changes
-through the same rules as `talkcode skills`, and a change that fails is dropped and logged. The
+through the same rules as `fleetherd skills`, and a change that fails is dropped and logged. The
 reviewer itself never touches a file.
 
 When something changed, one line appears in the conversation that was reviewed:
 
 ```text
-📝 复盘：更新技能 `deploy-check`（回滚 `talkcode skills revert deploy-check c4f06d73eaad`）。偏好建议：回答先给结论
+📝 复盘：更新技能 `deploy-check`（回滚 `fleetherd skills revert deploy-check c4f06d73eaad`）。偏好建议：回答先给结论
 ```
 
 No change, no line. One review runs at a time, and one gets up to 30 minutes: a provider that
@@ -364,7 +364,7 @@ back. A row is the reviewed conversation, when, and
 what happened — a skill created or updated, only suggestions, a change the store
 refused, nothing found, or a failed run. Opening it shows each change with the reviewer's reason,
 whether it actually took effect (and the store's sentence when it did not), the preference
-suggestions in full, and the `talkcode skills revert` / `archive` command that undoes a change.
+suggestions in full, and the `fleetherd skills revert` / `archive` command that undoes a change.
 A row whose reviewed conversation is still in the topic list links back to it. Reviews recorded
 before results were kept show only what the raw answer proposed, marked **inferred**: nothing in
 the library says whether those changes were applied.

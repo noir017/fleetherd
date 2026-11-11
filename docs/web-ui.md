@@ -52,9 +52,9 @@ session and its own context, and each gets named automatically from what it turn
 out to be about. A title opens with the agent that answers it in brackets — just the id, since
 the machine is named on the line below — and hovering the title shows the whole name. `+` opens
 one; the agent can open one itself with
-`talkcode create-thread`, and write into one with `--channel main/<topic id>`. Under each
+`fleetherd create-thread`, and write into one with `--channel main/<topic id>`. Under each
 title is the directory the topic works in, led by the machine when its agent runs on a
-[remote host](remote-hosts.md) (`devbox · talkcode`); hover it for the full path. A machine the
+[remote host](remote-hosts.md) (`devbox · fleetherd`); hover it for the full path. A machine the
 gateway cannot reach is marked there, over its agents on a new topic, and above the composer
 ([When a host is offline](remote-hosts.md#when-a-host-is-offline)). At the end of
 each row a **⋯** button (on hover or keyboard focus; always shown on a touch screen) opens that
@@ -248,7 +248,7 @@ status (active, expired or archived), whether it is pinned and when it was last 
 creates one; opening a skill shows its files, a `SKILL.md` editor and every recorded change, and
 **Delete** archives it rather than removing it — **Restore** brings it back. Saving `SKILL.md`
 carries the version the page read, so an edit made elsewhere is refused instead of overwritten.
-The page writes through the same store as `talkcode skills`, and an archive made here still tells
+The page writes through the same store as `fleetherd skills`, and an archive made here still tells
 the conversation that created the skill.
 
 The name is what an agent is told in a chat, so every row and the skill's own page carry a copy
@@ -262,7 +262,7 @@ overwrites.
 
 The topic list has two tabs at its top: **Topics** and **History**. History lists every
 conversation the gateway has recorded — whichever agent and platform it ran on. It is the same
-library `talkcode sessions list/search/read` reads. A review's own session is left out; those are
+library `fleetherd sessions list/search/read` reads. A review's own session is left out; those are
 read on the Reviews tab.
 
 A row says the title, the agent, the platform, when it was last active and how many messages it
@@ -300,7 +300,7 @@ own. A topic you are reading when it happens does not notify. Turn it on in each
 - Notifications go through the browser maker's push service (Google, Mozilla or Apple). The
   gateway needs to reach it over HTTPS. The content is encrypted for your device, and is only the
   topic's name and one line.
-- The key and the devices are kept in `~/.config/talkcode/webui-push-<instance>/`. Deleting the
+- The key and the devices are kept in `~/.config/fleetherd/webui-push-<instance>/`. Deleting the
   directory forgets every device, and each one has to turn notifications on again.
 
 ## Terminal
@@ -322,7 +322,7 @@ platforms:
     token: ${WEB_TOKEN}
     terminal:
       enabled: true
-      socket: ~/.config/talkcode/webui-term-web.sock   # where your ttyd listens
+      socket: ~/.config/fleetherd/webui-term-web.sock   # where your ttyd listens
       # Optional: how to END a session. Without it the window has no close button,
       # only minimize — because what holds a session open on the far side is your
       # arrangement, not this daemon's. argv, never a shell string.
@@ -334,7 +334,7 @@ platforms:
 # session in tmux — otherwise closing the tab kills whatever was running in it.
 printf '#!/bin/sh\nexec tmux -L aa-web new -A -s "aa-$1"\n' > /usr/local/bin/aa-terminal.sh
 chmod +x /usr/local/bin/aa-terminal.sh
-ttyd -i ~/.config/talkcode/webui-term-web.sock -b /term -W -a -O \
+ttyd -i ~/.config/fleetherd/webui-term-web.sock -b /term -W -a -O \
      -T xterm-256color /usr/local/bin/aa-terminal.sh
 ```
 
@@ -384,7 +384,7 @@ platforms:
 `from` is required, and is the reason a forged header is not interesting even if
 something above it is misconfigured: the signature makes forgery useless, and
 `from` makes a mistake in the four fields above it survivable. A refusal logs the
-address it came from, which is how you find what to put there. `talkcode
+address it came from, which is how you find what to put there. `fleetherd
 doctor` fetches the JWKS and reports how many keys it found — do that before
 setting `password: false`, because with the password door shut a provider outage
 means nobody opens the page at all.

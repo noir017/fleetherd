@@ -14,7 +14,7 @@ which the harnesses' own schedulers do not.
 | prompt, **daily session** | one session per day: the first run opens it, later runs that day join it | its own topic per day, named with the date; needs a platform that can open a topic without a message (the web UI, a Telegram forum group); no time limit |
 | **bash** | a command, run by the gateway itself — no agent | exit code, duration and the end of the output, long output attached |
 
-Output can go to any chat the gateway has answered in, on any platform (`talkcode
+Output can go to any chat the gateway has answered in, on any platform (`fleetherd
 channels` lists them). A run the gateway missed by less than an hour — it was restarting — is
 made when it comes back; older is recorded as missed. Every change posts a card with the task's
 details, written by the gateway rather than the agent, so what you read is what will run.
@@ -43,7 +43,7 @@ daily topic, a `/model` you type during the day wins over the task's choice for 
 day, including after the gateway restarts: the task records that the topic was set by hand and
 stops applying its own model.
 
-Change a task in place with `talkcode schedule edit <id>`: `--agent`, `--cwd`, `--model`,
+Change a task in place with `fleetherd schedule edit <id>`: `--agent`, `--cwd`, `--model`,
 `--cron` / `--at` / `--tz`, `--name`, `--prompt`, and `--bash` / `--timeout` for a bash task. The
 id, the run count and the last result stay, and the next run is computed from the edit under the
 new time rule — a task edited to a time that already passed today waits for tomorrow instead of
@@ -53,7 +53,7 @@ whose agent or directory changes cannot go on in the topic it already opened tod
 its agent and its directory — so the next run opens a new topic for the rest of the day, and the
 earlier one is left as it is.
 
-Label a task with `--tag ci,release` when it is registered, or with `talkcode schedule edit <id>
+Label a task with `--tag ci,release` when it is registered, or with `fleetherd schedule edit <id>
 --tag …` later: up to five tags, each at most 24 characters, lowercased, made of letters (Chinese
 included), digits and `- _ . /`. `edit` replaces the whole set, and `--tag ""` clears it. The tags
 are shown under the task's name and on the card posted for the change; the web UI's Tasks list

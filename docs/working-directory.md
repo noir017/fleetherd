@@ -12,7 +12,7 @@ on disk. The root is always offered, so a conversation can get back out.
 
 ```
 /cd                →  a button menu of the projects under the root
-/cd quantlab       →  move there by substring, on every platform
+/cd shop-api       →  move there by substring, on every platform
 ```
 
 The menu leads with the directories you actually use — a project's rank is how

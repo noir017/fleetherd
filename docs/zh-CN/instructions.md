@@ -7,7 +7,7 @@ Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机�
 内容放在网关的一个目录里，网关搬到哪，它就跟到哪。
 
 ```text
-<配置目录>/instructions/        （~/.config/talkcode/instructions/）
+<配置目录>/instructions/        （~/.config/fleetherd/instructions/）
   common.md      所有智能体
   claude.md      只给 Claude Code
   codex.md       只给 Codex
@@ -21,7 +21,7 @@ Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机�
 
 ## 怎么到达智能体
 
-每次启动智能体时，网关把拼好的内容写到智能体所在机器的 `~/.talkcode/instructions/<智能体>.md`（只读），
+每次启动智能体时，网关把拼好的内容写到智能体所在机器的 `~/.fleetherd/instructions/<智能体>.md`（只读），
 再把这个智能体自己读的用户级指令文件链接过去：
 
 | 智能体 | 它读的文件 |

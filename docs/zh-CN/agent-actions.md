@@ -38,7 +38,7 @@ CLI 给你弹按钮，模型通过内置 skill 找到它；再不行就用纯文
   守护进程把内置的 [skill](../../skill/SKILL.md) 软链到各 harness 读 skill 的地方——Claude Code 是
   `~/.claude/skills`，Codex 和 OpenCode 是 `~/.agents/skills`，Antigravity 是 `~/.gemini/config/skills`
   ——只给在这台机器上跑过的 harness。
-  用到之前，它只占每个 skill 都占的那一行描述；正文指向 `talkcode help <主题>`——`files`、
+  用到之前，它只占每个 skill 都占的那一行描述；正文指向 `fleetherd help <主题>`——`files`、
   `schedule`、`channels`、`history`、`messages`、`threads`、`ask`、`voice`、`tasks`——打印该主题的命令
   和规则。旁边还链着第二个 skill `super`：你发 `/super` 时，它告诉智能体怎样把活拆给[子代理](sub-agents.md)。
 

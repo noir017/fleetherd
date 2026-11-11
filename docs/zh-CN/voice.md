@@ -42,13 +42,13 @@ voice:
 
 - 识别质量信得过以后，在聊天里 `/setting voice off` 即可关掉确认，立即生效——此后自动发出的是整理稿。
   `/setting cleanup off` 回到逐字转写。
-- `vocabulary` 会加在内置词表（talkcode、Claude Code、Codex……）后面：填你的主机名、服务名这类
+- `vocabulary` 会加在内置词表（fleetherd、Claude Code、Codex……）后面：填你的主机名、服务名这类
   语音识别只能按发音瞎写的词。转写和整理两次请求都会用到它。
 - 整理每条语音多花一次请求。如果用的是有每日次数上限的免费档（Google AI Studio 按 key、按模型计），
   上限能覆盖的语音条数会减半。
 - **带**说明文字的音频不转写：「帮我剪一下」加一个 mp3 是针对文件的指令，文件照旧交给智能体。
 - 支持 Ogg、WebM、MP4/M4A、MP3、WAV、AAC、FLAC。QQ 和企业微信的语音编码（SILK、AMR）不支持，会明确告诉你。
-- 每次转写都记录在 `~/.config/talkcode/voice-log.jsonl`，附带保存的音频文件和两份文字；
-  智能体觉得某句话像是听错了时，可以用 `talkcode voice-log` 查本会话的转写记录。
+- 每次转写都记录在 `~/.config/fleetherd/voice-log.jsonl`，附带保存的音频文件和两份文字；
+  智能体觉得某句话像是听错了时，可以用 `fleetherd voice-log` 查本会话的转写记录。
 - 不能显示按钮的平台（QQ、LINE、企业微信、钉钉）会自动发送，卡片上会写明原因。
 - 不配 `voice:` 时，语音就是普通附件，和以前一样。

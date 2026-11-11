@@ -49,7 +49,7 @@ voice:
 - Once transcripts have earned your trust, `/setting voice off` turns
   confirmation off from chat, live — the cleaned-up version is what is then
   sent. `/setting cleanup off` goes back to word-for-word transcripts.
-- `vocabulary` is added to a built-in list (talkcode, Claude Code, Codex, …):
+- `vocabulary` is added to a built-in list (fleetherd, Claude Code, Codex, …):
   the names of your hosts and services, which speech recognition otherwise
   spells by ear. Both requests are given it.
 - Cleanup costs a second request per voice message. On a free tier with a
@@ -59,9 +59,9 @@ voice:
   instruction about a file, so the file goes to the agent as before.
 - Ogg, WebM, MP4/M4A, MP3, WAV, AAC and FLAC are transcribed. QQ's and WeCom's
   voice codecs (SILK, AMR) are not — you are told so.
-- Every transcription is logged to `~/.config/talkcode/voice-log.jsonl`
+- Every transcription is logged to `~/.config/fleetherd/voice-log.jsonl`
   with its saved audio file and both versions, and the agent can look its
-  conversation's transcripts up with `talkcode voice-log` when a message reads
+  conversation's transcripts up with `fleetherd voice-log` when a message reads
   like a mishearing.
 - Platforms that cannot show buttons (QQ, LINE, WeCom, DingTalk) send on
   automatically, and the card says why.

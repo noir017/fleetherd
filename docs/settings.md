@@ -70,7 +70,7 @@ pod's or set here; clearing it goes back to the pod's. Which model a conversatio
 starts with, from highest: its `/model` → `podModels` → pod.yaml → the harness's
 default.
 
-**Auto review** is set here too. `/setting review.agent ag@uniagent` turns it on,
+**Auto review** is set here too. `/setting review.agent ag@buildbox` turns it on,
 `/setting review.agent off` turns it off, and the row offers every agent: what a
 reviewer may do is decided by the review, not the agent — its tools are switched off
 where the harness allows it and every permission it asks for is refused. Naming an
