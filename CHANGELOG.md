@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-11
+
 ### Changed
 
 - **talkcode is now fleetherd.** Too many projects already go by names like talkcode — in
