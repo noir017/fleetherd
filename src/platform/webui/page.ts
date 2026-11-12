@@ -3319,11 +3319,12 @@ const SCRIPT = `
     if(cardId) schedOpen[cardId] = !detail.hidden;
   }
 
-  // Enter and Space open a task, as they do a topic row and a scheduled run. The ⋯ and the tag
-  // field are their own controls: Space in the field is a space, and Enter there saves a tag.
+  // Enter and Space open a task, as they do a topic row and a scheduled run. The ⋯ and the whole
+  // tag editor are their own controls: Space in the field is a space, Enter there saves a tag,
+  // and Enter on a tag's × is that button's click — swallowing it would fold the row instead.
   schedList.addEventListener('keydown', function(e){
     if(e.key !== 'Enter' && e.key !== ' ') return;
-    if(e.target.closest && e.target.closest('[data-rm],[data-tag-input]')) return;
+    if(e.target.closest && e.target.closest('.sched-tag-edit,[data-rm]')) return;
     var card = e.target.closest ? e.target.closest('.sched-item') : null;
     if(!card) return;
     e.preventDefault();

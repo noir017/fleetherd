@@ -8638,6 +8638,37 @@ describe('webui page: the scheduled-task panel', () => {
     expect(detail.hidden).toBe(true);
   });
 
+  it('lets Enter on a tag' + "'s × delete the tag instead of folding the row", async () => {
+    const replies = {
+      'api/schedules': listReply([task({ tags: ['ci'] })]),
+      'api/schedules/op': { ok: true, tasks: [task({ tags: [] })] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await tick();
+    const detail = h.doc.querySelector('.sched-detail') as HTMLElement;
+    expect(detail.hidden).toBe(false);
+
+    const del = h.doc.querySelector('[data-tag-del="ci"]') as HTMLElement;
+    del.focus();
+    // A browser turns Enter on a focused button into a click unless the keydown was cancelled;
+    // jsdom performs no default actions, so the test does that step itself.
+    const ev = new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    const live = del.dispatchEvent(ev);
+    expect(live).toBe(true);
+    if (live) del.click();
+    await until('the tags request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
+
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({
+      id: 'a1b2c3',
+      action: 'tags',
+      tags: [],
+    });
+    expect(detail.hidden).toBe(false);
+  });
+
   it('does not open a menu with a separator when the task has no state change', async () => {
     const h = await open({ replies: { 'api/schedules': listReply([task({ state: 'expired' })]) } });
     await h.emit(sync(A, [], [A]));
