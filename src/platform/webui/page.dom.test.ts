@@ -726,8 +726,8 @@ function readCache(idb: IDBFactory | null, topic: string): Promise<Array<Record<
  * selector that follows is the item inside it, not one per row.
  */
 async function rowMenu(h: Harness, id: string): Promise<HTMLElement> {
-  await h.click(`[data-more="${id}"]`);
-  return h.el('topic-menu');
+  await h.click(`[data-rm="topic:${id}"]`);
+  return h.el('row-menu');
 }
 
 describe('webui page: rendering', () => {
@@ -1593,7 +1593,7 @@ describe('webui page: topics', () => {
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5']));
 
     await rowMenu(h, 'b2c3d4e5');
-    await h.click('[data-tm="delete"]');
+    await h.click('[data-rmk="delete"]');
 
     expect(h.calls.map((c) => c.path)).toContain('api/topics/delete');
     expect(h.calls.find((c) => c.path === 'api/topics/delete')?.body).toEqual({ topic: 'b2c3d4e5' });
@@ -2523,7 +2523,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear all topics');
 
     await rowMenu(h, C);
-    await h.click('[data-tm="star"]');
+    await h.click('[data-rmk="star"]');
 
     expect(h.calls.find((c) => c.path === 'api/topics/star')?.body).toEqual({ topic: C, starred: true });
     // Drawn at once rather than on the broadcast, so a tap on a slow link does not look ignored.
@@ -2573,7 +2573,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     await h.emit(sync(A, [], [A, B]));
 
     await rowMenu(h, B);
-    await h.click('[data-tm="star"]');
+    await h.click('[data-rmk="star"]');
     await until('the refusal is on screen', () => h.alerts.length > 0);
 
     expect(h.doc.querySelector(`[data-topic="${B}"] .topic-star-mark`)).toBeNull();
@@ -2641,7 +2641,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     });
 
     await rowMenu(h, B);
-    await h.click('[data-tm="delete"]');
+    await h.click('[data-rmk="delete"]');
 
     expect(h.confirms.at(-1)).toBe('Delete starred topic "b"?');
   });
@@ -2684,14 +2684,14 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
 
     // Star a topic: title/aria-label update to unstarred
     await rowMenu(h, B);
-    await h.click('[data-tm="star"]');
+    await h.click('[data-rmk="star"]');
     expect(h.el('clear-topics').getAttribute('title')).toBe('Clear unstarred topics');
     expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear unstarred topics');
     expect(h.el('clear-topics').textContent).toBe('');
 
     // Unstar: title/aria-label revert to all topics
     await rowMenu(h, B);
-    await h.click('[data-tm="star"]');
+    await h.click('[data-rmk="star"]');
     expect(h.el('clear-topics').getAttribute('title')).toBe('Clear all topics');
     expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear all topics');
     expect(h.el('clear-topics').textContent).toBe('');
@@ -3073,7 +3073,7 @@ describe('webui page: a composer per topic', () => {
     expect(stored(h)).toEqual({ [A]: 'for A', [B]: 'for B' });
 
     await rowMenu(h, B);
-    await h.click('[data-tm="delete"]');
+    await h.click('[data-rmk="delete"]');
     await until('B is forgotten', () => JSON.stringify(stored(h)) === JSON.stringify({ [A]: 'for A' }));
 
     await h.click('#clear-topics');
@@ -4878,7 +4878,7 @@ describe('webui page: a message the daemon never acknowledged', () => {
     expect(Object.values(unsent(h) ?? {}).map((r) => r.x)).toEqual(['second']);
 
     await rowMenu(h, T);
-    await h.click('[data-tm="delete"]');
+    await h.click('[data-rmk="delete"]');
     await until('the topic is forgotten', () => unsent(h) === null);
   });
 
@@ -6111,7 +6111,7 @@ describe('webui page: the row control that only a pointer can reveal', () => {
 
     for (const id of [A, B]) {
       const acts = h.doc.querySelector(`[data-topic="${id}"] .topic-acts`);
-      expect(acts?.querySelector(`[data-more="${id}"]`)).not.toBeNull();
+      expect(acts?.querySelector(`[data-rm="topic:${id}"]`)).not.toBeNull();
       // The star and the × are items in the menu now; neither is a button on the row.
       expect(acts?.querySelector('[data-star]')).toBeNull();
       expect(acts?.querySelector('[data-del]')).toBeNull();
@@ -6125,7 +6125,7 @@ describe('webui page: the row control that only a pointer can reveal', () => {
     // Starring repaints at once, so the class — and the marker — follow the click rather than the
     // broadcast; the control that did it was the menu's item.
     await rowMenu(h, A);
-    await h.click('[data-tm="star"]');
+    await h.click('[data-rmk="star"]');
     expect(h.doc.querySelector(`[data-topic="${A}"]`)?.classList.contains('starred')).toBe(true);
     expect(h.doc.querySelector(`[data-topic="${A}"] .topic-star-mark`)).not.toBeNull();
   });
@@ -6136,7 +6136,7 @@ describe('webui page: the row control that only a pointer can reveal', () => {
     const css = hoverBlock();
     expect(css).toContain('.topic-acts{position:absolute;');
     expect(css).toContain('opacity:0;pointer-events:none');
-    expect(css).toContain('#topics .topic-item:hover .topic-acts,#topics .topic-item:focus-within .topic-acts{opacity:1;pointer-events:auto}');
+    expect(css).toContain('.topic-item:hover .topic-acts,.topic-item:focus-within .topic-acts{opacity:1;pointer-events:auto}');
     // The fade has to end in the row's own colour, or it draws a band across the title.
     expect(css).toContain('linear-gradient(90deg,transparent,var(--row-bg) 18px)');
   });
@@ -6180,32 +6180,32 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.emit({ t: 'topics', topics: fleet() });
 
     await rowMenu(h, D);
-    const menu = h.el('topic-menu');
+    const menu = h.el('row-menu');
     expect(menu.hidden).toBe(false);
     expect(menu.getAttribute('role')).toBe('menu');
     expect(h.el('topics').contains(menu)).toBe(false);
     expect(h.live().url).toBe(`api/events?t=${A}`);
-    expect(h.doc.querySelector(`[data-more="${D}"]`)?.getAttribute('aria-expanded')).toBe('true');
+    expect(h.doc.querySelector(`[data-rm="topic:${D}"]`)?.getAttribute('aria-expanded')).toBe('true');
     expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Star',
       'End agent',
       'Delete topic',
     ]);
     // An icon from IC, never an emoji: the same three the page draws elsewhere.
-    expect(menu.querySelector('[data-tm="star"] .ic-star')).not.toBeNull();
-    expect(menu.querySelector('[data-tm="end"] .ic-power')).not.toBeNull();
-    expect(menu.querySelector('[data-tm="delete"] .ic-trash')).not.toBeNull();
+    expect(menu.querySelector('[data-rmk="star"] .ic-star')).not.toBeNull();
+    expect(menu.querySelector('[data-rmk="end"] .ic-power')).not.toBeNull();
+    expect(menu.querySelector('[data-rmk="delete"] .ic-trash')).not.toBeNull();
     expect(menu.querySelector('[role="separator"]')).not.toBeNull();
     // The first item holds the focus, so the keyboard is already inside the menu.
-    expect(h.doc.activeElement).toBe(menu.querySelector('[data-tm="star"]'));
+    expect(h.doc.activeElement).toBe(menu.querySelector('[data-rmk="star"]'));
 
     // One at a time: another row's ⋯ moves the one box rather than opening a second. B is under
     // A, and sub-agents start folded.
     await h.click(`#topics [data-fold="${A}"]`);
     await rowMenu(h, B);
-    expect(h.doc.querySelectorAll('#topic-menu')).toHaveLength(1);
-    expect(h.doc.querySelector(`[data-more="${D}"]`)?.getAttribute('aria-expanded')).toBe('false');
-    expect(h.doc.querySelector(`[data-more="${B}"]`)?.getAttribute('aria-expanded')).toBe('true');
+    expect(h.doc.querySelectorAll('#row-menu')).toHaveLength(1);
+    expect(h.doc.querySelector(`[data-rm="topic:${D}"]`)?.getAttribute('aria-expanded')).toBe('false');
+    expect(h.doc.querySelector(`[data-rm="topic:${B}"]`)?.getAttribute('aria-expanded')).toBe('true');
   });
 
   it('stars and deletes from the menu, which closes after either', async () => {
@@ -6214,18 +6214,18 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.emit({ t: 'topics', topics: fleet() });
 
     await rowMenu(h, D);
-    await h.click('[data-tm="star"]');
+    await h.click('[data-rmk="star"]');
     expect(h.calls.find((c) => c.path === 'api/topics/star')?.body).toEqual({ topic: D, starred: true });
-    expect(h.el('topic-menu').hidden).toBe(true);
+    expect(h.el('row-menu').hidden).toBe(true);
     expect(h.doc.querySelector(`[data-topic="${D}"] .topic-star-mark`)).not.toBeNull();
 
     // The same item reads Unstar while the topic is starred.
     await rowMenu(h, D);
-    expect(h.doc.querySelector('[data-tm="star"]')?.textContent).toBe('Unstar');
-    await h.click('[data-tm="delete"]');
+    expect(h.doc.querySelector('[data-rmk="star"]')?.textContent).toBe('Unstar');
+    await h.click('[data-rmk="delete"]');
     expect(h.confirms.at(-1)).toBe('Delete starred topic "other"?');
     expect(h.calls.find((c) => c.path === 'api/topics/delete')?.body).toEqual({ topic: D });
-    expect(h.el('topic-menu').hidden).toBe(true);
+    expect(h.el('row-menu').hidden).toBe(true);
   });
 
   it('closes on Escape — focus back on the ⋯ — and on a click outside', async () => {
@@ -6236,13 +6236,13 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
 
     await rowMenu(h, B);
     h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-    expect(h.el('topic-menu').hidden).toBe(true);
-    expect(h.doc.activeElement).toBe(h.doc.querySelector(`[data-more="${B}"]`));
+    expect(h.el('row-menu').hidden).toBe(true);
+    expect(h.doc.activeElement).toBe(h.doc.querySelector(`[data-rm="topic:${B}"]`));
 
     await rowMenu(h, B);
     await h.click('#topic-title');
-    expect(h.el('topic-menu').hidden).toBe(true);
-    expect(h.doc.querySelector(`[data-more="${B}"]`)?.getAttribute('aria-expanded')).toBe('false');
+    expect(h.el('row-menu').hidden).toBe(true);
+    expect(h.doc.querySelector(`[data-rm="topic:${B}"]`)?.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('closes when the focus leaves it — Tab — and keeps the ⋯ in step', async () => {
@@ -6251,7 +6251,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.emit({ t: 'topics', topics: fleet() });
     await h.click(`#topics [data-fold="${A}"]`);
     await rowMenu(h, B);
-    const menu = h.el('topic-menu');
+    const menu = h.el('row-menu');
     const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
     const leave = (to: Element): void => {
       menu.dispatchEvent(new h.window.FocusEvent('focusout', { bubbles: true, relatedTarget: to }));
@@ -6263,7 +6263,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     // Tab to the composer: the menu is gone and the button no longer claims it is open.
     leave(h.el('input'));
     expect(menu.hidden).toBe(true);
-    expect(h.doc.querySelector(`[data-more="${B}"]`)?.getAttribute('aria-expanded')).toBe('false');
+    expect(h.doc.querySelector(`[data-rm="topic:${B}"]`)?.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('leaves a tap that blurs it with no next focus to the click — iOS Safari', async () => {
@@ -6271,8 +6271,8 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'topics', topics: fleet() });
     await rowMenu(h, D);
-    const menu = h.el('topic-menu');
-    const star = menu.querySelector<HTMLElement>('[data-tm="star"]')!;
+    const menu = h.el('row-menu');
+    const star = menu.querySelector<HTMLElement>('[data-rmk="star"]')!;
 
     // iOS Safari does not focus a button on tap: pointerdown, then a focusout with no
     // relatedTarget, and only then the click. Closing on that blur would eat the tap.
@@ -6292,7 +6292,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     // D has no process: End is disabled and must not be a stop on the way.
     await h.emit({ t: 'topics', topics: fleet({ [D]: { live: false } }) });
     await rowMenu(h, D);
-    const menu = h.el('topic-menu');
+    const menu = h.el('row-menu');
     const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
     const press = (key: string): void => {
       h.doc.activeElement?.dispatchEvent(new h.window.KeyboardEvent('keydown', { key, bubbles: true }));
@@ -6316,7 +6316,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.emit({ t: 'topics', topics: fleet({ [A]: { live: false }, [B]: { live: false }, [C]: { live: false } }) });
     await rowMenu(h, A);
 
-    const end = h.doc.querySelector<HTMLButtonElement>('[data-tm="end"]')!;
+    const end = h.doc.querySelector<HTMLButtonElement>('[data-rmk="end"]')!;
     expect(end.disabled).toBe(true);
     expect(end.textContent).toBe('End agent');
     expect(end.title).toMatch(/nothing to end/);
@@ -6329,11 +6329,11 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.click(`#topics [data-fold="${A}"]`);
 
     await rowMenu(h, A);
-    expect(h.doc.querySelector('[data-tm="end"]')?.textContent).toBe('End agent + 2 sub-agents');
+    expect(h.doc.querySelector('[data-rmk="end"]')?.textContent).toBe('End agent + 2 sub-agents');
     await rowMenu(h, B);
-    expect(h.doc.querySelector('[data-tm="end"]')?.textContent).toBe('End agent + 1 sub-agent');
+    expect(h.doc.querySelector('[data-rmk="end"]')?.textContent).toBe('End agent + 1 sub-agent');
     await rowMenu(h, D);
-    expect(h.doc.querySelector('[data-tm="end"]')?.textContent).toBe('End agent');
+    expect(h.doc.querySelector('[data-rmk="end"]')?.textContent).toBe('End agent');
   });
 
   it('ends the whole subtree on the click, with no second question', async () => {
@@ -6354,7 +6354,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     // interrupts them, and the menu item said how far it reaches before it was clicked.
     await h.emit({ t: 'topics', topics: fleet({ [A]: { running: true, asking: true }, [C]: { running: true } }) });
     await rowMenu(h, A);
-    await h.click('[data-tm="end"]');
+    await h.click('[data-rmk="end"]');
     await until('the kill', () => h.calls.some((c) => c.path === 'api/topics/kill'));
 
     expect(h.el('idle-dialog').hidden).toBe(true);
@@ -6362,7 +6362,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     // The root names the subtree; the list is what the page held, and the daemon ends only their
     // intersection — a sub-agent opened since is not in it.
     expect(h.calls.find((c) => c.path === 'api/topics/kill')?.body).toEqual({ topic: A, topics: [A, B, C] });
-    expect(h.el('topic-menu').hidden).toBe(true);
+    expect(h.el('row-menu').hidden).toBe(true);
     // Nothing to report when every process was ended or had already gone.
     expect(h.alerts).toEqual([]);
   });
@@ -6375,7 +6375,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'topics', topics: fleet() });
     await rowMenu(h, A);
-    await h.click('[data-tm="end"]');
+    await h.click('[data-rmk="end"]');
     await until('the alert', () => h.alerts.length > 0);
 
     expect(h.alerts[0]).toBe('1 agent left running: the runtime cannot resume it.');
@@ -6386,14 +6386,14 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'topics', topics: fleet() });
     await rowMenu(h, A);
-    const menu = h.el('topic-menu');
+    const menu = h.el('row-menu');
 
     // Every streamed message rebuilds #topics with innerHTML. The menu is at the body, so it is
     // not in that markup; the new button under it must still say it is the open one.
     await h.emit({ t: 'topics', topics: fleet({ [A]: { title: 'parent, renamed mid-turn' } }) });
     expect(menu.hidden).toBe(false);
     expect(h.doc.body.contains(menu)).toBe(true);
-    expect(h.doc.querySelector(`[data-more="${A}"]`)?.getAttribute('aria-expanded')).toBe('true');
+    expect(h.doc.querySelector(`[data-rm="topic:${A}"]`)?.getAttribute('aria-expanded')).toBe('true');
 
     // When its topic goes, it has nothing left to act on and closes.
     await h.emit({ t: 'topics', topics: fleet().filter((t) => t.id !== A && t.id !== B && t.id !== C) });
@@ -6591,7 +6591,7 @@ describe('webui page: the terminal window', () => {
     expect(frames(h)).toHaveLength(1);
 
     await rowMenu(h, 'a1b2c3d4');
-    await h.click('[data-tm="delete"]');
+    await h.click('[data-rmk="delete"]');
     await tick();
     expect(frames(h)).toHaveLength(0);
   });
@@ -7357,7 +7357,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     expect(face(row(D).querySelector('[data-fold]'))).toBe('[chevronDown] 1');
     expect(row(A).querySelector('[data-fold]')).toBeNull();
     // A child is a topic like any other: its row carries the same ⋯ menu, with star and delete.
-    expect(row(B).querySelector('[data-more]')).not.toBeNull();
+    expect(row(B).querySelector('[data-rm]')).not.toBeNull();
   });
 
   it('folds a parent’s sub-agents away by default — remembered, colour kept, and without switching to it', async () => {
@@ -7841,11 +7841,10 @@ describe('webui page: the sidebar footer, and low attention', () => {
     // Every rule the mode has, so one added for a question, a failure, a finished reply or the
     // green rows fails here: those are what the mode exists to leave standing out. A running
     // scheduled task is the same kind of "still working" signal as a running topic, so its dot
-    // is quieted with the same rule.
+    // is quieted by the same rule — it is the same .topic-dot now.
     expect(css.match(/#app\.calm [^{]*\{[^}]*\}/g)).toEqual([
       '#app.calm .topic-dot.running{animation:none}',
       '#app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}',
-      '#app.calm .sched-item.running .sched-dot{animation:none}',
     ]);
     expect(css).toMatch(/\.topic-dot\.asking\{[^}]*animation:pulse/);
   });
@@ -8108,6 +8107,11 @@ describe('webui page: the scheduled-task panel', () => {
     ...over,
   });
   const listReply = (tasks: Array<Record<string, unknown>>): Record<string, unknown> => ({ enabled: true, tasks });
+  /** Open a task row's ⋯ menu, as a person would: one box, so the selector is inside #row-menu. */
+  const taskMenu = async (h: Harness, id: string): Promise<HTMLElement> => {
+    await h.click(`[data-rm="task:${id}"]`);
+    return h.el('row-menu');
+  };
 
   it('is closed by default, opens from the header, and draws the list', async () => {
     const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
@@ -8122,10 +8126,95 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.el('schedules-toggle').getAttribute('aria-expanded')).toBe('true');
     expect(h.el('schedules-summary').textContent).toBe('1 active');
     expect(h.el('schedules-list').textContent).toContain('Morning CI');
-    expect(h.el('schedules-list').textContent).toContain('0 8 * * * (Asia/Shanghai)');
+    // The cron is not on the row any more — it is on the row's hover card, with the next run.
+    // The detail is in the DOM (folded), so the row is what is read here, not the whole list.
+    const row = h.doc.querySelector('.sched-item .topic-item') as HTMLElement;
+    expect(row.textContent).not.toContain('0 8 * * *');
+    expect(row.getAttribute('title')).toContain('0 8 * * * (Asia/Shanghai)');
+    expect(row.getAttribute('title')).toContain('next 2026-11-05 08:00');
     // The target is resolved against the topic list the page already has, rather than shown as
     // `web:main#…` — the one thing a person cannot read.
-    expect(h.el('schedules-list').textContent).toContain('posts to Topic ' + A);
+    expect(h.el('schedules-list').textContent).toContain('→ Topic ' + A);
+  });
+
+  it('draws a task as a row: no cron on it, the state on its dot, the rest on one line', async () => {
+    const now = Date.now();
+    const replies = { 'api/schedules': listReply([
+      task({ id: 't00001', name: 'Active one', nextAt: now + 3 * 3600 * 1000 }),
+      task({ id: 't00002', name: 'Running one', running: true }),
+      task({ id: 't00003', name: 'Paused one', state: 'paused' }),
+      task({ id: 't00004', name: 'Failed one', last: { status: 'failed', at: now - 2 * 3600 * 1000 } }),
+      task({ id: 't00005', name: 'Tagged one', tags: ['ci', 'ops'] }),
+      task({ id: 't00006', name: 'Done one', state: 'done' }),
+    ]) };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    const row = (id: string): HTMLElement => h.doc.querySelector(`.sched-item[data-id="${id}"] .topic-item`) as HTMLElement;
+    const dot = (id: string): Element | null => row(id).querySelector('.topic-dot');
+    const line = (id: string): string => row(id).querySelector('.topic-dir')?.textContent ?? '';
+
+    // The shared row component, and the cron is nowhere on the row itself.
+    expect(row('t00001').classList.contains('topic-item')).toBe(true);
+    expect(row('t00001').textContent).not.toContain('0 8 * * *');
+    expect(row('t00001').getAttribute('title')).toContain('0 8 * * * (Asia/Shanghai)');
+    expect(row('t00001').querySelector('.topic-title')?.textContent).toBe('Active one');
+
+    // Active: dim-blue dot, the countdown, the target, no last run.
+    expect(dot('t00001')?.classList.contains('live')).toBe(true);
+    expect(line('t00001')).toMatch(/^in \d+h/);
+    expect(line('t00001')).toContain('→ Topic ' + A);
+
+    // Running: the blue pulsing dot, the row's own running class (what colours "running now"),
+    // and the words themselves.
+    expect(dot('t00002')?.classList.contains('running')).toBe(true);
+    expect(row('t00002').classList.contains('running')).toBe(true);
+    expect(line('t00002')).toContain('running now');
+
+    // Paused and done: grey dot, the state word, and the title dimmed like an idle row.
+    expect(dot('t00003')?.className).toBe('topic-dot');
+    expect(line('t00003')).toContain('paused');
+    expect(row('t00003').classList.contains('idle')).toBe(true);
+    expect(row('t00006').classList.contains('idle')).toBe(true);
+
+    // A failed last run: the red dot and a red last-run segment.
+    expect(dot('t00004')?.classList.contains('failed')).toBe(true);
+    expect(line('t00004')).toContain('last failed');
+    expect(row('t00004').querySelector('.sched-last')?.classList.contains('bad')).toBe(true);
+
+    // Tags are on the line as #tag.
+    expect(line('t00005')).toContain('#ci');
+    expect(line('t00005')).toContain('#ops');
+  });
+
+  it('draws the selected scheduled run' + "'s title white, as the topic list does", () => {
+    const html = renderPage('Chat', false);
+    const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+    // The old .sess-item.on .sess-title rule went with the row; this is the shared one that
+    // replaces it. The topic list's own selected-idle greys are id-scoped and still win there.
+    expect(css).toContain('.topic-item.on .topic-title{color:#fff}');
+  });
+
+  it('keeps its menu through a poll, and closes it when the task goes', async () => {
+    const replies: Record<string, unknown> = {
+      'api/schedules': listReply([task(), task({ id: 'b2c3d4', name: 'Other task' })]),
+    };
+    // The 30s poll is shortened to 30ms, which is the repaint an open menu has to survive.
+    const h = await open({ replies, shortenLong: true });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await taskMenu(h, 'a1b2c3');
+    const menu = h.el('row-menu');
+    const first = h.doc.querySelector('[data-rm="task:a1b2c3"]');
+
+    await within('a repaint', 1000, () => h.doc.querySelector('[data-rm="task:a1b2c3"]') !== first);
+    expect(menu.hidden).toBe(false);
+    expect(h.doc.querySelector('[data-rm="task:a1b2c3"]')?.getAttribute('aria-expanded')).toBe('true');
+
+    // The task leaving the daemon's list leaves the menu with nothing to act on.
+    replies['api/schedules'] = listReply([task({ id: 'b2c3d4', name: 'Other task' })]);
+    await within('the task to go', 1000, () => h.doc.querySelector('[data-rm="task:a1b2c3"]') === null);
+    expect(menu.hidden).toBe(true);
   });
 
   it('divides the side panel into Scheduled and Reviews outer tabs, with Tasks and Sessions sub-tabs', async () => {
@@ -8411,25 +8500,78 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.window.localStorage.getItem('aa_sched_open')).toBe('1');
   });
 
-  it('deletes on the second tap, not the first', async () => {
+  it('deletes from the task menu, after one confirmation', async () => {
     const replies = {
       'api/schedules': listReply([task()]),
       'api/schedules/op': { ok: true, tasks: [] },
     };
+    const h = await open({ replies, confirm: true });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await taskMenu(h, 'a1b2c3');
+
+    // Pause and Run now, then Delete below its divider: the row's actions are all in here now.
+    expect(Array.from(h.el('row-menu').querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
+      'Pause',
+      'Run now',
+      'Delete',
+    ]);
+    expect(h.el('row-menu').querySelector('[role="separator"]')).not.toBeNull();
+    expect(h.doc.querySelector('.sched-item')?.querySelector('.topic-item [data-rm]')).not.toBeNull();
+
+    await h.click('[data-rmk="remove"]');
+    await until('the delete request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
+    expect(h.confirms.at(-1)).toBe('Delete task "Morning CI"?');
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({ id: 'a1b2c3', action: 'remove' });
+    await until('the empty state', () => h.el('schedules-list').textContent!.includes('No scheduled tasks yet'));
+  });
+
+  it('leaves the task alone when the confirmation is cancelled', async () => {
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/schedules/op': { ok: true, tasks: [] },
+    };
+    const h = await open({ replies, confirm: false });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await taskMenu(h, 'a1b2c3');
+    await h.click('[data-rmk="remove"]');
+    await tick();
+
+    expect(h.confirms.at(-1)).toBe('Delete task "Morning CI"?');
+    expect(h.calls.some((c) => c.path === 'api/schedules/op')).toBe(false);
+    expect(h.el('schedules-list').textContent).toContain('Morning CI');
+  });
+
+  it.each([
+    { state: 'active', key: 'pause', action: 'pause' },
+    { state: 'paused', key: 'resume', action: 'resume' },
+    { state: 'active', key: 'run', action: 'run' },
+  ])('sends $action from the task menu', async ({ state, key, action }) => {
+    const replies = {
+      'api/schedules': listReply([task({ state })]),
+      'api/schedules/op': { ok: true, tasks: [task({ state })] },
+    };
     const h = await open({ replies });
     await h.emit(sync(A, [], [A]));
     await h.click('#schedules-toggle');
-    const del = (): HTMLElement => h.doc.querySelector('.sched-acts [data-op="remove"]') as HTMLElement;
+    await taskMenu(h, 'a1b2c3');
+    await h.click(`[data-rmk="${key}"]`);
+    await until('the op', () => h.calls.some((c) => c.path === 'api/schedules/op'));
 
-    del().click();
-    await tick();
-    expect(h.calls.some((c) => c.path === 'api/schedules/op')).toBe(false);
-    expect(del().textContent).toBe('Delete?');
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({ id: 'a1b2c3', action });
+    expect(h.el('row-menu').hidden).toBe(true);
+  });
 
-    del().click();
-    await until('the delete request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
-    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({ id: 'a1b2c3', action: 'remove' });
-    await until('the empty state', () => h.el('schedules-list').textContent!.includes('No scheduled tasks yet'));
+  it('greys Run now while a run is in flight, and says why', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task({ running: true })]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await taskMenu(h, 'a1b2c3');
+
+    const run = h.doc.querySelector<HTMLButtonElement>('[data-rmk="run"]')!;
+    expect(run.disabled).toBe(true);
+    expect(run.title).toMatch(/run is in progress/);
   });
 
   it('shows the daemon sentence when an action is refused, and keeps the list', async () => {
@@ -8440,8 +8582,9 @@ describe('webui page: the scheduled-task panel', () => {
     const h = await open({ replies, status: { 'api/schedules/op': 400 } });
     await h.emit(sync(A, [], [A]));
     await h.click('#schedules-toggle');
+    await taskMenu(h, 'a1b2c3');
 
-    (h.doc.querySelector('.sched-acts [data-op="pause"]') as HTMLElement).click();
+    await h.click('[data-rmk="pause"]');
     await until('the refusal', () => !h.el('schedules-note').hidden);
 
     expect(h.el('schedules-note').textContent).toBe('#a1b2c3 is already paused');
@@ -8461,7 +8604,118 @@ describe('webui page: the scheduled-task panel', () => {
 
     expect(detail.hidden).toBe(false);
     expect(detail.textContent).toContain('summarise the failures');
+    // The detail names the target in full, as the hover card does.
+    expect(detail.textContent).toContain('Posts to');
+    expect(detail.textContent).toContain('Topic ' + A);
     expect(h.calls.some((c) => c.path === 'api/schedules/op')).toBe(false);
+  });
+
+  it('opens and folds a task from the keyboard, and Space does not scroll the page', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    const row = h.doc.querySelector('.sched-item .topic-item') as HTMLElement;
+    const detail = h.doc.querySelector('.sched-detail') as HTMLElement;
+    const press = (key: string): KeyboardEvent => {
+      const ev = new h.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      row.dispatchEvent(ev);
+      return ev;
+    };
+
+    // The row says role=button, so Enter and Space do what a click does — and Space is not left
+    // to the browser's scroll.
+    expect(press('Enter').defaultPrevented).toBe(true);
+    await tick();
+    expect(detail.hidden).toBe(false);
+    expect(press(' ').defaultPrevented).toBe(true);
+    await tick();
+    expect(detail.hidden).toBe(true);
+
+    // The ⋯ is its own control: Enter on it must not also fold the row.
+    const more = h.doc.querySelector('[data-rm="task:a1b2c3"]') as HTMLElement;
+    more.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await tick();
+    expect(detail.hidden).toBe(true);
+  });
+
+  it('lets Enter on a tag' + "'s × delete the tag instead of folding the row", async () => {
+    const replies = {
+      'api/schedules': listReply([task({ tags: ['ci'] })]),
+      'api/schedules/op': { ok: true, tasks: [task({ tags: [] })] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await tick();
+    const detail = h.doc.querySelector('.sched-detail') as HTMLElement;
+    expect(detail.hidden).toBe(false);
+
+    const del = h.doc.querySelector('[data-tag-del="ci"]') as HTMLElement;
+    del.focus();
+    // A browser turns Enter on a focused button into a click unless the keydown was cancelled;
+    // jsdom performs no default actions, so the test does that step itself.
+    const ev = new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    const live = del.dispatchEvent(ev);
+    expect(live).toBe(true);
+    if (live) del.click();
+    await until('the tags request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
+
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({
+      id: 'a1b2c3',
+      action: 'tags',
+      tags: [],
+    });
+    expect(detail.hidden).toBe(false);
+  });
+
+  it('does not open a menu with a separator when the task has no state change', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task({ state: 'expired' })]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await taskMenu(h, 'a1b2c3');
+
+    const menu = h.el('row-menu');
+    expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual(['Delete']);
+    expect(menu.querySelector('[role="separator"]')).toBeNull();
+    expect(menu.firstElementChild?.getAttribute('data-rmk')).toBe('remove');
+  });
+
+  it('puts an open task menu away when the panel tab changes or the panel closes', async () => {
+    const C = 'c3d4e5f6';
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/reviews': { enabled: true, reviews: [] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 3, stage: 'idle', scheduled: true },
+      ],
+    });
+    await h.click('#schedules-toggle');
+    const menu = h.el('row-menu');
+
+    await taskMenu(h, 'a1b2c3');
+    await h.click('#sched-tab-sessions');
+    expect(menu.hidden).toBe(true);
+
+    await h.click(`[data-rm="sess:${C}"]`);
+    expect(menu.hidden).toBe(false);
+    await h.click('#sched-tab-tasks');
+    expect(menu.hidden).toBe(true);
+
+    await taskMenu(h, 'a1b2c3');
+    await h.click('#sched-tab-reviews');
+    expect(menu.hidden).toBe(true);
+
+    await h.click('#sched-tab-scheduled');
+    await taskMenu(h, 'a1b2c3');
+    await h.click('#schedules-close');
+    expect(menu.hidden).toBe(true);
   });
 
   it('closes on Escape', async () => {
@@ -8585,7 +8839,14 @@ describe('webui page: the scheduled-task panel', () => {
 
     await h.click('#schedules-toggle');
     await h.click('#sched-tab-sessions');
-    (h.doc.querySelector('.sess-del') as HTMLElement).click();
+    // The run's ⋯ holds the same topic menu a sidebar row has.
+    await h.click(`[data-rm="sess:${C}"]`);
+    expect(Array.from(h.el('row-menu').querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
+      'Star',
+      'End agent',
+      'Delete topic',
+    ]);
+    await h.click('[data-rmk="delete"]');
     await until('the delete request', () => h.calls.some((c) => c.path === 'api/topics/delete'));
 
     expect(h.calls.find((c) => c.path === 'api/topics/delete')?.body).toEqual({ topic: C });
@@ -9108,7 +9369,7 @@ describe('webui page: the task list filter', () => {
       action: 'tags',
       tags: ['ci', 'deploy'],
     });
-    await until('the new chip', () => h.doc.querySelectorAll('.sched-tags .sched-tag').length === 2);
+    await until('the new chip', () => h.doc.querySelectorAll('.sched-tag-edit .sched-tag').length === 2);
     expect(h.el('schedules-list').textContent).toContain('deploy');
     // A poll or the answer's repaint must not fold a card being edited.
     expect((h.doc.querySelector('.sched-detail') as HTMLElement).hidden).toBe(false);
@@ -9131,7 +9392,7 @@ describe('webui page: the task list filter', () => {
       action: 'tags',
       tags: [],
     });
-    await until('no chip', () => h.doc.querySelectorAll('.sched-tags .sched-tag').length === 0);
+    await until('no chip', () => h.doc.querySelectorAll('.sched-tag-edit .sched-tag').length === 0);
 
     const refused = {
       'api/schedules': listReply([task({ tags: ['ci'] })]),

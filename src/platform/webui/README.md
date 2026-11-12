@@ -522,7 +522,7 @@ Within **Scheduled**, a sub-nav bar under the panel header separates **Tasks** (
 and their controls, default) from **Sessions** (the topics a new-session run opened,
 `Topic.scheduled`). Grouping them keeps the footer clean while preserving the distinction between
 a task definition and a run instance. The switcher leaves session topics out (`topicRows` filters
-them), so the Sessions sub-tab is their only listing and its × is the only delete. Sessions needs
+them), so the Sessions sub-tab is their only listing and its row's ⋯ is the only delete. Sessions needs
 no request of its own — the `topics` event that keeps the switcher current carries their titles,
 state, message counts and unread marks, so a run that starts or finishes moves the tab as it
 happens. Its one bulk write is **Mark all read**, which clears this page's `aa_reads` marks and posts
@@ -535,10 +535,17 @@ opens the topic and leaves the panel where it is. A run holding a question
 puts an amber dot on the clock (`#sched-alert`), on the Scheduled outer tab, and on the Sessions
 sub-tab, because it has no row in the switcher to show it there.
 
-A task card leads with the name (with a state word only when it is not the ordinary `active`) and
-its tags when it has any, then the schedule, the next run and the target, and the last run — red
-only when it did not end `ok`. The prompt or command, the run mode, the tag editor and the
-bookkeeping are behind a tap, so a column of tasks stays scannable.
+A task is drawn as a row like a topic's — the same `rowHtml`, so the dot, the ellipsis and the ⋯
+behave identically in both panels. It leads with the name; one line under it holds what it is doing
+(a countdown, `running now`, or the state word for paused/expired/done), where it posts, how the last
+run ended (red only when it was not `ok`) and its tags as `#tag`. The cron expression is deliberately
+not on the row: it is on the row's `title` with the next run in full, the target and the run mode, and
+in the detail a tap opens — with the prompt or command, the tag editor and the bookkeeping. The row's
+actions are in its ⋯ (Pause or Resume, Run now greyed while a run is in flight with the reason, then
+Delete, which asks once like deleting a topic does). The dot reuses `.topic-dot`: running is the blue
+pulse, a last run that did not end `ok` is red, an active task is the dim blue of a resident agent,
+and paused/expired/done are the grey of an idle row, with the title dimmed to match. The list is
+still a poll, so an open menu re-finds its row after every repaint and closes when the task is gone.
 
 Above the cards sits a `makeFilterBar` instance of its own, mounted outside `#schedules-list`
 because that list is redrawn with innerHTML on every poll. Its search covers the name, the prompt
@@ -881,6 +888,17 @@ the page records the message id, so a late edit does not reopen it; a new `/sett
 message and does. `page.dom.test.ts` pins the groups and controls drawn from the screen, each
 control's request, the banners, the failed-request rollback, the current mark, Back, paging and the
 narrow-screen rules.
+
+**A list row's ⋯ is one menu for every list** (`#row-menu`, `openRowMenu`, since the task rows moved
+to the shared component). A topic row's ⋯, a scheduled run's and a task's all open the same element
+with their own items — `{icon, label, title, disabled, danger}` or a separator — positioned from the
+button's rect and kept beside it while its list scrolls. Every one of those lists is rebuilt with
+`innerHTML` (on a message, on the 5s/30s poll), so the box lives at the body and each repaint
+re-finds its button by the key the button carries (`topic:<id>`, `sess:<id>`, `task:<id>`); when the
+row is gone from the list the menu closes. Escape puts the focus back on the ⋯; Tab or a click
+outside puts it away. The topic items are Star / End agent / Delete and are unchanged; a task's are
+Pause or Resume, Run now (greyed while a run is in flight, its `title` saying why), then Delete,
+which asks once through `confirm` like deleting a topic.
 
 **For every other menu, the page reads two conventions off the labels, because a label is all the
 daemon sends.** If you change the labels in `core/`, this is what moves:

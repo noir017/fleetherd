@@ -181,8 +181,8 @@ describe('webui page', () => {
   });
 
   it('allows deleting topics from the row menu, with its confirmation', () => {
-    expect(html).toContain('topic-menu');
-    expect(html).toContain('data-tm="delete"');
+    expect(html).toContain('row-menu');
+    expect(html).toContain("key:'delete'");
     expect(html).toContain('api/topics/delete');
   });
 

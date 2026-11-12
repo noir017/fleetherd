@@ -76,8 +76,9 @@ name, its prompt or command, and its target. **Filter** narrows by **Status** �
 Paused, and Ended (expired and done together) — and by **Tags**, which offers every tag in use plus
 **Untagged**. The sort is Status (the default, the list's own order), Next run, Last run or Created,
 ascending or descending; a task with no next run, or one that has never run, stays at the bottom
-either way. The keyword, filters and sort are kept in this browser. A task's tags are edited in its
-card: the × removes one, and typing in **+ tag** and pressing Enter adds one. Only the Tasks
+either way. The keyword, filters and sort are kept in this browser. A task is a row like a topic's:
+its ⋯ holds Pause or Resume, Run now and Delete, and the detail a tap opens holds the tags — the ×
+removes one, and typing in **+ tag** and pressing Enter adds one. Only the Tasks
 sub-tab has this bar — Sessions and Reviews do not. On a phone the same panel is a drawer from the right, with the chat
 still visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
 session opens topics; the **Sessions** sub-tab lists those topics, and they no longer appear in the
