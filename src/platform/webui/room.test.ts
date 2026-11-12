@@ -240,6 +240,25 @@ describe('WebRoom: topics are separate conversations', () => {
     expect(off).not.toHaveProperty('runningSince');
   });
 
+  it('stamps a fresh start when a stopped topic starts again, and never writes it to disk', () => {
+    vi.useFakeTimers({ now: 2_000_000 });
+    const file = path.join(dir, 'running.json');
+    const store = new TopicStore(file);
+    const room = new WebRoom(instance(), store);
+    const topic = store.current().id;
+
+    room.setTyping(topic, true);
+    expect(room.topicList().find((t) => t.id === topic)?.runningSince).toBe(2_000_000);
+    // The start is live state only: the topic file keeps the list's own fields.
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, Record<string, unknown>>;
+    expect(saved[topic]).not.toHaveProperty('runningSince');
+
+    room.setTyping(topic, false);
+    vi.setSystemTime(2_060_000);
+    room.setTyping(topic, true);
+    expect(room.topicList().find((t) => t.id === topic)?.runningSince).toBe(2_060_000);
+  });
+
   it('deletes a topic, cleans up room state, and announces the updated list', () => {
     const { room, seen, list } = attached();
     const second = room.createTopic('second');

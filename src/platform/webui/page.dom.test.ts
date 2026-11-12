@@ -7739,8 +7739,9 @@ describe('webui page: how long a topic has been running, or since it stopped', (
         { id: D, title: 'new', lastAt: NOW, msgCount: 0, stage: 'idle' },
         // A daemon from before runningSince: it says running, but not since when.
         { id: E, title: 'old server', lastAt: NOW - HOUR, msgCount: 1, stage: 'working', running: true },
-        // A question holds its turn open, so it is timed like work.
-        { id: F, title: 'asking', lastAt: NOW - 8 * MIN, msgCount: 1, stage: 'answer', asking: true, runningSince: NOW - 5 * MIN },
+        // A question holds its turn open, so the server sends running too, and it is timed
+        // like work.
+        { id: F, title: 'asking', lastAt: NOW - 8 * MIN, msgCount: 1, stage: 'answer', asking: true, running: true, runningSince: NOW - 5 * MIN },
       ],
     });
 
@@ -7793,15 +7794,20 @@ describe('webui page: how long a topic has been running, or since it stopped', (
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
     const set = vi.spyOn(h.window, 'setInterval');
+    const ticks = (): number => set.mock.calls.filter((c) => c[1] === 30_000).length;
     await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN)] });
+    expect(ticks()).toBe(1);
 
-    const timer = set.mock.calls.find((c) => c[1] === 30_000);
-    expect(timer).toBeTruthy();
+    // A second list change repaints the rows; the timer already running is reused, not doubled.
+    await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN), ended(B, 5 * MIN)] });
+    expect(ticks()).toBe(1);
+
+    const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
     const node = ageOf(h, A)!;
     expect(node.textContent).toBe('10m ago');
 
     vi.setSystemTime(NOW + MIN);
-    (timer![0] as () => void)();
+    (timer[0] as () => void)();
 
     // The same element, not a fresh row: a repaint would lose the hover state and any menu open
     // over the row, which is why the tick writes textContent only.
@@ -7809,32 +7815,51 @@ describe('webui page: how long a topic has been running, or since it stopped', (
     expect(node.textContent).toBe('11m ago');
   });
 
-  it('stops the tick behind a hidden tab, and catches up the moment it is looked at', async () => {
+  it('clears the tick when the last age leaves the list', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
     const set = vi.spyOn(h.window, 'setInterval');
     const clear = vi.spyOn(h.window, 'clearInterval');
     await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN)] });
     const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
+    const id = set.mock.results[set.mock.calls.indexOf(timer)]?.value;
+
+    // Nothing said in it any more: no running start, no end, so no age to keep current.
+    await h.emit({ t: 'topics', topics: [{ id: A, title: 'new', lastAt: NOW, msgCount: 0, stage: 'idle' }] });
+    expect(h.doc.querySelector('.topic-age')).toBeNull();
+    expect(clear).toHaveBeenCalledWith(id);
+  });
+
+  it('stops the tick behind a hidden tab, and catches up the moment it is looked at', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    const set = vi.spyOn(h.window, 'setInterval');
+    const clear = vi.spyOn(h.window, 'clearInterval');
+    const ticks = (): number => set.mock.calls.filter((c) => c[1] === 30_000).length;
+    await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN)] });
+    const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
     const node = ageOf(h, A)!;
+    expect(ticks()).toBe(1);
 
     Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'hidden' });
     h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
     expect(clear).toHaveBeenCalledWith(set.mock.results[set.mock.calls.indexOf(timer)]?.value);
 
     // Five minutes later the row still says what it said; coming back rewrites it at once,
-    // rather than up to half a minute later.
+    // rather than up to half a minute later, and arms a fresh timer.
     vi.setSystemTime(NOW + 5 * MIN);
     expect(node.textContent).toBe('10m ago');
     Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'visible' });
     h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
     expect(ageOf(h, A)).toBe(node);
     expect(node.textContent).toBe('15m ago');
+    expect(ticks()).toBe(2);
   });
 
-  it('writes a scheduled run’s last activity in the same units', async () => {
+  it('writes a scheduled run’s last activity in the same units, and keeps it current', async () => {
     const h = await open({ replies: { 'api/schedules': { enabled: true, tasks: [] } } });
     await h.emit(sync(A, [], [A]));
+    const set = vi.spyOn(h.window, 'setInterval');
     await h.emit({
       t: 'topics',
       topics: [{ id: A, title: 'a run', lastAt: NOW - DAY - 10 * HOUR, msgCount: 4, scheduled: true, stage: 'idle' }],
@@ -7844,6 +7869,16 @@ describe('webui page: how long a topic has been running, or since it stopped', (
     const line = h.doc.querySelector('.sess-item .topic-dir')?.textContent ?? '';
     expect(line).toContain('1d10h ago');
     expect(line).toContain('4 messages');
+
+    // The panel's age is stamped and rewritten by the same tick as the sidebar's, so it does not
+    // go stale while the panel is the thing on screen.
+    const node = h.doc.querySelector('.sess-item .topic-age')!;
+    expect(node.textContent).toBe('1d10h ago');
+    const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
+    vi.setSystemTime(NOW + HOUR);
+    (timer[0] as () => void)();
+    expect(h.doc.querySelector('.sess-item .topic-age')).toBe(node);
+    expect(node.textContent).toBe('1d11h ago');
   });
 });
 

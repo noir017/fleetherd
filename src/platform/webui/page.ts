@@ -1506,6 +1506,10 @@ const SCRIPT = `
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
       updateEl=$('update'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent');
+  // The 30-second tick that keeps the ages current (see paintAges). Declared here, not beside
+  // its functions, because paintSessions can arm it while the script is still setting up — and a
+  // var initialised after that would overwrite the timer's handle with null and leak the timer.
+  var AGE_TICK_MS=30000, ageTimer=null;
   var data={}, els={}, files=[], commands=[], stream=null;
   // The row menu: which row it belongs to (a key like "topic:<id>", "sess:<id>", "task:<id>"),
   // the button that opened it, and what a pick calls. The button is re-found after every repaint
@@ -2165,14 +2169,16 @@ const SCRIPT = `
   }
 
   /**
-   * The earliest start among a topic's working descendants.
+   * One walk of a topic's subtree: whether anything under it is working, and the earliest start
+   * among the ones that are — 0 when none carries one.
    *
    * A /super dispatcher's own turn ends between jobs while its sub-agents keep working, and
-   * rowRunning already draws it as running; its age has to be the job's, not a start it does not
-   * have. Earliest, because that is when the work the row is standing for began.
+   * rowRunning draws it as running; its age has to be the job's, not a start it does not have.
+   * Earliest, because that is when the work the row is standing for began. Both answers come out
+   * of the same walk, so painting one row does not walk its subtree twice for them.
    */
-  function belowSince(id){
-    var best=0, stack=[id], seenB={}, n=0;
+  function subtreeRun(id){
+    var busy=false, since=0, stack=[id], seenB={}, n=0;
     while(stack.length && n++<256){
       var p=stack.pop();
       if(seenB[p]) continue;
@@ -2180,11 +2186,14 @@ const SCRIPT = `
       for(var i=0;i<topics.length;i++){
         var t=topics[i];
         if(t.parent!==p) continue;
-        if((t.running||t.asking) && t.runningSince && (!best || t.runningSince<best)) best=t.runningSince;
+        if(t.running){
+          busy=true;
+          if(t.runningSince && (!since || t.runningSince<since)) since=t.runningSince;
+        }
         stack.push(t.id);
       }
     }
-    return best;
+    return {busy:busy, since:since};
   }
 
   /**
@@ -2195,13 +2204,11 @@ const SCRIPT = `
    * older than runningSince.
    */
   function topicAge(t){
-    if(t.running || t.asking) return t.runningSince ? {at:t.runningSince, run:true} : null;
+    if(t.running) return t.runningSince ? {at:t.runningSince, run:true} : null;
     // A dispatcher is drawn as running while its sub-agents work, so it has no "ended" to count
     // from: with no start anywhere below (a daemon older than runningSince) it shows nothing.
-    if(busyBelow(t.id)){
-      var below=belowSince(t.id);
-      return below ? {at:below, run:true} : null;
-    }
+    var below=subtreeRun(t.id);
+    if(below.busy) return below.since ? {at:below.since, run:true} : null;
     var at=(t.outcome && t.outcome.at) ? t.outcome.at : (t.msgCount ? t.lastAt : 0);
     return at ? {at:at, run:false} : null;
   }
@@ -2214,7 +2221,7 @@ const SCRIPT = `
   function ageHtml(t){
     var a=topicAge(t);
     if(!a) return '';
-    return '<span class="topic-age'+(a.run?' run':'')+'" data-age="'+a.at+'"'
+    return '<span class="topic-age'+(a.run?' run':'')+'" data-age="'+text(a.at)+'"'
       + ' data-age-run="'+(a.run?'1':'0')+'"'
       + ' title="'+text((a.run?'Started ':'Ended ')+ageClock(a.at))+'">'
       + text(ageText(Date.now()-a.at, !a.run))+'</span>';
@@ -2345,8 +2352,13 @@ const SCRIPT = `
     var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
     var state=asking?'awaiting you':(running?'running':(t.stage==='failed'?'failed':(t.stage==='review'?'finished':'')));
     // The same age format as the topic rows, so a run read here and its topic read in the
-    // switcher cannot disagree about what "1h" means. An undated record keeps the empty cell.
-    var meta=(t.lastAt ? ageText(Date.now()-t.lastAt, true) : '')+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'');
+    // switcher cannot disagree about what "1h" means. Stamped like theirs, so the same tick
+    // keeps it current without repainting the panel. An undated record keeps the empty cell.
+    var when=t.lastAt
+      ? '<span class="topic-age" data-age="'+text(t.lastAt)+'" data-age-run="0"'
+        + ' title="Ended '+text(ageClock(t.lastAt))+'">'+text(ageText(Date.now()-t.lastAt, true))+'</span>'
+      : '';
+    var meta=when+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'');
     return rowHtml({
       cls:(t.id===topic?'on ':'')+'sess-item',
       attrs:' data-sess="'+text(t.id)+'" role="button" tabindex="0"',
@@ -2355,7 +2367,7 @@ const SCRIPT = `
       title:'<span class="topic-title">'
         + (named.tag?'<span class="topic-tag">'+text(named.tag)+'</span> ':'')+text(named.rest)
         + '</span>',
-      sub:'<span class="topic-dir">'+text(meta)+'</span>',
+      sub:'<span class="topic-dir">'+meta+'</span>',
       badge:badge,
       moreTitle:'Session actions'
     });
@@ -2373,6 +2385,7 @@ const SCRIPT = `
     if(!list.length){
       schedSessionList.innerHTML='<div class="sched-empty">No scheduled sessions yet. A task that runs in a new or daily session opens one here.</div>';
       rowMenuFollow();
+      armAgeTick();
       return;
     }
     var pending=0;
@@ -2405,6 +2418,7 @@ const SCRIPT = `
     }
     schedSessionList.innerHTML=h;
     rowMenuFollow();
+    armAgeTick();
   }
 
   /**
@@ -4839,21 +4853,9 @@ const SCRIPT = `
     return {rows:rows, dividers:dividers, stars:stars, matched:matched, total:forest.convOrder.length, filtering:filtering};
   }
 
-  /** Whether a topic this one opened, or one of theirs, is working or asking. */
+  /** Whether a topic this one opened, or one of theirs, is working. */
   function busyBelow(id){
-    var stack=[id], seenB={}, n=0;
-    while(stack.length && n++<256){
-      var p=stack.pop();
-      if(seenB[p]) continue;
-      seenB[p]=true;
-      for(var i=0;i<topics.length;i++){
-        var t=topics[i];
-        if(t.parent!==p) continue;
-        if(t.running || t.asking) return true;
-        stack.push(t.id);
-      }
-    }
-    return false;
+    return subtreeRun(id).busy;
   }
 
   /**
@@ -4861,8 +4863,8 @@ const SCRIPT = `
    *
    * A /super dispatcher hands its work to topics of its own and then sits idle between turns, so
    * drawn from its own flag alone it was the one row that looked dead while the agents under it
-   * worked (reported 2026-11-04). busyBelow counts a question too — a sub-agent holding one has
-   * not finished either, and the fold pill is what says which of the two it is.
+   * worked (reported 2026-11-04). A sub-agent holding a question is running too — the daemon sends
+   * both flags — so busyBelow counts it, and the fold pill is what says which of the two it is.
    */
   function rowRunning(t){
     return Boolean(t.running) || busyBelow(t.id);
@@ -5970,10 +5972,11 @@ const SCRIPT = `
   // would throw away the hover state and any menu open over a row, twice a minute, for a string
   // that changed by one character. Minutes are the finest unit a row shows, so twice a minute is
   // as often as it can visibly move — and only while one is on screen and the tab is visible.
-  var AGE_TICK_MS = 30000, ageTimer = null;
+  // AGE_TICK_MS and ageTimer are declared near the top of the script; see there.
 
   function paintAges(){
-    var nodes=bar.querySelectorAll('.topic-age'), now=Date.now();
+    // Both lists carry one: a topic row in the switcher, a scheduled run in the panel.
+    var nodes=document.querySelectorAll('.topic-age'), now=Date.now();
     for(var i=0;i<nodes.length;i++){
       var n=nodes[i], at=Number(n.getAttribute('data-age')) || 0;
       if(!at) continue;
@@ -5984,7 +5987,7 @@ const SCRIPT = `
   }
 
   function armAgeTick(){
-    var want=Boolean(bar.querySelector('.topic-age')) && document.visibilityState !== 'hidden';
+    var want=Boolean(document.querySelector('.topic-age')) && document.visibilityState !== 'hidden';
     if(want && !ageTimer) ageTimer=setInterval(paintAges, AGE_TICK_MS);
     else if(!want && ageTimer){ clearInterval(ageTimer); ageTimer=null; }
   }
