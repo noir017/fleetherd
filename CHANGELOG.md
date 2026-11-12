@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-12
+
 ### Added
 
 - **A topic row says how long it has been working, or how long since it stopped.** A sidebar of
