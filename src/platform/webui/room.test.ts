@@ -626,6 +626,62 @@ describe('WebRoom: resuming a dropped stream', () => {
   });
 });
 
+describe('WebRoom: a topic handed over without attaching', () => {
+  it('gives the whole room and leaves no trace: no subscriber, no list event', () => {
+    const { room, topic, seen } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    room.post(topic, { own: true, html: '<p>two</p>' }, 'two');
+    seen.length = 0;
+
+    const snap = room.snapshot(topic);
+
+    expect(snap?.topic).toBe(topic);
+    expect(typeof snap?.epoch).toBe('number');
+    expect(snap?.messages.map((m) => m.html)).toEqual(['<p>one</p>', '<p>two</p>']);
+    expect(snap?.last).toMatch(new RegExp(`^${topic}\\.[0-9a-z]+\\.\\d+$`));
+    // Read-only in the strong sense: nobody was attached, so nothing was announced to the client
+    // already watching, and the room is exactly as the snapshot found it.
+    expect(seen).toEqual([]);
+    expect(room.watchers).toBe(1);
+    expect(snap?.stale).toBeUndefined();
+  });
+
+  it('numbers its last id so the stream can be resumed from it', () => {
+    const { room, topic } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const snap = room.snapshot(topic);
+    expect(snap).toBeDefined();
+    room.post(topic, { own: false, html: '<p>two</p>' }, 'two');
+    room.post(topic, { own: false, html: '<p>three</p>' }, 'three');
+
+    const resumed: Seen[] = [];
+    room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), snap?.last);
+    // The snapshot is the sync the page never had to wait for: what follows is only what was said
+    // after it, never the whole topic again.
+    expect(kinds(resumed).filter((k) => k === 'sync')).toEqual([]);
+    expect(resumed.filter((s) => s.ev.t === 'msg')).toHaveLength(2);
+  });
+
+  it('answers nothing for a topic the store does not have', () => {
+    const { room } = attached();
+    expect(room.snapshot('deadbeef')).toBeUndefined();
+    expect(room.snapshot('not-a-topic')).toBeUndefined();
+  });
+
+  it('calls an empty topic from before this process stale, without creating a room for it', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-10T08:00:00Z') });
+    const file = path.join(dir, 'stale.json');
+    const store = new TopicStore(file);
+    const topic = store.current().id;
+    // A daemon that started after the topic was last active: the transcript was not kept, and the
+    // page has to be told that rather than shown a blank panel.
+    vi.setSystemTime(new Date('2026-11-10T08:00:05Z'));
+    const room = new WebRoom(instance(), store);
+    expect(room.snapshot(topic)).toMatchObject({ topic, messages: [], stale: true });
+    room.dispose();
+  });
+});
+
 describe('WebRoom: a topic older than the process', () => {
   // A transcript is memory; the topic LIST is a file. So every restart leaves rows that open
   // onto nothing, and a page that renders that faithfully looks broken rather than empty — which

@@ -2794,6 +2794,115 @@ describe('webui page: a topic held in memory', () => {
   });
 });
 
+describe('webui page: a topic fetched before it is opened', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const C = 'c3d4e5f6';
+  const url = (id: string): string => `api/topic?t=${id}`;
+  /** A topic row as the daemon sends it; `stage` is what makes it need a person. */
+  const row = (id: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id,
+    title: `Topic ${id}`,
+    lastAt: 1000,
+    running: false,
+    msgCount: 0,
+    ...over,
+  });
+  /** A snapshot as `api/topic` answers one. */
+  const snap = (topic: string, messages: Array<Record<string, unknown>>, last: string): Record<string, unknown> => ({
+    topic,
+    epoch: 1,
+    last,
+    messages,
+  });
+  const fetched = (h: Harness, id: string): boolean => h.calls.some((c) => c.path === url(id));
+
+  it('fetches a topic that needs an answer, and opening it paints before the stream says anything', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`) } });
+    await h.emit(
+      sync(A, [message('a1', '<p>in A</p>')], [A, B], { topics: [row(A), row(B, { stage: 'answer', lastAt: 900 })] })
+    );
+    await within('the prefetch goes out', 2000, () => fetched(h, B));
+    await tick();
+    expect(h.painted()).toBe(1);
+
+    await h.click(`[data-topic="${B}"]`);
+    // The whole point: no sync for B has been sent, and its reply is already on screen.
+    expect(h.painted()).toBe(1);
+    expect(h.el('log').textContent).toContain('from B');
+    // And the stream resumes from the snapshot's id, so only what came after it is replayed.
+    expect(h.live().url).toBe(`api/events?t=${B}&last=${encodeURIComponent(`${B}.run.4`)}`);
+  });
+
+  it('leaves the topic on screen and a scheduled run alone', async () => {
+    const h = await open();
+    await h.emit(
+      sync(A, [], [A, B, C], {
+        topics: [row(A, { stage: 'answer' }), row(B, { stage: 'answer', scheduled: true })],
+      })
+    );
+    await new Promise((r) => setTimeout(r, 600));
+    // A is being read already, B is a scheduled lane the switcher does not even list.
+    expect(h.calls.filter((c) => c.path.startsWith('api/topic'))).toEqual([]);
+  });
+
+  it('fetches the first four that need an answer, and no more', async () => {
+    const ids = ['11111111', '22222222', '33333333', '44444444', '55555555', '66666666'];
+    const replies: Record<string, unknown> = {};
+    for (const id of ids) replies[url(id)] = snap(id, [message(`m${id}`, '<p>x</p>')], `${id}.run.1`);
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id) => row(id, { stage: 'answer' }))] }));
+    await within('four prefetches', 4000, () => ids.filter((id) => fetched(h, id)).length === 4);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(ids.filter((id) => fetched(h, id))).toEqual(ids.slice(0, 4));
+  });
+
+  it('fetches it again when a new reply moves the row', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>one</p>')], `${B}.run.1`) } });
+    const list = [row(A), row(B, { stage: 'answer', lastAt: 900 })];
+    await h.emit(sync(A, [], [A, B], { topics: list }));
+    await within('the first prefetch', 2000, () => fetched(h, B));
+    await new Promise((r) => setTimeout(r, 100));
+
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', lastAt: 1200, msgCount: 2 })] });
+    await within('the second prefetch', 2000, () => h.calls.filter((c) => c.path === url(B)).length === 2);
+  });
+
+  it('drops an answer that arrives after the person has opened the topic', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>stale</p>')], `${B}.run.1`) }, held: { [url(B)]: gate } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the prefetch goes out', 2000, () => fetched(h, B));
+
+    // Opened while the answer was still on the wire, and left again before its stream said
+    // where it got to — so nothing else could put B up from memory.
+    await h.click(`[data-topic="${B}"]`);
+    release();
+    await tick();
+    await tick();
+    await h.click(`[data-topic="${A}"]`);
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.live().url).toBe(`api/events?t=${B}`);
+  });
+
+  it('fetches nothing while the tab is hidden', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [], `${B}.run.0`) } });
+    Object.defineProperty(h.doc, 'visibilityState', { value: 'hidden', configurable: true });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(fetched(h, B)).toBe(false);
+  });
+
+  it('does not ask again at once when the daemon refused one', async () => {
+    const h = await open({ status: { [url(B)]: 500 } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the first attempt', 2000, () => fetched(h, B));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
+  });
+});
+
 describe('webui page: coming back to a topic', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';

@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI fetches a topic that needs an answer before it is opened.** The green rows are the
+  ones a person is about to tap, and tapping one cost the same full sync as any first visit — up
+  to 1000 messages, 83 KB gzipped and 2.3 s at 500 kbps for a long topic. The page now fetches the
+  first four of them in the background, one at a time and only while the tab is visible, and
+  opening one paints at once and resumes the stream from the snapshot, so the switch itself moves
+  no bytes. Measured in Chromium at 400 ms RTT / 500 kbps: the prefetch of a 1000-message topic
+  took 1.7 s and 83.3 KB while another topic was being read, and opening it went from 2.3 s to
+  0.4 s. The copies have their own budget (four topics, 2000 messages), a reply that arrives while
+  one is waiting is fetched again, and nothing is fetched for the topic on screen, a scheduled run,
+  or a topic already held in memory.
+
 ## [3.0.0] - 2026-11-11
 
 ### Changed

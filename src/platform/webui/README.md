@@ -1140,6 +1140,25 @@ Measured in Chromium at 400 ms / 500 kbps on 2026-11-10: switching back to a 100
 from 85.0 KB and 3.7 s to a few hundred bytes and 1.4 s, which is the time it takes to draw 1000
 messages on that (loaded) machine; the first visit to that topic is unchanged, at 86 KB.
 
+**A topic that needs an answer is fetched before it is opened** (`pre`, since this branch). The
+green rows are the ones a person is about to tap, and tapping one used to cost the same full sync
+as any first visit. The page now fetches up to four of them in the background — the first four in
+list order that need a person, are not a scheduled run, are not on screen, and are not already
+held — one request at a time, and only while the tab is visible and its stream is up. Opening one
+is then what opening a held topic is: the messages go up at once and the stream opens with
+`?last=<the snapshot's id>`, so only what was said after the snapshot is replayed. The budget is
+its own (4 topics, 2000 messages), not `held`'s, so a topic nobody has opened cannot evict the one
+just left. A copy older than the row is fetched again (a reply moves `lastAt`), and one that
+arrives after the person opened the topic, from another run of the daemon, or for a topic that has
+gone is dropped. A failed fetch is retried when the row moves or after a minute — never at once.
+Measured in Chromium at 400 ms / 500 kbps on 2026-11-12: the prefetch of a 1000-message topic took
+1.7 s and 83.3 KB in the background, and opening it went from 83.4 KB and 2.3 s to nothing on the
+wire and 0.4 s (`project-scripts/fleetherd-prefetch/prefetch.mts`). The cost is that much memory
+held for four topics, and the bytes spent on a topic the person may not open — which is why it
+happens only where the sidebar already says the person is wanted. The route is `GET api/topic`,
+read-only (no subscriber, no list event, no seen mark); its answer can be 1.5 MB of JSON, so it is
+gzipped on libuv's pool rather than with `gzipSync`, which would stall every stream in the process.
+
 **A browser with no IndexedDB is a supported configuration.** Private windows and old engines
 both produce one; the cache is the only thing that goes, and `page.dom.test.ts` holds that.
 
