@@ -115,7 +115,8 @@ between **Status** (the default), **Next run**, **Last run** and **Created**, ei
 a task with nothing to sort by stays last. The keyword, the filters and the sort are kept in this
 browser, and **Showing N of M** with **Clear** says what survived. **Sessions** lists the
 topics a new-session run opened; those topics are kept out of the main topic list, so this is where
-they live, and tapping one opens it (the × deletes it). The list groups this month's runs by day and
+they live, and tapping one opens it (its ⋯ holds **Star**, **End agent** and **Delete topic**, the
+same menu a topic row has). The list groups this month's runs by day and
 older ones by month, each header folding on its own and the choice kept in this browser — the newest
 group and the one holding the topic on screen start open, and a folded header still says how many
 replies are unread and whether a run is working or waiting on an answer. **Mark all read** clears
@@ -139,11 +140,15 @@ visible; below 640px the topic sidebar is that same drawer on the left. The dimm
 is what closes it. It is closed by default, and only a docked panel is restored on a reload; on a
 narrow screen it opens from the clock each time. Opening a session leaves a docked panel where it
 is. It is narrower than the topic sidebar — drag its left edge to resize it, double-click the edge
-for the default width. Tap a task for the
-full prompt or command, pause or resume it, run it now, or delete it (two taps); its tags are
-edited there too, with the × on a tag to remove it and the **+ tag** field, saved with Enter, to
-add one. Tasks are still registered by asking an agent in a topic — the panel manages them, it does
-not create them.
+for the default width. A task is a row like a topic's: a state dot, the name, and one line under it
+with what it is doing (a countdown, `running now`, or the state word), where it posts, how the last
+run ended (red when it was not ok) and its tags. The cron expression, the next run in full, the
+target and the run mode are on the row's hover card and in the detail a tap opens; the detail also
+holds the full prompt or command and the tag editor, with the × on a tag to remove it and the
+**+ tag** field, saved with Enter, to add one. The row's ⋯ holds **Pause** or **Resume**, **Run
+now** (greyed while a run is in flight, with the reason) and **Delete**, which asks once, like
+deleting a topic. Tasks are still registered by asking an agent in a topic — the panel manages
+them, it does not create them.
 
 **What needs you.** Every topic waiting on you moves to the top of the list, its title in green,
 with a line under the group: a question to answer first (amber dot), then a turn that failed (red

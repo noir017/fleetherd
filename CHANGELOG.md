@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A scheduled task is a row in the side panel, not a card.** The Tasks tab and the topic list are
+  read the same way — what is it, what is it doing, and one control — so they draw the same row now
+  (`rowHtml`), and the Sessions tab's rows do too: a state dot, the name, and one quiet line with
+  what it is doing (a countdown, `running now`, or the state word), where it posts, how the last run
+  ended and its tags. The cron expression left the row for the row's hover card and the detail,
+  which is what makes a column of tasks scannable: it was the widest thing on every card and the one
+  field nobody reads at a glance. A task's actions moved into the ⋯ every row now has — Pause or
+  Resume, Run now (greyed while a run is in flight, with the reason), then Delete — which also gives
+  a scheduled run the same Star / End agent / Delete a topic row has instead of a bare ×. Delete
+  asks once, through the same `confirm` deleting a topic uses. The menu is one box shared by all
+  three lists, re-found after each poll's repaint and closed when the row it acts on is gone.
+
 ## [3.0.0] - 2026-11-11
 
 ### Changed

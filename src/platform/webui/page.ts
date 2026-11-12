@@ -242,11 +242,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topics-empty .fb-clear:hover{text-decoration:underline}
 
 #topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding:8px}
-/* The row's colour is a variable because the hover buttons' fade (.topic-acts) has to end in exactly
-   it: a fade into any other colour shows as a band across the title. #171717 is #sidebar's own. */
-#topics .topic-item{--row-bg:#171717;display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
-#topics .topic-item:hover{--row-bg:#222}
-#topics .topic-item.on{--row-bg:#252525;border-color:var(--line)}
+/* One row shape for every list on the page: the topic list, a scheduled task and a scheduled run
+   are all "a dot, a name, a line under it, and a ⋯". Only #topics' own decorations (the needs
+   block, the sub-agent staircase, the star) stay scoped to it below.
+   The row's colour is a variable because the hover buttons' fade (.topic-acts) has to end in exactly
+   it: a fade into any other colour shows as a band across the title. #171717 is both panels' own. */
+.topic-item{--row-bg:#171717;display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
+.topic-item:hover{--row-bg:#222}
+.topic-item.on{--row-bg:#252525;border-color:var(--line)}
 /* Four states, and the dot is the only thing that carries all four. Read as one sentence: the
    colour says whether the agent is there, the pulse says whether it is busy.
      grey     — nothing resident. History, or a topic that will have to resume from a session id.
@@ -277,21 +280,21 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* Which project this topic is in. Dimmer than an idle title on purpose: it is what you scan
    for when several topics are open, not what you read. */
 .topic-dir{font-size:11px;line-height:1.35;color:#6b7683;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#topics .topic-item.on .topic-dir{color:#8b98a6}
+.topic-item.on .topic-dir{color:#8b98a6}
 /* A machine the gateway cannot reach (OfflineMachine, the machines event): its name in a topic's
    line, the heading over its agents on a new topic, and a line above the composer. A muted red of
    its own, because amber already means "waiting for you" on this page, and this is not something to
    act on in the topic — it is why nothing there will answer. */
 .topic-off{color:#c98a7d}
 .topic-off .ic{width:11px;height:11px;margin-right:3px;vertical-align:-.15em}
-#topics .topic-item.running .topic-title{color:var(--fg)}
-#topics .topic-item.on.running .topic-title{color:#fff}
-#topics .topic-item.idle .topic-title{color:var(--dim)}
-#topics .topic-item.on.idle .topic-title{color:#a0a0a0}
+.topic-item.running .topic-title{color:var(--fg)}
+.topic-item.on.running .topic-title{color:#fff}
+.topic-item.idle .topic-title{color:var(--dim)}
+.topic-item.on.idle .topic-title{color:#a0a0a0}
 /* Quiet but not finished: half a step back from a running title, half a step ahead of a topic
    with nothing behind it. The dot says which; this is so the eye finds the right row first. */
-#topics .topic-item.idle.live .topic-title{color:#9a9a9a}
-#topics .topic-item.on.idle.live .topic-title{color:#bcbcbc}
+.topic-item.idle.live .topic-title{color:#9a9a9a}
+.topic-item.on.idle.live .topic-title{color:#bcbcbc}
 .topic-badge{background:#2563eb;color:#fff;border-radius:9px;padding:1px 6px;font-size:11px;font-weight:600;line-height:1.3;margin-left:4px;flex-shrink:0}
 /* A terminal is attached to this topic. Deliberately not a fifth colour on .topic-dot: that dot
    is about the agent — whether one is resident, busy, or waiting on an answer — and a terminal is
@@ -323,22 +326,22 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-acts{display:flex;align-items:center;gap:4px;flex-shrink:0}
 @media(hover:hover){
   .topic-acts{position:absolute;top:0;bottom:0;right:9px;padding-left:22px;background:linear-gradient(90deg,transparent,var(--row-bg) 18px);opacity:0;pointer-events:none;transition:opacity .15s}
-  #topics .topic-item:hover .topic-acts,#topics .topic-item:focus-within .topic-acts{opacity:1;pointer-events:auto}
+  .topic-item:hover .topic-acts,.topic-item:focus-within .topic-acts{opacity:1;pointer-events:auto}
   #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-acts{position:static;padding-left:0;background:none;opacity:1;pointer-events:none}
   #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-more{display:none}
 }
-/* One topic's menu, drawn at the body rather than inside #topics: the list is rebuilt with
-   innerHTML on every message a running agent posts, and a menu that lived in it would vanish
-   mid-tap. Fixed, so it can sit beside the button that opened it and stay there while the list
-   scrolls; above the sidebar's own z-index (20 on a phone) so it works inside the drawer. */
-#topic-menu{position:fixed;z-index:21;min-width:210px;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
-#topic-menu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
-#topic-menu button:hover:not(:disabled){background:var(--field)}
-#topic-menu button:disabled{color:var(--dim);cursor:default}
-#topic-menu .ic{width:14px;height:14px;flex:none}
-#topic-menu .tm-del{color:#f87171}
-#topic-menu .tm-del:hover{background:rgba(248,113,113,.12)}
-#topic-menu .tm-sep{border-top:1px solid var(--line);margin:4px 2px}
+/* A list row's menu, drawn at the body rather than inside the list: every list here is rebuilt
+   with innerHTML on a poll or on every message a running agent posts, and a menu that lived in it
+   would vanish mid-tap. Fixed, so it can sit beside the button that opened it and stay there while
+   the list scrolls; above the sidebar's own z-index (20 on a phone) so it works inside the drawer. */
+#row-menu{position:fixed;z-index:21;min-width:210px;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
+#row-menu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
+#row-menu button:hover:not(:disabled){background:var(--field)}
+#row-menu button:disabled{color:var(--dim);cursor:default}
+#row-menu .ic{width:14px;height:14px;flex:none}
+#row-menu .rm-del{color:#f87171}
+#row-menu .rm-del:hover{background:rgba(248,113,113,.12)}
+#row-menu .rm-sep{border-top:1px solid var(--line);margin:4px 2px}
 /* Where the group that needs the person ends. A pseudo-element on the first row after it rather
    than a node of its own, so #topics holds rows and nothing else. */
 /* A topic another topic's agent opened (Topic.parent — daemon/delegation.ts), under the one that
@@ -523,20 +526,12 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    DOM it would otherwise replace. Its own border-bottom would double the sub-nav's line. */
 #sched-filter{flex:0 0 auto}
 #sched-filter .filterbar{padding:8px;border-bottom:0}
-#schedules-list{display:flex;flex-direction:column;gap:6px}
+#schedules-list{display:flex;flex-direction:column;gap:2px}
 /* A scheduled run, as the Sessions tab draws it: one line per topic, because there can be many
-   and the thing being scanned for is which one is still working or waiting. */
+   and the thing being scanned for is which one is still working or waiting. It is the same row
+   the topic list draws (rowHtml): dot, name, a quiet line under it, and a ⋯ that holds the same
+   Star / End agent / Delete a topic row's does. */
 #sched-sessions{display:flex;flex-direction:column;gap:2px}
-.sess-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 6px 8px 8px;border:1px solid transparent;border-radius:5px;text-align:left;font:inherit;cursor:pointer;position:relative}
-.sess-item:hover{background:#202020}
-.sess-item.on{background:#252525;border-color:var(--line)}
-.sess-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.sess-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sess-item.on .sess-title{color:#fff}
-.sess-meta{font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sess-del{opacity:.35;flex:none}
-.sess-item:hover .sess-del,.sess-item:focus-within .sess-del{opacity:1}
-.sess-del:hover{color:#f87171;background:rgba(248,113,113,.15)}
 /* The one bulk action over the list, and the period headers that keep a long run history
    scannable. A folded header carries what its rows would: the unread count and any run still
    working or waiting. */
@@ -556,25 +551,24 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sess-group-flag.asking{color:#fbbf24}
 .sess-group-flag.running{color:#38bdf8}
 .sess-group-rows{display:flex;flex-direction:column;gap:2px}
-/* A task card, in the order a person asks about one: what is it, when does it run, when next,
-   where does it post, how did last time go. The name and the schedule carry the weight; the
-   countdown and the target are one quiet line under them, and the only colour is a state that is
-   not the ordinary one or a run that did not end ok. */
-.sched-item{border:1px solid var(--line);border-radius:6px;padding:10px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px}
-.sched-item:hover{background:#1e1e1e}
-.sched-item.open{background:#202020;border-color:#3a3a3a}
-.sched-row{display:flex;align-items:center;gap:8px}
-.sched-dot{width:8px;height:8px;border-radius:50%;background:#555;flex:none}
-.sched-item.active .sched-dot{background:#38bdf8}
-.sched-item.paused .sched-dot{background:#fbbf24}
-.sched-item.expired .sched-dot{background:#f87171}
-.sched-item.done .sched-dot{background:#4ade80}
-.sched-item.running .sched-dot{box-shadow:0 0 6px rgba(56,189,248,.8);animation:pulse 1.5s infinite}
-#app.calm .sched-item.running .sched-dot{animation:none}
-.sched-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
-/* A task's labels, under its name: the same chip the filter panel's Tags group draws, so a tag
-   reads as one thing in both places. */
-.sched-tags{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+/* A task, as the Tasks tab draws it: the same row every list uses, with the schedule on its hover
+   card and in the detail rather than on the row, because a cron expression is the one thing on a
+   task nobody reads at a glance. This wrapper only holds the detail a tap opens under it. */
+.sched-item{display:flex;flex-direction:column}
+/* The row's second line: what it is doing (a countdown, a state word), where it posts, how last
+   time went, its tags — one line, ellipsised as a whole by .topic-dir. */
+.sched-next{color:#a8a8a8}
+.topic-item.running .sched-next{color:#38bdf8}
+.sched-last.bad{color:#f87171}
+.sched-row-tag{color:#8a8a8a}
+.sched-detail{margin:2px 0 6px;padding:8px 9px 0;border-top:1px solid var(--line)}
+.sched-detail-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.sched-detail-label+.sched-detail-label{margin-top:8px}
+.sched-detail-when{margin-top:4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:#a8a8a8;overflow-wrap:anywhere}
+.sched-detail-body{margin-top:4px;max-height:220px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#c9c9c9}
+.sched-detail-meta{margin-top:6px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+/* A task's labels, in the detail's editor: the same chip the filter panel's Tags group draws, so
+   a tag reads as one thing in both places. */
 .sched-tag{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:10.5px;color:#a8a8a8;background:#232323;line-height:1.55}
 .sched-tag .ic{width:9px;height:9px;flex:none;opacity:.8}
 .sched-tag>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -587,36 +581,6 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-tag-add .ic{width:9px;height:9px;flex:none}
 .sched-tag-add input{width:64px;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:10.5px;padding:0}
 .sched-tag-add:focus-within{border-color:#555;color:var(--fg)}
-/* A word only for the states that are not the ordinary one: an ACTIVE tag on every card is a
-   line of text that tells nobody anything. */
-.sched-state{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;background:#262626}
-.sched-state.running{color:#38bdf8;background:rgba(56,189,248,.12)}
-.sched-state.paused{color:#fbbf24;background:rgba(251,191,36,.12)}
-.sched-state.expired{color:#f87171;background:rgba(248,113,113,.12)}
-.sched-state.done{color:#4ade80;background:rgba(74,222,128,.12)}
-.sched-when{font-size:12px;color:#d0d0d0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
-.sched-sub{display:flex;align-items:baseline;gap:6px;min-width:0;font-size:11.5px;color:var(--dim)}
-.sched-next{flex:none;color:#a8a8a8}
-/* Blue is the running signal; a countdown on every active card would spend it. */
-.sched-item.running .sched-next{color:#38bdf8}
-.sched-target{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sched-sep{flex:none;color:#4a4a4a}
-.sched-last{font-size:11.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sched-last.bad{color:#f87171}
-.sched-detail{margin-top:5px;padding-top:8px;border-top:1px solid var(--line)}
-.sched-detail-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
-.sched-detail-body{margin-top:4px;max-height:220px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#c9c9c9}
-.sched-detail-meta{margin-top:6px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
-.sched-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.sched-acts button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
-.sched-acts button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
-.sched-acts button:disabled{opacity:.45;cursor:default}
-/* Delete is last and quiet until the pointer is on it: it is the one action here that cannot be
-   undone, and it should not compete with Pause for the eye on every card. */
-.sched-acts button:last-child{margin-left:auto}
-.sched-acts button.danger{color:var(--dim);border-color:transparent;background:none}
-.sched-acts button.danger:hover:not(:disabled){color:#f87171;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12)}
-.sched-acts button.confirm{background:rgba(248,113,113,.16);border-color:#7f1d1d;color:#fca5a5}
 #schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
 .sched-none{display:flex;align-items:center;gap:8px}
@@ -1312,7 +1276,7 @@ button:disabled{opacity:.5;cursor:default}
   #sidebar.collapsed{margin:0;transform:translateX(-100%)}
   #app.sb-open #backdrop{display:block}
   #sidebar>.panel-resize{display:none}
-  #topics .topic-item{padding:10px 9px}
+  .topic-item{padding:10px 9px}
   /* The filter bar in the drawer: the same finger-sized field as the composer, and a
      16px search box — the rule is the zoom, not the look. */
   .filterbar{padding:8px 10px}
@@ -1356,7 +1320,6 @@ button:disabled{opacity:.5;cursor:default}
   #schedules-toggle svg{width:18px;height:18px}
   #term-toggle{min-width:44px;height:44px}
   #term-toggle .ic{width:18px;height:18px}
-  .sched-acts button{min-height:44px;padding:0 14px}
   .sched-subtab{min-height:44px}
   .rev-open{min-height:44px;padding:0 14px}
   /* Both answers on a suggestion at an ordinary height: at 44px, two under every suggestion read
@@ -1424,9 +1387,9 @@ button:disabled{opacity:.5;cursor:default}
   .set-switch::before{left:8px;top:12px}
   .set-switch::after{left:11px;top:15px}
   .set-back{min-height:44px}
-  /* A hover-revealed × does not exist on a finger, and the row is the only way to delete a
-     scheduled run now that the switcher no longer lists it. */
-  .sess-del{opacity:1;min-width:44px;height:44px}
+  /* A hover-revealed ⋯ does not exist on a finger, and it is the only way to a scheduled run's
+     menu — and so to deleting it — now that the switcher no longer lists it. */
+  .topic-more{opacity:1;min-width:44px;height:44px}
   .chat-title{max-width:none}
   #log{padding:14px 12px 6px}
   #typing,#note{padding-left:12px;padding-right:12px}
@@ -1494,7 +1457,7 @@ const SCRIPT = `
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
       clearBtn=$('clear-topics'), idleBtn=$('close-idle'), noIdleBtn=$('no-idle'), idleCount=$('idle-count'),
       notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
-      topicMenu=$('topic-menu'),
+      rowMenu=$('row-menu'),
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
@@ -1529,9 +1492,10 @@ const SCRIPT = `
       updateEl=$('update'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent');
   var data={}, els={}, files=[], commands=[], stream=null;
-  // The row menu's topic and the button that opened it. The button is re-found after every repaint
-  // (paintTopics), because the row it lives in is replaced while the menu stays open.
-  var topicMenuFor=null, topicMenuBtn=null;
+  // The row menu: which row it belongs to (a key like "topic:<id>", "sess:<id>", "task:<id>"),
+  // the button that opened it, and what a pick calls. The button is re-found after every repaint
+  // (rowMenuFollow), because the row it lives in is replaced while the menu stays open.
+  var rowMenuKey=null, rowMenuBtn=null, rowMenuPick=null;
   // Last markup written per message, so a sync that re-sends an unchanged message touches no DOM.
   var sig={};
   // The tool-bubble lines a reader has opened, per message key. See lineOpen.
@@ -2236,11 +2200,34 @@ const SCRIPT = `
   }
 
   /**
+   * One row of any list: a state dot, a title, a quiet second line, an optional badge and mark,
+   * and the ⋯ that opens the row's menu.
+   *
+   * The topic list, a scheduled task and a scheduled run all draw this, because they are the
+   * same thing to read: what is it, what is it doing, and one control. The callers own what goes
+   * in each slot; this owns the shape, and the key that ties the row to an open menu across the
+   * innerHTML repaint every one of these lists does.
+   */
+  function rowHtml(o){
+    var key=o.key||'';
+    var more='<button type="button" class="btn-icon topic-more" data-rm="'+text(key)+'"'
+      + ' aria-haspopup="menu" aria-expanded="'+(rowMenuKey===key?'true':'false')+'"'
+      + ' title="'+text(o.moreTitle||'Row actions')+'" aria-label="'+text(o.moreTitle||'Row actions')+'">'+IC.icon.more+'</button>';
+    return '<div class="topic-item'+(o.cls?' '+o.cls:'')+'"'+o.attrs+'>'
+      + '<span class="'+(o.dot||'topic-dot')+'"></span>'
+      + '<span class="topic-main">'+(o.title||'')+(o.sub||'')+'</span>'
+      + (o.badge||'')
+      + '<span class="topic-acts">'+(o.mark||'')+more+'</span>'
+      + '</div>';
+  }
+
+  /**
    * One scheduled run, as the Sessions tab draws it.
    *
    * The row is the only way to reach these topics now that the switcher leaves them out, and the
-   * only way to delete one: the dot and the badge say whether it is working, waiting, unread; the
-   * × is the operator deciding about this run rather than the whole task.
+   * ⋯ is the operator deciding about this run rather than the whole task — the same menu a topic
+   * row has (Star / End agent / Delete). The dot and the badge say whether it is working,
+   * waiting, unread.
    */
   function schedSessionRow(t){
     var named=splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
@@ -2251,14 +2238,18 @@ const SCRIPT = `
     var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
     var state=asking?'awaiting you':(running?'running':(t.stage==='failed'?'failed':(t.stage==='review'?'finished':'')));
     var meta=schedAgo(t.lastAt)+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'');
-    return '<div class="sess-item'+(t.id===topic?' on':'')+'" data-sess="'+text(t.id)+'" role="button" tabindex="0">'
-      + '<span class="'+dot+'"></span>'
-      + '<span class="sess-main"><span class="sess-title">'
-      + (named.tag?'<span class="topic-tag">'+text(named.tag)+'</span> ':'')+text(named.rest)
-      + '</span><span class="sess-meta">'+text(meta)+'</span></span>'
-      + badge
-      + '<button type="button" class="btn-icon sess-del" data-sdel="'+text(t.id)+'" title="Delete this session" aria-label="Delete this session">&times;</button>'
-      + '</div>';
+    return rowHtml({
+      cls:(t.id===topic?'on ':'')+'sess-item',
+      attrs:' data-sess="'+text(t.id)+'" role="button" tabindex="0"',
+      key:'sess:'+t.id,
+      dot:dot,
+      title:'<span class="topic-title">'
+        + (named.tag?'<span class="topic-tag">'+text(named.tag)+'</span> ':'')+text(named.rest)
+        + '</span>',
+      sub:'<span class="topic-dir">'+text(meta)+'</span>',
+      badge:badge,
+      moreTitle:'Session actions'
+    });
   }
 
   /**
@@ -2272,6 +2263,7 @@ const SCRIPT = `
     var list=schedSessions();
     if(!list.length){
       schedSessionList.innerHTML='<div class="sched-empty">No scheduled sessions yet. A task that runs in a new or daily session opens one here.</div>';
+      rowMenuFollow();
       return;
     }
     var pending=0;
@@ -2303,6 +2295,7 @@ const SCRIPT = `
         + '</div>';
     }
     schedSessionList.innerHTML=h;
+    rowMenuFollow();
   }
 
   /**
@@ -2698,6 +2691,8 @@ const SCRIPT = `
   }
 
   function setSchedTab(tab){
+    // A menu belongs to a row in one of these panes; switching panes takes the row off screen.
+    closeRowMenu(false);
     schedTab = tab==='reviews' ? 'reviews' : 'scheduled';
     try { localStorage.setItem('aa_sched_tab', schedTab); } catch(x){}
     if(schedTab==='reviews') loadReviews();
@@ -2705,6 +2700,7 @@ const SCRIPT = `
   }
 
   function setSchedSubtab(sub){
+    closeRowMenu(false);
     schedTab = 'scheduled';
     schedSubtab = sub==='sessions' ? 'sessions' : 'tasks';
     try {
@@ -2735,6 +2731,7 @@ const SCRIPT = `
 
   function setSchedules(open, transient){
     if(open === schedPane.isOpen()) return;
+    if(!open) closeRowMenu(false);
     // Docking the panel narrows the chat, which re-wraps the transcript. A reader at the bottom
     // should stay at the bottom; one reading history keeps the pixel position they chose.
     var wasBottom = atBottom();
@@ -2802,14 +2799,36 @@ const SCRIPT = `
     return s;
   }
 
-  /** A word only for the states that are not the ordinary one: active is what a card is unless it
-      says otherwise, and a badge on every card is noise the eye has to filter. */
-  function schedStateTag(t, state){
-    if(t.running) return '<span class="sched-state running">Running</span>';
-    if(state === 'paused') return '<span class="sched-state paused">Paused</span>';
-    if(state === 'expired') return '<span class="sched-state expired">Expired</span>';
-    if(state === 'done') return '<span class="sched-state done">Done</span>';
-    return '';
+  /** The target without the "posts to" the filter and the hover card still say: on the row the
+      arrow says it in one character. */
+  function schedTargetShort(t){
+    if(t.targetTopic){
+      for(var i=0;i<topics.length;i++){
+        if(topics[i].id === t.targetTopic) return topics[i].title || t.targetTopic;
+      }
+    }
+    return t.target;
+  }
+
+  /** The last run in a row's second line: a word and how long ago. The duration, the error and
+      the exact time are in the row's hover card and in the detail. */
+  function schedLastShort(t){
+    if(!t.last) return '';
+    var word = {ok:'ok', failed:'failed', interrupted:'interrupted', skipped:'skipped', missed:'missed'}[t.last.status] || t.last.status;
+    return 'last ' + word + ' ' + schedAgo(t.last.at);
+  }
+
+  /**
+   * The dot, read the same way the topic list's is: the colour says whether anything is
+   * happening, and a failure stays until the next run. Running wins over a failed last run —
+   * something is happening now, and the failure is still on the row's line and in the detail.
+   */
+  function schedDot(t, state){
+    var dot = 'topic-dot';
+    if(t.running) dot += ' running';
+    else if(t.last && t.last.status !== 'ok') dot += ' failed';
+    else if(state === 'active') dot += ' live';
+    return dot;
   }
 
   /** Every tag on a task, or an empty list — the DTO always carries an array. */
@@ -2917,41 +2936,62 @@ const SCRIPT = `
     return valued.concat(missing);
   }
 
-  /** A task's tags as chips under its name. */
-  function schedTagChips(t){
+  /**
+   * A task's second line: what it is doing, where it posts, how last time went, its tags — one
+   * line, ellipsised as a whole. A cron expression is deliberately absent: it is the one field
+   * nobody reads at a glance, and it lives on the row's hover card and in the detail instead.
+   */
+  function schedRowLine(t, state){
+    var bits = [];
+    if(t.running) bits.push('<span class="sched-next">running now</span>');
+    else if(state === 'active' && t.nextAt) bits.push('<span class="sched-next">' + text(schedIn(t.nextAt)) + '</span>');
+    else if(state !== 'active') bits.push('<span class="sched-next">' + text(state) + '</span>');
+    bits.push('<span class="sched-target">' + text('→ ' + schedTargetShort(t)) + '</span>');
+    var last = schedLastShort(t);
+    if(last) bits.push('<span class="sched-last' + (t.last.status !== 'ok' ? ' bad' : '') + '">' + text(last) + '</span>');
     var tags = schedTags(t);
-    if(!tags.length) return '';
-    var h = '<div class="sched-tags">';
-    for(var i=0;i<tags.length;i++){
-      h += '<span class="sched-tag">' + IC.icon.tag + '<span>' + text(tags[i]) + '</span></span>';
-    }
-    return h + '</div>';
+    for(var i=0;i<tags.length;i++) bits.push('<span class="sched-row-tag">#' + text(tags[i]) + '</span>');
+    return '<span class="topic-dir sched-line">' + bits.join(' · ') + '</span>';
   }
 
   /**
-   * One task, in the order the questions come: what is it, when does it run, when next, where does
-   * it post, how did last time go. The name and the schedule carry the weight; the countdown is
-   * the one live number; the rest is a quiet line under them. The prompt, the run mode, the tags
-   * and the bookkeeping stay behind the card, which is what clicking it is for.
+   * What the row no longer shows, on its hover card: the cron and its zone, the next run in full,
+   * the target's full name, the last run with its duration and error, and the run mode. The same
+   * facts are in the detail; the card is what a pointer can reach without opening anything.
+   */
+  function schedRowTitle(t){
+    var bits = [];
+    if(t.when) bits.push(t.when);
+    if(t.next) bits.push('next ' + t.next);
+    bits.push(schedTarget(t));
+    var last = schedLast(t);
+    if(last) bits.push(last);
+    if(t.run) bits.push(t.run);
+    return bits.join(' · ');
+  }
+
+  /**
+   * One task, as a row like a topic: the name, then what it is doing, where it posts, how last
+   * time went and its tags on one line. Everything that made the old card tall — the schedule,
+   * the next run in full, the run mode, the prompt — is on the row's hover card and behind the
+   * tap that opens the detail. Its actions are in the ⋯, like every other row's.
    */
   function schedCard(t){
     var state = t.state || 'active';
     var open = schedOpen[t.id] === true;
     var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + (open ? ' open' : '') + '" data-id="' + text(t.id) + '">';
-    h += '<div class="sched-row"><span class="sched-dot"></span><span class="sched-name">' + text(t.name) + '</span>' + schedStateTag(t, state) + '</div>';
-    h += schedTagChips(t);
-    h += '<div class="sched-when">' + text(t.when) + '</div>';
-    var sub = '';
-    if(t.running) sub += '<span class="sched-next">running now</span><span class="sched-sep">·</span>';
-    else if(state === 'active' && t.nextAt){
-      var next = schedIn(t.nextAt);
-      sub += '<span class="sched-next" title="' + text(t.next || '') + '">' + text(next === 'due now' ? next : 'next ' + next) + '</span><span class="sched-sep">·</span>';
-    }
-    sub += '<span class="sched-target">' + text(schedTarget(t)) + '</span>';
-    h += '<div class="sched-sub">' + sub + '</div>';
-    var last = schedLast(t);
-    if(last) h += '<div class="sched-last' + (t.last.status !== 'ok' ? ' bad' : '') + '" title="' + text(t.last.atText) + '">' + text(last) + '</div>';
+    h += rowHtml({
+      cls:(state === 'active' ? '' : 'idle ') + 'sched-row',
+      attrs:' role="button" tabindex="0" title="' + text(schedRowTitle(t)) + '"',
+      key:'task:' + t.id,
+      dot:schedDot(t, state),
+      title:'<span class="topic-title">' + text(t.name) + '</span>',
+      sub:schedRowLine(t, state),
+      moreTitle:'Task actions'
+    });
     h += '<div class="sched-detail"' + (open ? '' : ' hidden') + '>';
+    h += '<div class="sched-detail-label">Schedule</div>';
+    h += '<div class="sched-detail-when">' + text(t.when) + (t.next ? ' · next ' + text(t.next) : '') + '</div>';
     h += '<div class="sched-detail-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div>';
     h += '<div class="sched-detail-body">' + text(t.detail) + '</div>';
     h += '<div class="sched-detail-tags"><div class="sched-detail-label">Tags</div><div class="sched-tag-edit">';
@@ -2966,13 +3006,7 @@ const SCRIPT = `
     var meta = t.run + ' · #' + t.id + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs');
     if(t.cwd) meta += ' · ' + t.cwd;
     if(t.expires) meta += ' · until ' + t.expires;
-    h += '<div class="sched-detail-meta">' + text(meta) + '</div></div>';
-    h += '<div class="sched-acts">';
-    if(state === 'active') h += '<button type="button" data-op="pause">Pause</button>';
-    if(state === 'paused') h += '<button type="button" data-op="resume">Resume</button>';
-    if(state === 'active' || state === 'paused') h += '<button type="button" data-op="run"' + (t.running ? ' disabled' : '') + '>Run now</button>';
-    h += '<button type="button" class="danger" data-op="remove">Delete</button>';
-    h += '</div></div>';
+    h += '<div class="sched-detail-meta">' + text(meta) + '</div></div></div>';
     return h;
   }
 
@@ -3026,6 +3060,7 @@ const SCRIPT = `
     if(schedTasks === null){
       schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
       if(schedFilter) schedFilter.setCounts(0, 0);
+      rowMenuFollow();
       return;
     }
     captureSchedTagDraft();
@@ -3049,6 +3084,7 @@ const SCRIPT = `
     }
     restoreSchedTagDraft();
     if(schedFilter) schedFilter.setCounts(rows.length, total);
+    rowMenuFollow();
   }
 
   function paintSchedulesList(tasks){
@@ -3204,11 +3240,11 @@ const SCRIPT = `
       if(again && again.focus) again.focus();
       return;
     }
-    var del = e.target.closest ? e.target.closest('[data-sdel]') : null;
-    if(del){
+    var more = e.target.closest ? e.target.closest('[data-rm]') : null;
+    if(more){
       e.stopPropagation();
-      var delId = del.getAttribute('data-sdel');
-      if(delId) deleteTopic(delId);
+      if(rowMenuKey && rowMenuKey===more.getAttribute('data-rm') && !rowMenu.hidden) closeRowMenu(true);
+      else openRowMenuFor(more);
       return;
     }
     var row = e.target.closest ? e.target.closest('[data-sess]') : null;
@@ -3220,7 +3256,7 @@ const SCRIPT = `
 
   schedSessionList.addEventListener('keydown', function(e){
     if(e.key !== 'Enter' && e.key !== ' ') return;
-    if(e.target.closest && e.target.closest('[data-sdel]')) return;
+    if(e.target.closest && e.target.closest('[data-rm]')) return;
     var row = e.target.closest ? e.target.closest('[data-sess]') : null;
     if(!row) return;
     e.preventDefault();
@@ -3236,31 +3272,11 @@ const SCRIPT = `
       if(schedFilter) schedFilter.clear();
       return;
     }
-    var opBtn = e.target.closest ? e.target.closest('[data-op]') : null;
-    if(opBtn){
+    var more = e.target.closest ? e.target.closest('[data-rm]') : null;
+    if(more){
       e.stopPropagation();
-      var item = opBtn.closest ? opBtn.closest('.sched-item') : null;
-      var id = item ? item.getAttribute('data-id') : '';
-      var op = opBtn.getAttribute('data-op');
-      if(!id || !op) return;
-      if(op === 'remove' && opBtn.getAttribute('data-confirm') !== '1'){
-        // Two taps, like the /setting menu: the task is gone for good and a mis-tap on a phone
-        // is easy. Any repaint clears it, and so does this timeout.
-        opBtn.setAttribute('data-confirm', '1');
-        opBtn.classList.add('confirm');
-        opBtn.classList.remove('danger');
-        opBtn.textContent = 'Delete?';
-        setTimeout(function(){
-          if(opBtn.getAttribute('data-confirm') === '1'){
-            opBtn.removeAttribute('data-confirm');
-            opBtn.classList.remove('confirm');
-            opBtn.classList.add('danger');
-            opBtn.textContent = 'Delete';
-          }
-        }, 4000);
-        return;
-      }
-      schedOp(id, op, opBtn);
+      if(rowMenuKey && rowMenuKey===more.getAttribute('data-rm') && !rowMenu.hidden) closeRowMenu(true);
+      else openRowMenuFor(more);
       return;
     }
     var tagDel = e.target.closest ? e.target.closest('[data-tag-del]') : null;
@@ -3273,9 +3289,8 @@ const SCRIPT = `
       if(tagged && tag) schedOp(tagId, 'tags', null, schedTags(tagged).filter(function(x){ return x !== tag; }));
       return;
     }
-    // The tag editor is inside the detail, and clicking its field is not a tap on the card.
+    // The tag editor is inside the detail, and clicking its field is not a tap on the row.
     if(e.target.closest && e.target.closest('.sched-tag-edit')) return;
-    if(e.target.closest && e.target.closest('.sched-acts')) return;
     var card = e.target.closest ? e.target.closest('.sched-item') : null;
     if(!card) return;
     var detail = card.querySelector('.sched-detail');
@@ -5308,7 +5323,7 @@ const SCRIPT = `
       var isLive=Boolean(t.live);
       var count=t.msgCount||0;
       var unread=isCur?0:Math.max(0, count - readCounts[t.id]);
-      var cls='topic-item '+(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
+      var cls=(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
         +(t.starred?' starred':'')+(painted.dividers[i]?' after-needs':'')
         +(row.depth?' sub d'+Math.min(row.depth,3):'')
         +(needsYou(t)?' needs':'');
@@ -5343,29 +5358,22 @@ const SCRIPT = `
       var starMark=t.starred
         ? '<span class="topic-star-mark" title="Starred: never removed to make room, and kept by Clear" aria-hidden="true">'+IC.icon.star+'</span>'
         : '';
-      // aria-expanded is read from the menu as well as written by it, so a repaint during a
-      // streaming reply cannot make the button under an open menu claim it is closed.
-      var more='<button type="button" class="btn-icon topic-more" data-more="'+text(t.id)+'"'
-         + ' aria-haspopup="menu" aria-expanded="'+(topicMenuFor===t.id?'true':'false')+'"'
-         + ' title="Topic actions" aria-label="Topic actions">'+IC.icon.more+'</button>';
       // Its own button, like the star: folding a parent is not a reason to switch to it.
       var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
          + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
          + ' title="'+(row.shut?'Show':'Hide')+' the '+row.kids+' topic'+(row.kids>1?'s':'')+' its agent opened">'
          + (row.shut?IC.icon.chevronRight:IC.icon.chevronDown)+' '+row.kids+'</button>':'';
-      h += '<div class="'+cls+'" data-topic="'+text(t.id)+'" role="button" tabindex="0"'+says+'>'
-         + '<span class="'+dotCls+'"></span>'
-         + '<span class="topic-main">'
-         + title
-         + (fold ? '<span class="topic-line">'+fold+dir+'</span>' : dir)
-         + '</span>'
-         + term
-         + badge
-         + '<span class="topic-acts">'
-         + starMark
-         + more
-         + '</span>'
-         + '</div>';
+      h += rowHtml({
+        cls:cls,
+        attrs:' data-topic="'+text(t.id)+'" role="button" tabindex="0"'+says,
+        key:'topic:'+t.id,
+        dot:dotCls,
+        title:title,
+        sub:fold ? '<span class="topic-line">'+fold+dir+'</span>' : dir,
+        badge:term+badge,
+        mark:starMark,
+        moreTitle:'Topic actions'
+      });
     }
     bar.innerHTML=h;
     // From the same list the rows were drawn from, so the line and the row cannot disagree.
@@ -5377,14 +5385,8 @@ const SCRIPT = `
         + '<button type="button" class="fb-clear" data-filter-clear="1">Clear</button></div>';
     }
     // The row menu lives at the body, so the innerHTML above cannot take it with it. Follow the
-    // button's replacement, and close the menu only if its topic is gone from the list.
-    if(topicMenuFor){
-      if(!topicById(topicMenuFor)) closeTopicMenu(false);
-      else {
-        var anchor=bar.querySelector('[data-more="'+topicMenuFor+'"]');
-        if(anchor){ topicMenuBtn=anchor; anchor.setAttribute('aria-expanded','true'); positionTopicMenu(anchor); }
-      }
-    }
+    // button's replacement, and close the menu only if its row is gone from the list.
+    rowMenuFollow();
     // Says what it will do: with stars in the list it no longer clears all of them.
     var clearLabel = stars ? 'Clear unstarred topics' : 'Clear all topics';
     clearBtn.title = clearLabel;
@@ -6403,14 +6405,11 @@ const SCRIPT = `
     }
     // The row's one control. Opening the menu is not opening the topic, like the star and the ×
     // before it: the act is about the row, not about switching to it.
-    var more = e.target.closest ? e.target.closest('[data-more]') : null;
+    var more = e.target.closest ? e.target.closest('[data-rm]') : null;
     if(more){
       e.stopPropagation();
-      var moreId = more.getAttribute('data-more');
-      if(moreId){
-        if(topicMenuFor===moreId && !topicMenu.hidden) closeTopicMenu(true);
-        else openTopicMenu(moreId, more);
-      }
+      if(rowMenuKey && rowMenuKey===more.getAttribute('data-rm') && !rowMenu.hidden) closeRowMenu(true);
+      else openRowMenuFor(more);
       return;
     }
     var fold = e.target.closest ? e.target.closest('[data-fold]') : null;
@@ -6437,7 +6436,7 @@ const SCRIPT = `
 
   bar.addEventListener('keydown', function(e){
     if(e.key==='Enter' || e.key===' '){
-      if(e.target.closest && e.target.closest('[data-more],[data-fold]')) return;
+      if(e.target.closest && e.target.closest('[data-rm],[data-fold]')) return;
       var b = e.target.closest ? e.target.closest('[data-topic]') : null;
       if(!b) return;
       e.preventDefault();
@@ -6447,23 +6446,81 @@ const SCRIPT = `
     }
   });
 
-  // ── A topic row's ⋯ menu ────────────────────────────────────────────────────
-  // Star/Unstar and Delete moved here from the row; End agent is new and only here. The menu is
-  // one box at the body, so the list's innerHTML repaint (every message a running agent posts)
-  // cannot take it away, and it is fixed so it stays beside the button that opened it.
-  function topicMenuItems(){
-    return Array.prototype.filter.call(topicMenu.querySelectorAll('[role="menuitem"]'), function(b){ return !b.disabled; });
+  // ── A row's ⋯ menu ──────────────────────────────────────────────────────────
+  // One menu for every list on the page: a topic row, a scheduled run and a scheduled task all
+  // open it, with their own items. The box lives at the body, so a list's innerHTML repaint (every
+  // message a running agent posts, every poll of the task list) cannot take it away, and it is
+  // fixed so it stays beside the button that opened it. What ties it to a row is a key on the
+  // button — "topic:<id>", "sess:<id>", "task:<id>" — re-found after each repaint by rowMenuFollow,
+  // which closes the menu when the row it acts on has gone.
+  var ROW_MENU_ITEMS = '[role="menuitem"]';
+  function rowMenuButtons(){
+    return Array.prototype.filter.call(rowMenu.querySelectorAll(ROW_MENU_ITEMS), function(b){ return !b.disabled; });
   }
   /** Place the menu under its button, above it when the viewport runs out, inside both edges. */
-  function positionTopicMenu(btn){
+  function positionRowMenu(btn){
     if(!btn) return;
     var r=btn.getBoundingClientRect();
-    var w=topicMenu.offsetWidth || 210, h=topicMenu.offsetHeight || 0;
+    var w=rowMenu.offsetWidth || 210, h=rowMenu.offsetHeight || 0;
     var left=Math.max(8, Math.min(r.right-w, window.innerWidth-8-w));
     var top=r.bottom+4;
     if(top+h+8>window.innerHeight) top=Math.max(8, r.top-4-h);
-    topicMenu.style.left=left+'px';
-    topicMenu.style.top=top+'px';
+    rowMenu.style.left=left+'px';
+    rowMenu.style.top=top+'px';
+  }
+  /**
+   * Draw the menu for one row and put it beside its button.
+   *
+   * items: {key, icon, label, title, disabled, danger} for an action, {sep:true} for a divider.
+   * onPick(key) runs after the menu has closed, so a handler may repaint the list it came from.
+   */
+  function openRowMenu(btn, key, items, onPick){
+    var h='';
+    for(var i=0;i<items.length;i++){
+      var it=items[i];
+      if(it.sep){ h+='<div class="rm-sep" role="separator"></div>'; continue; }
+      h+='<button type="button" role="menuitem" data-rmk="'+text(it.key)+'"'
+        +(it.disabled?' disabled':'')+(it.danger?' class="rm-del"':'')
+        +(it.title?' title="'+text(it.title)+'"':'')+'>'
+        +(it.icon||'')+'<span>'+text(it.label)+'</span></button>';
+    }
+    rowMenu.innerHTML=h;
+    // The composer's command list is another overlay; only one is ever up.
+    setMenu(null, false);
+    // The box moves to this row: the row it was on must stop saying its menu is open.
+    if(rowMenuBtn && rowMenuBtn!==btn) rowMenuBtn.setAttribute('aria-expanded','false');
+    rowMenuKey=key;
+    rowMenuBtn=btn;
+    rowMenuPick=onPick;
+    rowMenu.hidden=false;
+    btn.setAttribute('aria-expanded','true');
+    // Measured only once it is on screen; jsdom reports zeroes, hence the fallback width.
+    positionRowMenu(btn);
+    var first=rowMenuButtons()[0];
+    if(first) first.focus();
+  }
+  function closeRowMenu(focusBack){
+    if(rowMenu.hidden) return;
+    var btn=rowMenuBtn;
+    rowMenu.hidden=true;
+    rowMenuKey=null;
+    rowMenuBtn=null;
+    rowMenuPick=null;
+    if(btn) btn.setAttribute('aria-expanded','false');
+    if(focusBack && btn && btn.focus) btn.focus();
+  }
+  /**
+   * Keep an open menu beside the button that opened it, after the list was rebuilt with innerHTML,
+   * and close it when that row is gone — the task list is repainted on a 5s/30s poll, so a menu
+   * whose row vanished would otherwise act on something no longer on screen.
+   */
+  function rowMenuFollow(){
+    if(!rowMenuKey) return;
+    var anchor=document.querySelector('[data-rm="'+rowMenuKey+'"]');
+    if(!anchor){ closeRowMenu(false); return; }
+    rowMenuBtn=anchor;
+    anchor.setAttribute('aria-expanded','true');
+    positionRowMenu(anchor);
   }
   /** The topic and every topic under it, in the list's order — the ones End agent reaches. */
   function subtreeOf(id){
@@ -6480,12 +6537,10 @@ const SCRIPT = `
     }
     return out;
   }
+  /** A topic's menu, shared by its sidebar row and its Sessions row: Star / End agent / Delete. */
   function openTopicMenu(id, btn){
     var t=topicById(id);
     if(!t) return;
-    setMenu(null, false);
-    // The box moves to this row: the row it was on must stop saying its menu is open.
-    if(topicMenuBtn && topicMenuBtn!==btn) topicMenuBtn.setAttribute('aria-expanded','false');
     // How many sub-agent topics under this one have a process to end. The label says what the
     // item reaches, not what the row's dot says: a child that is resident and idle is still a
     // process, and the confirmation lists exactly the ones with one.
@@ -6493,54 +6548,76 @@ const SCRIPT = `
     var alive=0;
     for(var i=0;i<under.length;i++) if(under[i].live) alive++;
     var able=Boolean(t.live) || alive>0;
-    var tmStar=topicMenu.querySelector('[data-tm="star"]'),
-        tmEnd=topicMenu.querySelector('[data-tm="end"]'),
-        tmDel=topicMenu.querySelector('[data-tm="delete"]');
-    tmStar.innerHTML=IC.icon.star+'<span>'+(t.starred?'Unstar':'Star')+'</span>';
-    tmStar.title=t.starred
-      ? 'Stop keeping this topic through Clear and eviction'
-      : 'Keep this topic through Clear and eviction';
-    tmEnd.innerHTML=IC.icon.power+'<span>End agent'+(alive?' + '+alive+' sub-agent'+(alive===1?'':'s'):'')+'</span>';
-    tmEnd.disabled=!able;
-    // The reason, when there is nothing to end: a greyed item with no explanation asks.
-    tmEnd.title=able
-      ? 'End the agent process here'+(alive?' and in the '+alive+' topic'+(alive===1?'':'s')+' under it':'')
-        +' — the conversations are kept, and the next message resumes them'
-      : 'No agent process is running in this topic or the topics under it — there is nothing to end';
-    tmDel.innerHTML=IC.icon.trash+'<span>Delete topic</span>';
-    topicMenuFor=id;
-    topicMenuBtn=btn;
-    topicMenu.hidden=false;
-    btn.setAttribute('aria-expanded','true');
-    // Measured only once it is on screen; jsdom reports zeroes, hence the fallback width.
-    positionTopicMenu(btn);
-    var first=topicMenuItems()[0];
-    if(first) first.focus();
+    var items=[
+      {key:'star', icon:IC.icon.star, label:t.starred?'Unstar':'Star',
+       title:t.starred?'Stop keeping this topic through Clear and eviction':'Keep this topic through Clear and eviction'},
+      {key:'end', icon:IC.icon.power,
+       label:'End agent'+(alive?' + '+alive+' sub-agent'+(alive===1?'':'s'):''),
+       disabled:!able,
+       // The reason, when there is nothing to end: a greyed item with no explanation asks.
+       title:able
+         ? 'End the agent process here'+(alive?' and in the '+alive+' topic'+(alive===1?'':'s')+' under it':'')
+           +' — the conversations are kept, and the next message resumes them'
+         : 'No agent process is running in this topic or the topics under it — there is nothing to end'},
+      {sep:true},
+      {key:'delete', icon:IC.icon.trash, label:'Delete topic', danger:true}
+    ];
+    openRowMenu(btn, btn.getAttribute('data-rm')||('topic:'+id), items, function(what){
+      if(what==='star') starTopic(id);
+      else if(what==='delete') deleteTopic(id);
+      else if(what==='end') endTopic(id);
+    });
   }
-  function closeTopicMenu(focusBack){
-    if(topicMenu.hidden) return;
-    var btn=topicMenuBtn;
-    topicMenu.hidden=true;
-    topicMenuFor=null;
-    topicMenuBtn=null;
-    if(btn) btn.setAttribute('aria-expanded','false');
-    if(focusBack && btn && btn.focus) btn.focus();
+  /**
+   * A task's menu: its state changes, then Delete. Run now is greyed while a run is in flight and
+   * says so — the item a person reaches for is the one that would be wrong to allow, so it stays
+   * visible with the reason rather than disappearing.
+   */
+  function openTaskMenu(id, btn){
+    var t=schedTask(id);
+    if(!t) return;
+    var state=t.state||'active';
+    var items=[];
+    if(state==='active') items.push({key:'pause', icon:IC.icon.pause, label:'Pause', title:'Stop running this task on its schedule'});
+    if(state==='paused') items.push({key:'resume', icon:IC.icon.play, label:'Resume', title:'Put this task back on its schedule'});
+    if(state==='active'||state==='paused') items.push({key:'run', icon:IC.icon.clock, label:'Run now', disabled:Boolean(t.running),
+      title:t.running?'A run is in progress — wait for it to finish':'Run this task now, without waiting for its next scheduled time'});
+    items.push({sep:true});
+    items.push({key:'remove', icon:IC.icon.trash, label:'Delete', danger:true});
+    openRowMenu(btn, btn.getAttribute('data-rm')||('task:'+id), items, function(what){
+      if(what==='remove'){
+        // One question, like deleting a topic: the task is gone for good, and a tap that opened
+        // the menu is not a decision to remove it.
+        if(!confirm('Delete task "'+(t.name||t.id)+'"?')) return;
+        schedOp(id,'remove',null);
+        return;
+      }
+      schedOp(id, what, null);
+    });
   }
-  topicMenu.addEventListener('click', function(e){
-    var item=e.target.closest ? e.target.closest('[data-tm]') : null;
-    if(!item || item.disabled) return;
-    var id=topicMenuFor, what=item.getAttribute('data-tm');
+  /** Open the menu a row's ⋯ belongs to. The key's prefix is what the row is. */
+  function openRowMenuFor(btn){
+    var key=btn.getAttribute('data-rm')||'';
+    var cut=key.indexOf(':');
+    if(cut<0) return;
+    var kind=key.slice(0,cut), id=key.slice(cut+1);
     if(!id) return;
-    closeTopicMenu(false);
-    if(what==='star') starTopic(id);
-    else if(what==='delete') deleteTopic(id);
-    else if(what==='end') endTopic(id);
+    if(kind==='task') openTaskMenu(id, btn);
+    else openTopicMenu(id, btn);
+  }
+  rowMenu.addEventListener('click', function(e){
+    var item=e.target.closest ? e.target.closest('[data-rmk]') : null;
+    if(!item || item.disabled) return;
+    var pick=rowMenuPick, what=item.getAttribute('data-rmk');
+    if(!pick || !what) return;
+    closeRowMenu(false);
+    pick(what);
   });
   // Arrow keys move between the enabled items, as role=menu promises. Tab leaves the menu like any
   // other focus trip; Escape is the page-wide handler's, which also puts the focus back.
-  topicMenu.addEventListener('keydown', function(e){
+  rowMenu.addEventListener('keydown', function(e){
     if(e.key!=='ArrowDown' && e.key!=='ArrowUp' && e.key!=='Home' && e.key!=='End') return;
-    var items=topicMenuItems();
+    var items=rowMenuButtons();
     if(!items.length) return;
     e.preventDefault();
     var at=items.indexOf(document.activeElement);
@@ -6557,22 +6634,23 @@ const SCRIPT = `
   // left to the document click below: iOS Safari does not focus a button on tap, so it reports
   // one before the click that the tap is about to deliver, and closing here would swallow the
   // action the person just hit.
-  topicMenu.addEventListener('focusout', function(e){
-    if(topicMenu.hidden) return;
+  rowMenu.addEventListener('focusout', function(e){
+    if(rowMenu.hidden) return;
     var to=e.relatedTarget;
-    if(!to || topicMenu.contains(to) || (topicMenuBtn && topicMenuBtn.contains(to))) return;
-    closeTopicMenu(false);
+    if(!to || rowMenu.contains(to) || (rowMenuBtn && rowMenuBtn.contains(to))) return;
+    closeRowMenu(false);
   });
   // A click anywhere else puts it away. The ⋯ itself is excluded: its own handler toggles, and
   // closing it here too would make the second tap open and close in the same gesture.
   document.addEventListener('click', function(e){
-    if(topicMenu.hidden) return;
-    if(topicMenu.contains(e.target) || (topicMenuBtn && topicMenuBtn.contains(e.target))) return;
-    closeTopicMenu(false);
+    if(rowMenu.hidden) return;
+    if(rowMenu.contains(e.target) || (rowMenuBtn && rowMenuBtn.contains(e.target))) return;
+    closeRowMenu(false);
   });
-  // The list scrolls under the fixed menu; keep it beside its button rather than at a stale pixel.
-  bar.addEventListener('scroll', function(){ if(topicMenuFor) positionTopicMenu(topicMenuBtn); }, {passive:true});
-  window.addEventListener('resize', function(){ if(topicMenuFor) positionTopicMenu(topicMenuBtn); });
+  // Any list scrolls under the fixed menu — the sidebar's, the panel's — so follow the button
+  // rather than leave the box at a stale pixel.
+  document.addEventListener('scroll', function(){ if(rowMenuKey) positionRowMenu(rowMenuBtn); }, true);
+  window.addEventListener('resize', function(){ if(rowMenuKey) positionRowMenu(rowMenuBtn); });
 
   /**
    * Open a new topic, as the + does.
@@ -7375,11 +7453,11 @@ const SCRIPT = `
     // Close the topmost thing first: Escape over a picture, the reader or a menu must not also
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
-    var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !topicMenu.hidden
+    var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !rowMenu.hidden
       || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
     closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
     // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
-    closeTopicMenu(true);
+    closeRowMenu(true);
     if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
     var m = openMenu();
     if(m){ setMenu(null, false); m.btn.focus(); }
@@ -9537,15 +9615,11 @@ __GATE__
       <div id="settings-body"></div>
     </div>
   </div>
-  <!-- One topic's row menu, opened by its ⋯. At the body, not inside #topics: the list is rebuilt
-       with innerHTML whenever a message arrives, and a menu inside it would be wiped by an agent's
-       own streaming reply. Positioned from the button's rect by positionTopicMenu. -->
-  <div id="topic-menu" role="menu" aria-label="Topic actions" hidden>
-    <button type="button" role="menuitem" data-tm="star"></button>
-    <button type="button" role="menuitem" data-tm="end"></button>
-    <div class="tm-sep" role="separator"></div>
-    <button type="button" role="menuitem" data-tm="delete" class="tm-del"></button>
-  </div>
+  <!-- A list row's menu, opened by its ⋯. One box for every list on the page — topic rows,
+       scheduled runs, scheduled tasks — filled by openRowMenu. At the body, not inside a list:
+       every one of them is rebuilt with innerHTML on a poll or on a streaming reply, and a menu
+       inside one would be wiped mid-tap. Positioned from the button's rect by positionRowMenu. -->
+  <div id="row-menu" role="menu" aria-label="Row actions" hidden></div>
   <!-- "Close idle agents", confirmed against the list it will act on (openIdle), then showing what
        happened to each. -->
   <div id="idle-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="idle-title">
