@@ -54,7 +54,10 @@ the machine is named on the line below — and hovering the title shows the whol
 one; the agent can open one itself with
 `fleetherd create-thread`, and write into one with `--channel main/<topic id>`. Under each
 title is the directory the topic works in, led by the machine when its agent runs on a
-[remote host](remote-hosts.md) (`devbox · fleetherd`); hover it for the full path. A machine the
+[remote host](remote-hosts.md) (`devbox · fleetherd`); hover it for the full path. At the right
+end of that line is the time: how long the topic has been working (`3m`, `1h`, `1d10h`, in blue
+while it runs), or how long ago its last turn ended (`12m ago`, grey). Hover it for the clock
+time. A topic nothing has been said in yet shows none. A machine the
 gateway cannot reach is marked there, over its agents on a new topic, and above the composer
 ([When a host is offline](remote-hosts.md#when-a-host-is-offline)). At the end of
 each row a **⋯** button (on hover or keyboard focus; always shown on a touch screen) opens that

@@ -378,6 +378,14 @@ interface Client {
 interface Room {
   stored: Map<string, Stored>;
   typing: boolean;
+  /**
+   * When `typing` last went on, by this process's clock; null while it is off.
+   *
+   * The topic row says how long a working topic has been working, and a turn's start is not
+   * something the daemon pushes: the only moment this gateway learns of it is the typing
+   * indicator going on. Lives and dies with the room, like `typing` itself.
+   */
+  typingSince: number | null;
   seq: number;
   backlog: Array<{ seq: number; ev: WebEvent }>;
   /** Message ids whose edits are waiting to go out, in the order they were first held. */
@@ -1094,6 +1102,7 @@ export class WebRoom {
       return {
         ...t,
         running,
+        ...(running && room?.typingSince ? { runningSince: room.typingSince } : {}),
         // Before `running` in meaning, not just in this object: a question on screen holds the
         // turn open, so both are true at once and only this one says what is actually happening.
         asking,
@@ -1538,6 +1547,9 @@ export class WebRoom {
     const room = this.roomOf(topicId);
     if (room.typing === on) return;
     room.typing = on;
+    // The row's age counts from here while the topic works. Set only on the edge, not on every
+    // repeat the daemon sends, so a long turn's start does not move under the reader.
+    room.typingSince = on ? Date.now() : null;
     this.flush(room, topicId);
     this.emit(topicId, { t: 'typing', on });
     this.announceTopics();
@@ -1904,6 +1916,7 @@ export class WebRoom {
       room = {
         stored: new Map(),
         typing: false,
+        typingSince: null,
         seq: 0,
         backlog: [],
         queue: [],
