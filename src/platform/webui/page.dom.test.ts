@@ -8165,8 +8165,10 @@ describe('webui page: the scheduled-task panel', () => {
     expect(line('t00001')).toMatch(/^in \d+h/);
     expect(line('t00001')).toContain('→ Topic ' + A);
 
-    // Running: the blue pulsing dot and "running now".
+    // Running: the blue pulsing dot, the row's own running class (what colours "running now"),
+    // and the words themselves.
     expect(dot('t00002')?.classList.contains('running')).toBe(true);
+    expect(row('t00002').classList.contains('running')).toBe(true);
     expect(line('t00002')).toContain('running now');
 
     // Paused and done: grey dot, the state word, and the title dimmed like an idle row.
@@ -8183,6 +8185,14 @@ describe('webui page: the scheduled-task panel', () => {
     // Tags are on the line as #tag.
     expect(line('t00005')).toContain('#ci');
     expect(line('t00005')).toContain('#ops');
+  });
+
+  it('draws the selected scheduled run' + "'s title white, as the topic list does", () => {
+    const html = renderPage('Chat', false);
+    const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+    // The old .sess-item.on .sess-title rule went with the row; this is the shared one that
+    // replaces it. The topic list's own selected-idle greys are id-scoped and still win there.
+    expect(css).toContain('.topic-item.on .topic-title{color:#fff}');
   });
 
   it('keeps its menu through a poll, and closes it when the task goes', async () => {
@@ -8594,7 +8604,87 @@ describe('webui page: the scheduled-task panel', () => {
 
     expect(detail.hidden).toBe(false);
     expect(detail.textContent).toContain('summarise the failures');
+    // The detail names the target in full, as the hover card does.
+    expect(detail.textContent).toContain('Posts to');
+    expect(detail.textContent).toContain('Topic ' + A);
     expect(h.calls.some((c) => c.path === 'api/schedules/op')).toBe(false);
+  });
+
+  it('opens and folds a task from the keyboard, and Space does not scroll the page', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    const row = h.doc.querySelector('.sched-item .topic-item') as HTMLElement;
+    const detail = h.doc.querySelector('.sched-detail') as HTMLElement;
+    const press = (key: string): KeyboardEvent => {
+      const ev = new h.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      row.dispatchEvent(ev);
+      return ev;
+    };
+
+    // The row says role=button, so Enter and Space do what a click does — and Space is not left
+    // to the browser's scroll.
+    expect(press('Enter').defaultPrevented).toBe(true);
+    await tick();
+    expect(detail.hidden).toBe(false);
+    expect(press(' ').defaultPrevented).toBe(true);
+    await tick();
+    expect(detail.hidden).toBe(true);
+
+    // The ⋯ is its own control: Enter on it must not also fold the row.
+    const more = h.doc.querySelector('[data-rm="task:a1b2c3"]') as HTMLElement;
+    more.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await tick();
+    expect(detail.hidden).toBe(true);
+  });
+
+  it('does not open a menu with a separator when the task has no state change', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task({ state: 'expired' })]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await taskMenu(h, 'a1b2c3');
+
+    const menu = h.el('row-menu');
+    expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual(['Delete']);
+    expect(menu.querySelector('[role="separator"]')).toBeNull();
+    expect(menu.firstElementChild?.getAttribute('data-rmk')).toBe('remove');
+  });
+
+  it('puts an open task menu away when the panel tab changes or the panel closes', async () => {
+    const C = 'c3d4e5f6';
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/reviews': { enabled: true, reviews: [] },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' },
+        { id: C, title: '[cc] ⏰ Morning CI', lastAt: 3000, msgCount: 3, stage: 'idle', scheduled: true },
+      ],
+    });
+    await h.click('#schedules-toggle');
+    const menu = h.el('row-menu');
+
+    await taskMenu(h, 'a1b2c3');
+    await h.click('#sched-tab-sessions');
+    expect(menu.hidden).toBe(true);
+
+    await h.click(`[data-rm="sess:${C}"]`);
+    expect(menu.hidden).toBe(false);
+    await h.click('#sched-tab-tasks');
+    expect(menu.hidden).toBe(true);
+
+    await taskMenu(h, 'a1b2c3');
+    await h.click('#sched-tab-reviews');
+    expect(menu.hidden).toBe(true);
+
+    await h.click('#sched-tab-scheduled');
+    await taskMenu(h, 'a1b2c3');
+    await h.click('#schedules-close');
+    expect(menu.hidden).toBe(true);
   });
 
   it('closes on Escape', async () => {

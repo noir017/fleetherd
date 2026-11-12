@@ -250,6 +250,10 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-item{--row-bg:#171717;display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
 .topic-item:hover{--row-bg:#222}
 .topic-item.on{--row-bg:#252525;border-color:var(--line)}
+/* The selected row's title is the brightest thing in the column. The topic list's state rules
+   below are id-scoped and win where they apply (a selected idle topic stays grey); this is what
+   a selected scheduled run gets, whose row carries no running/idle class. */
+.topic-item.on .topic-title{color:#fff}
 /* Four states, and the dot is the only thing that carries all four. Read as one sentence: the
    colour says whether the agent is there, the pulse says whether it is busy.
      grey     — nothing resident. History, or a topic that will have to resume from a session id.
@@ -2981,7 +2985,9 @@ const SCRIPT = `
     var open = schedOpen[t.id] === true;
     var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + (open ? ' open' : '') + '" data-id="' + text(t.id) + '">';
     h += rowHtml({
-      cls:(state === 'active' ? '' : 'idle ') + 'sched-row',
+      // running is on the row, not only on the wrapper, because the row's own state colours
+      // (.topic-item.running .topic-title, .topic-item.running .sched-next) are keyed off it.
+      cls:(t.running ? 'running ' : '') + (state === 'active' ? '' : 'idle ') + 'sched-row',
       attrs:' role="button" tabindex="0" title="' + text(schedRowTitle(t)) + '"',
       key:'task:' + t.id,
       dot:schedDot(t, state),
@@ -2992,6 +2998,9 @@ const SCRIPT = `
     h += '<div class="sched-detail"' + (open ? '' : ' hidden') + '>';
     h += '<div class="sched-detail-label">Schedule</div>';
     h += '<div class="sched-detail-when">' + text(t.when) + (t.next ? ' · next ' + text(t.next) : '') + '</div>';
+    // The row shows the target short and ellipsised; this is the full name, as the hover card has it.
+    h += '<div class="sched-detail-label">Posts to</div>';
+    h += '<div class="sched-detail-when">' + text(schedTargetShort(t)) + '</div>';
     h += '<div class="sched-detail-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div>';
     h += '<div class="sched-detail-body">' + text(t.detail) + '</div>';
     h += '<div class="sched-detail-tags"><div class="sched-detail-label">Tags</div><div class="sched-tag-edit">';
@@ -3293,13 +3302,32 @@ const SCRIPT = `
     if(e.target.closest && e.target.closest('.sched-tag-edit')) return;
     var card = e.target.closest ? e.target.closest('.sched-item') : null;
     if(!card) return;
+    toggleSchedCard(card);
+  });
+
+  /**
+   * Fold or open one task's detail, and remember the choice so a poll's repaint does not fold a
+   * row the person is reading. Shared by the row's click and its Enter/Space: the row says
+   * role=button, and a button that only answers a pointer is not one.
+   */
+  function toggleSchedCard(card){
     var detail = card.querySelector('.sched-detail');
     if(!detail) return;
     detail.hidden = !detail.hidden;
     card.classList.toggle('open', !detail.hidden);
-    // Remembered so a poll's repaint does not fold a card the person is reading.
     var cardId = card.getAttribute('data-id');
     if(cardId) schedOpen[cardId] = !detail.hidden;
+  }
+
+  // Enter and Space open a task, as they do a topic row and a scheduled run. The ⋯ and the tag
+  // field are their own controls: Space in the field is a space, and Enter there saves a tag.
+  schedList.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    if(e.target.closest && e.target.closest('[data-rm],[data-tag-input]')) return;
+    var card = e.target.closest ? e.target.closest('.sched-item') : null;
+    if(!card) return;
+    e.preventDefault();
+    toggleSchedCard(card);
   });
 
   /**
@@ -6582,7 +6610,9 @@ const SCRIPT = `
     if(state==='paused') items.push({key:'resume', icon:IC.icon.play, label:'Resume', title:'Put this task back on its schedule'});
     if(state==='active'||state==='paused') items.push({key:'run', icon:IC.icon.clock, label:'Run now', disabled:Boolean(t.running),
       title:t.running?'A run is in progress — wait for it to finish':'Run this task now, without waiting for its next scheduled time'});
-    items.push({sep:true});
+    // Delete is below a divider only when there is something above it: an expired or done task
+    // has no state change to offer, and a menu that opens with a line is a menu that looks cut.
+    if(items.length) items.push({sep:true});
     items.push({key:'remove', icon:IC.icon.trash, label:'Delete', danger:true});
     openRowMenu(btn, btn.getAttribute('data-rm')||('task:'+id), items, function(what){
       if(what==='remove'){
