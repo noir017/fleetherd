@@ -87,7 +87,7 @@ import type {
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import { toolGlyph } from './icons.js';
-import type { ClickRequest, ReviewOpRequest, SendRequest, WebEvent, WebMessage } from './protocol.js';
+import type { ClickRequest, ReviewOpRequest, SendRequest, TopicSnapshot, WebEvent, WebMessage } from './protocol.js';
 import type { TerminalSessions } from './terminal-sessions.js';
 import { MAX_TOPICS, TopicStore, type Topic } from './topics.js';
 
@@ -1272,24 +1272,63 @@ export class WebRoom {
     return room.backlog.filter((entry) => entry.seq > from);
   }
 
+  /**
+   * One topic's state as a sync would carry it, without attaching to it.
+   *
+   * The page fetches this for the topics that need a person, so tapping one paints at once
+   * instead of waiting for a sync — on a long topic that sync is up to 1000 messages, 1.5 MB of
+   * JSON and seconds of a weak link. Read-only, deliberately and completely: it subscribes
+   * nothing, announces no topic list, logs nothing and does not mark the topic seen. A fetch
+   * nobody is waiting on must leave no trace in the room.
+   *
+   * `last` is the id a sync of this room would be numbered with (see `subscribe`), so the page
+   * enters the topic exactly as it does one held in memory: paint these messages, then open the
+   * stream with `?last=` and be handed only what was said after them.
+   */
+  snapshot(topicId: string): TopicSnapshot | undefined {
+    if (!this.topics.has(topicId)) return undefined;
+    // `rooms.get`, not `roomOf`: the latter creates an empty room, which would be this request
+    // changing the daemon's state. An absent room is an empty one here, which is what a sync
+    // would find too.
+    const room = this.rooms.get(topicId);
+    return {
+      topic: topicId,
+      ...this.roomState(topicId, room),
+      last: `${topicId}.${this.run}.${room?.seq ?? 0}`,
+    };
+  }
+
   /** `topics` is the list as it was just announced to everyone else (see `subscribe`). */
   private syncEvent(topicId: string, room: Room, topics: Topic[]): WebEvent {
     const agents = this.catalogFor(topicId, room);
     return {
       t: 'sync',
       topic: topicId,
-      messages: [...room.stored.values()].map((s) => s.msg),
+      ...this.roomState(topicId, room),
       commands: this.commands,
       topics,
       tv: this.topicsVer,
+      ...(room.status ? { status: room.status } : {}),
+      ...(agents ? { agents } : {}),
+      ...(this.offline.length > 0 ? { offline: [...this.offline] } : {}),
+    };
+  }
+
+  /**
+   * The part of a sync that is the room's own state: its messages, which run they belong to, and
+   * whether an empty room is empty because the topic predates this process.
+   *
+   * Shared with `snapshot`, so a page that asked for a topic early and the sync it gets on
+   * entering it can never disagree about these three.
+   */
+  private roomState(topicId: string, room: Room | undefined): Pick<TopicSnapshot, 'messages' | 'epoch' | 'stale'> {
+    return {
+      messages: room ? [...room.stored.values()].map((s) => s.msg) : [],
       // Which run of the daemon the ids in `messages` belong to. The page caches transcripts
       // and `nextId` restarts at `w1` every process, so without this a cached `w3` and a fresh
       // `w3` are indistinguishable to it — see the field's comment in `protocol.ts`.
       epoch: this.startedAt,
-      ...(this.isStale(topicId, room) ? { stale: true } : {}),
-      ...(room.status ? { status: room.status } : {}),
-      ...(agents ? { agents } : {}),
-      ...(this.offline.length > 0 ? { offline: [...this.offline] } : {}),
+      ...(this.isStale(topicId, room) ? { stale: true as const } : {}),
     };
   }
 
@@ -1302,9 +1341,12 @@ export class WebRoom {
    * topic that is simply new, because rendered identically they look like a broken page — which
    * is what they were reported as. `lastAt` is the persisted mark of activity, so a topic whose
    * last message predates this object is one whose transcript we no longer have.
+   *
+   * `room` is undefined for a topic nothing has opened since this process started (`snapshot`
+   * reads one without creating it), which is the same empty room a sync would find.
    */
-  private isStale(topicId: string, room: Room): boolean {
-    if (room.stored.size > 0) return false;
+  private isStale(topicId: string, room: Room | undefined): boolean {
+    if (room && room.stored.size > 0) return false;
     const topic = this.topics.get(topicId);
     return topic !== undefined && topic.lastAt < this.startedAt;
   }

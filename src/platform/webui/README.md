@@ -1156,7 +1156,7 @@ written off for the session with one `console.warn`. Writes are coalesced into a
 a streamed reply upserts the same message every second or so and each one would otherwise
 re-serialise the whole topic.
 
-**Going back to a topic in the same tab resumes it from memory** (`held`, since this branch).
+**Going back to a topic in the same tab resumes it from memory** (`held`, since 2.56.0).
 Before, every switch was a full sync — up to 1000 messages, 85 KB gzipped and 3.4–3.7 s at
 500 kbps for a long topic — because this cache keeps 200 and a switch empties memory, so it saved
 nothing on the way back. Now the topic being left is kept in memory whole (every message on screen,
@@ -1173,6 +1173,33 @@ stream said where it was, or held from a daemon that has since restarted, is ent
 Measured in Chromium at 400 ms / 500 kbps on 2026-11-10: switching back to a 1000-message topic went
 from 85.0 KB and 3.7 s to a few hundred bytes and 1.4 s, which is the time it takes to draw 1000
 messages on that (loaded) machine; the first visit to that topic is unchanged, at 86 KB.
+
+**A topic that needs an answer is fetched before it is opened** (`pre`, since 3.1.0). The
+green rows are the ones a person is about to tap, and tapping one used to cost the same full sync
+as any first visit. The page now fetches up to four of them in the background — the four most
+pressing, in the order the needs-you rows are drawn (questions, then failures, then finished
+replies, newest first within a stage), skipping a scheduled run, the topic on screen, and any topic
+already held — one request at a time, and only while the tab is visible and its stream is up.
+Opening one is then what opening a held topic is: the messages go up at once and the stream opens
+with `?last=<the snapshot's id>`, so what follows is a resumed stream rather than a sync — its
+status and machine state, the topic list when the page's copy is behind, and `resumed`. The budget
+is its own (4 topics, 2000 messages), not `held`'s, so a topic nobody has opened cannot evict the
+one just left. A copy older than the row is fetched again (a reply moves `lastAt`), and one that
+arrives after the person opened the topic, from another run of the daemon, or for a topic that has
+gone is dropped. A copy that carries the echo of a send the previous page left in flight claims it
+the way a sync does — the bubble still saying "Not confirmed" becomes the message — and a send the
+previous page left unsure that the copy does not carry is marked failed, the same judgement a sync
+makes; a send this page is still making is not touched. A failed fetch is not retried at once: that
+row's failure stands for a minute, and the next list event after it is what asks again. A request
+that never comes back is aborted after the same minute, so one hung answer cannot stop the page
+prefetching — and a body that does not parse is just another failure. Measured in Chromium at 400 ms / 500 kbps on 2026-11-12: the
+prefetch of a 1000-message topic took 1.7 s and 83.3 KB in the background, and opening it went from
+83.4 KB and 2.3 s to 0.8 KB and 0.4 s (`project-scripts/fleetherd-prefetch/prefetch.mts`). The cost
+is that much memory held for four topics, and the bytes spent on a topic the person may not open —
+which is why it happens only where the sidebar already says the person is wanted. The route is
+`GET api/topic`, read-only (no subscriber, no list event, no seen mark); its answer can be 1.5 MB
+of JSON, so it is gzipped on libuv's pool rather than with `gzipSync`, which would stall every
+stream in the process.
 
 **A browser with no IndexedDB is a supported configuration.** Private windows and old engines
 both produce one; the cache is the only thing that goes, and `page.dom.test.ts` holds that.
@@ -1296,7 +1323,7 @@ every client and not sent at all when it has not changed; each client's gzip str
 compression stays per client. `topics.json` gathers a streaming reply's touches into one write a
 second, while creating, deleting, clearing and starring still write at once.
 
-**The topic list travels as what changed** (`topic-rows`, since this branch). It used to be the
+**The topic list travels as what changed** (`topic-rows`, since 2.56.0). It used to be the
 whole list after every message posted anywhere, to every client — 34 KB of JSON at 200 topics,
 2.5 KB gzipped, for one row's `msgCount` and `lastAt` — and since a message always moves those two,
 the "has it changed" check never once found two lists equal. Now the room keeps the list every

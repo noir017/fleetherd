@@ -493,6 +493,11 @@ async function open(
      */
     hang?: string[];
     /**
+     * Paths whose answer arrives with a body that is not JSON: `r.json()` rejects, which is a
+     * failure the page has to survive rather than a response it can read.
+     */
+    badJson?: string[];
+    /**
      * Paths whose answer waits for a promise the test settles, so two requests can be made to
      * answer in the order a slow link would choose rather than the order they were sent.
      */
@@ -534,6 +539,7 @@ async function open(
     password = true,
     mic,
     hang = [],
+    badJson = [],
     held = {},
     shortenLong = false,
     push,
@@ -637,7 +643,10 @@ async function open(
           ok: code < 400,
           status: code,
           headers: { get: (name: string) => head[name] ?? head[name.toLowerCase()] ?? null },
-          json: () => Promise.resolve(replies[path] ?? {}),
+          json: () =>
+            badJson.includes(path)
+              ? Promise.reject(new SyntaxError('Unexpected token in JSON'))
+              : Promise.resolve(replies[path] ?? {}),
         }));
       };
     },
@@ -2791,6 +2800,277 @@ describe('webui page: a topic held in memory', () => {
     await h.emit({ t: 'topics', tv: 3, topics: (sync(B, [], [A, B, 'c3d4e5f6']).topics as unknown[]) });
     await h.click(`[data-topic="${A}"]`);
     expect(h.live().url).toBe(`api/events?t=${A}`);
+  });
+});
+
+describe('webui page: a topic fetched before it is opened', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const C = 'c3d4e5f6';
+  const url = (id: string): string => `api/topic?t=${id}`;
+  /** A topic row as the daemon sends it; `stage` is what makes it need a person. */
+  const row = (id: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id,
+    title: `Topic ${id}`,
+    lastAt: 1000,
+    running: false,
+    msgCount: 0,
+    ...over,
+  });
+  /** A snapshot as `api/topic` answers one. */
+  const snap = (topic: string, messages: Array<Record<string, unknown>>, last: string): Record<string, unknown> => ({
+    topic,
+    epoch: 1,
+    last,
+    messages,
+  });
+  const fetched = (h: Harness, id: string): boolean => h.calls.some((c) => c.path === url(id));
+
+  it('fetches a topic that needs an answer, and opening it paints before the stream says anything', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`) } });
+    await h.emit(
+      sync(A, [message('a1', '<p>in A</p>')], [A, B], { topics: [row(A), row(B, { stage: 'answer', lastAt: 900 })] })
+    );
+    await within('the prefetch goes out', 2000, () => fetched(h, B));
+    await tick();
+    expect(h.painted()).toBe(1);
+
+    await h.click(`[data-topic="${B}"]`);
+    // The whole point: no sync for B has been sent, and its reply is already on screen.
+    expect(h.painted()).toBe(1);
+    expect(h.el('log').textContent).toContain('from B');
+    // And the stream resumes from the snapshot's id, so only what came after it is replayed.
+    expect(h.live().url).toBe(`api/events?t=${B}&last=${encodeURIComponent(`${B}.run.4`)}`);
+  });
+
+  it('leaves the topic on screen and a scheduled run alone', async () => {
+    const h = await open();
+    await h.emit(
+      sync(A, [], [A, B, C], {
+        topics: [row(A, { stage: 'answer' }), row(B, { stage: 'answer', scheduled: true })],
+      })
+    );
+    await new Promise((r) => setTimeout(r, 600));
+    // A is being read already, B is a scheduled lane the switcher does not even list.
+    expect(h.calls.filter((c) => c.path.startsWith('api/topic'))).toEqual([]);
+  });
+
+  it('fetches the first four that need an answer, and no more', async () => {
+    const ids = ['11111111', '22222222', '33333333', '44444444', '55555555', '66666666'];
+    const replies: Record<string, unknown> = {};
+    for (const id of ids) replies[url(id)] = snap(id, [message(`m${id}`, '<p>x</p>')], `${id}.run.1`);
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id) => row(id, { stage: 'answer' }))] }));
+    await within('four prefetches', 4000, () => ids.filter((id) => fetched(h, id)).length === 4);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(ids.filter((id) => fetched(h, id))).toEqual(ids.slice(0, 4));
+  });
+
+  it('picks the four nearest the top of the sidebar, not the four the daemon listed first', async () => {
+    // Questions beat failures, failures beat finished replies, and within one stage the newest
+    // is first — the order topicRows draws the needs-you block in. The daemon's own order here is
+    // the reverse, so a prefetch that took topics as they came would fetch the wrong four.
+    const ans1 = 'a1a1a1a1';
+    const ans2 = 'a2a2a2a2';
+    const failed = 'f0f0f0f0';
+    const rev1 = 'c1c1c1c1';
+    const rev2 = 'c2c2c2c2';
+    const rev3 = 'c3c3c3c3';
+    const replies: Record<string, unknown> = {};
+    for (const id of [ans1, ans2, failed, rev1, rev2, rev3]) replies[url(id)] = snap(id, [], `${id}.run.0`);
+    const h = await open({ replies });
+    await h.emit(
+      sync(A, [], [A, rev3, rev2, rev1, failed, ans2, ans1], {
+        topics: [
+          row(A),
+          row(rev3, { stage: 'review', lastAt: 900 }),
+          row(rev2, { stage: 'review', lastAt: 950 }),
+          row(rev1, { stage: 'review', lastAt: 999 }),
+          row(failed, { stage: 'failed', lastAt: 800 }),
+          row(ans2, { stage: 'answer', lastAt: 400 }),
+          row(ans1, { stage: 'answer', lastAt: 500 }),
+        ],
+      })
+    );
+    await within('four prefetches', 4000, () =>
+      [ans1, ans2, failed, rev1, rev2, rev3].filter((id) => fetched(h, id)).length === 4
+    );
+    await new Promise((r) => setTimeout(r, 600));
+    // In the order they were fetched, which is the order they sit in the list.
+    expect(h.calls.filter((c) => c.path.startsWith('api/topic')).map((c) => c.path)).toEqual(
+      [ans1, ans2, failed, rev1].map(url)
+    );
+  });
+
+  it('fetches it again when a new reply moves the row', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>one</p>')], `${B}.run.1`) } });
+    const list = [row(A), row(B, { stage: 'answer', lastAt: 900 })];
+    await h.emit(sync(A, [], [A, B], { topics: list }));
+    await within('the first prefetch', 2000, () => fetched(h, B));
+    await new Promise((r) => setTimeout(r, 100));
+
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', lastAt: 1200, msgCount: 2 })] });
+    await within('the second prefetch', 2000, () => h.calls.filter((c) => c.path === url(B)).length === 2);
+  });
+
+  it('drops an answer that arrives after the person has opened the topic', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>stale</p>')], `${B}.run.1`) }, held: { [url(B)]: gate } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the prefetch goes out', 2000, () => fetched(h, B));
+
+    // Opened while the answer was still on the wire, and left again before its stream said
+    // where it got to — so nothing else could put B up from memory.
+    await h.click(`[data-topic="${B}"]`);
+    release();
+    await tick();
+    await tick();
+    await h.click(`[data-topic="${A}"]`);
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.live().url).toBe(`api/events?t=${B}`);
+  });
+
+  it('fetches nothing while the tab is hidden', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [], `${B}.run.0`) } });
+    Object.defineProperty(h.doc, 'visibilityState', { value: 'hidden', configurable: true });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(fetched(h, B)).toBe(false);
+  });
+
+  it('does not ask again at once when the daemon refused one', async () => {
+    const h = await open({ status: { [url(B)]: 500 } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the first attempt', 2000, () => fetched(h, B));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
+  });
+
+  it('asks for a topic once, even when the list moves again', async () => {
+    // The copy is matched to the row by lastAt. Without that, the next pass reads the copy as
+    // missing, fetches it again, and the page never stops asking.
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>x</p>')], `${B}.run.1`) } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the prefetch', 2000, () => fetched(h, B));
+    await new Promise((r) => setTimeout(r, 100));
+
+    // The same row, sent again: another list event must not be read as "this copy is stale".
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer' })] });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
+  });
+
+  it('asks again after a restart, even for a topic it had just failed on', async () => {
+    // A failure is remembered per row, and a restart moves nothing on the row — so without
+    // clearing that memory with the epoch, the new daemon's answer would not be asked for.
+    const h = await open({ status: { [url(B)]: 500 } });
+    const list = [row(A), row(B, { stage: 'answer' })];
+    await h.emit(sync(A, [], [A, B], { topics: list }));
+    await within('the failed attempt', 2000, () => fetched(h, B));
+
+    await h.emit(sync(A, [], [A, B], { topics: list, epoch: 2 }));
+    await within('the retry', 2000, () => h.calls.filter((c) => c.path === url(B)).length === 2);
+  });
+
+  it('starts again after a body that does not parse', async () => {
+    const h = await open({ badJson: [url(B)], replies: { [url(C)]: snap(C, [], `${C}.run.0`) } });
+    await h.emit(
+      sync(A, [], [A, B, C], {
+        topics: [row(A), row(B, { stage: 'answer', lastAt: 900 }), row(C, { stage: 'answer', lastAt: 800 })],
+      })
+    );
+    await within('the failed one', 2000, () => fetched(h, B));
+    // A rejected r.json() used to leave the pump busy for good, so this second one never came.
+    await within('the next one', 2000, () => fetched(h, C));
+  });
+
+  it('starts again after a request that never comes back', async () => {
+    const hang = [url(B)];
+    const h = await open({ hang, shortenLong: true, replies: { [url(C)]: snap(C, [], `${C}.run.0`) } });
+    await h.emit(
+      sync(A, [], [A, B, C], {
+        topics: [row(A), row(B, { stage: 'answer', lastAt: 900 }), row(C, { stage: 'answer', lastAt: 800 })],
+      })
+    );
+    await within('the hung one', 2000, () => fetched(h, B));
+    // The 60-second limit is 30 ms here: when it fires the request is aborted and the next starts.
+    expect(h.longTimers).toContain(60000);
+    await within('the next one', 2000, () => fetched(h, C));
+  });
+
+  it('leaves a topic it holds in memory alone, and goes back to it from what it held', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>from B</p>')], `${B}.run.1`) } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the prefetch', 2000, () => fetched(h, B));
+    await h.click(`[data-topic="${B}"]`);
+    h.live().onmessage?.({ data: JSON.stringify({ t: 'typing', on: false }), lastEventId: `${B}.run.1` });
+    await tick();
+    await h.click(`[data-topic="${A}"]`);
+
+    // A new reply moves the row, but B is held whole and its stream can resume: a fetch would be
+    // a few hundred kilobytes against a few hundred bytes.
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', lastAt: 1200 })] });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.live().url).toBe(`api/events?t=${B}&last=${encodeURIComponent(`${B}.run.1`)}&tv=2`);
+  });
+
+  it('prefers what it held over a copy that landed after the person left', async () => {
+    // The fetch was in flight when B was opened and left again, so it lands while B is held: both
+    // copies exist, and the held one is the topic this tab actually saw, resumed from its own id.
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({
+      replies: { [url(B)]: snap(B, [message('w1', '<p>from the fetch</p>')], `${B}.run.1`) },
+      held: { [url(B)]: gate },
+    });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the prefetch goes out', 2000, () => fetched(h, B));
+
+    await h.click(`[data-topic="${B}"]`);
+    h.live().onmessage?.({ data: JSON.stringify({ t: 'msg', msg: message('b1', '<p>in B</p>') }), lastEventId: `${B}.run.7` });
+    await tick();
+    await h.click(`[data-topic="${A}"]`);
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.live().url).toBe(`api/events?t=${B}&last=${encodeURIComponent(`${B}.run.7`)}`);
+  });
+
+  it('takes the echo in a fetched copy over the bubble still saying it was not confirmed', async () => {
+    // A send that was in flight when the last page went away comes back as "Not confirmed". If
+    // the daemon did receive it, the fetched copy carries the echo — and the copy is the first
+    // thing this page sees of the topic, so it has to claim that bubble as a sync does, or the
+    // same message is on screen twice and the unsure record is never settled.
+    const first = await open({ url: `http://localhost:8787/?t=${B}`, hang: ['api/send'] });
+    await first.emit(sync(B, [], [B]));
+    await saved();
+    (first.el('input') as HTMLTextAreaElement).value = 'on its way';
+    await first.click('#composer button[type="submit"]');
+    const nonce = first.calls.find((c) => c.path === 'api/send')?.body.nonce as string;
+    const storage = { aa_unsent: first.window.localStorage.getItem('aa_unsent')! };
+    first.window.close();
+
+    const echo = { ...message('w1', '<div class="raw">on its way</div>', true), nonce };
+    const h = await open({
+      url: `http://localhost:8787/?t=${A}`,
+      idb: first.idb,
+      storage,
+      replies: { [url(B)]: snap(B, [echo], `${B}.run.1`) },
+    });
+    expect(h.el('log').textContent).not.toContain('on its way');
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the prefetch', 2000, () => fetched(h, B));
+    await tick();
+
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.painted()).toBe(1);
+    expect(h.el('log').textContent).toContain('on its way');
+    expect(h.el('log').textContent).not.toContain('Not confirmed');
+    expect(h.window.localStorage.getItem('aa_unsent')).toBeNull();
   });
 });
 

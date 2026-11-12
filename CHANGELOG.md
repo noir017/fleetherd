@@ -16,6 +16,17 @@ All notable changes to this project are documented here. The format is based on
   sub-agents it is waiting on, and a topic nothing has been said in shows no time at all. Hovering
   gives the clock time. The label is rewritten in place every 30 seconds rather than by repainting
   the list, and the Sessions tab's last-activity line uses the same units.
+- **The web UI fetches a topic that needs an answer before it is opened.** The green rows are the
+  ones a person is about to tap, and tapping one cost the same full sync as any first visit — up
+  to 1000 messages, 83 KB gzipped and 2.3 s at 500 kbps for a long topic. The page now fetches the
+  four most pressing of them in the background, in the order the sidebar draws them, one at a time
+  and only while the tab is visible, and opening one paints at once and opens a resumed stream
+  from the snapshot — under a kilobyte of status, machines and `resumed` — instead of downloading
+  the topic again. Measured in Chromium at 400 ms RTT / 500 kbps: the prefetch of a 1000-message
+  topic took 1.7 s and 83.3 KB while another topic was being read, and opening it went from 2.3 s
+  to 0.4 s. The copies have their own budget (four topics, 2000 messages), a reply that arrives
+  while one is waiting is fetched again, and nothing is fetched for the topic on screen, a
+  scheduled run, or a topic already held in memory.
 
 ### Changed
 
@@ -30,6 +41,11 @@ All notable changes to this project are documented here. The format is based on
   a scheduled run the same Star / End agent / Delete a topic row has instead of a bare ×. Delete
   asks once, through the same `confirm` deleting a topic uses. The menu is one box shared by all
   three lists, re-found after each poll's repaint and closed when the row it acts on is gone.
+- **`/cd` and `/new` list projects by name by default.** The directory menus used to lead with the
+  projects chosen most often and most recently (a fortnight's half-life); they are now alphabetical
+  after the root unless config.yaml says `workdir.sort: frecency` (or the shorthand
+  `workdirSort: frecency`), which brings the usage order back. A config that sets neither sees the
+  new order after upgrading.
 
 ## [3.0.0] - 2026-11-11
 

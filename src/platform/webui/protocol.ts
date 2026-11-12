@@ -53,8 +53,12 @@ export const LoginRequestSchema = z.object({ token: z.string().min(1).max(4096) 
  * Shaped, not free text: the id travels on as the lane half of the address `main/<id>`, which
  * `core/conversation.ts` splits on `/` and refuses to see twice. Rejecting the wrong shape here
  * keeps a malformed lane from ever reaching an address.
+ *
+ * Exported because a query string is checked by hand rather than by a schema (`api/topic`), and
+ * one shape has to hold for both doors.
  */
-const TopicId = z.string().regex(/^[0-9a-f]{8}$/, 'not a topic id');
+export const TOPIC_ID = /^[0-9a-f]{8}$/;
+const TopicId = z.string().regex(TOPIC_ID, 'not a topic id');
 
 export const SendRequestSchema = z
   .object({
@@ -418,6 +422,28 @@ export type WebEvent =
    * It used to stop for good and ask for a reload, which on a phone nobody saw until they typed.
    */
   | { t: 'bye' };
+
+/**
+ * One topic's state, as `GET api/topic` answers it.
+ *
+ * The same three things a sync says about the room itself, plus the event id that sync would
+ * have been numbered with. The web UI fetches it for the topics that need a person, so opening
+ * one paints at once instead of waiting for the sync — on a long topic 1.5 MB of JSON and
+ * seconds of a weak link — and then enters it exactly as it enters a topic held in memory:
+ * paint these messages, open the stream with `?last=`.
+ *
+ * Read-only: asking for one attaches nothing, announces no list, and marks nothing seen.
+ */
+export interface TopicSnapshot {
+  topic: string;
+  /** Which run of the daemon these messages belong to — the sync's `epoch`. */
+  epoch: number;
+  /** `<topic>.<run>.<seq>`, the id a sync of this room would carry; usable as `?last=`. */
+  last: string;
+  /** The room is empty because the topic predates this daemon (the sync's `stale`). */
+  stale?: boolean;
+  messages: WebMessage[];
+}
 
 /** One message as the page holds it. `html` is already rendered and escaped by web-markdown. */
 export interface WebMessage {

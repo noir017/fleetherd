@@ -767,6 +767,101 @@ describe('webui server: topics', () => {
   });
 });
 
+describe('webui server: one topic, fetched before it is opened', () => {
+  it('answers with the room as a sync would carry it, and the id that sync would be numbered with', async () => {
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    room.post(topic, { own: true, html: '<p>two</p>' }, 'two');
+
+    const res = await fetch(`${base}/api/topic?t=${topic}`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const snap = (await res.json()) as { topic: string; epoch: number; last: string; messages: Array<{ html: string }> };
+    expect(snap.topic).toBe(topic);
+    expect(snap.messages.map((m) => m.html)).toEqual(['<p>one</p>', '<p>two</p>']);
+    expect(typeof snap.epoch).toBe('number');
+
+    // The same id the sync carries, so a page that entered the topic on the strength of this
+    // snapshot would resume from exactly here.
+    const stream = await openStream(port, topic, cookie);
+    const frame = await stream.next();
+    expect(frame).toContain(`id: ${snap.last}`);
+    const synced = JSON.parse(frame.slice(frame.indexOf('data: ') + 6)) as { epoch: number };
+    expect(synced.epoch).toBe(snap.epoch);
+    stream.close();
+  });
+
+  it('resumes from that id with only what was said after it', async () => {
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    room.post(topic, { own: false, html: '<p>before</p>' }, 'before');
+    const snap = (await (await fetch(`${base}/api/topic?t=${topic}`, { headers: { cookie } })).json()) as { last: string };
+    room.post(topic, { own: false, html: '<p>after</p>' }, 'after');
+
+    const stream = await openStream(port, topic, cookie, snap.last);
+    let seen = '';
+    for (let i = 0; i < 6 && !seen.includes('resumed'); i += 1) seen += await stream.next();
+    expect(seen).not.toContain('"t":"sync"');
+    expect(seen).not.toContain('before');
+    expect(seen).toContain('after');
+    expect(seen).toContain('"t":"resumed"');
+    stream.close();
+  });
+
+  it('announces nothing to the clients already attached', async () => {
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const stream = await openStream(port, topic, cookie);
+    await stream.next(); // the sync frame
+    await fetch(`${base}/api/topic?t=${topic}`, { headers: { cookie } });
+    // A read that told everyone else about the list would be a read with a side effect; nothing
+    // is written to the wire, and the heartbeat is 25 s away.
+    const quiet = await Promise.race([stream.next(), new Promise<string>((r) => setTimeout(() => r(''), 150))]);
+    expect(quiet).toBe('');
+    expect(room.watchers).toBe(1);
+    stream.close();
+  });
+
+  it('refuses a malformed id and answers 404 for a well-formed one that is not there', async () => {
+    const { base } = await boot();
+    const cookie = await signIn(base);
+    for (const t of ['', 'not-a-topic', '../../etc/passwd', 'a1b2c3d4e5', 'A1B2C3D4']) {
+      const res = await fetch(`${base}/api/topic?t=${encodeURIComponent(t)}`, { headers: { cookie } });
+      expect(res.status, `t=${t}`).toBe(400);
+    }
+    const missing = await fetch(`${base}/api/topic?t=deadbeef`, { headers: { cookie } });
+    expect(missing.status).toBe(404);
+  });
+
+  it('compresses a large answer off the event loop and sends a small one as it is', async () => {
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    room.post(topic, { own: false, html: `<p>${'x'.repeat(2000)}</p>` }, 'x');
+    const empty = room.createTopic('nothing said yet').id;
+
+    const big = await rawGet(port, `/api/topic?t=${topic}`, { cookie, 'accept-encoding': 'gzip' });
+    expect(big.status).toBe(200);
+    expect(big.headers['content-encoding']).toBe('gzip');
+    expect(big.headers.vary).toBe('Accept-Encoding');
+    expect((JSON.parse(gunzipSync(big.body).toString('utf8')) as { topic: string }).topic).toBe(topic);
+
+    // A real topic with nothing in it answers under MIN_COMPRESS_BYTES, and gzip's own framing
+    // would cost more than it saves — the same rule every other JSON answer here follows.
+    const small = await rawGet(port, `/api/topic?t=${empty}`, { cookie, 'accept-encoding': 'gzip' });
+    expect(small.status).toBe(200);
+    expect(small.headers['content-encoding']).toBeUndefined();
+    expect(small.body.length).toBeLessThan(512);
+    expect((JSON.parse(small.body.toString('utf8')) as { topic: string; messages: unknown[] }).topic).toBe(empty);
+    expect((JSON.parse(small.body.toString('utf8')) as { messages: unknown[] }).messages).toEqual([]);
+  });
+
+  it('refuses without a session, like every other guarded route', async () => {
+    const { base, topic } = await boot();
+    const res = await fetch(`${base}/api/topic?t=${topic}`);
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('webui server: built for a weak link', () => {
   it('compresses the event stream AND still delivers each event as it happens', async () => {
     // The trap this pins: a gzip stream buffers until told otherwise, so without an explicit

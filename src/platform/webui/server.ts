@@ -42,7 +42,7 @@ import { createReadStream } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
-import { brotliCompress, constants as zlibConstants, createGzip, gzipSync } from 'node:zlib';
+import { brotliCompress, constants as zlibConstants, createGzip, gzip, gzipSync } from 'node:zlib';
 
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
@@ -67,6 +67,7 @@ import {
   SkillOpRequestSchema,
   ReviewOpRequestSchema,
   StarTopicRequestSchema,
+  TOPIC_ID,
   parseBody,
   type SendRequest,
   type WebEvent,
@@ -380,6 +381,9 @@ const OPEN: Route[] = [
 /** Everything else. */
 const GUARDED: Route[] = [
   { method: 'GET', path: '/api/events', run: stream },
+  // One topic's state, whole, without attaching to it — what the page fetches ahead of time for
+  // the topics that need a person. Read-only; see `WebRoom.snapshot`.
+  { method: 'GET', path: '/api/topic', run: topicSnapshot },
   { method: 'POST', path: '/api/send', run: submit },
   { method: 'POST', path: '/api/click', run: click },
   { method: 'POST', path: '/api/topics', run: createTopic },
@@ -718,6 +722,25 @@ function stream({ req, res, url }: Req, ctx: Ctx): void {
   };
   req.on('close', leave);
   res.on('close', leave);
+}
+
+/**
+ * One topic, whole, without attaching to it.
+ *
+ * The page fetches this for the topics that need a person, so tapping one paints at once instead
+ * of waiting for a sync: on a long topic that sync is up to 1000 messages and 1.5 MB of JSON.
+ * Read-only — nothing here subscribes, announces the list, logs, or marks anything seen; see
+ * `WebRoom.snapshot`.
+ *
+ * The id is checked the way the history routes check theirs: the query string has no schema, so
+ * the shape is checked here before it reaches the room.
+ */
+async function topicSnapshot({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const id = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(id)) return send(req, res, 400, { error: 'not a topic id' });
+  const snapshot = ctx.room.snapshot(id);
+  if (!snapshot) return send(req, res, 404, { error: 'no such topic' });
+  await sendAsyncGzip(req, res, 200, snapshot);
 }
 
 /** Open the response as an event stream, compressed when the client will take it. */
@@ -1484,4 +1507,35 @@ function body(
     ...(compress ? { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' } : {}),
   });
   res.end(out);
+}
+
+/**
+ * `body`, with the gzip done on libuv's pool instead of the event loop.
+ *
+ * Every other answer here is small enough that `gzipSync` costs less than a turn of the loop.
+ * A topic snapshot is not: 1.5 MB of JSON, and compressing it synchronously would stall every
+ * event stream in the process for the duration — including the one the page asking for it is
+ * reading. A compression failure is not a reason to fail the request: the client gets it plain.
+ */
+function sendAsyncGzip(req: IncomingMessage, res: ServerResponse, status: number, payload: unknown): Promise<void> {
+  const raw = Buffer.from(JSON.stringify(payload), 'utf8');
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+  if (raw.length < MIN_COMPRESS_BYTES || !acceptsGzip(req)) {
+    res.writeHead(status, { ...headers, 'Content-Length': raw.length });
+    res.end(raw);
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    gzip(raw, (e, out) => {
+      if (e) console.warn(`[webui] could not gzip an answer, sending it plain: ${e.message}`);
+      const body = e ? raw : out;
+      res.writeHead(status, {
+        ...headers,
+        'Content-Length': body.length,
+        ...(e ? {} : { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' }),
+      });
+      res.end(body);
+      resolve();
+    });
+  });
 }

@@ -5802,6 +5802,9 @@ const SCRIPT = `
   var held={}, HELD_TOPICS=8, HELD_MSGS=4000;
   function hold(id){
     delete held[id];
+    // The whole topic is here now; a copy fetched while it waited is dead weight against the
+    // prefetch budget.
+    delete pre[id];
     // Only a topic whose stream has said where it got to (lastEv names this topic): the first
     // thing a stream delivers is a sync or a replay, both numbered, so a page that has an id for
     // the topic holds every message the daemon's ring had as of that id. Without one — left before
@@ -5815,6 +5818,137 @@ const SCRIPT = `
     for(var i=0;i<ids.length;i++){
       total += held[ids[i]].msgs.length;
       if(i >= HELD_TOPICS || (i > 0 && total > HELD_MSGS)) delete held[ids[i]];
+    }
+  }
+
+  // ── Topics fetched before they are opened ───────────────────────────────────
+  // A topic in "needs you" is one the person is about to open, and opening it used to cost a full
+  // sync: up to 1000 messages and 83 KB gzipped, seconds of a 500 kbps link. The row already says
+  // what the reply is; the transcript behind it can be fetched while the person is still deciding,
+  // so tapping the row paints at once and the stream only replays what came after. Its own budget,
+  // separate from held's: these are topics nobody has opened yet, and letting them evict what the
+  // person just left would make the way back slow again.
+  var pre={}, PRE_TOPICS=4, PRE_MSGS=2000, PRE_DEBOUNCE_MS=400, PRE_RETRY_MS=60000, PRE_TIMEOUT_MS=60000;
+  var preBusy=false, preTimer=0, preFail={};
+
+  /**
+   * The topics worth fetching now, in the sidebar's own order for them: one that needs a person,
+   * is not a scheduled run, is not on screen (needsYou says that), is not already held whole, and
+   * whose copy is missing or older than the row — a new reply moves lastAt, and a copy that
+   * predates it is the one thing a prefetch must not do.
+   *
+   * A topic held in memory is never fetched: its stream resumes from the id it was left at, which
+   * is a few hundred bytes against the whole topic.
+   */
+  function prefetchWanted(){
+    if(document.visibilityState === 'hidden' || parked || !epoch) return [];
+    if(!stream || stream.readyState !== 1) return [];
+    var targets=[];
+    for(var i=0;i<topics.length;i++){
+      var t=topics[i];
+      if(!needsYou(t) || t.scheduled) continue;
+      var h=held[t.id];
+      if(h && h.epoch === epoch) continue;
+      targets.push(t);
+    }
+    // The order the needs-you rows are drawn in (topicRows): what needs a decision first, then
+    // most recent. With more than PRE_TOPICS waiting, the four fetched are the four nearest the
+    // top of the sidebar, not the four the daemon happened to list first.
+    targets.sort(function(a, b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+    // The set is the first PRE_TOPICS that qualify, cached or not: fetching a fifth only because
+    // the first four are already here would evict one of them, which would put it back in this
+    // list, and the two would take turns for ever.
+    targets = targets.slice(0, PRE_TOPICS);
+    var out=[];
+    for(var j=0;j<targets.length;j++){
+      var want=targets[j], p=pre[want.id], f=preFail[want.id];
+      if(p && p.epoch === epoch && p.lastAt === want.lastAt) continue;
+      if(f && f.lastAt === want.lastAt && Date.now() - f.at < PRE_RETRY_MS) continue;
+      out.push(want);
+    }
+    return out;
+  }
+
+  /** Look again once a burst of list events has settled; a message posts one row per topic. */
+  function schedulePrefetch(){
+    if(preTimer) return;
+    preTimer = setTimeout(pumpPrefetch, PRE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Fetch the next one, if any, and only ever one at a time: these are up to 1.5 MB each, and four
+   * of them at once is the whole of a weak link for the one topic the person is actually reading.
+   *
+   * Every way this can end goes through finish — an answer, a refusal, a body that does not parse,
+   * and a request that never comes back, which is aborted after PRE_TIMEOUT_MS. A rejected
+   * r.json() used to skip the only line that cleared preBusy, and one such answer stopped the page
+   * prefetching for the rest of its life.
+   */
+  function pumpPrefetch(){
+    preTimer=0;
+    if(preBusy) return;
+    var want=prefetchWanted();
+    if(!want.length) return;
+    var t=want[0], done=false, timer=0;
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    preBusy=true;
+    function finish(d){
+      if(done) return;
+      done=true;
+      clearTimeout(timer);
+      preBusy=false;
+      // One bad answer is not retried until the row moves or a minute has passed: a daemon that
+      // is refusing them would otherwise be asked again the moment this one came back. The next
+      // list event after that minute is what tries again (prefetchWanted is asked each time).
+      if(!takePrefetched(t, d)) preFail[t.id]={lastAt:t.lastAt, at:Date.now()};
+      pumpPrefetch();
+    }
+    timer = setTimeout(function(){
+      if(ctl){ try{ ctl.abort(); }catch(x){} }
+      finish(null);
+    }, PRE_TIMEOUT_MS);
+    fetch('api/topic?t='+encodeURIComponent(t.id), {credentials:'same-origin', cache:'no-store', signal:ctl ? ctl.signal : undefined})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(finish, function(){ finish(null); });
+  }
+
+  /** Whether the answer was kept — or was simply no longer needed (see takePrefetched). */
+  function takePrefetched(t, d){
+    if(!d || d.topic !== t.id) return false;
+    // The person opened it while this was in flight: the switch already did its own work, and
+    // putting these messages under it now would paint a transcript nobody asked for.
+    if(t.id === topic) return true;
+    // Another run of the daemon: these ids name something else. Not retried at once — a page
+    // whose epoch is a restart behind would otherwise ask again the moment this came back — and
+    // the sync that brings the new epoch clears both, so the next pass fetches it properly.
+    if(!epoch || d.epoch !== epoch) return false;
+    var live=null;
+    for(var i=0;i<topics.length;i++) if(topics[i].id === t.id){ live=topics[i]; break; }
+    if(!live) return true;
+    var msgs=[], list=d.messages || [];
+    for(var j=0;j<list.length;j++){
+      var m=list[j];
+      if(!m || !m.id || m.settings || m.wasSettings) continue;
+      // The rule reconcile applies: a message a topic kept from an earlier run says which run it
+      // belongs to, and one that does not is this daemon's.
+      m._g = m.g || d.epoch;
+      msgs.push(m);
+    }
+    // The row's lastAt as it was when the fetch went out, not as it is now: if it moved while the
+    // answer was in flight, this copy is missing that reply and the next pass fetches it again.
+    // What is here still saves the whole transcript, and ?last= replays the rest.
+    pre[t.id]={msgs:msgs, last:d.last, epoch:d.epoch, stale:Boolean(d.stale), lastAt:t.lastAt, at:Date.now()};
+    trimPrefetch();
+    return true;
+  }
+
+  /** The same rotation hold() does, over its own budget: PRE_TOPICS topics, PRE_MSGS messages. */
+  function trimPrefetch(){
+    var ids=Object.keys(pre).sort(function(a, b){ return pre[b].at - pre[a].at; });
+    var total=0;
+    for(var i=0;i<ids.length;i++){
+      total += pre[ids[i]].msgs.length;
+      if(i >= PRE_TOPICS || (i > 0 && total > PRE_MSGS)) delete pre[ids[i]];
     }
   }
 
@@ -5883,14 +6017,32 @@ const SCRIPT = `
     showSkeleton();
     // A topic still held in memory from this daemon is put up whole, now, and its stream resumed
     // from where it was left; otherwise the cache and a sync, as on any first visit.
-    var back = held[id];
+    var back = held[id], fetched = false;
     delete held[id];
+    // Held wins when it is this run's, and deliberately: it is the topic this tab left, and its
+    // stream resumes from the exact event it was left at. A fetched copy is the fallback for one
+    // this tab has not had open. Either way the copy is used once — neither is a second cache.
+    var fetchedCopy = pre[id];
+    delete pre[id];
+    if(!back || back.epoch !== epoch){
+      back = fetchedCopy || null;
+      fetched = Boolean(back);
+    }
     if(back && back.epoch === epoch){
       stale = back.stale;
       // Marked as read from the cache, so the sync that follows a resume the daemon could not
       // honour does not read it in a second time.
       restoreFor = id;
+      // A fetched copy is the first thing this page sees of the topic, so it has to answer what a
+      // sync answers: an echo inside it claims the bubble still saying "not confirmed", and a send
+      // of this page's that the snapshot does not carry is a failure. Without this, a reload with
+      // a send in flight showed the message twice — once from the snapshot, once as "Not
+      // confirmed" — and the unsure record was never settled.
+      if(fetched){
+        for(var c=0;c<back.msgs.length;c++) claim(back.msgs[c]);
+      }
       adopt(back.msgs);
+      if(fetched) settleUnsure();
       lastEv = back.last;
     } else {
       back = null;
@@ -6255,6 +6407,9 @@ const SCRIPT = `
       // A different run under a page that was already open is a restart, and the daemon that came
       // back may be a newer one than served this script.
       if(epoch && ev.epoch && ev.epoch !== epoch) checkBuild();
+      // Whatever was fetched from the daemon that went away is about ids this one hands out
+      // again for different messages; the refusals to retry go with it.
+      if(ev.epoch && epoch && ev.epoch !== epoch){ pre={}; preFail={}; }
       epoch = ev.epoch || 0;
       synced = true;
       // What the server says about this room BEFORE the transcript is reconciled, so the drops
@@ -6289,6 +6444,9 @@ const SCRIPT = `
       note.textContent='';
       if(arriving) land(); else if(stick) toBottom();
       view = null;
+      // The list this sync carried is what says which topics need a person; the debounce keeps a
+      // reconnect's sync and the list events after it to one look.
+      schedulePrefetch();
     }
     else if(ev.t==='msg'){
       // /setting is a page here, not a message: the daemon's screen goes to it, and a retired
@@ -6356,6 +6514,7 @@ const SCRIPT = `
       // After any switch above, which writes down the view and draft of the topic it leaves — a
       // topic that has just gone, in that case.
       prune();
+      schedulePrefetch();
     }
     // The daemon is going away. The stream is closed here rather than left to EventSource, which
     // would retry it every few seconds for as long as the daemon is down; this tries again on a
@@ -6459,6 +6618,9 @@ const SCRIPT = `
     }
     clearTimeout(parkTimer); parkTimer=0;
     if(parked){ parked=false; connect(true, true); }
+    // A tab coming back is exactly when a topic may have started needing an answer while nobody
+    // was looking; nothing else fires until the next message.
+    schedulePrefetch();
   });
 
   /**
@@ -6528,6 +6690,9 @@ const SCRIPT = `
       retryMs = 0;
       var fresh = app.hidden || !quiet;
       gate.hidden=true; app.hidden=false; note.textContent=''; if(fresh && !narrow()) input.focus(); initNotify();
+      // The stream is the one thing that says the daemon is there to be asked; a tab that was
+      // hidden, or one that just rode out a restart, gets its prefetch from here.
+      schedulePrefetch();
       // A panel opened (or restored from aa_sched_open) before the gate came down asked too
       // early (loadSchedules and loadReviews refuse while #app is hidden); this is the first
       // moment the answer can be had. The restored tab is read here too: on a reload that comes
@@ -8663,6 +8828,8 @@ const SCRIPT = `
   function forget(id){
     delete views[id];
     delete held[id];
+    delete pre[id];
+    delete preFail[id];
     for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === id) dropUnsent(n);
     if(!drafts[id]) return;
     delete drafts[id];
@@ -8681,6 +8848,8 @@ const SCRIPT = `
     for(var i=0;i<topics.length;i++) known[topics[i].id]=1;
     for(id in views) if(!known[id]) delete views[id];
     for(id in held) if(!known[id]) delete held[id];
+    for(id in pre) if(!known[id]) delete pre[id];
+    for(id in preFail) if(!known[id]) delete preFail[id];
     for(id in drafts) if(!known[id]) forget(id);
     for(id in unsent) if(Object.prototype.hasOwnProperty.call(unsent, id) && !known[unsent[id].t]) dropUnsent(id);
   }
