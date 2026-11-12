@@ -668,6 +668,24 @@ describe('WebRoom: a topic handed over without attaching', () => {
     expect(room.snapshot('not-a-topic')).toBeUndefined();
   });
 
+  it('leaves the seen mark and the stage exactly where they were', () => {
+    // A fetch nobody is waiting on is not the person looking: if it marked the topic seen, the
+    // green row would go grey before it was ever opened.
+    const { room, topic } = attached();
+    room.post(topic, { own: false, html: '<p>x</p>' }, 'x');
+    room.setActivity(topic, { outcome: { kind: 'done', at: Date.now(), line: 'done' } });
+    expect(room.topicList().find((t) => t.id === topic)?.stage).toBe('review');
+    room.markSeen(topic);
+    const before = room.topicList().find((t) => t.id === topic);
+
+    room.snapshot(topic);
+
+    const after = room.topicList().find((t) => t.id === topic);
+    expect(after?.seenAt).toBe(before?.seenAt);
+    expect(after?.stage).toBe(before?.stage);
+    expect(after?.stage).toBe('idle');
+  });
+
   it('calls an empty topic from before this process stale, without creating a room for it', () => {
     vi.useFakeTimers({ now: new Date('2026-11-10T08:00:00Z') });
     const file = path.join(dir, 'stale.json');

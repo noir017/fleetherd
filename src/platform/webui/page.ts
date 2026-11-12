@@ -5660,6 +5660,9 @@ const SCRIPT = `
   var held={}, HELD_TOPICS=8, HELD_MSGS=4000;
   function hold(id){
     delete held[id];
+    // The whole topic is here now; a copy fetched while it waited is dead weight against the
+    // prefetch budget.
+    delete pre[id];
     // Only a topic whose stream has said where it got to (lastEv names this topic): the first
     // thing a stream delivers is a sync or a replay, both numbered, so a page that has an id for
     // the topic holds every message the daemon's ring had as of that id. Without one — left before
@@ -5683,7 +5686,7 @@ const SCRIPT = `
   // so tapping the row paints at once and the stream only replays what came after. Its own budget,
   // separate from held's: these are topics nobody has opened yet, and letting them evict what the
   // person just left would make the way back slow again.
-  var pre={}, PRE_TOPICS=4, PRE_MSGS=2000, PRE_DEBOUNCE_MS=400, PRE_RETRY_MS=60000;
+  var pre={}, PRE_TOPICS=4, PRE_MSGS=2000, PRE_DEBOUNCE_MS=400, PRE_RETRY_MS=60000, PRE_TIMEOUT_MS=60000;
   var preBusy=false, preTimer=0, preFail={};
 
   /**
@@ -5733,23 +5736,38 @@ const SCRIPT = `
   /**
    * Fetch the next one, if any, and only ever one at a time: these are up to 1.5 MB each, and four
    * of them at once is the whole of a weak link for the one topic the person is actually reading.
+   *
+   * Every way this can end goes through finish — an answer, a refusal, a body that does not parse,
+   * and a request that never comes back, which is aborted after PRE_TIMEOUT_MS. A rejected
+   * r.json() used to skip the only line that cleared preBusy, and one such answer stopped the page
+   * prefetching for the rest of its life.
    */
   function pumpPrefetch(){
     preTimer=0;
     if(preBusy) return;
     var want=prefetchWanted();
     if(!want.length) return;
-    var t=want[0];
+    var t=want[0], done=false, timer=0;
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
     preBusy=true;
-    fetch('api/topic?t='+encodeURIComponent(t.id), {credentials:'same-origin', cache:'no-store'})
-      .then(function(r){ return r.ok ? r.json() : null; }, function(){ return null; })
-      .then(function(d){
-        preBusy=false;
-        // One bad answer is not retried until the row moves or a minute has passed: a daemon that
-        // is refusing them would otherwise be asked again the moment this one came back.
-        if(!takePrefetched(t, d)) preFail[t.id]={lastAt:t.lastAt, at:Date.now()};
-        pumpPrefetch();
-      });
+    function finish(d){
+      if(done) return;
+      done=true;
+      clearTimeout(timer);
+      preBusy=false;
+      // One bad answer is not retried until the row moves or a minute has passed: a daemon that
+      // is refusing them would otherwise be asked again the moment this one came back. The next
+      // list event after that minute is what tries again (prefetchWanted is asked each time).
+      if(!takePrefetched(t, d)) preFail[t.id]={lastAt:t.lastAt, at:Date.now()};
+      pumpPrefetch();
+    }
+    timer = setTimeout(function(){
+      if(ctl){ try{ ctl.abort(); }catch(x){} }
+      finish(null);
+    }, PRE_TIMEOUT_MS);
+    fetch('api/topic?t='+encodeURIComponent(t.id), {credentials:'same-origin', cache:'no-store', signal:ctl ? ctl.signal : undefined})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(finish, function(){ finish(null); });
   }
 
   /** Whether the answer was kept — or was simply no longer needed (see takePrefetched). */
@@ -5857,17 +5875,32 @@ const SCRIPT = `
     showSkeleton();
     // A topic still held in memory from this daemon is put up whole, now, and its stream resumed
     // from where it was left; otherwise the cache and a sync, as on any first visit.
-    var back = held[id];
+    var back = held[id], fetched = false;
     delete held[id];
-    // Fetched while it waited in "needs you" is the next best thing, and fresher than a held copy
-    // could be: it was fetched after the reply that put the row there. Taken once, like held.
-    if(!back || back.epoch !== epoch){ back = pre[id] || null; delete pre[id]; }
+    // Held wins when it is this run's, and deliberately: it is the topic this tab left, and its
+    // stream resumes from the exact event it was left at. A fetched copy is the fallback for one
+    // this tab has not had open. Either way the copy is used once — neither is a second cache.
+    var fetchedCopy = pre[id];
+    delete pre[id];
+    if(!back || back.epoch !== epoch){
+      back = fetchedCopy || null;
+      fetched = Boolean(back);
+    }
     if(back && back.epoch === epoch){
       stale = back.stale;
       // Marked as read from the cache, so the sync that follows a resume the daemon could not
       // honour does not read it in a second time.
       restoreFor = id;
+      // A fetched copy is the first thing this page sees of the topic, so it has to answer what a
+      // sync answers: an echo inside it claims the bubble still saying "not confirmed", and a send
+      // of this page's that the snapshot does not carry is a failure. Without this, a reload with
+      // a send in flight showed the message twice — once from the snapshot, once as "Not
+      // confirmed" — and the unsure record was never settled.
+      if(fetched){
+        for(var c=0;c<back.msgs.length;c++) claim(back.msgs[c]);
+      }
       adopt(back.msgs);
+      if(fetched) settleUnsure();
       lastEv = back.last;
     } else {
       back = null;

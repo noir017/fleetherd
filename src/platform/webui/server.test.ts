@@ -837,6 +837,7 @@ describe('webui server: one topic, fetched before it is opened', () => {
     const { base, port, room, topic } = await boot();
     const cookie = await signIn(base);
     room.post(topic, { own: false, html: `<p>${'x'.repeat(2000)}</p>` }, 'x');
+    const empty = room.createTopic('nothing said yet').id;
 
     const big = await rawGet(port, `/api/topic?t=${topic}`, { cookie, 'accept-encoding': 'gzip' });
     expect(big.status).toBe(200);
@@ -844,11 +845,20 @@ describe('webui server: one topic, fetched before it is opened', () => {
     expect(big.headers.vary).toBe('Accept-Encoding');
     expect((JSON.parse(gunzipSync(big.body).toString('utf8')) as { topic: string }).topic).toBe(topic);
 
-    // A topic that does not exist answers a short JSON body, below the threshold, so it is not
-    // worth a compressor either way.
-    const small = await rawGet(port, '/api/topic?t=deadbeef', { cookie, 'accept-encoding': 'gzip' });
-    expect(small.status).toBe(404);
+    // A real topic with nothing in it answers under MIN_COMPRESS_BYTES, and gzip's own framing
+    // would cost more than it saves — the same rule every other JSON answer here follows.
+    const small = await rawGet(port, `/api/topic?t=${empty}`, { cookie, 'accept-encoding': 'gzip' });
+    expect(small.status).toBe(200);
     expect(small.headers['content-encoding']).toBeUndefined();
+    expect(small.body.length).toBeLessThan(512);
+    expect((JSON.parse(small.body.toString('utf8')) as { topic: string; messages: unknown[] }).topic).toBe(empty);
+    expect((JSON.parse(small.body.toString('utf8')) as { messages: unknown[] }).messages).toEqual([]);
+  });
+
+  it('refuses without a session, like every other guarded route', async () => {
+    const { base, topic } = await boot();
+    const res = await fetch(`${base}/api/topic?t=${topic}`);
+    expect(res.status).toBe(401);
   });
 });
 
