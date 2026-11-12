@@ -320,9 +320,11 @@ describe('moving a conversation', () => {
 describe('ordering by use', () => {
   const usageStore = (): WorkdirUsageStore =>
     new WorkdirUsageStore(join(mkdtempSync(join(tmpdir(), 'workdir-usage-')), 'usage.json'));
+  // Ordering by use is opt-in since `workdir.sort` defaults to 'name', so every rig here asks for it.
+  const config: Config = { ...cfg, workdir: { ...cfg.workdir, sort: 'frecency' } };
 
   it('stays alphabetical for a machine with no history', async () => {
-    const { send, menus } = rig({ usage: usageStore() });
+    const { send, menus } = rig({ usage: usageStore(), config });
     await send('/cc');
     expect(menus[0]!.options.map((o) => o.name)).toEqual([
       menus[0]!.options[0]!.name,
@@ -334,7 +336,7 @@ describe('ordering by use', () => {
 
   it('leads with the directory that has been used, root still first', async () => {
     const usage = usageStore();
-    const { send, menus } = rig({ usage });
+    const { send, menus } = rig({ usage, config });
     // uniagent sorts last alphabetically; using it should bring it to the top of the projects.
     await send('/cd uniagent');
     await send('/new');
@@ -347,11 +349,11 @@ describe('ordering by use', () => {
 
   it('carries the history across daemon restarts, into a conversation that never chose anything', async () => {
     const file = join(mkdtempSync(join(tmpdir(), 'workdir-usage-')), 'usage.json');
-    const first = rig({ usage: new WorkdirUsageStore(file) });
+    const first = rig({ usage: new WorkdirUsageStore(file), config });
     await first.send('/cd uniagent');
 
     // A different registry, a different store instance, reading the same file: what a restart is.
-    const { send, menus } = rig({ usage: new WorkdirUsageStore(file) });
+    const { send, menus } = rig({ usage: new WorkdirUsageStore(file), config });
     await send('/cc');
     expect(menus[0]!.options.map((o) => o.name).slice(1)).toEqual([
       'uniagent',
@@ -362,7 +364,7 @@ describe('ordering by use', () => {
 
   it('does not count re-picking the directory already in use (that is how a menu is dismissed)', async () => {
     const usage = usageStore();
-    const { send } = rig({ usage });
+    const { send } = rig({ usage, config });
     await send('/cd shop-api');
     const after = usage.stat(SHOP_API)!;
     await send('/cd shop-api'); // `unchanged`: nothing moved, nothing reset
@@ -371,7 +373,7 @@ describe('ordering by use', () => {
 
   it('does not count a directory that turned out not to exist', async () => {
     const usage = usageStore();
-    const { reg, send, key } = rig({ usage });
+    const { reg, send, key } = rig({ usage, config });
     await send('/cc');
     const gone = join(root, 'deleted-since-the-menu-was-drawn');
     expect(reg.applyWorkdirChoice(key, 'cc', gone)).toEqual({ kind: 'missing', path: gone });
@@ -380,10 +382,10 @@ describe('ordering by use', () => {
 
   it('orders the text list the same way, so both surfaces agree', async () => {
     const usage = usageStore();
-    const withButtons = rig({ usage });
+    const withButtons = rig({ usage, config });
     await withButtons.send('/cd uniagent');
 
-    const { send, replies } = rig({ buttons: false, usage });
+    const { send, replies } = rig({ buttons: false, usage, config });
     await send('/cd');
     const text = replies().at(-1)!;
     expect(text.indexOf('/cd uniagent')).toBeLessThan(text.indexOf('/cd gateway'));
