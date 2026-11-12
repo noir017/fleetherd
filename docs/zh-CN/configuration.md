@@ -58,6 +58,9 @@ review:                       # 可选；不指定复盘者就是关闭
 
 skills:                       # 可选；自管技能共用的 git 仓库
   repo: ssh://git@git.example:22/you/agent-skills.git
+
+workdir:                      # 可选；目录选择菜单（/cd、/new）
+  sort: name                  # name（按字母序，默认）| frecency（按使用频率加权）
 ```
 
 `${VAR}` 从环境变量及 `<配置目录>/.env` 展开，YAML 本身可以提交进仓库。

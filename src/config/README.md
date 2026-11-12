@@ -19,7 +19,7 @@ nothing else from the project.
 
 The config file has exactly five sections — `platforms`, `agents`, `routing`,
 `session`, `access` — plus the optional `display`, `stream`, `title`, `voice`, `hosts`,
-`podModels`, `review` and `delegation`. Everything else that
+`podModels`, `review`, `delegation` and `workdir`. Everything else that
 *looks* like config (stream throttling, tool-bubble rendering, inbound merge windows,
 attachment limits, reaction emoji, the IPC socket) is **not** user-configurable. It lives
 in the frozen `EXPERIENCE` constant in `schema.ts` and is merged into every loaded

@@ -929,6 +929,25 @@ export const ConfigSchema = z
         }),
       })
       .optional(),
+
+    /**
+     * Directory choice menus (`/cd`, `/new`, agent switch).
+     */
+    workdir: z
+      .object({
+        /**
+         * How project directories are ordered in `/new` and `/cd` menus:
+         * - `'name'` (default) — alphabetically by directory name.
+         * - `'frecency'` — most frequently and recently used first (14-day half-life).
+         */
+        sort: z.enum(['name', 'frecency']).default('name'),
+      })
+      .default({}),
+
+    /**
+     * Shorthand for `workdir.sort` in config.yaml (`workdirSort: 'name' | 'frecency'`).
+     */
+    workdirSort: z.enum(['name', 'frecency']).optional(),
   })
   // Referential-integrity + cross-field checks (fail-fast at load). Otherwise a typo
   // would surface only when that agent/platform is used, as an obscure runtime error.
@@ -1061,8 +1080,10 @@ export type Config = Omit<UserConfig, 'session' | 'stream'> &
 
 /** Merge the frozen experience defaults onto a parsed user config to get the runtime Config. */
 export function withExperienceDefaults(u: UserConfig): Config {
+  const sort = u.workdirSort ?? u.workdir.sort;
   return {
     ...u,
+    workdir: { ...u.workdir, sort },
     ...EXPERIENCE,
     // scope comes from the user; guardrails from experience.
     session: { ...EXPERIENCE.session, ...u.session },

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Daemon } from './daemon.js';
 import { ConversationStore } from './conversation-store.js';
+import { WorkdirUsageStore } from './workdir-usage.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession } from './agent.js';
@@ -40,7 +41,7 @@ const PROJECTS = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta'];
 for (const name of PROJECTS) mkdirSync(join(root, name));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-function config(access?: string[]): Config {
+function config(access?: string[], workdir?: { sort: 'name' | 'frecency' }): Config {
   const parsed = parseConfig({
     platforms: { tg: { type: 'telegram', token: 't' } },
     agents: [
@@ -55,6 +56,7 @@ function config(access?: string[]): Config {
       ],
     },
     ...(access ? { access: { allowFrom: access } } : {}),
+    ...(workdir ? { workdir } : {}),
   });
   return { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
 }
@@ -65,6 +67,8 @@ function rig(
   opts: {
     access?: string[];
     caps?: { buttons?: boolean; editButtons?: boolean; menuPageSize?: number; workdirPageSize?: number };
+    workdir?: { sort: 'name' | 'frecency' };
+    workdirUsage?: WorkdirUsageStore;
   } = {}
 ) {
   const sent: string[] = [];
@@ -153,11 +157,12 @@ function rig(
   const file = join(mkdtempSync(join(tmpdir(), 'workdir-click-store-')), 'conversations.json');
   const store = new ConversationStore(file);
   const daemon = new Daemon(
-    config(opts.access),
+    config(opts.access, opts.workdir),
     new Map([['tg', platform]]),
     agents,
     '/tmp/aa-workdir-menu-test.sock',
-    store
+    store,
+    opts.workdirUsage
   );
   const d = daemon as unknown as {
     onInbound(m: InboundMessage): void;
@@ -434,5 +439,31 @@ describe('choosing an agent by id asks where it should work', () => {
     await r.send('/agent oc');
     expect(r.store.boundAgent(r.key)).toBe('cc');
     expect(r.buttonSends).toHaveLength(0);
+  });
+});
+
+describe('workdir menu sorting', () => {
+  it('keeps alphabetical order by default even when usage history exists', async () => {
+    const usageFile = join(mkdtempSync(join(tmpdir(), 'wusage-')), 'usage.json');
+    const usage = new WorkdirUsageStore(usageFile);
+    usage.record(join(root, 'zeta'), Date.now());
+    const r = rig({ workdirUsage: usage });
+    await r.send('/cd');
+    // Page size 6: page 1 has root, alpha, beta, gamma, delta, epsilon; zeta stays on page 2.
+    expect(r.menu().text).toContain('page 1/2');
+    const labels = r.menu().buttons.map((b) => b.label);
+    expect(labels).not.toContain('zeta');
+    expect(labels).toContain('alpha');
+  });
+
+  it('ranks by frecency when workdir.sort is frecency', async () => {
+    const usageFile = join(mkdtempSync(join(tmpdir(), 'wusage-')), 'usage.json');
+    const usage = new WorkdirUsageStore(usageFile);
+    usage.record(join(root, 'zeta'), Date.now());
+    const r = rig({ workdir: { sort: 'frecency' }, workdirUsage: usage });
+    await r.send('/cd');
+    // zeta was visited, so frecency ranking promotes it to page 1 right after root.
+    const labels = r.menu().buttons.map((b) => b.label);
+    expect(labels).toContain('zeta');
   });
 });

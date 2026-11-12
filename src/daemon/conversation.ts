@@ -3374,6 +3374,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
   private rankedWorkdirs(def: AgentDef, root: string): WorkdirScan {
     const scan = def.host ? this.remoteScanOf(def, root) : scanWorkdirs(root);
     if (!scan.ok || !this.workdirUsage) return scan;
+    const sort = this.config.workdir?.sort ?? 'name';
+    if (sort === 'name') return scan;
     const [first, ...rest] = scan.options;
     if (!first) return scan;
     return {

@@ -59,6 +59,9 @@ review:                       # optional; off unless a reviewer is named
 
 skills:                       # optional; the managed skills' shared git repository
   repo: ssh://git@git.example:22/you/agent-skills.git
+
+workdir:                      # optional; directory choice menus (/cd, /new)
+  sort: name                  # name (alphabetical, default) | frecency (usage-weighted)
 ```
 
 `${VAR}` expands from the environment plus a `<configDir>/.env` sidecar, so

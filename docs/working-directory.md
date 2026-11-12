@@ -15,14 +15,15 @@ on disk. The root is always offered, so a conversation can get back out.
 /cd shop-api       →  move there by substring, on every platform
 ```
 
-The menu leads with the directories you actually use — a project's rank is how
-often it has been chosen, with each past choice discounted by how long ago it was
-(a fortnight half-life). A plain counter would leave last quarter's project on
-top forever; a plain "most recent" would let one curious click displace the
-project you have lived in all month. Anything never chosen keeps its alphabetical
-place, and the root stays first as the way back out. This is remembered per
-machine, not per conversation, so a brand-new topic gets the benefit of it
-immediately.
+By default, projects are listed in alphabetical order (`workdir.sort: name`).
+Setting `workdir.sort: frecency` (or `workdirSort: frecency`) orders the menu by
+the directories you actually use — a project's rank is how often it has been
+chosen, with each past choice discounted by how long ago it was (a fortnight
+half-life). A plain counter would leave last quarter's project on top forever; a
+plain "most recent" would let one curious click displace the project you have
+lived in all month. Anything never chosen keeps its alphabetical place, and the
+root stays first as the way back out. This is remembered per machine, not per
+conversation, so a brand-new topic gets the benefit of it immediately.
 
 A page holds as many directories as the platform can carry — twelve on Telegram,
 Discord and Slack, which is one page for a typical workspace, and 24 in the web UI,
