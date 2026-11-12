@@ -2857,6 +2857,42 @@ describe('webui page: a topic fetched before it is opened', () => {
     expect(ids.filter((id) => fetched(h, id))).toEqual(ids.slice(0, 4));
   });
 
+  it('picks the four nearest the top of the sidebar, not the four the daemon listed first', async () => {
+    // Questions beat failures, failures beat finished replies, and within one stage the newest
+    // is first — the order topicRows draws the needs-you block in. The daemon's own order here is
+    // the reverse, so a prefetch that took topics as they came would fetch the wrong four.
+    const ans1 = 'a1a1a1a1';
+    const ans2 = 'a2a2a2a2';
+    const failed = 'f0f0f0f0';
+    const rev1 = 'c1c1c1c1';
+    const rev2 = 'c2c2c2c2';
+    const rev3 = 'c3c3c3c3';
+    const replies: Record<string, unknown> = {};
+    for (const id of [ans1, ans2, failed, rev1, rev2, rev3]) replies[url(id)] = snap(id, [], `${id}.run.0`);
+    const h = await open({ replies });
+    await h.emit(
+      sync(A, [], [A, rev3, rev2, rev1, failed, ans2, ans1], {
+        topics: [
+          row(A),
+          row(rev3, { stage: 'review', lastAt: 900 }),
+          row(rev2, { stage: 'review', lastAt: 950 }),
+          row(rev1, { stage: 'review', lastAt: 999 }),
+          row(failed, { stage: 'failed', lastAt: 800 }),
+          row(ans2, { stage: 'answer', lastAt: 400 }),
+          row(ans1, { stage: 'answer', lastAt: 500 }),
+        ],
+      })
+    );
+    await within('four prefetches', 4000, () =>
+      [ans1, ans2, failed, rev1, rev2, rev3].filter((id) => fetched(h, id)).length === 4
+    );
+    await new Promise((r) => setTimeout(r, 600));
+    // In the order they were fetched, which is the order they sit in the list.
+    expect(h.calls.filter((c) => c.path.startsWith('api/topic')).map((c) => c.path)).toEqual(
+      [ans1, ans2, failed, rev1].map(url)
+    );
+  });
+
   it('fetches it again when a new reply moves the row', async () => {
     const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>one</p>')], `${B}.run.1`) } });
     const list = [row(A), row(B, { stage: 'answer', lastAt: 900 })];

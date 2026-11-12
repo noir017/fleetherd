@@ -5687,10 +5687,10 @@ const SCRIPT = `
   var preBusy=false, preTimer=0, preFail={};
 
   /**
-   * The topics worth fetching now, in list order: one that needs a person, is not a scheduled run,
-   * is not on screen (needsYou says that), is not already held whole, and whose copy is missing or
-   * older than the row — a new reply moves lastAt, and a copy that predates it is the one thing a
-   * prefetch must not do.
+   * The topics worth fetching now, in the sidebar's own order for them: one that needs a person,
+   * is not a scheduled run, is not on screen (needsYou says that), is not already held whole, and
+   * whose copy is missing or older than the row — a new reply moves lastAt, and a copy that
+   * predates it is the one thing a prefetch must not do.
    *
    * A topic held in memory is never fetched: its stream resumes from the id it was left at, which
    * is a few hundred bytes against the whole topic.
@@ -5698,17 +5698,22 @@ const SCRIPT = `
   function prefetchWanted(){
     if(document.visibilityState === 'hidden' || parked || !epoch) return [];
     if(!stream || stream.readyState !== 1) return [];
-    // The set is the first PRE_TOPICS that qualify, cached or not: fetching a fifth only because
-    // the first four are already here would evict one of them, which would put it back in this
-    // list, and the two would take turns for ever.
     var targets=[];
-    for(var i=0;i<topics.length && targets.length<PRE_TOPICS;i++){
+    for(var i=0;i<topics.length;i++){
       var t=topics[i];
       if(!needsYou(t) || t.scheduled) continue;
       var h=held[t.id];
       if(h && h.epoch === epoch) continue;
       targets.push(t);
     }
+    // The order the needs-you rows are drawn in (topicRows): what needs a decision first, then
+    // most recent. With more than PRE_TOPICS waiting, the four fetched are the four nearest the
+    // top of the sidebar, not the four the daemon happened to list first.
+    targets.sort(function(a, b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+    // The set is the first PRE_TOPICS that qualify, cached or not: fetching a fifth only because
+    // the first four are already here would evict one of them, which would put it back in this
+    // list, and the two would take turns for ever.
+    targets = targets.slice(0, PRE_TOPICS);
     var out=[];
     for(var j=0;j<targets.length;j++){
       var want=targets[j], p=pre[want.id], f=preFail[want.id];
