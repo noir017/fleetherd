@@ -1152,14 +1152,13 @@ status and machine state, the topic list when the page's copy is behind, and `re
 is its own (4 topics, 2000 messages), not `held`'s, so a topic nobody has opened cannot evict the
 one just left. A copy older than the row is fetched again (a reply moves `lastAt`), and one that
 arrives after the person opened the topic, from another run of the daemon, or for a topic that has
-gone is dropped. A copy that carries the echo of a send this page made is claimed like a sync's —
-the bubble still saying "Not confirmed" becomes the message — and a send the copy does not carry is
-marked failed, because a fetched copy is the first thing this page sees of the topic and has to
-answer what a sync answers. A failed fetch is not retried at once: that row's failure stands for a
-minute, and
-the next list event after it is what asks again. A request that never comes back is aborted after
-the same minute, so one hung answer cannot stop the page prefetching — and a body that does not
-parse is just another failure. Measured in Chromium at 400 ms / 500 kbps on 2026-11-12: the
+gone is dropped. A copy that carries the echo of a send the previous page left in flight claims it
+the way a sync does — the bubble still saying "Not confirmed" becomes the message — and a send the
+previous page left unsure that the copy does not carry is marked failed, the same judgement a sync
+makes; a send this page is still making is not touched. A failed fetch is not retried at once: that
+row's failure stands for a minute, and the next list event after it is what asks again. A request
+that never comes back is aborted after the same minute, so one hung answer cannot stop the page
+prefetching — and a body that does not parse is just another failure. Measured in Chromium at 400 ms / 500 kbps on 2026-11-12: the
 prefetch of a 1000-message topic took 1.7 s and 83.3 KB in the background, and opening it went from
 83.4 KB and 2.3 s to 0.8 KB and 0.4 s (`project-scripts/fleetherd-prefetch/prefetch.mts`). The cost
 is that much memory held for four topics, and the bytes spent on a topic the person may not open —
