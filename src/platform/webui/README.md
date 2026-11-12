@@ -456,6 +456,22 @@ default, that row is all the person sees. It is drawn as running (dot, title, he
 anything below it is running or asking, sorted with the working group, and left out of Close idle:
 offering to close a row that says "running" is the list contradicting itself.
 
+**A row says how long it has been doing what it is doing** (`topicAge`, since this branch). The dot
+answers "is anything happening"; the age answers "for how long", which is what a sidebar of parallel
+conversations is scanned for. A working row counts from `runningSince` — `room.ts` stamps it when
+`typing` goes on and clears it when it goes off, because no event the daemon pushes carries a turn's
+start — and a dispatcher that is running only because of its sub-agents counts from the earliest
+start among them, the same subtree `rowRunning` reads. An idle row counts from its last turn's end,
+`outcome.at` (which a failed turn writes too), falling back to `lastAt` when the daemon sent no
+outcome; a topic nothing has been said in shows nothing, and neither does a working one from a
+daemon older than `runningSince`. The span sits at the right end of the line under the title, so a
+long directory ellipsises while the time keeps its width, in the running blue or the directory grey
+with " ago". Hovering gives the clock time, with the date when it was not today. A 30-second tick
+(`paintAges`) rewrites only the label's text — repainting the list would replace every row and close
+any menu open over one — and stops while the tab is hidden, catching up as soon as it is looked at.
+The Sessions tab's last-activity age uses the same formatter (`durText` / `ageText`), so "1h" means
+the same thing in both lists.
+
 A link to another topic is `?t=<id>` — the one relative link `web-markdown.ts` keeps — rendered with
 `data-goto`, which the page intercepts to switch in place.
 

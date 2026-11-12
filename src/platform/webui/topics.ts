@@ -49,6 +49,15 @@ export interface Topic {
    */
   running?: boolean;
   /**
+   * When the run `running` describes began, by this server's clock — the row says how long a
+   * working topic has been working, and nothing the daemon pushes carries a start.
+   *
+   * Set when `typing` goes on and cleared when it goes off, so it is only ever present alongside
+   * `running: true`. Never persisted: a restart has no turn in progress to measure, and a stored
+   * start would count from before it.
+   */
+  runningSince?: number;
+  /**
    * A question is on screen here and nothing will move until it is answered.
    *
    * Derived from the room itself — a message still carrying live buttons — rather than asked of

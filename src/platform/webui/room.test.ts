@@ -214,6 +214,32 @@ describe('WebRoom: topics are separate conversations', () => {
     expect(list().find((t) => t.id === topic)?.running).toBe(false);
   });
 
+  it('stamps when a run began, sends it with the row, and clears it when typing stops', () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const { room, topic, seen, list } = attached();
+
+    seen.length = 0;
+    room.setTyping(topic, true);
+    expect(room.topicList().find((t) => t.id === topic)?.runningSince).toBe(1_000_000);
+    // The client holds it too: the row that changed is what the page counts the age from.
+    expect(list().find((t) => t.id === topic)?.runningSince).toBe(1_000_000);
+    const on = (lastOf(seen, 'topic-rows') as { rows: Topic[] }).rows.find((t) => t.id === topic);
+    expect(on?.runningSince).toBe(1_000_000);
+
+    // A repeat is not a new run: the start must not move under the reader.
+    vi.setSystemTime(1_030_000);
+    room.setTyping(topic, true);
+    expect(room.topicList().find((t) => t.id === topic)?.runningSince).toBe(1_000_000);
+
+    // Off clears it, and the row is sent without the field rather than with a stale one.
+    seen.length = 0;
+    room.setTyping(topic, false);
+    expect(room.topicList().find((t) => t.id === topic)?.runningSince).toBeUndefined();
+    expect(list().find((t) => t.id === topic)?.runningSince).toBeUndefined();
+    const off = (lastOf(seen, 'topic-rows') as { rows: Topic[] }).rows.find((t) => t.id === topic);
+    expect(off).not.toHaveProperty('runningSince');
+  });
+
   it('deletes a topic, cleans up room state, and announces the updated list', () => {
     const { room, seen, list } = attached();
     const second = room.createTopic('second');

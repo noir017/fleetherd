@@ -7666,6 +7666,187 @@ describe('webui page: notifications on this device', () => {
   });
 });
 
+describe('webui page: how long a topic has been running, or since it stopped', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const C = 'c3d4e5f6';
+  const D = 'd15a7c40';
+  const E = 'e6f7a8b9';
+  const F = 'f7a8b9c0';
+  const NOW = new Date('2027-01-02T12:00:00').getTime();
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const ageOf = (h: Harness, id: string): HTMLElement | null =>
+    h.doc.querySelector(`#topics [data-topic="${id}"] .topic-age`);
+  const ageText = (h: Harness, id: string): string | null => ageOf(h, id)?.textContent ?? null;
+  const ended = (id: string, ms: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id,
+    title: `T ${id}`,
+    lastAt: NOW - 30 * DAY,
+    msgCount: 1,
+    stage: 'idle',
+    outcome: { kind: 'done', at: NOW - ms },
+    ...extra,
+  });
+
+  it('writes every span in the same units, and "ago" only once it has ended', async () => {
+    const ids = ['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6', 'd15a7c40', 'e6f7a8b9', 'f7a8b9c0', '0a1b2c3d'];
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        ended(ids[0]!, 30_000), // under a minute
+        ended(ids[1]!, 59 * MIN + 30_000), // 59m
+        ended(ids[2]!, 60 * MIN), // 1h
+        ended(ids[3]!, 23 * HOUR), // 23h, no minutes
+        ended(ids[4]!, DAY), // 1d, no hours
+        ended(ids[5]!, DAY + 10 * HOUR), // 1d10h
+        ended(ids[6]!, -5 * MIN), // a browser clock behind the server's
+      ],
+    });
+    expect(ids.map((id) => ageText(h, id))).toEqual([
+      '<1m ago',
+      '59m ago',
+      '1h ago',
+      '23h ago',
+      '1d ago',
+      '1d10h ago',
+      '<1m ago',
+    ]);
+  });
+
+  it('counts a working topic from its start, an idle one from its last end, and says nothing about a new one', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'working', lastAt: NOW - 10 * MIN, msgCount: 1, stage: 'working', running: true, runningSince: NOW - 3 * MIN },
+        { ...ended(B, 10 * MIN) },
+        { id: C, title: 'no outcome', lastAt: NOW - 2 * HOUR, msgCount: 2, stage: 'idle' },
+        // Nothing said in it yet: there is no run to time and no end to count from.
+        { id: D, title: 'new', lastAt: NOW, msgCount: 0, stage: 'idle' },
+        // A daemon from before runningSince: it says running, but not since when.
+        { id: E, title: 'old server', lastAt: NOW - HOUR, msgCount: 1, stage: 'working', running: true },
+        // A question holds its turn open, so it is timed like work.
+        { id: F, title: 'asking', lastAt: NOW - 8 * MIN, msgCount: 1, stage: 'answer', asking: true, runningSince: NOW - 5 * MIN },
+      ],
+    });
+
+    expect(ageText(h, A)).toBe('3m');
+    expect(ageOf(h, A)?.className).toContain('run');
+    expect(ageOf(h, A)?.getAttribute('title')).toBe('Started 11:57');
+    expect(ageText(h, B)).toBe('10m ago');
+    expect(ageOf(h, B)?.className).not.toContain('run');
+    expect(ageOf(h, B)?.getAttribute('title')).toBe('Ended 11:50');
+    // No outcome on the row, but it has been spoken in: the last message is the end.
+    expect(ageText(h, C)).toBe('2h ago');
+    expect(ageText(h, D)).toBeNull();
+    expect(ageText(h, E)).toBeNull();
+    expect(ageText(h, F)).toBe('5m');
+    expect(ageOf(h, F)?.className).toContain('run');
+  });
+
+  it('times a dispatcher from the earliest start under it, not from its own last turn', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        // Its own turn is over; the job its sub-agents are doing began 80 minutes ago.
+        { id: A, title: 'dispatcher', lastAt: NOW - 2 * HOUR, msgCount: 3, stage: 'working', outcome: { kind: 'done', at: NOW - 2 * HOUR } },
+        { id: B, title: 'sub one', lastAt: NOW - 80 * MIN, msgCount: 1, stage: 'working', running: true, runningSince: NOW - 80 * MIN, parent: A },
+        { id: C, title: 'sub two', lastAt: NOW - 3 * MIN, msgCount: 1, stage: 'working', running: true, runningSince: NOW - 3 * MIN, parent: B },
+      ],
+    });
+
+    // Under a day the row shows hours only, so 80 minutes reads as "1h"; the point is that it is
+    // the child's start (10:40) and not the dispatcher's own last turn two hours ago.
+    expect(ageText(h, A)).toBe('1h');
+    expect(ageOf(h, A)?.className).toContain('run');
+    expect(ageOf(h, A)?.getAttribute('title')).toBe('Started 10:40');
+
+    // A daemon older than runningSince says the sub-agent works but not since when: the
+    // dispatcher is still drawn as running, so it shows no ended age instead.
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'dispatcher', lastAt: NOW - 2 * HOUR, msgCount: 3, stage: 'working', outcome: { kind: 'done', at: NOW - 2 * HOUR } },
+        { id: B, title: 'sub one', lastAt: NOW - 80 * MIN, msgCount: 1, stage: 'working', running: true, parent: A },
+      ],
+    });
+    expect(ageText(h, A)).toBeNull();
+  });
+
+  it('moves the age on a 30-second tick by rewriting the text, never by repainting the row', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    const set = vi.spyOn(h.window, 'setInterval');
+    await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN)] });
+
+    const timer = set.mock.calls.find((c) => c[1] === 30_000);
+    expect(timer).toBeTruthy();
+    const node = ageOf(h, A)!;
+    expect(node.textContent).toBe('10m ago');
+
+    vi.setSystemTime(NOW + MIN);
+    (timer![0] as () => void)();
+
+    // The same element, not a fresh row: a repaint would lose the hover state and any menu open
+    // over the row, which is why the tick writes textContent only.
+    expect(ageOf(h, A)).toBe(node);
+    expect(node.textContent).toBe('11m ago');
+  });
+
+  it('stops the tick behind a hidden tab, and catches up the moment it is looked at', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    const set = vi.spyOn(h.window, 'setInterval');
+    const clear = vi.spyOn(h.window, 'clearInterval');
+    await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN)] });
+    const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
+    const node = ageOf(h, A)!;
+
+    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+    expect(clear).toHaveBeenCalledWith(set.mock.results[set.mock.calls.indexOf(timer)]?.value);
+
+    // Five minutes later the row still says what it said; coming back rewrites it at once,
+    // rather than up to half a minute later.
+    vi.setSystemTime(NOW + 5 * MIN);
+    expect(node.textContent).toBe('10m ago');
+    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'visible' });
+    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
+    expect(ageOf(h, A)).toBe(node);
+    expect(node.textContent).toBe('15m ago');
+  });
+
+  it('writes a scheduled run’s last activity in the same units', async () => {
+    const h = await open({ replies: { 'api/schedules': { enabled: true, tasks: [] } } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [{ id: A, title: 'a run', lastAt: NOW - DAY - 10 * HOUR, msgCount: 4, scheduled: true, stage: 'idle' }],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+    const line = h.doc.querySelector('.sess-item .topic-dir')?.textContent ?? '';
+    expect(line).toContain('1d10h ago');
+    expect(line).toContain('4 messages');
+  });
+});
+
 describe('webui page: the sidebar footer, and low attention', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';

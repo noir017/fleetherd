@@ -285,6 +285,17 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    for when several topics are open, not what you read. */
 .topic-dir{font-size:11px;line-height:1.35;color:#6b7683;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .topic-item.on .topic-dir{color:#8b98a6}
+/* The line under a title: the directory on the left, how long the topic has been working or how
+   long since it stopped on the right. A flex row so the age keeps its width while a long path is
+   ellipsised — the time is the thing being scanned, and cutting it to "1d…" would say nothing.
+   margin-left:auto right-aligns it even when it is the only child, which is a row with no
+   directory to show. */
+.topic-sub{display:flex;align-items:baseline;gap:6px;min-width:0}
+.topic-sub .topic-line{flex:1 1 auto;min-width:0}
+.topic-age{flex:0 0 auto;margin-left:auto;font-size:11px;line-height:1.35;color:#6b7683;white-space:nowrap;font-variant-numeric:tabular-nums}
+/* Working is the one state the row is watched in, so the age takes the running blue. Waiting on
+   an answer keeps its own amber elsewhere; the age still says how long the turn has been open. */
+.topic-age.run{color:#38bdf8}
 /* A machine the gateway cannot reach (OfflineMachine, the machines event): its name in a topic's
    line, the heading over its agents on a new topic, and a line above the composer. A muted red of
    its own, because amber already means "waiting for you" on this page, and this is not something to
@@ -2121,6 +2132,94 @@ const SCRIPT = `
     return Math.round(s/86400)+'d ago';
   }
 
+  /**
+   * How long a span lasted, in the one format every age on this page uses: under a minute is
+   * "<1m", under an hour Nm, under a day Nh (no minutes — "23h" is as precise as a row needs),
+   * then Nd, or NdNh when the hours are not zero ("1d10h").
+   *
+   * Rounded down, so a row never claims a minute it has not reached. A negative span — the
+   * server's clock ahead of this browser's — counts as zero rather than rendering "-1m".
+   */
+  function durText(ms){
+    var m=Math.floor(Math.max(0, ms)/60000);
+    if(m<1) return '<1m';
+    if(m<60) return m+'m';
+    var h=Math.floor(m/60);
+    if(h<24) return h+'h';
+    var d=Math.floor(h/24), rh=h%24;
+    return d+'d'+(rh?rh+'h':'');
+  }
+
+  /** A span as an age: the same units, with " ago" only for something that has ended. */
+  function ageText(ms, done){
+    return durText(ms)+(done?' ago':'');
+  }
+
+  /** HH:MM, with the date in front when it was not today — the tooltip's "started/ended at". */
+  function ageClock(at){
+    var d=new Date(at), now=new Date();
+    var hm=(d.getHours()<10?'0':'')+d.getHours()+':'+(d.getMinutes()<10?'0':'')+d.getMinutes();
+    if(d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate()) return hm;
+    var day=MONTH_NAMES[d.getMonth()].slice(0,3)+' '+d.getDate();
+    return (d.getFullYear()===now.getFullYear()?day:day+', '+d.getFullYear())+' '+hm;
+  }
+
+  /**
+   * The earliest start among a topic's working descendants.
+   *
+   * A /super dispatcher's own turn ends between jobs while its sub-agents keep working, and
+   * rowRunning already draws it as running; its age has to be the job's, not a start it does not
+   * have. Earliest, because that is when the work the row is standing for began.
+   */
+  function belowSince(id){
+    var best=0, stack=[id], seenB={}, n=0;
+    while(stack.length && n++<256){
+      var p=stack.pop();
+      if(seenB[p]) continue;
+      seenB[p]=true;
+      for(var i=0;i<topics.length;i++){
+        var t=topics[i];
+        if(t.parent!==p) continue;
+        if((t.running||t.asking) && t.runningSince && (!best || t.runningSince<best)) best=t.runningSince;
+        stack.push(t.id);
+      }
+    }
+    return best;
+  }
+
+  /**
+   * What a row's age counts from, and whether it is still running: its own start while it works
+   * (or the earliest start below a dispatcher), else when its last turn ended — the outcome's
+   * own timestamp, or the last message when the daemon sent no outcome. Null when there is
+   * nothing to count: a topic nothing has been said in yet, or a running one from a daemon
+   * older than runningSince.
+   */
+  function topicAge(t){
+    if(t.running || t.asking) return t.runningSince ? {at:t.runningSince, run:true} : null;
+    // A dispatcher is drawn as running while its sub-agents work, so it has no "ended" to count
+    // from: with no start anywhere below (a daemon older than runningSince) it shows nothing.
+    if(busyBelow(t.id)){
+      var below=belowSince(t.id);
+      return below ? {at:below, run:true} : null;
+    }
+    var at=(t.outcome && t.outcome.at) ? t.outcome.at : (t.msgCount ? t.lastAt : 0);
+    return at ? {at:at, run:false} : null;
+  }
+
+  /**
+   * The age element of a row, stamped so the 30-second tick can rewrite it without repainting
+   * the list (see paintAges): data-age is the instant counted from, data-age-run says which
+   * wording it takes.
+   */
+  function ageHtml(t){
+    var a=topicAge(t);
+    if(!a) return '';
+    return '<span class="topic-age'+(a.run?' run':'')+'" data-age="'+a.at+'"'
+      + ' data-age-run="'+(a.run?'1':'0')+'"'
+      + ' title="'+text((a.run?'Started ':'Ended ')+ageClock(a.at))+'">'
+      + text(ageText(Date.now()-a.at, !a.run))+'</span>';
+  }
+
   var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   /**
@@ -2211,15 +2310,19 @@ const SCRIPT = `
    * same thing to read: what is it, what is it doing, and one control. The callers own what goes
    * in each slot; this owns the shape, and the key that ties the row to an open menu across the
    * innerHTML repaint every one of these lists does.
+   *
+   * The "time" slot is the right end of that second line, for the one row that carries a clock.
+   * It is a slot of its own rather than part of "sub" because it must not be ellipsised with it.
    */
   function rowHtml(o){
     var key=o.key||'';
     var more='<button type="button" class="btn-icon topic-more" data-rm="'+text(key)+'"'
       + ' aria-haspopup="menu" aria-expanded="'+(rowMenuKey===key?'true':'false')+'"'
       + ' title="'+text(o.moreTitle||'Row actions')+'" aria-label="'+text(o.moreTitle||'Row actions')+'">'+IC.icon.more+'</button>';
+    var sub=(o.sub||o.time)?'<span class="topic-sub">'+(o.sub||'')+(o.time||'')+'</span>':'';
     return '<div class="topic-item'+(o.cls?' '+o.cls:'')+'"'+o.attrs+'>'
       + '<span class="'+(o.dot||'topic-dot')+'"></span>'
-      + '<span class="topic-main">'+(o.title||'')+(o.sub||'')+'</span>'
+      + '<span class="topic-main">'+(o.title||'')+sub+'</span>'
       + (o.badge||'')
       + '<span class="topic-acts">'+(o.mark||'')+more+'</span>'
       + '</div>';
@@ -2241,7 +2344,9 @@ const SCRIPT = `
     var unread=sessUnread(t);
     var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
     var state=asking?'awaiting you':(running?'running':(t.stage==='failed'?'failed':(t.stage==='review'?'finished':'')));
-    var meta=schedAgo(t.lastAt)+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'');
+    // The same age format as the topic rows, so a run read here and its topic read in the
+    // switcher cannot disagree about what "1h" means. An undated record keeps the empty cell.
+    var meta=(t.lastAt ? ageText(Date.now()-t.lastAt, true) : '')+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'');
     return rowHtml({
       cls:(t.id===topic?'on ':'')+'sess-item',
       attrs:' data-sess="'+text(t.id)+'" role="button" tabindex="0"',
@@ -5399,6 +5504,7 @@ const SCRIPT = `
         dot:dotCls,
         title:title,
         sub:fold ? '<span class="topic-line">'+fold+dir+'</span>' : dir,
+        time:ageHtml(t),
         badge:term+badge,
         mark:starMark,
         moreTitle:'Topic actions'
@@ -5413,6 +5519,9 @@ const SCRIPT = `
       bar.innerHTML='<div class="topics-empty"><span>No matching topics</span>'
         + '<button type="button" class="fb-clear" data-filter-clear="1">Clear</button></div>';
     }
+    // The rows above replaced every age element, so the timer is re-armed against the new ones
+    // (and stopped when none is left).
+    armAgeTick();
     // The row menu lives at the body, so the innerHTML above cannot take it with it. Follow the
     // button's replacement, and close the menu only if its row is gone from the list.
     rowMenuFollow();
@@ -5854,6 +5963,38 @@ const SCRIPT = `
     if(want && !statusTimer) statusTimer = setInterval(paintStatus, STATUS_TICK_MS);
     else if(!want && statusTimer){ clearInterval(statusTimer); statusTimer = null; }
   }
+
+  // ── The ages on the topic rows ──────────────────────────────────────────────
+  // A row's age is derived from a stamp the server sent, so it goes stale on its own. Rewritten
+  // in place rather than by repainting the list: paintTopics replaces every row's markup, which
+  // would throw away the hover state and any menu open over a row, twice a minute, for a string
+  // that changed by one character. Minutes are the finest unit a row shows, so twice a minute is
+  // as often as it can visibly move — and only while one is on screen and the tab is visible.
+  var AGE_TICK_MS = 30000, ageTimer = null;
+
+  function paintAges(){
+    var nodes=bar.querySelectorAll('.topic-age'), now=Date.now();
+    for(var i=0;i<nodes.length;i++){
+      var n=nodes[i], at=Number(n.getAttribute('data-age')) || 0;
+      if(!at) continue;
+      var run=n.getAttribute('data-age-run')==='1';
+      n.textContent=ageText(now-at, !run);
+      n.title=(run?'Started ':'Ended ')+ageClock(at);
+    }
+  }
+
+  function armAgeTick(){
+    var want=Boolean(bar.querySelector('.topic-age')) && document.visibilityState !== 'hidden';
+    if(want && !ageTimer) ageTimer=setInterval(paintAges, AGE_TICK_MS);
+    else if(!want && ageTimer){ clearInterval(ageTimer); ageTimer=null; }
+  }
+
+  // A tab looked at again shows the age it should have had, at once, rather than up to half a
+  // minute late; and one put away stops the timer until it is back.
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState !== 'hidden') paintAges();
+    armAgeTick();
+  });
 
   // The same units as the footer (core/runtime-footer.ts formatTokens / formatWindow), so a number
   // read here and one read under a reply can be compared.

@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A topic row says how long it has been working, or how long since it stopped.** A sidebar of
+  parallel conversations is read to answer "what is still going", and the dot alone said whether
+  something was running, not whether it had been running for two minutes or two hours — or whether
+  the reply you are looking at arrived a moment ago or yesterday. Each row's second line now ends
+  with that span (`3m`, `1h`, `1d10h`), in the running blue while the agent works and grey as
+  `12m ago` once it has stopped; a /super dispatcher counts from the earliest start among the
+  sub-agents it is waiting on, and a topic nothing has been said in shows no time at all. Hovering
+  gives the clock time. The label is rewritten in place every 30 seconds rather than by repainting
+  the list, and the Sessions tab's last-activity line uses the same units.
+
 ### Changed
 
 - **A scheduled task is a row in the side panel, not a card.** The Tasks tab and the topic list are
