@@ -77,7 +77,7 @@ function executor(result: ScheduleRunResult = { status: 'ok' }) {
       if (!holding) return Promise.resolve(result);
       return new Promise((res) => hold.push(() => res(result)));
     },
-    notify: (t, event) => void exec.notified.push(`${t.id}:${event}`),
+    notify: (t, notice) => void exec.notified.push(`${t.id}:${notice.event}`),
   };
   return {
     exec,
@@ -185,6 +185,58 @@ describe('Scheduler', () => {
     s.stop();
   });
 
+  it('says so when a run is skipped, instead of only recording it', async () => {
+    const clock = makeClock();
+    const e = executor();
+    const s = new Scheduler(new ScheduleStore(file), clock, e.exec);
+    s.start();
+    s.add(task({ cron: '* * * * *', bash: 'sleep 999' }));
+    e.holdRuns();
+    await clock.advance(MIN);
+    await clock.advance(MIN);
+    // The executor is told, which is the only thing that reaches the chat (schedule-service.ts).
+    expect(e.exec.notified).toEqual(['a1b2c3:skipped']);
+    // And the run that did not happen is in the history, not only in `last`.
+    expect(new ScheduleStore(file).get('a1b2c3')!.history).toEqual([
+      expect.objectContaining({ status: 'skipped', error: 'the previous run was still going' }),
+    ]);
+    await e.release();
+    s.stop();
+  });
+
+  it('says so when a run was missed, and keeps the missed run in the history', async () => {
+    const store = new ScheduleStore(file);
+    store.put(task({ at: '+5m', bash: 'true' }));
+    const e = executor();
+    const clock = makeClock(NOW + 5 * MIN + 2 * 3_600_000);
+    const s = new Scheduler(new ScheduleStore(file), clock, e.exec);
+    s.start();
+    await clock.advance(0);
+    expect(e.exec.notified).toEqual(['a1b2c3:missed']);
+    expect(new ScheduleStore(file).get('a1b2c3')!.history).toEqual([
+      expect.objectContaining({ status: 'missed', error: 'the gateway was not running at the time' }),
+    ]);
+    s.stop();
+  });
+
+  it('keeps the last 20 runs, newest first, with the topic each one ran in', async () => {
+    const clock = makeClock();
+    const exec: ScheduleExecutor = {
+      run: async () => ({ status: 'ok', conversation: 'web#main#t1' }),
+    };
+    const s = new Scheduler(new ScheduleStore(file), clock, exec);
+    s.start();
+    s.add(task({ cron: '* * * * *', bash: 'true' }));
+    for (let i = 0; i < 25; i++) await clock.advance(MIN);
+    const saved = new ScheduleStore(file).get('a1b2c3')!;
+    expect(saved.runs).toBe(25);
+    expect(saved.history).toHaveLength(20);
+    // Newest first: the last run's record is the front, the oldest five have fallen off.
+    expect(saved.history![0]!.at).toBeGreaterThan(saved.history![19]!.at);
+    expect(saved.history![0]).toMatchObject({ status: 'ok', conversation: 'web#main#t1' });
+    s.stop();
+  }, 30_000);
+
   it('expires a fixed-session task at the end of its window and says so', async () => {
     const clock = makeClock();
     const e = executor();
@@ -203,6 +255,33 @@ describe('Scheduler', () => {
     // The fake clock ticks a minute at a time through 25 simulated hours, so this runs ~1500
     // timers: 5s (the default) is a machine-speed test, not a test of the scheduler.
   }, 30_000);
+
+  it('run now answers with the record once the run ends, for `schedule run --wait`', async () => {
+    const clock = makeClock();
+    const s = new Scheduler(new ScheduleStore(file), clock, executor({ status: 'failed', error: 'exit 3', exitCode: 3 }).exec);
+    s.start();
+    s.add(task({ at: '+1h', bash: 'false' }));
+    const started = s.runNow('a1b2c3');
+    if (typeof started === 'string') throw new Error(started);
+    // Not the task view: the run's own outcome, which is what the CLI prints.
+    expect(await started.done).toMatchObject({ status: 'failed', exitCode: 3, error: 'exit 3' });
+    expect(started.done).toBeInstanceOf(Promise);
+    s.stop();
+  });
+
+  it('run now refuses an unknown id and a run already in flight', async () => {
+    const clock = makeClock();
+    const e = executor();
+    const s = new Scheduler(new ScheduleStore(file), clock, e.exec);
+    s.start();
+    expect(s.runNow('nope')).toBe('no scheduled task #nope');
+    s.add(task({ cron: '* * * * *', bash: 'sleep 999' }));
+    e.holdRuns();
+    await clock.advance(MIN);
+    expect(s.runNow('a1b2c3')).toBe('#a1b2c3 is running right now');
+    await e.release();
+    s.stop();
+  });
 
   it('pausing stops runs; resuming does not replay what was skipped', async () => {
     const clock = makeClock();

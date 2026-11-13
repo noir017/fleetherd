@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -185,6 +188,7 @@ describe('schedule <action> [id]', () => {
       tz: undefined,
       bash: undefined,
       cwd: undefined,
+      host: undefined,
       timeoutMs: undefined,
     });
   });
@@ -223,9 +227,61 @@ describe('schedule <action> [id]', () => {
       bash: undefined,
       agent: 'oc',
       cwd: '/srv/app',
+      host: undefined,
       model: undefined,
       timeoutMs: undefined,
     });
+  });
+
+  it('--prompt-file reads the prompt where the command runs, and keeps it verbatim', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'aa-commands-'));
+    try {
+      const file = path.join(dir, 'prompt.md');
+      writeFileSync(file, 'Summarise `git log` (last 20)\nand post it\n\n');
+      expect(schedule(['add'], { cron: '0 8 * * *', promptFile: file })).toMatchObject({
+        prompt: 'Summarise `git log` (last 20)\nand post it',
+      });
+      // Not both, and not an empty file.
+      expect(() => schedule(['add'], { cron: '0 8 * * *', prompt: 'x', promptFile: file })).toThrow(/not both/);
+      writeFileSync(file, '\n\n');
+      expect(() => schedule(['add'], { cron: '0 8 * * *', promptFile: file })).toThrow(/is empty/);
+      expect(() => schedule(['add'], { cron: '0 8 * * *', promptFile: path.join(dir, 'gone.md') })).toThrow(/could not be read/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('--prompt-file is something to change, and only for add and edit', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'aa-commands-'));
+    try {
+      const file = path.join(dir, 'prompt.md');
+      writeFileSync(file, 'new text');
+      expect(schedule(['edit', 'a1b2c3'], { promptFile: file })).toMatchObject({ kind: 'schedule-edit', prompt: 'new text' });
+      expect(() => schedule(['list'], { promptFile: file })).toThrow(/--prompt-file only applies to `schedule add`/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('--host is the machine a --cwd is on, and rides with add and edit', () => {
+    expect(schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd: '/srv/app', host: 'box' })).toMatchObject({
+      kind: 'schedule-add',
+      cwd: '/srv/app',
+      host: 'box',
+    });
+    expect(schedule(['edit', 'a1b2c3'], { host: 'box', cwd: '/srv/app' })).toMatchObject({ kind: 'schedule-edit', host: 'box' });
+    expect(() => schedule(['list'], { host: 'box' })).toThrow(/--host only applies to `schedule add`/);
+  });
+
+  it('--wait waits for a run, defaulting to ten minutes, and only on run', () => {
+    expect(schedule(['run', 'a1b2c3'], { wait: true })).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 600_000 });
+    const parse = spec('schedule').options.find((o) => o.flags.startsWith('--wait'))!.parse!;
+    expect(parse('30s')).toBe(30_000);
+    // The native tool sends every value as a string, including a bare flag.
+    expect(parse('true')).toBe(600_000);
+    expect(schedule(['run', 'a1b2c3'], { wait: parse('2m') })).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 120_000 });
+    expect(schedule(['run', 'a1b2c3'])).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run' });
+    expect(() => schedule(['pause', 'a1b2c3'], { wait: true })).toThrow(/--wait only applies to `schedule run`/);
   });
 
   it('parses --tag as a comma-separated list, empty pieces dropped, and "" as clearing', () => {

@@ -28,6 +28,15 @@ describe('clientTimeoutFor', () => {
     );
   });
 
+  it('outlasts a schedule run it was asked to wait for, and only that run', () => {
+    // The daemon answers when the run ends, so the client's wait has to cover the wait it asked
+    // for — otherwise `--wait 30m` would report an IPC timeout at 60 s and the agent would retry
+    // into a second run.
+    expect(clientTimeoutFor({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 600_000 })).toBe(660_000);
+    expect(clientTimeoutFor({ kind: 'schedule-op', id: 'a1b2c3', op: 'run' })).toBeUndefined();
+    expect(clientTimeoutFor({ kind: 'schedule-op', id: 'a1b2c3', op: 'pause' })).toBeUndefined();
+  });
+
   it('leaves every other command on the default', () => {
     expect(clientTimeoutFor({ kind: 'schedule-list' })).toBeUndefined();
     expect(clientTimeoutFor({ kind: 'send-message', text: 'hi' })).toBeUndefined();

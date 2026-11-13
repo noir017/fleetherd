@@ -139,6 +139,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       agent: z.string().min(1).optional(),
       session: z.enum(['fixed', 'new', 'daily']).optional(),
       cwd: z.string().min(1).optional(),
+      host: z.string().min(1).max(64).optional(),
       model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
     })
@@ -160,6 +161,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       bash: z.string().min(1).max(20_000).optional(),
       agent: z.string().min(1).optional(),
       cwd: z.string().min(1).optional(),
+      host: z.string().min(1).max(64).optional(),
       model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
     })
@@ -213,7 +215,13 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z
-    .object({ kind: z.literal('schedule-op'), id: z.string().min(1), op: z.enum(['remove', 'pause', 'resume', 'run']) })
+    .object({
+      kind: z.literal('schedule-op'),
+      id: z.string().min(1),
+      op: z.enum(['remove', 'pause', 'resume', 'run']),
+      /** `run` only: wait this long for the run to end before answering (see ScheduleOpResult). */
+      waitMs: z.number().int().positive().optional(),
+    })
     .strict(),
   // Sub-agents (daemon/delegation.ts). None takes a channelId: they act from the asking conversation
   // on the topics it opened, each named as `topic`, and the daemon refuses any other. Bounds are
@@ -347,6 +355,7 @@ export type IpcAction =
       agent?: string;
       session?: 'fixed' | 'new' | 'daily';
       cwd?: string;
+      host?: string;
       model?: string;
       timeoutMs?: number;
     }
@@ -362,6 +371,7 @@ export type IpcAction =
       bash?: string;
       agent?: string;
       cwd?: string;
+      host?: string;
       model?: string;
       timeoutMs?: number;
     }
@@ -399,7 +409,7 @@ export type IpcAction =
       /** show: read it whole even if this conversation already read this version. */
       again?: boolean;
     }
-  | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run' }
+  | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run'; waitMs?: number }
   | { kind: 'task-agents' }
   | { kind: 'task-list'; limit?: number }
   | { kind: 'task-new'; agent?: string; text: string; cwd?: string; title?: string; model?: string }
@@ -498,6 +508,19 @@ export interface ListChannelsResult {
 }
 
 /**
+ * One run of a task, as `schedule show` prints it (core/schedule.ts runView): flat strings, one row
+ * of a table. `conversation` is the topic a new/daily run's output went to, empty for a fixed or
+ * bash run.
+ */
+export interface ScheduleRunView {
+  at: string;
+  status: string;
+  took: string;
+  conversation: string;
+  error: string;
+}
+
+/**
  * One scheduled task as the CLI prints it (core/schedule.ts taskView). Flat, so a list renders as
  * one TOON table; the detail fields appear only on `schedule show` and `schedule add`.
  */
@@ -521,11 +544,24 @@ export interface ScheduleTaskView {
   command?: string;
   timeout?: string;
   cwd?: string;
+  /** `show` only: the last runs, newest first (core/schedule.ts MAX_RUN_HISTORY). */
+  history?: ScheduleRunView[];
 }
 
 /** Response body for schedule-list. */
 export interface ScheduleListResult {
   tasks: ScheduleTaskView[];
+}
+
+/**
+ * Response body for `schedule run --wait`: the task as it stands after the run, plus the run's own
+ * record when it ended inside the wait. `note` explains a wait that ran out — the run goes on and
+ * its output still reaches the conversation.
+ */
+export interface ScheduleOpResult {
+  task: ScheduleTaskView;
+  run?: ScheduleRunView;
+  note?: string;
 }
 
 /**

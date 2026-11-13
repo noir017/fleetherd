@@ -17,7 +17,18 @@ which the harnesses' own schedulers do not.
 Output can go to any chat the gateway has answered in, on any platform (`fleetherd
 channels` lists them). A run the gateway missed by less than an hour — it was restarting — is
 made when it comes back; older is recorded as missed. Every change posts a card with the task's
-details, written by the gateway rather than the agent, so what you read is what will run.
+details, written by the gateway rather than the agent, so what you read is what will run — in the
+conversation the change was made in and in the one the task posts to, with the prompt quoted in
+full rather than cut at the first 200 characters.
+
+A run that does not deliver says so in the conversation it posts to, as one line:
+`⏰ #id name failed at 09:26 — reason`. That covers a turn that ended failed (which used to leave
+the start notice as the only message), a run skipped because the previous one of the same task was
+still going, and one missed because the gateway was down. The same reason twice in a row is
+reported once, so a task that keeps failing does not fill the chat. `schedule show <id>` prints the
+last 20 runs — when each ran, how it ended, how long it took, and the topic its output went to —
+so "how did the last few days go" is one command, not a reading of the conversation library per
+day. Missed and skipped runs are in that list too.
 
 A daily task counts days in **its own time zone**, by each run's planned time: the first run of
 2026-11-04 opens `⏰ name · 2026-11-04`, the rest of that day's runs reply into it, and the first
@@ -43,15 +54,24 @@ daily topic, a `/model` you type during the day wins over the task's choice for 
 day, including after the gateway restarts: the task records that the topic was set by hand and
 stops applying its own model.
 
-Change a task in place with `fleetherd schedule edit <id>`: `--agent`, `--cwd`, `--model`,
-`--cron` / `--at` / `--tz`, `--name`, `--prompt`, and `--bash` / `--timeout` for a bash task. The
-id, the run count and the last result stay, and the next run is computed from the edit under the
+Change a task in place with `fleetherd schedule edit <id>`: `--agent`, `--cwd`, `--host`,
+`--model`, `--cron` / `--at` / `--tz`, `--name`, `--prompt` (or `--prompt-file <path>`), and
+`--bash` / `--timeout` for a bash task. The
+id, the run count, the run history and the last result stay, and the next run is computed from the
+edit under the
 new time rule — a task edited to a time that already passed today waits for tomorrow instead of
 firing at once. What a task *is* cannot change: prompt ↔ bash, its session and where it posts
 (`--channel`) are refused, and the way to have a different task is `rm` + `add`. A daily task
 whose agent or directory changes cannot go on in the topic it already opened today — a topic keeps
 its agent and its directory — so the next run opens a new topic for the rest of the day, and the
 earlier one is left as it is.
+
+`fleetherd schedule run <id>` runs a task once, now, without touching its schedule. With
+`--wait` it answers when the run has ended, with the status, exit code and duration, instead of
+leaving you (or an agent) to poll: `--wait 30m` waits that long, and bare `--wait` ten minutes.
+When the wait runs out the answer says the run is still going; it finishes and posts its output as
+any other run does. `--prompt-file <path>` reads a long prompt from a file, so quotes, backticks
+and newlines arrive exactly as written.
 
 Label a task with `--tag ci,release` when it is registered, or with `fleetherd schedule edit <id>
 --tag …` later: up to five tags, each at most 24 characters, lowercased, made of letters (Chinese
@@ -64,10 +84,14 @@ a path on the machine you type the command on, and without one `add` takes your 
 directory. So when the task runs on another machine — an agent on a [remote host](remote-hosts.md)
 — the command is refused rather than storing a directory that means something else there: an `add`
 for that agent, an edit giving it a `--cwd`, and an edit moving a task to it with `--agent` while
-the task keeps a directory from the old machine. Run the command from a conversation on that
-machine instead (moving a task, add a `--cwd` there). A task with no directory is not affected, and
+the task keeps a directory from the old machine. `--host <id>` is the way through: it says the
+`--cwd` you are giving belongs to that machine, and the gateway checks it exists there before
+storing anything; with no `--cwd` at all, `--host` makes the task start in that machine's own
+default directory instead of this conversation's. Without `--host`, a `--cwd` is still read as this
+machine's — run the command from a conversation on that machine if you would rather do it there
+(moving a task, add a `--cwd` there). A task with no directory is not affected, and
 neither is a bash task: it runs on the machine of the agent that registered it, where its directory
-came from.
+came from, and `--host` does not apply to it.
 
 On the web UI, the clock at the right of the chat header opens the **⏰ Side tasks** panel of its
 own: the bottom has **Scheduled** and **Reviews** tabs. Under **Scheduled**, the **Tasks** sub-tab

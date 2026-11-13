@@ -2,16 +2,20 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { findAgent, type Config } from '../config/schema.js';
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
+import { splitIntoChunks } from '../core/stream-buffer.js';
 import {
   bashResultText,
   bashStatus,
   buildTask,
   editTask,
   formatDay,
+  formatDuration,
   formatInZone,
   nextRunOf,
   normalizeTags,
   runNoticeText,
+  runView,
+  targetId,
   taskCardText,
   taskExpiredText,
   taskView,
@@ -19,12 +23,13 @@ import {
   type NewTaskContext,
   type NewTaskInput,
   type ScheduleDaySession,
+  type ScheduleRunRecord,
   type ScheduleTask,
 } from '../core/schedule.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId } from '../types.js';
-import type { ScheduleListResult, ScheduleTaskView } from '../ipc/protocol.js';
+import type { ScheduleListResult, ScheduleOpResult, ScheduleTaskView } from '../ipc/protocol.js';
 import type { ConversationRegistry } from './conversation.js';
 import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './schedule-bash.js';
 import { remoteHosts } from './remote-hosts.js';
@@ -73,7 +78,16 @@ export class ScheduleService {
     this.defaultTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     this.scheduler = new Scheduler(store, clock, {
       run: (task, planned, signal) => this.run(task, planned, signal),
-      notify: (task) => this.post(task.target.platform, targetAddress(task), taskExpiredText(task), 'expiry notice'),
+      notify: (task, notice) => {
+        if (notice.event === 'expired') {
+          this.post(task.target.platform, targetAddress(task), taskExpiredText(task), 'expiry notice');
+          return;
+        }
+        // Skipped and missed: the run that never was. Nothing else in the gateway says a word about
+        // it — before this, a trader task could miss a whole slot and the chat only showed the
+        // slot's silence, with `last` still reading ok from an earlier run (2026-11-13).
+        void this.reportMissed(task, notice.event, notice.error ?? 'no reason recorded', notice.planned ?? notice.at);
+      },
     });
   }
 
@@ -106,8 +120,12 @@ export class ScheduleService {
       ...(targetConversation ? { targetConversation } : {}),
     });
     if (!built.ok) throw new Error(built.error);
-    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'add' }, input.cwd);
+    const hostProblem = this.hostProblem(input.host, built.task);
+    if (hostProblem) throw new Error(hostProblem);
+    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'add' }, input.cwd, input.host);
     if (cwdProblem) throw new Error(cwdProblem);
+    const dirProblem = await this.dirOnHostProblem(input.host, input.cwd);
+    if (dirProblem) throw new Error(dirProblem);
     if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
       // The list is the agent's own (`/model` shows the same one), so a typo is refused HERE,
       // while the registering agent can still retry in this turn with a name that exists.
@@ -135,8 +153,12 @@ export class ScheduleService {
 
     const built = editTask(task, input, this.editContext(task));
     if (!built.ok) throw new Error(built.error);
-    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'edit', before: task }, input.cwd);
+    const hostProblem = this.hostProblem(input.host, built.task);
+    if (hostProblem) throw new Error(hostProblem);
+    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'edit', before: task }, input.cwd, input.host);
     if (cwdProblem) throw new Error(cwdProblem);
+    const dirProblem = await this.dirOnHostProblem(input.host, input.cwd);
+    if (dirProblem) throw new Error(dirProblem);
     if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
       const why = await this.registry.scheduledModelProblem(built.task.run.agent, built.task.run.model, caller);
       if (why) throw new Error(why);
@@ -206,49 +228,103 @@ export class ScheduleService {
    * else the same path names a different place, or nothing. A task whose directory belongs to one
    * machine and whose runs happen on another is refused, not stored. Where the directory belongs:
    *
-   * - a `--cwd`, to the machine the command was typed on — the CLI resolved a relative path there,
-   *   and an absolute one is still that machine's;
+   * - a `--cwd` with `--host <id>`, to that machine — the caller's own declaration, the explicit
+   *   way to register a task for an agent on another machine (see dirOnHostProblem for the check
+   *   that the directory is really there);
+   * - a `--cwd` without one, to the machine the command was typed on — the CLI resolved a relative
+   *   path there, and an absolute one is still that machine's;
    * - the one `add` takes by default, to the registering conversation's machine, whose directory it
    *   is — so `add --agent <an agent on another host>` would hand that agent a path from here;
    * - the one an edit keeps, to the machine the task ran on before the edit — `--agent` moving the
    *   task to another host leaves its directory behind.
    *
-   * Every refusal sends the command to the one place where both a `--cwd` and the default directory
-   * are the task's machine's: a conversation on that machine. A task with no directory (a fixed
-   * session) has nothing to check. A bash task never trips this: it runs where the registering agent
-   * does, which is where its directory came from, and edit cannot move it (`--agent` is refused).
+   * Every refusal says how the path was read and names both ways out: `--host` when the path is the
+   * other machine's, and a conversation on that machine otherwise. Before `--host` existed the
+   * message said "a path on this machine" to an agent that had meant the other one, and the only
+   * way through was to send a sub-agent there (2026-11-07 → 2026-11-13).
    */
   private cwdHostProblem(
     task: ScheduleTask,
     caller: ConversationId,
     how: { verb: 'add' } | { verb: 'edit'; before: ScheduleTask },
-    given: string | undefined
+    given: string | undefined,
+    givenHost: string | undefined
   ): string | undefined {
     const dir = task.run.cwd;
     if (dir === undefined) return undefined;
     const callerHost = this.hostOfCaller(caller);
     const taskHost = this.hostOfTask(task);
-    const dirHost = given !== undefined || how.verb === 'add' ? callerHost : this.hostOfTask(how.before);
+    // A --host vouches for a --cwd given in this same command, and nothing else: a directory the
+    // task already had came from the machine it ran on, whatever the caller says about a path it
+    // did not give.
+    const dirHost =
+      givenHost !== undefined && given !== undefined
+        ? givenHost
+        : given !== undefined || how.verb === 'add'
+          ? callerHost
+          : this.hostOfTask(how.before);
     if (dirHost === taskHost) return undefined;
     // Named from the reader's side: the agent reading this may itself be on a host, where "this
     // machine" for the gateway's would point at the wrong one.
     const name = (host: string | undefined): string => (host === callerHost ? 'this machine' : (host ?? "the gateway's machine"));
     const runs = `this task runs on ${name(taskHost)}`;
     if (given !== undefined) {
-      return `--cwd ${given} is a path on ${name(dirHost)}, but ${runs}; run the ${how.verb} from a conversation there`;
+      return (
+        `--cwd ${given} is read as a path on ${name(dirHost)}, the machine this command ran on, but ${runs}; ` +
+        (taskHost !== undefined
+          ? `if it is a path on ${name(taskHost)}, pass --host ${taskHost}, or run the ${how.verb} from a conversation there`
+          : `run the ${how.verb} from a conversation on the gateway's machine`)
+      );
     }
     if (how.verb === 'add') {
       return (
         `${runs}, but would start in ${dir}, this conversation's directory on ${name(dirHost)}; ` +
-        "run the add from a conversation there, whose own directory — or a --cwd given there — is that machine's"
+        (taskHost !== undefined
+          ? `pass --host ${taskHost} with no --cwd to start in ${name(taskHost)}'s own default directory, or run the add from a conversation there`
+          : `run the add from a conversation on the gateway's machine, whose directory that is`)
       );
     }
     return (
       `${runs} after this edit, but keeps its directory ${dir}, a path on ${name(dirHost)}; ` +
       (callerHost === taskHost
         ? 'give the edit a --cwd on this machine as well'
-        : 'run the edit from a conversation there, with a --cwd on that machine')
+        : taskHost !== undefined
+          ? `give it a --cwd on ${name(taskHost)} with --host ${taskHost}, or run the edit from a conversation there`
+          : `run the edit from a conversation on the gateway's machine`)
     );
+  }
+
+  /**
+   * `--host` says which machine a task's `--cwd` is on. It has to be a configured host, and the
+   * machine the task actually runs on — an agent's host, or the gateway for a local agent — or the
+   * declaration would move the directory's meaning without moving the task.
+   */
+  private hostProblem(host: string | undefined, task: ScheduleTask): string | undefined {
+    if (host === undefined) return undefined;
+    const known = Object.keys(this.config.hosts ?? {});
+    if (!known.includes(host)) return `unknown host "${host}"; configured: ${known.join(', ') || 'none'}`;
+    const runs = this.hostOfTask(task);
+    if (runs === host) return undefined;
+    return `--host ${host} names the machine a --cwd is on, but this task runs on ${runs ?? "the gateway's machine"}; --host has to be the machine the task runs on`;
+  }
+
+  /**
+   * The `--host` a caller gives is a claim about a path it cannot see from here, so the one thing
+   * worth doing with it is checking: `test -d` on that machine, through the same link the run will
+   * use. A path that is not there is refused while the agent can still retype it, rather than
+   * discovered at the next run ("working directory … does not exist").
+   */
+  private async dirOnHostProblem(host: string | undefined, dir: string | undefined): Promise<string | undefined> {
+    if (host === undefined || dir === undefined) return undefined;
+    const remote = remoteHosts.get(host);
+    if (!remote) return `host "${host}" is not connected right now, so --cwd ${dir} could not be checked; nothing was stored — try again once it is back`;
+    try {
+      const r = await remote.run({ argv: ['test', '-d', dir], timeoutMs: DIR_CHECK_TIMEOUT_MS });
+      if (r.code === 0) return undefined;
+      return `--cwd ${dir} is not a directory on ${host}; nothing was stored`;
+    } catch (e) {
+      return `could not check --cwd ${dir} on ${host} (${e instanceof Error ? e.message : String(e)}); nothing was stored`;
+    }
   }
 
   /** The host the caller's agent runs on, which is where its `fleetherd` command ran. Undefined = here. */
@@ -293,10 +369,43 @@ export class ScheduleService {
       say(removed, 'deleted');
       return taskView(removed, now, { here: caller });
     }
-    const result = op === 'run' ? this.scheduler.runNow(id) : this.scheduler.setPaused(id, op === 'pause');
+    if (op === 'run') {
+      const started = this.scheduler.runNow(id);
+      if (typeof started === 'string') throw new Error(started);
+      return taskView(started.task, now, { here: caller });
+    }
+    const result = this.scheduler.setPaused(id, op === 'pause');
     if (typeof result === 'string') throw new Error(result);
-    if (op !== 'run') say(result, op === 'pause' ? 'paused' : 'resumed');
+    say(result, op === 'pause' ? 'paused' : 'resumed');
     return taskView(result, now, { here: caller });
+  }
+
+  /**
+   * `schedule run <id> [--wait]`. Starts it — the card and the run itself are the same as `/setting`'s
+   * run now — and, with a wait, answers once the run has ended: the status, exit code and duration,
+   * and for an agent run the conversation the output went to.
+   *
+   * Before `--wait`, an agent that wanted the result wrote `until …; do sleep 5; done` loops and
+   * `fetch-messages` (observed twice, 2026-11-13) — polling a thing the gateway already knows the
+   * end of. A wait that runs out answers with a note and leaves the run going: the result still
+   * arrives in the conversation, and the record is in the task's history either way.
+   */
+  async runTask(id: string, caller: ConversationId | undefined, waitMs: number | undefined): Promise<ScheduleOpResult> {
+    const started = this.scheduler.runNow(id);
+    if (typeof started === 'string') throw new Error(started);
+    if (waitMs === undefined) return { task: taskView(started.task, this.clock.now(), { here: caller }) };
+    const record = await settledWithin(started.done, waitMs);
+    const task = this.scheduler.get(id) ?? started.task;
+    if (record === 'timeout') {
+      return {
+        task: taskView(task, this.clock.now(), { here: caller }),
+        note: `still running after ${formatDuration(waitMs)}; its output is posted to ${targetId(task.target)} when it ends, and the task's history keeps the result`,
+      };
+    }
+    return {
+      task: taskView(task, this.clock.now(), { here: caller }),
+      ...(record !== undefined ? { run: runView(record, task.when.tz) } : {}),
+    };
   }
 
   /**
@@ -423,13 +532,15 @@ export class ScheduleService {
       if (bound !== undefined && bound !== run.agent) {
         // A topic keeps its agent; after /new the user may have given it another on purpose.
         const why = `this topic is now answered by ${bound}, not ${run.agent}`;
-        await platform.sendMessage(targetAddress(task), `⏰ \`#${task.id}\` **${task.name}** skipped — ${why}.`).catch((e) => warn('skip notice', e));
+        await this.reportFailure(task, platform, targetAddress(task), 'skipped', why, planned);
         return { status: 'failed', error: why };
       }
       await platform.sendMessage(targetAddress(task), runNoticeText(task, planned)).catch((e) => warn('run notice', e));
-      return toResult(
+      const result = toResult(
         await this.registry.runScheduledPrompt({ key, platform: task.target.platform, address: targetAddress(task), agentId: run.agent, prompt })
       );
+      await this.reportTurn(task, platform, targetAddress(task), result, planned);
+      return { ...result, conversation: key };
     }
 
     if (run.session === 'daily') return this.runDaily(task, run, platform, planned);
@@ -455,9 +566,11 @@ export class ScheduleService {
         }
       }
       await platform.sendMessage(opened.address, runNoticeText(task, planned)).catch((e) => warn('run notice', e));
-      return toResult(
+      const result = toResult(
         await this.registry.runScheduledPrompt({ key: opened.key, platform: task.target.platform, address: opened.address, agentId: run.agent, prompt })
       );
+      await this.reportTurn(task, platform, opened.address, result, planned);
+      return { ...result, conversation: opened.key };
     } finally {
       if (opened.ephemeral) this.registry.releaseScheduled(opened.key);
     }
@@ -496,7 +609,7 @@ export class ScheduleService {
       if (bound !== undefined && bound !== run.agent) {
         // The day's topic was given another agent on purpose; a schedule must not undo that.
         const why = `this topic is now answered by ${bound}, not ${run.agent}`;
-        await this.reportDaily(task, platform, targetAddress(task), 'skipped', why);
+        await this.reportFailure(task, platform, targetAddress(task), 'skipped', why, planned);
         return { status: 'failed', error: why };
       }
     } else {
@@ -513,7 +626,7 @@ export class ScheduleService {
         });
       } catch (e) {
         const why = `could not open a topic for today's session: ${e instanceof Error ? e.message : String(e)}`;
-        await this.reportDaily(task, platform, targetAddress(task), 'failed', why);
+        await this.reportFailure(task, platform, targetAddress(task), 'failed', why, planned);
         return { status: 'failed', error: why };
       }
       key = opened.key;
@@ -521,7 +634,7 @@ export class ScheduleService {
       this.rememberDay(task.id, { day, conversation: key, address });
     }
 
-    const modelWhy = await this.applyDailyModel(task, run, platform, key, address, reuse);
+    const modelWhy = await this.applyDailyModel(task, run, platform, key, address, reuse, planned);
     if (modelWhy) return { status: 'failed', error: modelWhy };
     try {
       await platform.sendMessage(address, runNoticeText(task, planned));
@@ -533,12 +646,14 @@ export class ScheduleService {
       // likely transient than a create that lied.
       const why = `could not post into today's topic: ${e instanceof Error ? e.message : String(e)}`;
       if (reused) this.forgetDay(task.id);
-      await this.reportDaily(task, platform, targetAddress(task), 'failed', why);
+      await this.reportFailure(task, platform, targetAddress(task), 'failed', why, planned);
       return { status: 'failed', error: why };
     }
-    return toResult(
+    const result = toResult(
       await this.registry.runScheduledPrompt({ key, platform: task.target.platform, address, agentId: run.agent, prompt: run.prompt })
     );
+    await this.reportTurn(task, platform, address, result, planned);
+    return { ...result, conversation: key };
   }
 
   /**
@@ -554,34 +669,63 @@ export class ScheduleService {
     platform: PlatformAdapter,
     key: string,
     address: ConversationAddress,
-    day: ScheduleDaySession | undefined
+    day: ScheduleDaySession | undefined,
+    planned: number
   ): Promise<string | undefined> {
     if (!run.model || day?.personModel) return undefined;
     const why = await this.registry.applyScheduledModel(key, task.target.platform, run.agent, run.model);
-    if (why) await this.reportDaily(task, platform, address, 'failed', why);
+    if (why) await this.reportFailure(task, platform, address, 'failed', why, planned);
     return why;
   }
 
   /**
-   * Tell the chat a daily run failed or was skipped — unless the previous run ended the same way
-   * with the same reason.
+   * Tell the chat a run did not deliver — failed, skipped, missed — unless the previous run ended
+   * the same way with the same reason.
    *
    * A five-minute task whose topic cannot be opened would otherwise post hundreds of identical
-   * lines a day. The first one says everything, and the task's record keeps the latest outcome
-   * either way; a successful run in between resets this, so a recurrence is news again.
+   * lines a day. The first one says everything, and the task's record and history keep every
+   * outcome either way; a run that ends differently in between resets this, so a recurrence is
+   * news again.
+   *
+   * The time is the planned one where there is one, so a catch-up says when it was meant to run.
    */
-  private async reportDaily(
+  private async reportFailure(
     task: ScheduleTask,
     platform: PlatformAdapter,
     address: ConversationAddress,
-    verb: 'failed' | 'skipped',
-    why: string
+    verb: 'failed' | 'skipped' | 'missed' | 'interrupted',
+    why: string,
+    at: number
   ): Promise<void> {
     const previous = task.lastRun;
-    if (previous?.status === 'failed' && previous.error === capError(why)) return;
+    if (previous?.status === verb && previous.error === capError(why)) return;
     await platform
-      .sendMessage(address, `⏰ \`#${task.id}\` **${task.name}** ${verb} — ${why}.`)
-      .catch((e) => warn('failure notice', e));
+      .sendMessage(address, `⏰ \`#${task.id}\` **${task.name}** ${verb} at ${formatInZone(at, task.when.tz)} — ${why}.`)
+      .catch((e) => warn(`${verb} notice`, e));
+  }
+
+  /** A run that did not happen at all (skipped, missed): the scheduler recorded it, the chat hears it. */
+  private async reportMissed(task: ScheduleTask, verb: 'failed' | 'skipped' | 'missed', why: string, at: number): Promise<void> {
+    const platform = this.platforms.get(task.target.platform);
+    if (!platform) return;
+    await this.reportFailure(task, platform, targetAddress(task), verb, why, at);
+  }
+
+  /**
+   * A turn that did not end ok posts nothing of its own — the person saw the notice that the run
+   * started, and then silence, which is indistinguishable from a run that is still thinking
+   * (observed on a trader task whose five tools all failed, 2026-11-11). Say so where its output
+   * was expected, in the same words a skipped or missed run uses.
+   */
+  private async reportTurn(
+    task: ScheduleTask,
+    platform: PlatformAdapter,
+    address: ConversationAddress,
+    result: ScheduleRunResult,
+    planned: number
+  ): Promise<void> {
+    if (result.status === 'ok') return;
+    await this.reportFailure(task, platform, address, result.status, result.error ?? 'no reason recorded', planned);
   }
 
   /**
@@ -618,18 +762,37 @@ export class ScheduleService {
 
   // ─────────────────────────────── helpers ───────────────────────────────
 
-  /** Post the task's card where the change was asked for — the daemon's word, not the agent's. */
+  /**
+   * Post the task's card where the change was asked for — the daemon's word, not the agent's — and
+   * in the conversation the task posts into.
+   *
+   * The second copy is the point: a sub-agent rewrote a task's prompt from a conversation the task
+   * never talks in, and the conversation that would run the new text at 18:00 saw nothing at all
+   * (2026-11-13). Whoever will read the output is told what changed. `deleted` included: a target
+   * that stops receiving a brief should know why. Paused, resumed and run now are not — those are
+   * the caller's business, and the target's next run says what happened.
+   */
   card(conversation: ConversationId, task: ScheduleTask, verb: string): void {
+    const text = taskCardText(task, verb, this.clock.now());
     const lane = this.registry.laneFor(conversation);
-    if (!lane) return;
-    this.post(lane.platformId, lane.address, taskCardText(task, verb, this.clock.now()), `${verb} card`);
+    if (lane) this.post(lane.platformId, lane.address, text, `${verb} card`);
+    const target = { platform: task.target.platform, address: targetAddress(task) };
+    if (lane && lane.platformId === target.platform && sameAddress(lane.address, target.address)) return;
+    this.post(target.platform, target.address, text, `${verb} card`);
   }
 
+  /**
+   * Send, chunked to the platform's own limit. A card now carries a whole prompt — the reason for
+   * the change — and an agent's prompt can be longer than one message on every platform here.
+   */
   private post(platformId: string, address: ConversationAddress, text: string, what: string): void {
-    void this.platforms
-      .get(platformId)
-      ?.sendMessage(address, text)
-      .catch((e) => warn(what, e));
+    const platform = this.platforms.get(platformId);
+    if (!platform) return;
+    const limit = platform.capabilities.maxMessageLength;
+    const parts = limit > 0 ? splitIntoChunks(text, limit) : [text];
+    void (async () => {
+      for (const part of parts) await platform.sendMessage(address, part);
+    })().catch((e) => warn(what, e));
   }
 
   private newId(): string {
@@ -644,8 +807,31 @@ function targetAddress(task: ScheduleTask): ConversationAddress {
   return task.target.thread ? { channel: task.target.channel, thread: task.target.thread } : { channel: task.target.channel };
 }
 
+function sameAddress(a: ConversationAddress, b: ConversationAddress): boolean {
+  return a.channel === b.channel && a.thread === b.thread;
+}
+
+/** How long `--host`'s `test -d` may take before the answer is "could not check". */
+const DIR_CHECK_TIMEOUT_MS = 15_000;
+
+/**
+ * The run's record, or `'timeout'` when the wait runs out first. The timer is cleared either way:
+ * a finished run must not keep a ten-minute timer alive in the daemon.
+ */
+function settledWithin(done: Promise<ScheduleRunRecord | undefined>, waitMs: number): Promise<ScheduleRunRecord | undefined | 'timeout'> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('timeout'), waitMs);
+    void done.then((record) => {
+      clearTimeout(timer);
+      resolve(record);
+    });
+  });
+}
+
 function toResult(r: SoloOutcome | { refused: string }): ScheduleRunResult {
-  return typeof r === 'string' ? { status: r } : { status: 'failed', error: r.refused };
+  if (typeof r !== 'string') return { status: 'failed', error: r.refused };
+  if (r === 'ok') return { status: 'ok' };
+  return { status: r, error: r === 'interrupted' ? 'the turn was stopped' : 'the turn failed without a reply' };
 }
 
 /** `{ [key]: value }` when value is defined, else `{}` — for optional fields under strict types. */
