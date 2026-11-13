@@ -216,10 +216,11 @@ agents:
   空闲回收后上下文仍在、图片。
 - **不可用**：本地文件、`send_file`/`schedule` 两个工具、MCP、skill，以及运行中插话（轮次进行时
   发的消息会排到下一轮）。非图片附件只给模型一个本机路径，它读不到。
-- **错误会写成人话**：上下文过期会说明并重置会话，下一条从新会话开始；撞到 token 上限会写明上限；
-  429 会带上上游原文和 `retry-after`。
+- **错误会写成人话**：只有 API 明确说上一条 interaction 已经不在了（GET 它返回 404）才判上下文过期，
+  此时重置会话并提示重发；请求本身的问题（模型、图片、输入不合法）原样报上游错误，会话状态保留。
+  撞到 token 上限会写明上限；429 会带上上游原文和 `retry-after`。
 - **`/stop` 立即结束本轮**；服务端取消是尽力而为，API 只在 interaction 还在运行时接受。
-- **状态**：`<configDir>/api-agent/antigravity.json`（0600，七天未用的记录会被清掉）。里面是让
-  下一轮成为续轮的 interaction / environment id。
+- **状态**：每个会话一个文件 `<configDir>/api-agent/antigravity/<sessionId>.json`（0600，七天未用的
+  文件会被清掉）。里面是让下一轮成为续轮的 interaction / environment id。
 - **`--max-tokens` 默认 200000**。一轮就是一整个 agent 循环，实测 harness 开口前就要 ~5.3k 输入
   token；API 的上限是尽力而为，到量返回 `status: "incomplete"`。

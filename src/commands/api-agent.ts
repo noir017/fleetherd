@@ -69,8 +69,9 @@ export async function runApiAgent(backendId: string, options: ApiAgentCliOptions
   });
   const store = new SessionStore({
     // The gateway's container mounts configDir and nothing else, so this is the only path that
-    // survives `fleetherd update` (see the store's header).
-    file: path.join(configDir(), 'api-agent', 'antigravity.json'),
+    // survives `fleetherd update` (see the store's header). One file per session, so several
+    // agents of this backend cannot overwrite each other's conversations.
+    dir: path.join(configDir(), 'api-agent', backend.id),
   });
 
   await serveApiAgent({ backend, store, models: backend.models });

@@ -9,10 +9,16 @@
  *   `GET /interactions/{id}?stream=true`. Creating it in the foreground would make the POST the
  *   stream, and a POST cannot be cancelled from here without killing the response — the id is
  *   what `/cancel` needs, and the id only exists once creation returns.
- * - **The GET replays from the beginning.** It is not a tail: a reconnect delivers every event
- *   again. Reconnection therefore counts frames already handled and skips that many; see
- *   `stream()`. This is the documented `last_event_id` mechanism's less clever cousin, chosen
- *   because the recorded frames carry no id to resume from.
+ * - **The GET replays from the beginning.** Measured 2026-11-13 (`probe-reconnect.mjs`): a
+ *   reconnect while the interaction is still running answers 200 and starts again at
+ *   `interaction.created`. There is no `event_id` in any frame — 0 of 292 in the recorded stream,
+ *   0 of 8 in the live one — so the documented `?last_event_id=` resume has nothing to resume
+ *   from; reconnection counts frames already handled and skips that many instead.
+ * - **A reconnect can be refused.** The same probe got 400 `Precondition check failed` when it
+ *   reconnected in the instant after aborting the first stream, and again after the interaction
+ *   had finished. The first is transient (a retry a few seconds later returned 200); the second
+ *   is resolved by reading the interaction itself, so a stream lost after the answer completed
+ *   still ends the turn normally.
  * - **`step.delta` is the only text channel**, and `thought_signature` is opaque noise that must
  *   be dropped: the recorded turns carry 172–1016 characters of it per turn, and rendering it
  *   would pour base64 into the chat.
@@ -72,6 +78,20 @@ const CONTEXT_WINDOW = 1_048_576;
 /** A dropped stream is retried this many times before the turn fails. */
 const MAX_RECONNECTS = 6;
 
+/** An interaction id is 70 characters and appears in every log line; ten is enough to correlate. */
+const shortId = (id: string | undefined): string => (id ? `${id.slice(0, 10)}…` : 'none');
+
+/**
+ * Thrown by `stream()` when the stream is gone but the interaction itself reached a terminal
+ * state: the answer exists, it just was not delivered. `turn()` renders what is left of it.
+ */
+class InteractionFinished extends Error {
+  constructor(readonly interaction: Record<string, unknown>) {
+    super('the interaction finished while the stream was down');
+    this.name = 'InteractionFinished';
+  }
+}
+
 export interface AntigravityOptions {
   /** `GEMINI_API_KEY`; empty is allowed so the first turn can say so in the chat. */
   apiKey: string;
@@ -128,7 +148,7 @@ class AntigravityBackend implements ApiBackend {
       );
     }
     const created = await this.create(request);
-    this.log(`[api-agent] interaction ${created.id} created (environment ${created.environmentId ?? 'none'})`);
+    this.log(`[api-agent] interaction ${shortId(created.id)} created (environment ${shortId(created.environmentId)})`);
     yield { type: 'state', lastInteractionId: created.id, environmentId: created.environmentId };
 
     // A /stop that landed while the POST was in flight has no id yet; now it does, so the
@@ -139,14 +159,28 @@ class AntigravityBackend implements ApiBackend {
     }
 
     const mapper = new AntigravityEventMapper(this.maxTokens);
-    for await (const frame of this.stream(created.id, request.signal)) {
-      for (const event of mapper.push(frame)) yield event;
-      if (frame.data.trim() === '[DONE]') {
-        if (!mapper.completed) {
-          throw new ApiAgentError('the Antigravity stream ended before the interaction completed', 'upstream');
+    try {
+      for await (const frame of this.stream(created.id, request.signal)) {
+        for (const event of mapper.push(frame)) yield event;
+        // Yielded before the throw so the final usage reaches the footer even on an incomplete
+        // turn: the mapper records the failure and hands back the events it already produced.
+        if (mapper.failure) throw mapper.failure;
+        if (frame.data.trim() === '[DONE]') {
+          if (!mapper.completed) {
+            throw new ApiAgentError('the Antigravity stream ended before the interaction completed', 'upstream');
+          }
+          return;
         }
+      }
+    } catch (err) {
+      // The stream is gone, but the interaction finished: deliver the part of the answer that was
+      // never streamed, then the terminal event, so a drop at the very end is not a failed turn.
+      if (err instanceof InteractionFinished) {
+        for (const event of mapper.recover(err.interaction)) yield event;
+        if (mapper.failure) throw mapper.failure;
         return;
       }
+      throw err;
     }
     if (!mapper.completed) {
       throw new ApiAgentError('the Antigravity stream ended before the interaction completed', 'upstream');
@@ -165,10 +199,10 @@ class AntigravityBackend implements ApiBackend {
       });
       if (!res.ok) {
         const detail = upstreamMessage(await res.text().catch(() => '')) ?? `HTTP ${res.status}`;
-        this.log(`[api-agent] cancel ${interactionId} failed: ${detail}`);
+        this.log(`[api-agent] cancel ${shortId(interactionId)} failed: ${detail}`);
       }
     } catch (err) {
-      this.log(`[api-agent] cancel ${interactionId} failed: ${messageOf(err)}`);
+      this.log(`[api-agent] cancel ${shortId(interactionId)} failed: ${messageOf(err)}`);
     }
   }
 
@@ -186,7 +220,7 @@ class AntigravityBackend implements ApiBackend {
     if (request.previousInteractionId) body.previous_interaction_id = request.previousInteractionId;
 
     const res = await this.call('POST', '/interactions', body, request.signal);
-    if (!res.ok) throw await this.fail(res, Boolean(request.previousInteractionId));
+    if (!res.ok) throw await this.fail(res, request.signal, request.previousInteractionId);
     const parsed = (await res.json().catch(() => ({}))) as InteractionBody;
     const id = parsed.id ?? parsed.interaction?.id;
     if (!id) {
@@ -198,19 +232,24 @@ class AntigravityBackend implements ApiBackend {
   /**
    * Read the interaction's stream, reconnecting on a drop.
    *
-   * The GET replays from event zero, so a reconnected read starts by skipping everything already
-   * handed to the caller. Frames are counted rather than matched: the recorded stream has no
-   * per-event id, and a count is exact as long as the replay is the same log (it is — the events
-   * describe a finished or running interaction, not a live cursor).
+   * There is no `last_event_id` to send: the live frames carried no `event_id` (see the header),
+   * and a reconnect replays from `interaction.created`. Frames are therefore counted, and a
+   * replay skips what was already handed to the caller.
+   *
+   * Two kinds of close are retried, both bounded: an error, and a clean EOF before `[DONE]` — the
+   * server closing a stream that has not finished, which used to fail the turn outright. A
+   * reconnect that yields no new frames twice in a row ends it: retrying the same log forever only
+   * delays the failure.
    */
   private async *stream(id: string, signal: AbortSignal): AsyncGenerator<SseFrame> {
     let skip = 0;
+    let emptyReconnects = 0;
     for (let attempt = 0; ; attempt++) {
+      const already = skip;
       let seen = 0;
       let sawDone = false;
       try {
-        const res = await this.call('GET', `/interactions/${encodeURIComponent(id)}?stream=true`, undefined, signal);
-        if (!res.ok) throw await this.fail(res, false);
+        const res = await this.openStream(id, signal);
         if (!res.body) throw new ApiAgentError('the Antigravity stream response had no body', 'upstream');
         for await (const frame of readSse(res.body)) {
           seen += 1;
@@ -219,16 +258,24 @@ class AntigravityBackend implements ApiBackend {
           if (frame.data.trim() === '[DONE]') sawDone = true;
           yield frame;
         }
-        // A clean end without [DONE] is not a drop: it is the server closing a stream that never
-        // finished, and reconnecting would replay the same truncated log forever.
-        if (!sawDone) {
-          throw new ApiAgentError('the Antigravity stream ended before the interaction completed', 'upstream');
+        if (sawDone) return;
+        if (seen < already) {
+          throw new ApiAgentError('the replayed stream was shorter than what was already read', 'upstream');
         }
-        return;
+        emptyReconnects = seen === already ? emptyReconnects + 1 : 0;
+        if (emptyReconnects >= 2) {
+          throw new ApiAgentError(
+            'the Antigravity stream closed before completion and a reconnect delivered no new events',
+            'upstream',
+          );
+        }
+        throw new ApiAgentError('the Antigravity stream closed before completion', 'network');
       } catch (err) {
         if (signal.aborted) throw err;
+        if (err instanceof InteractionFinished) throw err;
         // An HTTP error from the API is an answer, not a flaky connection: retrying a 429 or a
-        // 401 only spends time. Network failures and drops are what the loop is for.
+        // 401 only spends time. Network failures, drops and clean early EOFs are what the loop is
+        // for.
         if (err instanceof ApiAgentError && err.kind !== 'network') throw err;
         if (attempt >= MAX_RECONNECTS) {
           throw new ApiAgentError(
@@ -237,10 +284,52 @@ class AntigravityBackend implements ApiBackend {
           );
         }
         this.log(
-          `[api-agent] stream for ${id} dropped (${messageOf(err)}); reconnecting, ${skip} event(s) already read`,
+          `[api-agent] stream for ${shortId(id)} dropped (${messageOf(err)}); reconnecting, ${skip} event(s) already read`,
         );
         await sleep(500 * 2 ** attempt, signal);
       }
+    }
+  }
+
+  /**
+   * Open the stream, turning the API's refusals into the two outcomes the caller can act on.
+   *
+   * 400/404 is the API refusing to (re)open the stream: measured transiently right after an
+   * abort, and permanently once the interaction has finished (2026-11-13). Ask the interaction
+   * itself which one it is; a finished one is delivered from its steps, a running one is retried.
+   */
+  private async openStream(id: string, signal: AbortSignal): Promise<Response> {
+    const res = await this.call('GET', `/interactions/${encodeURIComponent(id)}?stream=true`, undefined, signal);
+    if (res.ok) return res;
+    if (res.status === 400 || res.status === 404) {
+      const finished = await this.terminalInteraction(id, signal);
+      if (finished) throw new InteractionFinished(finished);
+      const detail = upstreamMessage(await res.text().catch(() => '')) ?? `HTTP ${res.status}`;
+      throw new ApiAgentError(`the Antigravity stream is unavailable (${res.status}: ${detail})`, 'network');
+    }
+    throw await this.fail(res, signal);
+  }
+
+  /**
+   * The interaction itself (no stream), when it has reached a terminal state.
+   *
+   * Probed 2026-11-13: `GET /interactions/{id}` answers 200 for a real id and 404 `not_found` for
+   * a well-formed id that never existed, so the same call is the existence test `fail()` needs
+   * and the recovery path for a stream that closed after the answer was ready.
+   */
+  private async terminalInteraction(id: string, signal: AbortSignal): Promise<Record<string, unknown> | undefined> {
+    try {
+      const res = await this.call('GET', `/interactions/${encodeURIComponent(id)}`, undefined, signal);
+      if (!res.ok) {
+        await res.text().catch(() => '');
+        return undefined;
+      }
+      const body = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+      const status = typeof body?.status === 'string' ? body.status : '';
+      if (!status || status === 'in_progress' || status === 'requires_action') return undefined;
+      return body;
+    } catch {
+      return undefined;
     }
   }
 
@@ -274,12 +363,14 @@ class AntigravityBackend implements ApiBackend {
   /**
    * Turn an HTTP failure into something the person in the chat can act on.
    *
-   * A 400/404 **on a continuation** is treated as an expired context: the interaction the session
-   * points at is gone (the free tier keeps them for a day, and a stale record is possible). The
-   * exact code the API returns for that case was not known when this was written — the e2e run
-   * records it — so the rule is deliberately broad and the message says the state was reset.
+   * A 400/404 on a continuation is **not** enough to call the context expired: the same status
+   * comes back for a bad model, a bad image or a malformed input, and resetting then would drop
+   * the conversation and fail the resent message the same way. So the API is asked whether the
+   * interaction the session points at still exists — 404 `not_found` for one that does not, 200
+   * for a real one (probed 2026-11-13). Only "gone" resets; anything else is reported as the
+   * upstream error it is, and the session keeps its state.
    */
-  private async fail(res: Response, continuation: boolean): Promise<ApiAgentError> {
+  private async fail(res: Response, signal: AbortSignal, previousInteractionId?: string): Promise<ApiAgentError> {
     const text = await res.text().catch(() => '');
     const upstream = upstreamMessage(text) ?? `HTTP ${res.status}`;
     if (res.status === 429) {
@@ -290,13 +381,29 @@ class AntigravityBackend implements ApiBackend {
     if (res.status === 401 || res.status === 403) {
       return new ApiAgentError(`the Antigravity API rejected GEMINI_API_KEY (${res.status}): ${upstream}`, 'auth');
     }
-    if (continuation && (res.status === 400 || res.status === 404)) {
-      return new ApiAgentError(
-        `context expired: the upstream interaction can no longer be continued (${res.status}: ${upstream}); the session was reset, send the message again`,
-        'context_expired',
-      );
+    if (previousInteractionId && (res.status === 400 || res.status === 404)) {
+      const exists = await this.interactionExists(previousInteractionId, signal);
+      if (exists === false) {
+        return new ApiAgentError(
+          `context expired: the upstream interaction can no longer be continued (${res.status}: ${upstream}); the session was reset, send the message again`,
+          'context_expired',
+        );
+      }
     }
     return new ApiAgentError(`the Antigravity API returned ${res.status}: ${upstream}`, 'upstream');
+  }
+
+  /** `true` when the interaction exists, `false` only when the API says it is gone. */
+  private async interactionExists(id: string, signal: AbortSignal): Promise<boolean | undefined> {
+    try {
+      const res = await this.call('GET', `/interactions/${encodeURIComponent(id)}`, undefined, signal);
+      await res.text().catch(() => '');
+      if (res.ok) return true;
+      if (res.status === 404) return false;
+      return undefined;
+    } catch {
+      return undefined;
+    }
   }
 }
 
@@ -310,7 +417,14 @@ class AntigravityBackend implements ApiBackend {
  */
 export class AntigravityEventMapper {
   completed = false;
+  /**
+   * Set instead of thrown, so the events produced by the same frame (the final usage) reach the
+   * caller before the turn fails. `turn()` checks it after yielding each frame's events.
+   */
+  failure?: ApiAgentError;
   private readonly toolIds = new Map<number, string>();
+  /** All text emitted so far, for rebuilding a tail after the stream was lost. */
+  private text = '';
 
   constructor(private readonly maxTokens: number) {}
 
@@ -337,11 +451,34 @@ export class AntigravityEventMapper {
       case 'error': {
         const error = payload.error as { message?: string; code?: string } | undefined;
         const detail = error?.message ?? 'no detail';
-        throw new ApiAgentError(`the Antigravity agent reported an error: ${detail}`, 'upstream');
+        this.failure = new ApiAgentError(`the Antigravity agent reported an error: ${detail}`, 'upstream');
+        return [];
       }
       default:
         return [];
     }
+  }
+
+  /**
+   * Rebuild the end of an interaction that finished while its stream was down.
+   *
+   * The final `model_output` steps are the whole answer; whatever was already streamed is a
+   * prefix of it, so only the missing suffix is emitted. A mismatch (which would mean the two
+   * disagree about the answer) emits no text rather than a duplicate, and the turn still ends
+   * with the terminal state instead of failing.
+   */
+  recover(interaction: Record<string, unknown>): BackendEvent[] {
+    const events: BackendEvent[] = [];
+    const full = textOfInteraction(interaction);
+    if (full.startsWith(this.text)) {
+      const suffix = full.slice(this.text.length);
+      if (suffix) {
+        this.text += suffix;
+        events.push({ type: 'text', text: suffix });
+      }
+    }
+    events.push(...this.finished({ interaction }));
+    return events;
   }
 
   private stepStarted(payload: Record<string, unknown>): BackendEvent[] {
@@ -381,6 +518,7 @@ export class AntigravityEventMapper {
     const delta = payload.delta as Record<string, unknown> | undefined;
     if (!delta) return [];
     if (delta.type === 'text' && typeof delta.text === 'string' && delta.text.length > 0) {
+      this.text += delta.text;
       return [{ type: 'text', text: delta.text }];
     }
     if (delta.type === 'thought_summary') {
@@ -410,18 +548,43 @@ export class AntigravityEventMapper {
       events.push({ type: 'usage', used: usage.total_tokens, size: CONTEXT_WINDOW });
     }
     if (status === 'incomplete') {
-      throw new ApiAgentError(
+      // Documented (`antigravity-agent.md` §Budget controls, 2026-11-13) but never reproduced in
+      // the probe — the cap was not reached. The branch follows the document; the usage above is
+      // returned first so the footer still shows what the turn spent.
+      this.failure = new ApiAgentError(
         `hit this turn's ${this.maxTokens}-token cap (status "incomplete"); the answer above is all there is — raise --max-tokens or ask for less at once`,
         'token_limit',
       );
+    } else if (status !== 'completed') {
+      this.failure = new ApiAgentError(`the Antigravity interaction ended as "${status}"`, 'upstream');
+    } else {
+      this.completed = true;
+      events.push({ type: 'done' });
     }
-    if (status !== 'completed') {
-      throw new ApiAgentError(`the Antigravity interaction ended as "${status}"`, 'upstream');
-    }
-    this.completed = true;
-    events.push({ type: 'done' });
     return events;
   }
+}
+
+/**
+ * The answer out of a finished interaction: every `model_output` step's text, in order. This is
+ * the only place `steps[]` is read — the streaming path uses the deltas — and it exists for the
+ * stream that was lost after the answer was ready.
+ */
+function textOfInteraction(interaction: Record<string, unknown>): string {
+  const steps = interaction.steps;
+  if (!Array.isArray(steps)) return '';
+  let text = '';
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    const record = step as Record<string, unknown>;
+    if (record.type !== 'model_output' || !Array.isArray(record.content)) continue;
+    for (const part of record.content) {
+      if (!part || typeof part !== 'object') continue;
+      const block = part as Record<string, unknown>;
+      if (block.type === 'text' && typeof block.text === 'string') text += block.text;
+    }
+  }
+  return text;
 }
 
 /**

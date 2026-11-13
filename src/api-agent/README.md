@@ -71,24 +71,29 @@ else becomes a bare "Internal error" on the wire, which is the one thing the use
 
 | Case | What the chat says |
 |---|---|
-| continuation rejected (400/404 on a turn with `previous_interaction_id`) | `context expired: … the session was reset, send the message again` |
-| `status: "incomplete"` | `hit this turn's N-token cap … raise --max-tokens or ask for less at once` |
+| continuation rejected **and the previous interaction is gone** (GET on it answers 404) | `context expired: … the session was reset, send the message again` |
+| continuation rejected for any other reason (bad model/image/input) | the upstream error as-is; the session keeps its state, because the conversation is still usable |
+| `status: "incomplete"` | `hit this turn's N-token cap … raise --max-tokens or ask for less at once` (the final usage is sent first) |
 | 429 | `rate limited by the Antigravity API (429): <upstream message> (retry after Ns)` |
 | 401/403 | `the Antigravity API rejected GEMINI_API_KEY …` |
 | no key | `GEMINI_API_KEY is not set for this agent; add it to the agent's env in config.yaml` |
-| stream lost | retried six times with backoff, then `lost the Antigravity stream …` |
+| stream lost | retried six times with backoff; a reconnect that delivers nothing twice ends it |
 
 ## Session state
 
-`<configDir>/api-agent/antigravity.json`, mode 0600 (directory 0700), written atomically
-(temp file + rename), records unused for seven days pruned. configDir is the only path the
-gateway's container mounts as a volume, so it is the only one that survives `fleetherd update`.
+`<configDir>/api-agent/<backend>/<sessionId>.json` — **one file per session**, mode 0600
+(directory 0700), written atomically (temp file + rename), files whose mtime is more than seven
+days old pruned. configDir is the only path the gateway's container mounts as a volume, so it is
+the only one that survives `fleetherd update`. One file per session rather than one map: every
+agent process of a backend writes its own sessions, and a shared file meant two conversations
+overwrote each other on every turn.
 
 `lastInteractionId` is committed **only when a turn finishes** (or hits the token cap, which is
 also a terminal answer). A `/stop` leaves it pointing at the last finished interaction: the user
 never saw the stopped turn's answer, so the next message must not continue from it. The
 environment id is committed as soon as the interaction is created — it is a sandbox, not the
-conversation.
+conversation. Mid-turn writes name only the field they learned (`SessionStore.patch`), so a
+`/model` switch made while a turn runs is not overwritten by the turn's snapshot.
 
 ## Adding a backend
 
@@ -105,8 +110,15 @@ persists them and hands them back next turn. Images arrive base64-encoded.
 
 - **Background, then follow.** `POST /interactions` with `background: true` returns the id, and
   `GET /interactions/{id}?stream=true` streams it. A foreground POST would be the stream, and the
-  id is what `/cancel` takes. The GET **replays from event zero**, so a reconnect skips the frames
-  already handled (counted, because the recorded frames carry no id).
+  id is what `/cancel` takes. **Reconnection is replay, not resume**: measured 2026-11-13, no
+  frame carries an `event_id` (0 of 292 in the recorded stream, 0 of 8 live), so the documented
+  `?last_event_id=` has nothing to send; a reconnect starts again at `interaction.created` and the
+  adapter skips the frames it already handled. A reconnect can also answer 400
+  `Precondition check failed` — transient right after an abort, permanent once the interaction
+  finished. The transient case is retried; the finished case is delivered from the interaction's
+  own `steps[]`, so a stream lost after the answer was ready still ends the turn normally.
+  A clean EOF before `[DONE]` is retried too, and a reconnect that delivers no new frames twice in
+  a row ends the turn.
 - **Text is `step.delta[text]`**; `thought_summary` becomes a thought (kept out of the reply);
   `thought_signature` is dropped — 172–1016 opaque characters per recorded turn.
 - **Tools** are the sandbox's `code_execution_call` / `code_execution_result` steps, drawn as a
@@ -126,8 +138,10 @@ persists them and hands them back next turn. Images arrive base64-encoded.
 
 No local files, no reverse commands (`send_file`, `schedule`), no MCP, no skills, no mid-turn
 steering (a message sent while a turn runs waits for the next one). Non-image attachments reach the
-model as a local path it cannot read. Free-tier interactions are kept for a day; an expired
-continuation is reported and the session reset, so the next message starts a new context.
+model as a local path it cannot read. Free-tier interactions are kept for a day; a continuation
+whose interaction is really gone (the API answers 404 when asked for it) is reported and the
+session reset, so the next message starts a new context. Any other failure of the continuation is
+reported as it is, with the session kept.
 
 ## Testing
 

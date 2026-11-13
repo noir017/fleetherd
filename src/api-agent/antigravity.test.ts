@@ -82,24 +82,29 @@ describe('AntigravityEventMapper on the recorded streams', () => {
     }
   });
 
-  it('reports an incomplete interaction as the token cap, with the cap in the message', () => {
+  it('reports an incomplete interaction as the token cap, after the final usage', () => {
     const mapper = new AntigravityEventMapper(20_000);
     const completed = frames('turn1-thought-and-text.sse').find((frame) => frame.data.includes('interaction.completed'))!;
     const payload = JSON.parse(completed.data) as { interaction: { status: string } };
     payload.interaction.status = 'incomplete';
-    expect(() => mapper.push({ event: 'interaction.completed', data: JSON.stringify(payload) })).toThrowError(
-      /20,000|20000/,
-    );
+    const events = mapper.push({ event: 'interaction.completed', data: JSON.stringify(payload) });
+
+    // The usage is yielded before the turn fails, so the footer still shows what was spent.
+    expect(events.some((event) => event.type === 'usage')).toBe(true);
+    expect(events.some((event) => event.type === 'done')).toBe(false);
+    expect(mapper.failure).toMatchObject({ kind: 'token_limit' });
+    expect(mapper.failure?.message).toMatch(/20,000|20000/);
   });
 
   it('treats an error event as a failed turn with the upstream message', () => {
     const mapper = new AntigravityEventMapper(20_000);
-    expect(() =>
+    expect(
       mapper.push({
         event: 'error',
         data: JSON.stringify({ error: { message: 'quota exhausted', code: 'resource_exhausted' }, event_type: 'error' }),
       }),
-    ).toThrowError(/quota exhausted/);
+    ).toEqual([]);
+    expect(mapper.failure?.message).toMatch(/quota exhausted/);
   });
 });
 
@@ -240,13 +245,43 @@ describe('AntigravityBackend', () => {
     });
   });
 
-  it('maps a 400 on a continuation to an expired context, and a 400 on a fresh turn to an upstream error', async () => {
-    const { backend } = backendWith(() => jsonResponse({ error: { message: 'Interaction not found' } }, 400));
+  it('resets only when the previous interaction is really gone', async () => {
+    const { backend, calls } = backendWith((url) => {
+      if (url.endsWith('/interactions')) return jsonResponse({ error: { message: 'Invalid JSON payload' } }, 400);
+      // The well-formed id that never existed: GET by id answers 404 `not_found` (probed 2026-11-13).
+      if (url.endsWith('/interactions/v1_gone')) {
+        return jsonResponse({ error: { message: 'Requested entity was not found.', code: 'not_found' } }, 404);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
     await expect(runTurn(backend, turnRequest({ previousInteractionId: 'v1_gone' }))).rejects.toMatchObject({
       kind: 'context_expired',
       message: expect.stringContaining('session was reset'),
     });
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toContain(
+      'GET https://example.test/v1beta/interactions/v1_gone',
+    );
+  });
+
+  it('keeps the context when a continuation 400 is about the request, not the interaction', async () => {
+    const { backend } = backendWith((url) => {
+      if (url.endsWith('/interactions')) return jsonResponse({ error: { message: 'Invalid model' } }, 400);
+      // The previous interaction is alive, so the 400 was about this request (a bad model, image
+      // or input) and resetting would drop a conversation that is still usable.
+      return jsonResponse({ id: 'v1_prev', status: 'completed' });
+    });
+
+    await expect(runTurn(backend, turnRequest({ previousInteractionId: 'v1_prev' }))).rejects.toMatchObject({
+      kind: 'upstream',
+      message: expect.stringContaining('Invalid model'),
+    });
+  });
+
+  it('a 400 on a fresh turn is an upstream error without an existence check', async () => {
+    const { backend, calls } = backendWith(() => jsonResponse({ error: { message: 'bad input' } }, 400));
     await expect(runTurn(backend, turnRequest())).rejects.toMatchObject({ kind: 'upstream' });
+    expect(calls.filter((call) => call.method === 'GET')).toEqual([]);
   });
 
   it('says GEMINI_API_KEY is missing instead of calling the API', async () => {
@@ -295,6 +330,62 @@ describe('AntigravityBackend', () => {
     expect(textOf(events)).toBe(
       'The capital of Japan is Tokyo, and I will remember the code word KESTREL-7 for your next message.',
     );
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  it('reconnects after a clean EOF before [DONE] instead of failing the turn', async () => {
+    // The first read delivers half the log and closes cleanly — no error, no [DONE]. The server
+    // closed a stream that had not finished; the turn must retry, not fail.
+    const all = fixture('turn1-thought-and-text.sse').split('\n\n');
+    const partial = `${all.slice(0, 8).join('\n\n')}\n\n`;
+    let reads = 0;
+    const { backend } = backendWith((url) => {
+      if (url.endsWith('/interactions')) return jsonResponse({ id: 'v1_abc', environment_id: 'env_1' });
+      reads += 1;
+      return sseResponse(reads === 1 ? partial : fixture('turn1-thought-and-text.sse'));
+    });
+
+    const events = await runTurn(backend, turnRequest());
+    expect(reads).toBe(2);
+    expect(events.filter((event) => event.type === 'text')).toHaveLength(2);
+    expect(textOf(events)).toBe(
+      'The capital of Japan is Tokyo, and I will remember the code word KESTREL-7 for your next message.',
+    );
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  it('delivers the rest of the answer when the stream is gone but the interaction finished', async () => {
+    // Probed 2026-11-13: reconnecting after completion answers 400. The interaction itself still
+    // has the answer in steps[], so the turn ends with the missing suffix instead of an error.
+    const full = 'hello world';
+    const finished = {
+      id: 'v1_abc',
+      status: 'completed',
+      usage: { total_tokens: 1234 },
+      steps: [{ type: 'model_output', content: [{ type: 'text', text: full }] }],
+    };
+    let reads = 0;
+    const { backend } = backendWith((url) => {
+      if (url.endsWith('/interactions')) return jsonResponse({ id: 'v1_abc', environment_id: 'env_1' });
+      if (url.includes('?stream=true')) {
+        reads += 1;
+        if (reads === 1) {
+          return sseResponse(
+            'event: step.delta\ndata: {"index":0,"delta":{"type":"text","text":"hello "},"event_type":"step.delta"}\n\n',
+          );
+        }
+        return jsonResponse({ error: { message: 'Precondition check failed.' } }, 400);
+      }
+      return jsonResponse(finished);
+    });
+
+    const events = await runTurn(backend, turnRequest());
+    expect(textOf(events)).toBe(full);
+    expect(events.filter((event) => event.type === 'usage').at(-1)).toEqual({
+      type: 'usage',
+      used: 1234,
+      size: 1_048_576,
+    });
     expect(events.at(-1)).toEqual({ type: 'done' });
   });
 

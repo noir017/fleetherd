@@ -22,7 +22,7 @@ const dirs: string[] = [];
 function newStore(): SessionStore {
   const dir = mkdtempSync(path.join(tmpdir(), 'api-agent-server-'));
   dirs.push(dir);
-  return new SessionStore({ file: path.join(dir, 'api-agent', 'antigravity.json'), log: () => {} });
+  return new SessionStore({ dir: path.join(dir, 'api-agent', 'antigravity'), log: () => {} });
 }
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -164,6 +164,23 @@ describe('createApiAgentApp', () => {
       previousInteractionId: 'v1_a',
       environmentId: 'env_a',
     });
+  });
+
+  it('keeps a model that /model changed while the turn was running', async () => {
+    const store = newStore();
+    const backend = fakeBackend(async function* () {
+      yield { type: 'state', lastInteractionId: 'v1_a' };
+      // The person switched models mid-turn; the turn's own snapshot still says hydrogen.
+      store.put({ sessionId: 's1', model: 'gemini-3.8-flash', lastInteractionId: 'v1_old' });
+      yield { type: 'done' };
+    });
+    store.put({ sessionId: 's1', model: 'gemini-4-hydrogen', lastInteractionId: 'v1_old' });
+
+    await withClient(backend, store, (ctx) =>
+      ctx.request('session/prompt', { sessionId: 's1', prompt: [promptOf('go')] }),
+    );
+
+    expect(store.get('s1')).toMatchObject({ model: 'gemini-3.8-flash', lastInteractionId: 'v1_a' });
   });
 
   it('session/cancel aborts the turn, answers cancelled, and asks the backend to cancel', async () => {

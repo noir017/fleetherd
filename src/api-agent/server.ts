@@ -135,7 +135,7 @@ export function createApiAgentApp(options: ApiAgentServerOptions): AgentApp {
       // Two ways to stop: the client's session/cancel (our controller) and the connection going
       // away (the SDK's signal). The backend sees one signal, already combined.
       const combined = AbortSignal.any([signal, turn.controller.signal]);
-      let record = ensure(params.sessionId);
+      const record = ensure(params.sessionId);
       try {
         const events = backend.turn({
           sessionId: params.sessionId,
@@ -153,21 +153,14 @@ export function createApiAgentApp(options: ApiAgentServerOptions): AgentApp {
             // The interaction id is not — it becomes the next turn's continuation point only if
             // this turn finishes. A /stop must not leave the following message pointing at an
             // interaction whose answer the user never saw.
-            record = store.put({
-              sessionId: params.sessionId,
-              model: record.model,
-              lastInteractionId: record.lastInteractionId,
-              environmentId: event.environmentId ?? record.environmentId,
-            });
+            //
+            // Only the field learned is written: the turn's snapshot may be stale if /model
+            // changed the session while this one was running (store.patch says why).
+            if (event.environmentId) store.patch(params.sessionId, { environmentId: event.environmentId });
             continue;
           }
           if (event.type === 'done') {
-            record = store.put({
-              sessionId: params.sessionId,
-              model: record.model,
-              lastInteractionId: turn.interactionId ?? record.lastInteractionId,
-              environmentId: record.environmentId,
-            });
+            if (turn.interactionId) store.patch(params.sessionId, { lastInteractionId: turn.interactionId });
             continue;
           }
           await notify(client, params.sessionId, toUpdate(event));
@@ -177,17 +170,12 @@ export function createApiAgentApp(options: ApiAgentServerOptions): AgentApp {
         if (combined.aborted) return { stopReason: 'cancelled' as const };
         if (err instanceof ApiAgentError && err.kind === 'context_expired') {
           // The next turn must start a new interaction rather than fail the same way again.
-          store.put({ sessionId: params.sessionId, model: record.model });
+          store.clearContext(params.sessionId);
         }
         if (err instanceof ApiAgentError && err.kind === 'token_limit' && turn.interactionId) {
           // The cap is a terminal answer, not a lost turn: the partial reply was delivered, so
           // the next message should continue from it rather than from two turns ago.
-          store.put({
-            sessionId: params.sessionId,
-            model: record.model,
-            lastInteractionId: turn.interactionId,
-            environmentId: record.environmentId,
-          });
+          store.patch(params.sessionId, { lastInteractionId: turn.interactionId });
         }
         throw userError(err);
       } finally {

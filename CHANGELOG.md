@@ -12,16 +12,19 @@ All notable changes to this project are documented here. The format is based on
   and learns nothing about the service — the same arrangement as any other ACP child, with no
   daemon change. The first backend is Antigravity on Google's Interactions API: a turn is created
   in the background and followed as an event stream that replays from the start (a dropped
-  connection reconnects and skips what was already read), the sandbox's code execution is drawn as
-  a tool row, `/model` offers the six values `agent_config.model` accepts, and the interaction and
-  environment ids are kept under `<configDir>/api-agent/` (0600, seven days) so a daemon restart or
-  an idle reclaim continues the conversation instead of forgetting it. What it cannot do, it says:
-  no local files, no MCP, no `send_file`/`schedule`, no mid-turn steering; `/stop` ends the turn
-  here at once and the server-side cancel is best-effort (the API accepts it only while the
-  interaction is running). Failures are written for the chat — an expired context resets the
-  session and says to resend, hitting the token cap names the cap, a 429 carries the upstream
-  message and `retry-after`. `--max-tokens` defaults to 200000 because one turn is a whole agent
-  loop, and the harness spends ~5.3k input tokens before it says anything.
+  connection reconnects and skips what was already read; a reconnect after the answer finished is
+  recovered from the interaction itself), the sandbox's code execution is drawn as a tool row,
+  `/model` offers the six values `agent_config.model` accepts, and the interaction and
+  environment ids are kept one file per session under `<configDir>/api-agent/<backend>/` (0600,
+  seven days by mtime) so a daemon restart or an idle reclaim continues the conversation instead
+  of forgetting it. What it cannot do, it says: no local files, no MCP, no
+  `send_file`/`schedule`, no mid-turn steering; `/stop` ends the turn here at once and the
+  server-side cancel is best-effort (the API accepts it only while the interaction is running).
+  Failures are written for the chat — a context is called expired only when the API says the
+  interaction is gone, and the session is reset then; a rejected request is reported as it is and
+  keeps the session; hitting the token cap names the cap; a 429 carries the upstream message and
+  `retry-after`. `--max-tokens` defaults to 200000 because one turn is a whole agent loop, and the
+  harness spends ~5.3k input tokens before it says anything.
 
 ## [3.1.0] - 2026-11-12
 

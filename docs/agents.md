@@ -251,13 +251,16 @@ agents:
 - **What does not**: local files, the `send_file`/`schedule` tools, MCP, skills, and mid-turn
   steering (a message sent while a turn runs waits for the next one). A non-image attachment
   reaches the model as a local path it cannot read.
-- **Failures are written to be read in the chat.** An expired context says so and resets the
-  session — the next message starts a new one; hitting the token cap names the cap; a 429 carries
-  the upstream message and `retry-after`.
+- **Failures are written to be read in the chat.** A continuation is declared expired only when
+  the API says the previous interaction is gone (a 404 when asked for it); then the session is
+  reset and the message says to resend. A 400 about the request itself (a bad model, image or
+  input) is reported as it is and the session keeps its state. Hitting the token cap names the cap;
+  a 429 carries the upstream message and `retry-after`.
 - **`/stop` stops the turn here at once.** The server-side cancel is best-effort: the API only
   accepts it while the interaction is still running.
-- **State**: `<configDir>/api-agent/antigravity.json` (0600, records unused for seven days are
-  dropped). It holds the interaction and environment ids that make the next turn a continuation.
+- **State**: one file per session, `<configDir>/api-agent/antigravity/<sessionId>.json` (0600,
+  files unused for seven days are dropped). It holds the interaction and environment ids that make
+  the next turn a continuation.
 - **`--max-tokens` defaults to 200000.** One turn is a whole agent loop, and the recorded harness
   spends ~5.3k input tokens before it says anything; the API's cap is best-effort and answers
   `status: "incomplete"`.
