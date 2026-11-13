@@ -72,6 +72,17 @@ program
   .description('MCP server giving an agent session send_file and schedule as tools (started by the daemon)')
   .action(() => import('./commands/mcp.js').then((m) => m.runMcp(version)));
 
+// An ACP agent whose backend is an HTTP API, spawned by the daemon for `harness: custom`:
+// `args: [api-agent, antigravity]`. Visible, unlike `mcp`, because this is the command an operator
+// writes into config.yaml. Lazy-loaded for the same reason `mcp` is: it is a per-session child.
+program
+  .command('api-agent <backend>')
+  .description('ACP agent backed by an HTTP API (started by the daemon; backends: antigravity)')
+  .option('--models <ids>', 'comma-separated model ids to offer (default: the backend\'s own list)')
+  .option('--max-tokens <n>', 'per-turn token budget (default: 200000)')
+  .action((backend: string, opts: { models?: string; maxTokens?: string }) =>
+    import('./commands/api-agent.js').then((m) => m.runApiAgent(backend, opts)));
+
 // `help [topic]` replaces commander's implicit `help [command]`: it is where the bundled skill sends an
 // agent (see HELP_TOPICS), so it answers by TOPIC — `help schedule` — and still falls back to
 // a command's own flags for `help send-file`. `--help` keeps commander's full list for humans.

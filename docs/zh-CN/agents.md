@@ -10,6 +10,9 @@
 | `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` 的 Google 登录态（系统钥匙串） |
 | `custom` | 你的 `command` + `args` | 任意 ACP 可执行文件 | 由智能体自身决定 |
 
+只有 HTTP API 的服务不需要单独的 harness：[`fleetherd api-agent`](#http-apiapi-agent) 把它包成
+ACP 智能体，按 `custom` 启动。
+
 每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[固定会话选项](#固定会话选项)、
 [启动前钩子](#启动前钩子)，以及[权限策略](#权限请求)。
 设了 `host:` 就跑在另一台机器上、经 ssh 连接，见[远程主机](remote-hosts.md)。支持会话恢复
@@ -191,3 +194,33 @@ agents:
 > 驱动你的账号——请自行判断。`contextBudget` 走得更远：它的中继会经手 agy 的
 > 请求，包括登录 token（只转发，不读取、不保存），并且改动了 Google 服务端
 > 告诉 agy 的内容。
+
+## HTTP API（`api-agent`）
+
+只有 HTTP API 的服务也能当智能体：`fleetherd api-agent <后端>` 把它包成一个 ACP 智能体，网关按
+`custom` harness 启动它，不需要知道后端是什么。
+
+```yaml
+agents:
+  - id: agapi
+    harness: custom
+    command: fleetherd
+    args: [api-agent, antigravity]      # 可选：--models a,b   --max-tokens N
+    model: gemini-4-hydrogen
+    env: { GEMINI_API_KEY: "${GEMINI_API_KEY}" }
+```
+
+- **第一个后端是 Antigravity**（Google 的 Interactions API）。`/model` 列出它的 6 个模型，默认
+  `gemini-4-hydrogen`；Carbon 和 Argon 标了「付费层」，免费层选它们会得到 429 和升级提示。
+- **可用**：流式文本、沙盒代码执行显示成工具行、`/model`、`/stop`、多轮上下文、daemon 重启或
+  空闲回收后上下文仍在、图片。
+- **不可用**：本地文件、`send_file`/`schedule` 两个工具、MCP、skill，以及运行中插话（轮次进行时
+  发的消息会排到下一轮）。非图片附件只给模型一个本机路径，它读不到。
+- **错误会写成人话**：只有 API 明确说上一条 interaction 已经不在了（GET 它返回 404）才判上下文过期，
+  此时重置会话并提示重发；请求本身的问题（模型、图片、输入不合法）原样报上游错误，会话状态保留。
+  撞到 token 上限会写明上限；429 会带上上游原文和 `retry-after`。
+- **`/stop` 立即结束本轮**；服务端取消是尽力而为，API 只在 interaction 还在运行时接受。
+- **状态**：每个会话一个文件 `<configDir>/api-agent/antigravity/<sessionId>.json`（0600，七天未用的
+  文件会被清掉）。里面是让下一轮成为续轮的 interaction / environment id。
+- **`--max-tokens` 默认 200000**。一轮就是一整个 agent 循环，实测 harness 开口前就要 ~5.3k 输入
+  token；API 的上限是尽力而为，到量返回 `status: "incomplete"`。

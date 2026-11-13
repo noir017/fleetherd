@@ -48,6 +48,7 @@ it. Do not duplicate that content here.
 | `src/core/` | Platform-agnostic pure logic: conversation identity, gating, merging, streaming, tool bubbles, footer, attachments, command vocabulary | [README](src/core/README.md) |
 | `src/platform/` | IM adapters: the profile seam, 8 Satori platform profiles, per-dialect markdown renderers, and `webui/` — a browser page the daemon serves, implementing `PlatformAdapter` directly | [README](src/platform/README.md) |
 | `src/daemon/` | The running system: routing, conversations, turn orchestration, the agent runtimes (all ACP) | [README](src/daemon/README.md) |
+| `src/api-agent/` | `fleetherd api-agent <backend>`: an ACP agent over an HTTP API, spawned by the daemon for `harness: custom`. First backend: Antigravity | [README](src/api-agent/README.md) |
 | `src/ipc/` | Reverse-command protocol over a unix socket (agent → daemon → chat) | [README](src/ipc/README.md) |
 | `src/history/` | The conversation library: every turn in `<configDir>/history.db`, searchable by keyword (Han bigrams in JS, BM25), plus the web UI transcript import | [README](src/history/README.md) |
 | `src/remote/` | The gateway's side of agents on other machines: one reliable link per host over ssh | [README](src/remote/README.md) |
@@ -100,6 +101,10 @@ Enforced facts, verifiable with grep:
   daemon's to decide about a remote agent — the namespace, how its `fleetherd` command is run here,
   where the skill goes — lives in `daemon/remote-hosts.ts`. The one exception to "daemon only" is
   `commands/doctor.ts`, which uses its ssh argv to check hosts the way the daemon will reach them.
+- `api-agent/` imports nothing from other modules: Node built-ins and `@agentclientprotocol/sdk`.
+  It is the ACP *agent* side of a harness the daemon spawns, so it must not depend on the daemon
+  that spawned it. `commands/api-agent.ts` is the only place that reads `configDir()`, to name the
+  state file; the backend registry (models, key variable, file name) lives there too.
 - `daemon/` is the only module allowed to depend on everything.
 
 If a change requires an upward import, the design is wrong — move the pure part down
@@ -369,6 +374,8 @@ Do not weaken these without saying so explicitly in the PR:
 - **An agent harness** → an arm in `AgentDefSchema.harness` + `resolveHarness` in
   `daemon/agent-acp.ts` if it speaks ACP. A harness that did not would need a sibling runtime
   implementing `AgentFactory`, wired where `start.ts` builds the factory — nothing does today.
+  A service with an HTTP API is neither: it is a backend of `src/api-agent/`, which *is* an ACP
+  agent the daemon spawns as `custom` (see [its README](src/api-agent/README.md)).
   See [src/daemon/README.md](src/daemon/README.md).
 - **A reverse command** → an arm in the `IpcAction` union + an entry in
   `REVERSE_COMMANDS`, whose required `topic` puts it on a `fleetherd help` page; CLI

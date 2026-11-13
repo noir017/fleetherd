@@ -942,6 +942,10 @@ implementing `AgentFactory`, not a branch upstream.
 `agent.ts` holds only interfaces and imports nothing from the project, so either kind of runtime
 can implement it without a cycle.
 
+One agent lives outside this module: `fleetherd api-agent <backend>` (`src/api-agent/`) is an ACP
+**agent**, which the daemon spawns through `custom` like any other executable. Nothing here knows
+it exists — that is how a service with only an HTTP API becomes a harness without a new arm.
+
 ### `agent-acp.ts` — the ACP runtime
 
 The daemon is the ACP **client/host**. Each conversation+agent pair spawns a resident ACP
