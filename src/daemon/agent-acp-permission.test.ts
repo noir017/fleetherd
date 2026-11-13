@@ -46,10 +46,10 @@ describe('permissionRequestOf', () => {
         toolCallId: 't2',
         title: 'Bash',
         kind: 'execute',
-        rawInput: { ServerName: 'quantlab-research', ToolName: 'get_trading_calendar', Arguments: {} },
+        rawInput: { ServerName: 'notes-server', ToolName: 'list_notes', Arguments: {} },
       },
     };
-    expect(permissionRequestOf(req).title).toBe('MCP get_trading_calendar — quantlab-research');
+    expect(permissionRequestOf(req).title).toBe('MCP list_notes — notes-server');
   });
 });
 

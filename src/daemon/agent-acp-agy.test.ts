@@ -113,7 +113,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         toolCallId: 'c4',
         kind: 'execute',
         title: 'Bash',
-        rawInput: { ServerName: 'quantlab-research', ToolName: 'get_trading_calendar', Arguments: {} },
+        rawInput: { ServerName: 'notes-server', ToolName: 'list_notes', Arguments: {} },
       };
       update(sid, { sessionUpdate: 'tool_call', status: 'in_progress', ...call });
       update(sid, { sessionUpdate: 'tool_call_update', status: 'completed', ...call });
@@ -406,8 +406,8 @@ describe('agy over ACP: a turn', () => {
     await turn(session, 'tool-mcp-call', r);
     // agy sends kind `execute` / title `Bash`; without the input this row read `Bash: {"ServerName":…}`.
     expect(r.tools).toHaveLength(1);
-    expect(r.tools[0]?.name).toBe('MCP get_trading_calendar');
-    expect(r.tools[0]?.inputPreview).toBe('quantlab-research');
+    expect(r.tools[0]?.name).toBe('MCP list_notes');
+    expect(r.tools[0]?.inputPreview).toBe('notes-server');
   });
 
   it('does not hold the turn for a slow quota reading, and reports it when it lands', async () => {

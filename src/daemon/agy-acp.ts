@@ -301,7 +301,7 @@ export function agyAcpToolLabel(title: string | undefined, kind: string | undefi
  * A `call_mcp_tool` call's own fields: the server, the tool, and the arguments it was given.
  *
  * agy files the call as `kind: "execute"` titled `Bash`, with both names only in the raw input —
- * `{"ServerName":"quantlab-research","ToolName":"get_trading_calendar","Arguments":{}}` — so the
+ * `{"ServerName":"notes-server","ToolName":"list_notes","Arguments":{}}` — so the
  * generic label says a shell command ran (2026-11-13: 20+ sessions, 89 tool rows). It is the route
  * agy offers for a server it did not preload, and the only one its HTTP servers are reached
  * through (docs/agents.md).

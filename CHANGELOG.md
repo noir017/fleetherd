@@ -237,8 +237,8 @@ All notable changes to this project are documented here. The format is based on
   conversation that would run the new text at 18:00 saw nothing (2026-11-13). Whoever will read the
   output is now told what changed, and reads the whole text — as a blockquote, chunked to the
   platform's message limit, since an agent's prompt can outgrow one message.
-- **`help schedule` documents compound cron**, which the code has supported all along and four
-  trading tasks use: several 5-field expressions separated by `;` are one schedule that runs at
+- **`help schedule` documents compound cron**, which the code has supported all along and
+  several running tasks use: several 5-field expressions separated by `;` are one schedule that runs at
   whichever comes next. The `schedule` tool's description now also says that a wait longer than the
   turn, or a result that should arrive later as a message, is a task here — a background process a
   shell starts dies with the session, which is how a two-hour monitor produced nothing at all.
