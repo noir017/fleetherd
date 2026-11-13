@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { RETRY_PREFIX } from '../../core/turn-retry.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
@@ -1827,6 +1828,7 @@ describe('WebRoom: what the switcher dot is saying', () => {
       SCHEDULE_TASK_PREFIX,
       SCHEDULE_ACTION_PREFIX,
       PICK_PREFIX,
+      RETRY_PREFIX,
     ];
 
     for (const prefix of CONTROL_PREFIXES) {

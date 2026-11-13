@@ -132,6 +132,50 @@ All notable changes to this project are documented here. The format is based on
   when declared); agy and CodeBuddy declare no fork; and opencode is held to between turns, because
   its copy of a session mid-turn carried on with that turn too and ran its command a second time.
 
+- **A failed turn can be retried from its ❌.** The notice now carries Retry, which sends that
+  turn's input again — every message of it, attachments included — and, when there is more than one
+  agent, Retry with another agent, which asks which one first. Until now the only way was to copy
+  the message out and send it again: twice in one day the person pasted a whole request into a new
+  conversation with another agent after agy failed upstream (#208467 → #208472, #208530 → #208565).
+  A tap is the person's own act: a continue waiting after the failure is called off, and the input
+  goes in as theirs. Another agent takes over the topic when it has no session yet; one that has a
+  session keeps its agent, so the input goes to a new topic for the other one, beside this one and
+  in the same directory when both are on one machine. The buttons come off once they stop meaning
+  anything — used, or superseded by a later turn — and on a platform without buttons (WeCom,
+  DingTalk) the notice is the plain text it always was. The web UI's own Retry is unchanged: it is
+  for a message the browser never managed to send.
+
+### Changed
+
+- **A message the agent never received goes along with the next one, and the chat says so.** A turn
+  whose start failed never sent its prompt, and the ❌ only gave the cause — so the "continue" sent
+  after it, by the person, the parent agent or `hooks.turnFailed`, was the only thing the agent ever
+  read. On 2026-11-07 thirteen sub-agents failed to start, were each sent "继续执行原任务", and went
+  looking through their own session logs for a task they had never been given; a sub-agent's task
+  is handed over once, so it was simply gone. Such a turn's messages are now held and sent in front
+  of whatever starts the next turn — a message, a continue, a sub-agent card, a scheduled run — and
+  the ❌, the sub-agent card and the library all say "The agent did not receive this — it will be
+  sent along with the next message." A scheduled prompt, the operator's continue message and a
+  slash command are not held. Retrying the turn sends it instead, never both.
+- **A usage limit cools the whole agent down, not each conversation separately.** `limit` is the
+  account's, but `hooks.turnFailed.continue` counted per conversation: on 2026-11-07 eight cc
+  sub-agents hit "All credentials … are cooling down" together, each continued three times on its
+  own, every attempt spent ~200 s in Claude Code's own retries, and the parents woken by their
+  failure cards failed and continued too — 43 failed turns in 11 conversations over 1.5 hours. Now
+  their continues wait in one line: when the wait ends, one is sent to find out; if it gets through
+  (or any turn on that agent ends normally) the rest go at once, and if it hits the limit again the
+  wait doubles. The agent's limit gets `max` continues in all, not `max` per conversation — when
+  they are spent, every conversation waiting on it is left for the person. While an agent cools
+  down, sub-agent update cards for a parent it answers are held, said once in the parent's topic,
+  and sent when the limit lifts — an agent with no continue policy cools down too, for that.
+- **A startup failure says whether the process came up.** Every startup timeout told the person to
+  check that the launch command was on PATH. The four agy timeouts of 2026-11-11 had answered
+  `initialize` in 11 ms and hung on `session/new` behind a relay answering 502 and a DNS timeout.
+  The message now tells the two apart: "did not start — its process gave no answer to initialize"
+  points at the command and the machine; "started, but session/new got no answer" (or "failed:"
+  with the agent's own error, its `data` included) points behind it, at the backend, relay or
+  network. Either quotes the last lines the agent wrote to stderr.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

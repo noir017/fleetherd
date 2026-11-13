@@ -373,7 +373,13 @@ export type ReclaimState = 'no-child' | 'resumable' | 'unresumable';
 export class TurnFailure extends Error {
   constructor(
     message: string,
-    readonly reason: TurnFailureReason
+    readonly reason: TurnFailureReason,
+    /**
+     * The turn ended before its prompt was sent: the agent never received what it was asked. Set by
+     * a runtime that knows (a startup that failed), and read by the registry, which keeps such a
+     * turn's input for the next one rather than letting it fall between them (TurnOutcomes).
+     */
+    readonly undelivered = false
   ) {
     super(message);
     this.name = 'TurnFailure';
@@ -383,6 +389,22 @@ export class TurnFailure extends Error {
 /** The reason a turn failed with, `other` for anything a runtime did not classify. */
 export function turnFailureReason(err: unknown): TurnFailureReason {
   return err instanceof TurnFailure ? err.reason : 'other';
+}
+
+/** Whether a turn's failure happened before its prompt reached the agent (TurnFailure.undelivered). */
+export function promptUndelivered(err: unknown): boolean {
+  return err instanceof TurnFailure && err.undelivered;
+}
+
+/**
+ * The same failure, marked as one the agent never saw the prompt of. Keeps the reason and the
+ * message; anything a runtime did not classify stays `other`.
+ */
+export function asUndelivered(err: unknown): TurnFailure {
+  if (err instanceof TurnFailure && err.undelivered) return err;
+  const marked = new TurnFailure(err instanceof Error ? err.message : String(err), turnFailureReason(err), true);
+  if (err instanceof Error && err.stack) marked.stack = err.stack;
+  return marked;
 }
 
 /**

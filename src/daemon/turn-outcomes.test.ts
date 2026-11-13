@@ -276,6 +276,155 @@ describe('TurnOutcomes — hooks.turnFailed.continue', () => {
   });
 });
 
+describe('TurnOutcomes — a usage limit cools the whole agent down', () => {
+  /** Conversations A…H on one agent, continues recorded by conversation. */
+  function many(cfg: Config, opts: { cardsHeld?: string[] } = {}) {
+    const clock = manualClock();
+    const said: Array<[string, string]> = [];
+    const continued: string[] = [];
+    const needs: string[] = [];
+    const over: string[] = [];
+    const platform = {
+      sendMessage: async (a: ConversationAddress, text: string) => {
+        said.push([a.thread ?? '', text]);
+        return { address: a, messageId: 'x' };
+      },
+      setActivity: () => {},
+    } as unknown as PlatformAdapter;
+    const outcomes = new TurnOutcomes({
+      config: cfg,
+      clock,
+      platforms: new Map([['web', platform]]),
+      laneOf: (id) => ({ address: { channel: 'main', thread: id }, platformId: 'web' }),
+      agentIdOf: () => 'cc',
+      runContinue: (id) => {
+        continued.push(id);
+        return true;
+      },
+      onNeedsPerson: (id) => needs.push(id),
+      onCooldownOver: (agent) => {
+        over.push(agent);
+        opts.cardsHeld?.push(agent);
+      },
+    });
+    return { clock, said, continued, needs, over, outcomes };
+  }
+  const limit = () => fail('limit', 'All credentials for model opus are cooling down');
+
+  it('sends one continue to find out, not one per conversation, and lets the rest go once it gets through', () => {
+    // 2026-11-07: eight sub-agents hit the limit together and each continued three times on its own.
+    const r = many(config({ on: ['limit'], max: 3, backoffMs: 30_000 }));
+    const ids = ['A', 'B', 'C', 'D'];
+    for (const id of ids) r.outcomes.turnEnded(id, limit());
+    expect(r.outcomes.coolingDown('cc')).toBe(true);
+    // A burst is one piece of news: the wait is the first one, not four times doubled.
+    expect(r.outcomes.activityOf('A')?.retry).toEqual({ attempt: 1, max: 3, at: 31_000 });
+    expect(r.outcomes.activityOf('D')?.retry).toEqual({ attempt: 1, max: 3, at: 31_000 });
+    expect(r.said.find(([t]) => t === 'A')?.[1]).toBe(
+      '↻ A usage limit was hit on cc — sending “continue” in 30s (1/3). Send anything, or /stop, to call it off.'
+    );
+    expect(r.said.find(([t]) => t === 'B')?.[1]).toContain('once another conversation on it gets through (1/3)');
+
+    r.clock.advance(30_000);
+    expect(r.continued).toEqual(['A']);
+    // The probe hits the limit again: only it tries again, after twice the wait.
+    r.outcomes.turnStarted('A');
+    r.outcomes.turnEnded('A', limit());
+    expect(r.outcomes.activityOf('A')?.retry).toEqual({ attempt: 2, max: 3, at: 91_000 });
+    r.clock.advance(59_999);
+    expect(r.continued).toEqual(['A']);
+    r.clock.advance(1);
+    expect(r.continued).toEqual(['A', 'A']);
+    // Back at the front of the line, it says who waits behind it.
+    expect(r.said.filter(([t]) => t === 'A').at(-1)?.[1]).toContain('in 1 min (2/3); 3 more conversations wait for this one to get through');
+    // …and gets through: everyone waiting goes now, and the cooldown is over.
+    r.outcomes.turnStarted('A');
+    r.outcomes.turnEnded('A', { kind: 'done', text: 'ok' });
+    expect(r.continued).toEqual(['A', 'A', 'B', 'C', 'D']);
+    expect(r.outcomes.coolingDown('cc')).toBe(false);
+    expect(r.over).toEqual(['cc']);
+    expect(r.needs).toEqual(['A']);
+  });
+
+  it('when the probe spends the agent’s budget, everything waiting with it is the person’s', () => {
+    const r = many(config({ on: ['limit'], max: 2, backoffMs: 1_000 }));
+    for (const id of ['A', 'B', 'C']) r.outcomes.turnEnded(id, limit());
+    for (let i = 0; i < 2; i++) {
+      r.clock.advance(10_000);
+      r.outcomes.turnStarted('A');
+      r.outcomes.turnEnded('A', limit());
+    }
+    expect(r.continued).toEqual(['A', 'A']);
+    expect(r.needs.sort()).toEqual(['A', 'B', 'C']);
+    expect(r.outcomes.activityOf('B')?.retry).toBeUndefined();
+    expect(r.said.filter(([t]) => t === 'B').at(-1)?.[1]).toContain('Not continuing: cc stayed over its usage limit through 2 automatic continues');
+    // Two continues in all, not two per conversation; the cooldown stays for the cards until it runs out.
+    r.clock.advance(60_000);
+    expect(r.continued).toEqual(['A', 'A']);
+    expect(r.outcomes.coolingDown('cc')).toBe(false);
+    expect(r.over).toEqual(['cc']);
+  });
+
+  it('any turn on the agent that ends normally lifts it', () => {
+    const r = many(config({ on: ['limit'], backoffMs: 30_000 }));
+    r.outcomes.turnEnded('A', limit());
+    r.outcomes.turnEnded('B', limit());
+    r.outcomes.turnStarted('Z');
+    r.outcomes.turnEnded('Z', { kind: 'done', text: 'fine' });
+    expect(r.continued).toEqual(['A', 'B']);
+    expect(r.outcomes.coolingDown('cc')).toBe(false);
+  });
+
+  it('a probe that fails for another reason got past the limit, so the others go', () => {
+    const r = many(config({ on: ['limit', 'service'], backoffMs: 1_000 }));
+    r.outcomes.turnEnded('A', limit());
+    r.outcomes.turnEnded('B', limit());
+    r.clock.advance(1_000);
+    expect(r.continued).toEqual(['A']);
+    r.outcomes.turnStarted('A');
+    r.outcomes.turnEnded('A', fail('service'));
+    expect(r.continued).toEqual(['A', 'B']);
+    expect(r.outcomes.coolingDown('cc')).toBe(false);
+    expect(r.outcomes.activityOf('A')?.retry).toBeDefined(); // its own continue, for its own reason
+  });
+
+  it('the person acting in a waiting conversation takes it out of the line; in the probe, hands the try on', () => {
+    const r = many(config({ on: ['limit'], backoffMs: 1_000 }));
+    for (const id of ['A', 'B', 'C']) r.outcomes.turnEnded(id, limit());
+    r.outcomes.personActed('B');
+    expect(r.outcomes.activityOf('B')?.retry).toBeUndefined();
+    r.clock.advance(1_000);
+    expect(r.continued).toEqual(['A']);
+    r.outcomes.turnStarted('A');
+    r.outcomes.personActed('A'); // a /stop in the probe
+    r.outcomes.turnEnded('A', { kind: 'stopped' });
+    r.clock.advance(1_000);
+    expect(r.continued).toEqual(['A', 'C']);
+  });
+
+  it('cools an agent down with no continue policy too, for the cards that would land on it', () => {
+    const r = many(config());
+    r.outcomes.turnEnded('A', limit());
+    expect(r.outcomes.coolingDown('cc')).toBe(true);
+    expect(r.needs).toEqual(['A']);
+    expect(r.said).toEqual([]);
+    r.clock.advance(60_000);
+    expect(r.outcomes.coolingDown('cc')).toBe(false);
+    expect(r.over).toEqual(['cc']);
+    expect(r.continued).toEqual([]);
+  });
+});
+
+describe('TurnOutcomes — a prompt the agent never received', () => {
+  it('says so in what the card and the library quote', () => {
+    const r = rig(config());
+    r.outcomes.turnEnded(ID, { ...fail('startup', 'agent "ag" started, but session/new got no answer within 30s.'), undelivered: { held: 1 } });
+    expect(r.outcomes.failureOf(ID)?.text).toBe(
+      'agent "ag" started, but session/new got no answer within 30s.\nThe agent did not receive this — it will be sent along with the next message.'
+    );
+  });
+});
+
 describe('TurnOutcomes — turns the last daemon never finished', () => {
   let dir: string | undefined;
   afterEach(() => {

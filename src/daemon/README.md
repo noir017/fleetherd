@@ -63,7 +63,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `skill-lifecycle.ts` | The daily check (14 days expired, 30 archived; pinned and hand-written skills exempt) and its archive notice |
 | `managed-skills.ts` | Delivering active skills to `~/.fleetherd/skills/` on an agent's machine and linking only links that point back there; taking an archived skill's links back |
 | `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
-| `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
+| `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), the per-agent usage-limit cooldown, and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
+| `failed-input.ts` | A failed turn's input: held for the next turn when the agent never received it, and kept for the ❌ notice's Retry buttons — see [Failed turns: held input and Retry](#failed-turns-held-input-and-retry) |
 | `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on by default (or once per agent in the `first` tier, or the record card when it is off), and the `[sub-agent updates]` card |
 | `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `fleetherd …` back here (the allowlisted bridge); placing the skill on a host |
 | `pods.ts` | What each host's pod declares: its `~/.fleetherd/pod.yaml`, or the harness commands on its login PATH when it has none. Read at startup and on every `/reload` (`Daemon.reloadAll`) into `pods.json`, which `config/pods.ts` merges into `agents` as `<id>@<host>`. A host that cannot be read, or whose file does not validate, keeps what it had |
@@ -823,6 +824,45 @@ runtimes wherever they know why; anything else is `other`). It pushes that to th
   its end. A mark still there when the daemon starts (`recoverInterruptedTurns`, after the platforms
   and IPC) is a turn the last process never finished; it is said in its lane and handled as a failure
   with reason `restart`. Two writes per turn, on top of the lane write that was already there.
+- **A `limit` cools the agent down** (`Cooldown`, per agent id). A usage limit is the account's, so
+  a `limit` failure does not schedule its conversation's own continue: it joins the agent's line.
+  When the wait ends one waiting continue is sent (the probe); a probe that gets through, or any turn
+  on that agent ending normally, lifts the cooldown and sends every waiting continue at once; a probe
+  that hits the limit again doubles the wait (`strikes`); a probe that fails for another reason lifts
+  it too. Only news counts as a strike — the first failure and each probe's — so a burst of
+  simultaneous failures does not stretch the wait. When the probe spends `max`, every conversation
+  waiting with it is given up (`giveUpWaiting`): one limit gets `max` continues in all. An agent
+  with no policy for `limit` still cools down (at `LIMIT_WAIT_MS`), because `coolingDown` is also
+  what Delegation reads to hold update cards for a parent that agent answers; `onCooldownOver`
+  releases them. In memory only.
+
+### Failed turns: held input and Retry
+
+`failed-input.ts` keeps what a failed turn was asked (`RunningTurn.input`: its batch plus what joined
+it mid-turn), handed over by TurnRunner (`keepFailedInput`) before the ❌ notice goes out, because the
+notice says what became of it.
+
+- **Undelivered.** A runtime marks a failure that came before the prompt was sent
+  (`TurnFailure.undelivered`; agent-acp's `runTurn` wraps whatever `ensureStarted` threw with
+  `asUndelivered`). Such a turn's messages are held, minus a scheduled prompt, the continue message
+  and a slash command (which would run with the next message as its argument), and TurnRunner puts
+  them in front of the next turn's own (`takeUndelivered`) — whatever starts it. The turn's trigger
+  and the person's words reported to Delegation are the new messages only. `TurnEnd.undelivered`
+  carries how many were held, so the ❌, the card's failure quote and the library's `detail` all say
+  the agent did not receive it (`undeliveredLine`).
+- **Retry.** Every failed turn with an input gets a record and an id, which the ❌ notice's buttons
+  carry (`core/turn-retry.ts`, `rty:`) on a platform with buttons. A continue-only turn keeps the
+  record of the failure it continued. The daemon checks the clicker against `access.allowFrom`;
+  "another agent" first posts the `/agent` menu with `purpose: 'retry'`. `ConversationRegistry.retryTurn`
+  then calls off a waiting continue (`personActed`), and enqueues the input as one solo turn
+  (`enqueueSolo` takes a batch) as the clicker's — so in a sub-agent's topic it is reported to the
+  parent like anything the person writes there. Another agent rebinds a topic with no session, or
+  else opens a sibling topic under the same parent, carrying the directory when both agents are on
+  one machine; a platform without topics gets the switch refusal's text.
+- **Never twice.** Claiming a record drops the hold; a turn that ends normally or is stopped retires
+  the record; a newer failure replaces it. A retired record's notice has its buttons taken off
+  (`editButtons(ref, text, [])`) where the platform can edit them; where it cannot, a tap answers that
+  there is nothing to retry.
 
 **Sub-agents** (`delegation.ts`) are an agent handing parts of its job to other agents, each in a
 topic of its own nested under the asking one — on a platform that records that relation
@@ -1140,6 +1180,16 @@ unactionable right after `/cd` invites you to pick a project and then a model.
 that there are two of them: `active` is assigned only at the *end* of startup, so an unguarded
 second entrant would spawn its own child, overwrite `proc`, and leave the first as an orphan that
 no `dispose` can reach while it still holds the harness's session.
+
+A startup that fails says how far it got (`StartupProgress`, `startupFailureMessage`): a process
+that never answered `initialize` "did not start", and one that answered and then failed or went
+quiet on `session/load` / `session/new` / `set_config_option` "started, but …" — with the agent's
+own error (its `data` included) when it sent one. Either carries the tail of the child's stderr
+(`adoptChild` keeps the last 4 KB). The two used to read alike, as a launch command missing from
+PATH, which sent the person to the wrong place for the four agy starts of 2026-11-11 that had
+answered `initialize` in 11 ms and hung on `session/new` behind a relay answering 502. Whatever
+`ensureStarted` throws reaches TurnRunner marked `undelivered` (see
+[Failed turns](#failed-turns-held-input-and-retry)): no prompt was sent.
 
 #### A message sent while a turn runs (`steer`)
 

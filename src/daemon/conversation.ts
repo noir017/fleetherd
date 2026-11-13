@@ -122,9 +122,10 @@ import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
 import { InboundMerger, type SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
-import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, type PersonWords } from './turn-runner.js';
+import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, type PersonWords, type TurnEnd, type TurnRunnerDeps } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
 import { TurnOutcomes, type KeptText } from './turn-outcomes.js';
+import { FailedInputs } from './failed-input.js';
 import { TurnProgressBoard } from './turn-progress.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { RespawnCounts } from './config-reload.js';
@@ -510,6 +511,18 @@ export class ConversationRegistry {
    */
   private readonly outcomes: TurnOutcomes;
   /**
+   * What each conversation's last failed turn was asked: held for the next turn when the agent never
+   * received it, and kept for the ❌ notice's Retry buttons. See failed-input.ts.
+   */
+  private readonly failedInputs = new FailedInputs({ scheduled: SCHEDULED_SENDER, continued: CONTINUE_SENDER }, (notice) => {
+    // Read at call time: the platforms are the constructor's, and this runs only after a turn.
+    const adapter = this.platforms.get(notice.platformId);
+    if (!adapter?.capabilities.editButtons) return;
+    void adapter
+      .editButtons(notice.ref, notice.text, [])
+      .catch((e) => console.warn('[retry] could not take the buttons off a ❌ notice:', e instanceof Error ? e.message : e));
+  });
+  /**
    * The `/setting` writer: validates a value, patches config.yaml, applies it to this live Config.
    *
    * Owned here rather than by the daemon because the registry is the side that holds the Config and
@@ -728,6 +741,11 @@ export class ConversationRegistry {
        * opened it is told what the person wrote there, with how that turn ended.
        */
       onPersonWords?(id: ConversationId, words: PersonWords): void;
+      /**
+       * An agent's usage-limit cooldown is over (TurnOutcomes). Delegation listens: the update cards
+       * it held for parents answered by that agent go now.
+       */
+      onCooldownOver?(agentId: string): void;
     },
     /** Persistent conversation state (agent binding + each agent's own session id). */
     private readonly store?: ConversationStore,
@@ -814,15 +832,30 @@ export class ConversationRegistry {
           this.progress.started(id);
           this.outcomes.turnStarted(id);
         },
-        recordTurnEnd: (id, end) => this.outcomes.turnEnded(id, end),
+        recordTurnEnd: (id, end) => this.recordTurnEnd(id, end),
         recordPersonWords: (id, words) => this.hooks?.onPersonWords?.(id, words),
+        ...this.failedInputDeps(),
         recordHistory: (id, event) => this.recordHistory(id, event),
         beginHistoryTurn: (id, start) => this.beginHistoryTurn(id, start),
         endHistoryTurn: (turnId, end) => this.endHistoryTurn(turnId, end),
       },
       this.hooks
     );
-    this.outcomes = new TurnOutcomes({
+    this.outcomes = this.buildOutcomes();
+
+    // `/setting idle` has to re-arm the sweeper, not just change the number (see setIdleTimeout).
+    // A delegation change takes effect live too, but has to invalidate what Delegation remembered.
+    this.settings = new SettingsStore(this.config, {
+      onIdleTimeout: () => this.rearmIdleSweeper(),
+      onDelegationChanged: () => this.hooks?.onDelegationSettingChanged?.(),
+    });
+
+    this.startIdleSweeper();
+  }
+
+  /** What each conversation's last turn left, and what follows a failed one (turn-outcomes.ts). */
+  private buildOutcomes(): TurnOutcomes {
+    return new TurnOutcomes({
       config: this.config,
       clock: this.clock,
       platforms: this.platforms,
@@ -833,16 +866,23 @@ export class ConversationRegistry {
       agentIdOf: (id) => this.boundAgentOf(id) ?? this.agentIdOf(id),
       runContinue: (id, text) => this.runContinue(id, text),
       onNeedsPerson: (id) => this.hooks?.onNeedsPerson?.(id),
+      onCooldownOver: (agentId) => this.hooks?.onCooldownOver?.(agentId),
     });
+  }
 
-    // `/setting idle` has to re-arm the sweeper, not just change the number (see setIdleTimeout).
-    // A delegation change takes effect live too, but has to invalidate what Delegation remembered.
-    this.settings = new SettingsStore(this.config, {
-      onIdleTimeout: () => this.rearmIdleSweeper(),
-      onDelegationChanged: () => this.hooks?.onDelegationSettingChanged?.(),
-    });
+  /** A turn ended: a failure is TurnOutcomes' alone; any other end leaves nothing to retry (FailedInputs). */
+  private recordTurnEnd(id: ConversationId, end: TurnEnd): void {
+    if (end.kind !== 'failed') this.failedInputs.ended(id);
+    this.outcomes.turnEnded(id, end);
+  }
 
-    this.startIdleSweeper();
+  /** The turn runner's way to FailedInputs: the held messages, a failure's input, its notice. */
+  private failedInputDeps(): Pick<TurnRunnerDeps, 'takeUndelivered' | 'keepFailedInput' | 'failureNoticeSent'> {
+    return {
+      takeUndelivered: (id) => this.failedInputs.take(id),
+      keepFailedInput: (id, failure) => this.failedInputs.failed(id, failure),
+      failureNoticeSent: (retryId, notice) => this.failedInputs.noticeSent(retryId, notice),
+    };
   }
 
   /**
@@ -4188,6 +4228,133 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
+   * A Retry button on a failed turn's ❌ notice (FailedInputs, core/turn-retry.ts): send that turn's
+   * input again, to the agent answering here or — `agentId` — to another one. Only a person can get
+   * here: the daemon checks the clicker against `access.allowFrom`, and no reverse command reaches it.
+   *
+   * It is the person acting: a continue waiting after the failure is called off, and the input goes
+   * in as theirs (`user`), attended — which also makes it news for the agent that opened a sub-agent's
+   * topic, like anything the person writes there (Delegation.personWrote). It runs as one solo turn,
+   * the batch it was, behind anything already queued.
+   *
+   * Another agent takes over this topic when it has no session yet (a start that never came up — the
+   * usual case). One that has a session keeps its agent (switchRefusal), so the input goes to a new
+   * topic for the other agent instead — beside this one, under the same parent — in the directory
+   * this one was working in when both agents are on the same machine. A platform that cannot open a
+   * topic gets the refusal's text, which says how to carry on elsewhere.
+   *
+   * `done: false` means nothing was sent and the buttons stay; the text says why.
+   */
+  async retryTurn(opts: { retryId: string; user: string; agentId?: string }): Promise<{ done: boolean; text: string }> {
+    const record = this.failedInputs.peek(opts.retryId);
+    if (!record) return { done: false, text: 'Nothing to retry any more — a later turn has run since, or this one was already retried.' };
+    const key = record.conversation;
+    const lane = this.laneFor(key);
+    const bound = this.boundAgentOf(key) ?? record.agentId;
+    if (!lane) return { done: false, text: 'That conversation is gone — send the message again.' };
+    const live = this.conversations.get(key);
+    if (live && !live.merger.isIdle()) return { done: false, text: 'A turn is running here — Retry once it has ended.' };
+    if (this.draining) return { done: false, text: 'The gateway is restarting — Retry in a minute.' };
+    const target = opts.agentId ?? bound;
+    const def = findAgent(this.config, target);
+    if (!def) return { done: false, text: `No agent "${target}" is configured.` };
+    // By id: two agents on one harness share a display name, and which one is the whole question.
+    const name = target;
+    if (target === bound) {
+      this.useRetry(record.id, key);
+      this.enqueueRetry(key, lane.platformId, lane.address, target, record.input, opts.user);
+      return { done: true, text: `↻ Retrying with ${name}.` };
+    }
+    const refused = this.switchRefusal(key, target);
+    if (refused === undefined) {
+      this.useRetry(record.id, key);
+      const workdir = this.workdirOf(key, bound);
+      const state = this.ensureState(key, lane.platformId, bound);
+      this.rebind(key, state, target, lane.platformId, lane.address, false);
+      this.carryWorkdir(key, bound, target, workdir);
+      this.enqueueRetry(key, lane.platformId, lane.address, target, record.input, opts.user);
+      return { done: true, text: `↻ Retrying with ${name} — it answers this topic now.` };
+    }
+    const adapter = this.platforms.get(lane.platformId);
+    if (!adapter?.capabilities.thread) return { done: false, text: refused };
+    this.useRetry(record.id, key);
+    const parent = adapter.parentOf?.(lane.address);
+    // formatLaneTitle drops the old `[agent]` prefix itself.
+    const seed = this.conversationTitle(key) || fallbackTitle(record.input.map((m) => m.content).join('\n'));
+    const opened = (
+      await adapter.createThread({ address: { channel: lane.address.channel }, messageId: '' }, formatLaneTitle(target, seed), {
+        ...(parent ? { under: parent } : {}),
+      })
+    ).address;
+    const conv = this.conversationAt(lane.platformId, opened);
+    if (!conv) return { done: false, text: 'The new topic does not map to a conversation of its own here — send the message there yourself.' };
+    this.ensureState(conv.key, lane.platformId, target, { fresh: true, opener: 'retry with another agent' });
+    this.carryWorkdir(conv.key, bound, target, this.workdirOf(key, bound));
+    this.enqueueRetry(conv.key, lane.platformId, opened, target, record.input, opts.user);
+    return { done: true, text: `↻ Retrying with ${name} in a new topic — this one stays with ${bound}.` };
+  }
+
+  /** The record a Retry button names, while it can still be used (for the agent picker to check first). */
+  retryRecord(retryId: string): { conversation: ConversationId; agentId: string } | undefined {
+    const record = this.failedInputs.peek(retryId);
+    return record ? { conversation: record.conversation, agentId: this.boundAgentOf(record.conversation) ?? record.agentId } : undefined;
+  }
+
+  /** Retire the record (and the hold it shares an input with), and count it as the person acting. */
+  private useRetry(retryId: string, key: ConversationId): void {
+    this.failedInputs.claim(retryId);
+    this.outcomes.personActed(key);
+  }
+
+  /**
+   * The directory a retry worked in, kept for the agent it moves to — only on the same machine, where
+   * the path means the same place. A directory that is not there is logged and left at the root.
+   */
+  private carryWorkdir(key: ConversationId, from: string, to: string, path: string | undefined): void {
+    const a = findAgent(this.config, from);
+    const b = findAgent(this.config, to);
+    if (!path || !a || !b || (a.host ?? '') !== (b.host ?? '') || path === resolveAgentCwd(a)) return;
+    const moved = this.setWorkdir(key, to, path);
+    if (moved.kind === 'missing' || moved.kind === 'failed') {
+      console.warn(`[retry] ${key}: could not keep ${path} for "${to}" (${moved.kind}); it starts in its own root`);
+    }
+  }
+
+  /** The failed turn's input as one solo turn, the person's, in `address`. */
+  private enqueueRetry(
+    key: ConversationId,
+    platformId: string,
+    address: ConversationAddress,
+    agentId: string,
+    input: InboundMessage[],
+    user: string
+  ): void {
+    const state = this.ensureState(key, platformId, agentId);
+    state.reclaimOnIdle = false;
+    this.touch(key);
+    const batch: InboundMessage[] = input.map((m) => ({
+      ...m,
+      conversation: {
+        platform: platformId,
+        channel: address.channel,
+        ...(address.thread ? { thread: address.thread } : {}),
+        kind: 'direct',
+        user,
+      },
+      // No platform message behind it: the merger puts no reactions on a solo turn.
+      messageId: '',
+      timestamp: this.clock.now(),
+    }));
+    console.log(`[retry] ${key}: sending the failed turn's ${batch.length} message(s) again to "${agentId}"`);
+    void state.merger.enqueueSolo(batch);
+  }
+
+  /** Whether an agent is cooling down after a usage limit (TurnOutcomes) — Delegation holds cards for it. */
+  coolingDown(agentId: string): boolean {
+    return this.outcomes.coolingDown(agentId);
+  }
+
+  /**
    * Turns the last daemon never finished (see TurnOutcomes.recoverInterrupted). Called once by the
    * daemon after its platforms are up. Returns how many were found.
    */
@@ -4396,6 +4563,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.store?.clear(id);
     // What the last turn left is part of the context just thrown away.
     this.outcomes.forget(id);
+    this.failedInputs.forget(id);
     this.progress.forget(id);
     const state = this.conversations.get(id);
     if (state) {
@@ -4526,6 +4694,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     // what the outcomes and the status board hold for it goes too, or every run of a task without a
     // topic of its own left an entry in each for the life of the process.
     this.outcomes.release(id);
+    this.failedInputs.forget(id);
     this.status.forget(id);
   }
 

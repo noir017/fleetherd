@@ -83,9 +83,27 @@ running a shell command on your machine from chat.
 
 ## When a turn fails
 
-By default a failed turn shows ❌ and the reason, and waits for you. `hooks.turnFailed` can do
-more: continue automatically after failures that usually pass on their own, and run a command
-to alert you.
+By default a failed turn shows ❌ and the reason, and waits for you. Where the chat can show
+buttons, the ❌ carries **Retry**, which sends that turn's messages again (attachments too), and —
+with more than one agent configured — **Retry with another agent**, which asks which one first.
+Tapping either calls off an automatic continue that is waiting. Another agent takes over the topic
+if it has no session yet; otherwise the topic keeps its agent and the messages go to a new topic for
+the other one, in the same directory when both run on one machine. The buttons go away once a later
+turn runs. WeCom and DingTalk have no buttons: there the ❌ is text only.
+
+If the agent never received the message — its process did not start, or its host could not be
+reached — the ❌ says so, and the message is sent again along with whatever starts the next turn:
+your next message, an automatic continue, a sub-agent update. Retry sends it instead, never both.
+A scheduled run's prompt, the continue message and a slash command are not carried over. None of
+this survives a gateway restart.
+
+When an agent's process does not start, the ❌ says which of two things happened: it gave no answer
+to `initialize` (check the launch command and the machine), or it answered and then `session/new`
+failed or got no answer (the command is fine; look at the model backend, relay or network behind
+it). Either quotes the last lines the agent wrote to stderr.
+
+`hooks.turnFailed` can do more: continue automatically after failures that usually pass on their
+own, and run a command to alert you.
 
 ```yaml
 agents:
@@ -117,6 +135,13 @@ What `on` can name:
   turn of its own. Anything you send meanwhile, `/stop`, `/new` or `/kill` calls it off.
 - A turn that ends normally resets the count. After `max` failures in a row the chat says it
   will not continue again, and the topic is listed as failed.
+- A `limit` belongs to the agent's account, so the agent's conversations wait for it together:
+  when the wait is over one of them is continued first, and the rest go once it gets through (or
+  any turn on that agent ends normally). If it hits the limit again the wait doubles. The agent
+  gets `max` continues for one limit, not `max` per conversation; when they are used up, every
+  conversation waiting on it is left for you. While an agent is over its limit, sub-agent updates
+  for a topic it answers wait too — the topic says so once — and are sent when the limit lifts.
+  That last part applies even to an agent with no `continue` set.
 - `access` and `request` are not in the default list, because continuing does not fix a missing
   sign-in or a request the provider refuses — including a refusal that names no cause.
 - `command` runs after every failure, on the agent's own machine, under `bash -lc`. The failure is

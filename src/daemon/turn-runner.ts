@@ -10,12 +10,16 @@ import type {
   ElicitAnswer,
   PermissionAnswer,
   InboundMessage,
+  MessageRef,
   QuotaPool,
   SteerOutcome,
   ToolEvent,
 } from '../types.js';
 import type { MessageKind, PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
+import { promptUndelivered } from './agent.js';
+import { retryButtons } from '../core/turn-retry.js';
+import { undeliveredLine } from '../core/topic-stage.js';
 import { StreamBuffer } from '../core/stream-buffer.js';
 import { ToolRenderer } from '../core/tool-renderer.js';
 import { describeOutboundError, MessageNotEditableError } from '../core/outbound-errors.js';
@@ -335,6 +339,22 @@ export interface TurnRunnerDeps {
    */
   recordPersonWords?(id: ConversationId, words: PersonWords): void;
   /**
+   * The messages a failed start left for this conversation (FailedInputs.take): sent in front of this
+   * turn's own, because the agent never received them. Handed over once; empty when there are none.
+   */
+  takeUndelivered?(id: ConversationId): InboundMessage[];
+  /**
+   * A turn failed: keep its input for Retry, and for the next turn when the agent never received it
+   * (FailedInputs.failed). Answers the Retry id the ❌ notice's buttons carry, and how many messages
+   * are held for the next turn — which the notice says, since the agent has not read them.
+   */
+  keepFailedInput?(
+    id: ConversationId,
+    failure: { input: InboundMessage[]; undelivered: boolean; agentId: string }
+  ): { retryId?: string; held: number };
+  /** The ❌ notice for Retry record `retryId` went out with its buttons (FailedInputs.noticeSent). */
+  failureNoticeSent?(retryId: string, notice: { platformId: string; ref: MessageRef; text: string }): void;
+  /**
    * Open the library's row for a turn, returning its id and number, and close it when the turn
    * ends.
    *
@@ -371,10 +391,14 @@ export interface TurnRunnerDeps {
  * for the update card: a card says where the rest of a quoted reply or error is read, and "the last
  * turn" is a different turn by the time the parent reads it whenever the topic runs again — a
  * background burst is the usual case.
+ *
+ * `undelivered` is set on a failure that came before the prompt was sent (TurnFailure.undelivered),
+ * with how many of its messages are held for the next turn — what the card and the library say
+ * about it (undeliveredLine).
  */
 export type TurnEnd =
   | { kind: 'done'; text: string; turn?: number }
-  | { kind: 'failed'; error: unknown; turn?: number }
+  | { kind: 'failed'; error: unknown; turn?: number; undelivered?: { held: number } }
   | { kind: 'stopped'; turn?: number };
 
 /**
@@ -409,7 +433,8 @@ function historyEndOf(end: TurnEnd, at: number): HistoryTurnEnd {
     case 'stopped':
       return { outcome: 'stopped', at };
     case 'failed': {
-      const reason = end.error instanceof Error ? end.error.message : String(end.error);
+      const message = end.error instanceof Error ? end.error.message : String(end.error);
+      const reason = end.undelivered ? `${message}\n${undeliveredLine(end.undelivered.held)}` : message;
       return {
         outcome: 'failed',
         at,
@@ -535,6 +560,11 @@ interface RunningTurn {
    * makes the user's next message there arrive from it.
    */
   lanes: ConversationAddress[];
+  /**
+   * Everything this turn was asked: its batch, and what joined it mid-turn. What a failure keeps for
+   * Retry (FailedInputs), so a retry sends the whole of it rather than the message that started it.
+   */
+  input: InboundMessage[];
 }
 
 /**
@@ -623,17 +653,22 @@ export class TurnRunner {
    * parallel, and here it switches the final flush to a clean finalize — finalize with no footer and
    * no command fallback, since the turn did not finish. Absent = never stopped (treat as a normal turn).
    */
-  async runTurn(conversationId: ConversationId, batch: InboundMessage[], signal?: AbortSignal): Promise<void> {
+  async runTurn(conversationId: ConversationId, own: InboundMessage[], signal?: AbortSignal): Promise<void> {
     // The turn's platform is the batch's platform instance (all messages of one batch come from
     // one merger, i.e. one channel — same instance; a shared-scope session may hop instances
     // between turns, so this resolves per turn, not per session).
-    const last = batch[batch.length - 1]!; // batch is non-empty: the merger never dispatches an empty batch
+    const last = own[own.length - 1]!; // batch is non-empty: the merger never dispatches an empty batch
     const platformId = last.conversation.platform;
     const platform = this.adapterFor(platformId);
 
     // All subsequent outbound (typing, StreamBuffer sink, tool bubbles, reverse commands) targets
     // this address; on autoThread it is the newly opened thread, so the whole turn lands in it.
-    const address = await this.resolveTurnAddress(platform, batch, conversationId, platformId);
+    const address = await this.resolveTurnAddress(platform, own, conversationId, platformId);
+
+    // What a failed start left here goes first: the agent never received it (see FailedInputs). The
+    // turn is still started by `own` — its trigger, and the person's words reported for it, are the
+    // new ones; the held messages were reported when they were first sent.
+    const batch = this.withUndelivered(conversationId, own);
 
     const sessionToken = this.deps.tokenFor(conversationId);
     const agentId = this.deps.agentIdOf(conversationId);
@@ -672,8 +707,9 @@ export class TurnRunner {
     const releaseTyping = this.holdTyping(conversationId, platform, address);
 
     // What this batch was: one trigger for the turn, and the message kind the library files its
-    // rows under. The two are the same fact at different resolutions (see kindForTrigger).
-    const trigger = historyTriggerOf(batch);
+    // rows under. The two are the same fact at different resolutions (see kindForTrigger). Read off
+    // the turn's own messages: held ones ride along, they did not start it.
+    const trigger = historyTriggerOf(own);
     const historyKind = kindForTrigger(trigger);
 
     const agent = this.agents.getOrCreate(conversationId, agentId);
@@ -717,10 +753,11 @@ export class TurnRunner {
       turnId,
       seq: turnSeq,
       lanes: [addressOf(last.conversation), address],
+      input: [...batch],
     };
     this.running.set(conversationId, turn);
     this.reportStart(conversationId);
-    this.reportPersonWords(conversationId, batch, turnSeq);
+    this.reportPersonWords(conversationId, own, turnSeq);
     // Exactly one end per start, whichever way out the turn takes (see TurnRunnerDeps.recordTurnEnd).
     let end: TurnEnd = { kind: 'stopped' };
 
@@ -755,33 +792,7 @@ export class TurnRunner {
         end = { kind: 'done', text: finalText(ref) };
       }
     } catch (err) {
-      end = { kind: 'failed', error: err };
-      // Log error detail (InboundMerger only adds a ❌ reaction, keeping no reason).
-      console.error(`[turn] ${conversationId} turn failed:`, err instanceof Error ? err.stack ?? err.message : err);
-      // Deliver what the turn DID produce before saying it failed — the same clean finalize a
-      // stopped turn gets, with no footer because it did not finish.
-      //
-      // Not a nicety: text is only sent when its segment completes (at the next tool boundary, or
-      // here at the end), so a failed turn used to throw away everything after its last tool —
-      // which is usually the conclusion. Reported 2026-09-29: an answer claude-agent-acp never
-      // closed (see FOLDED_PROMPT_GRACE_MS in agent-acp.ts) sat complete in this buffer for the
-      // full ten-minute watchdog, and the only thing that ever reached the chat was the ❌.
-      //
-      // Guarded separately: a failure to flush must neither swallow the ❌ nor replace the error
-      // the merger is about to mark.
-      render.abort();
-      await render
-        .finalize('')
-        .catch((e) => console.error('[turn] failed to flush a failed turn\'s output:', describeOutboundError(e)));
-      // Surface a readable reason in-channel: the agent-acp error messages (auth_required, startup
-      // / turn timeout, command not on PATH) are written to be user-actionable, but otherwise only
-      // a bare ❌ reaction reaches the user. Best-effort and capped — a send failure here must not
-      // mask the original error, which is rethrown for the merger to mark ❌.
-      const reason = err instanceof Error ? err.message : String(err);
-      const short = reason.length > FAILURE_NOTICE_CHARS ? reason.slice(0, FAILURE_NOTICE_CHARS - 1) + '…' : reason;
-      await platform
-        .sendMessage(address, `❌ This turn failed: ${short}`)
-        .catch((e) => console.error('[turn] failed to send error notice:', e instanceof Error ? e.message : e));
+      end = await this.turnFailed(conversationId, err, { render, platform, platformId, address, input: turn.input, agentId });
       throw err;
     } finally {
       if (this.running.get(conversationId) === turn) this.running.delete(conversationId);
@@ -793,6 +804,61 @@ export class TurnRunner {
       // which is why this is in the finally rather than after the try.
       this.endHistoryTurn(turnId, historyEndOf(end, this.clock.now()));
     }
+  }
+
+  /**
+   * A turn threw: keep its input, deliver what it had produced, and say it failed — with what became
+   * of its input when the agent never received it, and Retry buttons where they can be drawn.
+   * Answers the end to report; the caller rethrows for the merger to mark ❌.
+   */
+  private async turnFailed(
+    conversationId: ConversationId,
+    err: unknown,
+    t: {
+      render: Render;
+      platform: PlatformAdapter;
+      platformId: string;
+      address: ConversationAddress;
+      input: InboundMessage[];
+      agentId: string;
+    }
+  ): Promise<TurnEnd> {
+    // Kept before anything is said, because the notice says what became of it: held for the next
+    // turn when the agent never received it, and offered to Retry either way (FailedInputs).
+    const undelivered = promptUndelivered(err);
+    const kept = this.keepFailedInput(conversationId, { input: t.input, undelivered, agentId: t.agentId });
+    // Log error detail (InboundMerger only adds a ❌ reaction, keeping no reason).
+    console.error(`[turn] ${conversationId} turn failed:`, err instanceof Error ? err.stack ?? err.message : err);
+    // Deliver what the turn DID produce before saying it failed — the same clean finalize a
+    // stopped turn gets, with no footer because it did not finish.
+    //
+    // Not a nicety: text is only sent when its segment completes (at the next tool boundary, or
+    // here at the end), so a failed turn used to throw away everything after its last tool —
+    // which is usually the conclusion. Reported 2026-09-29: an answer claude-agent-acp never
+    // closed (see FOLDED_PROMPT_GRACE_MS in agent-acp.ts) sat complete in this buffer for the
+    // full ten-minute watchdog, and the only thing that ever reached the chat was the ❌.
+    //
+    // Guarded separately: a failure to flush must neither swallow the ❌ nor replace the error
+    // the merger is about to mark.
+    t.render.abort();
+    await t.render
+      .finalize('')
+      .catch((e) => console.error('[turn] failed to flush a failed turn\'s output:', describeOutboundError(e)));
+    // Surface a readable reason in-channel: the agent-acp error messages (auth_required, startup
+    // / turn timeout, command not on PATH) are written to be user-actionable, but otherwise only
+    // a bare ❌ reaction reaches the user. Best-effort and capped — a send failure here must not
+    // mask the original error, which is rethrown for the merger to mark ❌.
+    const reason = err instanceof Error ? err.message : String(err);
+    const short = reason.length > FAILURE_NOTICE_CHARS ? reason.slice(0, FAILURE_NOTICE_CHARS - 1) + '…' : reason;
+    // Said after the cap, so a long error cannot cut it off: whether the agent has this message
+    // is what decides the person's next move.
+    const notice = `❌ This turn failed: ${short}${undelivered ? `\n${undeliveredLine(kept.held)}` : ''}`;
+    const sent = await this.sendFailureNotice(t.platform, t.address, notice, kept.retryId).catch((e) => {
+      console.error('[turn] failed to send error notice:', e instanceof Error ? e.message : e);
+      return undefined;
+    });
+    if (sent && kept.retryId) this.deps.failureNoticeSent?.(kept.retryId, { platformId: t.platformId, ref: sent, text: notice });
+    return { kind: 'failed', error: err, ...(undelivered ? { undelivered: { held: kept.held } } : {}) };
   }
 
   /** beginHistoryTurn, never allowed to break the turn it describes. */
@@ -812,6 +878,48 @@ export class TurnRunner {
     } catch (e) {
       console.error('[history] could not close a turn:', e instanceof Error ? e.message : e);
     }
+  }
+
+  /** `own`, behind whatever a failed start left for this conversation (TurnRunnerDeps.takeUndelivered). */
+  private withUndelivered(conversationId: ConversationId, own: InboundMessage[]): InboundMessage[] {
+    const held = this.deps.takeUndelivered?.(conversationId) ?? [];
+    if (held.length === 0) return own;
+    console.log(`[turn] ${conversationId}: sending ${held.length} undelivered message(s) ahead of this turn's own`);
+    return [...held, ...own];
+  }
+
+  /** keepFailedInput, likewise: a turn that cannot keep its input still fails the way it did. */
+  private keepFailedInput(
+    conversationId: ConversationId,
+    failure: { input: InboundMessage[]; undelivered: boolean; agentId: string }
+  ): { retryId?: string; held: number } {
+    try {
+      return this.deps.keepFailedInput?.(conversationId, failure) ?? { held: 0 };
+    } catch (e) {
+      console.error('[turn] could not keep a failed turn\'s input:', e instanceof Error ? e.message : e);
+      return { held: 0 };
+    }
+  }
+
+  /**
+   * The ❌ notice, with Retry buttons where the platform can draw them and the input was kept. A
+   * platform without buttons gets the same text alone: the affordance is gone, the news is not —
+   * and an undelivered message there still goes out with the next one (FailedInputs).
+   *
+   * "Retry with another agent" only when there is another agent to pick. Answers the notice when
+   * it carries buttons, so they can be taken off once they stop meaning anything.
+   */
+  private async sendFailureNotice(
+    platform: PlatformAdapter,
+    address: ConversationAddress,
+    text: string,
+    retryId: string | undefined
+  ): Promise<MessageRef | undefined> {
+    if (!retryId || !platform.capabilities.buttons) {
+      await platform.sendMessage(address, text);
+      return undefined;
+    }
+    return platform.sendButtons(address, text, retryButtons(retryId, { anotherAgent: this.config.agents.length > 1 }));
   }
 
   /** recordTurnStart, never allowed to break the turn it reports on. */
@@ -898,6 +1006,9 @@ export class TurnRunner {
     // prompt under the old turn would leave that turn holding a question it never answered, and
     // `--turn done` would then offer it as a finished turn.
     if (outcome !== 'refused') {
+      // Part of what this turn was asked, for a Retry of it (RunningTurn.input). A `detached` one
+      // started a turn of the harness's own, and is not this turn's to send again.
+      if (outcome === 'joined') turn.input.push(...batch);
       this.recordHistory(conversationId, {
         type: 'prompt',
         text: this.mergePrompt(batch),

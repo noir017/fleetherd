@@ -131,6 +131,9 @@ function agentLabel(def: AgentDef, current: string | undefined): string {
  * One screen of the menu: the groups (`group` undefined, and more than one group), or one group's
  * agents. `flat` is every agent in menu order — group by group — which is what a pick's index
  * points into, so a click resolves to the same agent whichever page it was on.
+ *
+ * `purpose: 'retry'` is the same menu asking which agent a failed turn goes to (core/turn-retry.ts)
+ * rather than which one answers the topic — the daemon decides what the pick does.
  */
 export function buildAgentMenu(opts: {
   reqId: string;
@@ -139,6 +142,7 @@ export function buildAgentMenu(opts: {
   group?: number;
   page?: number;
   pageSize: number;
+  purpose?: 'answer' | 'retry';
 }): AgentMenuView {
   const { reqId, groups, current, pageSize } = opts;
   const currentGroup = groups.findIndex((g) => g.agents.some((a) => a.id === current));
@@ -172,7 +176,8 @@ export function buildAgentMenu(opts: {
   const pageNote = pages > 1 ? ` (${page + 1}/${pages})` : '';
   // Said, not refused: the machine may well be back by the time anyone writes.
   const offline = group.offline ? `\n${group.name} is ${OFFLINE_NOTE}: its agents cannot answer until it is back.` : '';
-  return { text: `Which agent${where} should answer this topic?${pageNote}${offline}`, buttons };
+  const question = opts.purpose === 'retry' ? `Retry with which agent${where}?` : `Which agent${where} should answer this topic?`;
+  return { text: `${question}${pageNote}${offline}`, buttons };
 }
 
 /**

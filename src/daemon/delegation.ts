@@ -156,6 +156,7 @@ type Registry = Pick<
   | 'activityOf'
   | 'replyOf'
   | 'failureOf'
+  | 'coolingDown'
   | 'progressOf'
   | 'runningSince'
   | 'statusOf'
@@ -313,6 +314,14 @@ export class Delegation {
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
   private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void }>();
   /**
+   * Updates held back because the agent that would read them is over its usage limit (TurnOutcomes'
+   * cooldown), per conversation to tell, with that agent. A card is a turn on the same account: sent
+   * now it fails too, and its failure is one more continue on a limit that is already being waited
+   * out. On 2026-11-07 that is how two parents were dragged into their sub-agents' rate limit. Sent
+   * when the cooldown ends (cooldownOver).
+   */
+  private readonly held = new Map<ConversationId, { agent: string; children: Set<ConversationId> }>();
+  /**
    * Sub-agent topics whose turn the parent is told about when it ends: one the parent handed them
    * (task-new, task-send), or one the person started or joined by writing there (personWrote). Kept
    * while a question holds the turn open, and dropped once the end is on a card. Any other turn there
@@ -350,6 +359,7 @@ export class Delegation {
     this.started.clear();
     this.confirmedOnce.clear();
     this.updates.clear();
+    this.held.clear();
     this.onScreen.clear();
     this.owed.clear();
     this.said.clear();
@@ -1178,12 +1188,53 @@ export class Delegation {
     if (!this.owed.has(id)) return;
     const parent = this.parentOf(id);
     if (!parent) return;
-    const u = this.updates.get(parent.key) ?? {
+    this.queueUpdates(parent.key, [id]);
+  }
+
+  /** Gather news from `children` for one card to `key`, CARD_DELAY_MS from the first. */
+  private queueUpdates(key: ConversationId, children: Iterable<ConversationId>): void {
+    const u = this.updates.get(key) ?? {
       children: new Set<ConversationId>(),
-      cancel: this.deps.clock.schedule(() => this.sendUpdates(parent.key), CARD_DELAY_MS),
+      cancel: this.deps.clock.schedule(() => this.sendUpdates(key), CARD_DELAY_MS),
     };
-    u.children.add(id);
-    this.updates.set(parent.key, u);
+    for (const c of children) u.children.add(c);
+    this.updates.set(key, u);
+  }
+
+  /**
+   * An agent's usage-limit cooldown is over (TurnOutcomes): the cards held for the conversations it
+   * answers go now — gathered again, so a sub-agent that has since started over is left out the way
+   * sendUpdates always leaves it out.
+   */
+  cooldownOver(agentId: string): void {
+    for (const [key, h] of this.held) {
+      if (h.agent !== agentId) continue;
+      this.held.delete(key);
+      console.log(`[delegation] ${agentId} is past its usage limit; sending ${key} the ${h.children.size} update(s) held for it`);
+      this.queueUpdates(key, h.children);
+    }
+  }
+
+  /**
+   * Hold a card for later (see `held`), saying so in the parent's topic once — without a turn, which
+   * is the whole point.
+   */
+  private holdUpdates(here: Place, agentId: string, children: Set<ConversationId>): void {
+    const h = this.held.get(here.key);
+    if (h) {
+      for (const c of children) h.children.add(c);
+      return;
+    }
+    this.held.set(here.key, { agent: agentId, children: new Set(children) });
+    const n = children.size;
+    console.log(`[delegation] ${agentId} is over its usage limit; holding ${n} update(s) for ${here.key}`);
+    void here.adapter
+      .sendMessage(
+        here.address,
+        `⏸ ${agentId} is over its usage limit — ${n === 1 ? 'an update' : `updates`} from ${n} sub-agent${n === 1 ? '' : 's'} will reach it once the limit lifts.`,
+        { kind: 'report' }
+      )
+      .catch((e) => console.warn('[delegation] could not say updates are held:', e instanceof Error ? e.message : e));
   }
 
   /**
@@ -1231,6 +1282,11 @@ export class Delegation {
     this.updates.delete(key);
     const here = this.place(key);
     if (!u || !here) return;
+    const reader = this.deps.registry.boundAgentOf(key);
+    if (reader && this.deps.registry.coolingDown(reader)) {
+      this.holdUpdates(here, reader, u.children);
+      return;
+    }
     const entries: CardEntry[] = [];
     const shown: string[] = [];
     for (const id of u.children) {

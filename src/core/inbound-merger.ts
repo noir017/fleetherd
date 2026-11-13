@@ -80,7 +80,7 @@ export class InboundMerger {
    * Turns that must run ALONE and must not cut anything short (enqueueSolo): each is one message,
    * never merged into a batch, started only when nothing else is running or collecting.
    */
-  private solo: Array<{ msg: InboundMessage; settle: (o: SoloOutcome) => void }> = [];
+  private solo: Array<{ batch: InboundMessage[]; settle: (o: SoloOutcome) => void }> = [];
   private collectTimer: (() => void) | null = null;
   private collectStartedAt = 0;               // merge-window start (for the hard cap)
   private interrupted = false;                // turn stopped by `/stop` (then skip ✅)
@@ -183,10 +183,15 @@ export class InboundMerger {
    *
    * `/stop` (interrupt()) stops a running solo turn but leaves queued solo turns queued: the backlog
    * it drops is what the user typed for the turn being stopped, and a scheduled run is not that.
+   *
+   * Several messages are one turn, as they were the first time: a failed turn sent again from its
+   * Retry button (daemon/failed-input.ts) is the batch it was, not one turn per message.
    */
-  enqueueSolo(msg: InboundMessage): Promise<SoloOutcome> {
+  enqueueSolo(msg: InboundMessage | InboundMessage[]): Promise<SoloOutcome> {
+    const batch = Array.isArray(msg) ? msg : [msg];
+    if (batch.length === 0) return Promise.resolve('ok');
     return new Promise((settle) => {
-      this.solo.push({ msg, settle });
+      this.solo.push({ batch, settle });
       if (this.phase === 'idle') void this.drainQueue();
     });
   }
@@ -354,8 +359,8 @@ export class InboundMerger {
       this.toIdle();
       return;
     }
-    console.log('[dispatch] triggered, 1 solo message into this turn');
-    const outcome = await this.runBatch([next.msg], { solo: true });
+    console.log(`[dispatch] triggered, ${next.batch.length} solo message(s) into this turn`);
+    const outcome = await this.runBatch(next.batch, { solo: true });
     next.settle(outcome);
     await this.drainQueue();
   }

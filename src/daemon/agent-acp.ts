@@ -41,7 +41,7 @@ import type {
   ReclaimState,
   RunTurnInput,
 } from './agent.js';
-import { SideQuestionRefused, TurnFailure } from './agent.js';
+import { asUndelivered, SideQuestionRefused, TurnFailure } from './agent.js';
 import {
   askOnFork,
   forkSupportOf,
@@ -1550,11 +1550,17 @@ function createAcpSession(
    * because the process never started says THAT (a command not on PATH, here or on the agent's host)
    * rather than the "ACP connection closed" it surfaces as.
    */
-  function adoptChild(child: AgentChild): () => Error | undefined {
+  function adoptChild(child: AgentChild): { spawnError: () => Error | undefined; stderrTail: () => string } {
     // Record proc immediately so the 'exit' callback and start-failure dispose can match by reference and
     // terminate this process (conn/active assigned only after start() succeeds; active stays the sole readiness signal).
     proc = child;
-    child.stderr.on('data', (d: Buffer) => process.stderr.write(d));
+    // The last of what it wrote, for a startup that fails: an agent that cannot reach its backend
+    // often says so here and nowhere else over ACP (see startupFailureMessage).
+    let tail = '';
+    child.stderr.on('data', (d: Buffer) => {
+      process.stderr.write(d);
+      tail = (tail + d.toString('utf8')).slice(-STDERR_TAIL_KEEP);
+    });
     let spawnError: Error | undefined;
     child.on('error', (e) => {
       spawnError = e;
@@ -1570,7 +1576,7 @@ function createAcpSession(
       console.debug(`[acp] child process exited (${def.id}): code=${code} signal=${signal}; resetting connection handles to rebuild next turn`);
       resetHandles();
     });
-    return () => spawnError;
+    return { spawnError: () => spawnError, stderrTail: () => tail };
   }
 
   /** Lazily start the ACP child and complete initialize + session/new. sessionToken is injected into its env here. */
@@ -1597,7 +1603,7 @@ function createAcpSession(
 
     const { command, args } = resolveHarness(def, place !== undefined);
     const { child, mcpServers } = spawnChild(command, args, sessionToken, place, await relayEnv(def, place?.host));
-    const spawnError = adoptChild(child);
+    const { spawnError, stderrTail } = adoptChild(child);
 
     const stream = ndJsonStream(
       Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
@@ -1640,6 +1646,8 @@ function createAcpSession(
       ...(def.harness === 'claude' ? SESSION_FAILURE_CAPABILITY_META : {}),
       ...(isCursorAgent(def) ? { parameterizedModelPicker: true } : {}),
     };
+    // How far it got, for the message a failure is reported with (see startupFailureMessage).
+    const progress: StartupProgress = { answered: false, step: 'initialize' };
     const startup = (async () => {
       const initResult = await ctx.request('initialize', {
         protocolVersion: ACP_PROTOCOL_VERSION,
@@ -1665,6 +1673,7 @@ function createAcpSession(
           ...(Object.keys(capabilityMeta).length > 0 ? { _meta: capabilityMeta } : {}),
         },
       });
+      progress.answered = true;
       loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
       steeringMode = steeringModeOf(initResult);
       imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
@@ -1686,6 +1695,7 @@ function createAcpSession(
         ).attachSession.bind(ctx);
         const resumed = attach({ sessionId: persistedId });
         try {
+          progress.step = 'session/load';
           const loaded = await ctx.request('session/load', {
             sessionId: persistedId,
             cwd,
@@ -1720,6 +1730,7 @@ function createAcpSession(
       // reapplyPreferences enforces below.
       const hint = modelPreference ?? def.model;
       try {
+        progress.step = 'session/new';
         const session = await ctx
           .buildSession({
             cwd,
@@ -1744,6 +1755,7 @@ function createAcpSession(
         liveModel = liveModelName(liveConfigOptions);
         // _meta.model above is a hint some harnesses ignore; reapplyPreferences enforces it, and
         // puts back a `/effort` choice after it.
+        progress.step = 'session/set_config_option';
         await reapplyPreferences(ctx, session.sessionId, hint);
         store?.setAgentSession(conversationId, def.id, session.sessionId); // for post-restart session/load resume
       } catch (err) {
@@ -1765,16 +1777,7 @@ function createAcpSession(
       await Promise.race([
         startup,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new TurnFailure(
-                  `agent "${def.id}" startup timed out (${START_TIMEOUT_MS}ms). Make sure the launch command is executable on PATH: ${command} ${args.join(' ')}`,
-                  'startup'
-                )
-              ),
-            START_TIMEOUT_MS
-          );
+          timer = setTimeout(() => reject(new StartupTimeout()), START_TIMEOUT_MS);
         }),
       ]);
     } catch (err) {
@@ -1786,10 +1789,11 @@ function createAcpSession(
         const where = place ? ` on host "${place.host.id}"` : '';
         throw new TurnFailure(`agent "${def.id}" could not start${where}: ${failed.message}`, 'startup');
       }
-      // initialize or session/new refused: still a startup that did not happen. Classified rather
-      // than rethrown bare so hooks.turnFailed can tell it from a turn the provider failed.
+      // A login the harness asks for is its own sentence (above), and an `access` failure.
       if (err instanceof TurnFailure) throw err;
-      throw new TurnFailure(`${err instanceof Error ? err.message : String(err)}${startupHint(def)}`, 'startup');
+      // Refused or unanswered: classified, so hooks.turnFailed can tell it from a provider failure.
+      const launch = `${command} ${args.join(' ')}`.trim();
+      throw startupFailure(def, err, { host: place?.host.id, launch, progress, stderr: stderrTail(), timeoutMs: START_TIMEOUT_MS });
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -2398,7 +2402,8 @@ function createAcpSession(
         closePromptWindow();
         // Stopped (or disposed) while the preLaunch hook ran: nothing failed, so nothing to report.
         if (err instanceof PreLaunchCancelled) return;
-        throw err;
+        // Nothing was sent: whatever stopped the start, the agent never saw this turn's prompt.
+        throw asUndelivered(err);
       }
 
       const state = newTranslationState(handlers, true);
@@ -2856,6 +2861,148 @@ function startupHint(def: AgentDef): string {
   return def.harness === 'agy'
     ? ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)'
     : '';
+}
+
+/**
+ * The TurnFailure a startup that did not happen is reported with (startupFailureMessage). `err` is
+ * what ended it: the startup's own deadline, an error the agent answered with, or the connection
+ * closing under it.
+ */
+function startupFailure(
+  def: AgentDef,
+  err: unknown,
+  p: { host: string | undefined; launch: string; progress: StartupProgress; stderr: string; timeoutMs: number }
+): TurnFailure {
+  const timedOut = err instanceof StartupTimeout;
+  const message = startupFailureMessage({
+    agent: def.id,
+    ...(p.host ? { host: p.host } : {}),
+    launch: p.launch,
+    // An error answer is the process speaking, whichever request it answered.
+    progress: isRpcError(err) ? { ...p.progress, answered: true } : p.progress,
+    ...(timedOut ? { timeoutMs: p.timeoutMs } : { error: err }),
+    stderr: p.stderr,
+    hint: startupHint(def),
+  });
+  return new TurnFailure(message, 'startup');
+}
+
+/** How much of a child's stderr is kept for a startup failure to quote (see adoptChild). */
+const STDERR_TAIL_KEEP = 4_000;
+/** How much of it the failure message carries: the last lines, which is where an error ends up. */
+const STDERR_QUOTE_CHARS = 600;
+/** How much of an error the agent answered with the failure message carries. */
+const STARTUP_ERROR_CHARS = 600;
+
+/** How far an agent's startup got (startSession), for the message its failure is reported with. */
+export interface StartupProgress {
+  /** Whether the process has answered anything at all — a result or an error, to any request. */
+  answered: boolean;
+  /** The request the startup was waiting on, or the last one it sent. */
+  step: 'initialize' | 'session/load' | 'session/new' | 'session/set_config_option';
+}
+
+/** The startup's own deadline, told apart from an error the agent sent. */
+class StartupTimeout extends Error {
+  constructor() {
+    super('startup timed out');
+    this.name = 'StartupTimeout';
+  }
+}
+
+/**
+ * Whether an error is a JSON-RPC error answer (the SDK's RequestError carries the numeric `code`).
+ * A closed connection rejects with a plain Error instead, which is the process going away without a
+ * word — the one way an `initialize` failure says nothing about whether it ever came up.
+ */
+function isRpcError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && typeof (err as { code?: unknown }).code === 'number';
+}
+
+/**
+ * An error the agent answered with, as one line: its message and, when it sent any, its `data` —
+ * where an ACP agent puts the detail (`Internal error` alone names nothing).
+ */
+function rpcErrorText(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const data = (err as { data?: unknown } | null)?.data;
+  let detail = '';
+  if (typeof data === 'string') detail = data;
+  else if (data !== undefined && data !== null) {
+    const inner = (data as { details?: unknown; message?: unknown }).details ?? (data as { message?: unknown }).message;
+    detail = typeof inner === 'string' ? inner : JSON.stringify(data);
+  }
+  const text = (detail && !message.includes(detail) ? `${message}: ${detail}` : message).replace(/\s+/g, ' ').trim();
+  return text.length > STARTUP_ERROR_CHARS ? `${text.slice(0, STARTUP_ERROR_CHARS - 1)}…` : text;
+}
+
+/** The last lines of what a child wrote to stderr, on one line, or '' when it wrote nothing. */
+function stderrQuote(tail: string): string {
+  // Terminal colour codes, which some agents put in their logs whether or not stderr is a terminal.
+  const lines = tail.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n').map((l) => l.trim()).filter(Boolean);
+  let out = '';
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const next = out ? `${lines[i]} | ${out}` : lines[i]!;
+    if (next.length > STDERR_QUOTE_CHARS) {
+      if (!out) out = `…${next.slice(-(STDERR_QUOTE_CHARS - 1))}`;
+      break;
+    }
+    out = next;
+  }
+  return out;
+}
+
+/**
+ * What a failed startup says. Two different failures with two different fixes, and the message
+ * has to send the person to the right one:
+ *
+ *  - **the process did not come up** — it never answered `initialize`. The launch command, or the
+ *    machine it runs on, is what to look at.
+ *  - **the process came up and opening a session failed** — it answered `initialize`, then
+ *    `session/new` (or `session/load`) failed or went unanswered. The command is fine; what the
+ *    agent needs behind it — its model backend, a relay, the network — is not. The agent's own error
+ *    is quoted when it sent one.
+ *
+ * Until 2026-11-13 every timeout said "Make sure the launch command is executable on PATH", which was
+ * wrong for the second kind: the four agy timeouts of 2026-11-11 had answered `initialize` in 11ms
+ * and hung on `session/new` behind a relay answering 502 and a DNS timeout.
+ *
+ * Whatever the child last wrote to stderr is added to either: it is often the only place an agent
+ * says why. Exported for its test.
+ */
+export function startupFailureMessage(p: {
+  agent: string;
+  host?: string;
+  launch: string;
+  progress: StartupProgress;
+  /** Set when the startup's deadline passed; the error then is the deadline, not the agent's. */
+  timeoutMs?: number;
+  error?: unknown;
+  stderr: string;
+  /** What to add when the process never answered (startupHint). */
+  hint: string;
+}): string {
+  const where = p.host ? ` on host "${p.host}"` : '';
+  const said = stderrQuote(p.stderr);
+  const stderr = said ? ` Its last output on stderr: ${said}` : '';
+  const within = p.timeoutMs !== undefined ? ` within ${Math.round(p.timeoutMs / 1000)}s` : '';
+  if (!p.progress.answered) {
+    const why =
+      p.timeoutMs !== undefined
+        ? `its process gave no answer to initialize${within}`
+        : `its process went away before answering initialize (${p.error instanceof Error ? p.error.message : String(p.error)})`;
+    return (
+      `agent "${p.agent}" did not start${where}: ${why}. ` +
+      `Check that \`${p.launch}\` runs there and speaks ACP, and how loaded that machine is.${stderr}${p.hint}`
+    );
+  }
+  if (p.timeoutMs !== undefined) {
+    return (
+      `agent "${p.agent}" started${where}, but ${p.progress.step} got no answer${within}. The process is up; ` +
+      `what it needs to open a session (its model backend, a relay, the network) is not responding.${stderr}`
+    );
+  }
+  return `agent "${p.agent}" started${where}, but ${p.progress.step} failed: ${rpcErrorText(p.error)}.${stderr}`;
 }
 
 /**
