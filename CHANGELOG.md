@@ -39,6 +39,21 @@ All notable changes to this project are documented here. The format is based on
   stamping while a marker is still in the file, and folds a repeated `### Added`-style subsection
   into one when a merge left two.
 
+### Fixed
+
+- **agy's context is measured against where it compacts, not against Gemini's 1M window.** The
+  window table was read off agy's status line, but agy stops and compacts far earlier — 256k on
+  Gemini 3.8 Flash, 160k on Claude 4.6, 80k on GPT-OSS 120B — so the footer drew a session at
+  236k as `236k / 1M (23%)`, 92% of the way to a compaction that then arrived as a surprise.
+  Without a `contextBudget` the daemon now uses the compaction point Google hands agy with its
+  model list — the figure the relay already reads — while `contextWindow` still overrides it and a
+  model nobody has measured still shows no numbers.
+- **agy's generic MCP calls are labelled as MCP calls.** `call_mcp_tool` reaches a server agy did
+  not preload, its HTTP ones among them, and arrives as kind `execute` with the title `Bash` and
+  the server and tool only in the input — so the chat drew `Bash: {"ServerName":…}`, and a turn
+  that called an MCP tool looked like a shell command. The row now reads `MCP <tool>` with the
+  server in the preview, and the permission card names it the same way.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

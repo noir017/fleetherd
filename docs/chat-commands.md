@@ -46,12 +46,16 @@ soon as the turn ends — still without stopping anything:
 |---|---|
 | `claude` | joins the running turn |
 | `codex` | joins the running turn |
-| `opencode` | waits for the turn to end |
-| `agy` | waits for the turn to end |
+| `opencode`, `agy`, `custom` (e.g. CodeBuddy Code) | waits for the turn to end |
+
+Every other harness waits too — `custom` is any ACP program, and only one that declares it can take
+a message is the exception. Waiting is not a way to stop or redirect a long turn: if it is urgent,
+send **`/stop`** first — it ends the turn at once — then the message, which starts a fresh turn.
+`/stop` is the only thing that stops the agent; anything you sent that had not reached it yet is
+dropped with it.
 
 Slash commands (`/compact`, …) always wait for the turn to end: a command only runs as one at the
-start of a message. To actually stop the agent, use **`/stop`** — it is the only thing that does.
-Anything you sent that had not reached the agent yet is dropped with it.
+start of a message.
 
 ## Agent commands
 

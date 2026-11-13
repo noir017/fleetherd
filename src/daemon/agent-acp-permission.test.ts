@@ -37,6 +37,20 @@ describe('permissionRequestOf', () => {
       ],
     });
   });
+
+  it('names agy’s generic MCP call instead of its `Bash` title', () => {
+    // Same frame as the tool row (agent-acp-agy.test.ts): kind execute, title Bash.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't2',
+        title: 'Bash',
+        kind: 'execute',
+        rawInput: { ServerName: 'quantlab-research', ToolName: 'get_trading_calendar', Arguments: {} },
+      },
+    };
+    expect(permissionRequestOf(req).title).toBe('MCP get_trading_calendar — quantlab-research');
+  });
 });
 
 describe('permissionResponse', () => {

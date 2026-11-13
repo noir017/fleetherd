@@ -76,6 +76,8 @@ import type { RemoteHost } from '../remote/host.js';
 import { AGY_COMMAND, type AgyCliRunner } from './agy-cli.js';
 import {
   agyAcpToolLabel,
+  agyMcpCall,
+  agyMcpLabel,
   agySplitModel,
   agyTurnWatch,
   agyWindow,
@@ -2832,7 +2834,14 @@ export const PERMISSION_DECLINED_CODE = -32001;
 
 /** A permission request as the user is shown it: the tool call's title, and the agent's options. */
 export function permissionRequestOf(req: RequestPermissionRequest): AgentPermissionRequest {
-  const title = stripCode(req.toolCall.title ?? '') || buildInputPreview(req.toolCall.rawInput) || 'a tool call';
+  // agy's generic MCP call is titled `Bash` too, and this card has no preview line for the server,
+  // so it is named the way the tool row names it and the server rides in the title.
+  const mcp = agyMcpCall(req.toolCall.rawInput);
+  const title =
+    (mcp && `${agyMcpLabel(mcp)} — ${mcp.server}`) ||
+    stripCode(req.toolCall.title ?? '') ||
+    buildInputPreview(req.toolCall.rawInput) ||
+    'a tool call';
   return { title, options: req.options.map((o) => ({ optionId: o.optionId, label: o.name || o.optionId })) };
 }
 
@@ -3205,7 +3214,13 @@ function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): v
   if (typeof f.title === 'string') rec.title = f.title;
   if (typeof f.kind === 'string') rec.kind = f.kind;
   if (f.rawInput !== undefined) rec.rawInput = f.rawInput;
-  if (st.agy) rec.label = agyAcpToolLabel(rec.title, rec.kind) ?? rec.label;
+  if (st.agy) {
+    rec.label = agyAcpToolLabel(rec.title, rec.kind) ?? rec.label;
+    // agy's generic MCP call is kind `execute` / title `Bash`; only its input names the server and
+    // the tool (agy-acp.ts agyMcpCall). Named here, once, so finishTool draws the same row.
+    const mcp = agyMcpCall(rec.rawInput);
+    if (mcp) rec.label = agyMcpLabel(mcp);
+  }
 
   // Read before maybeStartTool below, which is where the bubble is drawn: it has to know whose it is.
   const { parent, spawnsSubagent } = claudeAttribution(meta);
@@ -3310,11 +3325,17 @@ function maybeStartTool(st: TurnState, id: string, force: boolean): void {
 
 /** The row a call would draw now, from everything known about it. */
 function toolStartEvent(st: TurnState, rec: ToolRec): ToolEvent {
+  // agy's `call_mcp_tool` carries the server in its input, not its title; the label names the tool,
+  // so the server and the arguments are the preview (see agyMcpCall).
+  const mcp = st.agy ? agyMcpCall(rec.rawInput) : undefined;
   return {
     // name uses the short ACP kind (aligns with emojiMap); command/path detail only in the truncated preview.
     name: rec.label ?? toolLabel(rec.kind, rec.title),
     inputPreview:
-      (rec.spawns && subagentDescription(rec)) || buildInputPreview(rec.rawInput) || stripCode(rec.title),
+      (rec.spawns && subagentDescription(rec)) ||
+      (mcp && [mcp.server, buildInputPreview(mcp.args)].filter(Boolean).join(' ')) ||
+      buildInputPreview(rec.rawInput) ||
+      stripCode(rec.title),
     input: rec.rawInput,
     index: rec.index,
     id: rec.id,

@@ -4,7 +4,7 @@ import type { QuotaPool } from '../types.js';
 import { TurnFailure } from './agent.js';
 import { truncateToolName } from './agent-common.js';
 import { runAgyCliCommand, runAgyCliFor, type AgyCliRunner } from './agy-cli.js';
-import { agyContextWindow, parseAgyUsagePools } from './agy-meters.js';
+import { agyCompactionPoint, agyContextWindow, parseAgyUsagePools } from './agy-meters.js';
 import { agyBudget } from './agy-relay.js';
 import { agentHome } from './skills-scan.js';
 
@@ -230,11 +230,12 @@ function contextTokensOf(usage: unknown): number | undefined {
 
 /**
  * What to show agy's context against: the configured window; else, behind a relay, the compaction
- * budget agy was given for this model (agy-relay.ts) — the `/context` line reads "left before
- * compaction", and that is where it compacts; else the measured window table's.
+ * budget agy was given for this model (agy-relay.ts); else where Google tells agy to compact
+ * (agy-meters.ts COMPACTION_POINTS) — the `/context` line reads "left before compaction", and that
+ * is where it compacts; else the measured window of a model nobody has seen compact.
  */
 export function agyWindow(def: AgentDef, model: string | undefined): number | undefined {
-  return def.contextWindow ?? agyBudget(def, model) ?? agyContextWindow(model);
+  return def.contextWindow ?? agyBudget(def, model) ?? agyCompactionPoint(model) ?? agyContextWindow(model);
 }
 
 // ───────────────────────── tool labels ─────────────────────────
@@ -294,6 +295,32 @@ export function agyAcpToolLabel(title: string | undefined, kind: string | undefi
   if (known) return known;
   const mcp = /^mcp_[A-Za-z0-9-]+_([A-Za-z0-9_-]+)$/.exec(name);
   return truncateToolName(mcp?.[1] ?? name);
+}
+
+/**
+ * A `call_mcp_tool` call's own fields: the server, the tool, and the arguments it was given.
+ *
+ * agy files the call as `kind: "execute"` titled `Bash`, with both names only in the raw input —
+ * `{"ServerName":"quantlab-research","ToolName":"get_trading_calendar","Arguments":{}}` — so the
+ * generic label says a shell command ran (2026-11-13: 20+ sessions, 89 tool rows). It is the route
+ * agy offers for a server it did not preload, and the only one its HTTP servers are reached
+ * through (docs/agents.md).
+ *
+ * Undefined for every other call, agy's preloaded MCP tools included: their title already names
+ * them (`Run mcp_<server>_<tool>`, agyAcpToolLabel).
+ */
+export function agyMcpCall(rawInput: unknown): { server: string; tool: string; args: unknown } | undefined {
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined;
+  const input = rawInput as Record<string, unknown>;
+  const server = typeof input.ServerName === 'string' ? input.ServerName.trim() : '';
+  const tool = typeof input.ToolName === 'string' ? input.ToolName.trim() : '';
+  if (!server || !tool) return undefined;
+  return { server, tool, args: input.Arguments };
+}
+
+/** The name a `call_mcp_tool` call is drawn under: `MCP <tool>`, truncated like any tool name. */
+export function agyMcpLabel(mcp: { tool: string }): string {
+  return truncateToolName(`MCP ${mcp.tool}`);
 }
 
 // ───────────────────────── quota ─────────────────────────

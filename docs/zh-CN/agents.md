@@ -158,18 +158,23 @@ agents:
 - **上下文数字来自 agy 的会话记录。** agy 每轮只报一次 token 用量，是这一轮所有模型调用的总和，
   只有只调一次模型的一轮，这个数才是上下文。调过工具的一轮，守护进程到智能体所在机器上读这个会话自己的
   记录（`~/.gemini/antigravity-cli/brain/<会话>/.system_generated/logs/transcript.jsonl`），取最后一次
-  调用的数，一轮结束时读一次，进行中每隔几秒读一次；读不到这个文件时，这样的一轮不显示。agy 从不告诉窗口有多大，
-  所以守护进程只认得实测过的模型（Gemini、Claude Sonnet/Opus 4.6、GPT-OSS 120B），或者用智能体的
-  `contextWindow`；配了 `contextBudget` 时，按 agy 的压缩点显示。
+  调用的数，一轮结束时读一次，进行中每隔几秒读一次；读不到这个文件时，这样的一轮不显示。agy 从不告诉窗口
+  有多大，而页脚要的是它**在哪儿压缩**，这个数远小于窗口：Gemini 3.8 Flash 256k（窗口 1M）、Claude
+  Sonnet/Opus 4.6 160k、GPT-OSS 120B 80k。这些之外的模型不显示数字。
+- **只有 stdio MCP server 会进它的工具表。** `agy acp` 接收 `session/new` 里的 server——网关自己的
+  `chat` 就是其中之一——并把 stdio 的那些给模型看。同样方式传进去的 HTTP 或 SSE server 会被接受，然后
+  被忽略：agy 根本不去连它，它的 `initialize` 也完全没有声明 `mcpCapabilities`（2026-11-13 在 1.5.7 上
+  实测）。agy 自己的配置里可以放 HTTP server，通用的 `call_mcp_tool` 能按名字调到它，但它不会出现在模型
+  的列表里——所以非用它不可的智能体，得在指令里写明 server 和工具的名字。
 - **压缩点可以挪：`contextBudget`。** agy 在哪儿压缩由 Google 按模型决定，随它启动时拉取的模型列表
-  下发：Gemini 3.8 Flash 窗口 1M，却在 256k 压缩；Claude 4.6 在 160k。本机上没有任何办法改它——agy 的
-  设置、`AGY_CLI_AUTO_COMPACT_OVERRIDE` 都不行。写上 `contextBudget: 900000`，守护进程会让 agy 走一个
-  *中继*：智能体所在机器 127.0.0.1 上的一个监听端口，通过 `CLOUD_CODE_URL` 指给 agy。它把所有请求原样
-  转发，包括流式的模型调用，只改一处：模型列表里，窗口（减去输出预留）装得下这个预算的模型，压缩点改成
-  这个值，其余模型保持 Google 给的。智能体在 `env` 里自己设了 `CLOUD_CODE_URL` 的，照样生效——中继转发
-  到那里。中继打不开时，智能体不带中继启动，按 Google 的值压缩，日志里写明原因。在 agy 1.5.2 上实测
-  （2026-11-07），已确认 Gemini 3.8 Flash 上下文到 600k 可用。代价是每次模型调用带的上下文更长，额度
-  用得更快。
+  下发——就是上面的数字。本机上没有任何办法改它——agy 的设置、`AGY_CLI_AUTO_COMPACT_OVERRIDE` 都不行。
+  写上 `contextBudget: 900000`，守护进程会让 agy 走一个 *中继*：智能体所在机器 127.0.0.1 上的一个监听
+  端口，通过 `CLOUD_CODE_URL` 指给 agy。它把所有请求原样转发，包括流式的模型调用，只改一处：模型列表里，
+  窗口（减去输出预留）装得下这个预算的模型，压缩点改成这个值，其余模型保持 Google 给的。智能体在 `env`
+  里自己设了 `CLOUD_CODE_URL` 的，照样生效——中继转发到那里。中继打不开时，智能体不带中继启动，按 Google
+  的值压缩，日志里写明原因。在 agy 1.5.2 上实测（2026-11-07），已确认 Gemini 3.8 Flash 上下文到 600k
+  可用。代价是每次模型调用带的上下文更长，额度用得更快。`contextWindow` 和 `contextBudget` 都设了时，
+  页脚以 `contextWindow` 为准；中继照样会挪动 agy 实际压缩的位置。
 
   ```yaml
   agents:
@@ -180,7 +185,8 @@ agents:
 - **额度来自它的 CLI**：`agy -p=/usage`，与一轮同时进行，最多每分钟一次，精度是整数百分比。
 - **agy 自己的警告是通知，不进回复正文。** 重试（「API error (attempt 1) …」）只提示一次；以警告收尾
   的一轮——额度用完、重试耗尽、服务器过载——按失败处理，`hooks.turnFailed` 能看到（归为 `provider`）。
-- **一轮中途发的消息要等这一轮结束**：`agy acp` 没有并入正在跑的那一轮的办法。
+- **一轮中途发的消息要等这一轮结束**：`agy acp` 没有并入正在跑的那一轮的办法。急事——叫停、改方向、
+  马上回答——先发 `/stop`，接下来那条消息会开新的一轮。
 - **skills** 从 `<cwd>/.agents/skills`、`~/.agents/skills`、
   `~/.gemini/antigravity-cli/skills`、`~/.gemini/skills`、`~/.gemini/config/skills`
   读取，所以 `/skills` 能列出它们，`/<名字> <请求>` 能直接调用。

@@ -909,7 +909,7 @@ Each harness reports a different subset, and an absent field is shown as nothing
 | Field | Source |
 |---|---|
 | model, effort | `onModel` / `onEffort` — ACP config options, `agy acp` included |
-| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`), shown against the compaction budget its relay gave it when it has one (`agy-relay.ts`) |
+| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`), shown against the point where agy compacts (`agy-meters.ts`) or the budget its relay gave it (`agy-relay.ts`) |
 | cost | `onUsage.cost` — claude and opencode; kept across the mid-stream snapshots that carry none |
 | cache expiry | claude only: `claude-transcript.ts`, read once a moment after each model cycle ends |
 | quota | agy only: `agy -p=/usage`, via `onQuota` |
@@ -1228,8 +1228,9 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   calls: input plus cache reads is the context only for a turn that ran no tool. A turn that ran
   tools reads the last call's figure off agy's own transcript instead (`agy-transcript.ts`, a file
   tail here or a filtered `readTail` on a host): once at the end, which the footer waits for, and
-  at most every 10 s while it runs, on each tool call. Either way it is reported over
-  `agy-meters.ts`'s window table or `contextWindow`.
+  at most every 10 s while it runs, on each tool call. Either way it is reported against the point
+  where agy compacts for that model (`agy-meters.ts` COMPACTION_POINTS), `contextWindow` when the
+  agent sets one, or the budget its relay gave it.
 - **Quota** has no ACP channel: `createAgyQuotaMeter` runs `agy -p=/usage` (`agy-cli.ts`) beside the
   turn, at most once a minute per account. It is reported whenever it lands, even after the turn,
   and nothing waits for it: quota feeds the conversation's status strip, not the turn's footer. (A
@@ -1237,7 +1238,10 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   a restart on a remote host, measured 2026-11-06.)
 - **Tool labels.** Calls of kind `other` are titled `Run <tool>`; `agyAcpToolLabel` reads the tool
   from there (`invoke_subagent` → Task, `mcp_chat_send_file` → `send_file`). agy also sends a `name`
-  field, but the SDK's validation strips it.
+  field, but the SDK's validation strips it. Its generic `call_mcp_tool` is the exception: kind
+  `execute`, title `Bash`, and the server and tool only in the input — `agyMcpCall` reads those and
+  labels the row `MCP <tool>` with the server as the preview. The same name heads the permission
+  card (`permissionRequestOf`), with the server in its title because that card has no preview.
 
 `/usage` and the other CLI-answered names still go to one-shots (`agy-cli.ts`): `agy acp` survives
 them but hands them to the model as a question.
