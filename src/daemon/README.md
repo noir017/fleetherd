@@ -1305,6 +1305,13 @@ generic command, so `ConversationRegistry` answers it before the merger (`answer
 its own marked `aside`, header `↪ btw: <question>`, a closing line instead of the footer, and no
 usage, model, status strip or library row, since the numbers would be the copy's.
 
+Every message of the answer, a notice about it, and a refusal (the runtime's, or
+`applyCommandTranslation`'s for a harness that has no `/btw`) is a reply to the `/btw` where the
+platform has replies (`sendAside`), so a chat app hangs it off the question and the web UI can pair
+the two by id and keep both out of the transcript ([its README](../platform/webui/README.md#side-questions)).
+A refused reply — a native slash command's interaction is no message to quote, and QQ takes a passive
+reply only within five minutes — falls back to a plain send, still marked `aside`.
+
 Under ACP it is `session/fork` in the child already running (`acp-side-question.ts`): fork,
 `session/resume` when declared, attach, prompt, read to the `stop`, then `session/delete` (or
 `session/close`). The copy has its own update queue — the SDK routes by session id — so the pump

@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A `/btw` answer no longer lands in the middle of the conversation.** In the web UI the question
+  and its answer were two more messages in the transcript — marked, but still between the turn's
+  own replies, and usually right in the middle of one still streaming. Now the question stays where
+  it was asked as one line, and the answer is read in a card over the composer: it opens as soon as
+  the question is sent, follows the answer as it is written, and the line opens it again after ×
+  or Escape. On chat platforms the answer, and a refusal, is a reply to the `/btw` — a quote on
+  Telegram, Discord, Lark and QQ, the question's thread on Slack — so it hangs off the question
+  rather than following the conversation. Where a reply is refused (a native slash command, a QQ
+  question older than five minutes) it is sent as before.
+
+- **Mark all read for scheduled sessions is in the side panel's title.** It was a button on a bar
+  of its own above the Sessions list; it is now the same check icon the topic list has beside its
+  title, shown while Sessions is open.
+
 ## [3.3.0] - 2026-11-13
 
 ### Added

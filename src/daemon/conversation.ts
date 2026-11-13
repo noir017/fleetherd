@@ -52,6 +52,7 @@ import type {
   ElicitAnswer,
   PermissionAnswer,
   InboundMessage,
+  MessageRef,
 } from '../types.js';
 import type { ConversationWorkdir, ModelPickerList, ModelPickerResult, PlatformAdapter } from '../platform/adapter.js';
 import { SideQuestionRefused, type AgentFactory, type AgentSession, type AgentUsage } from './agent.js';
@@ -122,7 +123,7 @@ import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
 import { InboundMerger, stopInputNote, type SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
-import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, type PersonWords, type TurnEnd, type TurnRunnerDeps } from './turn-runner.js';
+import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, sendAside, type PersonWords, type TurnEnd, type TurnRunnerDeps } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
 import { TurnOutcomes, type KeptText } from './turn-outcomes.js';
 import { FailedInputs } from './failed-input.js';
@@ -2512,10 +2513,7 @@ export class ConversationRegistry {
       const hint = harnessHasPicker(def?.harness) && own
         ? `\nIts own commands are available under /${own}.`
         : '';
-      void this.platforms
-        .get(msg.conversation.platform)
-        ?.sendMessage(addressOf(msg.conversation), `${name} does not support /${parsed.name}.${hint}`)
-        .catch((e) => console.warn('[conversation] failed to report an unsupported command:', e instanceof Error ? e.message : e));
+      this.reportUnsupported(msg, parsed.name, `${name} does not support /${parsed.name}.${hint}`);
       console.log(`[command] /${parsed.name} unsupported by ${state.agentId} (${name}); not forwarded`);
       return undefined;
     }
@@ -2525,6 +2523,21 @@ export class ConversationRegistry {
     const content = parsed.rest ? `/${result.native} ${parsed.rest}` : `/${result.native}`;
     console.log(`[command] /${parsed.name} → /${result.native} for ${state.agentId} (${name})`);
     return { ...msg, content };
+  }
+
+  /**
+   * Say that the bound harness has no such command. A /btw is answered by a reply to it, the
+   * refusal included (answerSideQuestion): the web UI shows the question in a card that waits for
+   * one, and a plain message would leave it waiting.
+   */
+  private reportUnsupported(msg: InboundMessage, command: string, sorry: string): void {
+    const platform = this.platforms.get(msg.conversation.platform);
+    if (!platform) return;
+    const address = addressOf(msg.conversation);
+    const sent = command === 'btw'
+      ? sendAside(platform, address, { address, messageId: msg.messageId }, sorry)
+      : platform.sendMessage(address, sorry);
+    sent.catch((e) => console.warn('[conversation] failed to report an unsupported command:', e instanceof Error ? e.message : e));
   }
 
   /**
@@ -2719,7 +2732,9 @@ export class ConversationRegistry {
    *
    * A refusal — the agent declares no fork, there is nothing to fork yet, a turn is running on a
    * harness whose fork would repeat it — is the runtime's sentence, sent as it stands. Anything
-   * else that goes wrong is said in the answer's own closing line.
+   * else that goes wrong is said in the answer's own closing line. Every one of those, like the
+   * answer, is a reply to the `/btw` (sendAside), so none of them lands in the conversation as its
+   * next message.
    */
   private async answerSideQuestion(
     key: ConversationId,
@@ -2730,10 +2745,11 @@ export class ConversationRegistry {
     const platform = this.platforms.get(msg.conversation.platform);
     if (!platform) return;
     const address = addressOf(msg.conversation);
+    const asked: MessageRef = { address, messageId: msg.messageId };
     const say = (text: string): void => {
-      platform
-        .sendMessage(address, text)
-        .catch((e) => console.warn('[btw] failed to reply:', e instanceof Error ? e.message : e));
+      sendAside(platform, address, asked, text).catch((e) =>
+        console.warn('[btw] failed to reply:', e instanceof Error ? e.message : e)
+      );
     };
     const text = question?.trim();
     if (!text) {
@@ -2751,7 +2767,7 @@ export class ConversationRegistry {
       say(`${agentDisplayName(findAgent(this.config, state.agentId), state.agentId)} does not support /btw.`);
       return;
     }
-    const render = this.turnRunner.beginAside(key, platform, address, text);
+    const render = this.turnRunner.beginAside(key, platform, address, text, asked);
     try {
       const outcome = await session.sideQuestion({ prompt: text, sessionToken: this.tokens.tokenFor(key) }, render.handlers);
       await render.finish(outcome === 'stopped' ? 'stopped' : undefined);

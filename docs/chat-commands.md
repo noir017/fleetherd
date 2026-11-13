@@ -84,8 +84,11 @@ agent  ↪ btw: which branch is this on?    ← a message of its own
        side question — not kept in this conversation
 ```
 
-The answer is its own message, opening with the question; in the web UI it is marked **Side
-question**. It costs a full turn's worth of tokens — the copy reads the whole conversation — but
+The answer is its own message, opening with the question. Where the platform has replies it is a
+reply to your `/btw` (a quote on Telegram, Discord, Lark and QQ, the question's thread on Slack), so it
+hangs off the question rather than following the conversation; a refusal is sent the same way. The
+web UI keeps both out of the transcript: the question stays as one line, and the answer is read in a
+card over the composer — see [the web UI](web-ui.md). It costs a full turn's worth of tokens — the copy reads the whole conversation — but
 is asked of the agent already running rather than a new one. `/stop` stops it along with anything
 else running. It takes words only;
 send pictures as an ordinary message.

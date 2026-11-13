@@ -554,7 +554,8 @@ counts, which are runs. A question from a sub-agent under a run lights the clock
 group's flags, since it has no row in the switcher either. Sessions needs
 no request of its own — the `topics` event that keeps the switcher current carries their titles,
 state, message counts and unread marks, so a run that starts or finishes moves the tab as it
-happens. Its one bulk write is **Mark all read**, which clears this page's `aa_reads` marks and posts
+happens. Its one bulk write is **Mark all read** — the check icon in the panel's title (`#sched-read`),
+shown only on this sub-tab, as the topic list's sits beside its own title — which clears this page's `aa_reads` marks and posts
 `api/seen` once for each run the daemon still counts as `stage: review` (the route takes one topic
 and has no bulk form; a run list is a handful). The list is grouped by the browser's calendar —
 this month by day, older by month, `lastAt` deciding — with each group folded or opened on its own
@@ -857,13 +858,40 @@ A third is not about sub-agents but is drawn the same way:
 - **`aside`** — the answer to a side question (`/btw`, `turn-runner.ts` `beginAside`). It is
   asked of a copy of the conversation and kept out of it, and it often lands while the turn's own
   reply is still streaming around it, so it must not read as that reply's next paragraph. Prose,
-  like a dispatch; its rail is dashed.
+  like a dispatch; its rail is dashed. Only an answer the page cannot pair with its question is
+  drawn this way — see [Side questions](#side-questions).
 
 The page puts the kind on the message's class and a `.sub-k` tag above the body (`SUB_K` in
 `page.ts`: the kinds it lists are the ones that get both), and only a report folds its lines like
 a tool bubble. The kind is stored on the message
 (`WebMessage.kind`), in the transcript file (`parseKept`), and on the page's cached copy — a reload
 and a restart redraw the same bubble. Every other platform ignores the field.
+
+## Side questions
+
+A `/btw` and its answer are not drawn as messages. The question stays where it was asked as one line
+(`btwLine`: BTW, the question, *Waiting…* or *Answer*), and the answer is read in a card over the
+composer (`#btw`, inside `#bar` like the model list). The card opens when the question is sent, follows
+the answer as it streams, and opens on an answer that arrives while it is shut — unless the person
+closed it on that question, which is remembered (`btwShut`) so a long answer does not keep popping up.
+A topic switch and Escape close it; the line toggles it.
+
+**The pairing is by id.** `sendAside` (`daemon/turn-runner.ts`) sends every message of an answer, and
+a refusal, as a reply to the `/btw` with `kind: 'aside'`; `replyMessage` here records the replied-to id
+in `quote.id`, which the transcript file keeps (`parseKept`). The page reads the question off the
+operator's own message (`ownText`, the `.raw` that `renderBody` writes, matched like
+`parseTextCommand`) and an answer's question as `<its generation>:<quote.id>` — the reply and the
+question come from one run. Matching on the answer's `↪ btw:` header would be a guess; the card does
+strip that header (its title already says it) and draws the closing `side question — …` line as small
+print, both by the wording `asideHeader` / `asideFooter` write.
+
+**The answer's node stays in `#log`**, empty and of no height (`.m.aside-held`), because the cache
+(`cacheable`) and the reading position (`firstVisible`) are both read off `#log`'s children; a node
+taken out of the log would be lost to the next reload and break the binary search. A question and its
+answer repaint each other in `paint` (`btwLink`, guarded against recursion), so the line learns its
+answer has come and an answer learns its question has gone. An answer whose question is no longer held
+— aged out of the ring, or kept from before answers were replies — is drawn as the marked bubble
+above, never left unreachable.
 
 ## Menus
 

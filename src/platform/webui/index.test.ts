@@ -220,6 +220,22 @@ describe('webui adapter: outbound', () => {
     await expect(a.replyMessage(target, 'the answer')).resolves.toMatchObject({ address });
   });
 
+  it('marks a side answer and names the /btw it replies to, across a restart', async () => {
+    // What sendAside (turn-runner.ts) sends: the page pairs the answer with its question by the
+    // replied-to id, and takes both out of the transcript.
+    const a = adapter();
+    const address = await somewhere(a);
+    const question = await a.sendMessage(address, '/btw which branch?');
+    await a.replyMessage(question, '↪ btw: which branch?\n\nfeat/x', { kind: 'aside' });
+    await a.stop();
+
+    const at = path.join(dir, 'webui-transcripts-webui', `${address.thread ?? ''}.json`);
+    const restored = diskTranscriptStore(path.dirname(at)).load().get(address.thread ?? '') ?? [];
+    expect(restored[1]?.msg).toMatchObject({ kind: 'aside', quote: { id: question.messageId } });
+    // Prose, like any answer.
+    expect(restored[1]?.msg.html).toContain('<p>feat/x</p>');
+  });
+
   it('takes reactions and typing without complaint, since nothing gates them', async () => {
     // The daemon never reads capabilities.reaction or .typing — it calls these unconditionally
     // and swallows failures. So the real obligation is that they are safe to call.
