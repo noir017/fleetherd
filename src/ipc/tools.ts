@@ -132,9 +132,7 @@ export function optionKey(opt: ReverseOption): string {
 }
 
 function optionsOf(spec: ReverseCommandSpec, tool?: NativeTool): ReverseOption[] {
-  // A command that refuses --channel does not get it in a tool schema either: the model would
-  // fill a parameter whose only possible answer is an error.
-  const all = spec.channel === false ? spec.options : [...spec.options, CHANNEL_OPTION];
+  const all = [...spec.options, CHANNEL_OPTION];
   return tool?.options ? all.filter((o) => tool.options!.includes(optionKey(o))) : all;
 }
 

@@ -38,10 +38,10 @@ export interface ReverseCommandSpec {
    */
   topic: HelpTopicName;
   /**
-   * `false` for a command that names its own conversation and refuses `--channel`. The flag stays
-   * registered (so passing it gets a sentence rather than commander's "unknown option"), but the
-   * help page and the native-tool schema leave it out: a page that advertises a flag the command
-   * refuses teaches an agent to distrust the page.
+   * `false` for a command that does not accept `--channel` — a gateway-wide one, or one acting on
+   * what this conversation owns. The flag stays registered (so passing it gets a sentence rather
+   * than commander's "unknown option"), but the help page leaves it out: a page that advertises a
+   * flag the command refuses teaches an agent to distrust the page.
    */
   channel?: false;
 }
@@ -119,7 +119,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'channels',
     summary: 'Post to another chat or topic, on any platform',
     notes: [
-      'Most commands take --channel <id>; the ones that act on what this conversation owns — `task-*`, `pods`, `skills`, `sessions` — refuse it. A bare <channel>[/<thread>] stays on the platform you are answering on; <instance>:<channel>[/<thread>] (what `channels` prints) names any platform.',
+      'Most commands take --channel <id>; the gateway-wide ones and the ones acting on what this conversation owns do not — `task-*`, `pods`, `skills`, `sessions`, `channels`, `voice`, `reload`. A bare <channel>[/<thread>] stays on the platform you are answering on; <instance>:<channel>[/<thread>] (what `channels` prints) names any platform.',
       'The list only holds places the gateway has answered in — most platforms cannot enumerate a bot\'s chats. kind=channel rows are chat roots (where a new topic would be opened); current=true is this conversation.',
     ],
   },
@@ -1015,7 +1015,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       {
         flags: '--cwd <dir>',
         description:
-          "where it starts: a directory name from task-agents, or an absolute path such as a git worktree (default: the agent's own root)",
+          "where it starts, on the machine that runs it: a directory name from task-agents, or an absolute path such as a git worktree there (default: the agent's own root)",
       },
       { flags: '--title <title>', description: 'the topic’s name (default: named from <text>)' },
       { flags: '--model <id>', description: "the model it runs on, from that agent's /model list (default: the agent's configured model)" },

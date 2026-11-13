@@ -3979,7 +3979,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * Hand `text` to a sub-agent's conversation — `task-new` (once confirmed) and `task-send`. It is
    * shown there first under `header`, which says whose words these are (the reactions land on that
    * bubble), then goes in like a message typed there: into the running turn when the harness takes
-   * one, else as the next turn. The agent receives `text` alone. Answers which of the three.
+   * one, else as the next turn. The agent receives `text` alone — plus the forwarded reply, when
+   * `opts.forward` attaches one. Answers which of the three.
    *
    * `queued` is not a failure: the message is delivered, just after the turn it could not join.
    * It is a separate answer because the harness's ability to take input mid-turn is not knowable

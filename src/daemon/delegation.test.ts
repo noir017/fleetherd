@@ -124,7 +124,7 @@ function manualClock() {
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-function rig(opts: { answer?: string | null; failOpen?: string; failModel?: string } = {}) {
+function rig(opts: { answer?: string | null; failOpen?: string; failModel?: string; noHistory?: boolean } = {}) {
   const clock = manualClock();
   const posted: Array<{ to: string; text: string; kind?: string }> = [];
   const parents = new Map<string, string>(); // child key → parent key
@@ -244,7 +244,8 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     ]),
     registry: registry as unknown as DelegationDeps['registry'],
     clock,
-    history,
+    // A gateway without node:sqlite has no library at all (see DelegationDeps.history).
+    ...(opts.noHistory ? {} : { history }),
     questionOf: (k: string) => questions.get(k),
     confirm: ({ text, labels, signal }) => {
       cards.push({ text, labels, signal });
@@ -990,6 +991,45 @@ describe('Delegation: acting on the topics it opened, and only those', () => {
     );
     // Refused before anything was sent: the target topic is left as it was.
     expect(r.calls.filter(([c]) => c === 'handTo')).toEqual([]);
+  });
+
+  it('--forward follows the source topic’s current generation, so /new does not carry the reply it discarded', async () => {
+    const r = await withTwoChildren();
+    seedTurn(r.history, 'web#main#c2000000', [{ role: 'agent', text: 'old verdict' }]);
+    // The topic was /new'd: the turn above belongs to the generation it discarded, and `--reply`
+    // (the same source) does not answer with it either.
+    r.deps.currentContext = () => ({ agent: 'cc', generation: 1 });
+    await expect(
+      r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'x', forward: 'c2000000' })
+    ).rejects.toThrow(/nothing to forward from "c2000000"/);
+  });
+
+  it('--forward says the library is unavailable rather than forwarding nothing', async () => {
+    const r = rig({ noHistory: true });
+    await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    await r.d.handle(P, task('cc', 'b'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    await expect(
+      r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'x', forward: 'c2000000' })
+    ).rejects.toThrow(/conversation library is unavailable/);
+  });
+
+  it('--forward says when the source is still working, so its reply is not read as the latest word', async () => {
+    const r = await withTwoChildren();
+    seedTurn(r.history, 'web#main#c2000000', [{ role: 'agent', text: 'verdict so far' }]);
+    r.busy.add('web#main#c2000000');
+    const out = (await r.d.handle(P, {
+      kind: 'task-send',
+      topic: 'c1000000',
+      text: 'x',
+      forward: 'c2000000',
+    })) as TaskActionResult;
+    expect(out.result).toContain('"part" is still working; this is turn 1, not the one running now.');
   });
 });
 

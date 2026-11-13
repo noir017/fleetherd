@@ -21,11 +21,11 @@ directly.
   repositories, different files, or questions that can be answered apart. One part is fine when
   the job does not split; do not invent parts.
 - Two sub-agents in the same checkout edit the same working tree. Give parts in one repository
-  disjoint files, or make each its own `git worktree` yourself and start the part there with
-  `task-new --cwd <absolute path>`.
+  disjoint files, or make each its own `git worktree` on the machine that will run it and start the
+  part there with `task-new --cwd <absolute path>` (an agent with here=true is on your machine).
 - A part that changes code needs a review before you call it done. Propose it once the change is
-  in: a sub-agent of its own, the same checkout, told to read the diff and run the tests that cover
-  it. You read the verdict, not the diff.
+  in: a sub-agent of its own, started in that branch's worktree (`--cwd`), told to read the diff and
+  run the tests that cover it. You read the verdict, not the diff.
 
 ## 2. Propose
 
@@ -35,11 +35,11 @@ directly.
   Prefer `here=true` — your own machine, with the same checkouts and tools — and say why on the
   card's title when a part goes elsewhere.
 - One `fleetherd task-new [--agent <id>] [--cwd <dir>] --title "<short name>" "<text>"` per part.
-  `--cwd` is a directory name from `task-agents` or an absolute path — a worktree you made, so the
-  part starts in it instead of the main checkout. With confirmation on, they all land on the card
-  waiting for the person, however far apart you send them; only the first waits a few seconds for
-  the rest. With it off where the person talks to you directly, each starts at once and the card
-  lists what started.
+  `--cwd` is a path on the machine that runs the part: a directory name from `task-agents`, or an
+  absolute path such as a worktree you made there, so the part starts in it instead of the main
+  checkout. With confirmation on, they all land on the card waiting for the person, however far
+  apart you send them; only the first waits a few seconds for the rest. With it off where the
+  person talks to you directly, each starts at once and the card lists what started.
 - `--model <id>` runs a part on another model from that agent's `/model` list — when the person
   asked for one, or a part plainly needs a stronger or a cheaper one. Otherwise leave it out. The
   model decides what the part costs, so the card shows it; an id the agent does not offer is
@@ -94,10 +94,10 @@ are delivered as your next turn: end this turn once the parts are handed out. Do
   your correction as the next one, with its context kept.
 - **Anything the person has to decide** — scope, merging, releasing, deleting, spending — say it
   in one line here and stop. Do not decide it for them.
-- **Failed**: if it looks transient (a dropped connection, an upstream error), `task-send` it
-  `continue` once — the gateway puts back the task it never received. Otherwise report it. Its
-  whole error is in the turn the card names — `task-read <topic> --turn <n>` — even when the
-  card's quote was cut.
+- **Failed**: a card saying the sub-agent could not start means the task never reached it —
+  `task-send` it `continue` and the gateway puts the task back. A turn that failed midway did reach
+  it: `task-send` it `continue` once, as it is. Otherwise report it. Its whole error is in the turn
+  the card names — `task-read <topic> --turn <n>` — even when the card's quote was cut.
 - While others are still working, say nothing, or one line.
 
 ## 4. Report

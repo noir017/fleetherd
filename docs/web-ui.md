@@ -198,7 +198,7 @@ task is the hand-off: the card that asks you to start the sub-agents, the record
 and the task text a sub-agent's topic is handed (the message opening `↳ From …`, and every
 `task-send` after it). A report is the folded `🔔` card the agent that opened the sub-agents is
 told with — one row per sub-agent, folded and opened exactly like a tool bubble — or the reply a
-`task-send --forward` carries into a topic. The mark travels
+`task-send --forward` carries into a topic, folded the same way. The mark travels
 with the message, so a reload and a daemon restart keep it; a chat platform shows the same text
 unmarked.
 

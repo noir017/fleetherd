@@ -154,8 +154,8 @@ gateway puts in front of the work tells the model what kind of job this is befor
 job, and no wording avoids that. A change that adds text to what an agent receives needs to say
 why the harness could not carry it.
 
-Two things reach an agent that the person did not type in that conversation, each decided on
-2026-11-02 and each kept to the one place it is for. An agent that started **sub-agents**
+Three things reach an agent that the person did not type in that conversation. Two were decided on
+2026-11-02, each kept to the one place it is for. An agent that started **sub-agents**
 (`daemon/delegation.ts`) is told what they did in a `[sub-agent updates]` card, because no harness
 can carry another conversation's state; it goes only to the conversation that opened those topics,
 only about turns it handed them or that the person started or joined by writing in one, and is
@@ -164,10 +164,13 @@ they wrote above the result: until then such a turn was theirs alone, and the ag
 topic went on summarising, reviewing or redoing work from a reply the person had already corrected
 there. And
 `hooks.turnFailed.continue.message` is sent after a failed turn — the operator's own words,
-announced in the chat first, off unless configured. A sub-agent gets the task text it was handed
-and nothing else; how to split a job and use the updates is the `super` skill's (`skill-super/`),
-read through the harness's own skill mechanism. (A standing dispatcher topic with an `AGENTS.md`
-of its own shipped in 2.18.0 and was removed the same day: see delegation.ts for why.)
+announced in the chat first, off unless configured. The third is `task-send --forward`'s: the reply
+it carries into a topic arrives under a `↳ Forwarded from … · turn N` heading, a source label,
+because those words are another agent's verdict and without it the agent would take them for the
+person's instruction. A sub-agent gets the task text it was handed, that heading when one is
+forwarded, and nothing else; how to split a job and use the updates is the `super` skill's
+(`skill-super/`), read through the harness's own skill mechanism. (A standing dispatcher topic with
+an `AGENTS.md` of its own shipped in 2.18.0 and was removed the same day: see delegation.ts for why.)
 
 **Best-effort side effects don't break turns.** Reactions, headers, receipts, and menu
 edits are `void`-and-`catch`: a failure is logged and the turn continues.

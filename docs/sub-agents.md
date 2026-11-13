@@ -26,9 +26,9 @@ in parallel, and come back with one report — so you follow one topic instead o
    in a sub-agent's own topic, `task-new` still puts up the card, so agents cannot open more agents
    without you. With confirmation on, to change something, write what instead of tapping, and it
    proposes again; the new card replaces the old one. A part that changes code is reviewed before
-   it counts as done: once its change is in, the agent proposes a review part — another agent, the
-   same checkout, told to read the diff and run the tests that cover it. The whole suite runs once,
-   before merging, not in every part and every review.
+   it counts as done: once its change is in, the agent proposes a review part — another agent,
+   started in that branch's worktree, told to read the diff and run the tests that cover it. The
+   whole suite runs once, before merging, not in every part and every review.
 3. Each part gets a topic of its own, nested under this one, and they run at once — up to four
    cold starts per machine, the rest waiting their turn. Starting a harness process costs several
    CPU-seconds and a few hundred MB before it answers, so a large card started together used to
@@ -88,7 +88,8 @@ A review verdict reaches the agent that must act on it without being retyped: `t
 --forward <review topic> "<what to fix>"` attaches the review topic's last normally-ended reply
 whole, under a heading that names the topic and its turn. Both topics must be ones that
 conversation opened. In the target topic the reply is shown as a folded **Sub-agent report** bubble
-(one row per line, tap to open); the agent receives it whole.
+(one row per line, tap to open); the agent receives it whole. Like the other `task-*` commands,
+this is web UI only.
 
 ## In the sidebar
 

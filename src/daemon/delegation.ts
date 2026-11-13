@@ -811,12 +811,17 @@ export class Delegation {
     }
     const title = subjectOf(this.titleOf(c.key, c));
     const id = `${c.platformId}:${c.address.channel}${c.address.thread ? `/${c.address.thread}` : ''}`;
+    // A topic mid-turn will report again, and the reply forwarded here is the last one that
+    // finished — saying so keeps the parent from treating it as that topic's latest word.
+    const working = this.stageOf(c) === 'working';
     // Plain text, not markdown: the topic shows this as a report bubble, which is rendered one
     // escaped line per row so it can fold — asterisks and links would arrive as themselves.
     return {
       heading: `↳ Forwarded from "${title}" · ${id} · turn ${got.reply.turn}`,
       text: got.reply.text,
-      note: `Forwarded "${title}" (turn ${got.reply.turn}) with it.`,
+      note:
+        `Forwarded "${title}" (turn ${got.reply.turn}) with it.` +
+        (working ? ` "${title}" is still working; this is turn ${got.reply.turn}, not the one running now.` : ''),
     };
   }
 
