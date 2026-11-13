@@ -167,8 +167,9 @@ there. And
 announced in the chat first, off unless configured. The third is `task-send --forward`'s: the reply
 it carries into a topic arrives under a `↳ Forwarded from … · turn N` heading, a source label,
 because those words are another agent's verdict and without it the agent would take them for the
-person's instruction. A sub-agent gets the task text it was handed, that heading when one is
-forwarded, and nothing else; how to split a job and use the updates is the `super` skill's
+person's instruction. A sub-agent gets the task text it was handed — and, when one is forwarded,
+that heading and the reply under it — and nothing else; how to split a job and use the updates is
+the `super` skill's
 (`skill-super/`), read through the harness's own skill mechanism. (A standing dispatcher topic with
 an `AGENTS.md` of its own shipped in 2.18.0 and was removed the same day: see delegation.ts for why.)
 

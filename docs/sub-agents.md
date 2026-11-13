@@ -27,8 +27,9 @@ in parallel, and come back with one report — so you follow one topic instead o
    without you. With confirmation on, to change something, write what instead of tapping, and it
    proposes again; the new card replaces the old one. A part that changes code is reviewed before
    it counts as done: once its change is in, the agent proposes a review part — another agent,
-   started in that branch's worktree, told to read the diff and run the tests that cover it. The
-   whole suite runs once, before merging, not in every part and every review.
+   started where that part ran (its worktree, or the same checkout when the parts did not need
+   one), told to read the diff and run the tests that cover it. The whole suite runs once, before
+   merging, not in every part and every review.
 3. Each part gets a topic of its own, nested under this one, and they run at once — up to four
    cold starts per machine, the rest waiting their turn. Starting a harness process costs several
    CPU-seconds and a few hundred MB before it answers, so a large card started together used to

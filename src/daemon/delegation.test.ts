@@ -1019,17 +1019,27 @@ describe('Delegation: acting on the topics it opened, and only those', () => {
     ).rejects.toThrow(/conversation library is unavailable/);
   });
 
-  it('--forward says when the source is still working, so its reply is not read as the latest word', async () => {
-    const r = await withTwoChildren();
-    seedTurn(r.history, 'web#main#c2000000', [{ role: 'agent', text: 'verdict so far' }]);
-    r.busy.add('web#main#c2000000');
-    const out = (await r.d.handle(P, {
-      kind: 'task-send',
-      topic: 'c1000000',
-      text: 'x',
-      forward: 'c2000000',
-    })) as TaskActionResult;
-    expect(out.result).toContain('"part" is still working; this is turn 1, not the one running now.');
+  it('--forward says when the source has more coming, so its reply is not read as the latest word', async () => {
+    const cases = [
+      ['working', 'is still working'],
+      ['retrying', 'failed and is continuing automatically'],
+      ['answer', 'is waiting on a question'],
+    ] as const;
+    for (const [stage, phrase] of cases) {
+      const r = await withTwoChildren();
+      const source = 'web#main#c2000000';
+      seedTurn(r.history, source, [{ role: 'agent', text: 'verdict so far' }]);
+      if (stage === 'working') r.busy.add(source);
+      if (stage === 'retrying') r.activity.set(source, { retry: { attempt: 1, max: 3, at: 0 } });
+      if (stage === 'answer') r.asking.add(source);
+      const out = (await r.d.handle(P, {
+        kind: 'task-send',
+        topic: 'c1000000',
+        text: 'x',
+        forward: 'c2000000',
+      })) as TaskActionResult;
+      expect(out.result, stage).toContain(`"part" ${phrase}; this is turn 1, not what it is doing now.`);
+    }
   });
 });
 

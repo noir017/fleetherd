@@ -24,8 +24,9 @@ directly.
   disjoint files, or make each its own `git worktree` on the machine that will run it and start the
   part there with `task-new --cwd <absolute path>` (an agent with here=true is on your machine).
 - A part that changes code needs a review before you call it done. Propose it once the change is
-  in: a sub-agent of its own, started in that branch's worktree (`--cwd`), told to read the diff and
-  run the tests that cover it. You read the verdict, not the diff.
+  in: a sub-agent of its own, started where that part ran — its worktree, or the same checkout when
+  the parts did not need one (`--cwd`) — told to read the diff and run the tests that cover it. You
+  read the verdict, not the diff.
 
 ## 2. Propose
 
