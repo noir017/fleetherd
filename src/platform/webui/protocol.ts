@@ -485,8 +485,13 @@ export interface WebMessage {
   wasSettings?: boolean;
   /** Lifecycle reactions currently on this message (👀 / ✅ / ❌). Empty, never absent, for the same reason. */
   reactions: string[];
-  /** Set when the agent used a native reply; rendered as a quote above the body. */
-  quote?: { html: string };
+  /**
+   * Set when the agent used a native reply; rendered as a quote above the body. `id` is the
+   * message replied to, from the same run (`g`) as this one: it is what pairs a side answer
+   * (`kind: 'aside'`) with the `/btw` it answers, so the page can take both out of the transcript.
+   * Absent on a reply kept from an older version.
+   */
+  quote?: { html: string; id?: string };
   /**
    * Set when the message IS a file the agent sent.
    *

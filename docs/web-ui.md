@@ -126,8 +126,9 @@ same menu a topic row has). A sub-agent a run opened is listed under that run, f
 same count pill a topic's sub-agents are, rather than in the topic list. The list groups this month's runs by day and
 older ones by month, each header folding on its own and the choice kept in this browser — the newest
 group and the one holding the topic on screen start open, and a folded header still says how many
-replies are unread and whether a run is working or waiting on an answer. **Mark all read** clears
-every run's unread badge at once and tells the daemon the replies it had not seen have been read.
+replies are unread and whether a run is working or waiting on an answer. **Mark all read**, the
+check icon in the panel's title while Sessions is open, clears every run's unread badge at once and
+tells the daemon the replies it had not seen have been read.
 **Reviews** lists the automatic reviews of
 quiet conversations (see [skills](skills.md#auto-review)): what each one changed, what the store
 refused and why, the preferences it noticed, and the command that undoes each change. A review that
@@ -206,9 +207,14 @@ told with — one row per sub-agent, folded and opened exactly like a tool bubbl
 with the message, so a reload and a daemon restart keep it; a chat platform shows the same text
 unmarked.
 
-**Side questions.** The answer to a [`/btw`](chat-commands.md#side-questions-btw) is marked
-**Side question**, with a dashed rail, so an answer that lands in the middle of a reply still
-streaming does not read as that reply's next paragraph.
+**Side questions.** A [`/btw`](chat-commands.md#side-questions-btw) and its answer stay out of the
+transcript, so an answer that lands in the middle of a reply still streaming does not read as that
+reply's next paragraph. Where you asked, the transcript keeps one line — **BTW**, the question, and
+*Waiting…* or *Answer* — and the answer is read in a card over the composer that opens as soon as
+you send the question and follows the answer as it is written. × or Escape puts the card away (it
+stays shut while the rest of that answer arrives); the line opens it again. An answer from before
+this version, or one whose question is no longer in the topic, is still drawn in the transcript,
+marked **Side question** with a dashed rail.
 
 **Pictures.** Paste a screenshot (Ctrl-V) or attach one and it shows as a thumbnail in the
 composer, with an × to take it back off the message. Once sent, your message shows it too, and a

@@ -31,6 +31,7 @@ import type { MessageRef, SettingsScreen, SlashCommandSpec } from '../../types.j
 import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
 import { renderWebMarkdown } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
+import type { WebMessage } from './protocol.js';
 import { readableKind } from './reading.js';
 import {
   CHANNEL,
@@ -433,7 +434,7 @@ function parseKept(value: unknown): Kept | null {
   const { id, own, html, at, g, reactions, quote, file, nonce, kind } = msg;
   if (typeof id !== 'string' || typeof html !== 'string' || typeof at !== 'number' || typeof g !== 'number') return null;
   const k = keptKind(kind);
-  const q = quote as { html?: unknown } | undefined;
+  const q = keptQuote(quote);
   const f = file as { name?: unknown; url?: unknown; image?: unknown } | undefined;
   return {
     text,
@@ -445,7 +446,7 @@ function parseKept(value: unknown): Kept | null {
       g,
       buttons: [],
       reactions: Array.isArray(reactions) ? reactions.filter((r): r is string => typeof r === 'string') : [],
-      ...(typeof q?.html === 'string' ? { quote: { html: q.html } } : {}),
+      ...(q ? { quote: q } : {}),
       // Not `view`, for the reason `buttons` is emptied: the reader is answered from the download
       // table, which died with the run that minted the token, so it could only open onto a 404.
       ...(typeof f?.name === 'string' && typeof f.url === 'string'
@@ -457,6 +458,13 @@ function parseKept(value: unknown): Kept | null {
       ...(k ? { kind: k } : {}),
     },
   };
+}
+
+/** A kept reply's quote, and the id of the message it answers when it named one (a side answer's question). */
+function keptQuote(quote: unknown): WebMessage['quote'] {
+  const q = quote as { html?: unknown; id?: unknown } | undefined;
+  if (typeof q?.html !== 'string') return undefined;
+  return { html: q.html, ...(typeof q.id === 'string' ? { id: q.id } : {}) };
 }
 
 /**
@@ -568,12 +576,20 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
         ).id
       );
     },
-    async replyMessage(r, text) {
+    async replyMessage(r, text, opts) {
       // A quote of the message being answered, which is all "native reply" can mean on a page
-      // whose topics are flat: the reader sees what it is about without scrolling.
+      // whose topics are flat: the reader sees what it is about without scrolling. Its id goes
+      // with it, which is how the page pairs a side answer with the `/btw` it answers.
       const topic = topicOf(r.address, 'replyMessage');
       const quote = room.htmlOf(topic, r.messageId);
-      return ref(topic, room.post(topic, { own: false, html: renderWebMarkdown(text), quote: { html: quote } }, text).id);
+      const kind = opts?.kind;
+      const part = {
+        own: false,
+        html: webMessageHtml(kind, text),
+        quote: { html: quote, id: r.messageId },
+        ...(kind ? { kind } : {}),
+      };
+      return ref(topic, room.post(topic, part, text).id);
     },
     async sendButtons(address, text, buttons, screen?: SettingsScreen, opts?: SendOptions) {
       const topic = topicOf(address, 'sendButtons');

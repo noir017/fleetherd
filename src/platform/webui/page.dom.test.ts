@@ -6309,9 +6309,9 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(narrowBlock()).toContain('.chip-x{min-width:44px;min-height:44px}');
   });
 
-  it('enlarges the topic list header icons on phones to match header glyphs', () => {
+  it('enlarges the panel header icons on phones to match header glyphs', () => {
     const css = narrowBlock();
-    expect(css).toContain('#clear-topics svg,#read-topics svg{width:18px;height:18px}');
+    expect(css).toContain('#clear-topics svg,#read-topics svg,#sched-read svg{width:18px;height:18px}');
   });
 
   it('gives the drawer toggle a finger-sized target', () => {
@@ -7549,9 +7549,10 @@ describe('webui page: sub-agent bubbles', () => {
     expect(html).toContain('.sub-k{');
   });
 
-  it('marks a side answer apart from the reply it lands in the middle of, while it streams', async () => {
-    // A /btw answer arrives while the turn's own reply is still being written above and below it,
-    // so the rail and tag are what keep it from reading as that reply's next paragraph.
+  it('marks a side answer that names no question apart from the reply it lands in, while it streams', async () => {
+    // An answer kept from before answers were replies to their /btw: nothing pairs it with a
+    // question, so it stays in the transcript, where the rail and tag keep it from reading as the
+    // reply's next paragraph. (One that is paired is read in a card: see "side questions" below.)
     const h = await open({ url: at });
     await h.emit(sync(T, [message('m1', '<p>working on it</p>'), sub('m2', '<p>↪ btw: which branch?</p>', 'aside')], [T]));
     // Edited in place as the answer streams, like any reply: the marking has to survive the edit.
@@ -7564,6 +7565,7 @@ describe('webui page: sub-agent bubbles', () => {
     // The reply around it stays a plain reply.
     expect(h.doc.querySelectorAll('#log .m:not(.aside)')).toHaveLength(1);
     expect(h.doc.querySelectorAll('#log .sub-k')).toHaveLength(1);
+    expect(h.el('btw').hidden).toBe(true);
   });
 
   it('gives a kind it has no tag for no tag, even one named like a property of every object', async () => {
@@ -7577,6 +7579,186 @@ describe('webui page: sub-agent bubbles', () => {
     const html = renderPage('Chat', false, true, false);
     expect(html).toContain('.m.aside{background:var(--aside);border-left:3px dashed var(--aside-edge)');
     expect(html).toContain('--aside:#151c1f;--aside-edge:#4f8a99');
+  });
+});
+
+describe('webui page: side questions (/btw)', () => {
+  const T = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const at = `http://localhost:8787/?t=${T}`;
+  /** The operator's /btw as room.ts posts it: escaped text, whole, in a .raw. */
+  const asked = (id: string, q: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    ...message(id, `<div class="raw">/btw ${q}</div>`, true),
+    ...extra,
+  });
+  /** A message of the answer, as sendAside → index.ts replyMessage posts it: a reply naming the question. */
+  const answer = (id: string, to: string, html: string): Record<string, unknown> => ({
+    ...message(id, html),
+    kind: 'aside',
+    quote: { html: '<div class="raw">/btw …</div>', id: to },
+  });
+  const line = (h: Harness): HTMLElement | null => h.doc.querySelector('#log .m.btw-q');
+  const card = (h: Harness): HTMLElement => h.el('btw');
+  const escape = (h: Harness): void => {
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+  };
+
+  it('keeps the question and its answer out of the transcript: a line where it was asked, the answer in a card', async () => {
+    const h = await open({ url: at });
+    await h.emit(sync(T, [message('w1', '<p>working on it</p>')], [T]));
+    (h.el('input') as HTMLTextAreaElement).value = '/btw which branch?';
+    await h.click('#composer button[type="submit"]');
+
+    // At once, before the daemon has said anything: the line, and the card saying it is being asked.
+    expect(face(line(h))).toContain('which branch?');
+    expect(face(line(h))).toContain('Waiting');
+    expect(card(h).hidden).toBe(false);
+    expect(h.el('btw-q').textContent).toBe('which branch?');
+    expect(h.el('btw-body').textContent).toContain('Asking a copy of this conversation');
+
+    const nonce = h.calls.find((c) => c.path === 'api/send')?.body.nonce as string;
+    await h.emit({ t: 'msg', msg: asked('w2', 'which branch?', { nonce }) });
+    // The echo takes over the line, and the card goes with it.
+    expect(h.doc.querySelectorAll('#log .m.btw-q')).toHaveLength(1);
+    expect(card(h).hidden).toBe(false);
+
+    // The answer opens with its header, which the card's title already says, then streams.
+    await h.emit({ t: 'msg', msg: answer('w3', 'w2', '<p>↪ btw: which branch?</p>') });
+    expect(h.el('btw-body').textContent).toContain('Asking a copy of this conversation');
+    await h.emit({ t: 'msg', msg: message('w1', '<p>working on it — tests pass</p>') });
+    await h.emit({
+      t: 'msg',
+      msg: answer('w3', 'w2', '<p>↪ btw: which branch?</p><p>feat/x</p><p>side question — not kept in this conversation</p>'),
+    });
+    await h.emit({ t: 'msg', msg: message('w4', '<p>all green</p>') });
+
+    expect(h.el('btw-body').textContent).toContain('feat/x');
+    expect(h.el('btw-body').textContent).not.toContain('↪ btw');
+    // The closing line is small print.
+    expect(h.el('btw-body').querySelector('.btw-foot')?.textContent).toBe('side question — not kept in this conversation');
+    // The transcript reads as the conversation: the reply, the line, the reply's next message.
+    const log = h.el('log');
+    expect(log.textContent).not.toContain('feat/x');
+    expect(log.querySelectorAll('.m.aside')).toHaveLength(0);
+    expect(log.querySelector('[data-k="1:w3"]')?.className).toBe('m aside-held');
+    expect(log.querySelector('[data-k="1:w3"]')?.innerHTML).toBe('');
+    expect(face(line(h))).toContain('Answer');
+    expect(line(h)?.querySelector('.btw-chip')?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('stays shut while the answer arrives once closed by hand, and its line opens it again', async () => {
+    const h = await open({ url: at });
+    await h.emit(sync(T, [asked('w1', 'which branch?'), answer('w2', 'w1', '<p>↪ btw: which branch?</p><p>feat</p>')], [T]));
+    // A sync is not an arrival: nothing pops up over a topic being opened.
+    expect(card(h).hidden).toBe(true);
+    expect(face(line(h))).toContain('Answer');
+
+    await h.click('#log .btw-chip');
+    expect(card(h).hidden).toBe(false);
+    expect(h.el('btw-body').textContent).toContain('feat');
+    await h.click('#btw-close');
+    expect(card(h).hidden).toBe(true);
+    expect(line(h)?.querySelector('.btw-chip')?.getAttribute('aria-expanded')).toBe('false');
+
+    await h.emit({ t: 'msg', msg: answer('w2', 'w1', '<p>↪ btw: which branch?</p><p>feat/x</p>') });
+    expect(card(h).hidden).toBe(true);
+
+    // The line toggles, and Escape puts it away without touching the panels behind it.
+    await h.click('#log .btw-chip');
+    expect(h.el('btw-body').textContent).toContain('feat/x');
+    await h.click('#log .btw-chip');
+    expect(card(h).hidden).toBe(true);
+    await h.click('#log .btw-chip');
+    const panelOpen = h.el('sidebar').classList.contains('collapsed');
+    escape(h);
+    expect(card(h).hidden).toBe(true);
+    expect(h.el('sidebar').classList.contains('collapsed')).toBe(panelOpen);
+  });
+
+  it('opens on an answer that arrives while it is shut, if nobody shut it', async () => {
+    // A reload while the answer was being worked out: the card is not up, and the answer is news.
+    const h = await open({ url: at });
+    await h.emit(sync(T, [asked('w1', 'which branch?')], [T]));
+    expect(card(h).hidden).toBe(true);
+    expect(face(line(h))).toContain('Waiting');
+
+    await h.emit({ t: 'msg', msg: answer('w2', 'w1', '<p>↪ btw: which branch?</p><p>feat/x</p>') });
+    expect(card(h).hidden).toBe(false);
+    expect(h.el('btw-body').textContent).toContain('feat/x');
+  });
+
+  it('shows a refusal as the answer', async () => {
+    const h = await open({ url: at });
+    await h.emit(sync(T, [asked('w1', 'q')], [T]));
+    await h.emit({ t: 'msg', msg: answer('w2', 'w1', '<p>agy does not support /btw.</p>') });
+    expect(h.el('btw-body').textContent).toBe('agy does not support /btw.');
+    expect(h.el('log').textContent).not.toContain('does not support');
+  });
+
+  it('draws an answer in the transcript again when its question is no longer held', async () => {
+    // The ring keeps the newest 1000 messages, so a question can age out before its answer does.
+    // An answer with no line to open it must not become unreachable.
+    const h = await open({ url: at });
+    await h.emit(sync(T, [asked('w1', 'which branch?'), answer('w2', 'w1', '<p>↪ btw: which branch?</p><p>feat/x</p>')], [T]));
+    await h.click('#log .btw-chip');
+    expect(h.doc.querySelectorAll('#log .m.aside')).toHaveLength(0);
+
+    await h.emit(sync(T, [answer('w2', 'w1', '<p>↪ btw: which branch?</p><p>feat/x</p>')], [T]));
+    expect(line(h)).toBeNull();
+    expect(card(h).hidden).toBe(true);
+    expect(h.doc.querySelectorAll('#log .m.aside')).toHaveLength(1);
+    expect(h.doc.querySelector('#log .m.aside .b')?.textContent).toContain('feat/x');
+  });
+
+  it('keeps the pairing across a reload, from the cache', async () => {
+    const messages = [asked('w1', 'which branch?'), answer('w2', 'w1', '<p>↪ btw: which branch?</p><p>feat/x</p>'), message('w3', '<p>next</p>')];
+    const first = await open({ url: at });
+    await first.emit(sync(T, messages, [T]));
+    await saved();
+    first.window.close();
+
+    const again = await open({ url: at, idb: first.idb });
+    await until('the cached transcript is painted', () => again.painted() === 3);
+    expect(face(line(again))).toContain('Answer');
+    expect(again.doc.querySelectorAll('#log .m.aside')).toHaveLength(0);
+    await again.click('#log .btw-chip');
+    expect(again.el('btw-body').textContent).toContain('feat/x');
+  });
+
+  it('is put away with the topic it belongs to', async () => {
+    const h = await open({ url: at });
+    await h.emit(sync(T, [asked('w1', 'q'), answer('w2', 'w1', '<p>yes</p>')], [T, B]));
+    await h.click('#log .btw-chip');
+    expect(card(h).hidden).toBe(false);
+    await h.click(`[data-topic="${B}"]`);
+    expect(card(h).hidden).toBe(true);
+  });
+
+  it('leaves a message that only starts like one alone', async () => {
+    const h = await open({ url: at });
+    await h.emit(sync(T, [message('w1', '<div class="raw">/btwx not a side question</div>', true)], [T]));
+    expect(line(h)).toBeNull();
+    expect(h.doc.querySelectorAll('#log .m.own')).toHaveLength(1);
+  });
+
+  it('is over the composer, inside the bar, and a finger target on a phone', () => {
+    const html = renderPage('Chat', false);
+    expect(html).toContain('#btw{position:absolute;left:16px;right:16px;bottom:calc(100% + 6px)');
+    const doc = new JSDOM(html).window.document;
+    expect(doc.getElementById('btw')?.parentElement?.id).toBe('bar');
+    const at640 = html.indexOf('@media(max-width:640px){');
+    let depth = 0;
+    let css = '';
+    for (let i = html.indexOf('{', at640); i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}' && --depth === 0) {
+        css = html.slice(at640, i + 1);
+        break;
+      }
+    }
+    expect(css).toContain('#btw{left:8px;right:8px;max-height:min(55dvh,480px)}');
+    expect(css).toContain('#btw-close{min-width:44px;min-height:44px}');
+    expect(css).toContain('.btw-chip{min-height:44px}');
   });
 });
 
@@ -9592,7 +9774,7 @@ describe('webui page: the Sessions list calendar', () => {
     await h.click('#schedules-toggle');
     await h.click('#sched-tab-sessions');
 
-    const button = (): HTMLButtonElement => h.doc.querySelector('[data-readall]') as HTMLButtonElement;
+    const button = (): HTMLButtonElement => h.doc.querySelector('#sched-read') as HTMLButtonElement;
     expect(button().disabled).toBe(false);
     expect(h.el('sched-sessions').querySelectorAll('.topic-badge')).toHaveLength(2);
 
@@ -9617,6 +9799,28 @@ describe('webui page: the Sessions list calendar', () => {
     expect(button().disabled).toBe(true);
   });
 
+  it('keeps Mark all read in the panel title, shown on the Sessions tab only', async () => {
+    const h = await open({ storage: { aa_reads: JSON.stringify({ [C]: 0 }) } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [{ id: C, title: 'finished run', lastAt: TODAY, msgCount: 3, stage: 'review', scheduled: true }, ordinary],
+    });
+    await h.click('#schedules-toggle');
+    const button = h.el('sched-read') as HTMLButtonElement;
+    // Beside the close, the way the topic list has its own beside its title — not a bar over the rows.
+    expect(button.parentElement?.id).toBe('schedules-head');
+    await h.click('#sched-tab-tasks');
+    expect(button.hidden).toBe(true);
+    await h.click('#sched-tab-sessions');
+    expect(button.hidden).toBe(false);
+    expect(button.title).toBe('Mark all read (1 session)');
+    expect(h.el('sched-sessions').textContent).not.toContain('Mark all read');
+    // It marks runs, so over the reviews it would name nothing listed there.
+    await h.click('#sched-tab-reviews');
+    expect(button.hidden).toBe(true);
+  });
+
   it('says so when the daemon refuses a mark, and sends them one at a time', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
@@ -9638,7 +9842,7 @@ describe('webui page: the Sessions list calendar', () => {
     });
     await h.click('#schedules-toggle');
     await h.click('#sched-tab-sessions');
-    (h.doc.querySelector('[data-readall]') as HTMLButtonElement).click();
+    (h.doc.querySelector('#sched-read') as HTMLButtonElement).click();
     await tick();
 
     // One at a time: the second is not even sent until the first has answered.
@@ -9764,13 +9968,13 @@ describe('webui page: sub-agents a scheduled run opened', () => {
     await h.click(`#sched-sessions [data-fold="${R}"]`);
     expect(row(h, S).querySelector('.topic-badge')?.textContent).toBe('2');
     expect(row(h, S).querySelector('.topic-dot')?.className).toBe('topic-dot');
-    const readAll = h.doc.querySelector('[data-readall]') as HTMLButtonElement;
+    const readAll = h.doc.querySelector('#sched-read') as HTMLButtonElement;
     expect(readAll.disabled).toBe(false);
 
     readAll.click();
     await tick();
     expect(row(h, S).querySelector('.topic-badge')).toBeNull();
-    expect((h.doc.querySelector('[data-readall]') as HTMLButtonElement).disabled).toBe(true);
+    expect((h.doc.querySelector('#sched-read') as HTMLButtonElement).disabled).toBe(true);
     expect(h.calls.filter((c) => c.path === 'api/seen')).toEqual([]);
   });
 });

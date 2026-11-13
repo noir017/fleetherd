@@ -521,8 +521,13 @@ export interface PlatformAdapter {
 
   // ---- Platform-layer interaction capabilities (vertical slice): true reply / thread / buttons / slash ----
 
-  /** True reply: send a platform-native reply targeting ref (Discord message_reference). */
-  replyMessage(ref: MessageRef, text: string): Promise<MessageRef>;
+  /**
+   * True reply: send a platform-native reply targeting ref (Discord message_reference).
+   *
+   * `opts.kind` as on sendMessage. The web UI also records which message this answers, so the
+   * page can pair a side answer with the `/btw` it replies to.
+   */
+  replyMessage(ref: MessageRef, text: string, opts?: SendOptions): Promise<MessageRef>;
 
   /**
    * Create a thread from a message; returns the new thread's address, which later sends
@@ -886,6 +891,8 @@ export interface PlatformAdapter {
  * - `aside` — the answer to a side question (`/btw`, daemon/acp-side-question.ts): asked of a copy
  *   of the conversation and kept out of it, so it must not read as the next step of the work the
  *   messages around it are about — it often arrives in the middle of a reply still streaming.
+ *   Sent as a reply to the `/btw` where the platform has replies (turn-runner.ts sendAside); the
+ *   web UI then shows it in a card over the composer instead of in the transcript.
  *
  * Every other platform ignores this: a chat app shows the text as sent, so the distinction is
  * the web UI's alone to draw.

@@ -15,7 +15,7 @@ import type {
   SteerOutcome,
   ToolEvent,
 } from '../types.js';
-import type { MessageKind, PlatformAdapter } from '../platform/adapter.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
 import { promptUndelivered } from './agent.js';
 import { retryButtons } from '../core/turn-retry.js';
@@ -185,6 +185,33 @@ function asideFooter(tools: number, note: string | undefined): string {
   if (tools > 0) parts.push(`${tools} tool call${tools === 1 ? '' : 's'}`);
   if (note) parts.push(note);
   return parts.join(' · ');
+}
+
+/**
+ * Send one message of a side answer (`/btw`): a reply to the question, where the platform has
+ * replies, so it hangs off the `/btw` rather than sitting in the conversation as its next message.
+ * A chat app shows the quote (Slack puts it in the question's thread); the web UI pairs the two by
+ * the replied-to id and shows them in a card over the composer, out of the transcript.
+ *
+ * Falls back to a plain send when the reply is refused: the "message" behind a native slash
+ * command is an interaction, not a message anything can quote (Discord, Slack), and QQ accepts a
+ * passive reply only within five minutes of the question. The answer still arrives, unthreaded,
+ * and still opens with the question it answers (asideHeader).
+ */
+export async function sendAside(
+  platform: PlatformAdapter,
+  address: ConversationAddress,
+  question: MessageRef | undefined,
+  text: string
+): Promise<MessageRef> {
+  if (question && platform.capabilities.reply) {
+    try {
+      return await platform.replyMessage(question, text, { kind: 'aside' });
+    } catch (e) {
+      console.warn('[btw] could not reply to the question, sending it unthreaded:', describeOutboundError(e));
+    }
+  }
+  return platform.sendMessage(address, text, { kind: 'aside' });
 }
 
 /**
@@ -1462,14 +1489,18 @@ export class TurnRunner {
    * Text only. A fork rarely runs a tool to answer a question, and a tool bubble of its own in the
    * lane would read as the running turn's; how many it ran goes in the closing line instead. A
    * permission the fork asks for is put to the person in this lane, like a turn's.
+   *
+   * `asked` is the `/btw` message itself: every message of the answer, and a notice about it, is a
+   * reply to it (sendAside).
    */
   beginAside(
     conversationId: ConversationId,
     platform: PlatformAdapter,
     address: ConversationAddress,
-    question: string
+    question: string,
+    asked?: MessageRef
   ): { handlers: AgentStreamHandlers; finish(note?: string): Promise<void> } {
-    const stream = this.makeStreamBuffer(platform, address, 'aside');
+    const stream = this.makeStreamBuffer(platform, address, (text) => sendAside(platform, address, asked, text));
     let tools = 0;
     let answered = false;
     let breakPending = false;
@@ -1505,9 +1536,9 @@ export class TurnRunner {
         return this.askPermission(conversationId, platform, address, request);
       },
       onNotice: (text) => {
-        platform
-          .sendMessage(address, text)
-          .catch((e) => console.warn('[btw] failed to send a notice:', e instanceof Error ? e.message : e));
+        sendAside(platform, address, asked, text).catch((e) =>
+          console.warn('[btw] failed to send a notice:', e instanceof Error ? e.message : e)
+        );
       },
     };
     return {
@@ -1692,8 +1723,11 @@ export class TurnRunner {
   private makeStreamBuffer(
     platform: PlatformAdapter,
     address: ConversationAddress,
-    /** What every message this buffer sends is, for the platform that draws kinds apart (SendOptions). */
-    kind?: MessageKind
+    /**
+     * How a new message is sent, when it is not a plain send to `address` — a side answer replies
+     * to its question (sendAside). Edits still go to the ref this returns.
+     */
+    post?: (text: string) => Promise<MessageRef>
   ): StreamBuffer {
     return new StreamBuffer(
       {
@@ -1720,7 +1754,7 @@ export class TurnRunner {
         schedule: this.clock.schedule,
         send: async (text) => {
           try {
-            const ref = await (kind ? platform.sendMessage(address, text, { kind }) : platform.sendMessage(address, text));
+            const ref = await (post ? post(text) : platform.sendMessage(address, text));
             console.log(`[out] send ok (${text.length} chars) → ${ref.messageId}`);
             return ref;
           } catch (e) {

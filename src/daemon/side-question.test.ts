@@ -3,12 +3,13 @@ import { ConversationRegistry } from './conversation.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter, SendOptions } from '../platform/adapter.js';
 import { SideQuestionRefused, type AgentFactory, type AgentSession, type AgentStreamHandlers } from './agent.js';
-import type { InboundMessage } from '../types.js';
+import type { InboundMessage, MessageRef } from '../types.js';
 
 /**
  * `/btw` in route(): a side question is answered at once — while a turn runs, without stopping it or
- * queueing behind it — in a message of its own, marked `aside`. What the runtime does with the fork
- * is pinned in agent-acp-btw.test.ts; these pin the gateway's half.
+ * queueing behind it — in a message of its own, marked `aside` and sent as a reply to the `/btw`
+ * where the platform has replies. What the runtime does with the fork is pinned in
+ * agent-acp-btw.test.ts; these pin the gateway's half.
  */
 
 function config(defaultAgent: string): Config {
@@ -31,10 +32,11 @@ const drain = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms));
 /** What the stub runtime does when asked a side question. */
 type SideScript = (handlers: AgentStreamHandlers, prompt: string) => Promise<'done' | 'stopped'>;
 
-function rig(opts: { agent?: string; side?: SideScript; noSide?: boolean } = {}) {
+function rig(opts: { agent?: string; side?: SideScript; noSide?: boolean; reply?: 'ok' | 'refused' } = {}) {
   const prompts: string[] = [];
   const asked: string[] = [];
-  const sent: Array<{ text: string; kind?: string }> = [];
+  /** `re` is the message a reply answered; absent on a plain send. */
+  const sent: Array<{ text: string; kind?: string; re?: string }> = [];
   let aborts = 0;
   let release: () => void = () => {};
   let stopSide: (() => void) | undefined;
@@ -79,10 +81,16 @@ function rig(opts: { agent?: string; side?: SideScript; noSide?: boolean } = {})
   };
 
   const platform = {
-    capabilities: { thread: false, editMessage: true, maxMessageLength: 4000 },
+    capabilities: { thread: false, editMessage: true, maxMessageLength: 4000, reply: opts.reply !== undefined },
     sendMessage: async (address: { channel: string }, text: string, o?: SendOptions) => {
       sent.push({ text, ...(o?.kind ? { kind: o.kind } : {}) });
-      return { address, messageId: `m${sent.length}` };
+      return { address, messageId: `out${sent.length}` };
+    },
+    // The way a native slash command's interaction, or a QQ trigger past its five minutes, answers.
+    replyMessage: async (ref: MessageRef, text: string, o?: SendOptions) => {
+      if (opts.reply === 'refused') throw new Error('message to be replied not found');
+      sent.push({ text, ...(o?.kind ? { kind: o.kind } : {}), re: ref.messageId });
+      return { address: ref.address, messageId: `out${sent.length}` };
     },
     editMessage: async () => {},
     addReaction: async () => {},
@@ -121,6 +129,9 @@ function rig(opts: { agent?: string; side?: SideScript; noSide?: boolean } = {})
     },
     /** Let the stub's side question be stopped, resolving it as `stopped`. */
     stoppable: (resolve: () => void) => void (stopSide = resolve),
+    sent,
+    /** The id the next `send` gives its message. */
+    nextId: () => `m${n + 1}`,
     asides: () => sent.filter((m) => m.kind === 'aside').map((m) => m.text),
     replies: () => sent.filter((m) => !m.kind && !m.text.startsWith('🤖')).map((m) => m.text),
   };
@@ -186,8 +197,10 @@ describe('/btw refused', () => {
     });
     await r.send('/btw q');
     expect(r.asked).toEqual(['q']); // a custom agent is asked — whether it can fork is its own to say
-    expect(r.asides()).toEqual([]);
-    expect(r.replies()).toEqual(['mine does not support /btw: its agent declares no session/fork, which a side question is asked on.']);
+    // The sentence alone, with no `↪ btw:` header over it: that would be an answer that never came.
+    // Marked aside like an answer, because it is the reply to the /btw and not the conversation's.
+    expect(r.asides()).toEqual(['mine does not support /btw: its agent declares no session/fork, which a side question is asked on.']);
+    expect(r.replies()).toEqual([]);
     expect(r.prompts).toEqual([]); // and it was never forwarded as a prompt
   });
 
@@ -195,14 +208,14 @@ describe('/btw refused', () => {
     const r = rig({ agent: 'ag' });
     await r.send('/btw q');
     expect(r.asked).toEqual([]);
-    expect(r.replies()).toEqual(['agy does not support /btw.']);
+    expect(r.asides()).toEqual(['agy does not support /btw.']);
     expect(r.prompts).toEqual([]);
   });
 
   it('says how to use it when there is no question', async () => {
     const r = rig();
     await r.send('/btw');
-    expect(r.replies().at(-1)).toMatch(/^Usage: `\/btw <question>`/);
+    expect(r.asides().at(-1)).toMatch(/^Usage: `\/btw <question>`/);
     expect(r.asked).toEqual([]);
   });
 
@@ -220,6 +233,46 @@ describe('/btw refused', () => {
   it('says so for a runtime with no side questions at all', async () => {
     const r = rig({ noSide: true });
     await r.send('/btw q');
-    expect(r.replies()).toEqual(['claude does not support /btw.']);
+    expect(r.asides()).toEqual(['claude does not support /btw.']);
+  });
+});
+
+describe('/btw on a platform with replies', () => {
+  it('answers as a reply to the /btw, so it hangs off the question rather than following the conversation', async () => {
+    const r = rig({
+      reply: 'ok',
+      side: async (h) => {
+        h.onNotice?.('⚠ retrying after an API error');
+        h.onText('it is feat/x');
+        return 'done';
+      },
+    });
+    await r.send('run the full suite');
+    const question = r.nextId();
+    await r.send('/btw which branch?');
+
+    // The answer and the notice about it both name the /btw they belong to; nothing of the side
+    // question went out as a plain message.
+    expect(r.sent.filter((m) => m.kind === 'aside')).toEqual([
+      { text: '⚠ retrying after an API error', kind: 'aside', re: question },
+      { text: '↪ btw: which branch?\n\nit is feat/x\n\nside question — not kept in this conversation', kind: 'aside', re: question },
+    ]);
+    expect(r.sent.filter((m) => m.re === undefined && m.kind === 'aside')).toEqual([]);
+  });
+
+  it('replies with a refusal too', async () => {
+    const r = rig({ reply: 'ok', agent: 'ag' });
+    const question = r.nextId();
+    await r.send('/btw q');
+    expect(r.sent).toEqual([{ text: 'agy does not support /btw.', kind: 'aside', re: question }]);
+  });
+
+  it('falls back to a plain send when the reply is refused, and the answer still arrives', async () => {
+    // A native slash command's "message" is an interaction nothing can quote.
+    const r = rig({ reply: 'refused' });
+    await r.send('/btw which branch?');
+    expect(r.sent).toEqual([
+      { text: '↪ btw: which branch?\n\nmain is on feat/x\n\nside question — not kept in this conversation', kind: 'aside' },
+    ]);
   });
 });

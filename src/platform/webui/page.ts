@@ -441,12 +441,12 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* Clear all topics sits in the panel title: quiet until the pointer is on it. Dim, then red. */
 #clear-topics{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
 #clear-topics:hover{color:#f87171;background:rgba(248,113,113,.15)}
-/* Mark all read sits beside it, in the same quiet: the Sessions tab's button, for the topic list.
-   An icon rather than a bar of its own above the rows, which would cost the list a row's height
-   for a control that is greyed out most of the time. */
-#read-topics{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
-#read-topics:hover:not(:disabled){color:var(--fg);background:var(--field)}
-#read-topics:disabled{opacity:.35;cursor:default}
+/* Mark all read sits beside it, in the same quiet, and the Sessions tab has the same icon in the side
+   panel's title (#sched-read). An icon rather than a bar of its own above the rows, which would cost
+   the list a row's height for a control that is greyed out most of the time. */
+#read-topics,#sched-read{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
+#read-topics:hover:not(:disabled),#sched-read:hover:not(:disabled){color:var(--fg);background:var(--field)}
+#read-topics:disabled,#sched-read:disabled{opacity:.35;cursor:default}
 /* The confirmation for it: names every topic whose agent is about to go, because "close 7 agents"
    does not say whether the one you were about to come back to is among them. A dialog of the page's
    own rather than confirm(), which cannot hold a list a phone can scroll. The list scrolls inside
@@ -554,13 +554,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    topic list draws (treeRowHtml), with the sub-agents the run opened folded under it the same way:
    dot, name, a quiet line under it, and a ⋯ that holds the same Star / End agent / Delete. */
 #sched-sessions{display:flex;flex-direction:column;gap:2px}
-/* The one bulk action over the list, and the period headers that keep a long run history
-   scannable. A folded header carries what its rows would: the unread count and any run still
-   working or waiting. */
-.sess-bar{display:flex;justify-content:flex-end;padding:0 2px 4px}
-.sess-readall{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:11.5px;padding:4px 9px;cursor:pointer}
-.sess-readall:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
-.sess-readall:disabled{opacity:.45;cursor:default}
+/* The period headers that keep a long run history scannable. A folded header carries what its rows
+   would: the unread count and any run still working or waiting. The list's one bulk action is in
+   the panel's title (#sched-read). */
 .sess-group{display:flex;flex-direction:column;margin-top:2px}
 .sess-group-head{display:flex;align-items:center;gap:5px;width:100%;padding:5px 6px;border:0;border-radius:5px;background:none;color:var(--dim);font:inherit;font-size:11.5px;cursor:pointer;text-align:left}
 .sess-group-head:hover{background:#202020;color:var(--fg)}
@@ -944,9 +940,35 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .m.report .sub-k{color:#9ad6b3;background:rgba(63,143,107,.16);border-color:rgba(63,143,107,.45)}
 /* The answer to a side question (/btw): asked of a copy of the conversation and kept out of it, so
    it must not read as the next step of the reply it may land in the middle of. The same rail and
-   tag as the two above, dashed and slate-teal — none of mine, waiting, dispatch or done. */
+   tag as the two above, dashed and slate-teal — none of mine, waiting, dispatch or done. Only an
+   answer that cannot be paired with its question is drawn this way now (one kept from before
+   answers were replies, or whose question has aged out); the rest are read in #btw. */
 .m.aside{background:var(--aside);border-left:3px dashed var(--aside-edge);border-radius:0 6px 6px 0;padding:9px 12px}
 .m.aside .sub-k{color:#a6cfd8;background:rgba(79,138,153,.16);border-color:rgba(79,138,153,.45)}
+/* A side question and its answer, out of the transcript (openBtw). The question stays where it was
+   asked, as one line that opens the answer; the answer's own node stays in #log but empty and of no
+   height, because the cache and the reading position are both read off #log's children (cacheable,
+   firstVisible) and a node taken out would be lost to both. */
+.m.aside-held{margin:0;animation:none}
+.btw-chip{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:5px 10px;border:1px dashed rgba(79,138,153,.5);border-radius:6px;background:var(--aside);color:var(--fg);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.btw-chip:hover,.btw-chip[aria-expanded="true"]{border-style:solid;background:#18242a}
+.btw-chip:focus-visible{outline:2px solid var(--aside-edge);outline-offset:1px}
+.btw-tag{flex:none;padding:0 7px;border:1px solid rgba(79,138,153,.45);border-radius:9px;background:rgba(79,138,153,.16);color:#a6cfd8;font-size:10.5px;font-weight:600;line-height:1.6;letter-spacing:.03em;text-transform:uppercase}
+.btw-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cdcdcd}
+.btw-state{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dim);font-size:11.5px}
+.btw-state.ready{color:#a6cfd8}
+.btw-when{flex:none;color:var(--dim);font-size:11.5px}
+/* The card the answer is read in: over the composer, inside #bar so it moves with it, like the model
+   list. Not closed by a click elsewhere, unlike that list — the transcript under it is still being
+   read, and scrolling it must not take the answer away. */
+#btw{position:absolute;left:16px;right:16px;bottom:calc(100% + 6px);z-index:14;display:flex;flex-direction:column;max-height:min(46vh,440px);background:#151c1f;border:1px solid rgba(79,138,153,.5);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.55);overflow:hidden}
+.btw-head{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-bottom:1px solid rgba(79,138,153,.25)}
+#btw-q{flex:1;min-width:0;font-weight:600;font-size:13px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
+#btw-close{flex:none;font-size:17px;padding:4px 10px}
+#btw-body{flex:1;min-height:0;overflow-y:auto;padding:10px 12px 4px;overflow-wrap:anywhere}
+#btw-body>.b{margin-bottom:.6em}
+#btw-body .btw-foot{margin:.8em 0 0;color:var(--dim);font-size:12px}
+.btw-wait{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12.5px;padding-bottom:8px}
 /* A message that is on screen because it was typed here, not because the daemon sent it back.
    Dimmed while the request is in flight; edged red and given something to do about it once the
    request has failed, since the text in it is the only copy left. */
@@ -1340,7 +1362,7 @@ button:disabled{opacity:.5;cursor:default}
      a target three times its size and reads as a stray mark rather than a control. */
   #kill-agent{min-width:44px;height:44px}
   #kill-agent svg{width:18px;height:18px}
-  #clear-topics svg,#read-topics svg{width:18px;height:18px}
+  #clear-topics svg,#read-topics svg,#sched-read svg{width:18px;height:18px}
   /* The panel keeps the drawer's width here rather than taking the whole screen: it is the same
      overlay the 1023px rule makes, sliding in from the right, and a strip of the conversation
      stays visible behind it. Only the header and the targets grow for a finger. */
@@ -1469,6 +1491,11 @@ button:disabled{opacity:.5;cursor:default}
   #model-pop{left:8px;right:8px;width:auto;max-height:min(62dvh,520px)}
   #mp-filter{min-height:44px;font-size:16px}
   #mp-close{min-width:44px;min-height:44px}
+  /* The side answer's card takes the composer's width and up to half the screen; its line in the
+     transcript and its close button are finger targets. */
+  #btw{left:8px;right:8px;max-height:min(55dvh,480px)}
+  #btw-close{min-width:44px;min-height:44px}
+  .btw-chip{min-height:44px}
   .mp-opt{min-height:48px}
   /* The same 44px for taking an attachment back off. A miss lands on the thumbnail, which only
      opens it — but a 15px glyph with no padding is a target a finger finds on the third try. */
@@ -1491,7 +1518,7 @@ const SCRIPT = `
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
       chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
-      schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'),
+      schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'), schedReadBtn=$('sched-read'),
       schedFilterHost=$('sched-filter'),
       schedClose=$('schedules-close'), schedNote=$('schedules-note'),
       schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
@@ -2487,7 +2514,7 @@ const SCRIPT = `
   }
 
   /**
-   * The Sessions list: a bar with the one bulk action, then the groups.
+   * The Sessions list: the groups, and whether the title's Mark all read has anything to mark.
    *
    * A folded group keeps its rows in the DOM but hidden, so aria-controls still names a real
    * element and a repaint does not have to remember what it left out. The flags on a folded
@@ -2496,6 +2523,7 @@ const SCRIPT = `
   function paintSessions(){
     var list=schedSessions();
     if(!list.length){
+      paintSchedRead(0);
       schedSessionList.innerHTML='<div class="sched-empty">No scheduled sessions yet. A task that runs in a new or daily session opens one here.</div>';
       rowMenuFollow();
       armAgeTick();
@@ -2503,9 +2531,9 @@ const SCRIPT = `
     }
     var tree=topicTree(schedMembers()), walker=treeWalker(tree), pending=0;
     for(var p=0;p<tree.visible.length;p++) if(needsRead(tree.visible[p])) pending++;
+    paintSchedRead(pending);
     var groups=schedSessionGroups(list);
-    var h='<div class="sess-bar"><button type="button" class="sess-readall" data-readall="1"'
-      + (pending?'':' disabled') + '>Mark all read</button></div>';
+    var h='';
     for(var g=0;g<groups.length;g++){
       var gr=groups[g];
       var open=sessGroupOpen(gr, g===0);
@@ -2535,6 +2563,12 @@ const SCRIPT = `
     schedSessionList.innerHTML=h;
     rowMenuFollow();
     armAgeTick();
+  }
+
+  /** The title's Mark all read, greyed when no run has anything to mark — the topic list's (paintTopics) does the same. */
+  function paintSchedRead(pending){
+    schedReadBtn.disabled = !pending;
+    schedReadBtn.title = pending ? 'Mark all read ('+pending+' session'+(pending===1?'':'s')+')' : 'Mark all read \u2014 nothing unread';
   }
 
   /**
@@ -2909,6 +2943,7 @@ const SCRIPT = `
     // The bar belongs to the Tasks list only: Sessions is a list of run topics and Reviews is a
     // different kind of thing, and a search box over either would filter nothing it names.
     schedFilterHost.hidden = isReviews || schedSubtab === 'sessions';
+    schedReadBtn.hidden = isReviews || schedSubtab !== 'sessions';
 
     if(!isReviews){
       var isSessions = schedSubtab === 'sessions';
@@ -3463,13 +3498,11 @@ const SCRIPT = `
     paintReviews();
   });
 
+  schedReadBtn.addEventListener('click', function(){
+    markAllRead(schedMembers(), 'session', showSchedNote);
+  });
+
   schedSessionList.addEventListener('click', function(e){
-    var readall = e.target.closest ? e.target.closest('[data-readall]') : null;
-    if(readall){
-      e.stopPropagation();
-      markAllRead(schedMembers(), 'session', showSchedNote);
-      return;
-    }
     var head = e.target.closest ? e.target.closest('[data-sgroup]') : null;
     if(head){
       e.stopPropagation();
@@ -3804,6 +3837,9 @@ const SCRIPT = `
       els[key]=el;
     }
     var out = msgMarkup(key, m, isHistory(m));
+    // A side question's line says whether its answer has come, and an answer is held out of the
+    // transcript only while its question is on the page: each repaints the other (btwLink).
+    if(!btwNest) btwLink(key, m);
     // Write nothing when nothing changed. A sync re-paints every message it carries, and most of
     // them are messages already on screen unchanged — rewriting innerHTML for those would drop
     // the caret out of a selection, restart any <img> decode, and undo the enabled state of a
@@ -3820,12 +3856,185 @@ const SCRIPT = `
    */
   var SUB_K = {dispatch:'Sub-agent task', report:'Sub-agent report', aside:'Side question'};
 
+  // ── Side questions (/btw) ──────────────────────────────────────────────────
+  // A /btw is asked of a copy of the conversation and kept out of it, and its answer often lands in
+  // the middle of a reply still streaming — where, drawn as a message, it read as that reply's next
+  // paragraph. So neither half is drawn as a message: the question stays where it was asked as one
+  // line, and the answer is read in a card over the composer (#btw) that the line opens again. The
+  // daemon sends every message of an answer, and a refusal, as a reply to the /btw (turn-runner.ts
+  // sendAside), whose quote names the question's id: the id, not the text, is what pairs them.
+  var btwBox=$('btw'), btwQ=$('btw-q'), btwBody=$('btw-body');
+  // The question the card shows, by its key in data; what the card last drew; the questions whose
+  // card was closed by hand, so an answer still arriving for one updates its line rather than
+  // opening the card again; and the guard that stops a question and its answer repainting each
+  // other for ever (btwLink).
+  var btwKey=null, btwSig='', btwShut={}, btwNest=false;
+  // What the daemon takes for a /btw (daemon/routing.ts parseTextCommand): the name exactly, then
+  // the question after whitespace, or nothing.
+  var BTW_RE=/^\\s*\\/btw(?:\\s+([\\s\\S]*))?$/;
+  // The answer's first line names its question again, for a chat app (turn-runner.ts asideHeader).
+  // The card has the question for a title, so there it goes.
+  var BTW_HEAD_RE=/^<p>\\u21aa btw: [\\s\\S]*?<\\/p>\\s*/;
+  // And its last says it was kept out of the conversation (asideFooter): small print, drawn as such.
+  var BTW_FOOT_RE=/<p>(side question \\u2014 [^<]*)<\\/p>\\s*$/;
+
+  /** The text of a message typed here, as the daemon was given it; null when there is none. */
+  function ownText(m){
+    if(m._local) return m._text;
+    // room.ts renderBody: the text escaped, whole, in the first element.
+    var x = /^<div class="raw">([^<]*)<\\/div>/.exec(m.html || '');
+    if(!x) return null;
+    return x[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  }
+
+  /**
+   * What a message typed here asked on the side — '' for a bare /btw — or null when it is not a
+   * /btw. Never in a conversation opened from History ('h:' keys): the library keeps no side
+   * question, and a card opened from one would be over a topic that is not on screen.
+   */
+  function btwAsked(key, m){
+    if(!m || !m.own || String(key).indexOf('h:') === 0) return null;
+    var raw = ownText(m);
+    var x = raw == null ? null : BTW_RE.exec(raw);
+    return x ? (x[1] || '').trim() : null;
+  }
+
+  /** The key of the question a side answer replies to; null for anything else, and for an answer kept from before answers named it. */
+  function btwOf(m){
+    return m && m.kind === 'aside' && m.quote && m.quote.id ? (m._g || epoch) + ':' + m.quote.id : null;
+  }
+
+  /**
+   * Whether an answer is kept out of the transcript. Only while its question is on the page to stand
+   * for it: an answer whose question has aged out of the ring or the cache is drawn as a bubble, as
+   * every answer was before, rather than becoming unreachable.
+   */
+  function btwHeld(key, m){
+    if(String(key).indexOf('h:') === 0) return false;
+    var q = btwOf(m);
+    return Boolean(q && data[q] && btwAsked(q, data[q]) !== null);
+  }
+
+  /** Every message of the answer to the question under qk, in the order they were sent. */
+  function btwParts(qk){
+    var out=[];
+    for(var k in data){
+      if(Object.prototype.hasOwnProperty.call(data, k) && btwOf(data[k]) === qk) out.push(k);
+    }
+    out.sort(function(a, b){ return (data[a].at - data[b].at) || (seqOf(data[a].id) - seqOf(data[b].id)); });
+    return out;
+  }
+  function seqOf(id){ var n = parseInt(String(id).slice(1), 10); return isNaN(n) ? 0 : n; }
+
+  /** A side question in the transcript: one line that opens its answer, in place of the question's bubble. */
+  function btwLine(key, m, asked, hist){
+    var answered = !m._local && btwParts(key).length > 0;
+    var state = answered ? 'Answer' + IC.icon.chevronRight
+      : stuck(m) ? '' : hist ? 'No answer' : 'Waiting\\u2026';
+    var shown = btwKey === key && !btwBox.hidden;
+    var cls = 'm btw-q' + (hist ? ' hist' : '')
+      + (m._local && m._state === 'sending' ? ' pending' : '')
+      + (stuck(m) ? ' failed' : '');
+    var h = '<button type="button" class="btw-chip" aria-haspopup="dialog" aria-controls="btw"'
+      + ' aria-expanded="'+(shown ? 'true' : 'false')+'" title="'+text(asked ? 'Side question: '+asked : 'Side question')+'">'
+      + '<span class="btw-tag">btw</span>'
+      + '<span class="btw-text">'+text(asked || '/btw')+'</span>'
+      + (state ? '<span class="btw-state'+(answered ? ' ready' : '')+'">'+state+'</span>' : '')
+      + '<span class="btw-when">'+text(clock(m.at))+'</span>'
+      + '</button>';
+    if(stuck(m)) h += failedActions(m);
+    return { cls: cls, h: h };
+  }
+
+  /** Repaint the other half of a side question — an answer's question, or a question's answers — where it is on screen. */
+  function btwLink(key, m){
+    var qk = btwOf(m), list = qk ? [qk] : btwAsked(key, m) !== null ? btwParts(key) : [];
+    if(!list.length) return;
+    btwNest = true;
+    try { for(var i=0;i<list.length;i++) if(els[list[i]] && data[list[i]]) paint(list[i]); }
+    finally { btwNest = false; }
+  }
+
+  /** Show the answer to the question under qk, from its start. */
+  function openBtw(qk){
+    if(!data[qk]) return;
+    var was = btwKey;
+    btwKey = qk;
+    delete btwShut[qk];
+    btwBox.hidden = false;
+    btwSig = '';
+    renderBtw(true);
+    if(was && was !== qk && els[was] && data[was]) paint(was);
+    if(els[qk]) paint(qk);
+  }
+
+  /**
+   * Put the card away. byHand is the person closing it, which keeps it shut while the rest of that
+   * answer arrives; the page closing it (a topic switch, the question gone) does not.
+   */
+  function closeBtw(byHand){
+    if(btwBox.hidden) return;
+    var k = btwKey;
+    btwBox.hidden = true;
+    btwKey = null;
+    btwSig = '';
+    btwBody.innerHTML = '';
+    if(!k) return;
+    if(byHand) btwShut[k] = 1;
+    if(els[k] && data[k]) paint(k);
+  }
+
+  /**
+   * Draw the card for the question it is on. top puts the reader at the start of the answer; any
+   * other redraw keeps a reader at the bottom of a growing answer there, and leaves one who has
+   * scrolled up where they are.
+   */
+  function renderBtw(top){
+    var m = btwKey ? data[btwKey] : null;
+    var asked = m ? btwAsked(btwKey, m) : null;
+    if(asked === null){ closeBtw(false); return; }
+    btwQ.textContent = asked || '/btw';
+    btwQ.title = asked;
+    var parts = m._local ? [] : btwParts(btwKey), h = '';
+    for(var i=0;i<parts.length;i++){
+      var body = String(data[parts[i]].html || '').replace(BTW_HEAD_RE, '').replace(BTW_FOOT_RE, '<p class="btw-foot">$1</p>');
+      if(body) h += '<div class="b">'+body+'</div>';
+    }
+    if(!h){
+      h = '<div class="btw-wait">' + (stuck(m) ? 'Not sent, so nothing is answering it.'
+        : isHistory(m) ? 'No answer came before the daemon restarted.'
+        : '<span class="set-spin" aria-hidden="true"></span>Asking a copy of this conversation\\u2026') + '</div>';
+    }
+    var stick = btwBody.scrollHeight - btwBody.scrollTop - btwBody.clientHeight < 40;
+    if(h !== btwSig){ btwBody.innerHTML = h; btwSig = h; }
+    if(top) btwBody.scrollTop = 0;
+    else if(stick) btwBody.scrollTop = btwBody.scrollHeight;
+  }
+
+  /**
+   * A message of a side answer arrived, or grew. The card follows it when it is on that question,
+   * and opens on it when it is shut and was not shut by hand on this question: the answer is what
+   * the person asked for a moment ago, and a line under a reply still streaming is easy to miss.
+   */
+  function btwArrived(m){
+    var qk = btwOf(m);
+    if(!qk || !data[qk] || btwAsked(qk, data[qk]) === null) return;
+    if(!btwBox.hidden && btwKey === qk) renderBtw(false);
+    else if(btwBox.hidden && !btwShut[qk]) openBtw(qk);
+  }
+
+  $('btw-close').addEventListener('click', function(){ closeBtw(true); });
+
   /**
    * One message's class and inner markup. Shared by the transcript (paint) and by a conversation
    * opened from the History tab (paintLib), which is what makes the two look the same: one place
    * decides what a bubble is.
    */
   function msgMarkup(key, m, hist){
+    // A side question and its answer are read in a card over the composer, not here (openBtw).
+    var asked = btwAsked(key, m);
+    if(asked !== null) return btwLine(key, m, asked, hist);
+    if(btwHeld(key, m)) return { cls: 'm aside-held', h: '' };
     var kind = m.kind;
     // A report is a line-based bubble like a tool one: fold it and offer the same control. A
     // dispatch is prose (the card, or the task a sub-agent was handed), so it only takes the tag.
@@ -4432,10 +4641,21 @@ const SCRIPT = `
   }
 
   function drop(key){
+    var m = data[key];
     if(els[key]) { els[key].remove(); delete els[key]; }
     delete data[key];
     delete sig[key];
     delete opened[key];
+    // A side question that goes leaves its answers drawn in the transcript rather than nowhere, and
+    // takes the card with it; an answer that goes is taken out of the card.
+    if(m && btwAsked(key, m) !== null){
+      if(btwKey === key) closeBtw(false);
+      var parts = btwParts(key);
+      for(var i=0;i<parts.length;i++) paint(parts[i]);
+    }
+    var q = btwOf(m);
+    if(q && q === btwKey && !btwBox.hidden) renderBtw(false);
+    if(q && els[q] && data[q]) paint(q);
     syncEmptyNote();
   }
 
@@ -6146,6 +6366,7 @@ const SCRIPT = `
     syncingEl=null;
     // The strip describes the topic being left; the incoming sync says what the new one's is.
     closeModelPop();
+    closeBtw(false);
     setStatus(null);
     entering=true;
     synced=false;
@@ -6568,6 +6789,8 @@ const SCRIPT = `
       settleUnsure();
       placeDivider();
       syncEmptyNote();
+      // The card follows what the sync says its question and answer now are, or goes with them.
+      if(!btwBox.hidden) renderBtw(false);
       cacheSave();
       // A visit that named no topic is only told which room it is in here, so this is also where
       // that room's cached transcript is asked for. Reading one twice is a no-op.
@@ -6602,6 +6825,7 @@ const SCRIPT = `
       // that local message is already occupying rather than appearing underneath it.
       claim(ev.msg);
       upsert(ev.msg);
+      btwArrived(ev.msg);
       cacheSave();
       if(!agentStatus) paintStatus();
       readCounts[topic] = (readCounts[topic] || 0) + 1;
@@ -7462,6 +7686,16 @@ const SCRIPT = `
     // A new topic's choice of agent: typed for the operator, so it is a message like any other.
     var card = e.target.closest ? e.target.closest('button[data-agent]') : null;
     if(card) return command('/agent '+card.getAttribute('data-agent'));
+    // A side question's line opens its answer, or puts it away when that is what the card shows.
+    var chip = e.target.closest ? e.target.closest('.btw-chip') : null;
+    if(chip){
+      var holder = chip.closest('[data-k]'), qk = holder ? holder.getAttribute('data-k') : null;
+      if(qk){
+        if(!btwBox.hidden && btwKey === qk) closeBtw(true);
+        else openBtw(qk);
+      }
+      return;
+    }
     // The name of a file the server can render opens it (openReader); the Download link beside
     // it, and any file the server cannot render, stays an ordinary download.
     var view = e.target.closest ? e.target.closest('a[data-view]') : null;
@@ -7955,9 +8189,11 @@ const SCRIPT = `
     var m = openMenu();
     if(m){ setMenu(null, false); m.btn.focus(); }
     // The two panels answer Escape alike: the right one first, then the left. Each is a choice
-    // the page remembers, and each has a control on screen that brings it back.
+    // the page remembers, and each has a control on screen that brings it back. A side answer's
+    // card goes before either: it is the most passing thing on the page, and over the composer.
     if(!overlay){
-      if(schedPane.isOpen()) setSchedules(false);
+      if(!btwBox.hidden) closeBtw(true);
+      else if(schedPane.isOpen()) setSchedules(false);
       else if(sbPane.isOpen()) setSidebar(false);
     }
   });
@@ -9773,6 +10009,9 @@ const SCRIPT = `
     writeUnsent(nonce);
     data['p:'+nonce] = localMsg(nonce, unsent[nonce]);
     paint('p:'+nonce);
+    // A side question opens its card at once, saying it is being asked: the answer can take a
+    // while to start, and the line alone would not say anything was happening.
+    if(btwAsked('p:'+nonce, data['p:'+nonce]) !== null) openBtw('p:'+nonce);
     syncEmptyNote();
     // Unconditionally, unlike an arriving message: you have just written this one, so wherever
     // you were in the history is not where you want to be now.
@@ -9944,6 +10183,9 @@ const SCRIPT = `
     delete els[pk];
     delete sig[pk];
     delete data[pk];
+    // A side question's card follows it to the key the daemon gave it.
+    if(btwKey === pk) btwKey = key;
+    if(btwShut[pk]){ btwShut[key] = 1; delete btwShut[pk]; }
   }
 
   // The transcript this browser already has, asked for before anything has been heard from the
@@ -10198,6 +10440,15 @@ __GATE__
       <div id="update" role="status" hidden>fleetherd was updated while this page was open. <button type="button" id="update-reload">Reload</button></div>
       <div id="machine-note" role="status" hidden></div>
       <div id="status" hidden title="Tap for details"></div>
+      <!-- The answer to a side question (/btw), read here rather than in the transcript (openBtw). -->
+      <div id="btw" hidden role="dialog" aria-labelledby="btw-q">
+        <div class="btw-head">
+          <span class="btw-tag">btw</span>
+          <div id="btw-q"></div>
+          <button type="button" class="btn-icon" id="btw-close" title="Close (Esc)" aria-label="Close">&times;</button>
+        </div>
+        <div id="btw-body"></div>
+      </div>
       <!-- The model switch's list, opened from the model in the status line (openModelPop). -->
       <div id="model-pop" hidden role="dialog" aria-labelledby="mp-heading">
         <div class="mp-head">
@@ -10245,6 +10496,9 @@ __GATE__
         <span class="panel-title">Side tasks</span>
         <span id="schedules-summary" class="sched-summary"></span>
       </div>
+      <!-- The Sessions tab's one bulk action, as the topic list has it beside its title. Shown only
+           on that tab: it marks runs read, and over Tasks or Reviews it would name nothing listed. -->
+      <button type="button" class="btn-icon" id="sched-read" title="Mark all read" aria-label="Mark all read" disabled hidden>${icon('done')}</button>
       <button type="button" class="btn-icon panel-close" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
     <div id="sched-subnav" class="sched-subnav" role="tablist" aria-label="Tasks and sessions">
