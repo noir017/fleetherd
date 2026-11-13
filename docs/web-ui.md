@@ -206,6 +206,10 @@ told with — one row per sub-agent, folded and opened exactly like a tool bubbl
 with the message, so a reload and a daemon restart keep it; a chat platform shows the same text
 unmarked.
 
+**Side questions.** The answer to a [`/btw`](chat-commands.md#side-questions-btw) is marked
+**Side question**, with a dashed rail, so an answer that lands in the middle of a reply still
+streaming does not read as that reply's next paragraph.
+
 **Pictures.** Paste a screenshot (Ctrl-V) or attach one and it shows as a thumbnail in the
 composer, with an × to take it back off the message. Once sent, your message shows it too, and a
 tap fills the screen with it. The daemon keeps that copy only while it is running: after a

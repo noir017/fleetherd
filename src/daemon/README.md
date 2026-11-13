@@ -26,6 +26,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under `permissions: auto`, ask through the turn's (or a background burst's) `onPermission` under `ask` — see answerPermission / permissionResponse for why an unanswered request goes back as an error |
 | `session-failure.ts` | Failures read off the ACP wire: claude-agent-acp's typed failure records (the capability that asks for them), and a prompt that ended in `stopReason: "refusal"` with whatever cause the harness attached |
 | `acp-steering.ts` | How an ACP harness takes a message into a running turn (a second prompt, `_session/steering`, or not at all), read off `initialize` |
+| `acp-side-question.ts` | A side question (`/btw`): `session/fork` the live session, ask the copy, delete it; which harnesses may be asked while a turn runs |
 | `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, per-turn usage, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
@@ -1180,6 +1181,33 @@ notification. A different feature from a queue. `steer` mode sends `idleBehavior
 "promptRequired"` so a harness that finds no turn hands the message back; codex-acp ignores that
 and starts a detached turn, which is what `detached` reports — its reply then arrives through the
 follow-up sink.
+
+#### A side question (`/btw`)
+
+`/btw <question>` is answered while a turn runs, without stopping it or queueing behind it, and
+neither the question nor the answer becomes part of the conversation's context. It is a `local`
+generic command, so `ConversationRegistry` answers it before the merger (`answerSideQuestion`);
+`AgentSession.sideQuestion` asks it and `TurnRunner.beginAside` draws the answer — a message of
+its own marked `aside`, header `↪ btw: <question>`, a closing line instead of the footer, and no
+usage, model, status strip or library row, since the numbers would be the copy's.
+
+Under ACP it is `session/fork` in the child already running (`acp-side-question.ts`): fork,
+`session/resume` when declared, attach, prompt, read to the `stop`, then `session/delete` (or
+`session/close`). The copy has its own update queue — the SDK routes by session id — so the pump
+never sees it, and its permission requests and questions are routed to the side answer by session
+id rather than to the running turn. `/stop` cancels it too (`stopSideQuestions`); the session's
+silence timeout bounds it.
+
+What decides support is the child's `initialize` (`sessionCapabilities.fork`), checked every time,
+so a refusal names the agent and the reason (`SideQuestionRefused`). Probed 2026-11-13 — a fork
+taken mid-turn, asked about the conversation, then the conversation asked to list its messages:
+
+| harness | fork | notes |
+|---|---|---|
+| claude (claude-agent-acp 0.81.0) | yes | the fork is made on disk and not loaded — a prompt fails "Session not found" until `session/resume` |
+| codex (codex-acp 2.5.0) | yes | live at once |
+| opencode 2.2.5 | between turns only | a fork taken mid-turn carries on with the running turn too and repeats its commands, so it is refused while a turn runs |
+| agy 1.5.7, CodeBuddy 2.181.0 | no | no `fork` declared |
 
 > **The daemon auto-approves every tool permission request.** Agents run with full tool
 > access. There is no per-call policy in the config schema by design — tightening tool

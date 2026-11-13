@@ -118,6 +118,20 @@ All notable changes to this project are documented here. The format is based on
   has the coordinator make the worktree on the machine that runs the part and pass its path with
   `--cwd`.
 
+- **`/btw <question>`: ask something on the side, even while a turn runs.** Until now a question
+  asked mid-turn either joined the turn — and became part of the work — or waited for it to end,
+  and either way the answer stayed in the conversation's context for good. A side question goes to
+  a copy of the session instead: the gateway asks the agent's ACP `session/fork` in the child that
+  is already running, prompts the copy, and deletes it, so the answer knows the whole conversation
+  while neither it nor the question is ever part of it, the running turn is not stopped, and no
+  second agent is started. The answer is a message of its own opening `↪ btw: <question>`, marked
+  **Side question** in the web UI, and it reports nothing about the conversation (no footer, usage
+  or status strip — those would be the copy's numbers). `/stop` stops it too. Whether an agent can
+  is read off its `initialize` every time, and a refusal says which agent and why: claude, codex and
+  opencode were probed to fork (claude-agent-acp 0.81.0 only after `session/resume`, which is sent
+  when declared); agy and CodeBuddy declare no fork; and opencode is held to between turns, because
+  its copy of a session mid-turn carried on with that turn too and ran its command a second time.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

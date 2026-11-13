@@ -250,6 +250,25 @@ export interface AgentSession {
    */
   stopBackground?(): boolean;
   /**
+   * Ask a side question (`/btw`): answered from everything the conversation holds, without
+   * stopping the turn that may be running, and without the question or its answer becoming part of
+   * the conversation's context.
+   *
+   * Under ACP that is `session/fork` — a copy of the session in the same child, asked once and
+   * deleted. The handlers get the copy's text, tools and any permission it asks for; nothing it
+   * reports about the session (usage, model, title) is passed on, since it describes the copy.
+   *
+   * Resolves `stopped` when `/stop` cut the answer off (stopSideQuestions), `done` otherwise. Rejects
+   * with a SideQuestionRefused, whose message is written for the user, when it cannot be asked here
+   * at all — nothing to fork yet, an agent that declares no fork — and with an ordinary error when
+   * the asking failed.
+   *
+   * Optional: a runtime that has no notion of it omits it, and the gateway says so.
+   */
+  sideQuestion?(input: { prompt: string; sessionToken: string }, handlers: AgentStreamHandlers): Promise<'done' | 'stopped'>;
+  /** Cancel every side question still being answered (`/stop`), returning how many there were. */
+  stopSideQuestions?(): number;
+  /**
    * The live session's model selector, or undefined when the harness exposes none.
    *
    * Non-spawning: reports what is already known and never starts a child. A caller that wants an
@@ -364,6 +383,18 @@ export class TurnFailure extends Error {
 /** The reason a turn failed with, `other` for anything a runtime did not classify. */
 export function turnFailureReason(err: unknown): TurnFailureReason {
   return err instanceof TurnFailure ? err.reason : 'other';
+}
+
+/**
+ * A side question (`/btw`) that cannot be asked here, with the reason in words for the user: an agent
+ * that declares no `session/fork`, a conversation with nothing to fork yet. Told apart from a failure
+ * so the gateway can send the sentence as it stands rather than as "could not answer".
+ */
+export class SideQuestionRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SideQuestionRefused';
+  }
 }
 
 /**

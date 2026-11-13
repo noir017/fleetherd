@@ -19,6 +19,7 @@ Discord, Slack), and equally usable as plain text everywhere else.
 | `/cc`, `/oc`, `/cx`, `/gm`, `/agy` | one per configured harness — see [below](#agent-commands) |
 | `/compact`, `/context`, `/model`, `/effort`, `/usage`, `/doctor`, `/mcp`, `/init`, `/review` | a generic vocabulary, translated to each harness's own spelling — see [below](#generic-commands) |
 | `/super <job>` | split a job across agents working in parallel — web UI only, see [Sub-agents](sub-agents.md) |
+| `/btw <question>` | ask something on the side, even mid-turn — answered apart and kept out of the conversation, see [below](#side-questions-btw) |
 
 `/usage` and `/context` sent while the agent is in the middle of a turn are answered by the
 gateway itself — context, cost so far, how long the turn has run — instead of being passed to the
@@ -56,6 +57,39 @@ dropped with it.
 
 Slash commands (`/compact`, …) always wait for the turn to end: a command only runs as one at the
 start of a message.
+
+## Side questions (`/btw`)
+
+`/btw <question>` asks the agent something without touching the work in progress — like Claude
+Code's own `/btw`. The question goes to a **copy** of the conversation, so the answer knows
+everything said so far; the copy is deleted afterwards, so neither the question nor the answer
+becomes part of the conversation, and the agent's next turn has never heard of them. A turn that
+is running carries on: nothing is stopped, and the question does not wait for it.
+
+```
+you    refactor the session store
+agent  ⚙ npm test …                      ← still running
+you    /btw which branch is this on?
+agent  ↪ btw: which branch is this on?    ← a message of its own
+       feat/session-store
+       side question — not kept in this conversation
+```
+
+The answer is its own message, opening with the question; in the web UI it is marked **Side
+question**. It costs a full turn's worth of tokens — the copy reads the whole conversation — but
+is asked of the agent already running rather than a new one. `/stop` stops it along with anything
+else running. It takes words only;
+send pictures as an ordinary message.
+
+| Harness | `/btw` |
+|---|---|
+| `claude` | yes |
+| `codex` | yes |
+| `opencode` | between turns only — a copy taken mid-turn carries on with that turn too, repeating its commands, so it is refused while one runs |
+| `agy`, `gemini`, `dsh` | not supported |
+| `custom` | if the agent declares `session/fork` (CodeBuddy does not); otherwise it says so |
+
+A conversation that has not started yet has nothing to ask about, and says so.
 
 ## Agent commands
 

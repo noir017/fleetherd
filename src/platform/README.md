@@ -154,7 +154,7 @@ tell apart from the rest.
 of it and the operator's `tools.previewLimit`, so a platform declares one only if it can fold a long
 tool line itself — a chat app shows the text as sent, and there a short preview is the only thing
 keeping a run of tools one line each. It travels with the other half of that arrangement,
-`sendMessage`'s optional `SendOptions` (`MessageKind`: `tools`, `dispatch`, `report`), which every
+`sendMessage`'s optional `SendOptions` (`MessageKind`: `tools`, `dispatch`, `report`, `aside`), which every
 adapter but the web UI ignores. See the web UI's [Tool bubbles](webui/README.md#tool-bubbles) and
 [Sub-agent bubbles](webui/README.md#sub-agent-bubbles).
 
