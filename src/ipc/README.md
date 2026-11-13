@@ -208,7 +208,11 @@ Timeout precedence is deliberate:
 - Blocking commands pass an explicit larger `timeoutMs`; the effective value is
   `max(env, explicit)`, so a small operator-set env cannot truncate a long wait and make
   the client give up before the daemon does. `ask` relies on this.
-- Otherwise: env, or a 10 s default.
+- Otherwise: env, or a 10 s default. The actions that outlast it — `schedule add`/`edit`,
+  `task-new`, `reload`, `pod-add`, and a `skills` WRITE (which ends in a commit in the skills
+  repository) — get 60 s instead; a `skills` read is a local file read and stays on the default.
+  The write's failure mode is the bad one: the daemon finishes and the change lands after the
+  client has given up, so a retry leaves a second commit.
 
 ## Capability gating in the handler
 
@@ -232,6 +236,10 @@ stdout is the agent's only data channel. A tool call gets the same text as its r
 renders an answer once (`renderResult`) and both front doors print it. `cli.ts` reroutes commander's usage and
 validation errors to stdout for the same reason, and the top-level catch emits
 `{ error }` structured rather than throwing a stack.
+
+Two answers are deliberately not TOON, because the text itself is the answer: `skills show`
+prints the file, and `task-read --reply` / `--turn <n> --full` print a header line and then the
+reply or the turn verbatim — prose in a TOON cell becomes one quoted line of `\n` escapes.
 
 `fetch-messages` truncates each row's content at 500 chars with a `…` marker, keeping a
 history dump token-bounded.

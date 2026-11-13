@@ -58,6 +58,7 @@ RUN set -eux; \
 
 USER fleetherd
 WORKDIR /home/fleetherd
-# The daemon logs to stdout; `docker logs` (with -t for timestamps) is the log.
+# The daemon logs to stdout, so `docker logs` (with -t for timestamps) is the live log; it also
+# keeps a rotated copy under <configDir>/logs/ that survives a container recreated by an update.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["fleetherd", "start"]

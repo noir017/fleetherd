@@ -173,6 +173,12 @@ export interface HistoryListOptions {
   all?: boolean;
   /** Resume after this row. A page and a cursor are the only way through a library older than `days`. */
   before?: HistoryListCursor;
+  /**
+   * Resume after this conversation id — `sessions list --before <id>`, the form a reader can copy
+   * from the page it just got. Resolved to a cursor here so the id→(lastAt, id) conversion stays in
+   * one place; an id the library does not hold throws, like `read` does.
+   */
+  beforeId?: number;
 }
 
 export interface HistoryHit {
@@ -395,8 +401,8 @@ export interface ReviewWindow {
   skillCalls: string[];
 }
 
-const DEFAULT_SEARCH_LIMIT = 10;
-const DEFAULT_LIST_LIMIT = 30;
+export const DEFAULT_SEARCH_LIMIT = 10;
+export const DEFAULT_LIST_LIMIT = 30;
 const DEFAULT_LIST_DAYS = 7;
 /** How much of one session `read` returns when no window was asked for. */
 const READ_ALL_LIMIT = 500;
@@ -903,6 +909,19 @@ export class HistoryStore {
   }
 
   /**
+   * Every agent id the library has recorded, sorted. For a search that named an agent it does not
+   * know: the filter is an exact match, and a bare `ag` for `ag@uniagent` used to be answered with
+   * the "the library only holds what went through this gateway" note — as if the history were
+   * missing rather than the spelling.
+   */
+  agents(): string[] {
+    const rows = this.requireDb()
+      .prepare("SELECT DISTINCT agent FROM sessions WHERE kind != 'review' AND agent != '' ORDER BY agent")
+      .all() as Array<{ agent: string }>;
+    return rows.map((row) => String(row.agent));
+  }
+
+  /**
    * One conversation: all of it, a window around one message, or the rows a filter selects.
    *
    * `around` is the old window (`--around`/`--window`) and is refused beside the filters, which
@@ -1204,6 +1223,13 @@ export class HistoryStore {
     }
     const count = this.turnCount(session);
     if (count === 0) {
+      // `done` asks what it last answered, and `--reply` is that same selection: a conversation
+      // with no turns has not answered yet, which is an empty answer with a note — the shape
+      // `doneTurn` already gives after `/new`. `last` and a turn number name a turn that must
+      // exist, so those still throw.
+      if (opts.turn === 'done') {
+        return { ids: [], note: `no turn of conversation ${session.id} has ended normally yet — nothing to reply with` };
+      }
       throw new Error(
         `conversation ${session.id} has no recorded turns — it predates turn tracking; read it without --turn`
       );
@@ -1324,6 +1350,13 @@ export class HistoryStore {
     if (opts.before) {
       where.push('(s.last_at < ? OR (s.last_at = ? AND s.id < ?))');
       params.push(opts.before.lastAt, opts.before.lastAt, opts.before.id);
+    } else if (opts.beforeId !== undefined) {
+      const cursor = db
+        .prepare('SELECT last_at, id FROM sessions WHERE id = ?')
+        .get(opts.beforeId) as { last_at: number; id: number } | undefined;
+      if (!cursor) throw new Error(`no conversation "${opts.beforeId}"; \`fleetherd sessions list\` shows the ids`);
+      where.push('(s.last_at < ? OR (s.last_at = ? AND s.id < ?))');
+      params.push(cursor.last_at, cursor.last_at, cursor.id);
     }
     params.push(limit);
     const rows = db

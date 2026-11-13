@@ -54,7 +54,7 @@ import type {
   InboundMessage,
 } from '../types.js';
 import type { ConversationWorkdir, ModelPickerList, ModelPickerResult, PlatformAdapter } from '../platform/adapter.js';
-import type { AgentFactory, AgentSession, AgentUsage } from './agent.js';
+import { SideQuestionRefused, type AgentFactory, type AgentSession, type AgentUsage } from './agent.js';
 import type { EffortSelector, ModelSelector, ToolEvent, TopicActivity } from '../types.js';
 import {
   effortAmbiguousText,
@@ -119,12 +119,13 @@ import { join } from 'node:path';
 import { formatAgyCliOutput, runAgyCliCommand, runAgyCliFor } from './agy-cli.js';
 import { formatRuntimeFooter, formatTokens } from '../core/runtime-footer.js';
 import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
-import { InboundMerger, type SoloOutcome } from '../core/inbound-merger.js';
+import { InboundMerger, stopInputNote, type SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
-import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, type PersonWords } from './turn-runner.js';
+import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, type PersonWords, type TurnEnd, type TurnRunnerDeps } from './turn-runner.js';
 import { StatusBoard } from './status-board.js';
 import { TurnOutcomes, type KeptText } from './turn-outcomes.js';
+import { FailedInputs } from './failed-input.js';
 import { TurnProgressBoard } from './turn-progress.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { RespawnCounts } from './config-reload.js';
@@ -260,11 +261,17 @@ type StopOutcome = 'running' | 'collecting' | 'background' | 'idle';
  */
 const STOP_ACK: Record<StopOutcome, string> = {
   running: '⏹ Stopped. The reply above is as far as it got — the conversation is kept, so just send the next message.',
-  collecting: '⏹ Dropped the message that was about to start a turn. Nothing reached the agent.',
+  collecting: '⏹ Stopped before the turn started. Nothing reached the agent.',
   background:
     '⏹ Stopped the background work. The update above is as far as it got — the conversation is kept, so just send the next message.',
   idle: 'Nothing is running here.',
 };
+
+/** A stop's ack with its note (stopInputNote) under it, when there is one. */
+function withInputNote(ack: string, kept: readonly InboundMessage[], dropped: readonly InboundMessage[]): string {
+  const note = stopInputNote(kept, dropped);
+  return note ? `${ack}\n${note}` : ack;
+}
 
 /**
  * `/stop` when the only thing waiting here was a question. Its own line because the outcomes above
@@ -274,6 +281,24 @@ const STOP_ACK_QUESTION = '⏹ Called off the question above. Nothing else was r
 
 /** `/stop` when the only thing here was a voice transcript waiting to be confirmed. */
 const STOP_ACK_VOICE = '⏹ Called off the voice transcript — nothing was sent. Nothing else was running.';
+
+/**
+ * What a stop did, and what became of the messages that never reached the agent — the merger's
+ * report (InboundMerger.interrupt) with `background` added, which the merger cannot see.
+ */
+export interface StopResult {
+  outcome: StopOutcome;
+  kept: InboundMessage[];
+  dropped: InboundMessage[];
+}
+
+/** The first line(s) of `/stop`'s answer: what was stopped, sub-agents included (`also`). */
+function stopHead(outcome: StopOutcome, calledOff: number, transcripts: number, also: string): string {
+  if (outcome === 'idle' && calledOff > 0) return also ? `${STOP_ACK_QUESTION}\n⏹ Stopped ${also}.` : STOP_ACK_QUESTION;
+  if (outcome === 'idle' && transcripts > 0) return also ? `${STOP_ACK_VOICE}\n⏹ Stopped ${also}.` : STOP_ACK_VOICE;
+  if (outcome === 'idle' && also) return `⏹ Stopped the ${also}. Their conversations are kept — a message in one carries on from it.`;
+  return also ? `${STOP_ACK[outcome]}\n⏹ Also stopped the ${also}.` : STOP_ACK[outcome];
+}
 
 /**
  * What `/kill` found. The first three are StopOutcome — the process was ended, and this is what
@@ -288,7 +313,7 @@ type KillOutcome = StopOutcome | 'no-child' | 'unresumable';
  */
 const KILL_ACK: Record<KillOutcome, string> = {
   running: '🔌 Stopped the turn and ended the agent process. The conversation is kept — the next message starts a new process that picks up where this one left off.',
-  collecting: '🔌 Dropped the message that was about to start a turn, and ended the agent process. The conversation is kept — the next message resumes it.',
+  collecting: '🔌 Stopped before the turn started, and ended the agent process. The conversation is kept — the next message resumes it.',
   background:
     '🔌 Stopped the background work and ended the agent process. The conversation is kept — the next message starts a new process that picks up where this one left off.',
   idle: '🔌 Ended the agent process. The conversation is kept — the next message starts a new one that picks up where it left off.',
@@ -510,6 +535,18 @@ export class ConversationRegistry {
    */
   private readonly outcomes: TurnOutcomes;
   /**
+   * What each conversation's last failed turn was asked: held for the next turn when the agent never
+   * received it, and kept for the ❌ notice's Retry buttons. See failed-input.ts.
+   */
+  private readonly failedInputs = new FailedInputs({ scheduled: SCHEDULED_SENDER, continued: CONTINUE_SENDER }, (notice) => {
+    // Read at call time: the platforms are the constructor's, and this runs only after a turn.
+    const adapter = this.platforms.get(notice.platformId);
+    if (!adapter?.capabilities.editButtons) return;
+    void adapter
+      .editButtons(notice.ref, notice.text, [])
+      .catch((e) => console.warn('[retry] could not take the buttons off a ❌ notice:', e instanceof Error ? e.message : e));
+  });
+  /**
    * The `/setting` writer: validates a value, patches config.yaml, applies it to this live Config.
    *
    * Owned here rather than by the daemon because the registry is the side that holds the Config and
@@ -728,6 +765,11 @@ export class ConversationRegistry {
        * opened it is told what the person wrote there, with how that turn ended.
        */
       onPersonWords?(id: ConversationId, words: PersonWords): void;
+      /**
+       * An agent's usage-limit cooldown is over (TurnOutcomes). Delegation listens: the update cards
+       * it held for parents answered by that agent go now.
+       */
+      onCooldownOver?(agentId: string): void;
     },
     /** Persistent conversation state (agent binding + each agent's own session id). */
     private readonly store?: ConversationStore,
@@ -814,15 +856,30 @@ export class ConversationRegistry {
           this.progress.started(id);
           this.outcomes.turnStarted(id);
         },
-        recordTurnEnd: (id, end) => this.outcomes.turnEnded(id, end),
+        recordTurnEnd: (id, end) => this.recordTurnEnd(id, end),
         recordPersonWords: (id, words) => this.hooks?.onPersonWords?.(id, words),
+        ...this.failedInputDeps(),
         recordHistory: (id, event) => this.recordHistory(id, event),
         beginHistoryTurn: (id, start) => this.beginHistoryTurn(id, start),
         endHistoryTurn: (turnId, end) => this.endHistoryTurn(turnId, end),
       },
       this.hooks
     );
-    this.outcomes = new TurnOutcomes({
+    this.outcomes = this.buildOutcomes();
+
+    // `/setting idle` has to re-arm the sweeper, not just change the number (see setIdleTimeout).
+    // A delegation change takes effect live too, but has to invalidate what Delegation remembered.
+    this.settings = new SettingsStore(this.config, {
+      onIdleTimeout: () => this.rearmIdleSweeper(),
+      onDelegationChanged: () => this.hooks?.onDelegationSettingChanged?.(),
+    });
+
+    this.startIdleSweeper();
+  }
+
+  /** What each conversation's last turn left, and what follows a failed one (turn-outcomes.ts). */
+  private buildOutcomes(): TurnOutcomes {
+    return new TurnOutcomes({
       config: this.config,
       clock: this.clock,
       platforms: this.platforms,
@@ -833,16 +890,23 @@ export class ConversationRegistry {
       agentIdOf: (id) => this.boundAgentOf(id) ?? this.agentIdOf(id),
       runContinue: (id, text) => this.runContinue(id, text),
       onNeedsPerson: (id) => this.hooks?.onNeedsPerson?.(id),
+      onCooldownOver: (agentId) => this.hooks?.onCooldownOver?.(agentId),
     });
+  }
 
-    // `/setting idle` has to re-arm the sweeper, not just change the number (see setIdleTimeout).
-    // A delegation change takes effect live too, but has to invalidate what Delegation remembered.
-    this.settings = new SettingsStore(this.config, {
-      onIdleTimeout: () => this.rearmIdleSweeper(),
-      onDelegationChanged: () => this.hooks?.onDelegationSettingChanged?.(),
-    });
+  /** A turn ended: a failure is TurnOutcomes' alone; any other end leaves nothing to retry (FailedInputs). */
+  private recordTurnEnd(id: ConversationId, end: TurnEnd): void {
+    if (end.kind !== 'failed') this.failedInputs.ended(id);
+    this.outcomes.turnEnded(id, end);
+  }
 
-    this.startIdleSweeper();
+  /** The turn runner's way to FailedInputs: the held messages, a failure's input, its notice. */
+  private failedInputDeps(): Pick<TurnRunnerDeps, 'takeUndelivered' | 'keepFailedInput' | 'failureNoticeSent'> {
+    return {
+      takeUndelivered: (id) => this.failedInputs.take(id),
+      keepFailedInput: (id, failure) => this.failedInputs.failed(id, failure),
+      failureNoticeSent: (retryId, notice) => this.failedInputs.noticeSent(retryId, notice),
+    };
   }
 
   /**
@@ -1897,9 +1961,12 @@ export class ConversationRegistry {
       // being discarded, and its caller is blocked until somebody answers it. A transcript waiting
       // for its tap belongs to it too.
       this.callOffPending(key, 'context cleared');
+      // What a `/stop` kept was written for the context being discarded: going in with the first
+      // message of a fresh conversation, it would be answered with nothing it refers to.
+      const dropped = this.conversations.get(key)?.merger.dropKept() ?? [];
       this.resetConversation(key);
       console.log(`[conversation] ${key} context cleared by ${conv.platform}:${conv.user}`);
-      ack('context clear', 'Context cleared — the next message starts a fresh conversation.');
+      ack('context clear', withInputNote('Context cleared — the next message starts a fresh conversation.', [], dropped));
       // Then ask where that fresh conversation should happen. A reset is the one moment the
       // question costs nothing: there is no context to strand, and the previous topic's directory
       // is the least likely answer to still be right. Declined silently when there is nothing to
@@ -2000,36 +2067,49 @@ export class ConversationRegistry {
    * so answering "nothing is running" to the person who just called one off would be flatly untrue.
    */
   private stopAndReport(key: ConversationId, conv: ConversationRef): string {
-    const { outcome, calledOff, transcripts } = this.stopWithPending(key, 'stopped');
+    const ack = this.stopTurnAndReport(key, conv);
+    // A side question being answered (`/btw`) stops too: it is something running here, and `/stop`
+    // is the only way to stop anything. After the turn, so the turn's own ack still leads.
+    const asides = this.agents.peek(key)?.stopSideQuestions?.() ?? 0;
+    if (asides === 0) return ack;
+    const what = asides === 1 ? 'the side question' : `${asides} side questions`;
+    return ack === STOP_ACK.idle ? `⏹ Stopped ${what}.` : `${ack}\n⏹ Also stopped ${what}.`;
+  }
+
+  /** stopAndReport for everything but side questions: the turn, questions, transcripts, sub-agents. */
+  private stopTurnAndReport(key: ConversationId, conv: ConversationRef): string {
+    const { outcome, calledOff, transcripts, kept, dropped } = this.stopWithPending(key, 'stopped');
     // A /super job's turn ends once it has handed the work out, so stopping "this" while its
     // sub-agents work used to stop nothing at all — and the person had to open each of them.
     const subs = this.hooks?.stopSubAgents?.(key) ?? 0;
-    console.log(`[conversation] ${key} /stop by ${conv.platform}:${conv.user} → ${outcome}${subs ? ` (+${subs} sub-agent(s))` : ''}`);
+    console.log(
+      `[conversation] ${key} /stop by ${conv.platform}:${conv.user} → ${outcome}${subs ? ` (+${subs} sub-agent(s))` : ''}` +
+        `${kept.length ? `, ${kept.length} message(s) kept` : ''}${dropped.length ? `, ${dropped.length} dropped` : ''}`
+    );
     const also = subs ? `${subs} sub-agent${subs === 1 ? '' : 's'} it started` : '';
-    if (outcome === 'idle' && calledOff > 0) return also ? `${STOP_ACK_QUESTION}\n⏹ Stopped ${also}.` : STOP_ACK_QUESTION;
-    if (outcome === 'idle' && transcripts > 0) return also ? `${STOP_ACK_VOICE}\n⏹ Stopped ${also}.` : STOP_ACK_VOICE;
-    if (outcome === 'idle' && also) return `⏹ Stopped the ${also}. Their conversations are kept — a message in one carries on from it.`;
-    return also ? `${STOP_ACK[outcome]}\n⏹ Also stopped the ${also}.` : STOP_ACK[outcome];
+    return withInputNote(stopHead(outcome, calledOff, transcripts, also), kept, dropped);
   }
 
   /**
    * What `/stop` does to a conversation, without saying so: the questions and transcripts waiting
    * there are called off, then the turn or background work is stopped. Public for the sub-agents a
    * `/stop` reaches from the topic that opened them (Delegation.stopOpened), which must leave no
-   * question live either.
+   * question live either. `kept` and `dropped` are the messages that never reached the agent
+   * (InboundMerger.interrupt); the caller says them (stopInputNote).
    */
-  stopWithPending(key: ConversationId, reason: string): { outcome: StopOutcome; calledOff: number; transcripts: number } {
+  stopWithPending(key: ConversationId, reason: string): StopResult & { calledOff: number; transcripts: number } {
     const calledOff = this.hooks?.cancelPendingAsks?.(key, reason) ?? 0;
-    // A transcript waiting for its tap is queued input like any other, and /stop drops the queue.
+    // A transcript waiting for its tap is called off too: nobody has approved those words yet, and
+    // the card says so — unlike a typed message, which is kept (see InboundMerger.interrupt).
     const transcripts = this.hooks?.cancelPendingVoice?.(key, reason) ?? 0;
-    return { outcome: this.stopConversation(key), calledOff, transcripts };
+    return { ...this.interruptConversation(key), calledOff, transcripts };
   }
 
   /** `/kill`: end the agent process here and say what that did (see killConversation). */
   private killAndReport(key: ConversationId, conv: ConversationRef): string {
-    const outcome = this.killConversation(key);
+    const { outcome, kept, dropped } = this.killWithInput(key);
     console.log(`[conversation] ${key} /kill by ${conv.platform}:${conv.user} → ${outcome}`);
-    return KILL_ACK[outcome];
+    return withInputNote(KILL_ACK[outcome], kept, dropped);
   }
 
   /**
@@ -2611,6 +2691,7 @@ export class ConversationRegistry {
     try {
       if (name === 'context') return reply(this.describeContext(state));
       if (name === 'usage') return await this.answerHarnessCliCommand(key, state, name, msg);
+      if (name === 'btw') return await this.answerSideQuestion(key, state, rest, msg);
       if (name === 'model') {
         // undefined means the answer went out on another surface — the daemon posted a button
         // menu — so saying anything here would duplicate it.
@@ -2626,6 +2707,64 @@ export class ConversationRegistry {
       reply(`/${name} has no local handler.`); // unreachable unless GENERIC_COMMANDS gains a `local` without one
     } catch (e) {
       reply(`Could not answer /${name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /**
+   * `/btw <question>`: ask the agent something on the side, answered in a message of its own.
+   *
+   * Answered here, before the merger, so a running turn is neither stopped nor queued behind: the
+   * runtime asks a fork of the session (AgentSession.sideQuestion), and the conversation's own
+   * context never sees the question or the answer. TurnRunner.beginAside draws the answer.
+   *
+   * A refusal — the agent declares no fork, there is nothing to fork yet, a turn is running on a
+   * harness whose fork would repeat it — is the runtime's sentence, sent as it stands. Anything
+   * else that goes wrong is said in the answer's own closing line.
+   */
+  private async answerSideQuestion(
+    key: ConversationId,
+    state: ConversationState,
+    question: string | undefined,
+    msg: InboundMessage
+  ): Promise<void> {
+    const platform = this.platforms.get(msg.conversation.platform);
+    if (!platform) return;
+    const address = addressOf(msg.conversation);
+    const say = (text: string): void => {
+      platform
+        .sendMessage(address, text)
+        .catch((e) => console.warn('[btw] failed to reply:', e instanceof Error ? e.message : e));
+    };
+    const text = question?.trim();
+    if (!text) {
+      say('Usage: `/btw <question>` — asked of a copy of this conversation and answered on the side; the copy is then deleted, and a running turn carries on.');
+      return;
+    }
+    // Pictures would need the turn's attachment path (saved files, named in the prompt); a side
+    // question that dropped them would answer about something it never saw.
+    if ((msg.attachments?.length ?? 0) > 0) {
+      say('/btw takes a question in words only. Send pictures and files as an ordinary message.');
+      return;
+    }
+    const session = this.agents.getOrCreate(key, state.agentId);
+    if (!session.sideQuestion) {
+      say(`${agentDisplayName(findAgent(this.config, state.agentId), state.agentId)} does not support /btw.`);
+      return;
+    }
+    const render = this.turnRunner.beginAside(key, platform, address, text);
+    try {
+      const outcome = await session.sideQuestion({ prompt: text, sessionToken: this.tokens.tokenFor(key) }, render.handlers);
+      await render.finish(outcome === 'stopped' ? 'stopped' : undefined);
+      console.log(`[btw] ${key} (${state.agentId}): side question ${outcome}`);
+    } catch (e) {
+      if (e instanceof SideQuestionRefused) {
+        console.log(`[btw] ${key} (${state.agentId}): refused — ${e.message}`);
+        say(e.message);
+        return;
+      }
+      const why = e instanceof Error ? e.message : String(e);
+      console.warn(`[btw] ${key} (${state.agentId}): failed — ${why}`);
+      await render.finish(`failed: ${why}`);
     }
   }
 
@@ -2734,7 +2873,7 @@ export class ConversationRegistry {
         def?.harness === 'opencode'
           ? ' On opencode that means a model from a custom provider: give it a `limit` block in opencode.json (e.g. `"limit": { "context": 128000 }`) and the numbers appear.'
           : def?.harness === 'agy'
-            ? ' agy reports usage once per turn, summed over every model call in it, so after a turn that ran tools the count comes from its transcript on the agent\'s machine, and is missing when that cannot be read; and agy never says how big the window is, so the daemon only knows it for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.'
+            ? ' agy reports usage once per turn, summed over every model call in it, so after a turn that ran tools the count comes from its transcript on the agent\'s machine, and is missing when that cannot be read; and agy never says how big its window is, so the daemon measures the context against where agy compacts, which it knows for the models it was measured on (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.'
             : '';
       return (
         `Context: not reported. ${name} finished a turn without sending any usage numbers, and ` +
@@ -3979,7 +4118,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * Hand `text` to a sub-agent's conversation — `task-new` (once confirmed) and `task-send`. It is
    * shown there first under `header`, which says whose words these are (the reactions land on that
    * bubble), then goes in like a message typed there: into the running turn when the harness takes
-   * one, else as the next turn. The agent receives `text` alone. Answers which of the three.
+   * one, else as the next turn. The agent receives `text` alone — plus the forwarded reply, when
+   * `opts.forward` attaches one. Answers which of the three.
    *
    * `queued` is not a failure: the message is delivered, just after the turn it could not join.
    * It is a separate answer because the harness's ability to take input mid-turn is not knowable
@@ -3991,6 +4131,12 @@ ${formatTokens(left)} left before compaction — ${name}`;
    *
    * `opts.queue` skips the offer entirely: the caller has just stopped the turn (task-send
    * --interrupt) and the message must wait for the new turn, not be handed to the dying one.
+   *
+   * `opts.forward` is `task-send --forward`'s attachment: another of this conversation's topics'
+   * last normally-ended reply. It is posted first as a `report` bubble — line-based, so the page
+   * folds it instead of letting a long review fill the topic — and goes into the agent's message
+   * whole, under its heading. A failure to post it throws before anything is handed over: the
+   * person must see the material the task is about, not a task that refers to nothing.
    */
   async handTo(
     key: ConversationId,
@@ -3998,7 +4144,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     address: ConversationAddress,
     text: string,
     header: string,
-    opts: { queue?: boolean } = {}
+    opts: { queue?: boolean; forward?: { heading: string; text: string } } = {}
   ): Promise<'started' | 'joined' | 'queued'> {
     const agentId = this.boundAgentOf(key);
     if (!agentId || !findAgent(this.config, agentId)) throw new Error('nobody answers that conversation yet; open it with task-new');
@@ -4006,6 +4152,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
     if (!adapter) throw new Error(`platform instance "${platformId}" is not running`);
     const state = this.ensureState(key, platformId, agentId);
     if (this.draining && state.merger.isIdle()) throw new Error('the gateway is restarting; send it again in a minute');
+    if (opts.forward) {
+      await adapter.sendMessage(address, `${opts.forward.heading}\n${opts.forward.text}`, { kind: 'report' });
+    }
     // Marked a dispatch: this is the `↳ From …` line (or a later task-send) a sub-agent's topic
     // receives, and the web UI draws it apart from the agent's own replies. Every chat platform
     // ignores the kind.
@@ -4024,7 +4173,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
         user: DELEGATE_SENDER,
       },
       messageId: posted.messageId,
-      content: text,
+      content: opts.forward ? `${text}\n\n${opts.forward.heading}\n\n${opts.forward.text}` : text,
       timestamp: this.clock.now(),
     };
     // `queue` is --interrupt's: never offer it to the turn that is being stopped (see
@@ -4105,6 +4254,133 @@ ${formatTokens(left)} left before compaction — ${name}`;
       timestamp: this.clock.now(),
     });
     return true;
+  }
+
+  /**
+   * A Retry button on a failed turn's ❌ notice (FailedInputs, core/turn-retry.ts): send that turn's
+   * input again, to the agent answering here or — `agentId` — to another one. Only a person can get
+   * here: the daemon checks the clicker against `access.allowFrom`, and no reverse command reaches it.
+   *
+   * It is the person acting: a continue waiting after the failure is called off, and the input goes
+   * in as theirs (`user`), attended — which also makes it news for the agent that opened a sub-agent's
+   * topic, like anything the person writes there (Delegation.personWrote). It runs as one solo turn,
+   * the batch it was, behind anything already queued.
+   *
+   * Another agent takes over this topic when it has no session yet (a start that never came up — the
+   * usual case). One that has a session keeps its agent (switchRefusal), so the input goes to a new
+   * topic for the other agent instead — beside this one, under the same parent — in the directory
+   * this one was working in when both agents are on the same machine. A platform that cannot open a
+   * topic gets the refusal's text, which says how to carry on elsewhere.
+   *
+   * `done: false` means nothing was sent and the buttons stay; the text says why.
+   */
+  async retryTurn(opts: { retryId: string; user: string; agentId?: string }): Promise<{ done: boolean; text: string }> {
+    const record = this.failedInputs.peek(opts.retryId);
+    if (!record) return { done: false, text: 'Nothing to retry any more — a later turn has run since, or this one was already retried.' };
+    const key = record.conversation;
+    const lane = this.laneFor(key);
+    const bound = this.boundAgentOf(key) ?? record.agentId;
+    if (!lane) return { done: false, text: 'That conversation is gone — send the message again.' };
+    const live = this.conversations.get(key);
+    if (live && !live.merger.isIdle()) return { done: false, text: 'A turn is running here — Retry once it has ended.' };
+    if (this.draining) return { done: false, text: 'The gateway is restarting — Retry in a minute.' };
+    const target = opts.agentId ?? bound;
+    const def = findAgent(this.config, target);
+    if (!def) return { done: false, text: `No agent "${target}" is configured.` };
+    // By id: two agents on one harness share a display name, and which one is the whole question.
+    const name = target;
+    if (target === bound) {
+      this.useRetry(record.id, key);
+      this.enqueueRetry(key, lane.platformId, lane.address, target, record.input, opts.user);
+      return { done: true, text: `↻ Retrying with ${name}.` };
+    }
+    const refused = this.switchRefusal(key, target);
+    if (refused === undefined) {
+      this.useRetry(record.id, key);
+      const workdir = this.workdirOf(key, bound);
+      const state = this.ensureState(key, lane.platformId, bound);
+      this.rebind(key, state, target, lane.platformId, lane.address, false);
+      this.carryWorkdir(key, bound, target, workdir);
+      this.enqueueRetry(key, lane.platformId, lane.address, target, record.input, opts.user);
+      return { done: true, text: `↻ Retrying with ${name} — it answers this topic now.` };
+    }
+    const adapter = this.platforms.get(lane.platformId);
+    if (!adapter?.capabilities.thread) return { done: false, text: refused };
+    this.useRetry(record.id, key);
+    const parent = adapter.parentOf?.(lane.address);
+    // formatLaneTitle drops the old `[agent]` prefix itself.
+    const seed = this.conversationTitle(key) || fallbackTitle(record.input.map((m) => m.content).join('\n'));
+    const opened = (
+      await adapter.createThread({ address: { channel: lane.address.channel }, messageId: '' }, formatLaneTitle(target, seed), {
+        ...(parent ? { under: parent } : {}),
+      })
+    ).address;
+    const conv = this.conversationAt(lane.platformId, opened);
+    if (!conv) return { done: false, text: 'The new topic does not map to a conversation of its own here — send the message there yourself.' };
+    this.ensureState(conv.key, lane.platformId, target, { fresh: true, opener: 'retry with another agent' });
+    this.carryWorkdir(conv.key, bound, target, this.workdirOf(key, bound));
+    this.enqueueRetry(conv.key, lane.platformId, opened, target, record.input, opts.user);
+    return { done: true, text: `↻ Retrying with ${name} in a new topic — this one stays with ${bound}.` };
+  }
+
+  /** The record a Retry button names, while it can still be used (for the agent picker to check first). */
+  retryRecord(retryId: string): { conversation: ConversationId; agentId: string } | undefined {
+    const record = this.failedInputs.peek(retryId);
+    return record ? { conversation: record.conversation, agentId: this.boundAgentOf(record.conversation) ?? record.agentId } : undefined;
+  }
+
+  /** Retire the record (and the hold it shares an input with), and count it as the person acting. */
+  private useRetry(retryId: string, key: ConversationId): void {
+    this.failedInputs.claim(retryId);
+    this.outcomes.personActed(key);
+  }
+
+  /**
+   * The directory a retry worked in, kept for the agent it moves to — only on the same machine, where
+   * the path means the same place. A directory that is not there is logged and left at the root.
+   */
+  private carryWorkdir(key: ConversationId, from: string, to: string, path: string | undefined): void {
+    const a = findAgent(this.config, from);
+    const b = findAgent(this.config, to);
+    if (!path || !a || !b || (a.host ?? '') !== (b.host ?? '') || path === resolveAgentCwd(a)) return;
+    const moved = this.setWorkdir(key, to, path);
+    if (moved.kind === 'missing' || moved.kind === 'failed') {
+      console.warn(`[retry] ${key}: could not keep ${path} for "${to}" (${moved.kind}); it starts in its own root`);
+    }
+  }
+
+  /** The failed turn's input as one solo turn, the person's, in `address`. */
+  private enqueueRetry(
+    key: ConversationId,
+    platformId: string,
+    address: ConversationAddress,
+    agentId: string,
+    input: InboundMessage[],
+    user: string
+  ): void {
+    const state = this.ensureState(key, platformId, agentId);
+    state.reclaimOnIdle = false;
+    this.touch(key);
+    const batch: InboundMessage[] = input.map((m) => ({
+      ...m,
+      conversation: {
+        platform: platformId,
+        channel: address.channel,
+        ...(address.thread ? { thread: address.thread } : {}),
+        kind: 'direct',
+        user,
+      },
+      // No platform message behind it: the merger puts no reactions on a solo turn.
+      messageId: '',
+      timestamp: this.clock.now(),
+    }));
+    console.log(`[retry] ${key}: sending the failed turn's ${batch.length} message(s) again to "${agentId}"`);
+    void state.merger.enqueueSolo(batch);
+  }
+
+  /** Whether an agent is cooling down after a usage limit (TurnOutcomes) — Delegation holds cards for it. */
+  coolingDown(agentId: string): boolean {
+    return this.outcomes.coolingDown(agentId);
   }
 
   /**
@@ -4316,6 +4592,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.store?.clear(id);
     // What the last turn left is part of the context just thrown away.
     this.outcomes.forget(id);
+    this.failedInputs.forget(id);
     this.progress.forget(id);
     const state = this.conversations.get(id);
     if (state) {
@@ -4360,10 +4637,24 @@ ${formatTokens(left)} left before compaction — ${name}`;
   /**
    * Stop what a conversation is doing (`/stop`), and report what that was.
    *
-   * The narrow sibling of resetConversation: the running turn is cancelled and the queued backlog
-   * dropped, while the agent's context, its session ids, the binding and the child process are all
-   * left exactly as they are. Stopping a task and losing the conversation it belongs to are
-   * different asks, and until this existed only the second one had a command.
+   * The narrow sibling of resetConversation: the running turn is cancelled, while the agent's
+   * context, its session ids, the binding and the child process are all left exactly as they are.
+   * Stopping a task and losing the conversation it belongs to are different asks, and until this
+   * existed only the second one had a command.
+   *
+   * For a caller that does not answer the person itself (a parent agent's `task-stop`, a
+   * `task-send --interrupt`): what the stop kept or dropped is said here, in the conversation's own
+   * lane, because nobody else will say it (see interruptConversation for the callers that do).
+   */
+  stopConversation(id: ConversationId): StopOutcome {
+    const { outcome, kept, dropped } = this.interruptConversation(id);
+    this.sayInputNote(id, kept, dropped);
+    return outcome;
+  }
+
+  /**
+   * stopConversation without saying anything — for the callers that put what the stop kept or
+   * dropped into their own answer (`/stop`, `/kill`, a parent topic's `/stop`).
    *
    * No state means nothing has ever run here, so the answer is 'idle'. Deliberately NOT routed
    * through agents.getOrCreate: building a session handle for a conversation that has none, in the
@@ -4374,13 +4665,24 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * through `peek` for the same reason. Not the other way round: while a turn runs the harness's
    * output belongs to the turn, so there is no burst to stop and asking would only race the abort.
    */
-  stopConversation(id: ConversationId): StopOutcome {
+  interruptConversation(id: ConversationId): StopResult {
     this.outcomes.personActed(id);
     const state = this.conversations.get(id);
-    if (!state) return 'idle';
-    const outcome = state.merger.interrupt();
-    if (outcome !== 'idle') return outcome;
-    return this.agents.peek(id)?.stopBackground?.() ? 'background' : 'idle';
+    if (!state) return { outcome: 'idle', kept: [], dropped: [] };
+    const report = state.merger.interrupt();
+    if (report.outcome !== 'idle') return report;
+    return { ...report, outcome: this.agents.peek(id)?.stopBackground?.() ? 'background' : 'idle' };
+  }
+
+  /** Post a stop's note (stopInputNote) in the conversation's lane, when it has one to post. */
+  private sayInputNote(id: ConversationId, kept: readonly InboundMessage[], dropped: readonly InboundMessage[]): void {
+    const note = stopInputNote(kept, dropped);
+    const lane = this.laneOf(id);
+    if (!note || !lane) return;
+    void this.platforms
+      .get(lane.platformId)
+      ?.sendMessage(lane.address, note)
+      .catch((e) => console.warn('[conversation] failed to say what a stop kept:', e instanceof Error ? e.message : e));
   }
 
   /**
@@ -4404,18 +4706,26 @@ ${formatTokens(left)} left before compaction — ${name}`;
    *     reclaimAfterAskTimeout's reclaimOnIdle — a turn that never unwinds is the case this exists for.
    *
    * No session means nothing ever ran here; answered without agents.getOrCreate for the reason
-   * stopConversation gives.
+   * stopConversation gives. What the stop kept or dropped is said in the lane, as stopConversation
+   * does; `/kill` puts it in its own answer instead (killWithInput).
    */
   killConversation(id: ConversationId): KillOutcome {
+    const { outcome, kept, dropped } = this.killWithInput(id);
+    this.sayInputNote(id, kept, dropped);
+    return outcome;
+  }
+
+  /** killConversation without saying anything — `/kill` says it in its own answer. */
+  private killWithInput(id: ConversationId): { outcome: KillOutcome; kept: InboundMessage[]; dropped: InboundMessage[] } {
     const session = this.agents.peek(id);
     const reclaim = session?.reclaimState?.() ?? 'no-child';
-    if (!session || reclaim === 'no-child') return 'no-child';
-    if (reclaim === 'unresumable') return 'unresumable';
+    if (!session || reclaim === 'no-child') return { outcome: 'no-child', kept: [], dropped: [] };
+    if (reclaim === 'unresumable') return { outcome: 'unresumable', kept: [], dropped: [] };
     this.hooks?.cancelPendingAsks?.(id, 'agent process ended');
-    const outcome = this.stopConversation(id);
+    const stopped = this.interruptConversation(id);
     session.dispose();
     console.log(`[reclaim] ${id} ended by /kill — agent child stopped; the next message resumes it`);
-    return outcome;
+    return stopped;
   }
 
   /** Shutdown: stop the sweeper, release all mergers and agent sessions. */
@@ -4446,6 +4756,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     // what the outcomes and the status board hold for it goes too, or every run of a task without a
     // topic of its own left an entry in each for the life of the process.
     this.outcomes.release(id);
+    this.failedInputs.forget(id);
     this.status.forget(id);
   }
 

@@ -344,6 +344,29 @@ const GENERIC_COMMANDS: Record<string, GenericCommand> = {
     arg: { name: 'job', description: 'The job to split up' },
     nested: true,
   },
+  btw: {
+    description: 'Ask a side question: answered apart, kept out of the conversation, no turn stopped',
+    // No harness has a slash for this over ACP — Claude Code's own `/btw` is a TUI panel, and
+    // claude-agent-acp says it never issues the side_question request behind it. What ACP has is
+    // `session/fork`: a copy of the session the gateway asks on and deletes afterwards
+    // (daemon/agent-acp.ts sideQuestion), so the conversation's own context never sees the question.
+    native: {},
+    // Only where `initialize` declared `sessionCapabilities.fork` and a fork answered, probed on
+    // 2026-11-13 (project-scripts/fleetherd-btw/): claude-agent-acp 0.81.0, codex-acp 2.5.0 and
+    // opencode 2.2.5 each answered a question about the conversation from a fork taken while a turn
+    // ran, and the conversation's own next turn did not know it had been asked. agy 1.5.7 declares
+    // no fork, and gemini and dsh were never probed; they get the explicit "not supported". The
+    // runtime still checks the capability on the live child, so an older adapter on a remote host
+    // refuses by name too.
+    //
+    // `custom` is here, unlike in every other entry, because what decides it is something the agent
+    // declares rather than a guess about the program: the runtime reads the capability and refuses
+    // when it is absent (CodeBuddy 2.181.0 declares none). Passing `/btw` through, as a custom agent
+    // gets every other command, would put the question into the very context it promised to stay
+    // out of.
+    local: ['claude', 'codex', 'opencode', 'custom'],
+    arg: { name: 'question', description: 'What to ask' },
+  },
 };
 
 /**
@@ -478,6 +501,8 @@ export function translateCommand(
   const entry = GENERIC_COMMANDS[name.toLowerCase()];
   if (!entry) return { kind: 'passthrough' };
   if (harness === 'custom' && entry.customOption && declares?.(entry.customOption)) return { kind: 'local' };
+  // A command whose local answer asks the agent itself whether it can (see `btw`).
+  if (harness === 'custom' && entry.local?.includes('custom')) return { kind: 'local' };
   if (!harness || harness === 'custom') return { kind: 'passthrough' };
   const native = entry.native[harness];
   if (native) return { kind: 'translated', native };

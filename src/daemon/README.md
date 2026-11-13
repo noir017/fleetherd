@@ -26,6 +26,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under `permissions: auto`, ask through the turn's (or a background burst's) `onPermission` under `ask` — see answerPermission / permissionResponse for why an unanswered request goes back as an error |
 | `session-failure.ts` | Failures read off the ACP wire: claude-agent-acp's typed failure records (the capability that asks for them), and a prompt that ended in `stopReason: "refusal"` with whatever cause the harness attached |
 | `acp-steering.ts` | How an ACP harness takes a message into a running turn (a second prompt, `_session/steering`, or not at all), read off `initialize` |
+| `acp-side-question.ts` | A side question (`/btw`): `session/fork` the live session, ask the copy, delete it; which harnesses may be asked while a turn runs |
 | `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, per-turn usage, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
@@ -62,7 +63,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `skill-lifecycle.ts` | The daily check (14 days expired, 30 archived; pinned and hand-written skills exempt) and its archive notice |
 | `managed-skills.ts` | Delivering active skills to `~/.fleetherd/skills/` on an agent's machine and linking only links that point back there; taking an archived skill's links back |
 | `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
-| `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
+| `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), the per-agent usage-limit cooldown, and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
+| `failed-input.ts` | A failed turn's input: held for the next turn when the agent never received it, and kept for the ❌ notice's Retry buttons — see [Failed turns: held input and Retry](#failed-turns-held-input-and-retry) |
 | `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on by default (or once per agent in the `first` tier, or the record card when it is off), and the `[sub-agent updates]` card |
 | `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `fleetherd …` back here (the allowlisted bridge); placing the skill on a host |
 | `pods.ts` | What each host's pod declares: its `~/.fleetherd/pod.yaml`, or the harness commands on its login PATH when it has none. Read at startup and on every `/reload` (`Daemon.reloadAll`) into `pods.json`, which `config/pods.ts` merges into `agents` as `<id>@<host>`. A host that cannot be read, or whose file does not validate, keeps what it had |
@@ -87,8 +89,9 @@ ConversationRegistry.route
    ├─ resolveAgent       routing.pipeline, then HARNESS_COMMANDS → { agentId, explicit }
    ├─ response gate      core/inbound-gate shouldRespond
    ├─ /new · /clear      reset the conversation, drop every agent's id, ack. Never forwarded.
-   ├─ /stop              cancel the running turn and the queued backlog — or, with no turn, a burst
-   │                     of background output (AgentSession.stopBackground) — ack. Never forwarded.
+   ├─ /stop              cancel the running turn, keep the queued backlog for the next message — or,
+   │                     with no turn, a burst of background output (AgentSession.stopBackground) —
+   │                     ack, quoting what was kept or dropped. Never forwarded.
    ├─ /kill              /stop, then end the agent child; the session id is kept. Never forwarded.
    ├─ /help              the registered vocabulary, from core/command-translate. Never forwarded.
    ├─ unconfigured agent `/agy` with no agy agent → say so, run no turn. Never forwarded.
@@ -288,8 +291,14 @@ it rather than starting blank.
 
 A missing or corrupt file degrades to empty (bindings lost, agent histories untouched).
 `/stop` is the narrow sibling of `/new` and touches none of this: it cancels the running
-turn and drops the queued backlog through `InboundMerger.interrupt()`, leaving the
-context, the session ids, the binding and the child process exactly as they were. It
+turn through `InboundMerger.interrupt()`, leaving the context, the session ids, the binding and
+the child process exactly as they were. The messages queued behind the turn are kept for the
+person's next one, and the ack quotes them (`stopInputNote`); a second `/stop` drops them and `/new`
+lets go of them, each saying which. Callers that answer the person themselves (`/stop`, `/kill`, a
+parent's `task-stop` and `/stop`) take the report from `interruptConversation` / `stopWithPending`
+and put the note in their own message; `stopConversation` and `killConversation` post it in the
+lane for the rest. The child process is left alone unless the turn outlives the cancel — see
+[A `/stop` that does not stop the agent](#a-stop-that-does-not-stop-the-agent). It
 deliberately does not reach the agent through `agents.getOrCreate` — building a session
 for a conversation that has none, in order to stop it, is backwards; the abort travels via
 the merger, which only fires it in the `running` phase where a session must exist.
@@ -622,8 +631,14 @@ What each piece is shaped by, one line each:
   a `--cwd` belongs to the machine the command was typed on (the CLI resolved it there), `add`'s
   default to the registering conversation's, and the directory an edit keeps to the task's machine
   before the edit — so `add --agent` / `edit --agent` naming an agent on another host is refused
-  while the task carries a directory from here. The fix every refusal names is the command from a
-  conversation on the task's machine, which passes the same check. Nothing is written until every
+  while the task carries a directory from here. `--host <id>` is the explicit way through: it says
+  the `--cwd` given in the same command is that machine's, the directory is checked there with
+  `test -d` over the host's own link (`dirOnHostProblem`), and with no `--cwd` the task starts in
+  that machine's own default directory instead of the caller's. A `--cwd` under `--host` must be
+  absolute, refused at parse time: the CLI resolves a relative path or `~` against the caller's
+  directory, so it would arrive naming a place on the wrong machine and nothing downstream could
+  tell. Without `--host` the rule is unchanged, and the refusal names both ways out — `--host`, or
+  the command from a conversation on the task's machine. Nothing is written until every
   check passes, and
   the task is re-read after the one `await` (the model list): a run that finished meanwhile, or a
   delete, is reported rather than overwritten, and `Scheduler.update` refuses an id that is gone.
@@ -631,10 +646,30 @@ What each piece is shaped by, one line each:
   b` forks), the daemon's environment minus the reverse-command token, a 16 KB tail kept for the chat
   and the full output in `<configDir>/schedule-runs/<id>/` (20 per task). Longer than 3000 characters
   inline, the log is attached.
-- **Every run speaks first.** A notice before an agent run, the result for a bash one — output that
-  arrives unasked always says which task produced it.
+- **Every run speaks first, and a run that did not deliver speaks too.** A notice before an agent
+  run, the result for a bash one — output that arrives unasked always says which task produced it.
+  A run that ended failed, one skipped because the previous run of the task was still going, and
+  one missed because the gateway was down each post one line to the task's target (a new/daily run
+  to the topic it opened), deduplicated by REASON — `reportFailure`, keyed on `lastRun.error`, not
+  on its status: the two skip paths record `failed`, so a status comparison let the same skip line
+  through every time. A turn that ends failed is the case this exists for: the merger posts nothing
+  on its own, so before this the start notice was the last thing the chat ever saw.
+- **A task keeps its last 20 runs** (`history` on the task, newest first, capped by
+  `MAX_RUN_HISTORY` because the whole task is rewritten on every run): time, status, duration,
+  exit code, error and the conversation the output went to. Missed and skipped runs are in it too,
+  and `schedule show` prints it. `lastRun` stays the single line lists show.
+- **`schedule run <id> --wait [duration]`** starts the run exactly as run-now does and answers when
+  it ends (`Scheduler.runNow` hands back the run's promise), with the record `schedule show` would
+  print. The wait is 10m by default, at most 1h, refused in words outside that range; when it runs
+  out the answer says the run is still going and the run carries on — the output still reaches the
+  conversation and the history still keeps the record.
 - **Cards are the daemon's.** Register, edit, pause, resume and delete post the task's card in the
-  caller's conversation, never left to the agent's retelling. `/setting` (below) answers in its own
+  caller's conversation, never left to the agent's retelling — and in the task's target
+  conversation as well, because whoever will read the output is the one a change is news to
+  (pause, resume and delete included: the target stops, starts or stops for good receiving the
+  task). The prompt is quoted in full rather than cut at 200 characters, chunked by RENDERED length
+  (`splitByMeasure` over `measureRendered`: WeCom counts UTF-8 bytes, and rendering expands). A
+  manual run posts no card — its own output is the record. `/setting` (below) answers in its own
   message instead of posting a second one.
 - **Trust.** Registering needs a reverse-command token — an agent the operator already runs with
   full tool access — so a bash task grants nothing that agent could not have written into crontab
@@ -822,6 +857,45 @@ runtimes wherever they know why; anything else is `other`). It pushes that to th
   its end. A mark still there when the daemon starts (`recoverInterruptedTurns`, after the platforms
   and IPC) is a turn the last process never finished; it is said in its lane and handled as a failure
   with reason `restart`. Two writes per turn, on top of the lane write that was already there.
+- **A `limit` cools the agent down** (`Cooldown`, per agent id). A usage limit is the account's, so
+  a `limit` failure does not schedule its conversation's own continue: it joins the agent's line.
+  When the wait ends one waiting continue is sent (the probe); a probe that gets through, or any turn
+  on that agent ending normally, lifts the cooldown and sends every waiting continue at once; a probe
+  that hits the limit again doubles the wait (`strikes`); a probe that fails for another reason lifts
+  it too. Only news counts as a strike — the first failure and each probe's — so a burst of
+  simultaneous failures does not stretch the wait. When the probe spends `max`, every conversation
+  waiting with it is given up (`giveUpWaiting`): one limit gets `max` continues in all. An agent
+  with no policy for `limit` still cools down (at `LIMIT_WAIT_MS`), because `coolingDown` is also
+  what Delegation reads to hold update cards for a parent that agent answers; `onCooldownOver`
+  releases them. In memory only.
+
+### Failed turns: held input and Retry
+
+`failed-input.ts` keeps what a failed turn was asked (`RunningTurn.input`: its batch plus what joined
+it mid-turn), handed over by TurnRunner (`keepFailedInput`) before the ❌ notice goes out, because the
+notice says what became of it.
+
+- **Undelivered.** A runtime marks a failure that came before the prompt was sent
+  (`TurnFailure.undelivered`; agent-acp's `runTurn` wraps whatever `ensureStarted` threw with
+  `asUndelivered`). Such a turn's messages are held, minus a scheduled prompt, the continue message
+  and a slash command (which would run with the next message as its argument), and TurnRunner puts
+  them in front of the next turn's own (`takeUndelivered`) — whatever starts it. The turn's trigger
+  and the person's words reported to Delegation are the new messages only. `TurnEnd.undelivered`
+  carries how many were held, so the ❌, the card's failure quote and the library's `detail` all say
+  the agent did not receive it (`undeliveredLine`).
+- **Retry.** Every failed turn with an input gets a record and an id, which the ❌ notice's buttons
+  carry (`core/turn-retry.ts`, `rty:`) on a platform with buttons. A continue-only turn keeps the
+  record of the failure it continued. The daemon checks the clicker against `access.allowFrom`;
+  "another agent" first posts the `/agent` menu with `purpose: 'retry'`. `ConversationRegistry.retryTurn`
+  then calls off a waiting continue (`personActed`), and enqueues the input as one solo turn
+  (`enqueueSolo` takes a batch) as the clicker's — so in a sub-agent's topic it is reported to the
+  parent like anything the person writes there. Another agent rebinds a topic with no session, or
+  else opens a sibling topic under the same parent, carrying the directory when both agents are on
+  one machine; a platform without topics gets the switch refusal's text.
+- **Never twice.** Claiming a record drops the hold; a turn that ends normally or is stopped retires
+  the record; a newer failure replaces it. A retired record's notice has its buttons taken off
+  (`editButtons(ref, text, [])`) where the platform can edit them; where it cannot, a tap answers that
+  there is nothing to retry.
 
 **Sub-agents** (`delegation.ts`) are an agent handing parts of its job to other agents, each in a
 topic of its own nested under the asking one — on a platform that records that relation
@@ -853,6 +927,10 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   re-applies it later — unlike a scheduled run's, which is applied per run and never written.
   Start opens each part with `ConversationRegistry.openTask` (`createThread` with `under`), whose
   `handTo` shows the text under a `↳ From [parent]` header and ingests it with `DELEGATE_SENDER`.
+  `task-send --forward <topic>` resolves that topic through `child` too, reads its last
+  normally-ended reply (the turn `task-read --reply` answers with), posts it first as a `report`
+  bubble — line-based, so the page folds it — and appends it, under a heading naming the topic and
+  turn, to what the agent reads. Both topics must be ones this conversation opened.
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).
 - Updates come back through `childChanged` — TurnOutcomes' `onNeedsPerson`, and a sub-agent's ask —
   for turns the parent is owed (`owed`, in memory): one it handed out (task-new, task-send), or one
@@ -909,7 +987,7 @@ Each harness reports a different subset, and an absent field is shown as nothing
 | Field | Source |
 |---|---|
 | model, effort | `onModel` / `onEffort` — ACP config options, `agy acp` included |
-| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`), shown against the compaction budget its relay gave it when it has one (`agy-relay.ts`) |
+| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`), shown against the point where agy compacts (`agy-meters.ts`) or the budget its relay gave it (`agy-relay.ts`) |
 | cost | `onUsage.cost` — claude and opencode; kept across the mid-stream snapshots that carry none |
 | cache expiry | claude only: `claude-transcript.ts`, read once a moment after each model cycle ends |
 | quota | agy only: `agy -p=/usage`, via `onQuota` |
@@ -1085,13 +1163,15 @@ that posts a new one.
   before writing its own reply into the same lane. Fired and forgotten, a burst sealed by an
   incoming turn would flush concurrently with that turn's answer and the background report would
   land underneath something it has nothing to do with, its marker orphaned above both.
-- **A cancel's trailing writes are dropped.** A cancelled tool call still emits its
-  `tool_call_update`, after the prompt has settled. Two tests catch it: while `aborting` stands
-  (between the cancel and the next turn) anything tool-shaped is the cancelled turn's tail, and
-  once a new turn has cleared that flag, the tool ids the cancel snapshotted still identify it —
-  which matters because a message sent right after `/stop` starts the next turn within
-  milliseconds, so the wreckage would otherwise be rendered into *its* reply. That is the case the
-  deleted drain described verbatim.
+- **A cancel's trailing writes are dropped — once the stopped turn has ended.** A cancelled tool
+  call still emits its `tool_call_update`, after the prompt has settled. Two tests catch it: while
+  `aborting` stands (between the stopped turn's end and the next turn) anything tool-shaped is the
+  cancelled turn's tail, and once a new turn has cleared that flag, the tool ids the cancel
+  snapshotted still identify it — which matters because a message sent right after `/stop` starts
+  the next turn within milliseconds, so the wreckage would otherwise be rendered into *its* reply.
+  That is the case the deleted drain described verbatim. Before the stopped turn ends
+  (`TurnState.stopped`) nothing is dropped: the harness is still working on it, and a call it starts
+  then is drawn with `still running after /stop` (`ToolEvent.afterStop`).
 - **A rendering burst reads as running.** Opening the message takes a typing hold
   (`TurnRunner.holdTyping`), released after the seal's flush — every surface that says "running"
   reads typing, and on the web UI that is the topic's dot, its "running" label and the Stop button.
@@ -1123,6 +1203,35 @@ agy runs on this runtime, so it has the same sink. Nothing out of a turn was see
 1.5.1 either — a subagent it started stayed quiet for the minute after the turn ended — so an
 event that does arrive is **logged** rather than dropped silently.
 
+#### A `/stop` that does not stop the agent
+
+On 2026-11-13 (#214115) a cbc turn ran for eleven minutes after `/stop`, two more `/stop`s seemed to
+do nothing, and only "End agent" ended it — while every tool call it made was dropped as the
+cancel's wreckage, so the chat showed nothing. Measured against a real cbc the same day, it was two
+things. The first `/stop` came one second in, during the cold start, when there was no session to
+send `session/cancel` to: the prompt went out anyway (reproduced on 3.2.0: a `/stop` three seconds
+into a fresh topic, and the turn still ran its commands and answered). And CodeBuddy 2.181.0 does act
+on a cancel, but takes 10–12 s, longer than the person waited before ending it. `session/cancel` is
+a notification — it asks, and nothing bounds how long the harness takes or makes it comply. Three
+things answer it:
+
+- **A deadline** (`STOP_GRACE_MS`, 20 s, or half the watchdog if that is less). `abort()` calls the
+  running turn's `turnStopped`, which marks the turn stopped and starts the clock once (a second
+  `/stop` does not restart it). If the turn has not ended by then, the child is ended — `/kill`'s
+  remedy, applied for the person — and the turn ends as a stop, with a notice in the chat; the next
+  message resumes the session through `session/load`. A harness that cannot reload a stored session
+  (`canResume`, the same test `reclaimState` uses) keeps its child, and the notice says `/new` ends
+  it. Harnesses that honour the cancel end their turn in well under a second, so for them nothing
+  changes. Separate and untouched: a `/stop` while claude still holds a joined message ends the
+  child at the turn's end (`endChildAfterStop` in agent-acp.ts, steering below), which its
+  cooperative cancel reaches long before the deadline.
+- **A stop before the prompt is out is not lost.** A `/stop` while the child was still starting had
+  no session to send `session/cancel` to, so the prompt went out afterwards and the whole turn ran.
+  `abort()` with no turn prompt out sets `stoppedWhileStarting`, and runTurn returns before
+  prompting; `TurnRunner` likewise skips `agent.runTurn` when the signal tripped while it was
+  resolving the lane or building the prompt.
+- **What it does after the stop is shown** (see the wreckage rule above).
+
 #### Starting a session without running a turn
 
 `AgentSession.ensureSession(token)` does everything the first turn does except send a prompt:
@@ -1135,6 +1244,16 @@ unactionable right after `/cd` invites you to pick a project and then a model.
 that there are two of them: `active` is assigned only at the *end* of startup, so an unguarded
 second entrant would spawn its own child, overwrite `proc`, and leave the first as an orphan that
 no `dispose` can reach while it still holds the harness's session.
+
+A startup that fails says how far it got (`StartupProgress`, `startupFailureMessage`): a process
+that never answered `initialize` "did not start", and one that answered and then failed or went
+quiet on `session/load` / `session/new` / `set_config_option` "started, but …" — with the agent's
+own error (its `data` included) when it sent one. Either carries the tail of the child's stderr
+(`adoptChild` keeps the last 4 KB). The two used to read alike, as a launch command missing from
+PATH, which sent the person to the wrong place for the four agy starts of 2026-11-11 that had
+answered `initialize` in 11 ms and hung on `session/new` behind a relay answering 502. Whatever
+`ensureStarted` throws reaches TurnRunner marked `undelivered` (see
+[Failed turns](#failed-turns-held-input-and-retry)): no prompt was sent.
 
 #### A message sent while a turn runs (`steer`)
 
@@ -1176,6 +1295,33 @@ notification. A different feature from a queue. `steer` mode sends `idleBehavior
 "promptRequired"` so a harness that finds no turn hands the message back; codex-acp ignores that
 and starts a detached turn, which is what `detached` reports — its reply then arrives through the
 follow-up sink.
+
+#### A side question (`/btw`)
+
+`/btw <question>` is answered while a turn runs, without stopping it or queueing behind it, and
+neither the question nor the answer becomes part of the conversation's context. It is a `local`
+generic command, so `ConversationRegistry` answers it before the merger (`answerSideQuestion`);
+`AgentSession.sideQuestion` asks it and `TurnRunner.beginAside` draws the answer — a message of
+its own marked `aside`, header `↪ btw: <question>`, a closing line instead of the footer, and no
+usage, model, status strip or library row, since the numbers would be the copy's.
+
+Under ACP it is `session/fork` in the child already running (`acp-side-question.ts`): fork,
+`session/resume` when declared, attach, prompt, read to the `stop`, then `session/delete` (or
+`session/close`). The copy has its own update queue — the SDK routes by session id — so the pump
+never sees it, and its permission requests and questions are routed to the side answer by session
+id rather than to the running turn. `/stop` cancels it too (`stopSideQuestions`); the session's
+silence timeout bounds it.
+
+What decides support is the child's `initialize` (`sessionCapabilities.fork`), checked every time,
+so a refusal names the agent and the reason (`SideQuestionRefused`). Probed 2026-11-13 — a fork
+taken mid-turn, asked about the conversation, then the conversation asked to list its messages:
+
+| harness | fork | notes |
+|---|---|---|
+| claude (claude-agent-acp 0.81.0) | yes | the fork is made on disk and not loaded — a prompt fails "Session not found" until `session/resume` |
+| codex (codex-acp 2.5.0) | yes | live at once |
+| opencode 2.2.5 | between turns only | a fork taken mid-turn carries on with the running turn too and repeats its commands, so it is refused while a turn runs |
+| agy 1.5.7, CodeBuddy 2.181.0 | no | no `fork` declared |
 
 > **The daemon auto-approves every tool permission request.** Agents run with full tool
 > access. There is no per-call policy in the config schema by design — tightening tool
@@ -1228,8 +1374,9 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   calls: input plus cache reads is the context only for a turn that ran no tool. A turn that ran
   tools reads the last call's figure off agy's own transcript instead (`agy-transcript.ts`, a file
   tail here or a filtered `readTail` on a host): once at the end, which the footer waits for, and
-  at most every 10 s while it runs, on each tool call. Either way it is reported over
-  `agy-meters.ts`'s window table or `contextWindow`.
+  at most every 10 s while it runs, on each tool call. Either way it is reported against the point
+  where agy compacts for that model (`agy-meters.ts` COMPACTION_POINTS), `contextWindow` when the
+  agent sets one, or the budget its relay gave it.
 - **Quota** has no ACP channel: `createAgyQuotaMeter` runs `agy -p=/usage` (`agy-cli.ts`) beside the
   turn, at most once a minute per account. It is reported whenever it lands, even after the turn,
   and nothing waits for it: quota feeds the conversation's status strip, not the turn's footer. (A
@@ -1237,7 +1384,10 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   a restart on a remote host, measured 2026-11-06.)
 - **Tool labels.** Calls of kind `other` are titled `Run <tool>`; `agyAcpToolLabel` reads the tool
   from there (`invoke_subagent` → Task, `mcp_chat_send_file` → `send_file`). agy also sends a `name`
-  field, but the SDK's validation strips it.
+  field, but the SDK's validation strips it. Its generic `call_mcp_tool` is the exception: kind
+  `execute`, title `Bash`, and the server and tool only in the input — `agyMcpCall` reads those and
+  labels the row `MCP <tool>` with the server as the preview. The same name heads the permission
+  card (`permissionRequestOf`), with the server in its title because that card has no preview.
 
 `/usage` and the other CLI-answered names still go to one-shots (`agy-cli.ts`): `agy acp` survives
 them but hands them to the model as a question.

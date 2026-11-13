@@ -65,6 +65,10 @@ const failureRecord = (sessionId, record) =>
   notify(sessionId, { sessionUpdate: 'session_info_update', _meta: recordMeta(record) });
 // What the client sent at initialize, so a turn can report whether it asked for those records.
 let initCaps = null;
+// The session this process resumed (session/load), so a turn can say which child it ran on.
+let loadedFrom = null;
+// A harness that never acts on session/cancel: the turn goes on (see STOP_GRACE_MS).
+let ignoreCancel = false;
 
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   let msg;
@@ -97,6 +101,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     // What session/load does: replay the stored conversation as ordinary notifications, BEFORE
     // answering. The client attaches the session first precisely so these land in its queue.
     const sessionId = msg.params.sessionId;
+    loadedFrom = sessionId;
     text(sessionId, 'REPLAYED HISTORY that must not be re-posted to the chat');
     notify(sessionId, {
       sessionUpdate: 'tool_call',
@@ -125,9 +130,26 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     return;
   }
   if (msg.method === 'session/cancel') {
+    const sessionId = msg.params.sessionId;
+    if (ignoreCancel) {
+      // Carries on as if nothing was asked: finishes the call it was in, starts another, and never
+      // answers the prompt.
+      setTimeout(() => {
+        notify(sessionId, { sessionUpdate: 'tool_call_update', toolCallId: 'stubborn-1', status: 'completed' });
+        notify(sessionId, {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'after-1',
+          title: 'carry on',
+          kind: 'execute',
+          status: 'in_progress',
+          rawInput: { command: './carry-on.sh' },
+        });
+        text(sessionId, 'still going');
+      }, 30);
+      return;
+    }
     // A cancelled tool still reports in, and it lands after the prompt has settled — or, when
     // what was cancelled was background output, after the gateway has already sealed it.
-    const sessionId = msg.params.sessionId;
     const doomed = openTool;
     reply(msg.id, {});
     setTimeout(() => {
@@ -208,6 +230,25 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       return;
     }
     if (asked.includes('HANG_SILENT')) return;          // never speaks, never answers
+    if (asked.includes('STUBBORN')) {
+      // A long job on a harness that will not stop for a cancel (see ignoreCancel).
+      ignoreCancel = true;
+      text(sessionId, 'working in ' + process.pid + '. ');
+      notify(sessionId, {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'stubborn-1',
+        title: 'a long job',
+        kind: 'execute',
+        status: 'in_progress',
+        rawInput: { command: './long-job.sh' },
+      });
+      return;
+    }
+    if (asked.includes('WHO_ARE_YOU')) {
+      text(sessionId, 'pid ' + process.pid + ' resumed ' + loadedFrom);
+      reply(msg.id, { stopReason: 'end_turn' });
+      return;
+    }
     if (asked.includes('RETRY_THEN_ANSWER')) {
       // The 2026-10-06 shape: the API fails and Claude Code retries. Each attempt is a warning
       // record, spaced closer than the test's watchdog but adding up to well past it, and then the
@@ -729,6 +770,117 @@ describe('stopping background output', () => {
     // Reported by session/new and never again: without the runtime handing them on, the burst's
     // footer fell back to config — which for the `claude` harness names no model at all.
     expect(sink.facts).toEqual(['model:Opus', 'effort:high']);
+  });
+});
+
+/**
+ * `/stop` that does not stop the agent — #214115 (2026-11-13): the first `/stop` landed during the
+ * cold start and never reached the harness, the turn ran for eleven minutes with every tool it called
+ * dropped as the cancel's wreckage, and the later `/stop`s looked like they did nothing (CodeBuddy
+ * takes 10–12 s to act on a cancel; see STOP_GRACE_MS). The fake below never acts on one at all.
+ */
+describe('a turn the harness will not stop', () => {
+  /** turnTimeoutMs 600 → a 300 ms stop grace (STOP_GRACE_MS is capped at half the watchdog). */
+  const TIMEOUT = 600;
+  const GRACE = TIMEOUT / 2;
+  const until = async (cond: () => boolean): Promise<void> => {
+    for (let i = 0; i < 300 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
+  };
+  /** Like collector(), but keeping each tool start whole: the after-stop mark is what is under test. */
+  function recorder() {
+    const base = collector();
+    const starts: Array<{ name: string; preview: string; afterStop?: boolean }> = [];
+    return {
+      ...base,
+      starts,
+      handlers: {
+        ...base.handlers,
+        onToolStart: (e: Parameters<AgentStreamHandlers['onToolStart']>[0]) => {
+          base.tools.push(e.name);
+          starts.push({ name: e.name, preview: e.inputPreview, ...(e.afterStop ? { afterStop: true } : {}) });
+        },
+      },
+    };
+  }
+
+  it('shows what it does after the stop, ends its process after the grace, and resumes on the next message', async () => {
+    const { session } = rig({ turnTimeoutMs: TIMEOUT, resumeFrom: 'stored-1' });
+    const turn = recorder();
+    const running = session.runTurn({ prompt: 'STUBBORN', sessionToken: 'tok' }, turn.handlers);
+    await until(() => turn.tools.length > 0);
+    const before = turn.turn.join('');
+
+    const stoppedAt = Date.now();
+    session.abort();
+    // Shown, and marked: the tool it STARTED after the stop says so; the one it was in does not.
+    await until(() => turn.starts.some((s) => s.preview.includes('carry-on')));
+    expect(turn.starts).toEqual([
+      { name: 'Bash', preview: './long-job.sh' },
+      { name: 'Bash', preview: './carry-on.sh', afterStop: true },
+    ]);
+    expect(turn.turn.join('')).toContain('still going');
+
+    // A second /stop does not restart the clock.
+    await new Promise((r) => setTimeout(r, GRACE / 2));
+    session.abort();
+
+    await running; // a stop, not a failure
+    expect(Date.now() - stoppedAt).toBeGreaterThanOrEqual(GRACE - 20);
+    expect(Date.now() - stoppedAt).toBeLessThan(GRACE * 2);
+    expect(turn.notices).toEqual([expect.stringMatching(/^⏹ fake was still running \ds after \/stop, so its process was ended\. The conversation is kept/)]);
+    expect(session.reclaimState?.()).toBe('no-child');
+
+    // The next message starts a new process that resumes the stored session.
+    const pid = /working in (\d+)/.exec(before)?.[1];
+    const next = collector();
+    await session.runTurn({ prompt: 'WHO_ARE_YOU', sessionToken: 'tok' }, next.handlers);
+    const answer = next.turn.join('');
+    expect(answer).toMatch(/^pid \d+ resumed stored-1$/);
+    expect(answer).not.toContain(`pid ${pid} `);
+  });
+
+  it('leaves a harness that cannot resume running, and says how to end it', async () => {
+    // No stored session id: ending the child would start the conversation over.
+    const { session } = rig({ turnTimeoutMs: TIMEOUT });
+    const turn = recorder();
+    const running = session.runTurn({ prompt: 'STUBBORN', sessionToken: 'tok' }, turn.handlers);
+    await until(() => turn.tools.length > 0);
+    session.abort();
+    await until(() => turn.notices.length > 0);
+    expect(turn.notices).toEqual([expect.stringContaining('cannot resume a stored session')]);
+    expect(session.reclaimState?.()).toBe('unresumable'); // still up
+    session.dispose();
+    await running;
+  });
+
+  it('changes nothing for a harness that does stop: no notice, no process ended', async () => {
+    const { session } = rig({ turnTimeoutMs: TIMEOUT, resumeFrom: 'stored-1' });
+    const turn = collector();
+    const running = session.runTurn({ prompt: 'SLOW: run the long script', sessionToken: 'tok' }, turn.handlers);
+    await until(() => turn.tools.length > 0);
+    session.abort();
+    await running;
+    await new Promise((r) => setTimeout(r, GRACE + 100)); // past where the deadline would have fired
+    expect(turn.notices).toEqual([]);
+    expect(session.reclaimState?.()).toBe('resumable');
+  });
+
+  it('does not send the prompt at all when the stop lands while the agent is starting', async () => {
+    // #214115's first `/stop` came one second into a cold start, before there was a session to send
+    // `session/cancel` to.
+    const { session } = rig({ turnTimeoutMs: TIMEOUT });
+    const turn = collector();
+    const running = session.runTurn({ prompt: 'STUBBORN', sessionToken: 'tok' }, turn.handlers);
+    session.abort();
+    await running;
+    await settle();
+    expect(turn.turn).toEqual([]);
+    expect(turn.tools).toEqual([]);
+
+    // The session itself is fine: the next message is answered as usual.
+    const next = collector();
+    await session.runTurn({ prompt: 'WHO_ARE_YOU', sessionToken: 'tok' }, next.handlers);
+    expect(next.turn.join('')).toMatch(/^pid \d+ resumed null$/);
   });
 });
 

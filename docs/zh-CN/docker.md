@@ -59,7 +59,9 @@ docker compose up -d
   `--build-arg UID=… --build-arg GID=…` 自己构建。
 - **容器里不跑智能体。** 镜像去掉了 `harness: claude` 在本机运行时要用的 Claude Code 二进制（约 220 MB），
   所以没写 `host:` 的智能体会启动失败，报 "native binary not found"。
-- **日志用 `docker logs fleetherd` 看**（加 `-t` 显示时间）。不写日志文件。
+- **日志用 `docker logs fleetherd` 看**（加 `-t` 显示时间）。网关另外在 `config/logs/daemon.log`
+  写一份，单文件 10 MB、保留 5 个，容器因更新重建后重启前后的记录还在。`docker logs` 仍是实时视图，
+  文件是活过容器的那份。
 - **重启容器会停掉它在各主机上起的智能体。** 更新就是一次重启。网关会先让正在跑的轮次跑完，见[更新](#更新)。
   另见[断网时](remote-hosts.md#断网时)。
 - **[网页端](web-ui.md#终端)的终端面板**通过 unix socket 代理到一个 ttyd。ttyd 在某台主机上时，挂一个两个容器

@@ -201,9 +201,14 @@ top with **Sub-agent task** or **Sub-agent report**, and gets a rail in a colour
 task is the hand-off: the card that asks you to start the sub-agents, the record of what started,
 and the task text a sub-agent's topic is handed (the message opening `↳ From …`, and every
 `task-send` after it). A report is the folded `🔔` card the agent that opened the sub-agents is
-told with — one row per sub-agent, folded and opened exactly like a tool bubble. The mark travels
+told with — one row per sub-agent, folded and opened exactly like a tool bubble — or the reply a
+`task-send --forward` carries into a topic, folded the same way. The mark travels
 with the message, so a reload and a daemon restart keep it; a chat platform shows the same text
 unmarked.
+
+**Side questions.** The answer to a [`/btw`](chat-commands.md#side-questions-btw) is marked
+**Side question**, with a dashed rail, so an answer that lands in the middle of a reply still
+streaming does not read as that reply's next paragraph.
 
 **Pictures.** Paste a screenshot (Ctrl-V) or attach one and it shows as a thumbnail in the
 composer, with an × to take it back off the message. Once sent, your message shows it too, and a

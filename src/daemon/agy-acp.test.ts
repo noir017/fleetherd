@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import {
   agyAcpToolLabel,
+  agyMcpCall,
   agySplitModel,
   agyTurnWatch,
   agyWarningOf,
@@ -166,6 +167,25 @@ describe('agyAcpToolLabel', () => {
     expect(agyAcpToolLabel('File probe.txt', 'edit')).toBeUndefined();
     expect(agyAcpToolLabel('Update the plan', 'other')).toBeUndefined();
     expect(agyAcpToolLabel(undefined, 'other')).toBeUndefined();
+  });
+});
+
+describe('agyMcpCall', () => {
+  it('reads the server and tool out of a call_mcp_tool input', () => {
+    // Verbatim shape from a trader session (2026-11-13); the ACP frame is kind execute, title Bash.
+    expect(agyMcpCall({ Arguments: {}, ServerName: 'notes-server', ToolName: 'list_notes' })).toEqual({
+      server: 'notes-server',
+      tool: 'list_notes',
+      args: {},
+    });
+  });
+
+  it('is undefined for anything that is not that call', () => {
+    expect(agyMcpCall({ CommandLine: 'ls' })).toBeUndefined();
+    expect(agyMcpCall({ ServerName: 'notes-server' })).toBeUndefined();
+    expect(agyMcpCall({ ToolName: 'x' })).toBeUndefined();
+    expect(agyMcpCall('Bash')).toBeUndefined();
+    expect(agyMcpCall(undefined)).toBeUndefined();
   });
 });
 

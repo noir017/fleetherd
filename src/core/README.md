@@ -61,6 +61,7 @@ conversation, not part of its name — see [`daemon/README.md`](../daemon/README
 | `paging.ts` | The platform-imposed shape of a button menu: page size, page arithmetic, label budget |
 | `frecency.ts` | How often a thing was chosen, discounted by how long ago — what orders the `/cd` list |
 | `button-id.ts` | The `<prefix><reqId>:<n>` button id grammar every menu shares |
+| `turn-retry.ts` | The Retry buttons on a failed turn's ❌ notice (`rty:`); the input they resend is the daemon's (`daemon/failed-input.ts`) |
 | `topic-stage.ts` | Where a conversation stands for a person (answer / failed / review / retrying / working / idle), from facts alone; the line that goes with it; the continue backoff |
 | `agent-menu.ts` | `/agent` and the web UI's new-topic catalog: agents grouped by machine, matching a typed name |
 | `title-namer.ts` | A topic's automatic name: the request to the namer model, cleaning its answer, the fallback from the first message |
@@ -126,7 +127,13 @@ idle ──ingest──► collecting ──window elapsed──► running ─�
   (`interruptOnNewMessage`). It trips the turn's `AbortSignal`; `TurnRunner` reads it to finalize
   the partial reply cleanly — no footer, no ✅ (a user must not see a ✅ on a turn that never
   finished, including on a message that had joined it). The queued backlog, and any message still
-  being offered, is dropped.
+  being offered, is **kept**: not run as a turn of its own, not dropped, but put in front of the
+  next batch the person starts. `interrupt()` returns a `StopReport` naming what it kept and what it
+  dropped, and the caller says both in the chat (`stopInputNote`) — through 3.2.0 the backlog was
+  dropped without a word, and a correction typed into a turn that went on after a stop was lost that way.
+  A message that arrives after the stop, while the turn unwinds (`stopping`), is not offered to the
+  dying turn; it starts the next one as soon as it ends. A `/stop` mid merge window drops the batch;
+  a `/stop` with nothing running drops what an earlier one kept. `dropKept()` is `/new`'s.
 - **Lifecycle reactions**: 👀 received, ✅ done, ❌ error, gated by `reactionsEnabled`
   (`display.reactions.enabled`) independently of the emoji themselves, which stay
   frozen.
@@ -138,7 +145,8 @@ idle ──ingest──► collecting ──window elapsed──► running ─�
   own queued messages (a person waiting outranks a clock), gets no reactions, and resolves with
   how its turn ended. A message typed while it runs is offered to it like to any turn: the person
   is there, the schedule is not. `/stop` stops a running solo turn but keeps queued ones, since the
-  backlog it drops is what the user typed.
+  backlog it keeps is what the user typed — and what it kept is never handed to a solo turn, only to
+  the person's next batch.
 
 ## `schedule.ts` and `schedule-menu.ts`
 
@@ -511,7 +519,7 @@ misinterpret — strictly worse than telling the user it is unsupported.
 The table's only mechanism is TEXT: it rewrites `/x` and hands it to the agent as a
 prompt. So a capability the harness exposes over the **protocol** rather than as a slash
 command has no native name to translate to, and used to read as "not supported" — even
-though the gateway could answer it outright. Four do:
+though the gateway could answer it outright. Five do:
 
 | command | why there is no native name to translate to | what answers it |
 |---|---|---|
@@ -520,6 +528,12 @@ though the gateway could answer it outright. Four do:
 | `/usage` (agy) | agy's own CLI answers it: forwarded, `agy acp` hands it to the model as a question | a one-shot `agy -p=/usage`, rendered as quota bars |
 | `/model` (opencode, claude, agy) | all three expose the selector as a config option (`agy acp` since 1.5) | `ConversationRegistry.applyModelCommand` via `AgentSession.modelSelector()` / `setModel()` |
 | `/effort` (claude, codex, opencode, agy) | all four expose the level as a config option in category `thought_level` (ids differ: `effort`, `reasoning_effort`, `thought_level`); none advertises a command for it | `ConversationRegistry.applyEffortCommand` via `AgentSession.effortSelector()` / `setEffort()` |
+| `/btw` (claude, codex, opencode, custom) | ACP has no side question, only `session/fork`; Claude Code's own `/btw` is a TUI panel the adapter never drives | `ConversationRegistry.answerSideQuestion` via `AgentSession.sideQuestion()` (see daemon README, *A side question*) |
+
+`/btw` is the one `local` entry that lists `custom`: whether a custom agent can fork is something
+it declares at `initialize`, and the runtime refuses by name when it does not. Forwarded, as
+every other command to a custom agent is, the question would land in the very context it promises
+to stay out of.
 
 ### `HARNESS_CLI_ANSWERED` — the names that must not be forwarded
 

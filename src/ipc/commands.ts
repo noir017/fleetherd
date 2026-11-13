@@ -1,5 +1,5 @@
 import type { IpcAction } from './protocol.js';
-import { DEFAULT_ASK_TIMEOUT_MS, DEFAULT_CHANNEL_LIMIT } from './protocol.js';
+import { DEFAULT_ASK_TIMEOUT_MS, DEFAULT_CHANNEL_LIMIT, MAX_RUN_WAIT_MS } from './protocol.js';
 
 /**
  * Reverse-command catalog: single source of truth.
@@ -37,6 +37,13 @@ export interface ReverseCommandSpec {
    * bundled skill, are how every command that is not a native tool gets discovered (see HELP_TOPICS).
    */
   topic: HelpTopicName;
+  /**
+   * `false` for a command that does not accept `--channel` — a gateway-wide one, or one acting on
+   * what this conversation owns. The flag stays registered (so passing it gets a sentence rather
+   * than commander's "unknown option"), but the help page leaves it out: a page that advertises a
+   * flag the command refuses teaches an agent to distrust the page.
+   */
+  channel?: false;
 }
 
 /**
@@ -85,6 +92,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     summary: 'Send a file or image into the chat',
     notes: [
       'Relative paths and ~ resolve against your working directory. --name overrides the displayed filename.',
+      'A report or plan you wrote for the user is a file to send, not a path to paste: a path on this machine, or a file:// link, points at the reader\'s own machine and reaches nobody. Send it here.',
       'Where you have a send_file tool, it is this same command.',
     ],
   },
@@ -92,19 +100,22 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'schedule',
     summary: 'Scheduled and recurring tasks that survive restarts — an agent prompt or a bash command, output to any chat',
     notes: [
-      'Use this rather than a scheduling tool built into your own harness: those live inside your process, which the gateway stops after an idle hour and on every restart. Tasks here are kept on disk by the gateway and run from it.',
-      'When the time, the time zone, or where the output should go is not clear from what the user said, ask before adding. The gateway posts a card with the task\'s details when it is registered, changed or deleted; the user can list, pause and delete tasks with /setting schedule.',
+      'Use this rather than a scheduling tool built into your own harness: those live inside your process, which the gateway stops after an idle hour and on every restart. Tasks here are kept on disk by the gateway and run from it. A wait longer than this turn, or a check whose result should arrive later as a message, is a task here — a background process your shell starts dies with the session.',
+      'When the time, the time zone, or where the output should go is not clear from what the user said, ask before adding. The gateway posts a card with the task\'s details when it is registered, changed or deleted — in this conversation and in the one the task posts to, with the prompt in full — and the user can list, pause and delete tasks with /setting schedule.',
       '--prompt with --session fixed (the default): each run is a turn in THIS conversation (or the one --channel names), with the agent answering it — context accumulates and the user can follow up in place. A fixed-session task lives 24h from registration, then expires; anything longer needs --session new.',
       '--prompt with --session new: every run is a fresh session, in a new topic where the platform can open one without a message (web UI, Telegram forum groups), otherwise posted straight into the chat. --agent picks who answers; --cwd where it starts.',
       '--prompt with --session daily: the first run of each day opens a new topic, and later runs that day join it — one conversation per day, named with the date. The day is counted in --tz, by each run\'s planned time, so a catch-up after midnight joins the day it was meant for. Needs --cron and a platform that can open a topic with no message to reply to (web UI, Telegram forum groups); --agent and --cwd work as with new.',
       '--model names the model a --session new or daily task\'s conversations use. A fixed-session task runs in this conversation and keeps the model /model set here, so --model there is refused. The id must be in the agent\'s own /model list: a name it does not offer is refused when the task is added, with the list, and a run that cannot apply the model fails with the reason instead of quietly using another.',
       '--bash: the gateway runs the command with `bash -lc` in --cwd (default: your working directory) and posts the exit code, duration and the end of the output; long output is attached as a file. --timeout defaults to 10m, at most 6h.',
-      '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday). Both are read in --tz, default the gateway\'s own zone.',
+      '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday); several 5-field expressions separated by `;` are one schedule that runs at whichever comes next (`0 9 * * *; 0 15 * * *` is twice a day). Both are read in --tz, default the gateway\'s own zone.',
+      'For a long prompt, let your own shell read the file: --prompt "$(cat prompt.md)". The file is expanded where you run the command, so it is your machine\'s file — the gateway has no flag that reads one of its own.',
       '--channel is where output goes (ids from `fleetherd channels`); default this conversation.',
-      'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped.',
-      '`add` and `show` print the task id; `list` shows every task with its next run and last result; pause / resume / run (run it now, once) / rm take the id.',
+      'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped. A run that is missed, skipped or fails says so in the conversation it posts to, once per reason — silence now means it ran.',
+      '`add` and `show` print the task id; `list` shows every task with its next run and last result; `show` also prints the last 20 runs with their time, result, duration and the topic each output went to; pause / resume / run / rm take the id.',
+      '`run <id>` runs it once, now, without touching its schedule; `--wait` waits for it to end and prints the result (status, exit code, duration) instead of making you poll. `--wait 30m` waits that long; it gives up after 10m by default and says the run is still going. A wait is at most 1h, and at least 1s.',
       '--tag labels a task for the web UI\'s task list: one comma-separated list, at most 5 tags of up to 24 characters each. A tag is letters (Chinese included), digits and - _ . / — no spaces or commas; it is trimmed and lowercased. edit replaces the whole set; --tag "" clears it.',
-      '`edit <id> [options]` changes a task in place: --agent, --cwd, --model, --cron / --at / --tz, --name, --tag, --prompt, and --bash / --timeout for a bash task. The id, the run count and the last result stay; the next run is recomputed from now under the new time rule, and the gateway posts the updated card. What a task IS cannot change: --session, prompt ↔ bash and --channel are refused — `rm` it and add a new one. A daily task whose agent or directory changes opens a new topic for the rest of today; the day\'s earlier topic is left as it is.',
+      '`edit <id> [options]` changes a task in place: --agent, --cwd, --host, --model, --cron / --at / --tz, --name, --tag, --prompt, and --bash / --timeout for a bash task. The id, the run count and the last result stay; the next run is recomputed from now under the new time rule, and the gateway posts the updated card. What a task IS cannot change: --session, prompt ↔ bash and --channel are refused — `rm` it and add a new one. A daily task whose agent or directory changes opens a new topic for the rest of today; the day\'s earlier topic is left as it is.',
+      'A task\'s --cwd is a path on one machine, and the task runs on its agent\'s machine. A --cwd you give without --host is read as a path on the machine this command runs on; for an agent on another host, either run the command from a conversation there, or give --host <that host> — which also checks the directory exists there, and with no --cwd lets the task start in that machine\'s own directory. A fixed-session task has no directory of its own, and a --bash task runs where the agent that registers it does.',
       'Where you have a schedule tool, it is this same command.',
     ],
   },
@@ -112,7 +123,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'channels',
     summary: 'Post to another chat or topic, on any platform',
     notes: [
-      'Every command takes --channel <id>. A bare <channel>[/<thread>] stays on the platform you are answering on; <instance>:<channel>[/<thread>] (what `channels` prints) names any platform.',
+      'Most commands take --channel <id>; the gateway-wide ones and the ones acting on what this conversation owns do not — `task-*`, `pods`, `skills`, `sessions`, `channels`, `voice`, `reload`. A bare <channel>[/<thread>] stays on the platform you are answering on; <instance>:<channel>[/<thread>] (what `channels` prints) names any platform.',
       'The list only holds places the gateway has answered in — most platforms cannot enumerate a bot\'s chats. kind=channel rows are chat roots (where a new topic would be opened); current=true is this conversation.',
     ],
   },
@@ -128,10 +139,11 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'sessions',
     summary: 'Search every earlier conversation the gateway has carried — all agents, all platforms',
     notes: [
+      'When the person says "yesterday", "last time" or asks you to look something up, search here first: your harness\'s own transcripts cover one agent on one machine, and may be a stale copy.',
       'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through fleetherd, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
       'search "<words>" returns the conversation id, the message id, the title, the agent and a matching excerpt. Quote a multi-word query — it is one argument. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations. Tool calls are left out; --tools searches them too, arguments included.',
-      'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail), --grep or --tail selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --role tool lists the calls with their arguments. list [--days <n>] is the recent conversations.',
-      'Pass the ids exactly as printed: session and message are numbers, with or without the leading #.',
+      'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail/--limit), --grep, --tail or --limit selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --role tool lists the calls with their arguments. --full is accepted for task-read\'s sake and changes nothing. list [--days <n>] [--limit <n>] is the recent conversations; a full page says how to continue with --before <id>.',
+      'read takes a session id (#12 or 12) or the topic id other commands print (web:main/c962cd3f). `sessions list` prints both, as id and key.',
     ],
   },
   {
@@ -169,7 +181,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'pods',
     summary: 'The machines agents run on: add one, remove one, declare its agents, ssh between them',
     notes: [
-      'A pod is a machine the gateway reaches over ssh to run agents (the `hosts:` of its config). `pods` lists them with their agents, and prints `gatewayKey` — the line a new machine needs in its ~/.ssh/authorized_keys.',
+      'A pod is a machine the gateway reaches over ssh to run agents (the `hosts:` of its config). `pods` lists them with their agents; the `gatewayKey` line a new machine needs in its ~/.ssh/authorized_keys comes after the table.',
       'Adding one: on the machine, append `gatewayKey` to ~/.ssh/authorized_keys and read its host key there (`cat /etc/ssh/ssh_host_ed25519_key.pub`, or wherever its sshd keeps it) — read it on the machine, not with ssh-keyscan, since this is what every connection will be checked against. Then `pod-add <name> <user@address[:port]> --host-key "<that line>"`. It answers with the agents found there.',
       'Its agents: ~/.fleetherd/pod.yaml on the machine lists them (`agents:`, the fields of a config.yaml agent without `host`); the gateway names them `<id>@<name>`. Without the file it offers each harness command it finds on the login PATH (claude-agent-acp, codex-acp, opencode, agy, codebuddy). After editing the file, `reload`. Values are used as written: ${VAR} is refused.',
       'Pod-to-pod ssh: `peer:` in a machine\'s pod.yaml puts it in the mesh — after a `reload`, every pod with `peer:` can `ssh <name>.pod` (and scp, rsync, git) to every other. `peer: { ssh: user@address:port }` when the others reach it differently from the gateway. Needs the machine\'s sshd to read ~/.fleetherd/ssh/authorized_keys and its ssh to include ~/.fleetherd/ssh/config (uniagent images do).',
@@ -203,6 +215,8 @@ export const HELP_TOPICS: HelpTopic[] = [
       '`tasks` shows what a working sub-agent is doing now: the tool it is running, its step count, how long the turn has gone and its context. `task-status` is one topic in detail, with its last three tool calls. `task-read <topic>` reads its messages from the conversation library, cut at 1500 characters each; `--tail 20` shows the newest lines, `--full` raises the cut, `--role`/`--turn`/`--turns`/`--since`/`--grep` select rows as they do for `sessions read`.',
       '`task-read <topic> --reply` is the last turn that ended normally, its reply whole — what a finished sub-agent concluded. `--turn <n>` is one turn\'s record, including the whole error when it failed. A cut update card names the turn it quoted (`--turn <n>`): read that one, not `--turn last` — the topic may have run again since.',
       'task-send only reaches a turn that is still running when the harness accepts input mid-turn (claude and codex do; agy does not). The answer says which happened: joined, queued behind the turn, or started. To redirect a harness that is not listening, `--interrupt` stops the turn and sends the message as the next one — its context is kept.',
+      '`task-send <topic> --forward <other>` sends <text> with <other>\'s last normally-ended reply attached whole, under a heading naming the topic and its turn: a review verdict reaches the agent that must act on it without being retyped. Both topics must be ones this conversation opened; a topic with no normally-ended reply yet is refused.',
+      'A reply that says it will carry on, or is only waiting for a command in the background, is not a finished job: the update card says `turn ended`, not done.',
     ],
   },
   {
@@ -214,14 +228,26 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
 ];
 
-/** `fleetherd help`: one line per topic. */
+/**
+ * `fleetherd help`: one line per topic, and under it the command names that topic documents.
+ *
+ * The names are the point. The index used to give only the topics, and an agent read `history` and
+ * `sessions` as commands and typed them — `fleetherd history` is not one, and cost seven calls in a
+ * week. Rendered from the catalog, so a new command appears without a second list.
+ */
 export function renderHelpIndex(): string {
   const width = Math.max(...HELP_TOPICS.map((t) => t.name.length));
   return [
     'fleetherd commands, by topic.',
     'Run `fleetherd help <topic>` for a topic\'s commands and rules.',
     '',
-    ...HELP_TOPICS.map((t) => `  ${t.name.padEnd(width)}  ${t.summary}`),
+    ...HELP_TOPICS.flatMap((t) => {
+      const commands = REVERSE_COMMANDS.filter((c) => c.topic === t.name).map((c) => c.usage.split(' ')[0]!);
+      return [
+        `  ${t.name.padEnd(width)}  ${t.summary}`,
+        ...(commands.length ? [`  ${' '.repeat(width)}  commands: ${commands.join(', ')}`] : []),
+      ];
+    }),
   ].join('\n');
 }
 
@@ -232,11 +258,53 @@ export function renderHelpTopic(name: string): string | undefined {
   const lines = [`${topic.name} — ${topic.summary}`, ''];
   for (const spec of REVERSE_COMMANDS.filter((c) => c.topic === topic.name)) {
     lines.push(`  fleetherd ${spec.usage}`, `    ${spec.description}`);
-    for (const opt of [...spec.options, CHANNEL_OPTION]) lines.push(`      ${opt.flags}${opt.description ? `  ${opt.description}` : ''}`);
+    const options = spec.channel === false ? spec.options : [...spec.options, CHANNEL_OPTION];
+    for (const opt of options) lines.push(`      ${opt.flags}${opt.description ? `  ${opt.description}` : ''}`);
     lines.push('');
   }
   if (topic.notes.length) lines.push('Notes:', ...topic.notes.map((n) => `  - ${n}`));
   return lines.join('\n');
+}
+
+/**
+ * What an agent probably meant by a name that is not a command.
+ *
+ * The refusals used to say only "not a command an agent can run here; `fleetherd help` lists
+ * them", which is true and useless: `history` and `sessions` are help TOPICS, and `status` /
+ * `agents` are the tails of `task-status` / `task-agents` (seven calls lost to this in a week).
+ * A topic gets the page that lists its commands; anything else gets the nearest command name.
+ */
+export function commandHint(name: string): string | undefined {
+  const word = name.trim().toLowerCase();
+  if (!word) return undefined;
+  if (HELP_TOPICS.some((t) => t.name === word)) {
+    return `\`${name}\` is a help topic, not a command; \`fleetherd help ${word}\` lists its commands.`;
+  }
+  const names = [...new Set(REVERSE_COMMANDS.map((c) => c.usage.split(' ')[0]!))];
+  // `status` is inside `task-status` and `agents` inside `task-agents`, while `task` is inside
+  // both `ask` and `tasks` — the longer overlap is the better guess.
+  const scored = names
+    .map((n) => ({ n, score: n.includes(word) ? word.length : word.includes(n) ? n.length : 0 }))
+    .filter((c) => c.score >= 3)
+    // On a tie the shorter name is the closer word: `task` is `tasks` before `task-agents`.
+    .sort((a, b) => b.score - a.score || a.n.length - b.n.length);
+  const near = scored[0]?.n ?? names.find((n) => editDistance(n, word) <= 2);
+  return near ? `Did you mean \`${near}\`?` : undefined;
+}
+
+/** Levenshtein distance, for a mistyped command name (`sesions`). */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0]!;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j]!;
+      row[j] = Math.min(row[j]! + 1, row[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return row[b.length]!;
 }
 
 /**
@@ -288,6 +356,19 @@ const idArg = (label: string) => {
   return (value: string): number => {
     const n = parse(value.trim().replace(/^#/, ''));
     if (n < 1) throw new Error(`${label} must be a positive message id, got ${JSON.stringify(value)}`);
+    return n;
+  };
+};
+
+/**
+ * A conversation id, as `sessions list` prints it (`#42`) or bare (`42`). `--before` continues
+ * after a row a reader copied from that page, and the `#` is part of what the page shows.
+ */
+const sessionArg = (label: string) => {
+  const parse = intArg(label);
+  return (value: string): number => {
+    const n = parse(value.trim().replace(/^#/, ''));
+    if (n < 1) throw new Error(`${label} must be a positive conversation id, got ${JSON.stringify(value)}`);
     return n;
   };
 };
@@ -456,21 +537,64 @@ const fieldsArg = (value: string, previous: string[] = []): string[] => {
 };
 
 /**
- * Duration parser for --timeout on schedule: `90s`, `10m`, `1h`, or bare milliseconds. Units
- * because a bash task's limit is minutes, and `--timeout 600000` is a number nobody checks.
+ * Duration parser for --timeout and --wait: `90s`, `10m`, `1h`, or bare milliseconds. Units because
+ * a bash task's limit is minutes, and `--timeout 600000` is a number nobody checks.
  */
-const durationArg = (value: string): number => {
+const duration = (label: string) => (value: string): number => {
   const m = /^(\d+)\s*(ms|s|m|h)?$/i.exec(value.trim());
-  if (!m) throw new Error(`--timeout must be a duration like 90s, 10m or 1h, got ${JSON.stringify(value)}`);
+  if (!m) throw new Error(`${label} must be a duration like 90s, 10m or 1h, got ${JSON.stringify(value)}`);
   const unit = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 }[(m[2] ?? 'ms').toLowerCase() as 'ms' | 's' | 'm' | 'h'];
   return Number(m[1]) * unit;
 };
 
+const durationArg = duration('--timeout');
+
+/** How long `schedule run --wait` waits when it is given no duration. The cap is the protocol's. */
+export const DEFAULT_RUN_WAIT_MS = 10 * 60_000;
+
+/**
+ * `--wait [duration]`: bare means DEFAULT_RUN_WAIT_MS. The tool sends the word "true" for a bare
+ * flag (every parameter is a string there), which reads the same as the flag with nothing after it.
+ *
+ * Bounded and refused in words here, before the daemon sees it: `--wait 0` is not a shorter wait but
+ * a meaningless one (the answer would always be "still running"), and a wait of days holds an IPC
+ * connection and an agent's turn open for no reason. The IPC schema would say the same thing in
+ * zod's words, which is not something to hand an agent.
+ */
+const waitArg = (value: string): number => {
+  if (value === 'true') return DEFAULT_RUN_WAIT_MS;
+  const ms = duration('--wait')(value);
+  if (ms < 1_000) throw new Error(`--wait ${value} is too short: give at least 1s, or leave it off for ${DEFAULT_RUN_WAIT_MS / 60_000}m`);
+  if (ms > MAX_RUN_WAIT_MS) {
+    throw new Error(`--wait ${value} is longer than the ${MAX_RUN_WAIT_MS / 60_000}m maximum; the run keeps going after that, and its output still reaches the conversation`);
+  }
+  return ms;
+};
+
 /** `schedule add`'s own options, by commander's camel-cased key — refused on every other action. */
-const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'session', 'cwd', 'model', 'timeout'] as const;
+const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'session', 'cwd', 'host', 'model', 'timeout'] as const;
 
 /** What `schedule edit` may set: add's options minus `--session`, plus nothing of its own. */
-const SCHEDULE_EDIT_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'cwd', 'model', 'timeout'] as const;
+const SCHEDULE_EDIT_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'cwd', 'host', 'model', 'timeout'] as const;
+
+/**
+ * A `--cwd` given with `--host` has to be absolute.
+ *
+ * The CLI resolves a relative path or `~` against the directory the command ran in (reverse.ts
+ * resolvePathArg) — here, on this machine. A path meant for another machine would then arrive
+ * absolute and wrong, naming a place on the wrong host, and nothing downstream could tell. So it is
+ * refused while the caller can still type the path it meant.
+ */
+function checkHostCwd(opts: Record<string, unknown>): void {
+  const host = str(opts.host);
+  const cwd = str(opts.cwd);
+  if (host === undefined || cwd === undefined) return;
+  if (!cwd.startsWith('/')) {
+    throw new Error(
+      `--cwd ${cwd} has to be an absolute path when --host is given: a relative path or ~ is resolved on this machine, not on ${host}; give the path as it is on ${host}`
+    );
+  }
+}
 
 /**
  * `--tag a,b` → the raw pieces. Splitting only: the trim/lowercase/dedupe and the limits are
@@ -482,6 +606,8 @@ const tagList = (v: unknown): string[] | undefined =>
   typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
 
 function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
+  if (opts.wait !== undefined) throw new Error('--wait only applies to `schedule run`');
+  checkHostCwd(opts);
   const session = str(opts.session);
   if (session !== undefined && session !== 'fixed' && session !== 'new' && session !== 'daily') {
     throw new Error(`--session must be fixed, new or daily, got ${JSON.stringify(session)}`);
@@ -499,6 +625,7 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
     agent: str(opts.agent),
     session,
     cwd: str(opts.cwd),
+    host: str(opts.host),
     model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
   };
@@ -511,6 +638,8 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
  * round trip that could only refuse the same thing.
  */
 function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcAction {
+  if (opts.wait !== undefined) throw new Error('--wait only applies to `schedule run`');
+  checkHostCwd(opts);
   const taskId = p[1]?.replace(/^#/, '');
   if (!taskId) throw new Error('schedule edit needs a task id (`fleetherd schedule list` shows them)');
   if (str(opts.session) !== undefined) {
@@ -537,13 +666,14 @@ function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcActio
     bash: str(opts.bash),
     agent: str(opts.agent),
     cwd: str(opts.cwd),
+    host: str(opts.host),
     model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
   };
   const changed = SCHEDULE_EDIT_KEYS.some((k) => opts[k] !== undefined);
   if (!changed) {
     throw new Error(
-      'schedule edit needs something to change: --agent, --cwd, --model, --cron, --at, --tz, --name, --tag, --prompt, --bash or --timeout'
+      'schedule edit needs something to change: --agent, --cwd, --host, --model, --cron, --at, --tz, --name, --tag, --prompt, --bash or --timeout'
     );
   }
   return action;
@@ -557,12 +687,7 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
     return buildScheduleAdd(opts);
   }
   if (action === 'edit') return buildScheduleEdit(p, opts);
-  const stray = SCHEDULE_ADD_KEYS.find((k) => opts[k] !== undefined);
-  if (stray) {
-    const where = stray === 'tag' ? '`schedule add` and `schedule edit`' : '`schedule add`';
-    throw new Error(`--${stray} only applies to ${where}`);
-  }
-  if (str(opts.channel) !== undefined) throw new Error(`--channel only applies to \`schedule add\` (where output goes)`);
+  refuseStrayFlags(action, opts);
   const id = (): string => {
     const v = p[1]?.replace(/^#/, '');
     if (!v) throw new Error(`schedule ${action} needs a task id (\`fleetherd schedule list\` shows them)`);
@@ -576,8 +701,11 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
       return { kind: 'schedule-list', id: id() };
     case 'pause':
     case 'resume':
-    case 'run':
       return { kind: 'schedule-op', id: id(), op: action };
+    case 'run': {
+      const waitMs = waitOf(opts);
+      return { kind: 'schedule-op', id: id(), op: 'run', ...(waitMs !== undefined ? { waitMs } : {}) };
+    }
     case 'rm':
     case 'remove':
     case 'delete':
@@ -585,6 +713,45 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
     default:
       throw new Error(`unknown schedule action "${action}"; use add | list | show | edit | pause | resume | run | rm`);
   }
+}
+
+/**
+ * `sessions read --reply`: task-read's name for "the last turn that ended normally, and its reply",
+ * as the selection it is made of. Stands alone, like task-read's own — a filter beside it would
+ * name a different answer.
+ */
+function sessionsReply(session: string, opts: Record<string, unknown>): IpcAction | undefined {
+  if (opts.reply !== true) return undefined;
+  const stray = ['around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail', 'limit'].find(
+    (key) => opts[key] !== undefined
+  );
+  if (stray) throw new Error(`--reply selects one turn's reply itself; --${stray} does not apply`);
+  return { kind: 'sessions-read', session, role: 'agent', turn: 'done' };
+}
+
+/**
+ * Refuse the add/edit flags — and `--channel` — on an action that has no use for them. Only
+ * `--session` is add-only; every other one is `edit`'s too, and the sentence says so.
+ */
+function refuseStrayFlags(action: string, opts: Record<string, unknown>): void {
+  if (action !== 'run' && opts.wait !== undefined) throw new Error('--wait only applies to `schedule run`');
+  const stray = SCHEDULE_ADD_KEYS.find((k) => opts[k] !== undefined);
+  if (stray) {
+    const where = stray === 'session' ? '`schedule add`' : '`schedule add` and `schedule edit`';
+    throw new Error(`--${flagName(stray)} only applies to ${where}`);
+  }
+  if (str(opts.channel) !== undefined) throw new Error('--channel only applies to `schedule add` (where output goes)');
+}
+
+/** `--wait` as milliseconds: bare (commander's `true`, or the tool's "true") means the default. */
+function waitOf(opts: Record<string, unknown>): number | undefined {
+  if (opts.wait === true) return DEFAULT_RUN_WAIT_MS;
+  return typeof opts.wait === 'number' ? opts.wait : undefined;
+}
+
+/** The CLI spelling of a commander key, for a sentence that names the flag the caller typed. */
+function flagName(key: string): string {
+  return key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
 /** `sessions <action> [arg]` → one IpcAction, refusing flags that do not belong to the action. */
@@ -601,7 +768,7 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
   }
   const num = (key: string): number | undefined => (typeof opts[key] === 'number' ? (opts[key] as number) : undefined);
   const refuse = (allowed: readonly string[]): void => {
-    const all = ['agent', 'days', 'limit', 'tools', 'around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail'];
+    const all = ['agent', 'days', 'limit', 'before', 'tools', 'around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail', 'full', 'reply'];
     const stray = all.find((k) => !allowed.includes(k) && opts[k] !== undefined);
     if (stray) throw new Error(`--${stray} does not apply to \`sessions ${action}\``);
   };
@@ -612,6 +779,7 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
       // passes them) as the phrase the person typed.
       const query = args.slice(1).join(' ').trim();
       if (!query) throw new Error('sessions search needs a word to look for');
+      assertLimit(num('limit'), 100, 'sessions search');
       return {
         kind: 'sessions-search',
         query,
@@ -622,29 +790,60 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
       };
     }
     case 'read': {
-      refuse(['around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail']);
+      refuse(['around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail', 'limit', 'full', 'reply']);
       if (args.length > 2) throw new Error('sessions read takes one conversation id');
+      const session = pos(args, 1, 'session');
+      const reply = sessionsReply(session, opts);
+      if (reply) return reply;
       const filters = readFilters(opts);
       const around = num('around');
-      if (around !== undefined && anyReadFilter(filters)) {
-        throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail');
+      const limit = num('limit');
+      assertLimit(limit, 500, 'sessions read');
+      if (filters.since !== undefined && limit !== undefined) {
+        throw new Error('--since reads forward from a message id; --limit reads the newest messages — use one');
       }
+      if (around !== undefined && (anyReadFilter(filters) || limit !== undefined)) {
+        throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail/--limit');
+      }
+      // `--full` is accepted and does nothing: a read is already whole (its only cut is the
+      // library's 200k answer budget). It exists here because it exists on task-read, and the two
+      // commands are typed from the same memory.
       return {
         kind: 'sessions-read',
-        session: pos(args, 1, 'session'),
+        session,
         around,
         window: num('window'),
+        ...(limit !== undefined ? { limit } : {}),
         ...filters,
       };
     }
     case 'list':
     case 'ls': {
-      refuse(['days', 'limit']);
+      refuse(['days', 'limit', 'before']);
       if (args.length > 1) throw new Error('sessions list takes no arguments');
-      return { kind: 'sessions-list', days: num('days'), limit: num('limit') };
+      assertLimit(num('limit'), 200, 'sessions list');
+      return {
+        kind: 'sessions-list',
+        days: num('days'),
+        limit: num('limit'),
+        ...(num('before') !== undefined ? { before: num('before') } : {}),
+      };
     }
     default:
       throw new Error(`unknown sessions action "${action}"; use search <words> | read <session> | list`);
+  }
+}
+
+/**
+ * A row bound above the schema's own maximum is refused here, in the words of the command.
+ *
+ * The IPC boundary would answer `malformed action: action.limit Number must be less than or equal
+ * to 200` — an internal path, naming a number the caller never typed. Agents hit it four times in
+ * a week with `--limit 300` / `--limit 500`, then lost the error to their own `grep`.
+ */
+function assertLimit(limit: number | undefined, max: number, command: string): void {
+  if (limit !== undefined && limit > max) {
+    throw new Error(`--limit is at most ${max} for ${command}, got ${limit}`);
   }
 }
 
@@ -653,13 +852,17 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
  * and the per-message text cuts (`--full`, its own `--tail`).
  *
  * `--reply` selects a turn by itself, so it stands alone: a filter beside it would name a different
- * selection, and `--full`/`--tail`/`--limit` would cut the one text it promises whole.
+ * selection, and `--tail`/`--limit` would cut the one text it promises whole. `--full` is the
+ * exception — it is already true of a reply, so it is accepted and ignored.
  */
 function buildTaskRead(positionals: string[], opts: Record<string, unknown>): IpcAction {
   refuseChannel('task-read', opts);
   const topic = pos(positionals, 0, 'topic');
   if (opts.reply === true) {
-    const stray = ['limit', 'full', 'tail', 'role', 'turn', 'turns', 'since', 'grep'].find(
+    // `--full` is accepted and ignored: the reply is already whole, and agents type the two
+    // together (one was refused for it on 2026-11-13). The other flags would select or cut a
+    // different answer.
+    const stray = ['limit', 'tail', 'role', 'turn', 'turns', 'since', 'grep'].find(
       (key) => opts[key] !== undefined
     );
     if (stray) throw new Error(`--reply reads one turn's whole reply; --${stray} does not apply`);
@@ -888,6 +1091,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'voice-log',
     topic: 'voice',
+    channel: false,
     description:
       "List this conversation's recent voice-message transcripts: what the user said, what was sent on, and the saved audio file (TOON table on stdout)",
     options: [{ flags: '-l, --limit <n>', description: 'number of transcripts (default 10)', parse: intArg('--limit') }],
@@ -907,6 +1111,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'channels',
     topic: 'channels',
+    channel: false,
     description:
       'List the chats and topics this gateway can post to, with the ids --channel accepts (TOON table on stdout)',
     options: [
@@ -934,15 +1139,23 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'sessions <action> [arg]',
     topic: 'sessions',
+    channel: false,
     description:
-      'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] [--tools] | read <session> [--around <message>] [--window] | read <session> [filters] | list [--days]',
+      'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] [--tools] | read <session> [--around <message>] [--window] | read <session> [filters] | list [--days] [--limit] [--before]',
     options: [
       { flags: '-a, --agent <id>', description: 'search: only conversations answered by this agent' },
       { flags: '-d, --days <n>', description: 'search/list: only the last n days', parse: intArg('--days') },
-      { flags: '-l, --limit <n>', description: 'search/list: how many rows (search default 10, list 30)', parse: intArg('--limit') },
+      {
+        flags: '-l, --limit <n>',
+        description: 'search/list: how many rows (search default 10, list 30) | read: the newest n messages',
+        parse: intArg('--limit'),
+      },
+      { flags: '--before <session>', description: 'list: continue after this conversation id (the last row of a full page)', parse: sessionArg('--before') },
       { flags: '--tools', description: 'search: include tool calls (commands, edits and their arguments); left out by default' },
       { flags: '--around <message>', description: 'read: a message id from a search hit, to read around', parse: idArg('--around') },
       { flags: '--window <n>', description: 'read: messages on each side of --around (default 10)', parse: intArg('--window') },
+      { flags: '--full', description: 'read: accepted for task-read\'s sake; a read is already whole' },
+      { flags: '--reply', description: 'read: the last turn that ended normally, and its reply — the same as --turn done --role agent' },
       ...READ_FILTER_OPTIONS,
       SESSIONS_READ_TAIL,
     ],
@@ -952,9 +1165,12 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'schedule <action> [id]',
     topic: 'schedule',
     description:
-      'Scheduled tasks kept by the gateway (they survive restarts): add | list | show <id> | edit <id> [options] | pause <id> | resume <id> | run <id> | rm <id>',
+      'Scheduled tasks kept by the gateway (they survive restarts): add | list | show <id> | edit <id> [options] | pause <id> | resume <id> | run <id> [--wait] | rm <id>',
     options: [
-      { flags: '--cron <expr>', description: 'add/edit: recurring, 5-field cron, e.g. "0 8 * * *"' },
+      {
+        flags: '--cron <expr>',
+        description: 'add/edit: recurring, 5-field cron, e.g. "0 8 * * *"; several expressions separated by ; — the task runs at the next one',
+      },
       { flags: '--at <time>', description: 'add/edit: once — +30m, +2h, 08:00, "2026-10-01 08:00", or ISO with a zone' },
       { flags: '--tz <zone>', description: "add/edit: IANA zone for --cron/--at (default: the gateway's; edit keeps the task's)" },
       { flags: '--prompt <text>', description: 'add/edit: the text an agent runs (edit cannot turn a --bash task into a prompt task)' },
@@ -965,13 +1181,24 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '--name <name>', description: 'add/edit: short name for lists and cards' },
       { flags: '--tag <a,b>', description: 'add/edit: labels for the task list, comma-separated (max 5, 24 chars each, letters/digits/- _ . /); edit replaces the whole set, --tag "" clears it' },
       { flags: '--cwd <dir>', description: 'add/edit: working directory for --bash, --session new or --session daily' },
+      {
+        flags: '--host <id>',
+        description:
+          'add/edit: the machine --cwd is on (a hosts: id), for a task whose agent runs there; with no --cwd the task starts in that machine\'s own directory. Without it a --cwd is read as this machine\'s',
+      },
       { flags: '--timeout <duration>', description: 'add/edit: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
+      {
+        flags: '--wait [duration]',
+        description: `run only: wait for the run to end and print its result (default ${DEFAULT_RUN_WAIT_MS / 60_000}m, at most ${MAX_RUN_WAIT_MS / 60_000}h)`,
+        parse: waitArg,
+      },
     ],
     build: buildSchedule,
   },
   {
     usage: 'task-agents',
     topic: 'tasks',
+    channel: false,
     description: 'The agents a sub-task can go to: the machine each runs on (here=true: yours), its model, and the project directories it can start in',
     options: [],
     build: (_positionals, opts) => {
@@ -982,8 +1209,9 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'tasks',
     topic: 'tasks',
+    channel: false,
     description:
-      'The sub-agent topics this conversation opened, most recent first: agent, directory, stage (review | answer | failed | retrying | working | idle), one line, and while one works the tool it is running, its step count, elapsed time and context',
+      'The sub-agent topics this conversation opened, most recent first: agent, directory, stage (review = its turn ended, answer | failed | retrying | working | idle), one line, and while one works the tool it is running, its step count, elapsed time and context',
     options: [{ flags: '-l, --limit <n>', description: 'how many (default 30)', parse: intArg('--limit') }],
     build: (_positionals, opts) => {
       refuseChannel('tasks', opts);
@@ -993,10 +1221,15 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-new <text>',
     topic: 'tasks',
+    channel: false,
     description: 'Propose a sub-task: <text> for one agent, in a topic of its own — started once the person confirms, or at once when confirmation is off',
     options: [
       { flags: '--agent <id>', description: "who does the work: an id from task-agents (default: this conversation's agent)" },
-      { flags: '--cwd <dir>', description: "where it starts: a directory task-agents lists (default: the agent's own)" },
+      {
+        flags: '--cwd <dir>',
+        description:
+          "where it starts, on the machine that runs it: a directory name from task-agents, or an absolute path such as a git worktree there (default: the agent's own root)",
+      },
       { flags: '--title <title>', description: 'the topic’s name (default: named from <text>)' },
       { flags: '--model <id>', description: "the model it runs on, from that agent's /model list (default: the agent's configured model)" },
     ],
@@ -1015,12 +1248,18 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-send <topic> <text>',
     topic: 'tasks',
+    channel: false,
     description:
       "Send <text> to one of this conversation's sub-agents: into its turn when the harness takes input mid-turn, else as its next turn",
     options: [
       {
         flags: '--interrupt',
         description: 'stop the turn it is running first, then send this as its next one (the only way to redirect a harness with no mid-turn input, such as agy)',
+      },
+      {
+        flags: '--forward <topic>',
+        description:
+          "attach that topic's last normally-ended reply, whole, under a heading that names it — for passing a review verdict to the agent that must act on it",
       },
     ],
     build: (positionals, opts) => {
@@ -1030,12 +1269,14 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         topic: pos(positionals, 0, 'topic'),
         text: pos(positionals, 1, 'text'),
         interrupt: opts.interrupt === true ? true : undefined,
+        forward: str(opts.forward),
       };
     },
   },
   {
     usage: 'task-read <topic>',
     topic: 'tasks',
+    channel: false,
     description:
       'A sub-agent topic from the conversation library: its messages, oldest first, cut at 1500 characters each; --full raises the cut, --tail shows the end of each, --reply the last finished reply whole, and the read filters select rows as they do for `sessions read`',
     options: [
@@ -1053,6 +1294,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-status <topic>',
     topic: 'tasks',
+    channel: false,
     description:
       'One sub-agent topic in detail: stage, current tool, step, elapsed, context and cost, plus the last three tool calls and its last reply',
     options: [],
@@ -1064,6 +1306,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-stop <topic>',
     topic: 'tasks',
+    channel: false,
     description: "Stop what one of this conversation's sub-agents is doing; its topic and context stay",
     options: [],
     build: (positionals, opts) => {
@@ -1074,6 +1317,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'pods',
     topic: 'pods',
+    channel: false,
     description: 'The machines agents run on: address, agents (and where they were read from), whether in the ssh mesh, the last read; and the authorized_keys line for a new one',
     options: [],
     build: (_positionals, opts) => {
@@ -1084,6 +1328,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'pod-add <name> <ssh>',
     topic: 'pods',
+    channel: false,
     description: 'Add a machine: <name> for its agents (<id>@<name>), <ssh> as user@address[:port]; prints what was found there',
     options: [{ flags: '--host-key <line>', description: "the machine's public host key line, read on the machine (required)" }],
     build: (positionals, opts) => {
@@ -1096,6 +1341,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'pod-remove <name>',
     topic: 'pods',
+    channel: false,
     description: 'Remove a machine and its agents from the gateway (the machine itself is not touched)',
     options: [],
     build: (positionals, opts) => {
@@ -1106,6 +1352,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'skills <action> [name] [file]',
     topic: 'skills',
+    channel: false,
     description:
       'The skills the gateway keeps for every agent: search <what you need> | show <name> [file] | list | categories | create <name> --description … | patch <name> --version … --content … | write-file | remove-file | archive | restore | pin | unpin | history | revert <name> <id>',
     options: [
@@ -1120,6 +1367,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'reload',
     topic: 'config',
+    channel: false,
     description: 'Apply an edited config.yaml (and its .env) to the running gateway, without a restart; prints what changed',
     options: [],
     build: (_positionals, opts) => {

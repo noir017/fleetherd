@@ -2,6 +2,7 @@ import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
 import { parseTarget, type ConversationAddress } from '../core/conversation.js';
+import { stopInputNote } from '../core/inbound-merger.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
 import { LINE_MAX, topicStage } from '../core/topic-stage.js';
@@ -156,10 +157,12 @@ type Registry = Pick<
   | 'activityOf'
   | 'replyOf'
   | 'failureOf'
+  | 'coolingDown'
   | 'progressOf'
   | 'runningSince'
   | 'statusOf'
   | 'stopConversation'
+  | 'interruptConversation'
   | 'stopWithPending'
   | 'killConversation'
   | 'runScheduledPrompt'
@@ -313,6 +316,14 @@ export class Delegation {
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
   private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void }>();
   /**
+   * Updates held back because the agent that would read them is over its usage limit (TurnOutcomes'
+   * cooldown), per conversation to tell, with that agent. A card is a turn on the same account: sent
+   * now it fails too, and its failure is one more continue on a limit that is already being waited
+   * out. On 2026-11-07 that is how two parents were dragged into their sub-agents' rate limit. Sent
+   * when the cooldown ends (cooldownOver).
+   */
+  private readonly held = new Map<ConversationId, { agent: string; children: Set<ConversationId> }>();
+  /**
    * Sub-agent topics whose turn the parent is told about when it ends: one the parent handed them
    * (task-new, task-send), or one the person started or joined by writing there (personWrote). Kept
    * while a question holds the turn open, and dropped once the end is on a card. Any other turn there
@@ -350,6 +361,7 @@ export class Delegation {
     this.started.clear();
     this.confirmedOnce.clear();
     this.updates.clear();
+    this.held.clear();
     this.onScreen.clear();
     this.owed.clear();
     this.said.clear();
@@ -375,7 +387,7 @@ export class Delegation {
       case 'task-new':
         return this.propose(here, action);
       case 'task-send':
-        return this.send(here, action.topic, action.text, action.interrupt === true);
+        return this.send(here, action.topic, action.text, action.interrupt === true, action.forward);
       case 'task-read':
         return this.read(here, action);
       case 'task-status':
@@ -409,7 +421,8 @@ export class Delegation {
         here: (def.host ?? '') === mine,
         model: def.model ?? '',
         root: choices?.root ?? '',
-        // Names, not paths: task-new takes a name inside the root, and two dozen of them is plenty.
+        // Short names for the column; `task-new --cwd` takes one of these or an absolute path
+        // (a worktree the coordinator made), which this list cannot know about.
         dirs: (choices?.dirs ?? []).slice(0, 24).map((d) => d.split('/').pop() ?? d),
       };
     });
@@ -755,8 +768,17 @@ export class Delegation {
     return lines.join('\n');
   }
 
-  private async send(here: Place, topic: string, text: string, interrupt: boolean): Promise<TaskActionResult> {
+  private async send(
+    here: Place,
+    topic: string,
+    text: string,
+    interrupt: boolean,
+    forward?: string
+  ): Promise<TaskActionResult> {
     const c = this.child(here, topic);
+    // Resolved before anything is sent: a source topic with nothing to forward must leave the
+    // target as it was, not with a message whose attachment is missing.
+    const attached = forward === undefined ? undefined : this.forwardOf(here, forward);
     const header = this.headerOf(here);
     // Stop first, and queue the message behind the stop: the dying turn must not be offered it
     // (InboundMerger.queueBehind). `idle` means there was nothing to stop, and the send is ordinary.
@@ -767,10 +789,61 @@ export class Delegation {
       c.address,
       text,
       header,
-      interrupt ? { queue: true } : {}
+      { ...(interrupt ? { queue: true } : {}), ...(attached ? { forward: attached } : {}) }
     );
     this.owed.add(c.key);
-    return { topic, result: sendResult(how, stopped) };
+    const result = sendResult(how, stopped);
+    return { topic, result: attached ? `${result} ${attached.note}` : result };
+  }
+
+  /**
+   * What `task-send --forward` attaches: the last reply a topic's turn ended normally on, whole.
+   *
+   * The turn is chosen by `replyOfTurn`, the same one `task-read --reply` answers with, so the two
+   * cannot disagree about which reply "the last" is — including after `/new` in the source topic,
+   * where a reply from before the reset is not the one to carry.
+   *
+   * Both topics go through `child()`, so a source this conversation did not open is refused with
+   * the same sentence as a target it did not open (security invariant 6).
+   */
+  private forwardOf(here: Place, topic: string): { heading: string; text: string; note: string } {
+    const c = this.child(here, topic);
+    const history = this.deps.history;
+    if (!history) {
+      throw new Error('the conversation library is unavailable, and --forward reads it; `task-status` shows the live turn');
+    }
+    // A topic with no session row yet would otherwise throw the library's own "no conversation",
+    // which reads like a wrong topic id rather than a topic that has not run (as `read` guards).
+    if (!history.sessionOf(c.key)) throw new Error(`nothing to forward from "${topic}": no turn has run there yet`);
+    const got = this.replyOfTurn(c, topic, history);
+    if (!got.reply) {
+      throw new Error(
+        `nothing to forward from "${topic}": no turn there has ended normally in the current generation yet — \`task-read ${topic} --reply\` says why`
+      );
+    }
+    const title = subjectOf(this.titleOf(c.key, c));
+    const id = `${c.platformId}:${c.address.channel}${c.address.thread ? `/${c.address.thread}` : ''}`;
+    // A topic that is still working, retrying, or holding a question will report again; the reply
+    // forwarded here is its last one that finished, and saying so keeps the parent from treating
+    // it as that topic's latest word.
+    const stage = this.stageOf(c);
+    const more =
+      stage === 'working'
+        ? 'is still working'
+        : stage === 'retrying'
+          ? 'failed and is continuing automatically'
+          : stage === 'answer'
+            ? 'is waiting on a question'
+            : undefined;
+    // Plain text, not markdown: the topic shows this as a report bubble, which is rendered one
+    // escaped line per row so it can fold — asterisks and links would arrive as themselves.
+    return {
+      heading: `↳ Forwarded from "${title}" · ${id} · turn ${got.reply.turn}`,
+      text: got.reply.text,
+      note:
+        `Forwarded "${title}" (turn ${got.reply.turn}) with it.` +
+        (more ? ` "${title}" ${more}; this is turn ${got.reply.turn}, not what it is doing now.` : ''),
+    };
   }
 
   /**
@@ -877,15 +950,22 @@ export class Delegation {
 
   private stop(here: Place, topic: string): TaskActionResult {
     const c = this.child(here, topic);
-    const outcome = this.deps.registry.stopConversation(c.key);
-    if (outcome !== 'idle') {
+    // What the stop kept or dropped goes under the mark, in the topic, where the person who may have
+    // typed it reads (see InboundMerger.interrupt) — and is counted for the agent that asked.
+    const { outcome, kept, dropped } = this.deps.registry.interruptConversation(c.key);
+    const note = stopInputNote(kept, dropped);
+    if (outcome !== 'idle' || note) {
+      const mark = `⏹ Stopped by the agent in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`;
       void c.adapter
-        .sendMessage(c.address, `⏹ Stopped by the agent in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`)
+        .sendMessage(c.address, note ? `${mark}\n${note}` : mark)
         .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
     }
+    const held = kept.length
+      ? ` ${kept.length} message(s) sent there while it ran never reached it; they are kept and go in with the next message there.`
+      : '';
     return {
       topic,
-      result: outcome === 'idle' ? 'Nothing was running there.' : 'Stopped. Its context is kept; a message there carries on from it.',
+      result: (outcome === 'idle' ? 'Nothing was running there.' : 'Stopped. Its context is kept; a message there carries on from it.') + held,
     };
   }
 
@@ -904,11 +984,13 @@ export class Delegation {
     seen.add(key);
     let stopped = 0;
     for (const c of this.childrenOf(here)) {
-      const { outcome, calledOff, transcripts } = this.deps.registry.stopWithPending(c.key, 'stopped from the topic that opened it');
-      if (outcome !== 'idle' || calledOff + transcripts > 0) {
-        stopped++;
+      const { outcome, calledOff, transcripts, kept, dropped } = this.deps.registry.stopWithPending(c.key, 'stopped from the topic that opened it');
+      const note = stopInputNote(kept, dropped);
+      if (outcome !== 'idle' || calledOff + transcripts > 0 || note) {
+        if (outcome !== 'idle' || calledOff + transcripts > 0) stopped++;
+        const mark = `⏹ Stopped with /stop in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`;
         void c.adapter
-          .sendMessage(c.address, `⏹ Stopped with /stop in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`)
+          .sendMessage(c.address, note ? `${mark}\n${note}` : mark)
           .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
       }
       stopped += this.stopOpened(c.key, seen);
@@ -1117,12 +1199,53 @@ export class Delegation {
     if (!this.owed.has(id)) return;
     const parent = this.parentOf(id);
     if (!parent) return;
-    const u = this.updates.get(parent.key) ?? {
+    this.queueUpdates(parent.key, [id]);
+  }
+
+  /** Gather news from `children` for one card to `key`, CARD_DELAY_MS from the first. */
+  private queueUpdates(key: ConversationId, children: Iterable<ConversationId>): void {
+    const u = this.updates.get(key) ?? {
       children: new Set<ConversationId>(),
-      cancel: this.deps.clock.schedule(() => this.sendUpdates(parent.key), CARD_DELAY_MS),
+      cancel: this.deps.clock.schedule(() => this.sendUpdates(key), CARD_DELAY_MS),
     };
-    u.children.add(id);
-    this.updates.set(parent.key, u);
+    for (const c of children) u.children.add(c);
+    this.updates.set(key, u);
+  }
+
+  /**
+   * An agent's usage-limit cooldown is over (TurnOutcomes): the cards held for the conversations it
+   * answers go now — gathered again, so a sub-agent that has since started over is left out the way
+   * sendUpdates always leaves it out.
+   */
+  cooldownOver(agentId: string): void {
+    for (const [key, h] of this.held) {
+      if (h.agent !== agentId) continue;
+      this.held.delete(key);
+      console.log(`[delegation] ${agentId} is past its usage limit; sending ${key} the ${h.children.size} update(s) held for it`);
+      this.queueUpdates(key, h.children);
+    }
+  }
+
+  /**
+   * Hold a card for later (see `held`), saying so in the parent's topic once — without a turn, which
+   * is the whole point.
+   */
+  private holdUpdates(here: Place, agentId: string, children: Set<ConversationId>): void {
+    const h = this.held.get(here.key);
+    if (h) {
+      for (const c of children) h.children.add(c);
+      return;
+    }
+    this.held.set(here.key, { agent: agentId, children: new Set(children) });
+    const n = children.size;
+    console.log(`[delegation] ${agentId} is over its usage limit; holding ${n} update(s) for ${here.key}`);
+    void here.adapter
+      .sendMessage(
+        here.address,
+        `⏸ ${agentId} is over its usage limit — ${n === 1 ? 'an update' : `updates`} from ${n} sub-agent${n === 1 ? '' : 's'} will reach it once the limit lifts.`,
+        { kind: 'report' }
+      )
+      .catch((e) => console.warn('[delegation] could not say updates are held:', e instanceof Error ? e.message : e));
   }
 
   /**
@@ -1170,6 +1293,11 @@ export class Delegation {
     this.updates.delete(key);
     const here = this.place(key);
     if (!u || !here) return;
+    const reader = this.deps.registry.boundAgentOf(key);
+    if (reader && this.deps.registry.coolingDown(reader)) {
+      this.holdUpdates(here, reader, u.children);
+      return;
+    }
     const entries: CardEntry[] = [];
     const shown: string[] = [];
     for (const id of u.children) {
@@ -1277,14 +1405,16 @@ export class Delegation {
     return lines;
   }
 
-  /** "2 of 3 sub-agents have finished; 1 is still working." — so the agent knows whether to wait. */
+  /** "2 of 3 sub-agents have ended their turn; 1 is still working." — so the agent knows whether to wait. */
   private tally(here: Place): string {
     const stages = this.childrenOf(here).map((c) => this.stageOf(c));
     const busy = stages.filter((s) => s === 'working' || s === 'retrying').length;
     const asking = stages.filter((s) => s === 'answer').length;
     const done = stages.length - busy - asking;
     return (
-      `${done} of ${stages.length} sub-agent${stages.length === 1 ? ' has' : 's have'} finished or stopped` +
+      `${done} of ${stages.length} sub-agent${stages.length === 1 ? ' has' : 's have'} ended ${
+        stages.length === 1 ? 'its' : 'their'
+      } turn or stopped` +
       (busy ? `; ${busy} still working` : '') +
       (asking ? `; ${asking} waiting on a question for the person` : '') +
       '.'
@@ -1619,7 +1749,10 @@ function describeStage(stage: TopicStage): string {
     case 'failed':
       return 'failed';
     case 'review':
-      return 'finished';
+      // Its turn ended normally — that is all the gateway knows. "finished" claimed the job was
+      // done, and a reply that says it is waiting for a background command is exactly the case
+      // where the parent read that as done and stopped waiting (2026-11-07, three times).
+      return 'turn ended';
     case 'retrying':
       return 'failed, continuing automatically';
     case 'working':

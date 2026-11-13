@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
-import { isBridgedCommand } from '../ipc/commands.js';
+import { commandHint, isBridgedCommand } from '../ipc/commands.js';
 import { packageVersion, remoteBinary, sshTransport } from '../remote/binaries.js';
 import type { Welcome } from '../remote/connection.js';
 import { RemoteHost, type CliBridge, type CliSession } from '../remote/host.js';
@@ -412,7 +412,11 @@ export class RemoteHosts {
     // The command is judged before this process's own shape: a forbidden command is forbidden
     // whatever the gateway runs as, and the message about it is the useful one.
     if (!isBridgedCommand(req.argv)) {
-      return refuse(`"${req.argv[0] ?? ''}" is not a command an agent can run here; \`fleetherd help\` lists them`);
+      const hint = commandHint(req.argv[0] ?? '');
+      return refuse(
+        `"${req.argv[0] ?? ''}" is not a command an agent can run here; \`fleetherd help\` lists them` +
+          (hint ? `. ${hint}` : '')
+      );
     }
     const self = selfInvocation();
     if (!self) return refuse('this gateway is not running as the fleetherd CLI, so it cannot run reverse commands');

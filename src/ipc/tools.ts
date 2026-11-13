@@ -71,7 +71,9 @@ export const NATIVE_TOOLS: readonly NativeTool[] = [
     description:
       'Tasks that run later or repeatedly — a prompt an agent answers, or a bash command — kept ' +
       'outside this session, so they survive restarts and idle shutdowns, unlike a session\'s own ' +
-      'scheduler. Output goes to this conversation unless channel names another. If the time, time ' +
+      'scheduler. A wait longer than this turn, or a result that should arrive later as a message, ' +
+      'is a task here: a background process your shell starts dies with the session. Output goes to ' +
+      'this conversation unless channel names another. If the time, time ' +
       'zone or destination is unclear, ask first. add needs cron or at, and prompt or bash; tag ' +
       'labels a task for the web UI task list (comma-separated, max 5); edit changes fields of an ' +
       'existing task and keeps its id and history; show, pause, resume, run (now, once) and rm ' +

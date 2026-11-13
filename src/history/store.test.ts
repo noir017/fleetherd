@@ -114,6 +114,8 @@ describe('HistoryStore', () => {
     expect(store.search('同一个词', { agent: 'oc' })).toHaveLength(1);
     expect(store.search('同一个词', { days: 1 })).toHaveLength(1);
     expect(store.search('同一个词', { days: 30 })).toHaveLength(2);
+    // The exact-match filter is right; the caller needs the ids to see why a short name missed.
+    expect(store.agents()).toEqual(['cc', 'oc']);
     store.close();
   });
 
@@ -197,6 +199,22 @@ describe('HistoryStore', () => {
     expect(second.map((s) => s.title)).toEqual(['t2', 't3']);
     const third = store.list({ all: true, limit: 2, before: { lastAt: Date.parse(second[1]!.lastAt), id: second[1]!.id } });
     expect(third.map((s) => s.title)).toEqual(['t4']);
+    store.close();
+  });
+
+  it('pages by conversation id, the form `sessions list --before` takes', () => {
+    const { store } = tempStore();
+    const at = Date.now();
+    for (let i = 0; i < 4; i++) {
+      const id = store.session({ key: `k${i}`, platform: 'tg', title: `t${i}`, at: at - i * 1_000 })!;
+      store.message(id, { ts: at - i * 1_000, role: 'user', kind: 'normal', text: `m${i}` });
+    }
+    const first = store.list({ all: true, limit: 2 });
+    expect(first.map((s) => s.title)).toEqual(['t0', 't1']);
+    const second = store.list({ all: true, limit: 2, beforeId: first[1]!.id });
+    expect(second.map((s) => s.title)).toEqual(['t2', 't3']);
+    // An id the library does not hold is a wrong request, not an empty page.
+    expect(() => store.list({ all: true, beforeId: 999_999 })).toThrow(/no conversation/);
     store.close();
   });
 
@@ -735,6 +753,10 @@ describe('HistoryStore turns', () => {
     expect(() => store.read(String(session), { since: 1, limit: 2 })).toThrow(/cannot be combined/);
     const old = store.session({ key: 'tg#pre#', platform: 'tg', at: 5 })!;
     expect(() => store.read(String(old), { turn: 'last' })).toThrow(/no recorded turns/);
+    // `done` / `--reply` on the same conversation is "it has not answered yet", not a bad request.
+    const noReply = store.read(String(old), { turn: 'done', role: 'agent' });
+    expect(noReply.messages).toEqual([]);
+    expect(noReply.note).toMatch(/nothing to reply with/);
     store.close();
   });
 

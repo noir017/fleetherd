@@ -19,6 +19,7 @@ Discord, Slack), and equally usable as plain text everywhere else.
 | `/cc`, `/oc`, `/cx`, `/gm`, `/agy` | one per configured harness — see [below](#agent-commands) |
 | `/compact`, `/context`, `/model`, `/effort`, `/usage`, `/doctor`, `/mcp`, `/init`, `/review` | a generic vocabulary, translated to each harness's own spelling — see [below](#generic-commands) |
 | `/super <job>` | split a job across agents working in parallel — web UI only, see [Sub-agents](sub-agents.md) |
+| `/btw <question>` | ask something on the side, even mid-turn — answered apart and kept out of the conversation, see [below](#side-questions-btw) |
 
 `/usage` and `/context` sent while the agent is in the middle of a turn are answered by the
 gateway itself — context, cost so far, how long the turn has run — instead of being passed to the
@@ -46,12 +47,58 @@ soon as the turn ends — still without stopping anything:
 |---|---|
 | `claude` | joins the running turn |
 | `codex` | joins the running turn |
-| `opencode` | waits for the turn to end |
-| `agy` | waits for the turn to end |
+| `opencode`, `agy`, `custom` (e.g. CodeBuddy Code) | waits for the turn to end |
+
+Every other harness waits too — `custom` is any ACP program, and only one that declares it can take
+a message is the exception. Waiting is not a way to stop or redirect a long turn: if it is urgent,
+send **`/stop`** first — it ends the turn at once — then the message, which starts a fresh turn.
 
 Slash commands (`/compact`, …) always wait for the turn to end: a command only runs as one at the
 start of a message. To actually stop the agent, use **`/stop`** — it is the only thing that does.
-Anything you sent that had not reached the agent yet is dropped with it.
+
+What `/stop` does with the rest:
+
+- **Messages that had not reached the agent yet are kept**, not sent and not lost. The stop's
+  answer quotes them; they go in ahead of whatever you send next. `/stop` again drops them, and
+  `/new` does too — either way the answer says which.
+- **A message you send after `/stop`**, while the agent is still winding down, starts the next turn
+  as soon as the stopped one ends.
+- **An agent that does not stop within 20 seconds** has its process ended, and the chat says so;
+  the next message picks the conversation up where it was (as with `/kill`). Anything it did after
+  the stop is shown, each tool marked `still running after /stop`.
+
+## Side questions (`/btw`)
+
+`/btw <question>` asks the agent something without touching the work in progress — like Claude
+Code's own `/btw`. The question goes to a **copy** of the conversation, so the answer knows
+everything said so far; the copy is deleted afterwards, so neither the question nor the answer
+becomes part of the conversation, and the agent's next turn has never heard of them. A turn that
+is running carries on: nothing is stopped, and the question does not wait for it.
+
+```
+you    refactor the session store
+agent  ⚙ npm test …                      ← still running
+you    /btw which branch is this on?
+agent  ↪ btw: which branch is this on?    ← a message of its own
+       feat/session-store
+       side question — not kept in this conversation
+```
+
+The answer is its own message, opening with the question; in the web UI it is marked **Side
+question**. It costs a full turn's worth of tokens — the copy reads the whole conversation — but
+is asked of the agent already running rather than a new one. `/stop` stops it along with anything
+else running. It takes words only;
+send pictures as an ordinary message.
+
+| Harness | `/btw` |
+|---|---|
+| `claude` | yes |
+| `codex` | yes |
+| `opencode` | between turns only — a copy taken mid-turn carries on with that turn too, repeating its commands, so it is refused while one runs |
+| `agy`, `gemini`, `dsh` | not supported |
+| `custom` | if the agent declares `session/fork` (CodeBuddy does not); otherwise it says so |
+
+A conversation that has not started yet has nothing to ask about, and says so.
 
 ## Agent commands
 

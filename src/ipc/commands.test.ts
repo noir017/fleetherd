@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, isBridgedCommand, renderHelpIndex, renderHelpTopic } from './commands.js';
+import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, commandHint, isBridgedCommand, renderHelpIndex, renderHelpTopic } from './commands.js';
 import type { IpcAction } from './protocol.js';
 
 /**
@@ -27,6 +27,27 @@ describe('help topics', () => {
   it('the index names every topic on one line each', () => {
     const index = renderHelpIndex();
     for (const t of HELP_TOPICS) expect(index).toMatch(new RegExp(`^  ${t.name}\\s+${t.summary.slice(0, 20)}`, 'm'));
+  });
+
+  it('the index also names the commands, so a topic name is not mistaken for one', () => {
+    // `fleetherd history` / `status` / `agents` were typed as commands seven times in a week.
+    const index = renderHelpIndex();
+    expect(index).toMatch(/^ +commands: fetch-messages$/m);
+    expect(index).toMatch(/^ +commands: send-message, reply, edit-message, react, delete$/m);
+    expect(index).toContain('task-agents');
+    expect(index).toContain('sessions');
+  });
+
+  it('points a name that is not a command at the nearest one, or at its topic', () => {
+    // A help topic is a page, not a command.
+    expect(commandHint('history')).toMatch(/help topic.*help history/);
+    // `status` and `agents` are the tails of real commands.
+    expect(commandHint('status')).toBe('Did you mean `task-status`?');
+    expect(commandHint('agents')).toBe('Did you mean `task-agents`?');
+    expect(commandHint('task')).toBe('Did you mean `tasks`?');
+    // A typo is still found.
+    expect(commandHint('sesions')).toBe('Did you mean `sessions`?');
+    expect(commandHint('frobnicate')).toBeUndefined();
   });
 
   it('says nothing about where the agent is running — only what the commands do', () => {
@@ -56,6 +77,17 @@ describe('help topics', () => {
     expect(renderHelpTopic('nope')).toBeUndefined();
     expect(renderHelpTopic('SCHEDULE')).toBeDefined();
   });
+
+  it('leaves --channel off the pages of the commands that refuse it', () => {
+    // Each of these refuses the flag with its own sentence; a page that lists it anyway is the
+    // mismatch that made `tasks -c web:main` look supported (reported 11-07).
+    for (const topic of ['tasks', 'pods', 'skills', 'sessions', 'voice', 'channels', 'config']) {
+      expect(renderHelpTopic(topic), topic).not.toContain('-c, --channel <id>');
+    }
+    // The ones that do take it still say so.
+    expect(renderHelpTopic('messages')).toContain('-c, --channel <id>');
+    expect(renderHelpTopic('files')).toContain('-c, --channel <id>');
+  });
 });
 
 describe('task commands', () => {
@@ -72,6 +104,12 @@ describe('task commands', () => {
       topic: 'web:main/t1',
       text: 'go',
       interrupt: true,
+    });
+    expect(spec('task-send').build(['web:main/t1', 'go'], { forward: 'web:main/t2' })).toEqual({
+      kind: 'task-send',
+      topic: 'web:main/t1',
+      text: 'go',
+      forward: 'web:main/t2',
     });
     expect(spec('task-status').build(['web:main/t1'], {})).toEqual({ kind: 'task-status', topic: 'web:main/t1' });
   });
@@ -98,14 +136,16 @@ describe('task commands', () => {
 
   it('task-read --reply stands alone: it selects the turn itself', () => {
     expect(spec('task-read').build(['t'], { reply: true })).toEqual({ kind: 'task-read', topic: 't', reply: true });
-    for (const extra of [{ limit: 5 }, { full: true }, { tail: 3 }, { role: 'agent' }, { turn: 'last' }, { grep: 'x' }]) {
+    // `--full` is the one it tolerates: the reply is whole either way, and agents type them together.
+    expect(spec('task-read').build(['t'], { reply: true, full: true })).toEqual({ kind: 'task-read', topic: 't', reply: true });
+    for (const extra of [{ limit: 5 }, { tail: 3 }, { role: 'agent' }, { turn: 'last' }, { grep: 'x' }]) {
       expect(() => spec('task-read').build(['t'], { reply: true, ...extra })).toThrow(/--reply reads one turn's whole reply/);
     }
   });
 
   it('refuses --channel: each names its conversation itself', () => {
-    for (const usage of ['task-send', 'task-read', 'task-status', 'task-stop']) {
-      expect(() => spec(usage).build(['t'], { channel: 'c1' })).toThrow(/names its conversation itself/);
+    for (const usage of ['task-agents', 'tasks', 'task-new', 'task-send', 'task-read', 'task-status', 'task-stop']) {
+      expect(() => spec(usage).build(['t'], { channel: 'c1' }), usage).toThrow(/names its conversation itself/);
     }
   });
 });
@@ -185,6 +225,7 @@ describe('schedule <action> [id]', () => {
       tz: undefined,
       bash: undefined,
       cwd: undefined,
+      host: undefined,
       timeoutMs: undefined,
     });
   });
@@ -223,9 +264,56 @@ describe('schedule <action> [id]', () => {
       bash: undefined,
       agent: 'oc',
       cwd: '/srv/app',
+      host: undefined,
       model: undefined,
       timeoutMs: undefined,
     });
+  });
+
+  it('--host is the machine a --cwd is on, and rides with add and edit', () => {
+    expect(schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd: '/srv/app', host: 'box' })).toMatchObject({
+      kind: 'schedule-add',
+      cwd: '/srv/app',
+      host: 'box',
+    });
+    expect(schedule(['edit', 'a1b2c3'], { host: 'box', cwd: '/srv/app' })).toMatchObject({ kind: 'schedule-edit', host: 'box' });
+    expect(() => schedule(['list'], { host: 'box' })).toThrow(/--host only applies to `schedule add` and `schedule edit`/);
+  });
+
+  it('refuses a relative or ~ --cwd under --host, since it would be resolved here', () => {
+    // reverse.ts resolves it against the caller's directory, so it would arrive absolute and
+    // naming a place on the wrong machine; nothing downstream could tell.
+    for (const cwd of ['srv/app', './app', '~/app', '~']) {
+      expect(() => schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd, host: 'box' })).toThrow(
+        /has to be an absolute path when --host is given/
+      );
+      expect(() => schedule(['edit', 'a1b2c3'], { cwd, host: 'box' })).toThrow(/has to be an absolute path when --host is given/);
+    }
+    // Without --host, relative is still resolved by the CLI and allowed — that is the local case.
+    expect(schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd: 'srv/app' })).toMatchObject({ cwd: 'srv/app' });
+  });
+
+  it('--wait waits for a run, defaulting to ten minutes, and only on run', () => {
+    expect(schedule(['run', 'a1b2c3'], { wait: true })).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 600_000 });
+    const parse = spec('schedule').options.find((o) => o.flags.startsWith('--wait'))!.parse!;
+    expect(parse('30s')).toBe(30_000);
+    // The native tool sends every value as a string, including a bare flag.
+    expect(parse('true')).toBe(600_000);
+    expect(schedule(['run', 'a1b2c3'], { wait: parse('2m') })).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 120_000 });
+    expect(schedule(['run', 'a1b2c3'])).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run' });
+    expect(() => schedule(['pause', 'a1b2c3'], { wait: true })).toThrow(/--wait only applies to `schedule run`/);
+    // Not silently ignored on the two actions that take options of their own.
+    expect(() => schedule(['add'], { cron: '0 8 * * *', prompt: 'x', wait: true })).toThrow(/--wait only applies to `schedule run`/);
+    expect(() => schedule(['edit', 'a1b2c3'], { name: 'x', wait: true })).toThrow(/--wait only applies to `schedule run`/);
+  });
+
+  it('refuses a --wait of zero and one past an hour, in words rather than zod', () => {
+    const parse = spec('schedule').options.find((o) => o.flags.startsWith('--wait'))!.parse!;
+    expect(parse('1h')).toBe(3_600_000);
+    expect(() => parse('0')).toThrow(/too short: give at least 1s/);
+    expect(() => parse('500ms')).toThrow(/too short: give at least 1s/);
+    expect(() => parse('2h')).toThrow(/longer than the 60m maximum/);
+    expect(() => parse('soon')).toThrow(/duration like 90s/);
   });
 
   it('parses --tag as a comma-separated list, empty pieces dropped, and "" as clearing', () => {
@@ -245,7 +333,7 @@ describe('schedule <action> [id]', () => {
     [['pause'], {}, /needs a task id/],
     [['list'], { tag: 'ci' }, /--tag only applies to `schedule add` and `schedule edit`/],
     [['frobnicate'], {}, /unknown schedule action "frobnicate"/],
-    [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add`/],
+    [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add` and `schedule edit`/],
     [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add`/],
     [['add', 'x'], { cron: '0 8 * * *' }, /takes no id/],
     [['add'], { session: 'forever' }, /--session must be fixed, new or daily/],
@@ -312,12 +400,37 @@ describe('sessions <action> [arg]', () => {
     expect(sessions(['read', '12'], { turns: 2 })).toMatchObject({ kind: 'sessions-read', turns: 2 });
   });
 
+  it('takes task-read’s --limit, --full and --reply, so the same word works in both commands', () => {
+    expect(sessions(['read', '#12'], { limit: 40 })).toMatchObject({ kind: 'sessions-read', session: '#12', limit: 40 });
+    // `--full` is accepted and changes nothing: a read is already whole.
+    expect(sessions(['read', '#12'], { full: true })).toEqual({
+      kind: 'sessions-read',
+      session: '#12',
+      around: undefined,
+      window: undefined,
+    });
+    // `--reply` is the selection it is made of, and stands alone like task-read's.
+    expect(sessions(['read', '#12'], { reply: true })).toEqual({
+      kind: 'sessions-read',
+      session: '#12',
+      role: 'agent',
+      turn: 'done',
+    });
+    expect(sessions(['read', '#12'], { reply: true, full: true })).toMatchObject({ role: 'agent', turn: 'done' });
+    expect(() => sessions(['read', '#12'], { reply: true, limit: 5 })).toThrow(/--reply selects one turn's reply/);
+    expect(() => sessions(['read', '#12'], { limit: 5, since: 40 })).toThrow(/--since reads forward/);
+    expect(() => sessions(['read', '#12'], { around: 3, limit: 5 })).toThrow(/--around reads a window of its own/);
+  });
+
   it('takes a message id exactly as read prints it, with or without #', () => {
     const parse = (flag: string) => spec('sessions').options.find((o) => o.flags.includes(flag))!.parse!;
     expect(parse('--since')('#87')).toBe(87);
     expect(parse('--since')('87')).toBe(87);
     expect(parse('--around')('#12')).toBe(12);
     expect(() => parse('--since')('#')).toThrow(/positive message id/);
+    // `--before` takes the id `sessions list` printed, `#` included.
+    expect(parse('--before')('#42')).toBe(42);
+    expect(parse('--before')('42')).toBe(42);
   });
 
   it('keeps --tail out of the shared filter list task-read will reuse', () => {
@@ -327,9 +440,19 @@ describe('sessions <action> [arg]', () => {
     expect(spec('sessions').options.some((o) => o.flags.includes('--tail'))).toBe(true);
   });
 
-  it('builds a list', () => {
+  it('builds a list, and pages it with --before', () => {
     expect(sessions(['list'], { days: 7, limit: 10 })).toEqual({ kind: 'sessions-list', days: 7, limit: 10 });
     expect(sessions(['ls'])).toEqual({ kind: 'sessions-list', days: undefined, limit: undefined });
+    expect(sessions(['list'], { days: 7, before: 42 })).toMatchObject({ kind: 'sessions-list', before: 42 });
+  });
+
+  it('refuses a --limit over the bound in the command’s own words, not the schema path', () => {
+    // `action.limit Number must be less than or equal to 200` is what the IPC boundary says, and
+    // it names a field the caller never typed.
+    expect(() => sessions(['list'], { limit: 500 })).toThrow(/--limit is at most 200 for sessions list/);
+    expect(() => sessions(['search', 'x'], { limit: 300 })).toThrow(/--limit is at most 100 for sessions search/);
+    expect(() => sessions(['read', '#12'], { limit: 501 })).toThrow(/--limit is at most 500 for sessions read/);
+    expect(sessions(['read', '#12'], { limit: 300 })).toMatchObject({ limit: 300 });
   });
 
   it('ignores the undefined slot commander leaves for an omitted optional positional', () => {

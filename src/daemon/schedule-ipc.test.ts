@@ -1,13 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Daemon } from './daemon.js';
 import { ConversationStore } from './conversation-store.js';
 import { ScheduleStore } from './schedule-store.js';
+import { remoteHosts } from './remote-hosts.js';
 import { parseConfig } from '../config/schema.js';
 import { callDaemon } from '../ipc/client.js';
-import type { IpcAction, ScheduleListResult, ScheduleTaskView } from '../ipc/protocol.js';
+import type { IpcAction, ScheduleListResult, ScheduleOpResult, ScheduleTaskView } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession } from './agent.js';
 import type { InboundMessage } from '../types.js';
@@ -161,6 +162,8 @@ async function rig(
     emptyThread?: boolean;
     perUser?: boolean;
     holdProbe?: boolean;
+    /** A prompt whose turn throws, as a harness dying mid-turn does. */
+    failPrompt?: string;
     /** A config of its own, for a test that needs a host or an agent the shared one lacks. */
     config?: typeof cfg;
   } = {}
@@ -194,6 +197,9 @@ async function rig(
             tokens.push(input.sessionToken);
             tokenOf.set(conversationId, input.sessionToken);
             turns.push({ conversation: conversationId, agent: agentId, prompt: input.prompt });
+            // A harness that dies mid-turn: the merger reports the turn as failed, and nothing the
+            // gateway posts on its own says so — which is what the run notice has to cover.
+            if (over.failPrompt !== undefined && input.prompt === over.failPrompt) throw new Error('the harness exited mid-turn');
           },
           ...(agentId === 'nosel'
             ? {}
@@ -355,11 +361,15 @@ describe('schedule over IPC', () => {
     const byDefault = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote' });
     expect((byDefault as { error: string }).error).toBe(
       "this task runs on box, but would start in /srv/gw, this conversation's directory on this machine; " +
-        "run the add from a conversation there, whose own directory — or a --cwd given there — is that machine's"
+        "pass --host box with no --cwd to start in box's own default directory, or run the add from a conversation there"
     );
-    // A --cwd typed here is this machine's too, the same rule edit applies.
+    // A --cwd typed here is this machine's too, the same rule edit applies — and the message says how
+    // it read the path, which the old one got wrong for an agent that meant the other machine.
     const given = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', agent: 'remote', cwd: '/srv/app' });
-    expect((given as { error: string }).error).toBe('--cwd /srv/app is a path on this machine, but this task runs on box; run the add from a conversation there');
+    expect((given as { error: string }).error).toBe(
+      '--cwd /srv/app is read as a path on this machine, the machine this command ran on, but this task runs on box; ' +
+        'if it is a path on box, pass --host box, or run the add from a conversation there'
+    );
     // Nothing was stored, and no card claimed it was.
     expect(saved(r)).toEqual([]);
     expect(r.sent.some((s) => s.text.includes('Scheduled task registered'))).toBe(false);
@@ -910,7 +920,7 @@ describe('schedule edit over IPC', () => {
     const task = await addedFrom(r, BOX_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote' });
     const resp = await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: task.id, cwd: '/srv/app' });
     expect((resp as { error: string }).error).toMatch(
-      /--cwd \/srv\/app is a path on this machine, but this task runs on box; .*run the edit from a conversation there/
+      /--cwd \/srv\/app is read as a path on this machine, the machine this command ran on, but this task runs on box; .*--host box/
     );
     // Everything else still edits.
     const ok = await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: task.id, name: 'renamed' });
@@ -931,7 +941,7 @@ describe('schedule edit over IPC', () => {
 
     const moved = await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id: task.id, agent: 'remote' });
     expect((moved as { error: string }).error).toBe(
-      "this task runs on box after this edit, but keeps its directory /srv/gw, a path on this machine; run the edit from a conversation there, with a --cwd on that machine"
+      "this task runs on box after this edit, but keeps its directory /srv/gw, a path on this machine; give it a --cwd on box with --host box, or run the edit from a conversation there"
     );
     // From box without --cwd, the same edit says what is still missing, from where it is read.
     const fromBox = await r.callFrom(BOX_KEY, { kind: 'schedule-edit', id: task.id, agent: 'remote' });
@@ -991,6 +1001,173 @@ describe('schedule edit over IPC', () => {
     expect((resp as { error: string }).error).toMatch(/this task runs on box/);
     const ok = await r.call({ kind: 'schedule-edit', id: 'b0x1', timeoutMs: 120_000 });
     expect(ok.ok).toBe(true);
+  });
+});
+
+/**
+ * What the chat hears about a run: the card reaching the conversation that will run the task, a
+ * run that failed saying so, and `run --wait` answering instead of leaving the agent to poll.
+ */
+describe('schedule runs: what the chat hears', () => {
+  it('posts the card in the conversation the task posts to, not only where it was registered', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    r.sent.length = 0;
+    await added(r, { kind: 'schedule-add', at: '+1h', bash: 'echo hi', channelId: 'tg:586', name: 'brief' });
+    await settle();
+    const cards = r.sent.filter((s) => s.text.includes('Scheduled task registered'));
+    expect(cards.map((c) => [c.platform, c.address])).toEqual([
+      ['web', { channel: 'main', thread: 't1' }],
+      ['tg', { channel: '586' }],
+    ]);
+  });
+
+  it('an edit that rewrites the prompt shows it whole, in both conversations', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', at: '+1h', prompt: 'old brief', session: 'new', channelId: 'tg:586', name: 'brief' });
+    r.sent.length = 0;
+    // A prompt that used to be cut at 200 characters on the card, in a conversation the target
+    // could not see — the change that shipped an unverified prototype (2026-11-13).
+    const prompt = `first line\nsecond line ${'z'.repeat(300)}`;
+    await r.call({ kind: 'schedule-edit', id: task.id, prompt });
+    await settle();
+    const cards = r.sent.filter((s) => s.text.includes('Scheduled task updated'));
+    expect(cards.map((c) => c.platform)).toEqual(['web', 'tg']);
+    for (const card of cards) expect(card.text).toContain(`• Prompt:\n> first line\n> second line ${'z'.repeat(300)}`);
+  });
+
+  it('a scheduled turn that fails says so where its output was expected, and stops reading ok', async () => {
+    const r = await rig(undefined, undefined, { failPrompt: 'check the thing' });
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', at: '+1h', prompt: 'check the thing', session: 'new', name: 'check' });
+    r.sent.length = 0;
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle(600);
+
+    const notice = r.sent.find((s) => s.text.includes('**check** failed at'));
+    expect(notice?.text).toMatch(/^⏰ `#[a-z0-9]+` \*\*check\*\* failed at .+ — the turn failed without a reply\.$/);
+    // The record is what a later `show` reads: no more "ok" from an earlier run standing in for this.
+    const shown = (await r.call({ kind: 'schedule-list', id: task.id })) as { data: ScheduleListResult };
+    const view = shown.data.tasks[0]!;
+    expect(view.last).toMatch(/^failed /);
+    expect(view.history?.[0]).toMatchObject({ status: 'failed', error: 'the turn failed without a reply' });
+    // The topic the run opened, so an audit can go and read what the agent did say.
+    expect(view.history?.[0]?.conversation).toBeTruthy();
+  });
+
+  it('reports the same skip reason once, not on every run', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', name: 'brief' });
+    // The topic now has another agent, so every run is skipped — and the run's record says
+    // `failed`, which is why the deduplication is keyed on the reason and not on the status.
+    await r.inbound(WEB, '/agent oc');
+    r.sent.length = 0;
+    await r.callFrom(WEB_KEY, { kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle(300);
+    await r.callFrom(WEB_KEY, { kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle(300);
+    const skips = r.sent.filter((s) => s.text.includes('**brief** skipped at'));
+    expect(skips).toHaveLength(1);
+    expect(skips[0]!.text).toContain('this topic is now answered by oc, not cc');
+    // Only the message is deduplicated: the record and the history keep both runs.
+    const shown = (await r.call({ kind: 'schedule-list', id: task.id })) as { data: ScheduleListResult };
+    expect(shown.data.tasks[0]!.last).toMatch(/^failed /);
+    expect(shown.data.tasks[0]!.history).toHaveLength(2);
+  });
+
+  it('run --wait answers with the run\'s result instead of leaving the agent to poll', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', at: '+1h', bash: 'echo waited-output' });
+    r.sent.length = 0;
+    const resp = (await r.call({ kind: 'schedule-op', id: task.id, op: 'run', waitMs: 20_000 })) as { data: ScheduleOpResult };
+    expect(resp.data.run).toMatchObject({ status: 'ok', error: '', conversation: '' });
+    expect(resp.data.run!.took).not.toBe('');
+    expect(resp.data.note).toBeUndefined();
+    // The output still reached the conversation, as any run's does.
+    expect(r.sent.some((s) => s.text.includes('waited-output'))).toBe(true);
+  });
+
+  it('run --wait gives up on time, says the run is still going, and the run still finishes', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', at: '+1h', bash: 'sleep 1; echo late' });
+    const resp = (await r.call({ kind: 'schedule-op', id: task.id, op: 'run', waitMs: 50 })) as { data: ScheduleOpResult };
+    expect(resp.data.run).toBeUndefined();
+    expect(resp.data.note).toMatch(/still running after 50ms/);
+    await settle(1_600);
+    const shown = (await r.call({ kind: 'schedule-list', id: task.id })) as { data: ScheduleListResult };
+    expect(shown.data.tasks[0]!.last).toMatch(/^ok /);
+  });
+});
+
+/**
+ * `--host`: the explicit way to register a task for an agent on another machine, which the 11-07
+ * rule otherwise refuses (a --cwd typed here is this machine's). The directory is checked on that
+ * machine with `test -d`; the fake host stands in for the ssh link, which no test has.
+ */
+describe('schedule --host over IPC', () => {
+  /** A RemoteHost with just what dirOnHostProblem uses; `/nope` is the path that is not there. */
+  function fakeHost(seen: string[]): void {
+    vi.spyOn(remoteHosts, 'get').mockReturnValue({
+      run: async (o: { argv?: string[] }) => {
+        seen.push((o.argv ?? []).join(' '));
+        return { code: o.argv?.[2] === '/nope' ? 1 : 0 };
+      },
+    } as never);
+  }
+
+  it('takes a --cwd for the task\'s machine, checks it there, and stores no directory without one', async () => {
+    const r = await rig(undefined, undefined, { config: cfgHosts });
+    await r.inbound(WEB, 'hello');
+    await onBox(r);
+    const seen: string[] = [];
+    fakeHost(seen);
+    try {
+      await addedFrom(r, WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote', cwd: '/srv/app', host: 'box' });
+      expect(seen).toEqual(['test -d /srv/app']);
+      expect(saved(r)[0]).toMatchObject({ run: { agent: 'remote', cwd: '/srv/app' } });
+
+      // No --cwd: the task starts in box's own default directory. This conversation's /srv/gw is a
+      // path on a machine the task never runs on, so it is not carried over.
+      await addedFrom(r, WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote', host: 'box' });
+      expect(saved(r)[1]!['run']).toEqual({ kind: 'agent', agent: 'remote', prompt: 'brief', session: 'new' });
+      expect(seen).toHaveLength(1); // nothing to check without a directory
+
+      // An edit gives the task a directory on box the same way.
+      const task = (await r.call({ kind: 'schedule-list' })) as { data: ScheduleListResult };
+      const id = task.data.tasks[0]!.id;
+      const ok = await r.callFrom(WEB_KEY, { kind: 'schedule-edit', id, cwd: '/srv/other', host: 'box' });
+      expect(ok.ok).toBe(true);
+      expect(saved(r)[0]).toMatchObject({ run: { cwd: '/srv/other' } });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('refuses a directory that is not there, an unknown host, and a host the task does not run on', async () => {
+    const r = await rig(undefined, undefined, { config: cfgHosts });
+    await r.inbound(WEB, 'hello');
+    await onBox(r);
+    fakeHost([]);
+    try {
+      const missing = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote', cwd: '/nope', host: 'box' });
+      expect((missing as { error: string }).error).toBe('--cwd /nope is not a directory on box; nothing was stored');
+
+      const unknown = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote', host: 'zz' });
+      expect((unknown as { error: string }).error).toBe('unknown host "zz"; configured: box');
+
+      // `cc` runs here; --host names a machine, and this task's is the gateway.
+      const wrong = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc', host: 'box' });
+      expect((wrong as { error: string }).error).toBe(
+        "--host box names the machine a --cwd is on, but this task runs on the gateway's machine; --host has to be the machine the task runs on"
+      );
+      expect(saved(r)).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 

@@ -49,6 +49,17 @@ const RunSchema = z.discriminatedUnion('kind', [
     .strict(),
 ]);
 
+const RunRecordSchema = z
+  .object({
+    at: z.number().finite(),
+    status: z.enum(['ok', 'failed', 'interrupted', 'skipped', 'missed']),
+    durationMs: z.number().finite().optional(),
+    exitCode: z.number().int().optional(),
+    error: z.string().optional(),
+    conversation: z.string().min(1).optional(),
+  })
+  .strict();
+
 const TaskSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9]{4,16}$/),
@@ -86,6 +97,8 @@ const TaskSchema = z
         error: z.string().optional(),
       })
       .optional(),
+    // Absent in every file written before run history existed — optional is the migration.
+    history: z.array(RunRecordSchema).optional(),
     runs: z.number().int().nonnegative(),
   })
   .superRefine((t, ctx) => {
@@ -138,6 +151,30 @@ function repairedTags(entry: unknown): unknown {
   return rest;
 }
 
+/**
+ * A run history is a log, not the task: a hand-edited file with one bad row must cost that row, not
+ * the schedule. Unlike `repairedTags` this cannot repair a row, only drop it — the scheduler writes
+ * every row itself, so a row that does not parse was not one of ours.
+ */
+function repairedHistory(entry: unknown): unknown {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+  const record = entry as Record<string, unknown>;
+  if (!('history' in record)) return entry;
+  const id = typeof record.id === 'string' ? `#${record.id}` : '(no id)';
+  const raw = record.history;
+  if (!Array.isArray(raw)) {
+    console.warn(`[schedule] ${id}: dropped history — expected a list`);
+    const { history: _bad, ...rest } = record;
+    return rest;
+  }
+  const history: unknown[] = [];
+  for (const row of raw) {
+    if (RunRecordSchema.safeParse(row).success) history.push(row);
+    else console.warn(`[schedule] ${id}: dropped a run from history — ${JSON.stringify(row)}`);
+  }
+  return { ...record, history };
+}
+
 export class ScheduleStore {
   private tasks = new Map<string, ScheduleTask>();
 
@@ -155,7 +192,7 @@ export class ScheduleStore {
       ? ((raw as { tasks: unknown[] }).tasks)
       : [];
     for (const entry of entries) {
-      const parsed = TaskSchema.safeParse(repairedTags(entry));
+      const parsed = TaskSchema.safeParse(repairedHistory(repairedTags(entry)));
       if (parsed.success) {
         // Tags are labels, not the task: a hand-edited file may hold ones an edit would refuse,
         // and dropping the whole entry would make it disappear for good on the next write. Each

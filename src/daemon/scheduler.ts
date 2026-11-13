@@ -1,4 +1,4 @@
-import { decide, nextRunOf, type ScheduleRunStatus, type ScheduleTask } from '../core/schedule.js';
+import { decide, nextRunOf, withRun, type ScheduleRunRecord, type ScheduleRunStatus, type ScheduleTask } from '../core/schedule.js';
 import type { ScheduleStore } from './schedule-store.js';
 
 /**
@@ -24,13 +24,31 @@ export interface ScheduleRunResult {
   status: Extract<ScheduleRunStatus, 'ok' | 'failed' | 'interrupted'>;
   exitCode?: number;
   error?: string;
+  /** The conversation the output went to, when it ran in one — a `new` or `daily` run opens one. */
+  conversation?: string;
+}
+
+/**
+ * Something that happened to a task without a turn being made, which the chat has to be told:
+ * a run that could not start, or one that never happened because the gateway was down.
+ *
+ * A run that DID happen reports its own failure (the executor posts it); these are the silent ones
+ * — the run that never was. `error` is what the task's record says, so both read the same.
+ */
+export interface ScheduleNotice {
+  event: 'expired' | 'failed' | 'skipped' | 'missed';
+  /** When it was recorded. */
+  at: number;
+  /** The time it was due, when the notice is about a run — what the chat says instead of `at`. */
+  planned?: number;
+  error?: string;
 }
 
 export interface ScheduleExecutor {
   /** Carry out one run. Must not throw — a failure is a result. `signal` fires on daemon shutdown. */
   run(task: ScheduleTask, planned: number, signal: AbortSignal): Promise<ScheduleRunResult>;
-  /** A task changed state on its own (a fixed-session window closed). Best-effort; say so in chat. */
-  notify?(task: ScheduleTask, event: 'expired'): void;
+  /** A task changed state on its own, or a run did not happen. Best-effort; say so in chat. */
+  notify?(task: ScheduleTask, notice: ScheduleNotice): void;
 }
 
 /** Longest the scheduler goes without looking. */
@@ -154,14 +172,16 @@ export class Scheduler {
   /**
    * Run a task now, out of schedule — to try one out. Its planned times are untouched, so the next
    * scheduled run still happens. Refused while a run of it is already going.
+   *
+   * `done` resolves with the run's record when it ends — what `schedule run --wait` answers with,
+   * so an agent does not have to poll. It resolves undefined when the task was removed mid-run.
    */
-  runNow(id: string): ScheduleTask | string {
+  runNow(id: string): { task: ScheduleTask; done: Promise<ScheduleRunRecord | undefined> } | string {
     const task = this.store.get(id);
     if (!task) return `no scheduled task #${id}`;
     if (this.running.has(id)) return `#${id} is running right now`;
     if (this.stopped) return `the gateway is restarting; run #${id} again once it is back`;
-    void this.execute(task, this.clock.now(), { manual: true });
-    return task;
+    return { task, done: this.execute(task, this.clock.now(), { manual: true }) };
   }
 
   /** Evaluate every task, act on what is due, and arm the timer for the next look. */
@@ -186,21 +206,27 @@ export class Scheduler {
         return decision.at;
       case 'run':
         if (this.running.has(task.id)) {
-          // Still running from last time: this run is skipped, not stacked behind it.
-          this.record(task, decision.planned, { at: now, status: 'skipped', error: 'the previous run was still going' });
+          // Still running from last time: this run is skipped, not stacked behind it. Recorded AND
+          // said: a run that quietly does not happen is exactly what nobody notices for days.
+          const error = 'the previous run was still going';
+          this.record(task, decision.planned, { at: now, status: 'skipped', error });
+          this.executor.notify?.(task, { event: 'skipped', at: now, planned: decision.planned, error });
         } else {
           void this.execute(task, decision.planned, { manual: false });
         }
         return undefined;
-      case 'missed':
+      case 'missed': {
+        const error = 'the gateway was not running at the time';
         console.warn(`[schedule] #${task.id} missed its ${new Date(decision.planned).toISOString()} run (the daemon was not running)`);
-        this.record(task, decision.planned, { at: now, status: 'missed', error: 'the gateway was not running at the time' });
+        this.record(task, decision.planned, { at: now, status: 'missed', error });
+        this.executor.notify?.(task, { event: 'missed', at: now, planned: decision.planned, error });
         return undefined;
+      }
       case 'expire': {
         const expired: ScheduleTask = { ...task, state: 'expired' };
         this.store.put(expired);
         console.log(`[schedule] #${task.id} expired`);
-        this.executor.notify?.(expired, 'expired');
+        this.executor.notify?.(expired, { event: 'expired', at: now });
         return undefined;
       }
       case 'done':
@@ -219,6 +245,9 @@ export class Scheduler {
       ...task,
       lastPlannedAt: planned,
       lastRun,
+      // A run that did not happen is still a run the audit has to account for: a day with one
+      // missing from the history is a day someone asks about.
+      history: withRun(task.history, { ...lastRun }),
       ...('at' in task.when ? { state: 'done' as const } : {}),
     };
     this.store.put(next);
@@ -227,7 +256,7 @@ export class Scheduler {
     queueMicrotask(() => this.look());
   }
 
-  private async execute(task: ScheduleTask, planned: number, opts: { manual: boolean }): Promise<void> {
+  private async execute(task: ScheduleTask, planned: number, opts: { manual: boolean }): Promise<ScheduleRunRecord | undefined> {
     const abort = new AbortController();
     this.running.set(task.id, abort);
     // Written before the run so a crash mid-run does not make it again (see the file header).
@@ -244,12 +273,22 @@ export class Scheduler {
       this.running.delete(task.id);
     }
     const current = this.store.get(task.id);
-    if (!current) return; // removed while it ran
+    if (!current) return undefined; // removed while it ran
     const durationMs = this.clock.now() - started;
     const error = result.error && result.error.length > ERROR_LIMIT ? `${result.error.slice(0, ERROR_LIMIT - 1)}…` : result.error;
+    const record: ScheduleRunRecord = {
+      at: started,
+      status: result.status,
+      durationMs,
+      ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+      ...(error ? { error } : {}),
+      ...(result.conversation !== undefined ? { conversation: result.conversation } : {}),
+    };
     this.store.put({
       ...current,
       runs: current.runs + 1,
+      // Built field by field, not spread from `record`: lastRun's schema is strict, and the
+      // conversation a run used is history, not part of "how did it go".
       lastRun: {
         at: started,
         status: result.status,
@@ -257,11 +296,13 @@ export class Scheduler {
         ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
         ...(error ? { error } : {}),
       },
+      history: withRun(current.history, record),
       // A one-shot is done once its scheduled run has been made; a manual try leaves it pending.
       ...(!opts.manual && 'at' in current.when ? { state: 'done' as const } : {}),
     });
     console.log(`[schedule] #${task.id} finished: ${result.status}${error ? ` (${error})` : ''} in ${durationMs}ms`);
     this.look();
+    return record;
   }
 
   /** When an active task runs next — for the list and the cards. */

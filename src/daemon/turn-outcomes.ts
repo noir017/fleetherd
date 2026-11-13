@@ -1,4 +1,4 @@
-import type { Config } from '../config/schema.js';
+import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import {
@@ -6,6 +6,7 @@ import {
   describeFailureReason,
   failureLine,
   replyLine,
+  undeliveredLine,
 } from '../core/topic-stage.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId, TopicActivity, TurnFailureReason, TurnOutcome } from '../types.js';
@@ -15,6 +16,9 @@ import { runTurnFailedHook } from './agent-hooks.js';
 import type { ConversationStore } from './conversation-store.js';
 import { CARD_ITEM_CHARS } from './delegation.js';
 import type { TurnEnd } from './turn-runner.js';
+
+/** An agent's `hooks.turnFailed.continue` policy, as parsed. */
+type TurnFailedContinue = NonNullable<NonNullable<NonNullable<AgentDef['hooks']>['turnFailed']>['continue']>;
 
 /**
  * What each conversation's last turn left for the person, and what the gateway does about a failed
@@ -58,6 +62,11 @@ export interface TurnOutcomesDeps {
    * continued). Delegation listens here, for a sub-agent's topic (daemon/delegation.ts); absent = nobody does.
    */
   onNeedsPerson?(id: ConversationId): void;
+  /**
+   * An agent's usage-limit cooldown is over (see Cooldown): whatever waited on it may go. Delegation
+   * listens, for the update cards it held for a parent answered by that agent.
+   */
+  onCooldownOver?(agentId: string): void;
 }
 
 /**
@@ -84,6 +93,43 @@ interface Continuing {
   cancel?: () => void;
 }
 
+/**
+ * One agent over its usage limit, and the continues waiting for it to lift.
+ *
+ * A usage limit belongs to the agent's account, not to a conversation, but continues used to be
+ * counted per conversation. On 2026-11-07 eight sub-agents on one cc account hit "All credentials
+ * … are cooling down" together; each continued three times on its own clock, every attempt spent
+ * ~200s in Claude Code's own retries, and the parents woken by their failure cards failed and
+ * continued too — 43 failed turns in 11 conversations over 1.5 hours, until the person worked out
+ * why (`project-reports/fleetherd-agent-friction-20261113/5-failed-stopped-turns.md` §1).
+ *
+ * So a `limit` failure cools the whole agent down. Its conversations' continues wait here instead of
+ * on timers of their own; when the wait ends ONE of them is sent (the probe). If the probe gets
+ * through — or any turn on that agent ends normally — the limit has lifted and every waiting continue
+ * goes at once. If it hits the limit again the wait doubles (continueDelayMs, by `strikes`) and it
+ * tries again; and when it has used up `max`, every conversation waiting with it is left for the
+ * person too. The agent's limit gets `max` continues in all, not `max` per conversation.
+ *
+ * An agent whose policy does not continue after `limit` still cools down, at LIMIT_WAIT_MS: nothing
+ * of its own waits, but a sub-agent update card for a parent it answers does (Delegation holds them
+ * while `coolingDown`), because a card is a turn on the same account.
+ */
+interface Cooldown {
+  /** `limit` failures that were news this episode — the first, and each probe's. Doubles the wait. */
+  strikes: number;
+  /** When the wait ends, epoch ms; undefined while a probe is out. */
+  until?: number;
+  /** Cancels the timer that ends the wait. */
+  cancel?: () => void;
+  /** The conversation whose continue was sent to find out whether the limit has lifted. */
+  probe?: ConversationId;
+  /** Conversations whose continue waits for it, in the order they will be tried, with that attempt. */
+  waiting: Map<ConversationId, number>;
+}
+
+/** The first wait of a cooldown for an agent whose policy names no backoff for `limit`. */
+const LIMIT_WAIT_MS = 60_000;
+
 export class TurnOutcomes {
   private readonly activity = new Map<ConversationId, TopicActivity>();
   /**
@@ -97,8 +143,15 @@ export class TurnOutcomes {
   /** The same for a failed turn's error: the card needs more than its first line. */
   private readonly failures = new Map<ConversationId, KeptText>();
   private readonly continuing = new Map<ConversationId, Continuing>();
+  /** Agents over their usage limit, by agent id (see Cooldown). */
+  private readonly cooldowns = new Map<string, Cooldown>();
 
   constructor(private readonly deps: TurnOutcomesDeps) {}
+
+  /** Whether an agent is cooling down after a usage limit (see Cooldown). */
+  coolingDown(agentId: string): boolean {
+    return this.cooldowns.has(agentId);
+  }
 
   /** The conversation's last finished reply, while it is still the last thing that happened. */
   replyOf(id: ConversationId): KeptText | undefined {
@@ -121,6 +174,7 @@ export class TurnOutcomes {
    */
   release(id: ConversationId): void {
     this.callOffPending(id);
+    this.leaveCooldown(id);
     this.continuing.delete(id);
     this.activity.delete(id);
     this.replies.delete(id);
@@ -162,6 +216,8 @@ export class TurnOutcomes {
         const line = replyLine(end.text);
         this.set(id, { outcome: { kind: 'done', at, ...(line ? { line } : {}) } });
         this.deps.onNeedsPerson?.(id);
+        // A turn on this agent got through: whatever limit it was under has lifted.
+        this.liftCooldown(this.deps.agentIdOf(id), 'a turn on it ended normally');
         return;
       }
       case 'stopped':
@@ -169,10 +225,13 @@ export class TurnOutcomes {
         this.continuing.delete(id);
         this.replies.delete(id);
         this.failures.delete(id);
+        this.leaveCooldown(id);
         this.set(id, {});
         return;
       case 'failed': {
-        const message = end.error instanceof Error ? end.error.message : String(end.error);
+        const error = end.error instanceof Error ? end.error.message : String(end.error);
+        // The library's record and the update card say what the ❌ said: that the agent never had it.
+        const message = end.undelivered ? `${error}\n${undeliveredLine(end.undelivered.held)}` : error;
         this.failed(id, turnFailureReason(end.error), message, at, end.turn);
         return;
       }
@@ -189,8 +248,9 @@ export class TurnOutcomes {
    * the first of a new run.
    */
   personActed(id: ConversationId): void {
-    const had = this.continuing.get(id)?.cancel !== undefined;
+    const had = this.continuing.get(id)?.cancel !== undefined || this.waitingOn(id) !== undefined;
     this.callOffPending(id);
+    this.leaveCooldown(id);
     this.continuing.delete(id);
     if (had) {
       const current = this.activity.get(id);
@@ -211,6 +271,8 @@ export class TurnOutcomes {
   dispose(): void {
     for (const c of this.continuing.values()) c.cancel?.();
     this.continuing.clear();
+    for (const cd of this.cooldowns.values()) cd.cancel?.();
+    this.cooldowns.clear();
   }
 
   /**
@@ -265,16 +327,24 @@ export class TurnOutcomes {
     this.set(id, { outcome, ...(scheduled ? { retry: scheduled } : {}) });
     this.reportToCommand(id, reason, message, at, scheduled);
     if (!scheduled) this.deps.onNeedsPerson?.(id);
+    // A probe that failed for another reason got past the limit: that is not what is failing now.
+    if (reason !== 'limit') {
+      const agentId = this.deps.agentIdOf(id);
+      if (this.cooldowns.get(agentId)?.probe === id) this.liftCooldown(agentId, `its probe failed for another reason (${reason})`);
+    }
   }
 
   /**
    * Schedule the next automatic continue if the agent's policy covers this reason and has attempts
    * left. Returns what was scheduled, or undefined (no policy, a reason it does not name, or the
    * attempts are spent — which is said in the chat, since the last notice promised a continue).
+   *
+   * A `limit` goes to the agent's cooldown instead (limitHit): its continue waits with the others.
    */
   private scheduleContinue(id: ConversationId, reason: TurnFailureReason): TopicActivity['retry'] {
     const agentId = this.deps.agentIdOf(id);
     const policy = findAgent(this.deps.config, agentId)?.hooks?.turnFailed?.continue;
+    if (reason === 'limit') return this.limitHit(agentId, id, policy);
     if (!policy || !policy.on.includes(reason)) {
       this.continuing.delete(id);
       return undefined;
@@ -304,14 +374,24 @@ export class TurnOutcomes {
     const state = this.continuing.get(id);
     if (!state?.cancel) return; // called off in the meantime
     state.cancel = undefined;
+    this.sendContinue(id, attempt, message);
+  }
+
+  /**
+   * Put continue number `attempt` in front of the agent. False when it could not be (no lane, or
+   * another agent answers here now) — the failure is then the person's, as if none had been promised.
+   */
+  private sendContinue(id: ConversationId, attempt: number, message: string): boolean {
+    const state = this.continuing.get(id) ?? { sent: 0 };
     state.sent = attempt;
-    if (!this.deps.runContinue(id, message)) {
-      console.warn(`[outcomes] ${id}: continue ${attempt} could not be sent; leaving the failure for the person`);
-      this.continuing.delete(id);
-      const current = this.activity.get(id);
-      this.set(id, { ...(current?.outcome ? { outcome: current.outcome } : {}) });
-      this.deps.onNeedsPerson?.(id);
-    }
+    this.continuing.set(id, state);
+    if (this.deps.runContinue(id, message)) return true;
+    console.warn(`[outcomes] ${id}: continue ${attempt} could not be sent; leaving the failure for the person`);
+    this.continuing.delete(id);
+    const current = this.activity.get(id);
+    this.set(id, { ...(current?.outcome ? { outcome: current.outcome } : {}) });
+    this.deps.onNeedsPerson?.(id);
+    return false;
   }
 
   private callOffPending(id: ConversationId): void {
@@ -320,6 +400,182 @@ export class TurnOutcomes {
       state.cancel();
       state.cancel = undefined;
     }
+    // A continue waiting on its agent's cooldown is called off the same way. Not the probe: its own
+    // continue starting a turn is what calls this, and it must stay the probe until that turn ends.
+    const agentId = this.waitingOn(id);
+    if (agentId !== undefined) this.cooldowns.get(agentId)?.waiting.delete(id);
+  }
+
+  // ── usage-limit cooldowns (see Cooldown) ──────────────────────────────────────────────────────
+
+  /**
+   * A turn on `agentId` failed with `limit`. Cools the agent down — or, when this was the probe or
+   * the first such failure, makes the wait longer — and puts this conversation's continue in line
+   * when the policy continues after a limit.
+   */
+  private limitHit(
+    agentId: string,
+    id: ConversationId,
+    policy: TurnFailedContinue | undefined
+  ): TopicActivity['retry'] {
+    const continues = policy?.on.includes('limit') ? policy : undefined;
+    const { cd, wasProbe } = this.noteLimit(agentId, id, continues?.backoffMs ?? LIMIT_WAIT_MS);
+    if (!continues) {
+      this.continuing.delete(id);
+      return undefined;
+    }
+    const state = this.continuing.get(id) ?? { sent: 0 };
+    if (state.sent >= continues.max) {
+      this.continuing.delete(id);
+      this.say(id, `↻ Not continuing again: ${continues.max} automatic ${continues.max === 1 ? 'continue' : 'continues'} in a row ended in a failure too.`);
+      // The probe has spent the agent's budget: the limit outlasted it, and the conversations
+      // waiting on the same limit are told so rather than each spending a budget of their own.
+      if (wasProbe) this.giveUpWaiting(agentId, cd, continues.max);
+      return undefined;
+    }
+    const attempt = state.sent + 1;
+    this.continuing.set(id, state);
+    // The probe goes back to the front: it is the one already trying.
+    cd.waiting = wasProbe ? new Map([[id, attempt], ...cd.waiting]) : cd.waiting.set(id, attempt);
+    const at = cd.until ?? this.deps.clock.now();
+    this.say(id, this.cooldownNotice(agentId, cd, id, continues, attempt, at));
+    console.log(`[outcomes] ${id}: limit — continue ${attempt}/${continues.max} waits on ${agentId}'s cooldown`);
+    return { attempt, max: continues.max, at };
+  }
+
+  /**
+   * Count a `limit` failure against the agent's cooldown, starting one if there is none. Answers the
+   * cooldown, and whether this conversation was its probe.
+   */
+  private noteLimit(agentId: string, id: ConversationId, base: number): { cd: Cooldown; wasProbe: boolean } {
+    let cd = this.cooldowns.get(agentId);
+    const fresh = cd === undefined;
+    if (!cd) {
+      cd = { strikes: 0, waiting: new Map() };
+      this.cooldowns.set(agentId, cd);
+      console.log(`[outcomes] ${agentId}: usage limit hit in ${id}; cooling the agent down`);
+    }
+    const wasProbe = cd.probe === id;
+    if (wasProbe) cd.probe = undefined;
+    // News is the first failure and each probe's. The rest of a burst that failed together says
+    // nothing new and must not stretch the wait — eight of them would make it 2^8 times as long.
+    if (fresh || wasProbe) {
+      cd.strikes += 1;
+      this.armCooldown(agentId, cd, base);
+    } else if (!cd.cancel && cd.probe === undefined) {
+      // Nobody is trying and nothing is timed (a probe was stopped, or could not be sent).
+      this.armCooldown(agentId, cd, base);
+    }
+    return { cd, wasProbe };
+  }
+
+  /** What a conversation waiting on its agent's cooldown says: when it goes, and who waits with it. */
+  private cooldownNotice(
+    agentId: string,
+    cd: Cooldown,
+    id: ConversationId,
+    policy: TurnFailedContinue,
+    attempt: number,
+    at: number
+  ): string {
+    const first = cd.waiting.keys().next().value === id && cd.probe === undefined;
+    const others = cd.waiting.size - 1 + (cd.probe !== undefined ? 1 : 0);
+    const when = first ? `in ${seconds(Math.max(0, at - this.deps.clock.now()))}` : 'once another conversation on it gets through';
+    const behind =
+      first && others > 0 ? `; ${others} more ${others === 1 ? 'conversation waits' : 'conversations wait'} for this one to get through` : '';
+    return (
+      `↻ ${capitalise(describeFailureReason('limit'))} on ${agentId} — sending “${preview(policy.message)}” ${when} ` +
+      `(${attempt}/${policy.max})${behind}. Send anything, or /stop, to call it off.`
+    );
+  }
+
+  /** (Re)start the wait, at the length this many strikes earns. */
+  private armCooldown(agentId: string, cd: Cooldown, base: number): void {
+    cd.cancel?.();
+    const delay = continueDelayMs(cd.strikes || 1, base);
+    cd.until = this.deps.clock.now() + delay;
+    cd.cancel = this.deps.clock.schedule(() => this.cooldownElapsed(agentId), delay);
+    console.log(`[outcomes] ${agentId}: cooling down for ${seconds(delay)} (strike ${cd.strikes})`);
+  }
+
+  /** The wait is over: send one waiting continue to find out, or end the cooldown if none waits. */
+  private cooldownElapsed(agentId: string): void {
+    const cd = this.cooldowns.get(agentId);
+    if (!cd) return;
+    cd.cancel = undefined;
+    cd.until = undefined;
+    const message = this.policyOf(agentId)?.message;
+    for (const [id, attempt] of cd.waiting) {
+      cd.waiting.delete(id);
+      if (message === undefined) break;
+      cd.probe = id;
+      console.log(`[outcomes] ${agentId}: cooldown over; ${id} tries first`);
+      if (this.sendContinue(id, attempt, message)) return;
+      cd.probe = undefined;
+    }
+    this.liftCooldown(agentId, 'nothing waits on it any more');
+  }
+
+  /**
+   * The limit has lifted (or nothing is left to wait on it): every waiting continue goes now, and
+   * whatever else held back for it — Delegation's cards — is told.
+   */
+  private liftCooldown(agentId: string, why: string): void {
+    const cd = this.cooldowns.get(agentId);
+    if (!cd) return;
+    this.cooldowns.delete(agentId);
+    cd.cancel?.();
+    console.log(`[outcomes] ${agentId}: cooldown lifted (${why}); ${cd.waiting.size} waiting continue(s) go now`);
+    const message = this.policyOf(agentId)?.message;
+    for (const [id, attempt] of cd.waiting) {
+      if (message !== undefined) {
+        this.sendContinue(id, attempt, message);
+        continue;
+      }
+      // The policy went in a /reload while they waited: nothing will continue them now.
+      this.continuing.delete(id);
+      const current = this.activity.get(id);
+      this.set(id, { ...(current?.outcome ? { outcome: current.outcome } : {}) });
+      this.deps.onNeedsPerson?.(id);
+    }
+    this.deps.onCooldownOver?.(agentId);
+  }
+
+  /** The probe ran out of attempts: everything waiting with it is the person's now. */
+  private giveUpWaiting(agentId: string, cd: Cooldown, max: number): void {
+    for (const id of cd.waiting.keys()) {
+      this.continuing.delete(id);
+      const current = this.activity.get(id);
+      this.set(id, { ...(current?.outcome ? { outcome: current.outcome } : {}) });
+      this.say(id, `↻ Not continuing: ${agentId} stayed over its usage limit through ${max} automatic ${max === 1 ? 'continue' : 'continues'}.`);
+      this.deps.onNeedsPerson?.(id);
+    }
+    console.log(`[outcomes] ${agentId}: the limit outlasted ${max} continue(s); ${cd.waiting.size} waiting conversation(s) left for the person`);
+    cd.waiting.clear();
+  }
+
+  /**
+   * The conversation no longer waits on a cooldown: the person acted there, it was stopped or let go.
+   * A probe that leaves hands its turn to the next in line after the current wait.
+   */
+  private leaveCooldown(id: ConversationId): void {
+    for (const [agentId, cd] of this.cooldowns) {
+      cd.waiting.delete(id);
+      if (cd.probe !== id) continue;
+      cd.probe = undefined;
+      if (!cd.cancel) this.armCooldown(agentId, cd, this.policyOf(agentId)?.backoffMs ?? LIMIT_WAIT_MS);
+    }
+  }
+
+  /** The agent whose cooldown this conversation's continue waits on, if it does. */
+  private waitingOn(id: ConversationId): string | undefined {
+    for (const [agentId, cd] of this.cooldowns) if (cd.waiting.has(id)) return agentId;
+    return undefined;
+  }
+
+  private policyOf(agentId: string): TurnFailedContinue | undefined {
+    const policy = findAgent(this.deps.config, agentId)?.hooks?.turnFailed?.continue;
+    return policy?.on.includes('limit') ? policy : undefined;
   }
 
   /** hooks.turnFailed.command, fire-and-forget (it never fails a turn; see runTurnFailedHook). */

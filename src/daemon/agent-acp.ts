@@ -41,7 +41,15 @@ import type {
   ReclaimState,
   RunTurnInput,
 } from './agent.js';
-import { TurnFailure } from './agent.js';
+import { asUndelivered, SideQuestionRefused, TurnFailure } from './agent.js';
+import {
+  askOnFork,
+  forkSupportOf,
+  NO_FORK,
+  sideQuestionRefusal,
+  type ForkSupport,
+  type SideAskHandle,
+} from './acp-side-question.js';
 import { harnessLogProbe, readHarnessErrors } from './harness-log.js';
 import { readSteerOutcome, STEER_METHOD, steeringModeOf, steerParams, type SteeringMode } from './acp-steering.js';
 import {
@@ -76,6 +84,8 @@ import type { RemoteHost } from '../remote/host.js';
 import { AGY_COMMAND, type AgyCliRunner } from './agy-cli.js';
 import {
   agyAcpToolLabel,
+  agyMcpCall,
+  agyMcpLabel,
   agySplitModel,
   agyTurnWatch,
   agyWindow,
@@ -445,6 +455,30 @@ export const TOOL_SILENCE_FACTOR = 2;
  * the watchdog does: a fold declared after the turn already failed as hung is no help.
  */
 export const FOLDED_PROMPT_GRACE_MS = 30_000;
+
+/**
+ * How long a turn may run on after `/stop`'s `session/cancel` before its child is ended for it.
+ *
+ * `session/cancel` is a notification: the harness is asked, and nothing makes it comply or says how
+ * long it may take. On 2026-11-13 (#214115) two `/stop`s on a cbc turn changed nothing that the
+ * person could see, and they ended it with "End agent" ten seconds later; the next turn there, 88
+ * minutes long, went the same way. CodeBuddy Code 2.181.0 does act on the cancel — measured the same
+ * day, a `/stop` between two commands ended its turn 12.2 s later and one five seconds into
+ * `sleep 40` 10.5 s later, interrupting it — but slowly enough to look like it does not, and nothing
+ * on screen said otherwise. A harness that never acts on it would run until its turn ended. Past
+ * this deadline neither is waited on. claude-agent-acp and codex-acp settled their cancelled turns
+ * within the command they were running in the 2026-10-10 steer probe (see endChildAfterStop), so for
+ * them the deadline goes with the turn long before it is reached.
+ *
+ * Ending the child is `/kill`'s remedy, applied for the person: the next message resumes the
+ * conversation through `session/load`. A harness that cannot reload a stored session keeps its
+ * child — ending it would start the conversation over, which is `/new`, and the person is told so
+ * instead. Capped at half the silence budget when that is smaller, like FOLDED_PROMPT_GRACE_MS, so
+ * that tests can drive it with a short watchdog. 20 s rather than 15: CodeBuddy took 10–12 s to act
+ * on a cancel on a loaded machine (2026-11-13), and ending a harness that was about to stop costs a
+ * restart for nothing.
+ */
+export const STOP_GRACE_MS = 20_000;
 
 /**
  * Result origins claude-agent-acp files as AUTONOMOUS — work the model did on its own rather than
@@ -1063,7 +1097,9 @@ function createAcpSession(
    * inventing an accept would hand it a decision the user never made and let it act on it.
    */
   async function answerElicitation(params: CreateElicitationRequest): Promise<CreateElicitationResponse> {
-    const ask = turnState?.handlers.onElicit;
+    // A fork's question goes where its side answer is, which has nowhere to ask: cancelled.
+    const side = sideAsks.get((params as { sessionId?: string }).sessionId ?? '');
+    const ask = side ? side.state.handlers.onElicit : turnState?.handlers.onElicit;
     if (!ask) {
       console.warn(`[acp] ${conversationId}: elicitation arrived with no turn to ask in; cancelling`);
       return { action: 'cancel' };
@@ -1101,7 +1137,8 @@ function createAcpSession(
    */
   async function answerPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     if (def.permissions !== 'ask') return decidePermission(params);
-    const ask = (turnState ?? followUp(false))?.handlers.onPermission;
+    // A fork answering a side question asks in that answer's lane, never the running turn's.
+    const ask = (sideAsks.get(params.sessionId)?.state ?? turnState ?? followUp(false))?.handlers.onPermission;
     let answer: PermissionAnswer;
     if (!ask) {
       answer = { kind: 'unavailable', why: 'no chat to ask in' };
@@ -1228,6 +1265,17 @@ function createAcpSession(
    */
   let imagePrompts = false;
   /**
+   * Which of the session methods a side question uses this harness declares (initialize →
+   * `sessionCapabilities`; see acp-side-question.ts). A property of the binary like the three above.
+   */
+  let forkSupport: ForkSupport = NO_FORK;
+  /**
+   * The side questions (`/btw`) being answered right now, by the id of the fork each one asks. Read
+   * to send a fork's permission requests and questions to the lane its answer is in, rather than to
+   * whatever turn happens to be running, and by `/stop`.
+   */
+  const sideAsks = new Map<string, SideAskHandle>();
+  /**
    * A turn's or a joined message's blocks, saying in the log when its pictures had to stay paths —
    * which is otherwise invisible: the agent still gets the path line and the turn looks normal.
    */
@@ -1271,6 +1319,27 @@ function createAcpSession(
    * interrupted turn in the same probe.
    */
   let endChildAfterStop = false;
+  /**
+   * Set by runTurn once its prompt is out, cleared when it ends: what abort() calls to tell that turn
+   * it was stopped — which marks what it does from then on (TurnState.stopped) and starts the
+   * deadline after which its child is ended for it (STOP_GRACE_MS).
+   */
+  let turnStopped: (() => void) | undefined;
+  /**
+   * abort() landed while a turn was still on its way to its prompt — starting its child, mostly.
+   * Until the prompt is out there is nothing for `session/cancel` to cancel (and during a cold start
+   * no session to send it to), so a prompt sent afterwards would run the whole turn the person had
+   * just stopped — and, with the stop standing, every tool it called would be dropped as the cancel's
+   * wreckage. A cold start (spawn, initialize, `session/load`) takes seconds, and #214115's first
+   * `/stop` came one second in: that turn then ran for eleven minutes with nothing on screen.
+   * Reproduced against a real cbc on 2026-11-13: a `/stop` three seconds into a fresh topic, and the
+   * turn still ran both of its commands and answered "done", its ten tool updates dropped. Its own
+   * flag rather than `aborting`, which teardowns that are not a stop raise too (see agent-hooks.ts
+   * PreLaunchCancelled). Reset by every turn.
+   */
+  let stoppedWhileStarting = false;
+  /** See STOP_GRACE_MS; capped like the fold grace so a short watchdog shortens it too. */
+  const stopGraceMs = turnTimeoutMs > 0 ? Math.min(STOP_GRACE_MS, turnTimeoutMs / 2) : STOP_GRACE_MS;
   /**
    * Model the harness reports as actually serving this session (from the session/new or session/load
    * config options). Undefined when the agent exposes no model selector; the footer then falls back
@@ -1345,6 +1414,16 @@ function createAcpSession(
     // and clears it on settle. Clearing it from a reset that happens DURING startup (dispose's
     // rollback, or a `/cd` landing mid-spawn) would let the next caller begin a second child while
     // the first is still running — the exact race ensureStarted exists to prevent.
+  }
+
+  /**
+   * Whether ending this child would keep the conversation. Only when BOTH halves of the restart path
+   * are in place: the harness can reload a session, and we know which session is this conversation's.
+   * Killing the child then costs a respawn — precisely what a daemon restart already does to every
+   * conversation at once.
+   */
+  function canResume(): boolean {
+    return loadSessionSupported && !!store?.agentSession(conversationId, def.id);
   }
 
   /** Max wait for initialize + session/new after spawn; on timeout, treat spawn as failed (ENOENT etc.) instead of hanging. */
@@ -1526,11 +1605,17 @@ function createAcpSession(
    * because the process never started says THAT (a command not on PATH, here or on the agent's host)
    * rather than the "ACP connection closed" it surfaces as.
    */
-  function adoptChild(child: AgentChild): () => Error | undefined {
+  function adoptChild(child: AgentChild): { spawnError: () => Error | undefined; stderrTail: () => string } {
     // Record proc immediately so the 'exit' callback and start-failure dispose can match by reference and
     // terminate this process (conn/active assigned only after start() succeeds; active stays the sole readiness signal).
     proc = child;
-    child.stderr.on('data', (d: Buffer) => process.stderr.write(d));
+    // The last of what it wrote, for a startup that fails: an agent that cannot reach its backend
+    // often says so here and nowhere else over ACP (see startupFailureMessage).
+    let tail = '';
+    child.stderr.on('data', (d: Buffer) => {
+      process.stderr.write(d);
+      tail = (tail + d.toString('utf8')).slice(-STDERR_TAIL_KEEP);
+    });
     let spawnError: Error | undefined;
     child.on('error', (e) => {
       spawnError = e;
@@ -1546,7 +1631,7 @@ function createAcpSession(
       console.debug(`[acp] child process exited (${def.id}): code=${code} signal=${signal}; resetting connection handles to rebuild next turn`);
       resetHandles();
     });
-    return () => spawnError;
+    return { spawnError: () => spawnError, stderrTail: () => tail };
   }
 
   /** Lazily start the ACP child and complete initialize + session/new. sessionToken is injected into its env here. */
@@ -1573,7 +1658,7 @@ function createAcpSession(
 
     const { command, args } = resolveHarness(def, place !== undefined);
     const { child, mcpServers } = spawnChild(command, args, sessionToken, place, await relayEnv(def, place?.host));
-    const spawnError = adoptChild(child);
+    const { spawnError, stderrTail } = adoptChild(child);
 
     const stream = ndJsonStream(
       Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
@@ -1616,6 +1701,8 @@ function createAcpSession(
       ...(def.harness === 'claude' ? SESSION_FAILURE_CAPABILITY_META : {}),
       ...(isCursorAgent(def) ? { parameterizedModelPicker: true } : {}),
     };
+    // How far it got, for the message a failure is reported with (see startupFailureMessage).
+    const progress: StartupProgress = { answered: false, step: 'initialize' };
     const startup = (async () => {
       const initResult = await ctx.request('initialize', {
         protocolVersion: ACP_PROTOCOL_VERSION,
@@ -1641,9 +1728,11 @@ function createAcpSession(
           ...(Object.keys(capabilityMeta).length > 0 ? { _meta: capabilityMeta } : {}),
         },
       });
+      progress.answered = true;
       loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
       steeringMode = steeringModeOf(initResult);
       imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
+      forkSupport = forkSupportOf(initResult);
 
       // Resume persisted context first: the harness keeps conversation history on its own disk, so a
       // daemon restart only loses the process — session/load replays the stored ACP session into the
@@ -1661,6 +1750,7 @@ function createAcpSession(
         ).attachSession.bind(ctx);
         const resumed = attach({ sessionId: persistedId });
         try {
+          progress.step = 'session/load';
           const loaded = await ctx.request('session/load', {
             sessionId: persistedId,
             cwd,
@@ -1695,6 +1785,7 @@ function createAcpSession(
       // reapplyPreferences enforces below.
       const hint = modelPreference ?? def.model;
       try {
+        progress.step = 'session/new';
         const session = await ctx
           .buildSession({
             cwd,
@@ -1719,6 +1810,7 @@ function createAcpSession(
         liveModel = liveModelName(liveConfigOptions);
         // _meta.model above is a hint some harnesses ignore; reapplyPreferences enforces it, and
         // puts back a `/effort` choice after it.
+        progress.step = 'session/set_config_option';
         await reapplyPreferences(ctx, session.sessionId, hint);
         store?.setAgentSession(conversationId, def.id, session.sessionId); // for post-restart session/load resume
       } catch (err) {
@@ -1740,16 +1832,7 @@ function createAcpSession(
       await Promise.race([
         startup,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new TurnFailure(
-                  `agent "${def.id}" startup timed out (${START_TIMEOUT_MS}ms). Make sure the launch command is executable on PATH: ${command} ${args.join(' ')}`,
-                  'startup'
-                )
-              ),
-            START_TIMEOUT_MS
-          );
+          timer = setTimeout(() => reject(new StartupTimeout()), START_TIMEOUT_MS);
         }),
       ]);
     } catch (err) {
@@ -1761,10 +1844,11 @@ function createAcpSession(
         const where = place ? ` on host "${place.host.id}"` : '';
         throw new TurnFailure(`agent "${def.id}" could not start${where}: ${failed.message}`, 'startup');
       }
-      // initialize or session/new refused: still a startup that did not happen. Classified rather
-      // than rethrown bare so hooks.turnFailed can tell it from a turn the provider failed.
+      // A login the harness asks for is its own sentence (above), and an `access` failure.
       if (err instanceof TurnFailure) throw err;
-      throw new TurnFailure(`${err instanceof Error ? err.message : String(err)}${startupHint(def)}`, 'startup');
+      // Refused or unanswered: classified, so hooks.turnFailed can tell it from a provider failure.
+      const launch = `${command} ${args.join(' ')}`.trim();
+      throw startupFailure(def, err, { host: place?.host.id, launch, progress, stderr: stderrTail(), timeoutMs: START_TIMEOUT_MS });
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -1911,11 +1995,20 @@ function createAcpSession(
    * milliseconds and starts a turn) be rendered into the NEXT turn's reply. The deleted
    * pre-prompt drain named exactly this case and cleared the queue to prevent it.
    *
-   * Two tests, because the cancel and the next turn race:
+   * Only once the stopped turn has ENDED. Until then (TurnState.stopped) the harness is still
+   * working on it, and what it does is shown — a new call marked as started after the stop. That
+   * used to be dropped too, on the assumption that a harness told to stop starts nothing new, which
+   * holds only when the cancel reached it. On 2026-11-13 (#214115) it had not — the `/stop` landed
+   * while the child was starting (see stoppedWhileStarting) — and a cbc turn worked for eleven
+   * minutes with every call dropped here (1085 drops in that conversation's log) and nothing on
+   * screen. A harness that ignores the cancel, or is slow to act on it, starts new calls the same way
+   * until STOP_GRACE_MS ends it.
    *
-   * - while `aborting` still stands — i.e. between the cancel and the next turn — anything
-   *   tool-shaped is the cancelled turn's tail. The agent has been told to stop, so it is not
-   *   starting new tool calls; this is the old drain's rule, stated positively.
+   * After that, two tests, because the cancel and the next turn race:
+   *
+   * - while `aborting` still stands — i.e. between the stopped turn's end and the next turn —
+   *   anything tool-shaped is the cancelled turn's tail; this is the old drain's rule, stated
+   *   positively.
    * - once a new turn has cleared `aborting`, the ids the cancel snapshotted still identify the
    *   wreckage. Ids are never reused, so a stale entry can only match the update it was recorded
    *   for — which is why the set is not cleared at turn start, the very moment the trailing write
@@ -1923,6 +2016,7 @@ function createAcpSession(
    */
   function isWreckage(update: SessionUpdate): boolean {
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return false;
+    if (turnState?.stopped) return false;
     if (aborting) return true;
     return typeof update.toolCallId === 'string' && cancelledTools.has(update.toolCallId);
   }
@@ -2290,6 +2384,59 @@ function createAcpSession(
   }
 
   /**
+   * End a turn that was stopped before its prompt went out (stoppedWhileStarting): the prompt is not
+   * sent. abort() has set `aborting`, so runTurn ends it quietly, as a stop.
+   */
+  function endIfStoppedWhileStarting(): void {
+    if (!stoppedWhileStarting) return;
+    console.log(`[acp] ${conversationId}: stopped while the agent was starting; not sending the prompt`);
+    throw new Error('stopped before the prompt was sent');
+  }
+
+  /**
+   * What abort() does to a turn whose prompt is out (turnStopped): mark it stopped, and start the
+   * deadline after which its child is ended for the person (STOP_GRACE_MS). `endTurn` wakes the turn;
+   * dispose() has set `aborting` by then, so it ends as a stop rather than a failure.
+   */
+  function watchStop(
+    state: TurnState,
+    handlers: AgentStreamHandlers,
+    endTurn: (err: Error) => void
+  ): { stopped: () => void; clear: () => void } {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const onIgnored = (): void => {
+      const secs = Math.max(1, Math.round(stopGraceMs / 1000));
+      if (!canResume()) {
+        console.warn(
+          `[acp] ${conversationId}: "${def.id}" is still running ${stopGraceMs}ms after the cancel and cannot resume a stored session; leaving its process up`
+        );
+        handlers.onNotice?.(
+          `⚠️ ${def.id} is still running ${secs}s after /stop. It cannot resume a stored session, so ending its process would lose this conversation — \`/new\` ends it and starts over.`
+        );
+        return;
+      }
+      console.warn(
+        `[acp] ${conversationId}: "${def.id}" is still running ${stopGraceMs}ms after the cancel; ending its process (the next message resumes the session)`
+      );
+      handlers.onNotice?.(
+        `⏹ ${def.id} was still running ${secs}s after /stop, so its process was ended. The conversation is kept — the next message resumes it.`
+      );
+      dispose();
+      endTurn(new Error(`"${def.id}" did not stop in time`));
+    };
+    return {
+      stopped: () => {
+        state.stopped = true;
+        // A second `/stop` does not restart the clock: the harness has had since the first one.
+        deadline ??= setTimeout(onIgnored, stopGraceMs);
+      },
+      clear: () => {
+        if (deadline) clearTimeout(deadline);
+      },
+    };
+  }
+
+  /**
    * Watch the harness's own log for the duration of one turn.
    *
    * ── Why a turn needs this at all ──────────────────────────────────────────────────────────────
@@ -2352,6 +2499,7 @@ function createAcpSession(
 
     async runTurn(input: RunTurnInput, incomingHandlers: AgentStreamHandlers): Promise<void> {
       aborting = false;
+      stoppedWhileStarting = false;
       // Everything this turn renders goes through the probe, so a refusal can tell an empty turn
       // from one whose explanation already reached the chat (see trackVisibleOutput).
       const output = trackVisibleOutput(incomingHandlers);
@@ -2373,7 +2521,8 @@ function createAcpSession(
         closePromptWindow();
         // Stopped (or disposed) while the preLaunch hook ran: nothing failed, so nothing to report.
         if (err instanceof PreLaunchCancelled) return;
-        throw err;
+        // Nothing was sent: whatever stopped the start, the agent never saw this turn's prompt.
+        throw asUndelivered(err);
       }
 
       const state = newTranslationState(handlers, true);
@@ -2530,6 +2679,10 @@ function createAcpSession(
       joinedStillQueued = () => unsettled > 1;
       rearmWatchdog();
 
+      // `/stop` reaches a turn as `session/cancel`, which the harness may simply not act on (see
+      // STOP_GRACE_MS). Woken through the same channel as the watchdog, so it ends the same way.
+      const stopWatch = watchStop(state, handlers, (err) => hung?.(err));
+
       try {
         // ActiveSession.prompt resolves at turn end and enqueues 'stop'; the pump reads the stream.
         // Inside the try so a synchronous throw (a closed stream) still runs the cleanup below.
@@ -2540,9 +2693,13 @@ function createAcpSession(
         // long conversation is guaranteed to lose).
         if (replayFence) await replayFence;
         promptedYet = true; // from here on, renderable output is this session's own (see promptedYet)
+        // The last moment a stop can keep the prompt from going out (see stoppedWhileStarting); from
+        // the send on, abort() reaches this turn through turnStopped instead. No await between them.
+        endIfStoppedWhileStarting();
         const session = active!;
         const agentCtx = conn!.agent;
         send(session, blocksOf(input));
+        turnStopped = stopWatch.stopped;
         joinTurn = steeringMode === 'none' ? undefined : (blocks) => {
           // The turn's last prompt has settled, so its `stop` is on the way: a message taken now
           // would be answered by the harness after this turn stopped listening.
@@ -2609,6 +2766,8 @@ function createAcpSession(
         throw err;
       } finally {
         if (watchdog) clearTimeout(watchdog);
+        stopWatch.clear();
+        turnStopped = undefined;
         logWatch.stop();
         unwatchLink();
         fold.stop();
@@ -2657,6 +2816,8 @@ function createAcpSession(
       // tool_call — the `aborting` half of isWreckage covers that window.
       cancelledTools = new Set(turnState?.toolLedger.keys() ?? []);
       if (conn && active) void conn.agent.notify('session/cancel', { sessionId: active.sessionId });
+      if (turnStopped) turnStopped();
+      else stoppedWhileStarting = true;
     },
 
     stopBackground(): boolean {
@@ -2676,6 +2837,43 @@ function createAcpSession(
       // and a message still streaming (or, in `once` mode, not yet sent at all) says otherwise.
       void closeFollowUp('stopped');
       return true;
+    },
+
+    async sideQuestion(input: { prompt: string; sessionToken: string }, handlers: AgentStreamHandlers): Promise<'done' | 'stopped'> {
+      // Nothing to copy, and starting a child to fork an empty session would answer from nothing.
+      if (!active && !store?.agentSession(conversationId, def.id)) {
+        throw new SideQuestionRefused(`Nothing to ask ${def.id} about yet: it has no conversation here. Send it a message first.`);
+      }
+      // A stored session the child no longer holds (idle reclaim, restart) is loaded first: the
+      // same start the next message would make.
+      await ensureStarted(input.sessionToken);
+      const refusal = sideQuestionRefusal(def.id, def.harness, forkSupport, turnState !== undefined);
+      if (refusal) throw new SideQuestionRefused(refusal);
+      // Read once: the child can go away while this was waiting on its start.
+      const [connection, parent] = [conn, active];
+      if (!connection || !parent) throw new Error(`agent "${def.id}" went away before the question could be asked`);
+      return askOnFork({
+        ctx: connection.agent,
+        parentId: parent.sessionId,
+        cwd,
+        support: forkSupport,
+        prompt: blocksOf({ prompt: input.prompt }),
+        // A state of its own: no config write-back and no failure notices into the conversation —
+        // what the copy reports about itself is not news about this session.
+        state: { handlers, lastSegment: 'none', toolLedger: new Map(), toolIndexSeq: 0, subagents: new Map() },
+        translate: translateUpdate,
+        silenceMs: turnTimeoutMs,
+        label: conversationId,
+        track: (forkId, handle) => {
+          if (handle) sideAsks.set(forkId, handle);
+          else sideAsks.delete(forkId);
+        },
+      });
+    },
+
+    stopSideQuestions(): number {
+      for (const handle of sideAsks.values()) handle.cancel();
+      return sideAsks.size;
     },
 
     async ensureSession(sessionToken: string): Promise<void> {
@@ -2770,12 +2968,7 @@ function createAcpSession(
       // `active` is this runtime's readiness signal everywhere else, so it is the honest test for
       // "there is something here to reclaim" too.
       if (!proc || !active) return 'no-child';
-      // Resumable only when BOTH halves of the restart path are in place: the harness can reload a
-      // session, and we know which session is this conversation's. Killing the child then costs a
-      // respawn — precisely what a daemon restart already does to every conversation at once.
-      return loadSessionSupported && store?.agentSession(conversationId, def.id)
-        ? 'resumable'
-        : 'unresumable';
+      return canResume() ? 'resumable' : 'unresumable';
     },
 
     dispose(): void {
@@ -2794,6 +2987,148 @@ function startupHint(def: AgentDef): string {
   return def.harness === 'agy'
     ? ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)'
     : '';
+}
+
+/**
+ * The TurnFailure a startup that did not happen is reported with (startupFailureMessage). `err` is
+ * what ended it: the startup's own deadline, an error the agent answered with, or the connection
+ * closing under it.
+ */
+function startupFailure(
+  def: AgentDef,
+  err: unknown,
+  p: { host: string | undefined; launch: string; progress: StartupProgress; stderr: string; timeoutMs: number }
+): TurnFailure {
+  const timedOut = err instanceof StartupTimeout;
+  const message = startupFailureMessage({
+    agent: def.id,
+    ...(p.host ? { host: p.host } : {}),
+    launch: p.launch,
+    // An error answer is the process speaking, whichever request it answered.
+    progress: isRpcError(err) ? { ...p.progress, answered: true } : p.progress,
+    ...(timedOut ? { timeoutMs: p.timeoutMs } : { error: err }),
+    stderr: p.stderr,
+    hint: startupHint(def),
+  });
+  return new TurnFailure(message, 'startup');
+}
+
+/** How much of a child's stderr is kept for a startup failure to quote (see adoptChild). */
+const STDERR_TAIL_KEEP = 4_000;
+/** How much of it the failure message carries: the last lines, which is where an error ends up. */
+const STDERR_QUOTE_CHARS = 600;
+/** How much of an error the agent answered with the failure message carries. */
+const STARTUP_ERROR_CHARS = 600;
+
+/** How far an agent's startup got (startSession), for the message its failure is reported with. */
+export interface StartupProgress {
+  /** Whether the process has answered anything at all — a result or an error, to any request. */
+  answered: boolean;
+  /** The request the startup was waiting on, or the last one it sent. */
+  step: 'initialize' | 'session/load' | 'session/new' | 'session/set_config_option';
+}
+
+/** The startup's own deadline, told apart from an error the agent sent. */
+class StartupTimeout extends Error {
+  constructor() {
+    super('startup timed out');
+    this.name = 'StartupTimeout';
+  }
+}
+
+/**
+ * Whether an error is a JSON-RPC error answer (the SDK's RequestError carries the numeric `code`).
+ * A closed connection rejects with a plain Error instead, which is the process going away without a
+ * word — the one way an `initialize` failure says nothing about whether it ever came up.
+ */
+function isRpcError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && typeof (err as { code?: unknown }).code === 'number';
+}
+
+/**
+ * An error the agent answered with, as one line: its message and, when it sent any, its `data` —
+ * where an ACP agent puts the detail (`Internal error` alone names nothing).
+ */
+function rpcErrorText(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const data = (err as { data?: unknown } | null)?.data;
+  let detail = '';
+  if (typeof data === 'string') detail = data;
+  else if (data !== undefined && data !== null) {
+    const inner = (data as { details?: unknown; message?: unknown }).details ?? (data as { message?: unknown }).message;
+    detail = typeof inner === 'string' ? inner : JSON.stringify(data);
+  }
+  const text = (detail && !message.includes(detail) ? `${message}: ${detail}` : message).replace(/\s+/g, ' ').trim();
+  return text.length > STARTUP_ERROR_CHARS ? `${text.slice(0, STARTUP_ERROR_CHARS - 1)}…` : text;
+}
+
+/** The last lines of what a child wrote to stderr, on one line, or '' when it wrote nothing. */
+function stderrQuote(tail: string): string {
+  // Terminal colour codes, which some agents put in their logs whether or not stderr is a terminal.
+  const lines = tail.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n').map((l) => l.trim()).filter(Boolean);
+  let out = '';
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const next = out ? `${lines[i]} | ${out}` : lines[i]!;
+    if (next.length > STDERR_QUOTE_CHARS) {
+      if (!out) out = `…${next.slice(-(STDERR_QUOTE_CHARS - 1))}`;
+      break;
+    }
+    out = next;
+  }
+  return out;
+}
+
+/**
+ * What a failed startup says. Two different failures with two different fixes, and the message
+ * has to send the person to the right one:
+ *
+ *  - **the process did not come up** — it never answered `initialize`. The launch command, or the
+ *    machine it runs on, is what to look at.
+ *  - **the process came up and opening a session failed** — it answered `initialize`, then
+ *    `session/new` (or `session/load`) failed or went unanswered. The command is fine; what the
+ *    agent needs behind it — its model backend, a relay, the network — is not. The agent's own error
+ *    is quoted when it sent one.
+ *
+ * Until 2026-11-13 every timeout said "Make sure the launch command is executable on PATH", which was
+ * wrong for the second kind: the four agy timeouts of 2026-11-11 had answered `initialize` in 11ms
+ * and hung on `session/new` behind a relay answering 502 and a DNS timeout.
+ *
+ * Whatever the child last wrote to stderr is added to either: it is often the only place an agent
+ * says why. Exported for its test.
+ */
+export function startupFailureMessage(p: {
+  agent: string;
+  host?: string;
+  launch: string;
+  progress: StartupProgress;
+  /** Set when the startup's deadline passed; the error then is the deadline, not the agent's. */
+  timeoutMs?: number;
+  error?: unknown;
+  stderr: string;
+  /** What to add when the process never answered (startupHint). */
+  hint: string;
+}): string {
+  const where = p.host ? ` on host "${p.host}"` : '';
+  const said = stderrQuote(p.stderr);
+  const stderr = said ? ` Its last output on stderr: ${said}` : '';
+  const within = p.timeoutMs !== undefined ? ` within ${Math.round(p.timeoutMs / 1000)}s` : '';
+  if (!p.progress.answered) {
+    const why =
+      p.timeoutMs !== undefined
+        ? `its process gave no answer to initialize${within}`
+        : `its process went away before answering initialize (${p.error instanceof Error ? p.error.message : String(p.error)})`;
+    return (
+      `agent "${p.agent}" did not start${where}: ${why}. ` +
+      `Check that \`${p.launch}\` runs there and speaks ACP, and how loaded that machine is.${stderr}${p.hint}`
+    );
+  }
+  if (p.timeoutMs !== undefined) {
+    return (
+      `agent "${p.agent}" started${where}, but ${p.progress.step} got no answer${within}. The process is up; ` +
+      `what it needs to open a session (its model backend, a relay, the network) is not responding.${stderr}`
+    );
+  }
+  return `agent "${p.agent}" started${where}, but ${p.progress.step} failed: ${rpcErrorText(p.error)}.${stderr}`;
 }
 
 /**
@@ -2832,7 +3167,14 @@ export const PERMISSION_DECLINED_CODE = -32001;
 
 /** A permission request as the user is shown it: the tool call's title, and the agent's options. */
 export function permissionRequestOf(req: RequestPermissionRequest): AgentPermissionRequest {
-  const title = stripCode(req.toolCall.title ?? '') || buildInputPreview(req.toolCall.rawInput) || 'a tool call';
+  // agy's generic MCP call is titled `Bash` too, and this card has no preview line for the server,
+  // so it is named the way the tool row names it and the server rides in the title.
+  const mcp = agyMcpCall(req.toolCall.rawInput);
+  const title =
+    (mcp && `${agyMcpLabel(mcp)} — ${mcp.server}`) ||
+    stripCode(req.toolCall.title ?? '') ||
+    buildInputPreview(req.toolCall.rawInput) ||
+    'a tool call';
   return { title, options: req.options.map((o) => ({ optionId: o.optionId, label: o.name || o.optionId })) };
 }
 
@@ -3028,6 +3370,12 @@ export interface TurnState {
    * means a `Run <tool>` title names agy's own tool, which labels the bubble (agyAcpToolLabel).
    */
   agy?: AgyTurnWatch;
+  /**
+   * The turn was stopped (`/stop`) and has not ended: the harness is still producing output for it.
+   * While this stands, its tool calls are shown rather than dropped as the cancel's wreckage (see
+   * isWreckage), and a call that STARTS now is marked as running after the stop (ToolEvent.afterStop).
+   */
+  stopped?: boolean;
 }
 
 /**
@@ -3055,6 +3403,8 @@ interface ToolRec {
   spawns?: boolean;
   /** The bubble's name when the harness's own tool name says more than `kind` (agy's; see TurnState.agy). */
   label?: string;
+  /** First seen after the turn was stopped (TurnState.stopped): the harness started it anyway. */
+  afterStop?: boolean;
 }
 
 /**
@@ -3198,6 +3548,7 @@ function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): v
   let rec = st.toolLedger.get(id);
   if (!rec) {
     rec = { index: st.toolIndexSeq++, id, startAt: nowMs(), started: false, finished: false };
+    if (st.stopped) rec.afterStop = true;
     st.toolLedger.set(id, rec);
     st.agy?.tool();
   }
@@ -3205,7 +3556,13 @@ function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): v
   if (typeof f.title === 'string') rec.title = f.title;
   if (typeof f.kind === 'string') rec.kind = f.kind;
   if (f.rawInput !== undefined) rec.rawInput = f.rawInput;
-  if (st.agy) rec.label = agyAcpToolLabel(rec.title, rec.kind) ?? rec.label;
+  if (st.agy) {
+    rec.label = agyAcpToolLabel(rec.title, rec.kind) ?? rec.label;
+    // agy's generic MCP call is kind `execute` / title `Bash`; only its input names the server and
+    // the tool (agy-acp.ts agyMcpCall). Named here, once, so finishTool draws the same row.
+    const mcp = agyMcpCall(rec.rawInput);
+    if (mcp) rec.label = agyMcpLabel(mcp);
+  }
 
   // Read before maybeStartTool below, which is where the bubble is drawn: it has to know whose it is.
   const { parent, spawnsSubagent } = claudeAttribution(meta);
@@ -3310,16 +3667,23 @@ function maybeStartTool(st: TurnState, id: string, force: boolean): void {
 
 /** The row a call would draw now, from everything known about it. */
 function toolStartEvent(st: TurnState, rec: ToolRec): ToolEvent {
+  // agy's `call_mcp_tool` carries the server in its input, not its title; the label names the tool,
+  // so the server and the arguments are the preview (see agyMcpCall).
+  const mcp = st.agy ? agyMcpCall(rec.rawInput) : undefined;
   return {
     // name uses the short ACP kind (aligns with emojiMap); command/path detail only in the truncated preview.
     name: rec.label ?? toolLabel(rec.kind, rec.title),
     inputPreview:
-      (rec.spawns && subagentDescription(rec)) || buildInputPreview(rec.rawInput) || stripCode(rec.title),
+      (rec.spawns && subagentDescription(rec)) ||
+      (mcp && [mcp.server, buildInputPreview(mcp.args)].filter(Boolean).join(' ')) ||
+      buildInputPreview(rec.rawInput) ||
+      stripCode(rec.title),
     input: rec.rawInput,
     index: rec.index,
     id: rec.id,
     // The spawning call always precedes its subagent's first tool, so its name is known by now.
     agent: rec.parent ? (st.subagents?.get(rec.parent) ?? UNNAMED_SUBAGENT) : undefined,
+    ...(rec.afterStop ? { afterStop: true } : {}),
   };
 }
 

@@ -852,8 +852,16 @@ be read as the agent's next reply:
   that decides "line-based or prose", for the send and for every later edit, so a report reaches
   the page as one `.tl` per line exactly as a tool bubble does.
 
-The page puts `dispatch` / `report` on the message's class and a `.sub-k` tag above the body, and
-only a dispatch skips `foldLines` and the "Show all" control. The kind is stored on the message
+A third is not about sub-agents but is drawn the same way:
+
+- **`aside`** — the answer to a side question (`/btw`, `turn-runner.ts` `beginAside`). It is
+  asked of a copy of the conversation and kept out of it, and it often lands while the turn's own
+  reply is still streaming around it, so it must not read as that reply's next paragraph. Prose,
+  like a dispatch; its rail is dashed.
+
+The page puts the kind on the message's class and a `.sub-k` tag above the body (`SUB_K` in
+`page.ts`: the kinds it lists are the ones that get both), and only a report folds its lines like
+a tool bubble. The kind is stored on the message
 (`WebMessage.kind`), in the transcript file (`parseKept`), and on the page's cached copy — a reload
 and a restart redraw the same bubble. Every other platform ignores the field.
 

@@ -44,6 +44,14 @@ export const DEFAULT_ASK_REMINDER_TEXT =
 export const ASK_CLIENT_TIMEOUT_MARGIN_MS = 10_000;
 
 /**
+ * The longest `schedule run --wait` may wait, in milliseconds.
+ *
+ * Here for the reason the ask timeout is: the CLI refuses a longer wait in words the caller can act
+ * on, and the boundary refuses the same number — one constant, so the two cannot drift apart.
+ */
+export const MAX_RUN_WAIT_MS = 60 * 60_000;
+
+/**
  * How many topic rows `channels` returns when the caller names no `--limit`. Here for the reason the
  * ask timeout is: the CLI prints it in its help line and the daemon applies it, and they must agree.
  * Thirty is a screenful of recent work; the live deployment had 335 conversations on 2026-09-30.
@@ -139,6 +147,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       agent: z.string().min(1).optional(),
       session: z.enum(['fixed', 'new', 'daily']).optional(),
       cwd: z.string().min(1).optional(),
+      host: z.string().min(1).max(64).optional(),
       model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
     })
@@ -160,6 +169,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       bash: z.string().min(1).max(20_000).optional(),
       agent: z.string().min(1).optional(),
       cwd: z.string().min(1).optional(),
+      host: z.string().min(1).max(64).optional(),
       model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
     })
@@ -213,7 +223,13 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z
-    .object({ kind: z.literal('schedule-op'), id: z.string().min(1), op: z.enum(['remove', 'pause', 'resume', 'run']) })
+    .object({
+      kind: z.literal('schedule-op'),
+      id: z.string().min(1),
+      op: z.enum(['remove', 'pause', 'resume', 'run']),
+      /** `run` only: wait this long for the run to end before answering (see ScheduleOpResult). */
+      waitMs: z.number().int().positive().max(MAX_RUN_WAIT_MS).optional(),
+    })
     .strict(),
   // Sub-agents (daemon/delegation.ts). None takes a channelId: they act from the asking conversation
   // on the topics it opened, each named as `topic`, and the daemon refuses any other. Bounds are
@@ -236,6 +252,12 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       topic: z.string().min(1).max(200),
       text: z.string().min(1).max(20_000),
       interrupt: z.boolean().optional(),
+      /**
+       * Another of this conversation's topics, whose last normally-ended reply is attached to the
+       * message whole (`task-send --forward`). The daemon refuses one this conversation did not
+       * open, like `topic` itself.
+       */
+      forward: z.string().min(1).max(200).optional(),
     })
     .strict(),
   z
@@ -290,6 +312,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       since: z.number().int().positive().optional(),
       grep: z.string().min(1).max(200).optional(),
       tail: z.number().int().positive().max(500).optional(),
+      // The newest n rows, as `task-read --limit` means it. A row filter of its own, so it is
+      // refused beside --since, which reads forward from a cursor.
+      limit: z.number().int().positive().max(500).optional(),
     })
     .strict(),
   z
@@ -297,6 +322,8 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       kind: z.literal('sessions-list'),
       days: z.number().int().positive().max(3_650).optional(),
       limit: z.number().int().positive().max(200).optional(),
+      /** Resume after this conversation id: the page before it ended there (`sessions list --before`). */
+      before: z.number().int().positive().optional(),
     })
     .strict(),
 ]);
@@ -347,6 +374,7 @@ export type IpcAction =
       agent?: string;
       session?: 'fixed' | 'new' | 'daily';
       cwd?: string;
+      host?: string;
       model?: string;
       timeoutMs?: number;
     }
@@ -362,6 +390,7 @@ export type IpcAction =
       bash?: string;
       agent?: string;
       cwd?: string;
+      host?: string;
       model?: string;
       timeoutMs?: number;
     }
@@ -399,11 +428,11 @@ export type IpcAction =
       /** show: read it whole even if this conversation already read this version. */
       again?: boolean;
     }
-  | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run' }
+  | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run'; waitMs?: number }
   | { kind: 'task-agents' }
   | { kind: 'task-list'; limit?: number }
   | { kind: 'task-new'; agent?: string; text: string; cwd?: string; title?: string; model?: string }
-  | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean }
+  | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean; forward?: string }
   | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number; role?: 'user' | 'agent' | 'tool'; turn?: string; turns?: number; since?: number; grep?: string; reply?: boolean }
   | { kind: 'task-status'; topic: string }
   | { kind: 'task-stop'; topic: string }
@@ -419,8 +448,9 @@ export type IpcAction =
       since?: number;
       grep?: string;
       tail?: number;
+      limit?: number;
     }
-  | { kind: 'sessions-list'; days?: number; limit?: number };
+  | { kind: 'sessions-list'; days?: number; limit?: number; before?: number };
 
 // Compile-time alignment: the zod-inferred type must equal the hand-written union;
 // if either side drifts, this type errors.
@@ -498,8 +528,23 @@ export interface ListChannelsResult {
 }
 
 /**
+ * One run of a task, as `schedule show` prints it and `schedule run --wait` answers with
+ * (core/schedule.ts runView): flat strings, one row of a table. `conversation` is the conversation
+ * its output went to — the topic a new/daily run opened, or the one a fixed run answered in; empty
+ * for a bash run, which has none.
+ */
+export interface ScheduleRunView {
+  at: string;
+  status: string;
+  took: string;
+  conversation: string;
+  error: string;
+}
+
+/**
  * One scheduled task as the CLI prints it (core/schedule.ts taskView). Flat, so a list renders as
- * one TOON table; the detail fields appear only on `schedule show` and `schedule add`.
+ * one TOON table; the detail fields (prompt or command, cwd) appear only on `schedule show`, `add`
+ * and `edit`, and `history` only on `show` — `list` stays one row a task.
  */
 export interface ScheduleTaskView {
   id: string;
@@ -521,11 +566,24 @@ export interface ScheduleTaskView {
   command?: string;
   timeout?: string;
   cwd?: string;
+  /** `show` only: the last runs, newest first (core/schedule.ts MAX_RUN_HISTORY). */
+  history?: ScheduleRunView[];
 }
 
 /** Response body for schedule-list. */
 export interface ScheduleListResult {
   tasks: ScheduleTaskView[];
+}
+
+/**
+ * Response body for `schedule run --wait`: the task as it stands after the run, plus the run's own
+ * record when it ended inside the wait. `note` explains a wait that ran out — the run goes on and
+ * its output still reaches the conversation.
+ */
+export interface ScheduleOpResult {
+  task: ScheduleTaskView;
+  run?: ScheduleRunView;
+  note?: string;
 }
 
 /**
@@ -675,6 +733,13 @@ export interface SessionSearchResult {
     role: string;
     excerpt: string;
   }>;
+  /** The row bound that was applied, so the CLI can say when the list may have been cut. */
+  limit: number;
+  /**
+   * With `--agent` and no hits: every agent id the library holds. The filter is an exact match, and
+   * a bare `ag` for `ag@uniagent` used to look like "this history is not in the library".
+   */
+  agents?: string[];
 }
 
 /** Response body for sessions-list. */
@@ -682,6 +747,8 @@ export interface SessionListResult {
   sessions: SessionRow[];
   /** The window that was applied, so the CLI can say what it left out. */
   days: number;
+  /** The row bound that was applied; a full page means there may be more behind it. */
+  limit: number;
 }
 
 /** Response body for sessions-read. */

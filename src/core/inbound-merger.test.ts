@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { InboundMerger, type MergerDeps } from './inbound-merger.js';
+import { InboundMerger, stopInputNote, type MergerDeps } from './inbound-merger.js';
 import type { InboundMessage, SteerOutcome } from '../types.js';
 
 /**
@@ -412,16 +412,18 @@ describe('InboundMerger lifecycle reactions', () => {
 /**
  * Explicit interrupt (`/stop`) — now the only way a turn is cut short.
  *
- * It must drop the backlog, or "stop" would mean "stop, then immediately start the next thing",
- * which is how a stop command earns a reputation for not stopping anything. That includes messages
- * still being offered to the turn when it lands, and a message that already joined the turn gets no
- * ✅ — the turn it joined did not finish.
+ * What it must not do is run the backlog ("stop" would then mean "stop, then immediately start the
+ * next thing") — nor drop it without a word, which is how a correction typed into a turn that would
+ * not stop was lost on 2026-11-13. So what never reached the agent is kept for the person's next
+ * message and reported; a second `/stop` drops it, and says so. A message that already joined the
+ * turn gets no ✅ — the turn it joined did not finish.
  */
 describe('InboundMerger.interrupt (/stop)', () => {
   const emojis = (h: ReturnType<typeof harness>) =>
     vi.mocked(h.deps.addReaction).mock.calls.map((c) => c[1]);
+  const ids = (msgs: InboundMessage[]) => msgs.map((m) => m.messageId);
 
-  it('running: cancels the turn, drops the backlog, and marks no ✅', async () => {
+  it('running: cancels the turn and keeps the backlog — not run, not dropped — and marks no ✅', async () => {
     const h = harness();
 
     await startTurn(h);
@@ -429,32 +431,49 @@ describe('InboundMerger.interrupt (/stop)', () => {
     await tick();
     expect(h.abortTurn).not.toHaveBeenCalled();
 
-    expect(h.merger.interrupt()).toBe('running');
+    const report = h.merger.interrupt();
+    expect(report.outcome).toBe('running');
+    expect(ids(report.kept)).toEqual(['m2']);
+    expect(report.dropped).toEqual([]);
     expect(h.abortTurn).toHaveBeenCalledTimes(1);
     expect(h.signals[0]?.aborted).toBe(true);
 
     h.resolveFirst();
     await tick();
-    // The backlog is gone rather than promoted to the next turn.
+    // Not promoted to a turn of its own: the stop stopped.
     expect(h.deps.runTurn).toHaveBeenCalledTimes(1);
     expect(h.merger.isIdle()).toBe(true);
     // 👀 for each of the two messages, and no ✅: the turn was stopped, not completed.
     expect(emojis(h)).toEqual(['👀', '👀']);
+
+    // ...but it goes in with the next message, ahead of it.
+    await h.merger.ingest(msg('m3'));
+    h.clock.advance(1500);
+    await tick();
+    expect(h.batches).toEqual([['m1'], ['m2', 'm3']]);
   });
 
-  it('running: drops a message still being offered to the turn, whatever the agent then says', async () => {
-    const answer = deferred<SteerOutcome>();
-    const h = harness(() => answer.promise);
-    await startTurn(h);
-    await h.merger.ingest(msg('m2'));
-    await tick();
+  it('running: keeps a message still being offered to the turn, whatever the agent then says', async () => {
+    for (const answer of ['refused', 'joined'] as const) {
+      const offer = deferred<SteerOutcome>();
+      const h = harness(() => offer.promise);
+      await startTurn(h);
+      await h.merger.ingest(msg('m2'));
+      await tick();
 
-    h.merger.interrupt();
-    answer.resolve('refused'); // would have queued it — but the stop dropped it
-    h.resolveFirst();
-    await tick();
-    expect(h.deps.runTurn).toHaveBeenCalledTimes(1);
-    expect(h.merger.isIdle()).toBe(true);
+      // Listed as kept at once — the ack is written now, before the agent answers.
+      expect(ids(h.merger.interrupt().kept)).toEqual(['m2']);
+      // Joined or not, the cancel takes the turn down with it, so the agent never answers it there.
+      offer.resolve(answer);
+      h.resolveFirst();
+      await tick();
+      expect(h.deps.runTurn).toHaveBeenCalledTimes(1);
+
+      await h.merger.ingest(msg('m3'));
+      h.clock.advance(1500);
+      await tick();
+      expect(h.batches).toEqual([['m1'], ['m2', 'm3']]);
+    }
   });
 
   it('running: a message that joined the turn goes down with it — no ✅ for it either', async () => {
@@ -462,17 +481,93 @@ describe('InboundMerger.interrupt (/stop)', () => {
     await startTurn(h);
     await h.merger.ingest(msg('m2'));
     await tick();
-    h.merger.interrupt();
+    expect(h.merger.interrupt().kept).toEqual([]); // the agent had it: it is not the backlog
     h.resolveFirst();
     await tick();
     expect(emojis(h)).toEqual(['👀', '👀']);
   });
 
-  it('collecting: drops the batch before it ever reaches the agent', async () => {
+  it('a message sent after /stop is not offered to the dying turn, and starts the next one when it ends', async () => {
+    // #214115: `/stop`, then "give me a plan first" typed while the harness kept going.
+    const h = harness(() => Promise.resolve('joined'));
+    await startTurn(h);
+    await h.merger.ingest(msg('before')); // joins the turn
+    await tick();
+    h.merger.interrupt();
+
+    await h.merger.ingest(msg('plan first'));
+    await tick();
+    // The harness could take it, but it is unwinding: one that takes a message and then drops it
+    // with the cancel would lose it.
+    expect(h.deps.steer).toHaveBeenCalledTimes(1); // only `before`
+    expect(h.merger.isIdle()).toBe(false);
+
+    h.resolveFirst();
+    await tick();
+    // Written after the stop, it is the next thing: no further message needed.
+    expect(h.batches).toEqual([['m1'], ['plan first']]);
+  });
+
+  it('a second /stop while the stopped turn is still running keeps what was sent in between', async () => {
+    // The rest of #214115: the turn went on after the first stop, and the second one used to throw
+    // the correction away.
+    const h = harness();
+    await startTurn(h);
+    h.merger.interrupt();
+    await h.merger.ingest(msg('plan first'));
+    await tick();
+
+    const second = h.merger.interrupt();
+    expect(second.outcome).toBe('running');
+    expect(ids(second.kept)).toEqual(['plan first']);
+    expect(h.abortTurn).toHaveBeenCalledTimes(2);
+
+    h.resolveFirst();
+    await tick();
+    expect(h.deps.runTurn).toHaveBeenCalledTimes(1);
+    await h.merger.ingest(msg('go on'));
+    h.clock.advance(1500);
+    await tick();
+    expect(h.batches).toEqual([['m1'], ['plan first', 'go on']]);
+  });
+
+  it('kept messages go in front of the post-stop ones when the stopped turn ends', async () => {
+    const h = harness();
+    await startTurn(h);
+    await h.merger.ingest(msg('queued'));
+    await tick();
+    h.merger.interrupt();
+    await h.merger.ingest(msg('after'));
+    await tick();
+    h.resolveFirst();
+    await tick();
+    expect(h.batches).toEqual([['m1'], ['queued', 'after']]);
+  });
+
+  it('kept messages are not handed to a scheduled turn — only a person starts them', async () => {
+    const h = harness();
+    await startTurn(h);
+    await h.merger.ingest(msg('queued'));
+    await tick();
+    h.merger.interrupt();
+    h.resolveFirst();
+    await tick();
+
+    expect(await h.merger.enqueueSolo(msg('sched'))).toBe('ok');
+    expect(h.batches).toEqual([['m1'], ['sched']]);
+    await h.merger.ingest(msg('person'));
+    h.clock.advance(1500);
+    await tick();
+    expect(h.batches).toEqual([['m1'], ['sched'], ['queued', 'person']]);
+  });
+
+  it('collecting: drops the batch before it ever reaches the agent, and says which', async () => {
     const h = harness();
 
     await h.merger.ingest(msg('m1')); // inside the merge window, nothing dispatched yet
-    expect(h.merger.interrupt()).toBe('collecting');
+    const report = h.merger.interrupt();
+    expect(report.outcome).toBe('collecting');
+    expect(ids(report.dropped)).toEqual(['m1']);
 
     h.clock.advance(5000); // the window would have elapsed long ago
     await tick();
@@ -481,11 +576,76 @@ describe('InboundMerger.interrupt (/stop)', () => {
     expect(h.merger.isIdle()).toBe(true);
   });
 
+  it('idle: a second /stop drops what the first kept, and says which', async () => {
+    const h = harness();
+    await startTurn(h);
+    await h.merger.ingest(msg('m2'));
+    await tick();
+    h.merger.interrupt();
+    h.resolveFirst();
+    await tick();
+
+    const again = h.merger.interrupt();
+    expect(again.outcome).toBe('idle');
+    expect(ids(again.dropped)).toEqual(['m2']);
+    expect(h.merger.interrupt().dropped).toEqual([]); // and it is gone
+
+    await h.merger.ingest(msg('m3'));
+    h.clock.advance(1500);
+    await tick();
+    expect(h.batches).toEqual([['m1'], ['m3']]);
+  });
+
+  it('dropKept: lets go of what a stop kept (for /new)', async () => {
+    const h = harness();
+    await startTurn(h);
+    await h.merger.ingest(msg('m2'));
+    await tick();
+    h.merger.interrupt();
+    h.resolveFirst();
+    await tick();
+    expect(ids(h.merger.dropKept())).toEqual(['m2']);
+    expect(h.merger.dropKept()).toEqual([]);
+  });
+
   it('idle: reports idle and touches nothing', async () => {
     const h = harness();
-    expect(h.merger.interrupt()).toBe('idle');
+    expect(h.merger.interrupt()).toEqual({ outcome: 'idle', kept: [], dropped: [] });
     expect(h.abortTurn).not.toHaveBeenCalled();
     expect(h.deps.runTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('stopInputNote', () => {
+  const m = (content: string, extra: Partial<InboundMessage> = {}): InboundMessage => ({ ...msg('x'), content, ...extra });
+
+  it('says nothing when the stop kept and dropped nothing', () => {
+    expect(stopInputNote([], [])).toBe('');
+  });
+
+  it('quotes what was kept, and how to send or drop it', () => {
+    expect(stopInputNote([m('请你给我先出个完善的方案')], [])).toBe(
+      'Kept this message for your next one — the agent has not seen it yet, and it goes in with whatever you send next. `/stop` again drops it:\n' +
+        '> 请你给我先出个完善的方案'
+    );
+  });
+
+  it('quotes what was dropped', () => {
+    expect(stopInputNote([], [m('a'), m('b')])).toBe('Dropped these 2 messages — the agent never saw them:\n> a\n> b');
+  });
+
+  it('flattens and cuts a long message, counts attachments, and caps the list', () => {
+    const long = 'x'.repeat(300);
+    const note = stopInputNote(
+      [m(`line one\n\nline two`), m(long), m('', { attachments: [{ type: 'image', url: 'u' }] }), m('4'), m('5'), m('6'), m('7')],
+      []
+    );
+    const lines = note.split('\n');
+    expect(lines[1]).toBe('> line one line two');
+    expect(lines[2]!.length).toBeLessThan(130);
+    expect(lines[2]!.endsWith('…')).toBe(true);
+    expect(lines[3]).toBe('> [1 attachment]');
+    expect(lines.at(-1)).toBe('> … and 2 more');
   });
 });
 

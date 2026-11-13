@@ -19,6 +19,17 @@ describe('clientTimeoutFor', () => {
     expect(clientTimeoutFor({ kind: 'pod-add', name: 'laptop', ssh: 'user@192.0.2.9:10022', hostKey: 'ssh-ed25519 AAAA' })).toBe(60_000);
   });
 
+  it('gives a skills write the repository round trip, and leaves its reads on the default', () => {
+    // The write answers only after the skills repository has been pulled and the commit pushed;
+    // 19 of 55 writes in a week timed out at 10 s after the write had already landed.
+    for (const action of ['create', 'patch', 'write-file', 'remove-file', 'archive', 'restore', 'revert', 'pin', 'unpin'] as const) {
+      expect(clientTimeoutFor({ kind: 'skills', action, name: 'x' }), action).toBe(60_000);
+    }
+    for (const action of ['list', 'search', 'show', 'categories', 'history'] as const) {
+      expect(clientTimeoutFor({ kind: 'skills', action }), action).toBeUndefined();
+    }
+  });
+
   it('keeps the ask wait tied to its own timeout plus the margin', () => {
     expect(clientTimeoutFor({ kind: 'ask', prompt: 'ok?', options: ['yes', 'no'] })).toBe(
       DEFAULT_ASK_TIMEOUT_MS + ASK_CLIENT_TIMEOUT_MARGIN_MS
@@ -26,6 +37,15 @@ describe('clientTimeoutFor', () => {
     expect(clientTimeoutFor({ kind: 'ask', prompt: 'ok?', options: ['yes'], timeoutMs: 5_000 })).toBe(
       5_000 + ASK_CLIENT_TIMEOUT_MARGIN_MS
     );
+  });
+
+  it('outlasts a schedule run it was asked to wait for, and only that run', () => {
+    // The daemon answers when the run ends, so the client's wait has to cover the wait it asked
+    // for — otherwise `--wait 30m` would report an IPC timeout at 60 s and the agent would retry
+    // into a second run.
+    expect(clientTimeoutFor({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 600_000 })).toBe(660_000);
+    expect(clientTimeoutFor({ kind: 'schedule-op', id: 'a1b2c3', op: 'run' })).toBeUndefined();
+    expect(clientTimeoutFor({ kind: 'schedule-op', id: 'a1b2c3', op: 'pause' })).toBeUndefined();
   });
 
   it('leaves every other command on the default', () => {

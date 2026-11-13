@@ -179,6 +179,32 @@ export interface ScheduleDaySession {
   personModel?: boolean;
 }
 
+/**
+ * One finished run, kept on the task.
+ *
+ * `lastRun` answers "how did it go"; this answers "how have the last N gone" — the question a
+ * person asks after a schedule has been quietly missing runs, and the one that used to need a
+ * sub-agent reading the conversation library for each day (2026-11-13). Missed and skipped runs
+ * are here too: they are exactly the ones nobody sees in the chat.
+ */
+export interface ScheduleRunRecord {
+  /** When it ran (its start), or when a missed/skipped run was recorded. */
+  at: number;
+  status: ScheduleRunStatus;
+  durationMs?: number;
+  exitCode?: number;
+  error?: string;
+  /** The conversation its output went to, when it ran in one — a new/daily run opens its own. */
+  conversation?: string;
+}
+
+/**
+ * How many runs a task keeps. Bounded because the whole task is rewritten to disk on every run:
+ * an every-minute task would otherwise grow `schedules.json` without limit. Twenty covers the
+ * "what happened over the last few days" audit a daily task is asked about.
+ */
+export const MAX_RUN_HISTORY = 20;
+
 export interface ScheduleTask {
   id: string;
   name: string;
@@ -203,7 +229,14 @@ export interface ScheduleTask {
    */
   lastPlannedAt?: number;
   lastRun?: { at: number; status: ScheduleRunStatus; durationMs?: number; exitCode?: number; error?: string };
+  /** The last MAX_RUN_HISTORY runs, newest first. Absent on tasks written before it existed. */
+  history?: ScheduleRunRecord[];
   runs: number;
+}
+
+/** `history` with `record` at the front, cut to MAX_RUN_HISTORY. */
+export function withRun(history: readonly ScheduleRunRecord[] | undefined, record: ScheduleRunRecord): ScheduleRunRecord[] {
+  return [record, ...(history ?? [])].slice(0, MAX_RUN_HISTORY);
 }
 
 // ─────────────────────────────── time ───────────────────────────────
@@ -409,6 +442,13 @@ export interface NewTaskInput {
   agent?: string;
   session?: 'fixed' | 'new' | 'daily';
   cwd?: string;
+  /**
+   * The machine `--cwd` belongs to, named by the caller. Without it a `--cwd` is read as a path on
+   * the machine the command ran on, which is what a task on another machine may not use. With it,
+   * the directory is that machine's — and with no `--cwd` at all, the task starts in that machine's
+   * own default directory rather than the caller's.
+   */
+  host?: string;
   model?: string;
   timeoutMs?: number;
 }
@@ -541,6 +581,9 @@ function buildBashTask(input: NewTaskInput, command: string, ctx: NewTaskContext
   if (input.agent !== undefined || input.session !== undefined) {
     return fail('--agent and --session are for --prompt tasks; a --bash task is run by the daemon, not an agent');
   }
+  if (input.host !== undefined) {
+    return fail('--host is for a --prompt task on another machine: a --bash task runs where the agent that registers it does, with that machine\'s directory');
+  }
   if (!command.trim()) return fail('--bash is empty');
   const timeoutMs = input.timeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   if (timeoutMs < 1_000 || timeoutMs > MAX_BASH_TIMEOUT_MS) {
@@ -575,6 +618,9 @@ function buildFixedTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext
   if (input.cwd !== undefined) {
     return fail('a fixed-session task runs where its topic already works; /cd there to move it, or use --session new --cwd <dir>');
   }
+  if (input.host !== undefined) {
+    return fail('--host names the machine a --cwd belongs to, and a fixed-session task has no --cwd: it runs where its topic already works');
+  }
   const agent = input.agent ?? conv.agent ?? ctx.from.agent;
   const unknown = checkAgent(agent, ctx);
   if (unknown) return fail(unknown);
@@ -596,12 +642,25 @@ function buildFixedTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext
   return { ok: true, task };
 }
 
+/**
+ * Where a `new` or `daily` task starts.
+ *
+ * Without `--host` it is the caller's directory when none was given: a task registered here runs
+ * here, and "here" is where the registering conversation works. With `--host` the caller is naming
+ * a machine whose directories it cannot see, so nothing is inferred — the task starts in exactly
+ * the `--cwd` it was given, or in that machine's own default directory.
+ */
+function taskCwd(input: NewTaskInput, ctx: NewTaskContext): string | undefined {
+  if (input.host !== undefined) return input.cwd;
+  return input.cwd ?? ctx.from.cwd;
+}
+
 /** A fresh session every run, with no window. */
 function buildFreshTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext, base: TaskBase): Built {
   const agent = input.agent ?? ctx.from.agent;
   const unknown = checkAgent(agent, ctx);
   if (unknown) return fail(unknown);
-  const cwd = input.cwd ?? ctx.from.cwd;
+  const cwd = taskCwd(input, ctx);
   const model = input.model?.trim();
   return firstRunCheck(
     {
@@ -625,7 +684,7 @@ function buildDailyTask(input: NewTaskInput, prompt: string, ctx: NewTaskContext
   const agent = input.agent ?? ctx.from.agent;
   const unknown = checkAgent(agent, ctx);
   if (unknown) return fail(unknown);
-  const cwd = input.cwd ?? ctx.from.cwd;
+  const cwd = taskCwd(input, ctx);
   const model = input.model?.trim();
   return firstRunCheck(
     {
@@ -660,6 +719,8 @@ export interface EditTaskInput {
   bash?: string;
   agent?: string;
   cwd?: string;
+  /** The machine the `--cwd` this edit gives belongs to; see NewTaskInput.host. */
+  host?: string;
   model?: string;
   timeoutMs?: number;
 }
@@ -729,6 +790,7 @@ function preserveTask(task: ScheduleTask, built: ScheduleTask): ScheduleTask {
     state: task.state,
     runs: task.runs,
     ...(task.lastRun !== undefined ? { lastRun: task.lastRun } : {}),
+    ...(task.history !== undefined ? { history: task.history } : {}),
     ...(task.conversation !== undefined ? { conversation: task.conversation } : {}),
     ...(task.expiresAt !== undefined ? { expiresAt: task.expiresAt } : {}),
     ...(task.lastPlannedAt !== undefined ? { lastPlannedAt: task.lastPlannedAt } : {}),
@@ -780,6 +842,9 @@ function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
     ...mergedTime(task, input),
     tz: input.tz ?? task.when.tz,
     ...(input.cwd !== undefined ? { cwd: input.cwd } : run.cwd !== undefined ? { cwd: run.cwd } : {}),
+    // Only what the caller named: the task's machine is its agent's, and a --host that agreed with
+    // it yesterday must not be assumed to agree with a --agent this edit moves the task to.
+    ...(input.host !== undefined ? { host: input.host } : {}),
   };
   if (run.kind === 'bash') {
     return {
@@ -882,6 +947,22 @@ function body(task: ScheduleTask): string {
 }
 
 /**
+ * The task's text on the card, whole.
+ *
+ * It used to be the one-line `body()` cut at 200 characters, and that was the wrong cut in the one
+ * place it mattered: a sub-agent rewrote a task's prompt to an unverified prototype, the card said
+ * "…" after 200 characters, and the conversation the task actually runs in was not told at all —
+ * the person found out when 18:00 ran the wrong thing (2026-11-13). So the prompt is quoted in
+ * full: a blockquote reads as folded under the card rather than competing with it, and the reader
+ * can see exactly what will run. The card goes to the target conversation too (ScheduleService.card).
+ */
+function bodyLines(task: ScheduleTask): string[] {
+  if (task.run.kind === 'bash') return [`• Command: ${body(task)}`];
+  const lines = task.run.prompt.replace(/\r\n/g, '\n').split('\n');
+  return ['• Prompt:', ...lines.map((line) => (line ? `> ${line}` : '>'))];
+}
+
+/**
  * The card posted when a task is registered, changed or removed — by the daemon itself, never left
  * to the agent's retelling, so what the user reads is what will actually run. `verb` is the change.
  */
@@ -892,7 +973,7 @@ export function taskCardText(task: ScheduleTask, verb: string, now: number): str
     `• When: ${describeWhen(task.when)}${nextSuffix(task, now)}`,
     `• Runs: ${describeRun(task.run)}${task.expiresAt !== undefined ? ` · until ${formatInZone(task.expiresAt, tz)}` : ''}`,
     `• Posts to: \`${targetId(task.target)}\``,
-    `• ${task.run.kind === 'bash' ? 'Command' : 'Prompt'}: ${body(task)}`,
+    ...bodyLines(task),
   ];
   if (task.tags?.length) lines.push(`• Tags: ${task.tags.map((tag) => `\`${tag}\``).join(', ')}`);
   if (task.state !== 'active') lines.push(`• State: ${STATE_LABEL[task.state]}`);
@@ -953,6 +1034,26 @@ export function taskView(task: ScheduleTask, now: number, opts: { detail?: boole
       ? { command: task.run.command, timeout: formatDuration(task.run.timeoutMs) }
       : { prompt: task.run.prompt, ...(task.run.model ? { model: task.run.model } : {}) }),
     cwd: task.run.cwd ?? '',
+    // `schedule show` is where the audit happens: the last MAX_RUN_HISTORY runs, newest first,
+    // each with the conversation its output went to. Kept off `list`, which stays one row a task.
+    ...(task.history?.length ? { history: task.history.map((r) => runView(r, tz)) } : {}),
+  };
+}
+
+/** One run as the CLI prints it: flat strings, one row of a table. */
+export function runView(record: ScheduleRunRecord, tz: string): {
+  at: string;
+  status: string;
+  took: string;
+  conversation: string;
+  error: string;
+} {
+  return {
+    at: formatInZone(record.at, tz),
+    status: record.status,
+    took: record.durationMs !== undefined ? formatDuration(record.durationMs) : '',
+    conversation: record.conversation ?? '',
+    error: record.error ?? '',
   };
 }
 

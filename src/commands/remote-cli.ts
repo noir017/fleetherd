@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { isBridgedCommand } from '../ipc/commands.js';
+import { commandHint, isBridgedCommand } from '../ipc/commands.js';
 import { envOf } from '../legacy-name.js';
 
 /**
@@ -60,14 +60,25 @@ export function planRemoteCli(argv: string[], env: NodeJS.ProcessEnv): RemoteCli
   if (!envOf('REMOTE_SOCK', env)) return { kind: 'local' };
   const command = argv[0];
   if (!isBridgedCommand(argv)) {
-    const message =
+    // Why the binary is not the CLI at all, and the one way to get the CLI back on this machine:
+    // the operator's own shell has the same variable set when it was opened from an agent, and
+    // "command not found" / "config not found" reads as a broken install instead. Both names are
+    // named because a host's daemon sets both (withLegacyNames): unsetting only the current one
+    // leaves envOf falling back to the old one, and the command is refused again.
+    const set = ['FLEETHERD_REMOTE_SOCK', 'TALKCODE_REMOTE_SOCK'].filter((name) => env[name]);
+    const unsets = set.map((name) => `-u ${name}`).join(' ');
+    const unset =
+      `${set.join(' and ')} ${set.length > 1 ? 'are' : 'is'} set in this environment; ` +
+      `to run the full CLI on this machine, unset ${set.length > 1 ? 'both' : 'it'} first: \`env ${unsets} fleetherd …\`.`;
+    const hint = commandHint(command ?? '');
+    const why =
       command === undefined
-        ? 'fleetherd: an agent on a host can run only the reverse commands, `mcp` and `help`; `fleetherd help` lists them'
+        ? 'fleetherd: an agent on a host can run only the reverse commands, `mcp` and `help`; `fleetherd help` lists them.'
         : MANAGEMENT.has(command)
-          ? `fleetherd: "${command}" is the gateway's own administration; an agent on a host can run only the reverse commands, \`mcp\` and \`help\` (\`fleetherd help\` lists them)`
+          ? `fleetherd: "${command}" is the gateway's own administration; an agent on a host can run only the reverse commands, \`mcp\` and \`help\` (\`fleetherd help\` lists them).`
           : // The gateway's own wording for a command it turns away, so the two sides say the same thing.
-            `fleetherd: "${command}" is not a command an agent can run here; \`fleetherd help\` lists them`;
-    return { kind: 'refuse', message };
+            `fleetherd: "${command}" is not a command an agent can run here; \`fleetherd help\` lists them.`;
+    return { kind: 'refuse', message: [why, hint, unset].filter(Boolean).join(' ') };
   }
   if (SELF_ANSWERED.has(command!)) return { kind: 'local' };
   const shim = envOf('REMOTE_CLI', env);

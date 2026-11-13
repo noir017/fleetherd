@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseIpcRequest } from './protocol.js';
+import { MAX_RUN_WAIT_MS, parseIpcRequest } from './protocol.js';
 
 /**
  * parseIpcRequest is the runtime trust boundary for the reverse-command IPC: the peer is an
@@ -39,10 +39,12 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'schedule-list' },
     { kind: 'schedule-list', id: 'a1b2c3' },
     { kind: 'schedule-op', id: 'a1b2c3', op: 'remove' },
+    { kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: MAX_RUN_WAIT_MS },
     { kind: 'task-new', text: 'go' },
     { kind: 'task-new', agent: 'cc', text: 'go', model: 'fast-model', cwd: '/tmp', title: 'part' },
     { kind: 'task-send', topic: 'web:main/t1', text: 'go' },
     { kind: 'task-send', topic: 'web:main/t1', text: 'go', interrupt: true },
+    { kind: 'task-send', topic: 'web:main/t1', text: 'go', forward: 'web:main/t2' },
     { kind: 'task-read', topic: 'web:main/t1' },
     { kind: 'task-read', topic: 'web:main/t1', limit: 5, full: true, tail: 20 },
     { kind: 'task-read', topic: 'web:main/t1', role: 'tool', turn: 'last', grep: 'x', tail: 20 },
@@ -101,6 +103,10 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['schedule-add empty prompt', { token: TOKEN, action: { kind: 'schedule-add', cron: 'x', prompt: '' } }],
     ['schedule-op unknown op', { token: TOKEN, action: { kind: 'schedule-op', id: 'a', op: 'explode' } }],
     ['schedule-op missing id', { token: TOKEN, action: { kind: 'schedule-op', op: 'remove' } }],
+    // The CLI caps a wait at an hour in words; the boundary refuses the same number, so a caller
+    // that skips the CLI cannot hold an IPC connection open for a day.
+    ['schedule-op wait past an hour', { token: TOKEN, action: { kind: 'schedule-op', id: 'a', op: 'run', waitMs: MAX_RUN_WAIT_MS + 1 } }],
+    ['schedule-op zero wait', { token: TOKEN, action: { kind: 'schedule-op', id: 'a', op: 'run', waitMs: 0 } }],
     ['schedule-list with a channel', { token: TOKEN, action: { kind: 'schedule-list', channelId: 'c' } }],
     ['schedule-edit missing id', { token: TOKEN, action: { kind: 'schedule-edit', name: 'x' } }],
     ['schedule-edit with a session', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', session: 'new' } }],
@@ -112,6 +118,7 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['task-read zero tail', { token: TOKEN, action: { kind: 'task-read', topic: 't', tail: 0 } }],
     ['task-read unknown field', { token: TOKEN, action: { kind: 'task-read', topic: 't', noTruncate: true } }],
     ['task-send non-boolean interrupt', { token: TOKEN, action: { kind: 'task-send', topic: 't', text: 'x', interrupt: 'yes' } }],
+    ['task-send empty forward', { token: TOKEN, action: { kind: 'task-send', topic: 't', text: 'x', forward: '' } }],
     ['task-status missing topic', { token: TOKEN, action: { kind: 'task-status' } }],
     // The library arms: a query is text, a session is an id, and none targets a channel.
     ['sessions-search empty query', { token: TOKEN, action: { kind: 'sessions-search', query: '' } }],

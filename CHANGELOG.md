@@ -22,6 +22,237 @@ All notable changes to this project are documented here. The format is based on
   like a question from the run. Both lists now draw their trees with one walk and one row, so
   the two cannot drift apart again.
 
+- **The gateway's log survives the container.** `docker logs` is the live view, but a container
+  recreated for an update takes its json-file log with it — and the incidents that most need a log
+  are the ones around a restart. On 2026-11-11 a crash and an update cut turns off, and by the time
+  anyone looked the account of both had gone with the old container. The daemon now also writes
+  `<configDir>/logs/daemon.log`: timestamped lines, 10 MB per file with five files kept, on the
+  config volume that already holds conversations and schedules. The daemon writes it itself, so it
+  works as soon as the image is updated — no compose change, no log driver, and nothing to do on the
+  host.
+
+### Changed
+
+- **A release refuses a CHANGELOG that still carries conflict markers.** 19 of the 72 merges in
+  the week to 2026-11-13 conflicted in `CHANGELOG.md`, and once a failed resolution script let
+  later commands run and pushed a `<<<<<<<` line to main. `npm run release` now stops before
+  stamping while a marker is still in the file, and folds a repeated `### Added`-style subsection
+  into one when a merge left two.
+
+### Fixed
+
+- **agy's context is measured against where it compacts, not against Gemini's 1M window.** The
+  window table was read off agy's status line, but agy stops and compacts far earlier — 256k on
+  Gemini 3.8 Flash, 160k on Claude 4.6, 80k on GPT-OSS 120B — so the footer drew a session at
+  236k as `236k / 1M (23%)`, 92% of the way to a compaction that then arrived as a surprise.
+  Without a `contextBudget` the daemon now uses the compaction point Google hands agy with its
+  model list — the figure the relay already reads — while `contextWindow` still overrides it and a
+  model nobody has measured still shows no numbers.
+- **agy's generic MCP calls are labelled as MCP calls.** `call_mcp_tool` reaches a server agy did
+  not preload, its HTTP ones among them, and arrives as kind `execute` with the title `Bash` and
+  the server and tool only in the input — so the chat drew `Bash: {"ServerName":…}`, and a turn
+  that called an MCP tool looked like a shell command. The row now reads `MCP <tool>` with the
+  server in the preview, and the permission card names it the same way.
+
+### Changed
+
+- **A reverse command stops failing after it has worked, and stops hiding what it cut.** A `skills`
+  write now waits as long as the repository round trip takes (60 s, the bound `pod-add` already
+  had): 19 of 55 writes in a week answered "IPC timeout" after the commit had landed, and agents
+  retried into a second one. `sessions read` takes the topic id every other command prints
+  (`web:main/c962cd3f`) as well as the library's own (`web#main#c962cd3f`), and `sessions list`
+  prints both; a full page says there may be more and continues with `--before <id>`, and a
+  `--limit` over the bound is refused in the command's words rather than the schema's. `sessions
+  read` also accepts `task-read`'s `--limit`, `--full` and `--reply`, so one word no longer depends
+  on which of the two commands was typed. A `--role tool` answer over 50 KB points at `--tail` and
+  `--since`; an `--agent` the library does not know lists the ids it does, instead of reusing the
+  note about the library's coverage.
+- **`task-read --reply` and `--turn <n> --full` print prose: a header line, then the reply or the
+  turn as it was written.** Both used to be one TOON cell — a quoted line of `\n` escapes that 25 of
+  61 answers in a week needed a script to undo. `--reply --full` is accepted and ignored rather
+  than refused.
+- **`pods` prints the table first and `gatewayKey` after it.** The key was the first line of all 20
+  calls in a week, and every one piped the output through `head`, `tail` or `grep -v` to get past
+  it; it is still there when a machine is being added.
+- **A name that is not a command says what is.** `fleetherd help` now lists each topic's commands
+  (`history — fetch-messages`), and a refused one points at its help topic (`history`) or the
+  nearest command (`status` → `task-status`, `agents` → `task-agents`). On a host the refusal also
+  says that `FLEETHERD_REMOTE_SOCK` is set and how to unset it to get the full CLI back. The
+  `sessions`, `files` and `pods` pages now say when to search the library instead of a harness's
+  own transcripts, that a report written for the user is a file to send, and which library skill
+  carries the remote-host procedure.
+
+- **`task-send --forward` hands a reply to another sub-agent without retyping it.** Half of the
+  `task-send` calls in a week's conversations (99 of 194) were a coordinator passing on a review
+  verdict or a commit range by hand, and every copy cost a whole turn: read the update card, write
+  the retelling. `task-send <topic> --forward <other topic> "<what to fix>"` now attaches
+  `<other topic>`'s last normally-ended reply — the same turn `task-read --reply` answers with —
+  whole, under a heading that names the topic and its turn. It is shown in the target topic as a
+  folded report bubble, one row per line, and reaches the agent whole in the message it reads. Both
+  topics must be ones the asking conversation opened; a source with no normally-ended reply is
+  refused before anything is sent, and the answer says so when that source is still working, so
+  the forwarded turn is not read as its latest word.
+
+### Changed
+
+- **A sub-agent's update card says its turn ended, not that it finished.** A turn that ends after
+  "the tests are running in the background, I will report when they are done" is a normal end, so
+  the card called it finished, and a parent reading only the stage stopped waiting for work that
+  was still going. The stage is `turn ended` now — all the gateway knows — and the tally line says
+  the same. The `super` skill adds that a reply promising to carry on, or only waiting for a
+  command, does not count as done.
+- **The `super` skill ends the turn after handing out the parts, instead of polling.** Updates
+  arrive as the next turn, so a coordinator that stayed in this one could only sleep and re-read
+  `tasks` — 44 of the 50 same-turn repeat queries in a week were cbc's — and sometimes started the
+  work it had just handed out. The skill says to end the turn, not to poll, and not to do a part's
+  work while waiting.
+- **`fleetherd help` no longer lists `--channel` on the commands that refuse it.** The page is
+  rendered from the command catalog, which appended `-c, --channel` to every command, so `help
+  tasks` advertised a flag `tasks` rejects — the mismatch that made `tasks -c web:main` look
+  supported. A command that does not accept the flag says so in the catalog now, and the help page
+  leaves it out.
+- **`task-new --cwd` says it takes an absolute path, and the `super` skill uses it.** It always
+  did — an absolute or `~` path is resolved as given — but the help and a comment described a name
+  from `task-agents`, and the skill told the coordinator to write the worktree into the task text
+  instead. 38 of 43 sub-agents sent to a named worktree started in the main checkout. The skill now
+  has the coordinator make the worktree on the machine that runs the part and pass its path with
+  `--cwd`.
+
+- **`/btw <question>`: ask something on the side, even while a turn runs.** Until now a question
+  asked mid-turn either joined the turn — and became part of the work — or waited for it to end,
+  and either way the answer stayed in the conversation's context for good. A side question goes to
+  a copy of the session instead: the gateway asks the agent's ACP `session/fork` in the child that
+  is already running, prompts the copy, and deletes it, so the answer knows the whole conversation
+  while neither it nor the question is ever part of it, the running turn is not stopped, and no
+  second agent is started. The answer is a message of its own opening `↪ btw: <question>`, marked
+  **Side question** in the web UI, and it reports nothing about the conversation (no footer, usage
+  or status strip — those would be the copy's numbers). `/stop` stops it too. Whether an agent can
+  is read off its `initialize` every time, and a refusal says which agent and why: claude, codex and
+  opencode were probed to fork (claude-agent-acp 0.81.0 only after `session/resume`, which is sent
+  when declared); agy and CodeBuddy declare no fork; and opencode is held to between turns, because
+  its copy of a session mid-turn carried on with that turn too and ran its command a second time.
+
+- **A failed turn can be retried from its ❌.** The notice now carries Retry, which sends that
+  turn's input again — every message of it, attachments included — and, when there is more than one
+  agent, Retry with another agent, which asks which one first. Until now the only way was to copy
+  the message out and send it again: twice in one day the person pasted a whole request into a new
+  conversation with another agent after agy failed upstream (#208467 → #208472, #208530 → #208565).
+  A tap is the person's own act: a continue waiting after the failure is called off, and the input
+  goes in as theirs. Another agent takes over the topic when it has no session yet; one that has a
+  session keeps its agent, so the input goes to a new topic for the other one, beside this one and
+  in the same directory when both are on one machine. The buttons come off once they stop meaning
+  anything — used, or superseded by a later turn — and on a platform without buttons (WeCom,
+  DingTalk) the notice is the plain text it always was. The web UI's own Retry is unchanged: it is
+  for a message the browser never managed to send.
+
+### Changed
+
+- **A message the agent never received goes along with the next one, and the chat says so.** A turn
+  whose start failed never sent its prompt, and the ❌ only gave the cause — so the "continue" sent
+  after it, by the person, the parent agent or `hooks.turnFailed`, was the only thing the agent ever
+  read. On 2026-11-07 thirteen sub-agents failed to start, were each sent "继续执行原任务", and went
+  looking through their own session logs for a task they had never been given; a sub-agent's task
+  is handed over once, so it was simply gone. Such a turn's messages are now held and sent in front
+  of whatever starts the next turn — a message, a continue, a sub-agent card, a scheduled run — and
+  the ❌, the sub-agent card and the library all say "The agent did not receive this — it will be
+  sent along with the next message." A scheduled prompt, the operator's continue message and a
+  slash command are not held. Retrying the turn sends it instead, never both.
+- **A usage limit cools the whole agent down, not each conversation separately.** `limit` is the
+  account's, but `hooks.turnFailed.continue` counted per conversation: on 2026-11-07 eight cc
+  sub-agents hit "All credentials … are cooling down" together, each continued three times on its
+  own, every attempt spent ~200 s in Claude Code's own retries, and the parents woken by their
+  failure cards failed and continued too — 43 failed turns in 11 conversations over 1.5 hours. Now
+  their continues wait in one line: when the wait ends, one is sent to find out; if it gets through
+  (or any turn on that agent ends normally) the rest go at once, and if it hits the limit again the
+  wait doubles. The agent's limit gets `max` continues in all, not `max` per conversation — when
+  they are spent, every conversation waiting on it is left for the person. While an agent cools
+  down, sub-agent update cards for a parent it answers are held, said once in the parent's topic,
+  and sent when the limit lifts — an agent with no continue policy cools down too, for that.
+- **A startup failure says whether the process came up.** Every startup timeout told the person to
+  check that the launch command was on PATH. The four agy timeouts of 2026-11-11 had answered
+  `initialize` in 11 ms and hung on `session/new` behind a relay answering 502 and a DNS timeout.
+  The message now tells the two apart: "did not start — its process gave no answer to initialize"
+  points at the command and the machine; "started, but session/new got no answer" (or "failed:"
+  with the agent's own error, its `data` included) points behind it, at the backend, relay or
+  network. Either quotes the last lines the agent wrote to stderr.
+
+### Fixed
+
+- **A `/stop` sent while the agent is starting stops it.** A cold start takes seconds, and a
+  `/stop` in that window had no session to send the cancel to: the prompt went out once the agent
+  was up, and the whole turn ran. On 2026-11-13 a CodeBuddy turn stopped one second in this way
+  went on for eleven minutes; reproduced the same day, a `/stop` three seconds into a fresh topic
+  still let the agent run its commands and answer. The prompt is no longer sent.
+- **`/stop` ends the agent's process if the turn has not ended 20 seconds later.** `/stop` reaches
+  a harness as a cancel, which asks and cannot make it, nor say how long it will take: CodeBuddy
+  acts on one after 10–12 seconds, long enough that the turn above looked unstoppable and was ended
+  with "End agent". Past the deadline the process is ended, the chat says so, and the next message
+  resumes the conversation through `session/load` — what `/kill` does, done for you. A harness that
+  stops in time sees no change; one that cannot reload a stored session keeps its process, and the
+  chat says `/new` ends it.
+- **What an agent does after `/stop` is shown.** Every tool call that arrived between a cancel and
+  the end of the turn was dropped as the cancel's leftovers, on the assumption that a harness told
+  to stop starts nothing new. The turn above worked for eleven minutes with nothing on screen and no
+  tool calls in its history. They are rendered now, and a call started after the stop is marked
+  `still running after /stop`; only what trails in after the turn has ended is still dropped.
+- **`/stop` no longer throws away messages without saying so.** What was waiting behind a turn —
+  typed while an agent that cannot take input mid-turn was working — used to be dropped with the
+  turn, silently. In the turn above, the person had written "give me a proper plan first"; a later
+  `/stop` dropped it, and the agent went back to the original job for another 88 minutes. Those
+  messages are now kept: the stop's answer quotes them, they go in ahead of whatever the person
+  sends next, and a second `/stop` drops them — quoting them again. A message sent after a `/stop`,
+  while the turn is still winding down, is not handed to that turn any more; it starts the next one
+  as soon as it ends. `/new` lets go of kept messages and says which.
+
+- **A scheduled task keeps its last 20 runs, and `schedule show` prints them.** Each row is when it
+  ran, how it ended, how long it took and the topic its output went to; missed and skipped runs are
+  in the list too, because those are the ones nobody sees in the chat. The record a task kept before
+  this was one `last`, so a run that failed at 13:33 was indistinguishable by 15:08 from one that
+  never happened — answering "how did the last few days go" meant a sub-agent reading the
+  conversation library per day (four of them, 58–68 tool calls each, 2026-11-13). Twenty because the
+  whole task is rewritten to disk on every run, and an every-minute task would otherwise grow
+  `schedules.json` without limit.
+- **`schedule run <id> --wait [duration]` waits for the run and answers with its result** — status,
+  exit code, duration, and the topic an agent run's output went to. An agent that wants the outcome
+  used to write `until …; do sleep 5; done` and then read the conversation back, polling a command
+  the gateway already knows the end of. Bare `--wait` waits 10 minutes; `--wait 30m` says how long.
+  A wait is at most an hour — past that the run keeps going on its own and the answer would only
+  hold a connection open — and under a second is refused as meaningless rather than answered
+  instantly. When the wait runs out it says the run is still going, and the run finishes and posts
+  its output as any other does.
+- **`schedule add/edit --host <id>` names the machine a `--cwd` is on**, which is the way to
+  register a task for an agent on another host from a conversation here. The directory is checked
+  on that machine (`test -d`, over the same link the run will use) so a typo is refused while the
+  agent can still retype it; the path has to be absolute, since a relative one or `~` is resolved
+  on the caller's machine and would arrive naming a place on the wrong host; and with no `--cwd`
+  the task starts in that machine's own default directory instead of the caller's. The 2026-11-07
+  rule is unchanged: a `--cwd` without `--host` is still this machine's, and is still refused for
+  a task that runs elsewhere.
+
+### Changed
+
+- **A task's card is posted in the conversation the task posts to, and quotes the prompt in full.**
+  It used to go only where the change was made, with the prompt cut at 200 characters: a sub-agent
+  rewrote a task's prompt from a conversation the task never talks in, the card said "…" and the
+  conversation that would run the new text at 18:00 saw nothing (2026-11-13). Whoever will read the
+  output is now told what changed, and reads the whole text — as a blockquote, chunked to the
+  platform's message limit, since an agent's prompt can outgrow one message.
+- **`help schedule` documents compound cron**, which the code has supported all along and
+  several running tasks use: several 5-field expressions separated by `;` are one schedule that runs at
+  whichever comes next. The `schedule` tool's description now also says that a wait longer than the
+  turn, or a result that should arrive later as a message, is a task here — a background process a
+  shell starts dies with the session, which is how a two-hour monitor produced nothing at all.
+
+### Fixed
+
+- **A scheduled run that fails, is skipped or is missed now says so in the chat.** A turn that ended
+  failed posted nothing at all: the person had seen the run's start notice and then silence, which
+  reads exactly like a run that is still thinking, while `last` went on showing ok from an earlier
+  run. A run skipped because the previous one was still going, and one missed because the gateway
+  was down, were recorded and never mentioned. Each now posts one line — `⏰ #id name failed at
+  09:26 — reason` — in the conversation the task posts to, deduplicated by reason so a task that
+  keeps failing the same way still reports once rather than every run.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

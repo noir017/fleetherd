@@ -13,6 +13,11 @@ import { envOf } from '../legacy-name.js';
  * - `reload` and `pod-add`: a reload reads every pod first, waiting up to 20 s for a host that does
  *   not answer (daemon.ts RELOAD_POD_TIMEOUT_MS), and a host added just now has the helper installed
  *   before it can be read.
+ * - A `skills` WRITE: the store answers only after the skills repository has been pulled and the
+ *   commit pushed, and that queue is shared (skills-repo.ts). The read actions are local file reads
+ *   and stay on the default — `kind: 'skills'` covers both, so the action is what decides
+ *   (SKILLS_WRITES). Measured 2026-11-13: 19 of 55 skill writes over seven days answered "IPC
+ *   timeout" while the write had gone through, and agents retried into a second commit.
  *
  * The failure is the bad kind: the client gives up while the daemon finishes and applies the
  * change, so an agent that retries leaves a duplicate (an add, a proposal) or edits twice. Both
@@ -22,6 +27,19 @@ import { envOf } from '../legacy-name.js';
 const SLOW_ACTION_TIMEOUT_MS = 60_000;
 const SLOW_ACTIONS: ReadonlySet<IpcAction['kind']> = new Set(['schedule-add', 'schedule-edit', 'task-new', 'reload-config', 'pod-add']);
 
+/** The `skills` actions that write — each one ends in a commit, and the repository round trip. */
+const SKILLS_WRITES: ReadonlySet<string> = new Set([
+  'create',
+  'patch',
+  'write-file',
+  'remove-file',
+  'archive',
+  'restore',
+  'pin',
+  'unpin',
+  'revert',
+]);
+
 /**
  * The wait this action needs, or undefined for the 10 s default (which still honours
  * `FLEETHERD_IPC_TIMEOUT_MS`). Shared by the shell command and the native tool, so both get the
@@ -30,6 +48,12 @@ const SLOW_ACTIONS: ReadonlySet<IpcAction['kind']> = new Set(['schedule-add', 's
  */
 export function clientTimeoutFor(action: IpcAction): number | undefined {
   if (action.kind === 'ask') return (action.timeoutMs ?? DEFAULT_ASK_TIMEOUT_MS) + ASK_CLIENT_TIMEOUT_MARGIN_MS;
+  if (action.kind === 'skills' && SKILLS_WRITES.has(action.action)) return SLOW_ACTION_TIMEOUT_MS;
+  // `schedule run --wait`: the daemon answers when the run ends, so the client has to outlast the
+  // wait it asked for. The margin is the daemon's own answer time on top of it.
+  if (action.kind === 'schedule-op' && action.op === 'run' && action.waitMs !== undefined) {
+    return action.waitMs + SLOW_ACTION_TIMEOUT_MS;
+  }
   if (SLOW_ACTIONS.has(action.kind)) return SLOW_ACTION_TIMEOUT_MS;
   return undefined;
 }

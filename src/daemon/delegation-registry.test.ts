@@ -328,6 +328,25 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     await expect(r.registry.handTo(opened.key, 'web', opened.address, 'also the docs', header)).resolves.toBe('joined');
     expect(r.sent.at(-1)).toEqual({ to: 'main/new1', text: `${header}\n\nalso the docs`, kind: 'dispatch' });
   });
+
+  it('handTo --forward shows the reply as a report first, folded, and gives the agent the whole text', async () => {
+    const r = rig();
+    live = r.registry;
+    const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header });
+    await wait();
+    const heading = '↳ Forwarded from "Review" · web:main/new1 · turn 1';
+    await r.registry.handTo(opened.key, 'web', opened.address, 'fix it', header, {
+      forward: { heading, text: 'Verdict: one fix.' },
+    });
+    await wait();
+    // A report bubble: line-based, so the page folds it to one row per line instead of a wall of
+    // prose in the middle of the topic. Posted before the task that refers to it.
+    const report = r.sent.findIndex((m) => m.kind === 'report');
+    expect(r.sent[report]).toEqual({ to: 'main/new1', text: `${heading}\nVerdict: one fix.`, kind: 'report' });
+    expect(r.sent[report + 1]).toEqual({ to: 'main/new1', text: `${header}\n\nfix it`, kind: 'dispatch' });
+    // The agent gets it whole, under the same heading, in the one message it reads.
+    expect(r.prompts.at(-1)!.prompt).toBe(`fix it\n\n${heading}\n\nVerdict: one fix.`);
+  });
 });
 
 describe('what a person writes reaches delegation (recordPersonWords)', () => {

@@ -70,4 +70,32 @@ describe('sessions read over the daemon', () => {
 
     history.close();
   });
+
+  it('reads the topic id every other command prints, and still the key', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-sessions-topic-'));
+    dirs.push(dir);
+    const history = new HistoryStore(path.join(dir, 'history.db'));
+    const store = new ConversationStore(path.join(dir, 'conversations.json'));
+    const at = Date.UTC(2026, 10, 5, 9, 0);
+    // What the web UI stores: platform, channel, thread, joined by `#` — while `channels`, the
+    // update cards and `tasks` all print `web:main/c962cd3f`.
+    const session = history.session({ key: 'web#main#c962cd3f', platform: 'web', agent: 'cc', at })!;
+    history.message(session, { ts: at, role: 'user', kind: 'normal', text: '在吗' });
+
+    const cfg = parseConfig({
+      platforms: { web: { type: 'webui', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc' },
+    });
+    const daemon = new Daemon(cfg, new Map(), factory, path.join(dir, 'd.sock'), store, undefined, undefined, history);
+    const query = (
+      daemon as unknown as { handleSessionsQuery(action: IpcAction): unknown }
+    ).handleSessionsQuery.bind(daemon);
+
+    for (const ref of ['web:main/c962cd3f', 'web#main#c962cd3f', `#${session}`]) {
+      const read = query({ kind: 'sessions-read', session: ref }) as { messages: Array<{ text: string }> };
+      expect(read.messages.map((m) => m.text), ref).toEqual(['在吗']);
+    }
+    history.close();
+  });
 });

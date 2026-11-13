@@ -47,6 +47,7 @@ import { parseEffortButtonId } from '../../core/effort-menu.js';
 import { parseModelButtonId } from '../../core/model-menu.js';
 import { parseScheduleButtonId } from '../../core/schedule-menu.js';
 import { parseSettingButtonId } from '../../core/settings.js';
+import { parseRetryButtonId } from '../../core/turn-retry.js';
 import { parseWorkdirButtonId } from '../../core/workdir-menu.js';
 import type {
   AgentCatalog,
@@ -2030,6 +2031,8 @@ function noticeBody(stage: TopicStage, line: string | undefined): string {
  *
  * Menus opened by the operator (/cd, /model, /effort, /agent, /setting, scheduled tasks,
  * and command pickers) are controls for their own next step, not questions blocking the agent.
+ * So are a failed turn's Retry buttons: the topic is already listed as failed, and reading it as a
+ * question would say the agent is waiting on an answer when nothing is running at all.
  */
 export function isControlMenuButton(id: string): boolean {
   return (
@@ -2039,7 +2042,8 @@ export function isControlMenuButton(id: string): boolean {
     parseAgentButtonId(id) !== null ||
     parseSettingButtonId(id) !== null ||
     parseScheduleButtonId(id) !== null ||
-    parsePickButtonId(id) !== null
+    parsePickButtonId(id) !== null ||
+    parseRetryButtonId(id) !== null
   );
 }
 
