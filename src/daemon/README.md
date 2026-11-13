@@ -1215,7 +1215,7 @@ on a cancel, but takes 10–12 s, longer than the person waited before ending it
 a notification — it asks, and nothing bounds how long the harness takes or makes it comply. Three
 things answer it:
 
-- **A deadline** (`STOP_GRACE_MS`, 15 s, or half the watchdog if that is less). `abort()` calls the
+- **A deadline** (`STOP_GRACE_MS`, 20 s, or half the watchdog if that is less). `abort()` calls the
   running turn's `turnStopped`, which marks the turn stopped and starts the clock once (a second
   `/stop` does not restart it). If the turn has not ended by then, the child is ended — `/kill`'s
   remedy, applied for the person — and the turn ends as a stop, with a notice in the chat; the next

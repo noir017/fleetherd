@@ -183,7 +183,7 @@ All notable changes to this project are documented here. The format is based on
   was up, and the whole turn ran. On 2026-11-13 a CodeBuddy turn stopped one second in this way
   went on for eleven minutes; reproduced the same day, a `/stop` three seconds into a fresh topic
   still let the agent run its commands and answer. The prompt is no longer sent.
-- **`/stop` ends the agent's process if the turn has not ended 15 seconds later.** `/stop` reaches
+- **`/stop` ends the agent's process if the turn has not ended 20 seconds later.** `/stop` reaches
   a harness as a cancel, which asks and cannot make it, nor say how long it will take: CodeBuddy
   acts on one after 10–12 seconds, long enough that the turn above looked unstoppable and was ended
   with "End agent". Past the deadline the process is ended, the chat says so, and the next message

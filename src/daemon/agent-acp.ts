@@ -474,9 +474,11 @@ export const FOLDED_PROMPT_GRACE_MS = 30_000;
  * conversation through `session/load`. A harness that cannot reload a stored session keeps its
  * child — ending it would start the conversation over, which is `/new`, and the person is told so
  * instead. Capped at half the silence budget when that is smaller, like FOLDED_PROMPT_GRACE_MS, so
- * that tests can drive it with a short watchdog.
+ * that tests can drive it with a short watchdog. 20 s rather than 15: CodeBuddy took 10–12 s to act
+ * on a cancel on a loaded machine (2026-11-13), and ending a harness that was about to stop costs a
+ * restart for nothing.
  */
-export const STOP_GRACE_MS = 15_000;
+export const STOP_GRACE_MS = 20_000;
 
 /**
  * Result origins claude-agent-acp files as AUTONOMOUS — work the model did on its own rather than

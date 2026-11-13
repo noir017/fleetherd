@@ -63,7 +63,7 @@ What `/stop` does with the rest:
   `/new` does too — either way the answer says which.
 - **A message you send after `/stop`**, while the agent is still winding down, starts the next turn
   as soon as the stopped one ends.
-- **An agent that does not stop within 15 seconds** has its process ended, and the chat says so;
+- **An agent that does not stop within 20 seconds** has its process ended, and the chat says so;
   the next message picks the conversation up where it was (as with `/kill`). Anything it did after
   the stop is shown, each tool marked `still running after /stop`.
 
