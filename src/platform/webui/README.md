@@ -487,7 +487,8 @@ in two when the three buttons stopped fitting).
 Menu holds All settings, Notifications, Low attention and Skills — things set once per device or
 visited rarely. Manage holds Close idle and carries the idle count on its own
 face so the number is still seen without opening anything (with no idle agents, it shows a disabled
-No idle agents line; Clear all topics is an icon button beside Topics in the header). The two menus are the same box, opened
+No idle agents line; Clear all topics is an icon button beside Topics in the header, and Mark all
+read another beside it — the Sessions tab's button for this list, the same `markAllRead`). The two menus are the same box, opened
 upward over the list, one at a time, and dismissed by a click outside either (the drawer's backdrop
 included) or Escape, which also gives the focus back to the button that opened it (`setMenu`). The
 footer is a size container: at the narrowest sidebar (180px) both words drop and the row
@@ -537,8 +538,20 @@ between the two main domains of background work: **Scheduled** background tasks 
 Within **Scheduled**, a sub-nav bar under the panel header separates **Tasks** (the definitions
 and their controls, default) from **Sessions** (the topics a new-session run opened,
 `Topic.scheduled`). Grouping them keeps the footer clean while preserving the distinction between
-a task definition and a run instance. The switcher leaves session topics out (`topicRows` filters
-them), so the Sessions sub-tab is their only listing and its row's ⋯ is the only delete. Sessions needs
+a task definition and a run instance. The switcher leaves session topics out (`topicForest` filters
+them), so the Sessions sub-tab is their only listing and its row's ⋯ is the only delete.
+
+**A run's sub-agents are the run's** (2026-11-13). A topic an agent opened carries `parent`, not
+`scheduled`, so before this the switcher drew a run's sub-agent as a root of its own — its parent
+was not in that list — while the run sat in the panel. `runOwners` now gives every topic the run it
+is under, any depth, and the two lists split on that: the switcher draws what is in no run, Sessions
+draws each run with its tree. Both draw through the same three pieces — `topicTree` (who is under
+whom), `treeWalker` (depth-first rows, the per-browser `aa_folded` fold, the topic on screen's
+ancestors forced open) and `treeRowHtml` (the row: dot, fold pill, badge, marks) — so a sub-agent
+is nested and folded the same way wherever it is listed. What stays the list's own: the switcher's
+order and filter, and Sessions' date groups, its run-row line (when, messages, state) and its
+counts, which are runs. A question from a sub-agent under a run lights the clock and its folded
+group's flags, since it has no row in the switcher either. Sessions needs
 no request of its own — the `topics` event that keeps the switcher current carries their titles,
 state, message counts and unread marks, so a run that starts or finishes moves the tab as it
 happens. Its one bulk write is **Mark all read**, which clears this page's `aa_reads` marks and posts

@@ -81,7 +81,8 @@ describe('webui page', () => {
     expect(html).toContain('#sidebar.collapsed');
     expect(html).toContain('id="collapse-sidebar"');
     expect(html).toContain('id="expand-sidebar"');
-    expect(html).toContain('data-topic=');
+    // The rows' attribute is a parameter of the shared row (treeRowHtml); the handlers read it.
+    expect(html).toContain("closest('[data-topic]')");
     expect(html).toContain('data-new=');
     expect(html).toContain('topic-badge');
     expect(html).toContain('topic-dot');

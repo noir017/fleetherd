@@ -2680,6 +2680,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     expect(h.el('sb-tab-topics').getAttribute('aria-controls')).toBe('topics');
     expect(h.el('sb-tab-history').getAttribute('aria-controls')).toBe('history-pane');
     expect(tabs.nextElementSibling).toBe(h.el('clear-topics'));
+    expect(h.el('clear-topics').nextElementSibling).toBe(h.el('read-topics'));
     // The old window's button is gone: History is a place in the sidebar now, not a window.
     expect(h.doc.getElementById('history-open')).toBeNull();
     expect(h.doc.getElementById('history')).toBeNull();
@@ -9622,6 +9623,184 @@ describe('webui page: the Sessions list calendar', () => {
     expect(h.el('schedules-note').hidden).toBe(false);
     expect(h.el('schedules-note').textContent).toContain('Could not mark 2 sessions read');
     expect(h.el('sched-sessions').querySelectorAll('.topic-dot.review')).toHaveLength(2);
+  });
+});
+
+describe('webui page: sub-agents a scheduled run opened', () => {
+  const A = 'a1b2c3d4';
+  const R = 'c3d4e5f6';
+  const S = 'd4e5f6a7';
+  const G = 'e5f6a7b8';
+  const N = 'f6a7b8c9';
+  const ordinary = { id: A, title: 'an ordinary topic', lastAt: 2000, msgCount: 1, stage: 'idle' };
+  const run = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: R, title: '[cc] ⏰ After close', lastAt: 3000, msgCount: 3, stage: 'idle', scheduled: true, ...extra,
+  });
+  const sub = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: S, title: '[ag] verify', lastAt: 2900, msgCount: 2, stage: 'idle', parent: R,
+    dir: { host: 'pod', path: '/w/trader', name: 'trader' }, ...extra,
+  });
+  const grand = { id: G, title: '[cc] check', lastAt: 2800, msgCount: 1, stage: 'idle', parent: S };
+  /** A run active now, so its group is the newest and starts open; R's 1970 group starts folded. */
+  const newer = { id: N, title: '[cc] ⏰ Today', lastAt: Date.now(), msgCount: 1, stage: 'idle', scheduled: true };
+  const switcher = (h: Harness): Array<string | null> =>
+    Array.from(h.el('topics').querySelectorAll('[data-topic]')).map((r) => r.getAttribute('data-topic'));
+  const sessions = (h: Harness): Array<string | null> =>
+    Array.from(h.el('sched-sessions').querySelectorAll('[data-sess]')).map((r) => r.getAttribute('data-sess'));
+  const row = (h: Harness, id: string): Element => h.doc.querySelector(`#sched-sessions [data-sess="${id}"]`)!;
+  const panel = async (h: Harness): Promise<void> => {
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+  };
+
+  it('nests them under the run in Sessions, folded as a topic’s are, and keeps them out of the switcher', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: [run(), sub(), grand, ordinary] });
+    // The switcher drew the run's sub-agent as a root of its own, its run nowhere near it
+    // (reported 2026-11-13). It belongs with the run.
+    expect(switcher(h)).toEqual([A]);
+
+    await panel(h);
+    const stream = h.live().url;
+    expect(sessions(h)).toEqual([R]);
+    expect(face(row(h, R).querySelector('[data-fold]'))).toBe('[chevronRight] 1');
+    // The tab counts runs: a sub-agent rides with its run, as it does with its topic.
+    expect(h.el('sched-tab-sessions-n').textContent).toBe('1');
+
+    await h.click(`#sched-sessions [data-fold="${R}"]`);
+    expect(sessions(h)).toEqual([R, S]);
+    expect(row(h, S).className).toMatch(/\bsub d1\b/);
+    // The same row a topic's sub-agent gets: where it works, not the run's message count.
+    expect(row(h, S).querySelector('.topic-dir')?.textContent).toBe('pod · trader');
+    expect(face(row(h, S).querySelector('[data-fold]'))).toBe('[chevronRight] 1');
+    // Folding is remembered like a topic's, and is not a reason to switch.
+    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [R]: false });
+    expect(h.live().url).toBe(stream);
+
+    await h.click(`#sched-sessions [data-fold="${S}"]`);
+    expect(sessions(h)).toEqual([R, S, G]);
+    expect(row(h, G).className).toMatch(/\bsub d2\b/);
+
+    (row(h, S) as HTMLElement).click();
+    await until('the switch', () => h.window.location.search.includes(S));
+    expect(switcher(h)).toEqual([A]);
+  });
+
+  it('says when one of them asks: the clock, the run’s pill, and its folded group', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: [newer, run(), sub({ stage: 'answer', asking: true, running: true }), ordinary] });
+    // It has no row in the switcher any more, so the clock is what reaches the person.
+    expect(switcher(h)).toEqual([A]);
+    expect(h.el('sched-alert').hidden).toBe(false);
+
+    await panel(h);
+    const heads = Array.from(h.el('sched-sessions').querySelectorAll('.sess-group-head'));
+    expect(heads.map((n) => n.getAttribute('aria-expanded'))).toEqual(['true', 'false']);
+    expect(Array.from(heads[1]!.querySelectorAll('.sess-group-flag')).map((n) => n.textContent)).toEqual(['1 awaiting you']);
+
+    await h.click(`#sched-sessions [data-sgroup="${heads[1]!.getAttribute('data-sgroup')}"]`);
+    expect(row(h, R).querySelector('[data-fold]')?.className).toContain('asking');
+    // Its own turn is over, but the run is working while what it opened works, as a topic is.
+    expect(row(h, R).querySelector('.topic-dot')?.className).toBe('topic-dot running');
+    expect(row(h, R).querySelector('.topic-dir')?.textContent).toContain('running');
+  });
+
+  it('opens the way to the one on screen', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${S}` });
+    await h.emit(sync(S, [], [S]));
+    await h.emit({ t: 'topics', topics: [newer, run(), sub(), ordinary] });
+    expect(switcher(h)).toEqual([A]);
+    expect(h.el('topic-title').textContent).toBe('[ag] verify');
+
+    await panel(h);
+    // Its run's group and the run itself are drawn open, without that being saved.
+    const heads = Array.from(h.el('sched-sessions').querySelectorAll('.sess-group-head'));
+    expect(heads.map((n) => n.getAttribute('aria-expanded'))).toEqual(['true', 'true']);
+    expect(sessions(h)).toEqual([N, R, S]);
+    expect(row(h, S).classList.contains('on')).toBe(true);
+    expect(h.window.localStorage.getItem('aa_folded')).toBeNull();
+  });
+
+  it('marks a sub-agent’s badge read with the runs, and leaves its finished turn to the run', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: [run(), sub(), ordinary] });
+    // Two new messages in the sub-agent's topic since the page last saw it; its finished turn is
+    // the run's news, so its row has no green dot and api/seen is not the page's to send for it.
+    await h.emit({ t: 'topics', topics: [run(), sub({ msgCount: 4, stage: 'review' }), ordinary] });
+    await panel(h);
+    await h.click(`#sched-sessions [data-fold="${R}"]`);
+    expect(row(h, S).querySelector('.topic-badge')?.textContent).toBe('2');
+    expect(row(h, S).querySelector('.topic-dot')?.className).toBe('topic-dot');
+    const readAll = h.doc.querySelector('[data-readall]') as HTMLButtonElement;
+    expect(readAll.disabled).toBe(false);
+
+    readAll.click();
+    await tick();
+    expect(row(h, S).querySelector('.topic-badge')).toBeNull();
+    expect((h.doc.querySelector('[data-readall]') as HTMLButtonElement).disabled).toBe(true);
+    expect(h.calls.filter((c) => c.path === 'api/seen')).toEqual([]);
+  });
+});
+
+describe('webui page: Mark all read in the topic list', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const C = 'c3d4e5f6';
+  const D = 'd4e5f6a7';
+  const R = 'e5f6a7b8';
+  const list = (extra: Record<string, Record<string, unknown>> = {}): Array<Record<string, unknown>> => [
+    { id: A, title: 'on screen', lastAt: 5000, msgCount: 1, stage: 'idle', ...(extra[A] ?? {}) },
+    { id: B, title: 'b', lastAt: 4000, msgCount: 2, stage: 'idle', ...(extra[B] ?? {}) },
+    { id: C, title: 'c', lastAt: 3000, msgCount: 2, stage: 'idle', ...(extra[C] ?? {}) },
+    { id: D, title: 'd', lastAt: 2000, msgCount: 1, stage: 'idle', parent: C, ...(extra[D] ?? {}) },
+    { id: R, title: 'a run', lastAt: 1000, msgCount: 1, stage: 'idle', scheduled: true, ...(extra[R] ?? {}) },
+  ];
+  const btn = (h: Harness): HTMLButtonElement => h.el('read-topics') as HTMLButtonElement;
+  const badges = (h: Harness): string[] =>
+    Array.from(h.el('topics').querySelectorAll('.topic-badge')).map((n) => n.textContent ?? '');
+
+  it('clears every badge and finished reply in the list, and nothing of the Sessions tab', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list() });
+    // Everything was seen on first sight: nothing to mark.
+    expect(btn(h).disabled).toBe(true);
+
+    await h.emit({
+      t: 'topics',
+      topics: list({ [B]: { msgCount: 5 }, [C]: { stage: 'review' }, [D]: { msgCount: 3, stage: 'review' }, [R]: { msgCount: 4, stage: 'review' } }),
+    });
+    await h.click(`#topics [data-fold="${C}"]`);
+    expect(badges(h)).toEqual(['2', '3']);
+    expect(btn(h).disabled).toBe(false);
+    expect(btn(h).title).toBe('Mark all read (3 topics)');
+
+    await h.click('#read-topics');
+    await until('the mark', () => h.calls.some((c) => c.path === 'api/seen'));
+    expect(badges(h)).toEqual([]);
+    // The green dot is the daemon's to clear, and only a topic the person reads has one: C, not
+    // its sub-agent D, and not the run, which is the Sessions tab's.
+    await tick();
+    expect(h.calls.filter((c) => c.path === 'api/seen').map((c) => c.body)).toEqual([{ topic: C }]);
+    const reads = JSON.parse(h.window.localStorage.getItem('aa_reads') ?? '{}');
+    expect(reads[R]).toBe(1);
+
+    // The daemon announces C seen, and there is nothing left to mark.
+    await h.emit({ t: 'topics', topics: list({ [B]: { msgCount: 5 }, [D]: { msgCount: 3 }, [R]: { msgCount: 4, stage: 'review' } }) });
+    expect(btn(h).disabled).toBe(true);
+  });
+
+  it('says so when the daemon refuses a mark', async () => {
+    const h = await open({ status: { 'api/seen': 500 } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: list() });
+    await h.emit({ t: 'topics', topics: list({ [C]: { stage: 'review' } }) });
+    await h.click('#read-topics');
+    await until('the note', () => h.el('note').textContent !== '');
+    expect(h.el('note').textContent).toContain('Could not mark 1 topic read');
   });
 });
 
