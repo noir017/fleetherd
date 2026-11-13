@@ -142,6 +142,7 @@ access:
 | [语音消息](docs/zh-CN/voice.md) | 转写与确认 |
 | **多台机器，多个智能体** | |
 | [智能体](docs/zh-CN/agents.md) | 各 harness、各需装什么、Antigravity 怎么驱动 |
+| [只能轮询的智能体](docs/zh-CN/mailbox.md) | Muse 这类智能体，经一个两边都轮询的信箱中继接入 |
 | [远程主机](docs/zh-CN/remote-hosts.md) | 经 ssh 跑在别的机器上的智能体、`/agent`、断网时会怎样 |
 | [子代理](docs/zh-CN/sub-agents.md) | `/super`：把一件活拆给几个智能体并行干 |
 | [在容器里运行](docs/zh-CN/docker.md) | 只含网关的镜像，智能体全在主机上 |

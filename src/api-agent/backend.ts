@@ -7,8 +7,8 @@
  * Everything vendor-specific (the request body, the event vocabulary, how cancellation is spelled)
  * stays on the backend's side of this interface.
  *
- * The first backend is Antigravity (`antigravity.ts`). Adding another one — an xAI endpoint, a
- * mailbox API — is a new file plus one arm in `commands/api-agent.ts`; no daemon change, because
+ * Backends: Antigravity (`antigravity.ts`) and the agent-mailbox relay (`mailbox.ts`). Adding
+ * another one is a new file plus one arm in `commands/api-agent.ts`; no daemon change, because
  * the daemon only ever sees ACP.
  */
 
@@ -39,8 +39,11 @@ export type BackendEvent =
   | { type: 'text'; text: string }
   /** The model's reasoning summary. The gateway keeps thoughts out of the reply body. */
   | { type: 'thought'; text: string }
-  /** A tool the backend's own sandbox ran, announced before its result. */
-  | { type: 'tool_start'; id: string; title: string; rawInput?: unknown }
+  /**
+   * A tool the backend's own sandbox ran, announced before its result. `kind` is ACP's tool kind;
+   * it defaults to `execute`, what a sandbox's code execution is.
+   */
+  | { type: 'tool_start'; id: string; title: string; rawInput?: unknown; kind?: 'execute' | 'other' }
   /** The result of that tool. `failed` draws the row's ✗ rather than its ✓. */
   | { type: 'tool_end'; id: string; status: 'completed' | 'failed'; output?: string }
   /** Tokens in context after a step, for the footer's `18k / 1M (2%)`. */
@@ -48,7 +51,12 @@ export type BackendEvent =
   /** Server-side ids this turn established, for the next `session/prompt`. */
   | { type: 'state'; lastInteractionId?: string; environmentId?: string }
   /** The turn finished normally. */
-  | { type: 'done' };
+  | { type: 'done' }
+  /**
+   * Output sent outside a turn (`ApiBackend.follow`) is complete for now. The gateway holds such
+   * output until it can tell a burst ended, so a backend says so instead of leaving it to wait.
+   */
+  | { type: 'settled' };
 
 /** Everything a backend needs to run one turn. */
 export interface TurnRequest {
@@ -73,15 +81,28 @@ export interface ApiBackend {
   readonly id: string;
   /** Model a fresh session starts on. */
   readonly defaultModel: string;
-  /** The models this backend offers, after `--models` narrowed them. */
+  /** The models this backend offers, after `--models` narrowed them. Empty: no model menu. */
   readonly models: readonly ModelOption[];
+  /** Whether pictures may be sent as prompt blocks (`promptCapabilities.image`). Default true. */
+  readonly images?: boolean;
   /** Run one turn. The generator ends after yielding `done`, or throws. */
   turn(request: TurnRequest): AsyncGenerator<BackendEvent>;
   /**
    * Best-effort server-side cancellation. Called after the local turn has already been stopped,
    * so a failure is logged and never fails the turn — the user asked to stop, and it is stopped.
    */
-  cancel(interactionId: string | undefined): Promise<void>;
+  cancel(interactionId: string | undefined, sessionId: string): Promise<void>;
+  /**
+   * Optional: deliver what the service sends for this session between turns. The server calls it
+   * after each turn of the session ends (the backend keeps one follower per session); `emit`
+   * sends an event as a `session/update` with no prompt in flight, which the gateway shows as a
+   * follow-up message. Not called before a session's first turn in this process: the gateway
+   * drops output from a child it has not prompted yet (daemon/README.md, "Replayed history is not
+   * output"), so such output must wait for the next turn instead.
+   */
+  follow?(sessionId: string, emit: (event: BackendEvent) => Promise<void>): void;
+  /** Optional: stop timers and followers; the connection is gone. */
+  close?(): void;
 }
 
 /**

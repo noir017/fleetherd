@@ -77,10 +77,13 @@ program
 // writes into config.yaml. Lazy-loaded for the same reason `mcp` is: it is a per-session child.
 program
   .command('api-agent <backend>')
-  .description('ACP agent backed by an HTTP API (started by the daemon; backends: antigravity)')
-  .option('--models <ids>', 'comma-separated model ids to offer (default: the backend\'s own list)')
-  .option('--max-tokens <n>', 'per-turn token budget (default: 200000)')
-  .action((backend: string, opts: { models?: string; maxTokens?: string }) =>
+  .description('ACP agent backed by an HTTP API (started by the daemon; backends: antigravity, mailbox)')
+  .option('--models <ids>', 'antigravity: comma-separated model ids to offer (default: the backend\'s own list)')
+  .option('--max-tokens <n>', 'antigravity: per-turn token budget (default: 200000)')
+  .option('--url <url>', 'mailbox: the relay\'s base URL (default: $MAILBOX_URL); the token is read from $MAILBOX_TOKEN')
+  .option('--pickup-timeout <s>', 'mailbox: seconds a message may wait to be picked up (default: 120)')
+  .option('--silence-timeout <s>', 'mailbox: seconds a turn may go without a reply (default: 300)')
+  .action((backend: string, opts: { models?: string; maxTokens?: string; url?: string; pickupTimeout?: string; silenceTimeout?: string }) =>
     import('./commands/api-agent.js').then((m) => m.runApiAgent(backend, opts)));
 
 // `help [topic]` replaces commander's implicit `help [command]`: it is where the bundled skill sends an

@@ -234,6 +234,7 @@ agents:
     env: { GEMINI_API_KEY: "${GEMINI_API_KEY}" }
 ```
 
+- **两个后端**：`antigravity`（见下）和 `mailbox`，给 Muse 这类只能轮询的智能体，见[只能轮询的智能体](mailbox.md)。
 - **第一个后端是 Antigravity**（Google 的 Interactions API）。`/model` 列出它的 6 个模型，默认
   `gemini-4-hydrogen`；Carbon 和 Argon 标了「付费层」，免费层选它们会得到 429 和升级提示。
 - **可用**：流式文本、沙盒代码执行显示成工具行、`/model`、`/stop`、多轮上下文、daemon 重启或

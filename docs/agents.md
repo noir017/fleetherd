@@ -277,6 +277,8 @@ agents:
     env: { GEMINI_API_KEY: "${GEMINI_API_KEY}" }
 ```
 
+- **Two backends**: `antigravity` (below) and `mailbox`, for an agent that can only poll, such as
+  Muse — see [Agents that only poll](mailbox.md).
 - **Antigravity is the first backend** (Google's Interactions API). Its six models are offered in
   `/model`, with `gemini-4-hydrogen` as the default; Carbon and Argon are labelled "(paid tier)"
   because the free tier answers them with a 429 and an upgrade prompt.

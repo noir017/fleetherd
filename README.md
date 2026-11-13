@@ -146,6 +146,7 @@ is in [Configuration](docs/configuration.md).
 | [Voice messages](docs/voice.md) | transcription and confirmation |
 | **Many machines, many agents** | |
 | [Agents](docs/agents.md) | the harnesses, what each needs installed, how Antigravity is driven |
+| [Agents that only poll](docs/mailbox.md) | Muse and the like, through a mailbox relay both sides poll |
 | [Remote hosts](docs/remote-hosts.md) | agents on other machines over ssh, `/agent`, what happens when the network drops |
 | [Sub-agents](docs/sub-agents.md) | `/super`: split a job across agents working in parallel |
 | [Running in a container](docs/docker.md) | the gateway-only image, with every agent on a host |

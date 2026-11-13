@@ -31,23 +31,27 @@ afterEach(() => {
 interface FakeBackend extends ApiBackend {
   requests: TurnRequest[];
   cancelled: (string | undefined)[];
+  cancelledSessions: string[];
 }
 
 function fakeBackend(handler: (request: TurnRequest) => AsyncGenerator<BackendEvent>): FakeBackend {
   const requests: TurnRequest[] = [];
   const cancelled: (string | undefined)[] = [];
+  const cancelledSessions: string[] = [];
   return {
     id: 'antigravity',
     defaultModel: 'gemini-4-hydrogen',
     models: ANTIGRAVITY_MODELS,
     requests,
     cancelled,
+    cancelledSessions,
     async *turn(request) {
       requests.push(request);
       yield* handler(request);
     },
-    async cancel(id) {
+    async cancel(id, sessionId) {
       cancelled.push(id);
+      cancelledSessions.push(sessionId);
     },
   };
 }
@@ -209,6 +213,7 @@ describe('createApiAgentApp', () => {
 
     expect(await response.pending).toEqual({ stopReason: 'cancelled' });
     expect(backend.cancelled).toEqual(['v1_c']);
+    expect(backend.cancelledSessions).toEqual([response.sessionId]);
     // A stopped turn is not a context: the next message continues from the last finished one.
     expect(store.get(response.sessionId)?.lastInteractionId).toBe('v1_old');
   });
@@ -274,5 +279,77 @@ describe('createApiAgentApp', () => {
         });
       }),
     ).rejects.toThrow(/unknown model/);
+  });
+});
+
+describe('a backend with no model menu, no pictures and output between turns (mailbox)', () => {
+  function mailboxLike(handler: (request: TurnRequest) => AsyncGenerator<BackendEvent>) {
+    const followed: { sessionId: string; emit: (event: BackendEvent) => Promise<void> }[] = [];
+    const backend: ApiBackend = {
+      ...fakeBackend(handler),
+      id: 'mailbox',
+      defaultModel: '',
+      models: [],
+      images: false,
+      follow(sessionId, emit) {
+        followed.push({ sessionId, emit });
+      },
+    };
+    return { backend, followed };
+  }
+
+  it('declares no pictures and offers no model menu', async () => {
+    const { backend } = mailboxLike(async function* () {});
+    const store = newStore();
+    const result = await withClient(backend, store, async (ctx) => {
+      const init = await ctx.request('initialize', { protocolVersion: PROTOCOL_VERSION });
+      const created = await ctx.request('session/new', { cwd: '/tmp', mcpServers: [] });
+      const loaded = await ctx.request('session/load', { sessionId: created.sessionId, cwd: '/tmp', mcpServers: [] });
+      const refused = await ctx
+        .request('session/set_config_option', { sessionId: created.sessionId, configId: 'model', value: 'x' })
+        .catch((err: unknown) => err);
+      return { init, created, loaded, refused };
+    });
+    expect(result.init.agentCapabilities).toMatchObject({ loadSession: true, promptCapabilities: { image: false } });
+    expect(result.created.configOptions).toBeUndefined();
+    expect(result.loaded.configOptions).toBeUndefined();
+    expect((result.refused as Error).message).toMatch(/no model menu/);
+  });
+
+  it('after a turn, hands the backend a way to send updates with no prompt in flight', async () => {
+    const { backend, followed } = mailboxLike(async function* () {
+      yield { type: 'tool_start', id: 'p1', title: 'progress', kind: 'other', rawInput: { prompt: 'looking' } };
+      yield { type: 'tool_end', id: 'p1', status: 'completed' };
+      yield { type: 'text', text: 'answer' };
+      yield { type: 'done' };
+    });
+    const store = newStore();
+    const updates = await withClient(backend, store, async (ctx, seen) => {
+      const session = await ctx.request('session/new', { cwd: '/tmp', mcpServers: [] });
+      await ctx.request('session/prompt', { sessionId: session.sessionId, prompt: [promptOf('q')] });
+      expect(followed.map((f) => f.sessionId)).toEqual([session.sessionId]);
+      const during = seen.length;
+      await followed[0]!.emit({ type: 'text', text: 'the background job finished' });
+      await followed[0]!.emit({ type: 'settled' });
+      await followed[0]!.emit({ type: 'done' }); // not an update: nothing is sent
+      while (seen.length < during + 2) await new Promise((resolve) => setTimeout(resolve, 5));
+      return seen;
+    });
+    expect(updates[0]).toMatchObject({ sessionUpdate: 'tool_call', kind: 'other', title: 'progress' });
+    expect(updates.slice(-2)).toEqual([
+      { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'the background job finished' } },
+      // The gateway's cue that a follow-up burst is complete (daemon/agent-acp.ts isResultUsage).
+      { sessionUpdate: 'usage_update', used: 0, size: 0, cost: { amount: 0, currency: 'USD' } },
+    ]);
+  });
+
+  it('follows a session after a failed turn too', async () => {
+    const { backend, followed } = mailboxLike(async function* () {
+      throw new ApiAgentError('nobody picked the message up', 'upstream');
+    });
+    await withClient(backend, newStore(), async (ctx) => {
+      await ctx.request('session/prompt', { sessionId: 's9', prompt: [promptOf('q')] }).catch(() => undefined);
+    });
+    expect(followed.map((f) => f.sessionId)).toEqual(['s9']);
   });
 });

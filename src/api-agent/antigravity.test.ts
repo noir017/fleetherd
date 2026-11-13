@@ -399,11 +399,11 @@ describe('AntigravityBackend', () => {
       baseUrl: 'https://example.test/v1beta',
       log: (line) => logged.push(line),
     });
-    await backend.cancel('v1_abc');
+    await backend.cancel('v1_abc', 'session-1');
     expect(recorder.calls[0]).toMatchObject({ method: 'POST', url: 'https://example.test/v1beta/interactions/v1_abc/cancel' });
     expect(logged.join('\n')).toContain('Precondition check failed');
     // No id yet (a /stop in the first moments of a turn) is not an error.
-    await backend.cancel(undefined);
+    await backend.cancel(undefined, 'session-1');
     expect(recorder.calls).toHaveLength(1);
   });
 });
