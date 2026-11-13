@@ -316,6 +316,12 @@ export interface ToolEvent {
    * (see daemon/agent-acp.ts claudeAttribution).
    */
   agent?: string;
+  /**
+   * The harness started this call after the turn was stopped (`/stop`) — the cancel had not reached
+   * it yet, or it had not acted on it. The bubble line says so, since the stop's ack right under the
+   * reply says "Stopped".
+   */
+  afterStop?: boolean;
 }
 
 /**

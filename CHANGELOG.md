@@ -5,6 +5,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `/stop` sent while the agent is starting stops it.** A cold start takes seconds, and a
+  `/stop` in that window had no session to send the cancel to: the prompt went out once the agent
+  was up, and the whole turn ran. On 2026-11-13 a CodeBuddy turn stopped one second in this way
+  went on for eleven minutes; reproduced the same day, a `/stop` three seconds into a fresh topic
+  still let the agent run its commands and answer. The prompt is no longer sent.
+- **`/stop` ends the agent's process if the turn has not ended 15 seconds later.** `/stop` reaches
+  a harness as a cancel, which asks and cannot make it, nor say how long it will take: CodeBuddy
+  acts on one after 10–12 seconds, long enough that the turn above looked unstoppable and was ended
+  with "End agent". Past the deadline the process is ended, the chat says so, and the next message
+  resumes the conversation through `session/load` — what `/kill` does, done for you. A harness that
+  stops in time sees no change; one that cannot reload a stored session keeps its process, and the
+  chat says `/new` ends it.
+- **What an agent does after `/stop` is shown.** Every tool call that arrived between a cancel and
+  the end of the turn was dropped as the cancel's leftovers, on the assumption that a harness told
+  to stop starts nothing new. The turn above worked for eleven minutes with nothing on screen and no
+  tool calls in its history. They are rendered now, and a call started after the stop is marked
+  `still running after /stop`; only what trails in after the turn has ended is still dropped.
+- **`/stop` no longer throws away messages without saying so.** What was waiting behind a turn —
+  typed while an agent that cannot take input mid-turn was working — used to be dropped with the
+  turn, silently. In the turn above, the person had written "give me a proper plan first"; a later
+  `/stop` dropped it, and the agent went back to the original job for another 88 minutes. Those
+  messages are now kept: the stop's answer quotes them, they go in ahead of whatever the person
+  sends next, and a second `/stop` drops them — quoting them again. A message sent after a `/stop`,
+  while the turn is still winding down, is not handed to that turn any more; it starts the next one
+  as soon as it ends. `/new` lets go of kept messages and says which.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

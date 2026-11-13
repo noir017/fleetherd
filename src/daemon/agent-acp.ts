@@ -447,6 +447,28 @@ export const TOOL_SILENCE_FACTOR = 2;
 export const FOLDED_PROMPT_GRACE_MS = 30_000;
 
 /**
+ * How long a turn may run on after `/stop`'s `session/cancel` before its child is ended for it.
+ *
+ * `session/cancel` is a notification: the harness is asked, and nothing makes it comply or says how
+ * long it may take. On 2026-11-13 (#214115) two `/stop`s on a cbc turn changed nothing that the
+ * person could see, and they ended it with "End agent" ten seconds later; the next turn there, 88
+ * minutes long, went the same way. CodeBuddy Code 2.181.0 does act on the cancel — measured the same
+ * day, a `/stop` between two commands ended its turn 12.2 s later and one five seconds into
+ * `sleep 40` 10.5 s later, interrupting it — but slowly enough to look like it does not, and nothing
+ * on screen said otherwise. A harness that never acts on it would run until its turn ended. Past
+ * this deadline neither is waited on. claude-agent-acp and codex-acp settled their cancelled turns
+ * within the command they were running in the 2026-10-10 steer probe (see endChildAfterStop), so for
+ * them the deadline goes with the turn long before it is reached.
+ *
+ * Ending the child is `/kill`'s remedy, applied for the person: the next message resumes the
+ * conversation through `session/load`. A harness that cannot reload a stored session keeps its
+ * child — ending it would start the conversation over, which is `/new`, and the person is told so
+ * instead. Capped at half the silence budget when that is smaller, like FOLDED_PROMPT_GRACE_MS, so
+ * that tests can drive it with a short watchdog.
+ */
+export const STOP_GRACE_MS = 15_000;
+
+/**
  * Result origins claude-agent-acp files as AUTONOMOUS — work the model did on its own rather than
  * for the prompt. A copy of the adapter's own AUTONOMOUS_RESULT_ORIGINS (0.81.2 dist/acp-agent.js),
  * kept in step with it deliberately: an origin the adapter treats as the user's own settles the
@@ -1272,6 +1294,27 @@ function createAcpSession(
    */
   let endChildAfterStop = false;
   /**
+   * Set by runTurn once its prompt is out, cleared when it ends: what abort() calls to tell that turn
+   * it was stopped — which marks what it does from then on (TurnState.stopped) and starts the
+   * deadline after which its child is ended for it (STOP_GRACE_MS).
+   */
+  let turnStopped: (() => void) | undefined;
+  /**
+   * abort() landed while a turn was still on its way to its prompt — starting its child, mostly.
+   * Until the prompt is out there is nothing for `session/cancel` to cancel (and during a cold start
+   * no session to send it to), so a prompt sent afterwards would run the whole turn the person had
+   * just stopped — and, with the stop standing, every tool it called would be dropped as the cancel's
+   * wreckage. A cold start (spawn, initialize, `session/load`) takes seconds, and #214115's first
+   * `/stop` came one second in: that turn then ran for eleven minutes with nothing on screen.
+   * Reproduced against a real cbc on 2026-11-13: a `/stop` three seconds into a fresh topic, and the
+   * turn still ran both of its commands and answered "done", its ten tool updates dropped. Its own
+   * flag rather than `aborting`, which teardowns that are not a stop raise too (see agent-hooks.ts
+   * PreLaunchCancelled). Reset by every turn.
+   */
+  let stoppedWhileStarting = false;
+  /** See STOP_GRACE_MS; capped like the fold grace so a short watchdog shortens it too. */
+  const stopGraceMs = turnTimeoutMs > 0 ? Math.min(STOP_GRACE_MS, turnTimeoutMs / 2) : STOP_GRACE_MS;
+  /**
    * Model the harness reports as actually serving this session (from the session/new or session/load
    * config options). Undefined when the agent exposes no model selector; the footer then falls back
    * to the configured value. Cleared on dispose so a rebuilt child re-reports.
@@ -1345,6 +1388,16 @@ function createAcpSession(
     // and clears it on settle. Clearing it from a reset that happens DURING startup (dispose's
     // rollback, or a `/cd` landing mid-spawn) would let the next caller begin a second child while
     // the first is still running — the exact race ensureStarted exists to prevent.
+  }
+
+  /**
+   * Whether ending this child would keep the conversation. Only when BOTH halves of the restart path
+   * are in place: the harness can reload a session, and we know which session is this conversation's.
+   * Killing the child then costs a respawn — precisely what a daemon restart already does to every
+   * conversation at once.
+   */
+  function canResume(): boolean {
+    return loadSessionSupported && !!store?.agentSession(conversationId, def.id);
   }
 
   /** Max wait for initialize + session/new after spawn; on timeout, treat spawn as failed (ENOENT etc.) instead of hanging. */
@@ -1911,11 +1964,20 @@ function createAcpSession(
    * milliseconds and starts a turn) be rendered into the NEXT turn's reply. The deleted
    * pre-prompt drain named exactly this case and cleared the queue to prevent it.
    *
-   * Two tests, because the cancel and the next turn race:
+   * Only once the stopped turn has ENDED. Until then (TurnState.stopped) the harness is still
+   * working on it, and what it does is shown — a new call marked as started after the stop. That
+   * used to be dropped too, on the assumption that a harness told to stop starts nothing new, which
+   * holds only when the cancel reached it. On 2026-11-13 (#214115) it had not — the `/stop` landed
+   * while the child was starting (see stoppedWhileStarting) — and a cbc turn worked for eleven
+   * minutes with every call dropped here (1085 drops in that conversation's log) and nothing on
+   * screen. A harness that ignores the cancel, or is slow to act on it, starts new calls the same way
+   * until STOP_GRACE_MS ends it.
    *
-   * - while `aborting` still stands — i.e. between the cancel and the next turn — anything
-   *   tool-shaped is the cancelled turn's tail. The agent has been told to stop, so it is not
-   *   starting new tool calls; this is the old drain's rule, stated positively.
+   * After that, two tests, because the cancel and the next turn race:
+   *
+   * - while `aborting` still stands — i.e. between the stopped turn's end and the next turn —
+   *   anything tool-shaped is the cancelled turn's tail; this is the old drain's rule, stated
+   *   positively.
    * - once a new turn has cleared `aborting`, the ids the cancel snapshotted still identify the
    *   wreckage. Ids are never reused, so a stale entry can only match the update it was recorded
    *   for — which is why the set is not cleared at turn start, the very moment the trailing write
@@ -1923,6 +1985,7 @@ function createAcpSession(
    */
   function isWreckage(update: SessionUpdate): boolean {
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return false;
+    if (turnState?.stopped) return false;
     if (aborting) return true;
     return typeof update.toolCallId === 'string' && cancelledTools.has(update.toolCallId);
   }
@@ -2290,6 +2353,59 @@ function createAcpSession(
   }
 
   /**
+   * End a turn that was stopped before its prompt went out (stoppedWhileStarting): the prompt is not
+   * sent. abort() has set `aborting`, so runTurn ends it quietly, as a stop.
+   */
+  function endIfStoppedWhileStarting(): void {
+    if (!stoppedWhileStarting) return;
+    console.log(`[acp] ${conversationId}: stopped while the agent was starting; not sending the prompt`);
+    throw new Error('stopped before the prompt was sent');
+  }
+
+  /**
+   * What abort() does to a turn whose prompt is out (turnStopped): mark it stopped, and start the
+   * deadline after which its child is ended for the person (STOP_GRACE_MS). `endTurn` wakes the turn;
+   * dispose() has set `aborting` by then, so it ends as a stop rather than a failure.
+   */
+  function watchStop(
+    state: TurnState,
+    handlers: AgentStreamHandlers,
+    endTurn: (err: Error) => void
+  ): { stopped: () => void; clear: () => void } {
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const onIgnored = (): void => {
+      const secs = Math.max(1, Math.round(stopGraceMs / 1000));
+      if (!canResume()) {
+        console.warn(
+          `[acp] ${conversationId}: "${def.id}" is still running ${stopGraceMs}ms after the cancel and cannot resume a stored session; leaving its process up`
+        );
+        handlers.onNotice?.(
+          `⚠️ ${def.id} is still running ${secs}s after /stop. It cannot resume a stored session, so ending its process would lose this conversation — \`/new\` ends it and starts over.`
+        );
+        return;
+      }
+      console.warn(
+        `[acp] ${conversationId}: "${def.id}" is still running ${stopGraceMs}ms after the cancel; ending its process (the next message resumes the session)`
+      );
+      handlers.onNotice?.(
+        `⏹ ${def.id} was still running ${secs}s after /stop, so its process was ended. The conversation is kept — the next message resumes it.`
+      );
+      dispose();
+      endTurn(new Error(`"${def.id}" did not stop in time`));
+    };
+    return {
+      stopped: () => {
+        state.stopped = true;
+        // A second `/stop` does not restart the clock: the harness has had since the first one.
+        deadline ??= setTimeout(onIgnored, stopGraceMs);
+      },
+      clear: () => {
+        if (deadline) clearTimeout(deadline);
+      },
+    };
+  }
+
+  /**
    * Watch the harness's own log for the duration of one turn.
    *
    * ── Why a turn needs this at all ──────────────────────────────────────────────────────────────
@@ -2352,6 +2468,7 @@ function createAcpSession(
 
     async runTurn(input: RunTurnInput, incomingHandlers: AgentStreamHandlers): Promise<void> {
       aborting = false;
+      stoppedWhileStarting = false;
       // Everything this turn renders goes through the probe, so a refusal can tell an empty turn
       // from one whose explanation already reached the chat (see trackVisibleOutput).
       const output = trackVisibleOutput(incomingHandlers);
@@ -2530,6 +2647,10 @@ function createAcpSession(
       joinedStillQueued = () => unsettled > 1;
       rearmWatchdog();
 
+      // `/stop` reaches a turn as `session/cancel`, which the harness may simply not act on (see
+      // STOP_GRACE_MS). Woken through the same channel as the watchdog, so it ends the same way.
+      const stopWatch = watchStop(state, handlers, (err) => hung?.(err));
+
       try {
         // ActiveSession.prompt resolves at turn end and enqueues 'stop'; the pump reads the stream.
         // Inside the try so a synchronous throw (a closed stream) still runs the cleanup below.
@@ -2540,9 +2661,13 @@ function createAcpSession(
         // long conversation is guaranteed to lose).
         if (replayFence) await replayFence;
         promptedYet = true; // from here on, renderable output is this session's own (see promptedYet)
+        // The last moment a stop can keep the prompt from going out (see stoppedWhileStarting); from
+        // the send on, abort() reaches this turn through turnStopped instead. No await between them.
+        endIfStoppedWhileStarting();
         const session = active!;
         const agentCtx = conn!.agent;
         send(session, blocksOf(input));
+        turnStopped = stopWatch.stopped;
         joinTurn = steeringMode === 'none' ? undefined : (blocks) => {
           // The turn's last prompt has settled, so its `stop` is on the way: a message taken now
           // would be answered by the harness after this turn stopped listening.
@@ -2609,6 +2734,8 @@ function createAcpSession(
         throw err;
       } finally {
         if (watchdog) clearTimeout(watchdog);
+        stopWatch.clear();
+        turnStopped = undefined;
         logWatch.stop();
         unwatchLink();
         fold.stop();
@@ -2657,6 +2784,8 @@ function createAcpSession(
       // tool_call — the `aborting` half of isWreckage covers that window.
       cancelledTools = new Set(turnState?.toolLedger.keys() ?? []);
       if (conn && active) void conn.agent.notify('session/cancel', { sessionId: active.sessionId });
+      if (turnStopped) turnStopped();
+      else stoppedWhileStarting = true;
     },
 
     stopBackground(): boolean {
@@ -2770,12 +2899,7 @@ function createAcpSession(
       // `active` is this runtime's readiness signal everywhere else, so it is the honest test for
       // "there is something here to reclaim" too.
       if (!proc || !active) return 'no-child';
-      // Resumable only when BOTH halves of the restart path are in place: the harness can reload a
-      // session, and we know which session is this conversation's. Killing the child then costs a
-      // respawn — precisely what a daemon restart already does to every conversation at once.
-      return loadSessionSupported && store?.agentSession(conversationId, def.id)
-        ? 'resumable'
-        : 'unresumable';
+      return canResume() ? 'resumable' : 'unresumable';
     },
 
     dispose(): void {
@@ -3028,6 +3152,12 @@ export interface TurnState {
    * means a `Run <tool>` title names agy's own tool, which labels the bubble (agyAcpToolLabel).
    */
   agy?: AgyTurnWatch;
+  /**
+   * The turn was stopped (`/stop`) and has not ended: the harness is still producing output for it.
+   * While this stands, its tool calls are shown rather than dropped as the cancel's wreckage (see
+   * isWreckage), and a call that STARTS now is marked as running after the stop (ToolEvent.afterStop).
+   */
+  stopped?: boolean;
 }
 
 /**
@@ -3055,6 +3185,8 @@ interface ToolRec {
   spawns?: boolean;
   /** The bubble's name when the harness's own tool name says more than `kind` (agy's; see TurnState.agy). */
   label?: string;
+  /** First seen after the turn was stopped (TurnState.stopped): the harness started it anyway. */
+  afterStop?: boolean;
 }
 
 /**
@@ -3198,6 +3330,7 @@ function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): v
   let rec = st.toolLedger.get(id);
   if (!rec) {
     rec = { index: st.toolIndexSeq++, id, startAt: nowMs(), started: false, finished: false };
+    if (st.stopped) rec.afterStop = true;
     st.toolLedger.set(id, rec);
     st.agy?.tool();
   }
@@ -3320,6 +3453,7 @@ function toolStartEvent(st: TurnState, rec: ToolRec): ToolEvent {
     id: rec.id,
     // The spawning call always precedes its subagent's first tool, so its name is known by now.
     agent: rec.parent ? (st.subagents?.get(rec.parent) ?? UNNAMED_SUBAGENT) : undefined,
+    ...(rec.afterStop ? { afterStop: true } : {}),
   };
 }
 

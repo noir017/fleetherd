@@ -394,7 +394,7 @@ describe('ConversationRegistry /stop', () => {
   };
   const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
 
-  function stopRig(opts: { turnsSettle?: boolean; subAgents?: number } = {}) {
+  function stopRig(opts: { turnsSettle?: boolean; subAgents?: number; abortEnds?: boolean } = {}) {
     const parsed = parseConfig({
       platforms: { discord: { type: 'discord', token: 't' } },
       agents: [{ id: 'cc', harness: 'claude' }],
@@ -418,6 +418,10 @@ describe('ConversationRegistry /stop', () => {
 
     const created: string[] = [];
     const aborts: string[] = [];
+    /** The prompt of every turn the agent was asked to run. */
+    const prompts: string[] = [];
+    /** Ends the turn now running, when `abortEnds` lets abort() do that (as a real cancel does). */
+    let endTurn: (() => void) | undefined;
     /** Whether the session is producing background output; a stop clears it, as the runtime's does. */
     const background = { running: false, stops: 0 };
     const sessions = new Map<string, AgentSession>();
@@ -430,8 +434,18 @@ describe('ConversationRegistry /stop', () => {
         if (!s) {
           s = {
             conversationId,
-            runTurn: () => (opts.turnsSettle ? Promise.resolve() : new Promise<void>(() => {})),
-            abort: () => void aborts.push(conversationId),
+            runTurn: (input) => {
+              prompts.push(input.prompt);
+              if (opts.turnsSettle) return Promise.resolve();
+              return new Promise<void>((resolve) => {
+                if (opts.abortEnds) endTurn = resolve;
+              });
+            },
+            abort: () => {
+              aborts.push(conversationId);
+              endTurn?.();
+              endTurn = undefined;
+            },
             stopBackground: () => {
               if (!background.running) return false;
               background.running = false;
@@ -456,7 +470,7 @@ describe('ConversationRegistry /stop', () => {
       },
     };
     const reg = new ConversationRegistry(cfg, new Map([['discord', platform]]), factory, realClock, hooks);
-    return { reg, sent, created, aborts, background, subStops };
+    return { reg, sent, created, aborts, background, subStops, prompts };
   }
 
   it('mid-turn: aborts the agent and says what it stopped', async () => {
@@ -477,7 +491,9 @@ describe('ConversationRegistry /stop', () => {
     reg.route(inbound('/stop', 'm2'));
     await drain();
 
-    expect(sent.some((t) => t.includes('Dropped the message'))).toBe(true);
+    expect(sent.at(-1)).toBe(
+      '⏹ Stopped before the turn started. Nothing reached the agent.\nDropped this message — the agent never saw it:\n> never mind'
+    );
     expect(created).toEqual([]); // no turn ran, so no session was ever built
   });
 
@@ -527,6 +543,69 @@ describe('ConversationRegistry /stop', () => {
     reg.route(inbound('/stop', 'm2'));
     await drain();
     expect(sent.at(-1)).toMatch(/^⏹ Stopped\. .*\n⏹ Also stopped the 1 sub-agent it started\.$/s);
+  });
+
+  // #214115 (2026-11-13): a correction typed into a turn that went on after /stop was dropped by the next
+  // `/stop` without a word, and the agent went back to the original job.
+  it('mid-turn with a message waiting behind it: keeps it, quotes it, and sends it with the next one', async () => {
+    const { reg, sent, prompts } = stopRig({ abortEnds: true });
+    reg.route(inbound('build the whole thing', 'm1'));
+    await drain();
+    reg.route(inbound('give me a plan first', 'm2')); // this harness cannot take it mid-turn: queued
+    await drain();
+
+    reg.route(inbound('/stop', 'm3'));
+    await drain();
+    expect(sent.at(-1)).toBe(
+      '⏹ Stopped. The reply above is as far as it got — the conversation is kept, so just send the next message.\n' +
+        'Kept this message for your next one — the agent has not seen it yet, and it goes in with whatever you send next. `/stop` again drops it:\n' +
+        '> give me a plan first'
+    );
+    expect(prompts).toHaveLength(1); // not started on its own
+
+    reg.route(inbound('go on', 'm4'));
+    await drain();
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain('give me a plan first');
+    expect(prompts[1]).toContain('go on');
+    expect(prompts[1]!.indexOf('give me a plan first')).toBeLessThan(prompts[1]!.indexOf('go on'));
+  });
+
+  it('a second /stop drops what the first kept, and quotes what it dropped', async () => {
+    const { reg, sent, prompts } = stopRig({ abortEnds: true });
+    reg.route(inbound('build the whole thing', 'm1'));
+    await drain();
+    reg.route(inbound('also deploy it', 'm2'));
+    await drain();
+    reg.route(inbound('/stop', 'm3'));
+    await drain();
+
+    reg.route(inbound('/stop', 'm4'));
+    await drain();
+    expect(sent.at(-1)).toBe('Nothing is running here.\nDropped this message — the agent never saw it:\n> also deploy it');
+
+    reg.route(inbound('something else', 'm5'));
+    await drain();
+    expect(prompts.at(-1)).not.toContain('also deploy it');
+  });
+
+  it('/new lets go of what a stop kept, and says so', async () => {
+    const { reg, sent, prompts } = stopRig({ abortEnds: true });
+    reg.route(inbound('build the whole thing', 'm1'));
+    await drain();
+    reg.route(inbound('also deploy it', 'm2'));
+    await drain();
+    reg.route(inbound('/stop', 'm3'));
+    await drain();
+
+    reg.route(inbound('/new', 'm4'));
+    await drain();
+    expect(sent.at(-1)).toBe(
+      'Context cleared — the next message starts a fresh conversation.\nDropped this message — the agent never saw it:\n> also deploy it'
+    );
+    reg.route(inbound('hello', 'm5'));
+    await drain();
+    expect(prompts.at(-1)).not.toContain('also deploy it');
   });
 
   it('after the background work is done: back to nothing running', async () => {

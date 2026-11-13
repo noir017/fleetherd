@@ -51,7 +51,17 @@ soon as the turn ends — still without stopping anything:
 
 Slash commands (`/compact`, …) always wait for the turn to end: a command only runs as one at the
 start of a message. To actually stop the agent, use **`/stop`** — it is the only thing that does.
-Anything you sent that had not reached the agent yet is dropped with it.
+
+What `/stop` does with the rest:
+
+- **Messages that had not reached the agent yet are kept**, not sent and not lost. The stop's
+  answer quotes them; they go in ahead of whatever you send next. `/stop` again drops them, and
+  `/new` does too — either way the answer says which.
+- **A message you send after `/stop`**, while the agent is still winding down, starts the next turn
+  as soon as the stopped one ends.
+- **An agent that does not stop within 15 seconds** has its process ended, and the chat says so;
+  the next message picks the conversation up where it was (as with `/kill`). Anything it did after
+  the stop is shown, each tool marked `still running after /stop`.
 
 ## Agent commands
 

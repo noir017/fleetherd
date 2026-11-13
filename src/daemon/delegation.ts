@@ -2,6 +2,7 @@ import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
 import { parseTarget, type ConversationAddress } from '../core/conversation.js';
+import { stopInputNote } from '../core/inbound-merger.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
 import { LINE_MAX, topicStage } from '../core/topic-stage.js';
@@ -160,6 +161,7 @@ type Registry = Pick<
   | 'runningSince'
   | 'statusOf'
   | 'stopConversation'
+  | 'interruptConversation'
   | 'stopWithPending'
   | 'killConversation'
   | 'runScheduledPrompt'
@@ -877,15 +879,22 @@ export class Delegation {
 
   private stop(here: Place, topic: string): TaskActionResult {
     const c = this.child(here, topic);
-    const outcome = this.deps.registry.stopConversation(c.key);
-    if (outcome !== 'idle') {
+    // What the stop kept or dropped goes under the mark, in the topic, where the person who may have
+    // typed it reads (see InboundMerger.interrupt) — and is counted for the agent that asked.
+    const { outcome, kept, dropped } = this.deps.registry.interruptConversation(c.key);
+    const note = stopInputNote(kept, dropped);
+    if (outcome !== 'idle' || note) {
+      const mark = `⏹ Stopped by the agent in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`;
       void c.adapter
-        .sendMessage(c.address, `⏹ Stopped by the agent in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`)
+        .sendMessage(c.address, note ? `${mark}\n${note}` : mark)
         .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
     }
+    const held = kept.length
+      ? ` ${kept.length} message(s) sent there while it ran never reached it; they are kept and go in with the next message there.`
+      : '';
     return {
       topic,
-      result: outcome === 'idle' ? 'Nothing was running there.' : 'Stopped. Its context is kept; a message there carries on from it.',
+      result: (outcome === 'idle' ? 'Nothing was running there.' : 'Stopped. Its context is kept; a message there carries on from it.') + held,
     };
   }
 
@@ -904,11 +913,13 @@ export class Delegation {
     seen.add(key);
     let stopped = 0;
     for (const c of this.childrenOf(here)) {
-      const { outcome, calledOff, transcripts } = this.deps.registry.stopWithPending(c.key, 'stopped from the topic that opened it');
-      if (outcome !== 'idle' || calledOff + transcripts > 0) {
-        stopped++;
+      const { outcome, calledOff, transcripts, kept, dropped } = this.deps.registry.stopWithPending(c.key, 'stopped from the topic that opened it');
+      const note = stopInputNote(kept, dropped);
+      if (outcome !== 'idle' || calledOff + transcripts > 0 || note) {
+        if (outcome !== 'idle' || calledOff + transcripts > 0) stopped++;
+        const mark = `⏹ Stopped with /stop in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`;
         void c.adapter
-          .sendMessage(c.address, `⏹ Stopped with /stop in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`)
+          .sendMessage(c.address, note ? `${mark}\n${note}` : mark)
           .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
       }
       stopped += this.stopOpened(c.key, seen);

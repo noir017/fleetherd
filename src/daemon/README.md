@@ -87,8 +87,9 @@ ConversationRegistry.route
    ├─ resolveAgent       routing.pipeline, then HARNESS_COMMANDS → { agentId, explicit }
    ├─ response gate      core/inbound-gate shouldRespond
    ├─ /new · /clear      reset the conversation, drop every agent's id, ack. Never forwarded.
-   ├─ /stop              cancel the running turn and the queued backlog — or, with no turn, a burst
-   │                     of background output (AgentSession.stopBackground) — ack. Never forwarded.
+   ├─ /stop              cancel the running turn, keep the queued backlog for the next message — or,
+   │                     with no turn, a burst of background output (AgentSession.stopBackground) —
+   │                     ack, quoting what was kept or dropped. Never forwarded.
    ├─ /kill              /stop, then end the agent child; the session id is kept. Never forwarded.
    ├─ /help              the registered vocabulary, from core/command-translate. Never forwarded.
    ├─ unconfigured agent `/agy` with no agy agent → say so, run no turn. Never forwarded.
@@ -288,8 +289,14 @@ it rather than starting blank.
 
 A missing or corrupt file degrades to empty (bindings lost, agent histories untouched).
 `/stop` is the narrow sibling of `/new` and touches none of this: it cancels the running
-turn and drops the queued backlog through `InboundMerger.interrupt()`, leaving the
-context, the session ids, the binding and the child process exactly as they were. It
+turn through `InboundMerger.interrupt()`, leaving the context, the session ids, the binding and
+the child process exactly as they were. The messages queued behind the turn are kept for the
+person's next one, and the ack quotes them (`stopInputNote`); a second `/stop` drops them and `/new`
+lets go of them, each saying which. Callers that answer the person themselves (`/stop`, `/kill`, a
+parent's `task-stop` and `/stop`) take the report from `interruptConversation` / `stopWithPending`
+and put the note in their own message; `stopConversation` and `killConversation` post it in the
+lane for the rest. The child process is left alone unless the turn outlives the cancel — see
+[A `/stop` that does not stop the agent](#a-stop-that-does-not-stop-the-agent). It
 deliberately does not reach the agent through `agents.getOrCreate` — building a session
 for a conversation that has none, in order to stop it, is backwards; the abort travels via
 the merger, which only fires it in the `running` phase where a session must exist.
@@ -1085,13 +1092,15 @@ that posts a new one.
   before writing its own reply into the same lane. Fired and forgotten, a burst sealed by an
   incoming turn would flush concurrently with that turn's answer and the background report would
   land underneath something it has nothing to do with, its marker orphaned above both.
-- **A cancel's trailing writes are dropped.** A cancelled tool call still emits its
-  `tool_call_update`, after the prompt has settled. Two tests catch it: while `aborting` stands
-  (between the cancel and the next turn) anything tool-shaped is the cancelled turn's tail, and
-  once a new turn has cleared that flag, the tool ids the cancel snapshotted still identify it —
-  which matters because a message sent right after `/stop` starts the next turn within
-  milliseconds, so the wreckage would otherwise be rendered into *its* reply. That is the case the
-  deleted drain described verbatim.
+- **A cancel's trailing writes are dropped — once the stopped turn has ended.** A cancelled tool
+  call still emits its `tool_call_update`, after the prompt has settled. Two tests catch it: while
+  `aborting` stands (between the stopped turn's end and the next turn) anything tool-shaped is the
+  cancelled turn's tail, and once a new turn has cleared that flag, the tool ids the cancel
+  snapshotted still identify it — which matters because a message sent right after `/stop` starts
+  the next turn within milliseconds, so the wreckage would otherwise be rendered into *its* reply.
+  That is the case the deleted drain described verbatim. Before the stopped turn ends
+  (`TurnState.stopped`) nothing is dropped: the harness is still working on it, and a call it starts
+  then is drawn with `still running after /stop` (`ToolEvent.afterStop`).
 - **A rendering burst reads as running.** Opening the message takes a typing hold
   (`TurnRunner.holdTyping`), released after the seal's flush — every surface that says "running"
   reads typing, and on the web UI that is the topic's dot, its "running" label and the Stop button.
@@ -1122,6 +1131,35 @@ spelled out at `resolveAddress`.
 agy runs on this runtime, so it has the same sink. Nothing out of a turn was seen from `agy acp`
 1.5.1 either — a subagent it started stayed quiet for the minute after the turn ended — so an
 event that does arrive is **logged** rather than dropped silently.
+
+#### A `/stop` that does not stop the agent
+
+On 2026-11-13 (#214115) a cbc turn ran for eleven minutes after `/stop`, two more `/stop`s seemed to
+do nothing, and only "End agent" ended it — while every tool call it made was dropped as the
+cancel's wreckage, so the chat showed nothing. Measured against a real cbc the same day, it was two
+things. The first `/stop` came one second in, during the cold start, when there was no session to
+send `session/cancel` to: the prompt went out anyway (reproduced on 3.2.0: a `/stop` three seconds
+into a fresh topic, and the turn still ran its commands and answered). And CodeBuddy 2.181.0 does act
+on a cancel, but takes 10–12 s, longer than the person waited before ending it. `session/cancel` is
+a notification — it asks, and nothing bounds how long the harness takes or makes it comply. Three
+things answer it:
+
+- **A deadline** (`STOP_GRACE_MS`, 15 s, or half the watchdog if that is less). `abort()` calls the
+  running turn's `turnStopped`, which marks the turn stopped and starts the clock once (a second
+  `/stop` does not restart it). If the turn has not ended by then, the child is ended — `/kill`'s
+  remedy, applied for the person — and the turn ends as a stop, with a notice in the chat; the next
+  message resumes the session through `session/load`. A harness that cannot reload a stored session
+  (`canResume`, the same test `reclaimState` uses) keeps its child, and the notice says `/new` ends
+  it. Harnesses that honour the cancel end their turn in well under a second, so for them nothing
+  changes. Separate and untouched: a `/stop` while claude still holds a joined message ends the
+  child at the turn's end (`endChildAfterStop` in agent-acp.ts, steering below), which its
+  cooperative cancel reaches long before the deadline.
+- **A stop before the prompt is out is not lost.** A `/stop` while the child was still starting had
+  no session to send `session/cancel` to, so the prompt went out afterwards and the whole turn ran.
+  `abort()` with no turn prompt out sets `stoppedWhileStarting`, and runTurn returns before
+  prompting; `TurnRunner` likewise skips `agent.runTurn` when the signal tripped while it was
+  resolving the lane or building the prompt.
+- **What it does after the stop is shown** (see the wreckage rule above).
 
 #### Starting a session without running a turn
 

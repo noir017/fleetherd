@@ -213,3 +213,58 @@ describe('a failed turn’s record', () => {
     expect(live).toEqual([{ kind: 'failed', error: expect.any(Error), turn: 7 }]);
   });
 });
+
+describe('a turn stopped before the agent was asked', () => {
+  it('never starts the agent, and ends as stopped', async () => {
+    // `/stop` while the lane was resolved or the prompt built: the runtime had no turn to cancel, so
+    // asking it now would run what the person had just stopped.
+    let asked = 0;
+    const ended: Array<{ outcome: string }> = [];
+    const platform = {
+      capabilities: { thread: false, editMessage: true, maxMessageLength: 2_000 },
+      measureRendered: (s: string) => s.length,
+      sendMessage: async (address: { channel: string }) => ({ address, messageId: 'm' }),
+      editMessage: async () => {},
+      addReaction: async () => {},
+      startTyping: async () => {},
+      stopTyping: async () => {},
+    } as unknown as PlatformAdapter;
+    const factory: AgentFactory = {
+      getOrCreate: (conversationId): AgentSession => ({
+        conversationId,
+        runTurn: async () => {
+          asked++;
+        },
+        abort: () => {},
+        dispose: () => {},
+      }),
+      peek: () => undefined,
+      dispose: () => {},
+    };
+    const cfg = parseConfig({
+      platforms: { discord: { type: 'discord', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc', pipeline: [] },
+    });
+    const runner = new TurnRunner(
+      cfg,
+      new Map([['discord', platform]]),
+      factory,
+      { now: () => 1_000, schedule: () => () => {} },
+      {
+        tokenFor: () => 'tok',
+        agentIdOf: () => 'cc',
+        getModelOverride: () => undefined,
+        setLane: () => {},
+        beginHistoryTurn: () => ({ id: 1, seq: 1 }),
+        endHistoryTurn: (_id, end) => ended.push(end),
+      }
+    );
+
+    const stop = new AbortController();
+    stop.abort();
+    await runner.runTurn('discord#c1', [inbound('go')], stop.signal);
+    expect(asked).toBe(0);
+    expect(ended.map((e) => e.outcome)).toEqual(['stopped']);
+  });
+});
