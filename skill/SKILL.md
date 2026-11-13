@@ -3,11 +3,11 @@ name: fleetherd
 description: >-
   Send a file to the user; schedule a prompt or a bash command to run later or repeatedly,
   surviving restarts; post to another chat or topic; read earlier messages in the
-  conversation; search earlier conversations (every agent, every platform); reply to, edit,
-  react to or delete a message; open a thread; ask with buttons; check what a voice message
-  said; read, write and archive the skills every agent shares — all through the `fleetherd`
-  command. Also for diagnosing or reconfiguring fleetherd itself, and the machines its agents
-  run on.
+  conversation; before grepping harness logs or asking the user to repeat, search earlier
+  conversations (every agent, every platform); reply to, edit, react to or delete a message;
+  open a thread; ask with buttons; check what a voice message said; read, write and archive
+  the skills every agent shares — all through the `fleetherd` command. Also for diagnosing or
+  reconfiguring fleetherd itself, and the machines its agents run on.
 ---
 
 # fleetherd

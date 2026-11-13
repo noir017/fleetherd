@@ -6,7 +6,7 @@ import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { accessUnrestricted, agentDisplayName, findAgent } from '../config/schema.js';
 import { configDir, readConfig, readRawConfigIfExists, UNRESTRICTED_WARNING, type ReadConfig } from '../config/load.js';
 import { applyConfig, describeReload, diffConfig } from './config-reload.js';
-import type { HistoryStore } from '../history/store.js';
+import { DEFAULT_LIST_LIMIT, DEFAULT_SEARCH_LIMIT, type HistoryStore } from '../history/store.js';
 import {
   agentCommandSpecs,
   agentForCommand,
@@ -124,7 +124,9 @@ import type {
 } from '../types.js';
 import {
   addressOf,
+  conversationKey,
   formatAddress,
+  parseTarget,
   type ConversationAddress,
   type ConversationRef,
 } from '../core/conversation.js';
@@ -1600,19 +1602,26 @@ export class Daemon {
    */
   private handleSessionsQuery(action: SessionsQuery): unknown {
     switch (action.kind) {
-      case 'sessions-search':
+      case 'sessions-search': {
         // Scheduled runs sort after ordinary conversations, and tool calls are left out unless
         // asked for — see HistoryStore.search.
+        const history = this.requireHistory();
+        const hits = history.search(action.query, {
+          agent: action.agent,
+          days: action.days,
+          limit: action.limit,
+          tools: action.tools,
+        });
         return {
-          hits: this.requireHistory().search(action.query, {
-            agent: action.agent,
-            days: action.days,
-            limit: action.limit,
-            tools: action.tools,
-          }),
+          hits,
+          limit: action.limit ?? DEFAULT_SEARCH_LIMIT,
+          // Only on an empty answer: the ids are the correction when the spelling was the problem,
+          // and a line of them beside every ordinary result would be noise.
+          ...(action.agent !== undefined && hits.length === 0 ? { agents: history.agents() } : {}),
         };
+      }
       case 'sessions-read':
-        return this.requireHistory().read(action.session, {
+        return this.requireHistory().read(this.sessionRef(action.session), {
           around: action.around,
           window: action.window,
           role: action.role,
@@ -1621,6 +1630,7 @@ export class Daemon {
           since: action.since,
           grep: action.grep,
           tail: action.tail,
+          limit: action.limit,
           // The live context, not the newest turn row: after `/new` the library's newest turn
           // is still the generation the person discarded, and `--turn done` must not answer
           // with it. Only conversations.json knows the reset has happened.
@@ -1632,14 +1642,49 @@ export class Daemon {
         });
       case 'sessions-list':
         return {
-          sessions: this.requireHistory().list({ days: action.days, limit: action.limit }),
+          sessions: this.requireHistory().list({
+            days: action.days,
+            limit: action.limit,
+            beforeId: action.before,
+          }),
           days: action.days ?? 7,
+          limit: action.limit ?? DEFAULT_LIST_LIMIT,
         };
       default: {
         const _exhaustive: never = action;
         throw new Error(`unknown sessions query: ${JSON.stringify(_exhaustive)}`);
       }
     }
+  }
+
+  /**
+   * A conversation reference as the library stores it.
+   *
+   * `sessions read` took only the key (`web#main#c962cd3f`), while every other command prints the
+   * topic id (`web:main/c962cd3f`) — an update card, `tasks`, `channels` — so an agent holding an id
+   * it was just given could not read the conversation. A target is turned into the key here, with
+   * the same `parseTarget` / `conversationKey` the rest of the gateway uses. Numeric ids, bare keys
+   * and targets that match nothing are returned unchanged, so the store's "no conversation" still
+   * names what the caller typed.
+   */
+  private sessionRef(ref: string): string {
+    if (/^#?\d+$/.test(ref)) return ref;
+    const target = parseTarget(ref, new Set(Object.keys(this.config.platforms)));
+    if (!target.platform) return ref;
+    const base = {
+      platform: target.platform,
+      channel: target.address.channel,
+      thread: target.address.thread,
+      kind: 'thread' as const,
+      user: '',
+    };
+    // A thread is its own conversation under per_thread. A bare channel may be either the root of
+    // a per-thread conversation (`web#main#`) or a per_channel one (`web#main`), and only the
+    // library can say which spelling this gateway wrote.
+    const keys = target.address.thread
+      ? [conversationKey('per_thread', base)]
+      : [conversationKey('per_thread', base), conversationKey('per_channel', base)];
+    return keys.find((key) => this.history?.sessionOf(key)) ?? ref;
   }
 
   /**

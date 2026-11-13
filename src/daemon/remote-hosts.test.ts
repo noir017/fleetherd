@@ -91,6 +91,13 @@ describe('the shim bridge', () => {
     }
   });
 
+  it('points a name that is not a command at the topic or command that is', () => {
+    // `history` is a help topic; `agents` is the tail of `task-agents`. Both were typed as
+    // commands, and the bare "not a command" sentence left the caller to search.
+    expect(run(['history']).out).toContain('`history` is a help topic');
+    expect(run(['agents']).out).toContain('did you mean `task-agents`?');
+  });
+
   it('lets the reverse commands, mcp and help through to the CLI', () => {
     // Past the gate the next refusal is about this process not being the CLI — under vitest it is
     // not — which is how we know the command was not turned away here.

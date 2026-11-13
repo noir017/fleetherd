@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, isBridgedCommand, renderHelpIndex, renderHelpTopic } from './commands.js';
+import { HELP_TOPICS, READ_FILTER_OPTIONS, REVERSE_COMMANDS, commandHint, isBridgedCommand, renderHelpIndex, renderHelpTopic } from './commands.js';
 import type { IpcAction } from './protocol.js';
 
 /**
@@ -27,6 +27,27 @@ describe('help topics', () => {
   it('the index names every topic on one line each', () => {
     const index = renderHelpIndex();
     for (const t of HELP_TOPICS) expect(index).toMatch(new RegExp(`^  ${t.name}\\s+${t.summary.slice(0, 20)}`, 'm'));
+  });
+
+  it('the index also names the commands, so a topic name is not mistaken for one', () => {
+    // `fleetherd history` / `status` / `agents` were typed as commands seven times in a week.
+    const index = renderHelpIndex();
+    expect(index).toMatch(/^ +commands: fetch-messages$/m);
+    expect(index).toMatch(/^ +commands: send-message, reply, edit-message, react, delete$/m);
+    expect(index).toContain('task-agents');
+    expect(index).toContain('sessions');
+  });
+
+  it('points a name that is not a command at the nearest one, or at its topic', () => {
+    // A help topic is a page, not a command.
+    expect(commandHint('history')).toMatch(/help topic.*help history/);
+    // `status` and `agents` are the tails of real commands.
+    expect(commandHint('status')).toBe('did you mean `task-status`?');
+    expect(commandHint('agents')).toBe('did you mean `task-agents`?');
+    expect(commandHint('task')).toBe('did you mean `tasks`?');
+    // A typo is still found.
+    expect(commandHint('sesions')).toBe('did you mean `sessions`?');
+    expect(commandHint('frobnicate')).toBeUndefined();
   });
 
   it('says nothing about where the agent is running — only what the commands do', () => {
@@ -98,7 +119,9 @@ describe('task commands', () => {
 
   it('task-read --reply stands alone: it selects the turn itself', () => {
     expect(spec('task-read').build(['t'], { reply: true })).toEqual({ kind: 'task-read', topic: 't', reply: true });
-    for (const extra of [{ limit: 5 }, { full: true }, { tail: 3 }, { role: 'agent' }, { turn: 'last' }, { grep: 'x' }]) {
+    // `--full` is the one it tolerates: the reply is whole either way, and agents type them together.
+    expect(spec('task-read').build(['t'], { reply: true, full: true })).toEqual({ kind: 'task-read', topic: 't', reply: true });
+    for (const extra of [{ limit: 5 }, { tail: 3 }, { role: 'agent' }, { turn: 'last' }, { grep: 'x' }]) {
       expect(() => spec('task-read').build(['t'], { reply: true, ...extra })).toThrow(/--reply reads one turn's whole reply/);
     }
   });
@@ -312,12 +335,37 @@ describe('sessions <action> [arg]', () => {
     expect(sessions(['read', '12'], { turns: 2 })).toMatchObject({ kind: 'sessions-read', turns: 2 });
   });
 
+  it('takes task-read’s --limit, --full and --reply, so the same word works in both commands', () => {
+    expect(sessions(['read', '#12'], { limit: 40 })).toMatchObject({ kind: 'sessions-read', session: '#12', limit: 40 });
+    // `--full` is accepted and changes nothing: a read is already whole.
+    expect(sessions(['read', '#12'], { full: true })).toEqual({
+      kind: 'sessions-read',
+      session: '#12',
+      around: undefined,
+      window: undefined,
+    });
+    // `--reply` is the selection it is made of, and stands alone like task-read's.
+    expect(sessions(['read', '#12'], { reply: true })).toEqual({
+      kind: 'sessions-read',
+      session: '#12',
+      role: 'agent',
+      turn: 'done',
+    });
+    expect(sessions(['read', '#12'], { reply: true, full: true })).toMatchObject({ role: 'agent', turn: 'done' });
+    expect(() => sessions(['read', '#12'], { reply: true, limit: 5 })).toThrow(/--reply selects one turn's reply/);
+    expect(() => sessions(['read', '#12'], { limit: 5, since: 40 })).toThrow(/--since reads forward/);
+    expect(() => sessions(['read', '#12'], { around: 3, limit: 5 })).toThrow(/--around reads a window of its own/);
+  });
+
   it('takes a message id exactly as read prints it, with or without #', () => {
     const parse = (flag: string) => spec('sessions').options.find((o) => o.flags.includes(flag))!.parse!;
     expect(parse('--since')('#87')).toBe(87);
     expect(parse('--since')('87')).toBe(87);
     expect(parse('--around')('#12')).toBe(12);
     expect(() => parse('--since')('#')).toThrow(/positive message id/);
+    // `--before` takes the id `sessions list` printed, `#` included.
+    expect(parse('--before')('#42')).toBe(42);
+    expect(parse('--before')('42')).toBe(42);
   });
 
   it('keeps --tail out of the shared filter list task-read will reuse', () => {
@@ -327,9 +375,18 @@ describe('sessions <action> [arg]', () => {
     expect(spec('sessions').options.some((o) => o.flags.includes('--tail'))).toBe(true);
   });
 
-  it('builds a list', () => {
+  it('builds a list, and pages it with --before', () => {
     expect(sessions(['list'], { days: 7, limit: 10 })).toEqual({ kind: 'sessions-list', days: 7, limit: 10 });
     expect(sessions(['ls'])).toEqual({ kind: 'sessions-list', days: undefined, limit: undefined });
+    expect(sessions(['list'], { days: 7, before: 42 })).toMatchObject({ kind: 'sessions-list', before: 42 });
+  });
+
+  it('refuses a --limit over the bound in the command’s own words, not the schema path', () => {
+    // `action.limit Number must be less than or equal to 200` is what the IPC boundary says, and
+    // it names a field the caller never typed.
+    expect(() => sessions(['list'], { limit: 500 })).toThrow(/--limit is at most 200 for sessions list/);
+    expect(() => sessions(['search', 'x'], { limit: 300 })).toThrow(/--limit is at most 100 for sessions search/);
+    expect(sessions(['read', '#12'], { limit: 300 })).toMatchObject({ limit: 300 });
   });
 
   it('ignores the undefined slot commander leaves for an omitted optional positional', () => {

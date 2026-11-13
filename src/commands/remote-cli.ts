@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { isBridgedCommand } from '../ipc/commands.js';
+import { commandHint, isBridgedCommand } from '../ipc/commands.js';
 import { envOf } from '../legacy-name.js';
 
 /**
@@ -60,13 +60,19 @@ export function planRemoteCli(argv: string[], env: NodeJS.ProcessEnv): RemoteCli
   if (!envOf('REMOTE_SOCK', env)) return { kind: 'local' };
   const command = argv[0];
   if (!isBridgedCommand(argv)) {
+    // Why the binary is not the CLI at all, and the one way to get the CLI back on this machine:
+    // the operator's own shell has the same variable set when it was opened from an agent, and
+    // "command not found" / "config not found" reads as a broken install instead.
+    const sockVar = env.FLEETHERD_REMOTE_SOCK ? 'FLEETHERD_REMOTE_SOCK' : 'TALKCODE_REMOTE_SOCK';
+    const unset = ` ${sockVar} is set in this environment; to run the full CLI on this machine, unset it first: \`env -u ${sockVar} fleetherd …\``;
+    const hint = commandHint(command ?? '');
     const message =
       command === undefined
-        ? 'fleetherd: an agent on a host can run only the reverse commands, `mcp` and `help`; `fleetherd help` lists them'
+        ? `fleetherd: an agent on a host can run only the reverse commands, \`mcp\` and \`help\`; \`fleetherd help\` lists them${unset}`
         : MANAGEMENT.has(command)
-          ? `fleetherd: "${command}" is the gateway's own administration; an agent on a host can run only the reverse commands, \`mcp\` and \`help\` (\`fleetherd help\` lists them)`
+          ? `fleetherd: "${command}" is the gateway's own administration; an agent on a host can run only the reverse commands, \`mcp\` and \`help\` (\`fleetherd help\` lists them)${unset}`
           : // The gateway's own wording for a command it turns away, so the two sides say the same thing.
-            `fleetherd: "${command}" is not a command an agent can run here; \`fleetherd help\` lists them`;
+            `fleetherd: "${command}" is not a command an agent can run here; \`fleetherd help\` lists them${hint ? `. ${hint}` : ''}${unset}`;
     return { kind: 'refuse', message };
   }
   if (SELF_ANSWERED.has(command!)) return { kind: 'local' };

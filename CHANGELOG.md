@@ -5,6 +5,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A reverse command stops failing after it has worked, and stops hiding what it cut.** A `skills`
+  write now waits as long as the repository round trip takes (60 s, the bound `pod-add` already
+  had): 19 of 55 writes in a week answered "IPC timeout" after the commit had landed, and agents
+  retried into a second one. `sessions read` takes the topic id every other command prints
+  (`web:main/c962cd3f`) as well as the library's own (`web#main#c962cd3f`), and `sessions list`
+  prints both; a full page says there may be more and continues with `--before <id>`, and a
+  `--limit` over the bound is refused in the command's words rather than the schema's. `sessions
+  read` also accepts `task-read`'s `--limit`, `--full` and `--reply`, so one word no longer depends
+  on which of the two commands was typed. A `--role tool` answer over 50 KB points at `--tail` and
+  `--since`; an `--agent` the library does not know lists the ids it does, instead of reusing the
+  note about the library's coverage.
+- **`task-read --reply` and `--turn <n> --full` print prose: a header line, then the reply or the
+  turn as it was written.** Both used to be one TOON cell — a quoted line of `\n` escapes that 25 of
+  61 answers in a week needed a script to undo. `--reply --full` is accepted and ignored rather
+  than refused.
+- **`pods` prints the table first and `gatewayKey` after it.** The key was the first line of all 20
+  calls in a week, and every one piped the output through `head`, `tail` or `grep -v` to get past
+  it; it is still there when a machine is being added.
+- **A name that is not a command says what is.** `fleetherd help` now lists each topic's commands
+  (`history — fetch-messages`), and a refused one points at its help topic (`history`) or the
+  nearest command (`status` → `task-status`, `agents` → `task-agents`). On a host the refusal also
+  says that `FLEETHERD_REMOTE_SOCK` is set and how to unset it to get the full CLI back. The
+  `sessions`, `files` and `pods` pages now say when to search the library instead of a harness's
+  own transcripts, that a report written for the user is a file to send, and which library skill
+  carries the remote-host procedure.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

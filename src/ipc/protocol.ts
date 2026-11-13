@@ -290,6 +290,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       since: z.number().int().positive().optional(),
       grep: z.string().min(1).max(200).optional(),
       tail: z.number().int().positive().max(500).optional(),
+      // The newest n rows, as `task-read --limit` means it. A row filter of its own, so it is
+      // refused beside --since, which reads forward from a cursor.
+      limit: z.number().int().positive().max(500).optional(),
     })
     .strict(),
   z
@@ -297,6 +300,8 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       kind: z.literal('sessions-list'),
       days: z.number().int().positive().max(3_650).optional(),
       limit: z.number().int().positive().max(200).optional(),
+      /** Resume after this conversation id: the page before it ended there (`sessions list --before`). */
+      before: z.number().int().positive().optional(),
     })
     .strict(),
 ]);
@@ -419,8 +424,9 @@ export type IpcAction =
       since?: number;
       grep?: string;
       tail?: number;
+      limit?: number;
     }
-  | { kind: 'sessions-list'; days?: number; limit?: number };
+  | { kind: 'sessions-list'; days?: number; limit?: number; before?: number };
 
 // Compile-time alignment: the zod-inferred type must equal the hand-written union;
 // if either side drifts, this type errors.
@@ -675,6 +681,13 @@ export interface SessionSearchResult {
     role: string;
     excerpt: string;
   }>;
+  /** The row bound that was applied, so the CLI can say when the list may have been cut. */
+  limit: number;
+  /**
+   * With `--agent` and no hits: every agent id the library holds. The filter is an exact match, and
+   * a bare `ag` for `ag@uniagent` used to look like "this history is not in the library".
+   */
+  agents?: string[];
 }
 
 /** Response body for sessions-list. */
@@ -682,6 +695,8 @@ export interface SessionListResult {
   sessions: SessionRow[];
   /** The window that was applied, so the CLI can say what it left out. */
   days: number;
+  /** The row bound that was applied; a full page means there may be more behind it. */
+  limit: number;
 }
 
 /** Response body for sessions-read. */

@@ -68,6 +68,8 @@ fleetherd sessions read '#12' --turn 2 --role agent
 fleetherd sessions read '#12' --since '#87'
 fleetherd sessions read '#12' --grep 超时
 fleetherd sessions read '#12' --role tool --tail 20
+fleetherd sessions read '#12' --limit 40
+fleetherd sessions read '#12' --reply
 ```
 
 - `--role user|agent|tool`：只看这个角色的行。
@@ -80,6 +82,10 @@ fleetherd sessions read '#12' --role tool --tail 20
   服务两个方向。
 - `--grep <文字>`：只在这个会话里找包含这段文字的行。
 - `--tail <n>`：配合 `--role tool`，取最近 `n` 行工具调用。
+- `--limit <n>`：取最近 `n` 条消息。它从最新一端读，不能和 `--since` 一起用。
+- `--reply`：最近一个正常结束的轮及其回复，等同于 `--turn done --role agent`——同一个词在
+  `task-read` 里也是这个意思。
+- `--full`：接受但什么都不改变：读本来就是全文。
 
 这些筛选可以叠加（AND），但 `--since` 与轮次筛选或 `--tail` 的组合会被拒绝，而不是猜一个语义。
 带筛选的读会额外打印每行的轮次、那一轮的结局和 agent。`--around`
@@ -97,7 +103,8 @@ fleetherd sessions read '#12' --role tool --tail 20
 `--around` 的窗口不折叠；折叠过时 note 会说明。
 
 每次读都有上限：500 行（折叠后的一行算一行）、20 万字符。碰到上限会说明漏掉了多少行、从哪一端截的——尾部读
-（`--turn`、`--turns`、`--tail`）保留最新的行，普通读和 `--since` 读保留最早的行。
+（`--turn`、`--turns`、`--tail`、`--limit`）保留最新的行，普通读和 `--since` 读保留最早的行。`--role tool`
+的答复超过 50 KB 时会说明，并指向 `--tail` 和 `--since`，因为这么大的答复可能被 harness 挤出上下文。
 
 ## 怎么查
 
@@ -110,9 +117,11 @@ fleetherd sessions list --days 7
 ```
 
 `search` 返回会话 id、消息 id、日期、标题、agent、平台和命中的片段。它搜的是人和 agent 说的话；
-加 `--tools` 连工具调用（含参数）一起搜。`read` 接会话 id，
-从最早一条往后打印；`--around <消息>` 以某条为中心，前后各显示 `--window` 条（默认 10）。
-`list` 是最近活跃的会话。
+加 `--tools` 连工具调用（含参数）一起搜。`--agent` 是精确匹配——用短名 `ag` 去找 `ag@uniagent`
+什么也找不到，这时 note 会列出库里有的 agent id。`read` 接会话 id（`#12` 或 `12`），
+或别的命令打印的话题 id（`web:main/c962cd3f`），从最早一条往后打印；`--around <消息>` 以某条为中心，
+前后各显示 `--window` 条（默认 10）。`list` 是最近活跃的会话，每行带上 id 和 key；一页满了会说明后面
+可能还有，并给出接着读的 `--before <id>`。
 
 检索是关键词检索（BM25），不做向量。中文能搜到靠两点：
 

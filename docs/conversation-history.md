@@ -81,6 +81,8 @@ fleetherd sessions read '#12' --turn 2 --role agent
 fleetherd sessions read '#12' --since '#87'
 fleetherd sessions read '#12' --grep 超时
 fleetherd sessions read '#12' --role tool --tail 20
+fleetherd sessions read '#12' --limit 40
+fleetherd sessions read '#12' --reply
 ```
 
 - `--role user|agent|tool` — only rows of that role.
@@ -96,6 +98,11 @@ fleetherd sessions read '#12' --role tool --tail 20
   `--tail`: those read from the newest end, and one cursor cannot serve both directions.
 - `--grep <text>` — rows containing this text, in this conversation only.
 - `--tail <n>` — with `--role tool`, the newest `n` tool lines.
+- `--limit <n>` — the newest `n` messages. It reads from the newest end, so it cannot be combined
+  with `--since`.
+- `--reply` — the last turn that ended normally and its reply: the same selection as
+  `--turn done --role agent`, so one word means the same thing here and in `task-read`.
+- `--full` — accepted and changes nothing: a read is already whole.
 
 The filters combine (AND), except `--since` with the turn filters or `--tail`, which is refused
 rather than guessed at. A filtered read prints each row's turn number, that turn's outcome and
@@ -115,8 +122,9 @@ shows a matching call whole, and an `--around` window is not folded; the note sa
 folded anything.
 
 Every read is bounded: 500 rows (folded rows count as one) and 200,000 characters. A read that hits a bound says how many
-rows it left out and which end it cut — a tail read (`--turn`, `--turns`, `--tail`) keeps the
-newest rows, an ordinary or `--since` read keeps the oldest.
+rows it left out and which end it cut — a tail read (`--turn`, `--turns`, `--tail`, `--limit`) keeps the
+newest rows, an ordinary or `--since` read keeps the oldest. A `--role tool` answer over 50 KB says so
+and points at `--tail` and `--since`, because a harness may push an answer that size out of context.
 
 ## Searching it
 
@@ -130,9 +138,13 @@ fleetherd sessions list --days 7
 
 `search` answers with the conversation id, the message id, the date, the title, the agent, the
 platform and a matching excerpt. It searches what the person and the agents said; `--tools`
-searches the tool calls too, arguments included. `read` takes the conversation id and prints it oldest first;
-`--around <message>` shows a window of `--window` messages on each side (10 by default). `list`
-is the recently active conversations.
+searches the tool calls too, arguments included. `--agent` is an exact match — a short name such as
+`ag` for `ag@uniagent` finds nothing, and the note then lists the agent ids the library holds.
+`read` takes a session id (`#12` or `12`) or the topic id other commands print
+(`web:main/c962cd3f`), and prints it oldest first; `--around <message>` shows a window of `--window`
+messages on each side (10 by default). `list` is the recently active conversations, each with its
+id and key; a full page says there may be more and gives the `--before <id>` that continues after
+its last row.
 
 Search is keyword search (BM25), not embeddings. Two details make it work in Chinese:
 
