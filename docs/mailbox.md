@@ -46,8 +46,10 @@ would show in `ps` and sit in config.yaml as written. It runs on the gateway's o
   hour) and sends a progress
   line, shown as a row: `progress: "…"`. Each new one closes the last with its duration.
 - Its answer is the reply. Muse ends every turn with a final, which ends the turn here.
-- Each conversation is a session of its own on Muse's side, with its own context; `/new` starts a
-  fresh one. A gateway restart keeps the session.
+- Each conversation is a session of its own, but on Muse's side every session is woken into its
+  one main conversation, which is the context: Muse keeps sessions apart there by their id, and
+  the gateway adds nothing to what it reads. One conversation per Muse account at a time works
+  best. `/new` starts a fresh session; a gateway restart keeps it.
 - **Nobody picks the message up in 2 minutes**: the message is withdrawn and the turn fails with
   when the agent last polled — usually the hook is off or the account is out of quota.
 - **Nothing more for 5 minutes after pickup**: the turn ends with what arrived and a note that no
