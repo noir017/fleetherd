@@ -883,18 +883,21 @@ export interface PlatformAdapter {
  * - `report` — a `[sub-agent updates]` card: what the sub-agents did, shown to the parent. The
  *   web UI keeps its lines folded the way it folds a tool bubble, and marks it apart from a
  *   dispatch.
+ * - `aside` — the answer to a side question (`/btw`, daemon/acp-side-question.ts): asked of a copy
+ *   of the conversation and kept out of it, so it must not read as the next step of the work the
+ *   messages around it are about — it often arrives in the middle of a reply still streaming.
  *
  * Every other platform ignores this: a chat app shows the text as sent, so the distinction is
  * the web UI's alone to draw.
  */
-export type MessageKind = 'tools' | 'dispatch' | 'report';
+export type MessageKind = 'tools' | 'dispatch' | 'report' | 'aside';
 
 /**
  * `MessageKind`'s values at runtime, for code that has to recognise a kind it was handed as data —
  * a transcript file read back from disk. `satisfies` pins every entry to the type, so a typo or a
  * renamed kind fails to compile rather than silently matching nothing.
  */
-export const MESSAGE_KINDS = ['tools', 'dispatch', 'report'] as const satisfies readonly MessageKind[];
+export const MESSAGE_KINDS = ['tools', 'dispatch', 'report', 'aside'] as const satisfies readonly MessageKind[];
 
 export interface SendOptions {
   kind?: MessageKind;

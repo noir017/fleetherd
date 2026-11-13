@@ -16,6 +16,7 @@ import {
   needsNestedTopics,
   routeCommandAgent,
   routeCommandSpecs,
+  SLASH_DESC_MAX,
   translateCommand,
 } from './command-translate.js';
 import type { AgentDef, RouteRule } from '../config/schema.js';
@@ -211,6 +212,40 @@ describe('/super', () => {
     expect(genericCommandSpecs().map((s) => s.name)).toContain('super');
     // Taking nothing away from the rest.
     expect(genericCommandSpecs({ nested: false })).toHaveLength(genericCommandSpecs().length - 1);
+  });
+});
+
+describe('/btw', () => {
+  it('is answered by the gateway on every harness probed to fork, and on custom, never forwarded', () => {
+    // Probed 2026-11-13 (see the table entry). custom too: the runtime asks the agent's own
+    // initialize, and a forwarded /btw would land in the context it promises to stay out of.
+    for (const h of ['claude', 'codex', 'opencode', 'custom'] as const) {
+      expect(translateCommand('btw', h)).toEqual({ kind: 'local' });
+    }
+  });
+
+  it('is refused by name where no fork was found or probed', () => {
+    for (const h of ['agy', 'gemini', 'dsh'] as const) {
+      expect(translateCommand('btw', h)).toEqual({ kind: 'unsupported' });
+    }
+  });
+
+  it('leaves every other command passing through for custom, as before', () => {
+    expect(translateCommand('compact', 'custom')).toEqual({ kind: 'passthrough' });
+    expect(translateCommand('super', 'custom')).toEqual({ kind: 'passthrough' });
+  });
+
+  it('is offered everywhere with its argument named, and listed only where it works', () => {
+    expect(genericCommandSpecs({ nested: false }).find((s) => s.name === 'btw')?.options).toEqual([
+      { name: 'question', description: 'What to ask', type: 'string', required: true },
+    ]);
+    const cfg = { agents: [agent('cc', 'claude'), agent('g', 'agy')], routing: { default: 'cc', pipeline: [] } };
+    expect(buildHelpText(cfg, { agent: 'cc', harness: 'claude' })).toContain('`/btw <question>` — Ask a side question');
+    expect(buildHelpText(cfg, { agent: 'g', harness: 'agy' })).not.toContain('/btw');
+  });
+
+  it('fits the platform limit on a description', () => {
+    expect(genericCommandSpecs().find((s) => s.name === 'btw')!.description.length).toBeLessThanOrEqual(SLASH_DESC_MAX);
   });
 });
 

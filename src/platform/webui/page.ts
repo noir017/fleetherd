@@ -101,7 +101,7 @@ const STYLE = `
    as ragged. min-height rather than height because the panel's bar grows to 49px for a finger
    under 640px, and because a bar's own content can only make it taller, never shorter: whatever
    goes inside one has to fit this number. */
-:root{--bg:#131313;--fg:#dcdcdc;--dim:#7d7d7d;--line:#272727;--own:#1c222b;--own-edge:#3a5f86;--field:#1a1a1a;--disp:#1a1622;--disp-edge:#8b6cc1;--rep:#14201a;--rep-edge:#3f8f6b;--headh:42px;color-scheme:dark}
+:root{--bg:#131313;--fg:#dcdcdc;--dim:#7d7d7d;--line:#272727;--own:#1c222b;--own-edge:#3a5f86;--field:#1a1a1a;--disp:#1a1622;--disp-edge:#8b6cc1;--rep:#14201a;--rep-edge:#3f8f6b;--aside:#151c1f;--aside-edge:#4f8a99;--headh:42px;color-scheme:dark}
 *{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#333 transparent}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -934,6 +934,11 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sub-k{display:inline-block;margin:0 0 6px;padding:1px 8px;border:1px solid;border-radius:9px;font-size:10.5px;line-height:1.6;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
 .m.dispatch .sub-k{color:#cbb5ee;background:rgba(139,108,193,.16);border-color:rgba(139,108,193,.45)}
 .m.report .sub-k{color:#9ad6b3;background:rgba(63,143,107,.16);border-color:rgba(63,143,107,.45)}
+/* The answer to a side question (/btw): asked of a copy of the conversation and kept out of it, so
+   it must not read as the next step of the reply it may land in the middle of. The same rail and
+   tag as the two above, dashed and slate-teal — none of mine, waiting, dispatch or done. */
+.m.aside{background:var(--aside);border-left:3px dashed var(--aside-edge);border-radius:0 6px 6px 0;padding:9px 12px}
+.m.aside .sub-k{color:#a6cfd8;background:rgba(79,138,153,.16);border-color:rgba(79,138,153,.45)}
 /* A message that is on screen because it was typed here, not because the daemon sent it back.
    Dimmed while the request is in flight; edged red and given something to do about it once the
    request has failed, since the text in it is the only copy left. */
@@ -3694,6 +3699,12 @@ const SCRIPT = `
   }
 
   /**
+   * The kinds drawn as a marked bubble — a rail, and this tag — rather than as the agent talking:
+   * a task handed to a sub-agent, what sub-agents reported, and the answer to a side question.
+   */
+  var SUB_K = {dispatch:'Sub-agent task', report:'Sub-agent report', aside:'Side question'};
+
+  /**
    * One message's class and inner markup. Shared by the transcript (paint) and by a conversation
    * opened from the History tab (paintLib), which is what makes the two look the same: one place
    * decides what a bubble is.
@@ -3703,14 +3714,14 @@ const SCRIPT = `
     // A report is a line-based bubble like a tool one: fold it and offer the same control. A
     // dispatch is prose (the card, or the task a sub-agent was handed), so it only takes the tag.
     var folded = kind === 'tools' || kind === 'report';
+    var tag = kind && Object.prototype.hasOwnProperty.call(SUB_K, kind) ? SUB_K[kind] : '';
     var cls = 'm' + (m.own ? ' own' : '') + (hist ? ' hist' : '')
-      + (kind === 'dispatch' ? ' dispatch' : kind === 'report' ? ' report' : '')
+      + (tag ? ' '+kind : '')
       + (m._local && m._state === 'sending' ? ' pending' : '')
       + (stuck(m) ? ' failed' : '');
     var h='';
-    // The tag, not the text, is what makes the two kinds tell apart before the body is read.
-    if(kind === 'dispatch' || kind === 'report')
-      h += '<div class="sub-k">'+(kind === 'dispatch' ? 'Sub-agent task' : 'Sub-agent report')+'</div>';
+    // The tag, not the text, is what makes the kinds tell apart before the body is read.
+    if(tag) h += '<div class="sub-k">'+tag+'</div>';
     if(m.quote && m.quote.html) h += '<div class="q">'+m.quote.html+'</div>';
     h += '<div class="b">'+(folded ? foldLines(key, m.html) : m.html)+'</div>';
     if(m.file){

@@ -41,7 +41,15 @@ import type {
   ReclaimState,
   RunTurnInput,
 } from './agent.js';
-import { TurnFailure } from './agent.js';
+import { SideQuestionRefused, TurnFailure } from './agent.js';
+import {
+  askOnFork,
+  forkSupportOf,
+  NO_FORK,
+  sideQuestionRefusal,
+  type ForkSupport,
+  type SideAskHandle,
+} from './acp-side-question.js';
 import { harnessLogProbe, readHarnessErrors } from './harness-log.js';
 import { readSteerOutcome, STEER_METHOD, steeringModeOf, steerParams, type SteeringMode } from './acp-steering.js';
 import {
@@ -1063,7 +1071,9 @@ function createAcpSession(
    * inventing an accept would hand it a decision the user never made and let it act on it.
    */
   async function answerElicitation(params: CreateElicitationRequest): Promise<CreateElicitationResponse> {
-    const ask = turnState?.handlers.onElicit;
+    // A fork's question goes where its side answer is, which has nowhere to ask: cancelled.
+    const side = sideAsks.get((params as { sessionId?: string }).sessionId ?? '');
+    const ask = side ? side.state.handlers.onElicit : turnState?.handlers.onElicit;
     if (!ask) {
       console.warn(`[acp] ${conversationId}: elicitation arrived with no turn to ask in; cancelling`);
       return { action: 'cancel' };
@@ -1101,7 +1111,8 @@ function createAcpSession(
    */
   async function answerPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     if (def.permissions !== 'ask') return decidePermission(params);
-    const ask = (turnState ?? followUp(false))?.handlers.onPermission;
+    // A fork answering a side question asks in that answer's lane, never the running turn's.
+    const ask = (sideAsks.get(params.sessionId)?.state ?? turnState ?? followUp(false))?.handlers.onPermission;
     let answer: PermissionAnswer;
     if (!ask) {
       answer = { kind: 'unavailable', why: 'no chat to ask in' };
@@ -1227,6 +1238,17 @@ function createAcpSession(
    * see promptBlocks). A property of the binary like the two above, kept across a rebuilt child.
    */
   let imagePrompts = false;
+  /**
+   * Which of the session methods a side question uses this harness declares (initialize →
+   * `sessionCapabilities`; see acp-side-question.ts). A property of the binary like the three above.
+   */
+  let forkSupport: ForkSupport = NO_FORK;
+  /**
+   * The side questions (`/btw`) being answered right now, by the id of the fork each one asks. Read
+   * to send a fork's permission requests and questions to the lane its answer is in, rather than to
+   * whatever turn happens to be running, and by `/stop`.
+   */
+  const sideAsks = new Map<string, SideAskHandle>();
   /**
    * A turn's or a joined message's blocks, saying in the log when its pictures had to stay paths —
    * which is otherwise invisible: the agent still gets the path line and the turn looks normal.
@@ -1644,6 +1666,7 @@ function createAcpSession(
       loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
       steeringMode = steeringModeOf(initResult);
       imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
+      forkSupport = forkSupportOf(initResult);
 
       // Resume persisted context first: the harness keeps conversation history on its own disk, so a
       // daemon restart only loses the process — session/load replays the stored ACP session into the
@@ -2676,6 +2699,43 @@ function createAcpSession(
       // and a message still streaming (or, in `once` mode, not yet sent at all) says otherwise.
       void closeFollowUp('stopped');
       return true;
+    },
+
+    async sideQuestion(input: { prompt: string; sessionToken: string }, handlers: AgentStreamHandlers): Promise<'done' | 'stopped'> {
+      // Nothing to copy, and starting a child to fork an empty session would answer from nothing.
+      if (!active && !store?.agentSession(conversationId, def.id)) {
+        throw new SideQuestionRefused(`Nothing to ask ${def.id} about yet: it has no conversation here. Send it a message first.`);
+      }
+      // A stored session the child no longer holds (idle reclaim, restart) is loaded first: the
+      // same start the next message would make.
+      await ensureStarted(input.sessionToken);
+      const refusal = sideQuestionRefusal(def.id, def.harness, forkSupport, turnState !== undefined);
+      if (refusal) throw new SideQuestionRefused(refusal);
+      // Read once: the child can go away while this was waiting on its start.
+      const [connection, parent] = [conn, active];
+      if (!connection || !parent) throw new Error(`agent "${def.id}" went away before the question could be asked`);
+      return askOnFork({
+        ctx: connection.agent,
+        parentId: parent.sessionId,
+        cwd,
+        support: forkSupport,
+        prompt: blocksOf({ prompt: input.prompt }),
+        // A state of its own: no config write-back and no failure notices into the conversation —
+        // what the copy reports about itself is not news about this session.
+        state: { handlers, lastSegment: 'none', toolLedger: new Map(), toolIndexSeq: 0, subagents: new Map() },
+        translate: translateUpdate,
+        silenceMs: turnTimeoutMs,
+        label: conversationId,
+        track: (forkId, handle) => {
+          if (handle) sideAsks.set(forkId, handle);
+          else sideAsks.delete(forkId);
+        },
+      });
+    },
+
+    stopSideQuestions(): number {
+      for (const handle of sideAsks.values()) handle.cancel();
+      return sideAsks.size;
     },
 
     async ensureSession(sessionToken: string): Promise<void> {

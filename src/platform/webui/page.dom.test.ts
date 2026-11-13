@@ -7448,7 +7448,7 @@ describe('webui page: sub-agent bubbles', () => {
   const sub = (
     id: string,
     html: string,
-    kind: 'dispatch' | 'report'
+    kind: 'dispatch' | 'report' | 'aside'
   ): Record<string, unknown> => ({ ...message(id, html), kind });
   const tag = (h: Harness, cls: string): string | null =>
     h.doc.querySelector(`#log .m.${cls} .sub-k`)?.textContent ?? null;
@@ -7546,6 +7546,36 @@ describe('webui page: sub-agent bubbles', () => {
     expect(html).toContain('.m.report{background:var(--rep);border-left:3px solid var(--rep-edge)');
     expect(html).toContain('--disp:#1a1622;--disp-edge:#8b6cc1;--rep:#14201a;--rep-edge:#3f8f6b');
     expect(html).toContain('.sub-k{');
+  });
+
+  it('marks a side answer apart from the reply it lands in the middle of, while it streams', async () => {
+    // A /btw answer arrives while the turn's own reply is still being written above and below it,
+    // so the rail and tag are what keep it from reading as that reply's next paragraph.
+    const h = await open({ url: at });
+    await h.emit(sync(T, [message('m1', '<p>working on it</p>'), sub('m2', '<p>↪ btw: which branch?</p>', 'aside')], [T]));
+    // Edited in place as the answer streams, like any reply: the marking has to survive the edit.
+    await h.emit({ t: 'msg', msg: sub('m2', '<p>↪ btw: which branch?</p><p>feat/x</p>', 'aside') });
+    await h.emit({ t: 'msg', msg: message('m1', '<p>working on it — tests pass</p>') });
+
+    expect(h.doc.querySelectorAll('#log .m.aside')).toHaveLength(1);
+    expect(tag(h, 'aside')).toBe('Side question');
+    expect(h.doc.querySelector('#log .m.aside .b')?.textContent).toContain('feat/x');
+    // The reply around it stays a plain reply.
+    expect(h.doc.querySelectorAll('#log .m:not(.aside)')).toHaveLength(1);
+    expect(h.doc.querySelectorAll('#log .sub-k')).toHaveLength(1);
+  });
+
+  it('gives a kind it has no tag for no tag, even one named like a property of every object', async () => {
+    const h = await open({ url: at });
+    await h.emit(sync(T, [{ ...message('m1', '<p>a reply</p>'), kind: 'constructor' }], [T]));
+    expect(h.doc.querySelectorAll('#log .sub-k')).toHaveLength(0);
+    expect(h.doc.querySelector('#log .m')?.className).toBe('m');
+  });
+
+  it('styles a side answer like the other marked kinds, from variables', () => {
+    const html = renderPage('Chat', false, true, false);
+    expect(html).toContain('.m.aside{background:var(--aside);border-left:3px dashed var(--aside-edge)');
+    expect(html).toContain('--aside:#151c1f;--aside-edge:#4f8a99');
   });
 });
 

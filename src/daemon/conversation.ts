@@ -54,7 +54,7 @@ import type {
   InboundMessage,
 } from '../types.js';
 import type { ConversationWorkdir, ModelPickerList, ModelPickerResult, PlatformAdapter } from '../platform/adapter.js';
-import type { AgentFactory, AgentSession, AgentUsage } from './agent.js';
+import { SideQuestionRefused, type AgentFactory, type AgentSession, type AgentUsage } from './agent.js';
 import type { EffortSelector, ModelSelector, ToolEvent, TopicActivity } from '../types.js';
 import {
   effortAmbiguousText,
@@ -2000,6 +2000,17 @@ export class ConversationRegistry {
    * so answering "nothing is running" to the person who just called one off would be flatly untrue.
    */
   private stopAndReport(key: ConversationId, conv: ConversationRef): string {
+    const ack = this.stopTurnAndReport(key, conv);
+    // A side question being answered (`/btw`) stops too: it is something running here, and `/stop`
+    // is the only way to stop anything. After the turn, so the turn's own ack still leads.
+    const asides = this.agents.peek(key)?.stopSideQuestions?.() ?? 0;
+    if (asides === 0) return ack;
+    const what = asides === 1 ? 'the side question' : `${asides} side questions`;
+    return ack === STOP_ACK.idle ? `⏹ Stopped ${what}.` : `${ack}\n⏹ Also stopped ${what}.`;
+  }
+
+  /** stopAndReport for everything but side questions: the turn, questions, transcripts, sub-agents. */
+  private stopTurnAndReport(key: ConversationId, conv: ConversationRef): string {
     const { outcome, calledOff, transcripts } = this.stopWithPending(key, 'stopped');
     // A /super job's turn ends once it has handed the work out, so stopping "this" while its
     // sub-agents work used to stop nothing at all — and the person had to open each of them.
@@ -2611,6 +2622,7 @@ export class ConversationRegistry {
     try {
       if (name === 'context') return reply(this.describeContext(state));
       if (name === 'usage') return await this.answerHarnessCliCommand(key, state, name, msg);
+      if (name === 'btw') return await this.answerSideQuestion(key, state, rest, msg);
       if (name === 'model') {
         // undefined means the answer went out on another surface — the daemon posted a button
         // menu — so saying anything here would duplicate it.
@@ -2626,6 +2638,64 @@ export class ConversationRegistry {
       reply(`/${name} has no local handler.`); // unreachable unless GENERIC_COMMANDS gains a `local` without one
     } catch (e) {
       reply(`Could not answer /${name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /**
+   * `/btw <question>`: ask the agent something on the side, answered in a message of its own.
+   *
+   * Answered here, before the merger, so a running turn is neither stopped nor queued behind: the
+   * runtime asks a fork of the session (AgentSession.sideQuestion), and the conversation's own
+   * context never sees the question or the answer. TurnRunner.beginAside draws the answer.
+   *
+   * A refusal — the agent declares no fork, there is nothing to fork yet, a turn is running on a
+   * harness whose fork would repeat it — is the runtime's sentence, sent as it stands. Anything
+   * else that goes wrong is said in the answer's own closing line.
+   */
+  private async answerSideQuestion(
+    key: ConversationId,
+    state: ConversationState,
+    question: string | undefined,
+    msg: InboundMessage
+  ): Promise<void> {
+    const platform = this.platforms.get(msg.conversation.platform);
+    if (!platform) return;
+    const address = addressOf(msg.conversation);
+    const say = (text: string): void => {
+      platform
+        .sendMessage(address, text)
+        .catch((e) => console.warn('[btw] failed to reply:', e instanceof Error ? e.message : e));
+    };
+    const text = question?.trim();
+    if (!text) {
+      say('Usage: `/btw <question>` — asked of a copy of this conversation and answered on the side; the copy is then deleted, and a running turn carries on.');
+      return;
+    }
+    // Pictures would need the turn's attachment path (saved files, named in the prompt); a side
+    // question that dropped them would answer about something it never saw.
+    if ((msg.attachments?.length ?? 0) > 0) {
+      say('/btw takes a question in words only. Send pictures and files as an ordinary message.');
+      return;
+    }
+    const session = this.agents.getOrCreate(key, state.agentId);
+    if (!session.sideQuestion) {
+      say(`${agentDisplayName(findAgent(this.config, state.agentId), state.agentId)} does not support /btw.`);
+      return;
+    }
+    const render = this.turnRunner.beginAside(key, platform, address, text);
+    try {
+      const outcome = await session.sideQuestion({ prompt: text, sessionToken: this.tokens.tokenFor(key) }, render.handlers);
+      await render.finish(outcome === 'stopped' ? 'stopped' : undefined);
+      console.log(`[btw] ${key} (${state.agentId}): side question ${outcome}`);
+    } catch (e) {
+      if (e instanceof SideQuestionRefused) {
+        console.log(`[btw] ${key} (${state.agentId}): refused — ${e.message}`);
+        say(e.message);
+        return;
+      }
+      const why = e instanceof Error ? e.message : String(e);
+      console.warn(`[btw] ${key} (${state.agentId}): failed — ${why}`);
+      await render.finish(`failed: ${why}`);
     }
   }
 

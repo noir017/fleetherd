@@ -14,7 +14,7 @@ import type {
   SteerOutcome,
   ToolEvent,
 } from '../types.js';
-import type { PlatformAdapter } from '../platform/adapter.js';
+import type { MessageKind, PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
 import { StreamBuffer } from '../core/stream-buffer.js';
 import { ToolRenderer } from '../core/tool-renderer.js';
@@ -165,6 +165,23 @@ function turnHandlers(batch: InboundMessage[], handlers: AgentStreamHandlers): A
  * background output indistinguishably from a reply would just be recreating the confusion.
  */
 const FOLLOW_UP_MARKER = '⏱ background update — picking up where the last reply left off';
+
+/** How long a side question may run in its answer's first line before it is cut. */
+const ASIDE_QUESTION_MAX = 120;
+
+/** The first line of a side answer: which question it answers, on one line. */
+function asideHeader(question: string): string {
+  const flat = question.replace(/\s+/g, ' ').trim();
+  return `↪ btw: ${flat.length > ASIDE_QUESTION_MAX ? `${flat.slice(0, ASIDE_QUESTION_MAX - 1)}…` : flat}`;
+}
+
+/** The closing line of a side answer: that it is not in the conversation, and anything else worth saying. */
+function asideFooter(tools: number, note: string | undefined): string {
+  const parts = ['side question — not kept in this conversation'];
+  if (tools > 0) parts.push(`${tools} tool call${tools === 1 ? '' : 's'}`);
+  if (note) parts.push(note);
+  return parts.join(' · ');
+}
 
 /**
  * How long the body text waits for a tool bubble to take its place in the chat.
@@ -1317,6 +1334,78 @@ export class TurnRunner {
   }
 
   /**
+   * Render the answer to a side question (`/btw`) as a message of its own, marked `aside`.
+   *
+   * Not a turn and not a follow-up, and built apart from both on purpose: it may stream while the
+   * conversation's own reply is streaming in the same lane, so it owns its own buffer and touches
+   * nothing the turn reads — no footer, usage, model or status strip (the copy's numbers would be
+   * reported as the conversation's), no typing hold, and nothing in the conversation library, which
+   * records the conversation the agent has and this answer was kept out of.
+   *
+   * Text only. A fork rarely runs a tool to answer a question, and a tool bubble of its own in the
+   * lane would read as the running turn's; how many it ran goes in the closing line instead. A
+   * permission the fork asks for is put to the person in this lane, like a turn's.
+   */
+  beginAside(
+    conversationId: ConversationId,
+    platform: PlatformAdapter,
+    address: ConversationAddress,
+    question: string
+  ): { handlers: AgentStreamHandlers; finish(note?: string): Promise<void> } {
+    const stream = this.makeStreamBuffer(platform, address, 'aside');
+    let tools = 0;
+    let answered = false;
+    let breakPending = false;
+    // The message opens with the first thing there is to show, not before: a side question the
+    // runtime refuses (no fork, nothing to fork yet) is answered with one sentence, and a header
+    // already posted above it would be an answer that never came.
+    let opened = false;
+    const open = (): void => {
+      if (opened) return;
+      opened = true;
+      stream.push(asideHeader(question));
+    };
+    const handlers: AgentStreamHandlers = {
+      onText: (delta) => {
+        open();
+        if (delta.trim() === '' && !answered) return; // nothing to put under the header yet
+        // The header and the answer, or two stretches of answer either side of a tool, a paragraph apart.
+        if (!answered || breakPending) stream.push('\n\n');
+        breakPending = false;
+        answered = true;
+        stream.push(delta);
+      },
+      onToolStart: () => {
+        open();
+        tools++;
+      },
+      onToolFinish: () => {},
+      onSegmentBreak: () => {
+        breakPending = true;
+      },
+      onPermission: (request) => {
+        open();
+        return this.askPermission(conversationId, platform, address, request);
+      },
+      onNotice: (text) => {
+        platform
+          .sendMessage(address, text)
+          .catch((e) => console.warn('[btw] failed to send a notice:', e instanceof Error ? e.message : e));
+      },
+    };
+    return {
+      handlers,
+      finish: async (note) => {
+        open();
+        if (!answered && !note) stream.push('\n\n(no answer)');
+        await stream
+          .complete({ footer: asideFooter(tools, note) })
+          .catch((e) => console.error('[btw] failed to finish the answer:', describeOutboundError(e)));
+      },
+    };
+  }
+
+  /**
    * Stream handlers for out-of-turn output: rendering events go through `open()` (which opens the
    * follow-up message on first use), while everything that is merely REPORTED is forwarded to the
    * conversation whether or not a message was ever opened.
@@ -1483,7 +1572,12 @@ export class TurnRunner {
    * StreamBuffer factory: sink bound to the given address; each call yields a fresh buffer for
    * per-segment rotation (trailing text below a tool bubble goes to a new message, not editing the prior).
    */
-  private makeStreamBuffer(platform: PlatformAdapter, address: ConversationAddress): StreamBuffer {
+  private makeStreamBuffer(
+    platform: PlatformAdapter,
+    address: ConversationAddress,
+    /** What every message this buffer sends is, for the platform that draws kinds apart (SendOptions). */
+    kind?: MessageKind
+  ): StreamBuffer {
     return new StreamBuffer(
       {
         // Streaming is opt-in AND capability-gated in one place: `stream.enabled` is what the
@@ -1509,7 +1603,7 @@ export class TurnRunner {
         schedule: this.clock.schedule,
         send: async (text) => {
           try {
-            const ref = await platform.sendMessage(address, text);
+            const ref = await (kind ? platform.sendMessage(address, text, { kind }) : platform.sendMessage(address, text));
             console.log(`[out] send ok (${text.length} chars) → ${ref.messageId}`);
             return ref;
           } catch (e) {

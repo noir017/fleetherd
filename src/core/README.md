@@ -511,7 +511,7 @@ misinterpret — strictly worse than telling the user it is unsupported.
 The table's only mechanism is TEXT: it rewrites `/x` and hands it to the agent as a
 prompt. So a capability the harness exposes over the **protocol** rather than as a slash
 command has no native name to translate to, and used to read as "not supported" — even
-though the gateway could answer it outright. Four do:
+though the gateway could answer it outright. Five do:
 
 | command | why there is no native name to translate to | what answers it |
 |---|---|---|
@@ -520,6 +520,12 @@ though the gateway could answer it outright. Four do:
 | `/usage` (agy) | agy's own CLI answers it: forwarded, `agy acp` hands it to the model as a question | a one-shot `agy -p=/usage`, rendered as quota bars |
 | `/model` (opencode, claude, agy) | all three expose the selector as a config option (`agy acp` since 1.5) | `ConversationRegistry.applyModelCommand` via `AgentSession.modelSelector()` / `setModel()` |
 | `/effort` (claude, codex, opencode, agy) | all four expose the level as a config option in category `thought_level` (ids differ: `effort`, `reasoning_effort`, `thought_level`); none advertises a command for it | `ConversationRegistry.applyEffortCommand` via `AgentSession.effortSelector()` / `setEffort()` |
+| `/btw` (claude, codex, opencode, custom) | ACP has no side question, only `session/fork`; Claude Code's own `/btw` is a TUI panel the adapter never drives | `ConversationRegistry.answerSideQuestion` via `AgentSession.sideQuestion()` (see daemon README, *A side question*) |
+
+`/btw` is the one `local` entry that lists `custom`: whether a custom agent can fork is something
+it declares at `initialize`, and the runtime refuses by name when it does not. Forwarded, as
+every other command to a custom agent is, the question would land in the very context it promises
+to stay out of.
 
 ### `HARNESS_CLI_ANSWERED` — the names that must not be forwarded
 
