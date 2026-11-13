@@ -48,7 +48,7 @@ it. Do not duplicate that content here.
 | `src/core/` | Platform-agnostic pure logic: conversation identity, gating, merging, streaming, tool bubbles, footer, attachments, command vocabulary | [README](src/core/README.md) |
 | `src/platform/` | IM adapters: the profile seam, 8 Satori platform profiles, per-dialect markdown renderers, and `webui/` — a browser page the daemon serves, implementing `PlatformAdapter` directly | [README](src/platform/README.md) |
 | `src/daemon/` | The running system: routing, conversations, turn orchestration, the agent runtimes (all ACP) | [README](src/daemon/README.md) |
-| `src/api-agent/` | `fleetherd api-agent <backend>`: an ACP agent over an HTTP API, spawned by the daemon for `harness: custom`. First backend: Antigravity | [README](src/api-agent/README.md) |
+| `src/api-agent/` | `fleetherd api-agent <backend>`: an ACP agent over an HTTP API, spawned by the daemon for `harness: custom`. Backends: Antigravity, an agent-mailbox relay | [README](src/api-agent/README.md) |
 | `src/ipc/` | Reverse-command protocol over a unix socket (agent → daemon → chat) | [README](src/ipc/README.md) |
 | `src/history/` | The conversation library: every turn in `<configDir>/history.db`, searchable by keyword (Han bigrams in JS, BM25), plus the web UI transcript import | [README](src/history/README.md) |
 | `src/remote/` | The gateway's side of agents on other machines: one reliable link per host over ssh | [README](src/remote/README.md) |

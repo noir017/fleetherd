@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Agents that can only poll, through a mailbox: `fleetherd api-agent mailbox`.** Meta's Muse runs
+  in a cloud VM nobody can call; it can only run a script every few seconds and make HTTPS requests.
+  The new backend reaches it through an agent-mailbox relay (a Cloudflare Worker, separate
+  repository) that both sides poll, so neither opens a port. A turn delivers the message, shows
+  Muse's progress lines as rows rather than thoughts — the gateway never displays thoughts, and an
+  invisible "got it, working on it" is no use — and ends at Muse's final. Because Muse is an LLM
+  following rules rather than a protocol, every way a turn can go wrong is said in the chat: a
+  message nobody picks up in two minutes is withdrawn and the failure says when Muse last polled;
+  five silent minutes end the turn with what arrived (under the gateway's ten-minute watchdog, so
+  the person reads why rather than a hang); a late answer or one Muse sends on its own arrives as a
+  background update, or opens the next reply when the process was gone. Text only — attachments
+  are refused out loud, never dropped — and no model menu. One agent entry per Muse account. The
+  generic half of `api-agent` learned what this needed and nothing more: backends without a model
+  menu or pictures, and output between turns.
+
 ## [3.3.0] - 2026-11-13
 
 ### Added

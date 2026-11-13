@@ -5,6 +5,7 @@ this module speaks HTTP to the service.
 
 ```
 fleetherd daemon ──ACP/stdio──► fleetherd api-agent antigravity ──HTTPS──► Interactions API
+fleetherd daemon ──ACP/stdio──► fleetherd api-agent mailbox     ──HTTPS──► agent-mailbox relay ◄── Muse
 ```
 
 The daemon is unchanged. config.yaml names the process under `harness: custom`:
@@ -22,6 +23,16 @@ agents:
 It runs on the gateway's own machine (no `host:`): it only calls the cloud API, so it needs
 nothing from the agents' container. The key is read from `GEMINI_API_KEY` and nowhere else.
 
+The mailbox backend, one entry per mailbox (user doc: `docs/mailbox.md`):
+
+```yaml
+  - id: muse
+    harness: custom
+    command: fleetherd
+    args: [api-agent, mailbox, --url, "https://mailbox.example.com"]   # or MAILBOX_URL
+    env: { MAILBOX_TOKEN: "${MUSE_MAILBOX_TOKEN}" }                  # the client token, env only
+```
+
 ## Files
 
 | File | What |
@@ -30,6 +41,8 @@ nothing from the agents' container. The key is read from `GEMINI_API_KEY` and no
 | `server.ts` | The ACP side: `initialize`, `session/new`, `session/load`, `session/prompt`, `session/cancel`, `session/set_config_option`; maps backend events to `session/update`. |
 | `store.ts` | `sessionId → {lastInteractionId, environmentId, model}` on disk. |
 | `antigravity.ts` | The first backend: Interactions API request/stream/SSE mapping. |
+| `mailbox.ts` | The second: a turn is a message left in an agent-mailbox relay; deadlines, progress rows, between-turn replies. |
+| `mailbox-relay.ts` | The relay's client side over fetch. |
 | `sse.ts` | The SSE subset that API uses. |
 | `fixtures/` | Redacted recordings the contract tests replay. |
 
@@ -41,12 +54,14 @@ Dependencies: Node built-ins and `@agentclientprotocol/sdk` only. The config pat
 Probed against the gateway 2026-11-13 (`project-reports/acp-chat-shim-smoke-20261113.md`): these
 six methods are all the daemon sends, and the capabilities below are what make it send the rest.
 
-- **`initialize`** declares `loadSession: true` and `promptCapabilities.image: true`. Without
-  `loadSession` the daemon never reclaims an idle child (it would lose the context) and never
-  resumes after a restart; with it, `session/load` restores the model and the continuation ids.
-  Images are declared because the backend forwards them inline.
+- **`initialize`** declares `loadSession: true` and `promptCapabilities.image` as the backend says
+  (`ApiBackend.images`, default true). Without `loadSession` the daemon never reclaims an idle
+  child (it would lose the context) and never resumes after a restart; with it, `session/load`
+  restores the model and the continuation ids. A backend that declares no images gets pictures as
+  attachment paths in the text, like any other file.
 - **`session/new`** returns a fresh UUID and the model menu as `configOptions`
-  (`{id:'model', category:'model', type:'select'}`). `mcpServers` and `cwd` are ignored: this
+  (`{id:'model', category:'model', type:'select'}`) — none at all when the backend has no models,
+  which is how the daemon knows there is no `/model` menu. `mcpServers` and `cwd` are ignored: this
   agent runs no local process, so the gateway's `send_file`/`schedule` tools have nowhere to go.
 - **`session/load`** reads the record from disk and returns the menu. It does **not** replay
   history: only ids are stored, and the gateway drops updates that arrive before the first prompt
@@ -62,6 +77,25 @@ six methods are all the daemon sends, and the capabilities below are what make i
 
 `stdout` is the JSON-RPC transport and nothing else. Diagnostics go to stderr, which the daemon
 forwards to its own log.
+
+### Output between turns
+
+A backend with `follow(sessionId, emit)` is handed, after each turn of a session ends (finished,
+failed or stopped), a way to send updates with no prompt in flight; the daemon renders those as a
+`⏱ background update` message (daemon/README.md, "Out-of-turn output becomes a follow-up
+message"). The connection is the SDK's `onConnect` one, not a request's. Two rules come from the
+daemon:
+
+- **Not before the session's first turn in this process.** The daemon drops renderable updates
+  from a child it has not prompted yet (`promptedYet`, so a resumed session cannot re-narrate
+  itself). Output that arrives then must wait for the next turn — the mailbox shows it at the top
+  of that turn's reply.
+- **End a burst with `settled`.** In the default `once` delivery mode nothing is sent until the
+  daemon decides the burst is over: 1.5 s after a `usage_update` carrying `cost`, else after three
+  minutes of quiet. `settled` becomes that usage report, with `size: 0` so the footer ignores it.
+
+`close()` is called when the connection goes; followers poll on timers, which must not keep the
+process alive.
 
 ### When a turn ends without an answer
 
@@ -97,9 +131,10 @@ conversation. Mid-turn writes name only the field they learned (`SessionStore.pa
 
 ## Adding a backend
 
-Implement `ApiBackend` in a new file: `id`, `defaultModel`, `models`, `turn(request)` (an async
-generator of `BackendEvent`s, ending with `done` or throwing `ApiAgentError`) and
-`cancel(interactionId)` (best-effort, never throws). Then add one arm to
+Implement `ApiBackend` in a new file: `id`, `defaultModel`, `models` (empty for no menu),
+`turn(request)` (an async generator of `BackendEvent`s, ending with `done` or throwing
+`ApiAgentError`) and `cancel(interactionId, sessionId)` (best-effort; a rejection is only logged).
+Optional: `images: false`, `follow` and `close` (above). Then add one arm to
 `commands/api-agent.ts`, where the model list, the key's environment variable and the state file
 name are decided. Nothing in `server.ts` changes.
 
@@ -134,6 +169,30 @@ persists them and hands them back next turn. Images arrive base64-encoded.
 - **Cancellation is best-effort.** `/cancel` only works while the interaction is `in_progress`;
   delayed attempts returned 400 (probed at 2.5s, 4.5s, 8s). The local turn stops either way.
 
+## Mailbox notes
+
+- **The relay** is agent-mailbox (a Cloudflare Worker, its own repository). Client side: `send`,
+  `replies` (cursor per session; passing it confirms and deletes), `cancel` (withdraws a message not
+  yet fetched, else queues a `cancel` for the agent). Every answer carries the agent's polling
+  status — `last_poll_at`, `fetched_upto` — which is how "not picked up" is told from "picked up,
+  thinking".
+- **Turn ids are ours** (`state.lastInteractionId`, so `/stop` can name the turn). A delivery is
+  retried with the same id, and the relay files a repeat under the first copy.
+- **Progress is a tool row**, `progress: "<text>"` (kind `other`, the text as `rawInput.prompt`,
+  one of the keys the daemon previews a row by). Not a thought: the daemon never shows
+  `agent_thought_chunk`, so a progress line sent as one would not be seen at all.
+- **Two deadlines**, both said in the chat: no pickup in `--pickup-timeout` (120 s) → withdraw, then
+  fail with when the agent last polled; picked up but silent for `--silence-timeout` (300 s) → end
+  the turn with what arrived and a note. The second must stay under `session.turnTimeoutMs`
+  (frozen at 600 s); the CLI refuses a value that is not.
+- **Replies outside the turn**: a reply for another turn read during a turn is held and sent after
+  it; between turns the follower polls every 20 s. Progress of a turn that is over is dropped.
+  Replies waiting when nobody followed (no process, or before the first turn) open the next reply.
+- **Attachments**: the daemon appends them under `---\nAttachments:` (turn-runner.ts buildPrompt;
+  the test pins the separator). The text before it is sent, and the reply says the rest was not.
+- **Polling cost**: every poll is a request against the relay's daily quota; 2 s in a turn and 20 s
+  between turns is the trade (the agent itself polls every 5 s, so faster buys nothing).
+
 ## Limits
 
 No local files, no reverse commands (`send_file`, `schedule`), no MCP, no skills, no mid-turn
@@ -151,5 +210,11 @@ reported as it is, with the session kept.
   429/400/incomplete, reconnection, cancel. Re-recording means replacing the fixture and the
   expectations together.
 - `store.test.ts` — persistence, 0600, pruning, corrupt file.
+- `mailbox.test.ts` — the mailbox backend against an in-memory relay and a moved clock: a turn,
+  both deadlines, retry, `/stop` before and after pickup, attachments (with the separator pinned
+  to turn-runner.ts), late replies at the next turn, the between-turn follower. The end-to-end run
+  against a real relay, a fake Muse and a gateway is outside the repository
+  (`project-scripts/muse-mailbox/e2e.mjs`).
 - `server.test.ts` — a real ACP client (`@agentclientprotocol/sdk`'s in-process `connectWith`)
-  driving the app with a fake backend: capabilities, menu, updates, cancel, expiry, load.
+  driving the app with a fake backend: capabilities, menu, updates, cancel, expiry, load; and a
+  backend with no menu, no pictures and a `follow` that sends between turns.

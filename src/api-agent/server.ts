@@ -14,6 +14,10 @@
  * from `session/new` is ignored for the same reason — the gateway's `send_file`/`schedule` tools
  * are not reachable from a cloud sandbox.
  *
+ * Most updates answer a `session/prompt`. A backend with `follow` also sends some between turns
+ * (a reply that arrived after its turn ended), through the connection rather than a request:
+ * the gateway renders an update with no prompt in flight as a follow-up message.
+ *
  * What the daemon expects, in the places this file is easy to get wrong:
  * - A cancelled turn must still **resolve** its `session/prompt`, with `stopReason: "cancelled"`.
  *   The gateway waits on the response, not on the notification (prompt-turn.md).
@@ -28,6 +32,7 @@ import { Readable, Writable } from 'node:stream';
 import {
   agent,
   ndJsonStream,
+  type AgentConnection,
   PROTOCOL_VERSION,
   RequestError,
   type AgentApp,
@@ -44,6 +49,23 @@ import {
   type PromptImage,
 } from './backend.js';
 import type { SessionRecord, SessionStore } from './store.js';
+
+/**
+ * The usage report that tells the gateway a follow-up burst is complete.
+ *
+ * The gateway shows output that arrives between turns as a new message, and in its default
+ * `once` delivery mode sends nothing until it decides the burst ended: 1.5s after a `usage_update`
+ * carrying `cost`, otherwise after three minutes of quiet (daemon/agent-acp.ts isResultUsage,
+ * FOLLOW_UP_QUIET_MS). Hyrum's Law: that cue is what claude-agent-acp sends with a finished
+ * result, not something ACP defines. `size: 0` keeps it off the footer — the gateway ignores a
+ * usage report with no context window (ingestUsage). Losing the cue costs latency, not output.
+ */
+const BURST_END: SessionUpdate = {
+  sessionUpdate: 'usage_update',
+  used: 0,
+  size: 0,
+  cost: { amount: 0, currency: 'USD' },
+};
 
 export interface ApiAgentServerOptions {
   backend: ApiBackend;
@@ -85,7 +107,24 @@ export function createApiAgentApp(options: ApiAgentServerOptions): AgentApp {
   const notify = (client: AgentContext, sessionId: string, update: SessionUpdate): Promise<void> =>
     client.notify('session/update', { sessionId, update });
 
+  /** The connection, for updates sent outside any request (see `follow`). */
+  let connection: AgentConnection | undefined;
+  const hasMenu = models.length > 0;
+  const menu = (current: string): { configOptions?: SessionConfigOption[] } =>
+    hasMenu ? { configOptions: [modelOption(current)] } : {};
+
+  /** An event as a `session/update` sent with no prompt in flight. */
+  const emitOutOfTurn = async (sessionId: string, event: BackendEvent): Promise<void> => {
+    if (!connection) throw new Error('no ACP connection');
+    if (event.type === 'state' || event.type === 'done') return;
+    await notify(connection.client, sessionId, toUpdate(event));
+  };
+
   const app = agent({ name: `fleetherd api-agent (${backend.id})` })
+    .onConnect((conn) => {
+      connection = conn;
+      void conn.closed.then(() => backend.close?.());
+    })
     .onRequest('initialize', ({ params }) => {
       log(`[api-agent] initialize: client protocol ${params.protocolVersion}`);
       // loadSession is what lets the gateway reclaim an idle child and resume it later; without
@@ -93,14 +132,14 @@ export function createApiAgentApp(options: ApiAgentServerOptions): AgentApp {
       // because the backend forwards them inline; if the API rejects them, the turn says so.
       return {
         protocolVersion: PROTOCOL_VERSION,
-        agentCapabilities: { loadSession: true, promptCapabilities: { image: true } },
+        agentCapabilities: { loadSession: true, promptCapabilities: { image: backend.images !== false } },
       };
     })
     .onRequest('session/new', () => {
       const sessionId = randomUUID();
       const record = store.put({ sessionId, model: backend.defaultModel });
-      log(`[api-agent] session/new ${sessionId} (model ${record.model})`);
-      return { sessionId, configOptions: [modelOption(record.model ?? backend.defaultModel)] };
+      log(`[api-agent] session/new ${sessionId}${hasMenu ? ` (model ${record.model})` : ''}`);
+      return { sessionId, ...menu(record.model ?? backend.defaultModel) };
     })
     .onRequest('session/load', ({ params }) => {
       const existing = store.get(params.sessionId);
@@ -108,10 +147,11 @@ export function createApiAgentApp(options: ApiAgentServerOptions): AgentApp {
       if (!existing) {
         log(`[api-agent] session/load ${params.sessionId}: no stored context, starting it empty`);
       }
-      return { configOptions: [modelOption(record.model ?? backend.defaultModel)] };
+      return menu(record.model ?? backend.defaultModel);
     })
     .onRequest('session/set_config_option', ({ params }) => {
       const value = typeof params.value === 'string' ? params.value : '';
+      if (!hasMenu) throw userError(new Error('this agent has no model menu'));
       if (params.configId !== 'model') throw userError(new Error(`unknown session config option "${params.configId}"`));
       if (!models.some((model) => model.value === value)) throw userError(new Error(`unknown model "${value}"`));
       const record = ensure(params.sessionId);
@@ -180,6 +220,8 @@ export function createApiAgentApp(options: ApiAgentServerOptions): AgentApp {
         throw userError(err);
       } finally {
         active.delete(params.sessionId);
+        // After every turn, finished or not: a /stop'd turn's late answer is between-turn output too.
+        backend.follow?.(params.sessionId, (event) => emitOutOfTurn(params.sessionId, event));
       }
     })
     .onNotification('session/cancel', ({ params }) => {
@@ -187,7 +229,7 @@ export function createApiAgentApp(options: ApiAgentServerOptions): AgentApp {
       if (!turn) return;
       // Stop the local turn first: the user asked to stop, and the upstream call is best-effort.
       turn.controller.abort();
-      void backend.cancel(turn.interactionId).catch((err: unknown) => {
+      void backend.cancel(turn.interactionId, params.sessionId).catch((err: unknown) => {
         log(`[api-agent] cancel failed: ${err instanceof Error ? err.message : String(err)}`);
       });
     });
@@ -204,6 +246,8 @@ export async function serveApiAgent(options: ApiAgentServerOptions): Promise<voi
   );
   const connection = app.connect(stream);
   await connection.closed;
+  // Followers poll on timers; without this the process would outlive its pipe.
+  options.backend.close?.();
 }
 
 /**
@@ -245,6 +289,7 @@ function userError(err: unknown): RequestError {
  * because the only tool the backend exposes is its own sandbox's code execution.
  */
 function toUpdate(event: Exclude<BackendEvent, { type: 'state' | 'done' }>): SessionUpdate {
+  if (event.type === 'settled') return BURST_END;
   switch (event.type) {
     case 'text':
       return { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: event.text } };
@@ -255,7 +300,7 @@ function toUpdate(event: Exclude<BackendEvent, { type: 'state' | 'done' }>): Ses
         sessionUpdate: 'tool_call',
         toolCallId: event.id,
         title: event.title,
-        kind: 'execute',
+        kind: event.kind ?? 'execute',
         status: 'in_progress',
         rawInput: event.rawInput,
       };
