@@ -137,6 +137,8 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
   const replies = new Map<string, string>();
   const asking = new Set<string>();
   const busy = new Set<string>();
+  /** Agents over their usage limit (TurnOutcomes' cooldown), as the registry reports them. */
+  const cooling = new Set<string>();
   const calls: Array<[string, unknown]> = [];
   const cards: Array<{ text: string; labels: string[]; signal: AbortSignal }> = [];
   let threads = 0;
@@ -227,6 +229,7 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     },
     workdirOf: () => '/home/u/workspace/fleetherd',
     boundAgentOf: (k: string) => bound.get(k),
+    coolingDown: (agent: string) => cooling.has(agent),
     // The store's record, which knows a name written before the topic's first turn; `listChannels`
     // below is the fallback `titleOf` uses when there is none.
     conversationTitle: (k: string) => (k === P ? '[cc] Release' : bound.has(k) ? `[${bound.get(k)}] part` : undefined),
@@ -268,6 +271,7 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     asking,
     history,
     busy,
+    cooling,
     calls,
     cards,
     setHandResult: (v: 'started' | 'joined' | 'queued') => {
@@ -1360,6 +1364,37 @@ describe('Delegation: [sub-agent updates]', () => {
     await settle();
     await settle();
   };
+
+  it('holds the card while the reading agent is over its usage limit, says so once, and sends it when the limit lifts', async () => {
+    // 2026-11-07: the failure cards of sub-agents stuck on a cc rate limit woke their cc parent,
+    // which failed on the same limit and was continued too.
+    const r = await oneChild();
+    const key = 'web#main#c1000000';
+    r.cooling.add('cc');
+    r.failures.set(key, 'All credentials for model opus are cooling down');
+    r.activity.set(key, { outcome: { kind: 'failed', at: 5, line: 'All credentials…', reason: 'limit' } });
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(r.calls.filter(([c]) => c === 'prompt')).toEqual([]);
+    const said = r.posted.filter((p) => p.to === P && p.text.startsWith('⏸'));
+    expect(said).toEqual([
+      { to: P, text: '⏸ cc is over its usage limit — an update from 1 sub-agent will reach it once the limit lifts.', kind: 'report' },
+    ]);
+    // A second piece of news while it waits joins the held card, and is not announced again.
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(r.posted.filter((p) => p.to === P && p.text.startsWith('⏸'))).toHaveLength(1);
+    // Another agent's cooldown ending is not this one's.
+    r.d.cooldownOver('cx');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(r.calls.filter(([c]) => c === 'prompt')).toEqual([]);
+    r.cooling.delete('cc');
+    r.d.cooldownOver('cc');
+    r.clock.advance(CARD_DELAY_MS);
+    const cards = r.calls.filter(([c]) => c === 'prompt');
+    expect(cards).toHaveLength(1);
+    expect(cardOf(r)).toContain('failure: All credentials for model opus are cooling down');
+  });
 
   it('tells the agent that opened a topic when it finishes — gathered, shown folded, then run as a turn', async () => {
     const r = rig();

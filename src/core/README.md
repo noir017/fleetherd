@@ -61,6 +61,7 @@ conversation, not part of its name — see [`daemon/README.md`](../daemon/README
 | `paging.ts` | The platform-imposed shape of a button menu: page size, page arithmetic, label budget |
 | `frecency.ts` | How often a thing was chosen, discounted by how long ago — what orders the `/cd` list |
 | `button-id.ts` | The `<prefix><reqId>:<n>` button id grammar every menu shares |
+| `turn-retry.ts` | The Retry buttons on a failed turn's ❌ notice (`rty:`); the input they resend is the daemon's (`daemon/failed-input.ts`) |
 | `topic-stage.ts` | Where a conversation stands for a person (answer / failed / review / retrying / working / idle), from facts alone; the line that goes with it; the continue backoff |
 | `agent-menu.ts` | `/agent` and the web UI's new-topic catalog: agents grouped by machine, matching a typed name |
 | `title-namer.ts` | A topic's automatic name: the request to the namer model, cleaning its answer, the fallback from the first message |

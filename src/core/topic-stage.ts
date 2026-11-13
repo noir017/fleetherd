@@ -107,6 +107,18 @@ export function failureLine(message: string, max = LINE_MAX): string {
 }
 
 /**
+ * What a failure says about a prompt the agent never received: that it did not, and — when the
+ * turn's messages are held (FailedInputs) — that they go with the next one. Without it a failed
+ * start read like any failure, and the "continue" sent after it became the only thing the agent
+ * was ever told (2026-11-07, 18 sub-agent topics).
+ */
+export function undeliveredLine(held: number): string {
+  return held > 0
+    ? `The agent did not receive this — it will be sent along with the next message.`
+    : 'The agent did not receive this.';
+}
+
+/**
  * How a failure reason reads in a sentence ("failed (service)" says nothing to most people). Total
  * over the union, so a new reason fails to compile here rather than reading as its identifier.
  */

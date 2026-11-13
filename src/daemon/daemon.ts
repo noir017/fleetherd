@@ -22,6 +22,7 @@ import {
 } from '../core/command-translate.js';
 import { parseButtonId, PICK_PREFIX, parsePickButtonId } from '../core/button-id.js';
 import {
+  agentGroups,
   buildAgentMenu,
   flatAgents,
   offlinePlaces,
@@ -29,6 +30,7 @@ import {
   type AgentButtonClick,
   type AgentGroup,
 } from '../core/agent-menu.js';
+import { parseRetryButtonId, type RetryButtonClick } from '../core/turn-retry.js';
 import { canReach } from '../remote/reachable.js';
 import { HostAvailability } from './host-availability.js';
 import {
@@ -740,6 +742,11 @@ interface PendingAgentMenu {
   current: string | undefined;
   pageSize: number;
   ref?: MessageRef;
+  /**
+   * Set for "Retry with another agent" (core/turn-retry.ts): the pick sends that failed turn's input
+   * to the agent picked (ConversationRegistry.retryTurn) instead of rebinding the topic.
+   */
+  retry?: string;
 }
 
 const SKILL_READS = ['list', 'search', 'categories', 'show', 'history'] as const;
@@ -1006,7 +1013,7 @@ export class Daemon {
       // a `/new` that just cleared one, or an `/agent` pick before the first turn.
       onWorkdirMenuRequest: (id, agentId, conv, menu) =>
         this.onWorkdirMenuRequest(id, agentId, conv, menu),
-      onAgentMenuRequest: (id, msg, menu) => this.onAgentMenuRequest(id, msg, menu),
+      onAgentMenuRequest: (id, msg, menu) => this.onAgentMenuRequest(id, msg.conversation, menu),
       offlinePlaces: () => this.offlineNames,
       // A voice message is transcribed and confirmed before it becomes a prompt; typing drops a
       // transcript still waiting, and /stop and /new call them off.
@@ -1020,6 +1027,8 @@ export class Daemon {
       onPersonWords: (id, words) => this.delegation.personWrote(id, words),
       // `/stop` in a topic that opened sub-agents stops them too.
       stopSubAgents: (id) => this.delegation.stopOpened(id),
+      // An agent's usage limit lifted: the update cards held for parents it answers go now.
+      onCooldownOver: (agentId) => this.delegation.cooldownOver(agentId),
     }, store, workdirUsage, undefined, history);
     this.delegation = new Delegation({
       config,
@@ -2457,7 +2466,7 @@ export class Daemon {
   /** Button click: resolve the matching model menu, effort menu, directory menu, settings menu, pending ask, or picker; otherwise ignore. */
   private onButton(ev: ButtonInteraction): void {
     // Prefixes are pairwise non-prefixing (`vtx:`/`mdl:`/`mpg:`/`eff:`/`wdr:`/`wdp:`/`stg:`/`stv:`/
-    // `stp:`/`stb:`/`cmd:`/`ask:`), so this order is for readability, not correctness.
+    // `stp:`/`stb:`/`cmd:`/`ask:`/`rty:`), so this order is for readability, not correctness.
     if (this.voice.onClick(ev)) return;
     const model = parseModelButtonId(ev.buttonId);
     if (model) {
@@ -2477,6 +2486,11 @@ export class Daemon {
     const agentClick = parseAgentButtonId(ev.buttonId);
     if (agentClick) {
       this.onAgentClick(ev, agentClick);
+      return;
+    }
+    const retry = parseRetryButtonId(ev.buttonId);
+    if (retry) {
+      this.onRetryClick(ev, retry);
       return;
     }
     const setting = parseSettingButtonId(ev.buttonId);
@@ -3289,13 +3303,51 @@ export class Daemon {
     this.editWorkdirMenu(menu, text, []);
   }
 
+  /**
+   * A Retry button on a failed turn's ❌ notice (core/turn-retry.ts). Only a person reaches it: the
+   * clicker is checked against the allowlist like every button that sends something to an agent.
+   * "Retry" sends the turn's input again at once; "Retry with another agent" first asks which, with
+   * the `/agent` menu, and sends it when one is picked.
+   */
+  private onRetryClick(ev: ButtonInteraction, click: RetryButtonClick): void {
+    const clicker = ev.conversation;
+    const allow = this.config.access.allowFrom;
+    if (allow.length > 0 && !allow.includes(`${clicker.platform}:${clicker.user}`)) {
+      console.log(`[access] denied retry click from ${clicker.platform}:${clicker.user}`);
+      return;
+    }
+    if (click.mode === 'same') {
+      this.runRetry(click.retryId, clicker.user, undefined, (text) => this.replyToClick(ev, text));
+      return;
+    }
+    const record = this.registry.retryRecord(click.retryId);
+    if (!record) {
+      this.replyToClick(ev, 'Nothing to retry any more — a later turn has run since, or this one was already retried.');
+      return;
+    }
+    const groups = agentGroups(this.config.agents, this.offlineNames);
+    this.onAgentMenuRequest(record.conversation, clicker, { groups, current: record.agentId }, click.retryId);
+  }
+
+  /** Send a failed turn's input again (ConversationRegistry.retryTurn) and say what happened. */
+  private runRetry(retryId: string, user: string, agentId: string | undefined, say: (text: string) => void): void {
+    this.registry
+      .retryTurn({ retryId, user, ...(agentId ? { agentId } : {}) })
+      .then((r) => say(r.text))
+      .catch((e) => {
+        console.error('[retry] failed:', e instanceof Error ? e.message : e);
+        say(`Could not retry: ${e instanceof Error ? e.message : String(e)}`);
+      });
+  }
+
   /** `/agent` on a platform with buttons: post the grouped menu (core/agent-menu.ts). */
   private onAgentMenuRequest(
     conversationId: ConversationId,
-    msg: InboundMessage,
-    menu: { groups: AgentGroup[]; current: string | undefined }
+    conversation: ConversationRef,
+    menu: { groups: AgentGroup[]; current: string | undefined },
+    retry?: string
   ): void {
-    const adapter = this.platforms.get(msg.conversation.platform);
+    const adapter = this.platforms.get(conversation.platform);
     if (!adapter) return;
     for (const [reqId, old] of this.pendingAgentMenus) {
       if (old.conversationId !== conversationId) continue;
@@ -3305,15 +3357,16 @@ export class Daemon {
     const reqId = randomUUID().slice(0, 8);
     const pending: PendingAgentMenu = {
       conversationId,
-      conversation: msg.conversation,
+      conversation,
       groups: menu.groups.map((g) => ({ ...g, agents: [...g.agents] })),
       current: menu.current,
       pageSize: resolvePageSize(adapter.capabilities.menuPageSize),
+      ...(retry ? { retry } : {}),
     };
     this.pendingAgentMenus.set(reqId, pending);
-    const view = buildAgentMenu({ reqId, groups: pending.groups, current: pending.current, pageSize: pending.pageSize });
+    const view = buildAgentMenu({ reqId, groups: pending.groups, current: pending.current, pageSize: pending.pageSize, ...(retry ? { purpose: 'retry' as const } : {}) });
     void adapter
-      .sendButtons(addressOf(msg.conversation), view.text, view.buttons)
+      .sendButtons(addressOf(conversation), view.text, view.buttons)
       .then((ref) => {
         pending.ref = ref;
       })
@@ -3348,7 +3401,15 @@ export class Daemon {
       return;
     }
     const render = (group?: number, page?: number): void => {
-      const view = buildAgentMenu({ reqId: click.reqId, groups: menu.groups, current: menu.current, group, page, pageSize: menu.pageSize });
+      const view = buildAgentMenu({
+        reqId: click.reqId,
+        groups: menu.groups,
+        current: menu.current,
+        group,
+        page,
+        pageSize: menu.pageSize,
+        ...(menu.retry ? { purpose: 'retry' as const } : {}),
+      });
       this.editAgentMenu(menu, view.text, view.buttons);
     };
     if (click.kind === 'group') return render(click.group);
@@ -3356,6 +3417,11 @@ export class Daemon {
     if (click.kind === 'page') return render(click.group, click.page);
     const def = flatAgents(menu.groups)[click.index];
     this.pendingAgentMenus.delete(click.reqId);
+    if (menu.retry) {
+      if (!def) return this.editAgentMenu(menu, 'That agent is no longer configured.', []);
+      this.runRetry(menu.retry, clicker.user, def.id, (text) => this.editAgentMenu(menu, text, []));
+      return;
+    }
     const text = def ? this.registry.chooseAgent(menu.conversationId, def.id, menu.conversation) : 'That agent is no longer configured.';
     this.editAgentMenu(menu, text, []);
     // Then where it should work, as a typed `/agent <id>` asks — a pick from the menu is the same choice.
