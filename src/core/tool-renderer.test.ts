@@ -709,6 +709,38 @@ describe('new dedupe', () => {
 
     expect(sends).toEqual(['💻 Bash: "ls"', '↳ probe · 💻 Bash: "pwd"']);
   });
+
+  it('the first call a harness starts after /stop is not a repeat either: it is the news', async () => {
+    const { sink, sends, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'separate', mode: 'new' }), sink);
+
+    r.onToolStart(start('Bash', 'ls'));
+    r.onToolStart({ ...start('Bash', 'rm -rf build'), afterStop: true });
+    await flush();
+
+    expect(sends).toEqual(['💻 Bash: "ls"', '💻 Bash: "rm -rf build" · still running after /stop']);
+  });
+});
+
+/**
+ * A call the harness started after `/stop` (ToolEvent.afterStop) says so on its row — the stop's
+ * ack under the reply says "Stopped", and on 2026-11-13 a cbc turn went on for eleven minutes after
+ * one with nothing on screen.
+ */
+describe('tools started after /stop', () => {
+  it('carry the mark on their row, before the ✓, and the earlier rows do not', async () => {
+    const { sink, sends, edits, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+
+    r.onToolStart(start('Bash', './long-job.sh', 0));
+    await flush();
+    r.onToolStart({ ...start('Bash', './carry-on.sh', 1), afterStop: true });
+    r.onToolFinish(finish('Bash', true, 1200, 1));
+    await flush();
+
+    expect(sends).toHaveLength(1);
+    expect(edits.at(-1)!.text).toBe('💻 Bash: "./long-job.sh"\n💻 Bash: "./carry-on.sh" · still running after /stop ✓ 1.2s');
+  });
 });
 
 /**

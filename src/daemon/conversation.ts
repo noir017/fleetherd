@@ -119,7 +119,7 @@ import { join } from 'node:path';
 import { formatAgyCliOutput, runAgyCliCommand, runAgyCliFor } from './agy-cli.js';
 import { formatRuntimeFooter, formatTokens } from '../core/runtime-footer.js';
 import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
-import { InboundMerger, type SoloOutcome } from '../core/inbound-merger.js';
+import { InboundMerger, stopInputNote, type SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, type PersonWords, type TurnEnd, type TurnRunnerDeps } from './turn-runner.js';
@@ -261,11 +261,17 @@ type StopOutcome = 'running' | 'collecting' | 'background' | 'idle';
  */
 const STOP_ACK: Record<StopOutcome, string> = {
   running: '⏹ Stopped. The reply above is as far as it got — the conversation is kept, so just send the next message.',
-  collecting: '⏹ Dropped the message that was about to start a turn. Nothing reached the agent.',
+  collecting: '⏹ Stopped before the turn started. Nothing reached the agent.',
   background:
     '⏹ Stopped the background work. The update above is as far as it got — the conversation is kept, so just send the next message.',
   idle: 'Nothing is running here.',
 };
+
+/** A stop's ack with its note (stopInputNote) under it, when there is one. */
+function withInputNote(ack: string, kept: readonly InboundMessage[], dropped: readonly InboundMessage[]): string {
+  const note = stopInputNote(kept, dropped);
+  return note ? `${ack}\n${note}` : ack;
+}
 
 /**
  * `/stop` when the only thing waiting here was a question. Its own line because the outcomes above
@@ -275,6 +281,24 @@ const STOP_ACK_QUESTION = '⏹ Called off the question above. Nothing else was r
 
 /** `/stop` when the only thing here was a voice transcript waiting to be confirmed. */
 const STOP_ACK_VOICE = '⏹ Called off the voice transcript — nothing was sent. Nothing else was running.';
+
+/**
+ * What a stop did, and what became of the messages that never reached the agent — the merger's
+ * report (InboundMerger.interrupt) with `background` added, which the merger cannot see.
+ */
+export interface StopResult {
+  outcome: StopOutcome;
+  kept: InboundMessage[];
+  dropped: InboundMessage[];
+}
+
+/** The first line(s) of `/stop`'s answer: what was stopped, sub-agents included (`also`). */
+function stopHead(outcome: StopOutcome, calledOff: number, transcripts: number, also: string): string {
+  if (outcome === 'idle' && calledOff > 0) return also ? `${STOP_ACK_QUESTION}\n⏹ Stopped ${also}.` : STOP_ACK_QUESTION;
+  if (outcome === 'idle' && transcripts > 0) return also ? `${STOP_ACK_VOICE}\n⏹ Stopped ${also}.` : STOP_ACK_VOICE;
+  if (outcome === 'idle' && also) return `⏹ Stopped the ${also}. Their conversations are kept — a message in one carries on from it.`;
+  return also ? `${STOP_ACK[outcome]}\n⏹ Also stopped the ${also}.` : STOP_ACK[outcome];
+}
 
 /**
  * What `/kill` found. The first three are StopOutcome — the process was ended, and this is what
@@ -289,7 +313,7 @@ type KillOutcome = StopOutcome | 'no-child' | 'unresumable';
  */
 const KILL_ACK: Record<KillOutcome, string> = {
   running: '🔌 Stopped the turn and ended the agent process. The conversation is kept — the next message starts a new process that picks up where this one left off.',
-  collecting: '🔌 Dropped the message that was about to start a turn, and ended the agent process. The conversation is kept — the next message resumes it.',
+  collecting: '🔌 Stopped before the turn started, and ended the agent process. The conversation is kept — the next message resumes it.',
   background:
     '🔌 Stopped the background work and ended the agent process. The conversation is kept — the next message starts a new process that picks up where this one left off.',
   idle: '🔌 Ended the agent process. The conversation is kept — the next message starts a new one that picks up where it left off.',
@@ -1937,9 +1961,12 @@ export class ConversationRegistry {
       // being discarded, and its caller is blocked until somebody answers it. A transcript waiting
       // for its tap belongs to it too.
       this.callOffPending(key, 'context cleared');
+      // What a `/stop` kept was written for the context being discarded: going in with the first
+      // message of a fresh conversation, it would be answered with nothing it refers to.
+      const dropped = this.conversations.get(key)?.merger.dropKept() ?? [];
       this.resetConversation(key);
       console.log(`[conversation] ${key} context cleared by ${conv.platform}:${conv.user}`);
-      ack('context clear', 'Context cleared — the next message starts a fresh conversation.');
+      ack('context clear', withInputNote('Context cleared — the next message starts a fresh conversation.', [], dropped));
       // Then ask where that fresh conversation should happen. A reset is the one moment the
       // question costs nothing: there is no context to strand, and the previous topic's directory
       // is the least likely answer to still be right. Declined silently when there is nothing to
@@ -2051,36 +2078,38 @@ export class ConversationRegistry {
 
   /** stopAndReport for everything but side questions: the turn, questions, transcripts, sub-agents. */
   private stopTurnAndReport(key: ConversationId, conv: ConversationRef): string {
-    const { outcome, calledOff, transcripts } = this.stopWithPending(key, 'stopped');
+    const { outcome, calledOff, transcripts, kept, dropped } = this.stopWithPending(key, 'stopped');
     // A /super job's turn ends once it has handed the work out, so stopping "this" while its
     // sub-agents work used to stop nothing at all — and the person had to open each of them.
     const subs = this.hooks?.stopSubAgents?.(key) ?? 0;
-    console.log(`[conversation] ${key} /stop by ${conv.platform}:${conv.user} → ${outcome}${subs ? ` (+${subs} sub-agent(s))` : ''}`);
+    console.log(
+      `[conversation] ${key} /stop by ${conv.platform}:${conv.user} → ${outcome}${subs ? ` (+${subs} sub-agent(s))` : ''}` +
+        `${kept.length ? `, ${kept.length} message(s) kept` : ''}${dropped.length ? `, ${dropped.length} dropped` : ''}`
+    );
     const also = subs ? `${subs} sub-agent${subs === 1 ? '' : 's'} it started` : '';
-    if (outcome === 'idle' && calledOff > 0) return also ? `${STOP_ACK_QUESTION}\n⏹ Stopped ${also}.` : STOP_ACK_QUESTION;
-    if (outcome === 'idle' && transcripts > 0) return also ? `${STOP_ACK_VOICE}\n⏹ Stopped ${also}.` : STOP_ACK_VOICE;
-    if (outcome === 'idle' && also) return `⏹ Stopped the ${also}. Their conversations are kept — a message in one carries on from it.`;
-    return also ? `${STOP_ACK[outcome]}\n⏹ Also stopped the ${also}.` : STOP_ACK[outcome];
+    return withInputNote(stopHead(outcome, calledOff, transcripts, also), kept, dropped);
   }
 
   /**
    * What `/stop` does to a conversation, without saying so: the questions and transcripts waiting
    * there are called off, then the turn or background work is stopped. Public for the sub-agents a
    * `/stop` reaches from the topic that opened them (Delegation.stopOpened), which must leave no
-   * question live either.
+   * question live either. `kept` and `dropped` are the messages that never reached the agent
+   * (InboundMerger.interrupt); the caller says them (stopInputNote).
    */
-  stopWithPending(key: ConversationId, reason: string): { outcome: StopOutcome; calledOff: number; transcripts: number } {
+  stopWithPending(key: ConversationId, reason: string): StopResult & { calledOff: number; transcripts: number } {
     const calledOff = this.hooks?.cancelPendingAsks?.(key, reason) ?? 0;
-    // A transcript waiting for its tap is queued input like any other, and /stop drops the queue.
+    // A transcript waiting for its tap is called off too: nobody has approved those words yet, and
+    // the card says so — unlike a typed message, which is kept (see InboundMerger.interrupt).
     const transcripts = this.hooks?.cancelPendingVoice?.(key, reason) ?? 0;
-    return { outcome: this.stopConversation(key), calledOff, transcripts };
+    return { ...this.interruptConversation(key), calledOff, transcripts };
   }
 
   /** `/kill`: end the agent process here and say what that did (see killConversation). */
   private killAndReport(key: ConversationId, conv: ConversationRef): string {
-    const outcome = this.killConversation(key);
+    const { outcome, kept, dropped } = this.killWithInput(key);
     console.log(`[conversation] ${key} /kill by ${conv.platform}:${conv.user} → ${outcome}`);
-    return KILL_ACK[outcome];
+    return withInputNote(KILL_ACK[outcome], kept, dropped);
   }
 
   /**
@@ -4608,10 +4637,24 @@ ${formatTokens(left)} left before compaction — ${name}`;
   /**
    * Stop what a conversation is doing (`/stop`), and report what that was.
    *
-   * The narrow sibling of resetConversation: the running turn is cancelled and the queued backlog
-   * dropped, while the agent's context, its session ids, the binding and the child process are all
-   * left exactly as they are. Stopping a task and losing the conversation it belongs to are
-   * different asks, and until this existed only the second one had a command.
+   * The narrow sibling of resetConversation: the running turn is cancelled, while the agent's
+   * context, its session ids, the binding and the child process are all left exactly as they are.
+   * Stopping a task and losing the conversation it belongs to are different asks, and until this
+   * existed only the second one had a command.
+   *
+   * For a caller that does not answer the person itself (a parent agent's `task-stop`, a
+   * `task-send --interrupt`): what the stop kept or dropped is said here, in the conversation's own
+   * lane, because nobody else will say it (see interruptConversation for the callers that do).
+   */
+  stopConversation(id: ConversationId): StopOutcome {
+    const { outcome, kept, dropped } = this.interruptConversation(id);
+    this.sayInputNote(id, kept, dropped);
+    return outcome;
+  }
+
+  /**
+   * stopConversation without saying anything — for the callers that put what the stop kept or
+   * dropped into their own answer (`/stop`, `/kill`, a parent topic's `/stop`).
    *
    * No state means nothing has ever run here, so the answer is 'idle'. Deliberately NOT routed
    * through agents.getOrCreate: building a session handle for a conversation that has none, in the
@@ -4622,13 +4665,24 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * through `peek` for the same reason. Not the other way round: while a turn runs the harness's
    * output belongs to the turn, so there is no burst to stop and asking would only race the abort.
    */
-  stopConversation(id: ConversationId): StopOutcome {
+  interruptConversation(id: ConversationId): StopResult {
     this.outcomes.personActed(id);
     const state = this.conversations.get(id);
-    if (!state) return 'idle';
-    const outcome = state.merger.interrupt();
-    if (outcome !== 'idle') return outcome;
-    return this.agents.peek(id)?.stopBackground?.() ? 'background' : 'idle';
+    if (!state) return { outcome: 'idle', kept: [], dropped: [] };
+    const report = state.merger.interrupt();
+    if (report.outcome !== 'idle') return report;
+    return { ...report, outcome: this.agents.peek(id)?.stopBackground?.() ? 'background' : 'idle' };
+  }
+
+  /** Post a stop's note (stopInputNote) in the conversation's lane, when it has one to post. */
+  private sayInputNote(id: ConversationId, kept: readonly InboundMessage[], dropped: readonly InboundMessage[]): void {
+    const note = stopInputNote(kept, dropped);
+    const lane = this.laneOf(id);
+    if (!note || !lane) return;
+    void this.platforms
+      .get(lane.platformId)
+      ?.sendMessage(lane.address, note)
+      .catch((e) => console.warn('[conversation] failed to say what a stop kept:', e instanceof Error ? e.message : e));
   }
 
   /**
@@ -4652,18 +4706,26 @@ ${formatTokens(left)} left before compaction — ${name}`;
    *     reclaimAfterAskTimeout's reclaimOnIdle — a turn that never unwinds is the case this exists for.
    *
    * No session means nothing ever ran here; answered without agents.getOrCreate for the reason
-   * stopConversation gives.
+   * stopConversation gives. What the stop kept or dropped is said in the lane, as stopConversation
+   * does; `/kill` puts it in its own answer instead (killWithInput).
    */
   killConversation(id: ConversationId): KillOutcome {
+    const { outcome, kept, dropped } = this.killWithInput(id);
+    this.sayInputNote(id, kept, dropped);
+    return outcome;
+  }
+
+  /** killConversation without saying anything — `/kill` says it in its own answer. */
+  private killWithInput(id: ConversationId): { outcome: KillOutcome; kept: InboundMessage[]; dropped: InboundMessage[] } {
     const session = this.agents.peek(id);
     const reclaim = session?.reclaimState?.() ?? 'no-child';
-    if (!session || reclaim === 'no-child') return 'no-child';
-    if (reclaim === 'unresumable') return 'unresumable';
+    if (!session || reclaim === 'no-child') return { outcome: 'no-child', kept: [], dropped: [] };
+    if (reclaim === 'unresumable') return { outcome: 'unresumable', kept: [], dropped: [] };
     this.hooks?.cancelPendingAsks?.(id, 'agent process ended');
-    const outcome = this.stopConversation(id);
+    const stopped = this.interruptConversation(id);
     session.dispose();
     console.log(`[reclaim] ${id} ended by /kill — agent child stopped; the next message resumes it`);
-    return outcome;
+    return stopped;
   }
 
   /** Shutdown: stop the sweeper, release all mergers and agent sessions. */

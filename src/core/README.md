@@ -127,7 +127,13 @@ idle ──ingest──► collecting ──window elapsed──► running ─�
   (`interruptOnNewMessage`). It trips the turn's `AbortSignal`; `TurnRunner` reads it to finalize
   the partial reply cleanly — no footer, no ✅ (a user must not see a ✅ on a turn that never
   finished, including on a message that had joined it). The queued backlog, and any message still
-  being offered, is dropped.
+  being offered, is **kept**: not run as a turn of its own, not dropped, but put in front of the
+  next batch the person starts. `interrupt()` returns a `StopReport` naming what it kept and what it
+  dropped, and the caller says both in the chat (`stopInputNote`) — through 3.2.0 the backlog was
+  dropped without a word, and a correction typed into a turn that went on after a stop was lost that way.
+  A message that arrives after the stop, while the turn unwinds (`stopping`), is not offered to the
+  dying turn; it starts the next one as soon as it ends. A `/stop` mid merge window drops the batch;
+  a `/stop` with nothing running drops what an earlier one kept. `dropKept()` is `/new`'s.
 - **Lifecycle reactions**: 👀 received, ✅ done, ❌ error, gated by `reactionsEnabled`
   (`display.reactions.enabled`) independently of the emoji themselves, which stay
   frozen.
@@ -139,7 +145,8 @@ idle ──ingest──► collecting ──window elapsed──► running ─�
   own queued messages (a person waiting outranks a clock), gets no reactions, and resolves with
   how its turn ended. A message typed while it runs is offered to it like to any turn: the person
   is there, the schedule is not. `/stop` stops a running solo turn but keeps queued ones, since the
-  backlog it drops is what the user typed.
+  backlog it keeps is what the user typed — and what it kept is never handed to a solo turn, only to
+  the person's next batch.
 
 ## `schedule.ts` and `schedule-menu.ts`
 

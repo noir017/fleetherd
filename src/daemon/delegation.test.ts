@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
-import type { AgentStatus, TopicActivity } from '../types.js';
+import type { AgentStatus, InboundMessage, TopicActivity } from '../types.js';
 import type {
   ListChannelsResult,
   TaskActionResult,
@@ -214,9 +214,13 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
       calls.push(['stop', k]);
       return busy.has(k) ? ('running' as const) : ('idle' as const);
     },
+    interruptConversation: (k: string) => {
+      calls.push(['stop', k]);
+      return { outcome: busy.has(k) ? ('running' as const) : ('idle' as const), kept: [] as InboundMessage[], dropped: [] as InboundMessage[] };
+    },
     stopWithPending: (k: string) => {
       calls.push(['stop', k]);
-      return { outcome: busy.has(k) ? ('running' as const) : ('idle' as const), calledOff: 0, transcripts: 0 };
+      return { outcome: busy.has(k) ? ('running' as const) : ('idle' as const), calledOff: 0, transcripts: 0, kept: [], dropped: [] };
     },
     killConversation: (k: string) => {
       calls.push(['kill', k]);
@@ -1264,6 +1268,19 @@ describe('Delegation: seeing what a sub-agent is doing', () => {
     expect(r.calls).toContainEqual(['stop', KEY]);
     expect(r.calls.find(([c]) => c === 'handTo')![1]).toMatchObject({ queue: true });
     expect(res.result).toMatch(/^Stopped the turn it was running\./);
+  });
+
+  it('task-stop says in the topic what the stop kept, and tells the agent', async () => {
+    const r = await withChild();
+    const kept = { conversation: { platform: 'web', channel: 'main', kind: 'direct' as const, user: 'u' }, messageId: 'q', content: 'plan first', timestamp: 0 };
+    r.registry.interruptConversation = () => ({ outcome: 'running' as const, kept: [kept], dropped: [] });
+    const res = (await r.d.handle(P, { kind: 'task-stop', topic: 'c1000000' })) as TaskActionResult;
+    expect(r.posted.find((p) => p.to === KEY)?.text).toBe(
+      '⏹ Stopped by the agent in [Release](?t=aaaaaaaa).\n' +
+        'Kept this message for your next one — the agent has not seen it yet, and it goes in with whatever you send next. `/stop` again drops it:\n' +
+        '> plan first'
+    );
+    expect(res.result).toMatch(/1 message\(s\) sent there while it ran never reached it; they are kept/);
   });
 
   it('--interrupt with nothing running is an ordinary send', async () => {

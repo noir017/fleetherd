@@ -11,7 +11,8 @@ import { addressOf } from './conversation.js';
  *   cannot take waits in a queue (keeps the latest batch, never drops) and starts as a fresh batch
  *   after the turn ends.
  * - `interrupt()` is the only way to cut a turn short: a user who typed `/stop` gets the turn
- *   cancelled and the backlog dropped.
+ *   cancelled, and what was waiting behind it is KEPT, not run: it goes in with their next message
+ *   (see interrupt for why neither running nor dropping it is right).
  * - Lifecycle reactions: received 👀 / done ✅ / error ❌.
  *
  * ── Why a new message no longer interrupts ──────────────────────────────────────────────────────
@@ -72,10 +73,83 @@ function refOf(msg: InboundMessage): MessageRef {
 /** How a solo turn (enqueueSolo) ended. */
 export type SoloOutcome = 'ok' | 'failed' | 'interrupted';
 
+/**
+ * What `/stop` did (interrupt): what was running, and what became of the messages that had not
+ * reached the agent. Both lists are in arrival order, and the caller says them in the chat — a stop
+ * that keeps or drops someone's words without saying so is how one went missing (see interrupt).
+ */
+export interface StopReport {
+  outcome: 'running' | 'collecting' | 'idle';
+  /** Waiting for the person's next message, which they will go in with. */
+  kept: InboundMessage[];
+  /** Thrown away by this stop. */
+  dropped: InboundMessage[];
+}
+
+/** Longest a message is quoted in a stop's note (stopInputNote); the person wrote it, so a glance is enough. */
+const STOP_QUOTE_CHARS = 120;
+/** Most messages a stop's note quotes; the rest are counted. */
+const STOP_QUOTE_MAX = 5;
+
+/**
+ * What a stop says in the chat about the messages that never reached the agent (StopReport): the
+ * ones it kept for the person's next message, and the ones it dropped — each quoted, so the person
+ * can tell which words they are without scrolling up. Empty when there were none.
+ *
+ * Said, never left implicit: through 3.2.0 `/stop` dropped the queue without a word, and a correction
+ * typed into a turn that went on after a stop was lost that way (2026-11-13; see interrupt).
+ */
+export function stopInputNote(kept: readonly InboundMessage[], dropped: readonly InboundMessage[]): string {
+  const these = (n: number): string => (n === 1 ? 'this message' : `these ${n} messages`);
+  const it = (n: number): string => (n === 1 ? 'it' : 'them');
+  const lines: string[] = [];
+  if (dropped.length > 0) {
+    lines.push(`Dropped ${these(dropped.length)} — the agent never saw ${it(dropped.length)}:`, ...quoteMessages(dropped));
+  }
+  if (kept.length > 0) {
+    lines.push(
+      `Kept ${these(kept.length)} for your next one — the agent has not seen ${it(kept.length)} yet, and ` +
+        `${kept.length === 1 ? 'it goes' : 'they go'} in with whatever you send next. \`/stop\` again drops ${it(kept.length)}:`,
+      ...quoteMessages(kept)
+    );
+  }
+  return lines.join('\n');
+}
+
+/** One `> …` line per message, cut to a glance; attachments counted, since a quote cannot show them. */
+function quoteMessages(msgs: readonly InboundMessage[]): string[] {
+  const lines = msgs.slice(0, STOP_QUOTE_MAX).map((m) => {
+    const flat = m.content.replace(/\s+/g, ' ').trim();
+    const text = flat.length > STOP_QUOTE_CHARS ? `${flat.slice(0, STOP_QUOTE_CHARS - 1)}…` : flat;
+    const files = m.attachments?.length ?? 0;
+    const extra = files > 0 ? `[${files} attachment${files === 1 ? '' : 's'}]` : '';
+    return `> ${[text, extra].filter(Boolean).join(' ') || '(empty)'}`;
+  });
+  if (msgs.length > STOP_QUOTE_MAX) lines.push(`> … and ${msgs.length - STOP_QUOTE_MAX} more`);
+  return lines;
+}
+
 export class InboundMerger {
   private phase: Phase = 'idle';
   private buffer: InboundMessage[] = [];      // batch being collected
   private queued: InboundMessage[] = [];      // arrived mid-turn and the turn could not take them: they start the next one
+  /**
+   * What a `/stop` kept (see interrupt): messages that never reached the agent, waiting to go in
+   * FRONT of the next batch the person starts. Not a turn of their own — only a person's next message
+   * starts one — and not given to a solo turn, which is never merged with anything.
+   */
+  private held: InboundMessage[] = [];
+  /**
+   * Between a `/stop` and the end of the turn it stopped. A message arriving then is not offered to
+   * that turn — the harness is unwinding, and one that takes a message and then drops it with the
+   * cancel loses it — but waits, and starts the next turn the moment the stopped one ends.
+   */
+  private stopping = false;
+  /**
+   * Messages on the offer chain, not yet decided (see offers). Listed by a `/stop` as kept: one that
+   * lands while they are being offered keeps them whatever the agent answers (see decideOffer).
+   */
+  private offeringMsgs: InboundMessage[] = [];
   /**
    * Turns that must run ALONE and must not cut anything short (enqueueSolo): each is one message,
    * never merged into a batch, started only when nothing else is running or collecting.
@@ -101,8 +175,9 @@ export class InboundMerger {
   /** How many offers are still on that chain; the merger is not idle while one is (see isIdle). */
   private offering = 0;
   /**
-   * Counts `/stop`s. An offer still on the chain when one lands belongs to the backlog it dropped, so
-   * each offer remembers the count it was made under and goes nowhere if that has changed.
+   * Counts `/stop`s. An offer still on the chain when one lands belongs to the backlog it kept, so
+   * each offer remembers the count it was made under and is kept rather than offered if that has
+   * changed.
    */
   private stops = 0;
 
@@ -131,38 +206,69 @@ export class InboundMerger {
 
   /**
    * Explicit user interrupt (`/stop`): stop whatever this conversation is doing, and report what
-   * that was so the caller can say something true rather than a generic ack.
+   * that was — and what became of the messages that had not reached the agent — so the caller can
+   * say something true rather than a generic ack.
    *
    * The only way a turn is cut short: a message that arrives mid-turn is offered to it or queued
    * behind it, never allowed to cancel it (see the note at the top of this file).
    *
-   * The queued backlog is DROPPED rather than run next — and so is anything still being offered to
-   * the turn. Those messages were written for the turn being stopped, and "stop, then immediately
-   * start the thing I queued behind it" is not what stop means. Anything still wanted can be sent
-   * again. A message that already JOINED the turn goes down with it: the agent had it, and the cancel
-   * reaches everything the agent was doing.
+   * ── What happens to the backlog ─────────────────────────────────────────────────────────────────
+   * Running: the messages queued behind the turn — and any still being offered to it — are KEPT.
+   * They do not start a turn of their own ("stop, then immediately start what I queued behind it" is
+   * not what stop means), and they are not dropped either: they go in front of the person's next
+   * message. Through 3.2.0 they were dropped, unannounced, and on 2026-11-13 that lost a correction:
+   * a cbc turn ran on for eleven minutes after `/stop` (it never got the cancel — see agent-acp.ts
+   * stoppedWhileStarting), the person typed "give me a plan first" into it, a second `/stop` threw
+   * that away, and the agent went back to the original job for another 88 minutes. Kept and announced, it is the person's to send (anything they type next) or to
+   * drop (`/stop` again).
+   *
+   * A message that already JOINED the turn goes down with it: the agent had it, and the cancel reaches
+   * everything the agent was doing. One that arrives after this, while the turn unwinds, is not
+   * offered to it (see `stopping`) and starts the next turn when this one ends — it was written after
+   * the stop, so it is the next thing, not part of what was stopped.
+   *
+   * Collecting: the batch inside its merge window never reached the agent, and stopping it is the
+   * way to take back what was just typed — dropped, and reported. What an earlier stop kept stays kept.
+   *
+   * Idle: what an earlier stop kept is all there is, and a second `/stop` is how it is let go.
    */
-  interrupt(): 'running' | 'collecting' | 'idle' {
+  interrupt(): StopReport {
     if (this.phase === 'running') {
       this.interrupted = true; // dispatch then skips ✅: the turn did not finish, it was stopped
+      this.held.push(...this.queued);
       this.queued = [];
       this.stops++;
+      this.stopping = true;
       // Both halves: trip the turn's signal (the runner finalizes the partial reply cleanly — no
       // footer) *and* cancel the agent itself.
       this.activeAbort?.abort();
       this.deps.abortTurn?.();
-      return 'running';
+      // The offers still on the chain land in `held` as they are decided (decideOffer), after these.
+      return { outcome: 'running', kept: [...this.held, ...this.offeringMsgs], dropped: [] };
     }
     if (this.phase === 'collecting') {
       // Still inside the merge window: nothing has reached the agent, so cancelling the timer and
       // dropping the buffer is the entire job — there is no turn to abort.
       this.collectTimer?.();
       this.collectTimer = null;
+      const dropped = this.buffer;
       this.buffer = [];
       this.toIdle();
-      return 'collecting';
+      return { outcome: 'collecting', kept: [...this.held], dropped };
     }
-    return 'idle';
+    const dropped = this.held;
+    this.held = [];
+    return { outcome: 'idle', kept: [], dropped };
+  }
+
+  /**
+   * Let go of what a `/stop` kept, and say what it was — for `/new`, after which the next message
+   * starts a fresh conversation the kept words were not written for.
+   */
+  dropKept(): InboundMessage[] {
+    const dropped = this.held;
+    this.held = [];
+    return dropped;
   }
 
   /**
@@ -182,7 +288,7 @@ export class InboundMerger {
    * scheduled turn to itself.
    *
    * `/stop` (interrupt()) stops a running solo turn but leaves queued solo turns queued: the backlog
-   * it drops is what the user typed for the turn being stopped, and a scheduled run is not that.
+   * it keeps is what the user typed for the turn being stopped, and a scheduled run is not that.
    *
    * Several messages are one turn, as they were the first time: a failed turn sent again from its
    * Retry button (daemon/failed-input.ts) is the batch it was, not one turn per message.
@@ -232,6 +338,7 @@ export class InboundMerger {
   private offer(msg: InboundMessage): void {
     const stops = this.stops;
     this.offering++;
+    this.offeringMsgs.push(msg);
     this.offers = this.offers
       .then(() => this.decideOffer(msg, stops))
       .catch((e) =>
@@ -241,14 +348,21 @@ export class InboundMerger {
       )
       .finally(() => {
         this.offering--;
+        const i = this.offeringMsgs.indexOf(msg);
+        if (i >= 0) this.offeringMsgs.splice(i, 1);
       });
   }
 
   private async decideOffer(msg: InboundMessage, stops: number): Promise<void> {
-    if (stops !== this.stops) return; // a `/stop` since it arrived dropped it with the rest of the backlog
+    // A `/stop` since it arrived kept it with the rest of the backlog (see interrupt).
+    if (stops !== this.stops) {
+      this.held.push(msg);
+      return;
+    }
     // Straight into the turn only while nothing is queued ahead of it: a message the turn refused is
-    // waiting for the turn to end, and one typed after it must not overtake it.
-    if (this.phase === 'running' && this.queued.length === 0 && this.deps.steer) {
+    // waiting for the turn to end, and one typed after it must not overtake it. Nor into a turn that
+    // is being stopped (see `stopping`).
+    if (this.phase === 'running' && !this.stopping && this.queued.length === 0 && this.deps.steer) {
       let outcome: SteerOutcome = 'refused';
       try {
         outcome = await this.deps.steer([msg]);
@@ -256,9 +370,15 @@ export class InboundMerger {
         // Treated as refused: the message is still ours, and the queue is a correct place for it.
         console.warn('[dispatch] offering a message to the running turn failed; queueing it instead:', e instanceof Error ? e.message : e);
       }
-      // Taken or not, a `/stop` while it was being offered settles it: if the agent has it, the
-      // cancel reaches it; if not, it belonged to the dropped backlog.
-      if (stops !== this.stops) return;
+      // Taken or not, a `/stop` while it was being offered keeps it: if the agent did not take it, it
+      // belonged to the backlog that stop kept; if it did, the cancel took it down with the turn (a
+      // steered message dies with the interrupted turn in codex, and claude's is ended with the child
+      // — see agent-acp.ts endChildAfterStop), so it was never answered. The stop's report already
+      // listed it as kept.
+      if (stops !== this.stops) {
+        this.held.push(msg);
+        return;
+      }
       if (outcome !== 'refused') {
         console.log(`[dispatch] a message that arrived mid-turn was taken by the agent (${outcome})`);
         // Marked with the turn it joined. Normally that turn is still running — a turn waits for
@@ -287,16 +407,20 @@ export class InboundMerger {
     else this.collect(msg);
   }
 
-  /** Merge window elapsed: hand the batch to the agent. */
+  /** Merge window elapsed: hand the batch to the agent, behind whatever a `/stop` kept. */
   private async dispatch(): Promise<void> {
     this.collectTimer = null;
     if (this.buffer.length === 0) {
       this.toIdle();
       return;
     }
-    console.log(`[dispatch] triggered, ${this.buffer.length} message(s) into this turn`);
-    const batch = this.buffer;
+    // Kept messages go first: they were sent first, and the stop that kept them said they would go
+    // in with the next message.
+    const batch = [...this.held, ...this.buffer];
+    if (this.held.length > 0) console.log(`[dispatch] ${this.held.length} message(s) kept by /stop go in with this batch`);
+    this.held = [];
     this.buffer = [];
+    console.log(`[dispatch] triggered, ${batch.length} message(s) into this turn`);
     await this.runBatch(batch);
     await this.drainQueue();
   }
@@ -338,6 +462,7 @@ export class InboundMerger {
       return 'failed';
     } finally {
       this.activeAbort = null;
+      this.stopping = false;
     }
   }
 

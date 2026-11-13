@@ -760,13 +760,19 @@ export class TurnRunner {
     this.reportPersonWords(conversationId, own, turnSeq);
     // Exactly one end per start, whichever way out the turn takes (see TurnRunnerDeps.recordTurnEnd).
     let end: TurnEnd = { kind: 'stopped' };
+    const stopped = (): boolean => signal?.aborted === true;
 
     try {
-      await agent.runTurn(
-        { prompt, ...(images.length > 0 ? { images } : {}), sessionToken, model: this.deps.getModelOverride(conversationId) },
-        turnHandlers(batch, render.handlers)
-      );
-      if (signal?.aborted) {
+      // Stopped before the agent was even asked — `/stop` landed while the lane was resolved or the
+      // prompt built (attachments are downloaded there). The abort found no turn in the runtime to
+      // cancel, and starting one now would run what the person just stopped.
+      if (!stopped()) {
+        await agent.runTurn(
+          { prompt, ...(images.length > 0 ? { images } : {}), sessionToken, model: this.deps.getModelOverride(conversationId) },
+          turnHandlers(batch, render.handlers)
+        );
+      }
+      if (stopped()) {
         // Stopped (`/stop`): finalize the partial reply cleanly — drop the streaming reply with no
         // footer (it didn't finish), and skip the command fallback.
         //

@@ -144,6 +144,12 @@ describe('ConversationRegistry /kill', () => {
     // The regression this guards: disposing without interrupting the merger lets the turn "finish"
     // and the queue start a second one, which spawns a fresh child a moment after the ack.
     expect(r.turns()).toBe(1);
+    // Kept rather than dropped, and the ack says so (InboundMerger.interrupt).
+    expect(r.sent.at(-1)).toMatch(/^🔌 Stopped the turn and ended the agent process\..*\nKept this message for your next one .*\n> and then this$/s);
+
+    r.reg.route(inbound('go on', 'm4'));
+    await drain();
+    expect(r.turns()).toBe(2);
   });
 
   it('idle with a resident child: ends it without an abort', async () => {

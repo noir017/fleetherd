@@ -50,6 +50,9 @@ import { MessageNotEditableError, retryAfterMsOf } from './outbound-errors.js';
  * buffer, emits the tool bubble, then starts a fresh body buffer.
  */
 
+/** What a row says after its call when the harness started that call after `/stop` (ToolEvent.afterStop). */
+export const AFTER_STOP_MARK = ' · still running after /stop';
+
 /** Retry interval used after a failure that named no wait of its own. */
 const DEFAULT_RETRY_INTERVAL_MS = 1_200;
 /** Ceiling on the exponential retry backoff. */
@@ -242,13 +245,7 @@ export class ToolRenderer {
     // lost; either way it is not this segment's business.
     if (this.closeAtRev !== null) this.rotate();
 
-    const emoji = this.opts.emojiMap[evt.name] ?? this.opts.defaultEmoji;
-    const preview = this.truncate(evt.inputPreview, this.opts.previewLimit);
-    // No quoted preview when it only repeats the name: harnesses that title a call with the tool's
-    // own name (`Bash`, `ToolSearch`) fall back to that title before the parameters stream, and
-    // `💻 Bash: "Bash"` is a row that says one thing twice.
-    const body =
-      preview && preview !== evt.name ? `${emoji} ${evt.name}: "${preview}"` : `${emoji} ${evt.name}`;
+    const body = this.rowBody(evt);
     const json =
       this.opts.mode === 'verbose' && evt.input !== undefined
         ? '```json\n' + safeJson(evt.input) + '\n```'
@@ -257,9 +254,7 @@ export class ToolRenderer {
     // An update to a call that is already on screen: rewrite its row, do not add a second one.
     if (this.rewriteKnownRow(evt, body, json)) return;
 
-    // A subagent's Bash right after the main agent's is a different call, not a repeat, so the
-    // owner is part of what `new` compares.
-    const dedupeKey = evt.agent === undefined ? evt.name : `${evt.agent}\u0000${evt.name}`;
+    const dedupeKey = dedupeKeyOf(evt);
     if (this.opts.mode === 'new' && dedupeKey === this.lastToolKey) {
       return; // dedupe consecutive same-name (applies under both groupings)
     }
@@ -287,6 +282,19 @@ export class ToolRenderer {
     // accumulate: add the tool to the line set and re-render the whole bubble.
     this.lines.push({ index: evt.index, name: evt.name, agent: evt.agent, body, json });
     this.touch();
+  }
+
+  /** A call's row, without its owner prefix or its ✓/✗. */
+  private rowBody(evt: ToolEvent): string {
+    const emoji = this.opts.emojiMap[evt.name] ?? this.opts.defaultEmoji;
+    const preview = this.truncate(evt.inputPreview, this.opts.previewLimit);
+    // No quoted preview when it only repeats the name: harnesses that title a call with the tool's
+    // own name (`Bash`, `ToolSearch`) fall back to that title before the parameters stream, and
+    // `💻 Bash: "Bash"` is a row that says one thing twice.
+    const call = preview && preview !== evt.name ? `${emoji} ${evt.name}: "${preview}"` : `${emoji} ${evt.name}`;
+    // A call the harness started after `/stop` (the cancel had not reached it, or it had not acted on
+    // it yet): the stop's ack under the reply says "Stopped", so a row appearing anyway has to say why.
+    return evt.afterStop ? `${call}${AFTER_STOP_MARK}` : call;
   }
 
   /**
@@ -720,6 +728,15 @@ export class ToolRenderer {
     if (agent === above) return '↳ ';
     return `↳ ${this.truncate(agent, AGENT_LABEL_LIMIT)} · `;
   }
+}
+
+/**
+ * What `new` mode compares the next call against. A subagent's Bash right after the main agent's is
+ * a different call, not a repeat, so the owner is part of it; nor is the first call after a `/stop` a
+ * repeat of the one before it — it is the news.
+ */
+function dedupeKeyOf(evt: ToolEvent): string {
+  return `${evt.agent ?? ''}\u0000${evt.name}${evt.afterStop ? '\u0000after-stop' : ''}`;
 }
 
 /** Duration formatting: <1000ms → "832ms"; otherwise "1.2s" (one decimal). */
