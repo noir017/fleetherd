@@ -29,8 +29,7 @@ import type { QuotaPool } from '../types.js';
  *
  * This is the model's window, not where agy compacts — and the footer is about compaction. It is
  * used only for a model whose window was measured but whose compaction point was not; a model in
- * neither table gets nothing, because a guessed denominator would draw a confident percentage out
- * of nothing.
+ * neither table gets nothing.
  */
 const CONTEXT_WINDOWS: ReadonlyArray<{ match: RegExp; size: number }> = [
   { match: /^gemini[ -]3\.8[ -]flash/i, size: 1_048_576 },
