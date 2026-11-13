@@ -34,8 +34,11 @@ in parallel, and come back with one report — so you follow one topic instead o
    CPU-seconds and a few hundred MB before it answers, so a large card started together used to
    time out every part. The first message in each says which topic it came from.
 4. When a sub-agent finishes, fails or asks something, the agent that started it is told. A folded
-   🔔 line in its topic shows exactly what it was told. The notice quotes what the sub-agent said
-   in full when it fits the card's budget — the reply, the question or the error, line breaks kept —
+   🔔 line in its topic shows exactly what it was told. A topic whose turn ended normally is marked
+   `turn ended`, not finished: a sub-agent can end its turn while a command it started is still
+   running in the background, and its reply is where that is said. The notice quotes what the
+   sub-agent said in full when it fits the card's budget — the reply, the question or the error,
+   line breaks kept —
    so the agent can act on the conclusion without opening the topic. A cut adds one line with the
    text's full length and where the rest is: the card names the turn it quoted, and `task-read
    <topic> --turn <n>` reads that turn back — its reply with `--full`, a failed turn's whole error
@@ -80,6 +83,12 @@ When a sub-agent is going the wrong way, `task-send --interrupt` stops the turn 
 sends the correction as the next one. Its conversation is kept: it carries on with the context it
 already had. Without `--interrupt`, a message reaches a running turn only on harnesses that take
 input mid-turn; elsewhere it waits for the turn to end, and the agent is told which happened.
+
+A review verdict reaches the agent that must act on it without being retyped: `task-send <topic>
+--forward <review topic> "<what to fix>"` attaches the review topic's last normally-ended reply
+whole, under a heading that names the topic and its turn. Both topics must be ones that
+conversation opened. In the target topic the reply is shown as a folded **Sub-agent report** bubble
+(one row per line, tap to open); the agent receives it whole.
 
 ## In the sidebar
 

@@ -853,6 +853,10 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   re-applies it later — unlike a scheduled run's, which is applied per run and never written.
   Start opens each part with `ConversationRegistry.openTask` (`createThread` with `under`), whose
   `handTo` shows the text under a `↳ From [parent]` header and ingests it with `DELEGATE_SENDER`.
+  `task-send --forward <topic>` resolves that topic through `child` too, reads its last
+  normally-ended reply (the turn `task-read --reply` answers with), posts it first as a `report`
+  bubble — line-based, so the page folds it — and appends it, under a heading naming the topic and
+  turn, to what the agent reads. Both topics must be ones this conversation opened.
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).
 - Updates come back through `childChanged` — TurnOutcomes' `onNeedsPerson`, and a sub-agent's ask —
   for turns the parent is owed (`owed`, in memory): one it handed out (task-new, task-send), or one

@@ -375,7 +375,7 @@ export class Delegation {
       case 'task-new':
         return this.propose(here, action);
       case 'task-send':
-        return this.send(here, action.topic, action.text, action.interrupt === true);
+        return this.send(here, action.topic, action.text, action.interrupt === true, action.forward);
       case 'task-read':
         return this.read(here, action);
       case 'task-status':
@@ -409,7 +409,8 @@ export class Delegation {
         here: (def.host ?? '') === mine,
         model: def.model ?? '',
         root: choices?.root ?? '',
-        // Names, not paths: task-new takes a name inside the root, and two dozen of them is plenty.
+        // Short names for the column; `task-new --cwd` takes one of these or an absolute path
+        // (a worktree the coordinator made), which this list cannot know about.
         dirs: (choices?.dirs ?? []).slice(0, 24).map((d) => d.split('/').pop() ?? d),
       };
     });
@@ -755,8 +756,17 @@ export class Delegation {
     return lines.join('\n');
   }
 
-  private async send(here: Place, topic: string, text: string, interrupt: boolean): Promise<TaskActionResult> {
+  private async send(
+    here: Place,
+    topic: string,
+    text: string,
+    interrupt: boolean,
+    forward?: string
+  ): Promise<TaskActionResult> {
     const c = this.child(here, topic);
+    // Resolved before anything is sent: a source topic with nothing to forward must leave the
+    // target as it was, not with a message whose attachment is missing.
+    const attached = forward === undefined ? undefined : this.forwardOf(here, forward);
     const header = this.headerOf(here);
     // Stop first, and queue the message behind the stop: the dying turn must not be offered it
     // (InboundMerger.queueBehind). `idle` means there was nothing to stop, and the send is ordinary.
@@ -767,10 +777,47 @@ export class Delegation {
       c.address,
       text,
       header,
-      interrupt ? { queue: true } : {}
+      { ...(interrupt ? { queue: true } : {}), ...(attached ? { forward: attached } : {}) }
     );
     this.owed.add(c.key);
-    return { topic, result: sendResult(how, stopped) };
+    const result = sendResult(how, stopped);
+    return { topic, result: attached ? `${result} ${attached.note}` : result };
+  }
+
+  /**
+   * What `task-send --forward` attaches: the last reply a topic's turn ended normally on, whole.
+   *
+   * The turn is chosen by `replyOfTurn`, the same one `task-read --reply` answers with, so the two
+   * cannot disagree about which reply "the last" is — including after `/new` in the source topic,
+   * where a reply from before the reset is not the one to carry.
+   *
+   * Both topics go through `child()`, so a source this conversation did not open is refused with
+   * the same sentence as a target it did not open (security invariant 6).
+   */
+  private forwardOf(here: Place, topic: string): { heading: string; text: string; note: string } {
+    const c = this.child(here, topic);
+    const history = this.deps.history;
+    if (!history) {
+      throw new Error('the conversation library is unavailable, and --forward reads it; `task-status` shows the live turn');
+    }
+    // A topic with no session row yet would otherwise throw the library's own "no conversation",
+    // which reads like a wrong topic id rather than a topic that has not run (as `read` guards).
+    if (!history.sessionOf(c.key)) throw new Error(`nothing to forward from "${topic}": no turn has run there yet`);
+    const got = this.replyOfTurn(c, topic, history);
+    if (!got.reply) {
+      throw new Error(
+        `nothing to forward from "${topic}": no turn there has ended normally in the current generation yet — \`task-read ${topic} --reply\` says why`
+      );
+    }
+    const title = subjectOf(this.titleOf(c.key, c));
+    const id = `${c.platformId}:${c.address.channel}${c.address.thread ? `/${c.address.thread}` : ''}`;
+    // Plain text, not markdown: the topic shows this as a report bubble, which is rendered one
+    // escaped line per row so it can fold — asterisks and links would arrive as themselves.
+    return {
+      heading: `↳ Forwarded from "${title}" · ${id} · turn ${got.reply.turn}`,
+      text: got.reply.text,
+      note: `Forwarded "${title}" (turn ${got.reply.turn}) with it.`,
+    };
   }
 
   /**
@@ -1277,14 +1324,16 @@ export class Delegation {
     return lines;
   }
 
-  /** "2 of 3 sub-agents have finished; 1 is still working." — so the agent knows whether to wait. */
+  /** "2 of 3 sub-agents have ended their turn; 1 is still working." — so the agent knows whether to wait. */
   private tally(here: Place): string {
     const stages = this.childrenOf(here).map((c) => this.stageOf(c));
     const busy = stages.filter((s) => s === 'working' || s === 'retrying').length;
     const asking = stages.filter((s) => s === 'answer').length;
     const done = stages.length - busy - asking;
     return (
-      `${done} of ${stages.length} sub-agent${stages.length === 1 ? ' has' : 's have'} finished or stopped` +
+      `${done} of ${stages.length} sub-agent${stages.length === 1 ? ' has' : 's have'} ended ${
+        stages.length === 1 ? 'its' : 'their'
+      } turn or stopped` +
       (busy ? `; ${busy} still working` : '') +
       (asking ? `; ${asking} waiting on a question for the person` : '') +
       '.'
@@ -1619,7 +1668,10 @@ function describeStage(stage: TopicStage): string {
     case 'failed':
       return 'failed';
     case 'review':
-      return 'finished';
+      // Its turn ended normally — that is all the gateway knows. "finished" claimed the job was
+      // done, and a reply that says it is waiting for a background command is exactly the case
+      // where the parent read that as done and stopped waiting (2026-11-07, three times).
+      return 'turn ended';
     case 'retrying':
       return 'failed, continuing automatically';
     case 'working':
