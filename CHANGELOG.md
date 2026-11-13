@@ -18,12 +18,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- **A release refuses a CHANGELOG that still carries conflict markers.** `CHANGELOG.md` now has
-  `merge=union`, so two branches that both add entries under `## [Unreleased]` no longer stop the
-  merge: 19 of the 72 merges in the week to 2026-11-13 conflicted there, and once a failed
-  resolution script pushed a `<<<<<<<` line to main. Union can leave two `### Added` headings, so
-  `npm run release` folds same-named subsections into one before stamping the version — and it
-  refuses to run at all while a marker is still in the file.
+- **A release refuses a CHANGELOG that still carries conflict markers.** 19 of the 72 merges in
+  the week to 2026-11-13 conflicted in `CHANGELOG.md`, and once a failed resolution script let
+  later commands run and pushed a `<<<<<<<` line to main. `npm run release` now stops before
+  stamping while a marker is still in the file, and folds a repeated `### Added`-style subsection
+  into one when a merge left two.
 
 ## [3.2.0] - 2026-11-13
 

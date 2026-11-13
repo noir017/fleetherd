@@ -1,14 +1,14 @@
 /**
  * What `npm run release` does to CHANGELOG.md before it stamps a version.
  *
- * `.gitattributes` gives CHANGELOG.md `merge=union`, so merging branches that each added entries
- * keeps both sides. The cost is a repeated subsection heading under `## [Unreleased]` — "### Added"
- * from this branch, "### Added" from that one — and Keep a Changelog wants one. Folding them at
- * release time keeps the union merge from leaking into a published section.
+ * Two guards for the file that causes the most merge trouble. A release refuses to run while a
+ * conflict marker is still in it, and it folds a repeated subsection heading under
+ * `## [Unreleased]` into one — the shape a merge of two branches that both added entries tends to
+ * leave behind, and one Keep a Changelog does not want in a published section.
  *
- * The other half is refusing to release a file that still carries a conflict marker. On 2026-11-11
- * a conflict-resolution script failed, later commands ran anyway, and a CHANGELOG with `<<<<<<<`
- * in it reached main. The release is the last gate before such a file becomes a tag.
+ * The incident behind the marker check: on 2026-11-11 a conflict-resolution script failed, later
+ * commands ran anyway, and a CHANGELOG with `<<<<<<<` in it reached main. The release is the last
+ * gate before such a file becomes a tag.
  */
 
 /** Lines only a merge conflict produces: `<<<<<<<`, `=======`, `>>>>>>>` at the start of a line. */
@@ -20,21 +20,36 @@ export function conflictMarkers(text) {
  * Fold duplicate `### <name>` subsections in one body into the first of each name: same order as
  * first appearance, contents concatenated with one blank line between them. Text before the first
  * `###` is left alone, and a body with no duplicates is returned byte for byte.
+ *
+ * A `###` inside a fenced code block is content, not a heading — an entry that quotes markdown
+ * must not be split or merged by it.
  */
 export function mergeSubsections(body, eol = '\n') {
   const lines = body.split(eol);
   const preamble = [];
   const sections = [];
   let current = null;
+  let fence = null;
+  const put = (line) => (current ? current.lines : preamble).push(line);
   for (const line of lines) {
+    if (fence) {
+      put(line);
+      const close = /^\s*(`{3,}|~{3,})\s*$/.exec(line);
+      if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
+      continue;
+    }
+    const open = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (open) {
+      fence = { char: open[1][0], length: open[1].length };
+      put(line);
+      continue;
+    }
     const heading = /^### (.+?)\s*$/.exec(line);
     if (heading) {
       current = { heading: heading[1], lines: [] };
       sections.push(current);
-    } else if (current) {
-      current.lines.push(line);
     } else {
-      preamble.push(line);
+      put(line);
     }
   }
 

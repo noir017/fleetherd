@@ -25,7 +25,11 @@ import { legacyConfigDirNote, migrateHostDir } from '../legacy-name.js';
 export async function runStart(): Promise<void> {
   // First, so that a config that does not load is still explained in the file. `docker logs` is
   // lost with the container on an update; this copy lives on the config volume (log-file.ts).
-  installDaemonLog(path.join(configDir(), 'logs'));
+  const flushLog = installDaemonLog(path.join(configDir(), 'logs'));
+  // The daemon stops through process.exit() (its signal handlers, a normal shutdown), and 'exit'
+  // is where the last line still waiting for its newline gets written. The log writes are
+  // synchronous, so doing it there is safe.
+  process.once('exit', flushLog);
   // Long-running daemon backstop: an occasional network blip (e.g. a transient
   // discord.com TLS drop while sending a reaction) shouldn't crash the whole process.
   // Log and keep running; never exit.

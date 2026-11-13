@@ -94,8 +94,8 @@ const rest = before.slice(at + header.length);
 const next = rest.search(/^## \[/m);
 const unreleased = next < 0 ? rest : rest.slice(0, next);
 const tail = next < 0 ? '' : rest.slice(next);
-// `merge=union` (.gitattributes) keeps both branches' entries but can leave two "### Added"
-// headings; fold them before this body becomes a published section.
+// A merge of two branches that both added entries can leave two "### Added" headings; fold them
+// before this body becomes a published section.
 const merged = mergeSubsections(unreleased, eol);
 if (!merged.trim()) {
   die('the Unreleased section is empty — nothing to release');

@@ -1,5 +1,0 @@
-# Two branches almost always add entries to the same spot under ## [Unreleased], and a normal
-# merge then stops every merge that follows with a conflict in a file nobody wants to hand-edit.
-# Union keeps both sides' lines. The price is a duplicated "### Added" heading when both sides
-# added one; `npm run release` folds those back together before it stamps the version.
-CHANGELOG.md merge=union
