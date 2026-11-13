@@ -22,6 +22,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { conflictMarkers, mergeSubsections } from './changelog.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const run = (cmd, args, { inherit = false, shell = false } = {}) =>
@@ -82,13 +83,21 @@ if (run('git', ['tag', '--list', `v${version}`]).trim()) die(`tag v${version} al
 // from being a whole-file line-ending rewrite.
 const clPath = path.join(root, 'CHANGELOG.md');
 const before = fs.readFileSync(clPath, 'utf8');
+// A merge resolved by leaving the markers in ships them to the tag and to every reader. This is
+// the last place that can still say no (see scripts/changelog.mjs for the incident).
+if (conflictMarkers(before)) die('CHANGELOG.md still contains merge conflict markers — resolve them first');
 const eol = before.includes('\r\n') ? '\r\n' : '\n';
 const header = `## [Unreleased]${eol}${eol}`;
 const at = before.indexOf(header);
 if (at < 0) die('CHANGELOG.md has no "## [Unreleased]" section');
 const rest = before.slice(at + header.length);
 const next = rest.search(/^## \[/m);
-if (!(next < 0 ? rest : rest.slice(0, next)).trim()) {
+const unreleased = next < 0 ? rest : rest.slice(0, next);
+const tail = next < 0 ? '' : rest.slice(next);
+// `merge=union` (.gitattributes) keeps both branches' entries but can leave two "### Added"
+// headings; fold them before this body becomes a published section.
+const merged = mergeSubsections(unreleased, eol);
+if (!merged.trim()) {
   die('the Unreleased section is empty — nothing to release');
 }
 
@@ -117,7 +126,7 @@ const files = ['CHANGELOG.md', 'package.json', 'package-lock.json'];
 try {
   // `## [Unreleased]` stays where it is, empty, and this version's header goes under it — the
   // shape every previous release commit produced.
-  fs.writeFileSync(clPath, before.slice(0, at + header.length) + `## [${version}] - ${date}${eol}${eol}` + rest);
+  fs.writeFileSync(clPath, before.slice(0, at + header.length) + `## [${version}] - ${date}${eol}${eol}` + merged + tail);
   npm(['version', version, '--no-git-tag-version']); // package.json + package-lock.json
   run('git', ['commit', '-m', body ? `chore(release): ${version}\n\n${body}\n` : `chore(release): ${version}\n`, '--', ...files]);
   run('git', ['tag', '-a', `v${version}`, '-m', `v${version}`]);

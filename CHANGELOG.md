@@ -5,6 +5,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The gateway's log survives the container.** `docker logs` is the live view, but a container
+  recreated for an update takes its json-file log with it — and the incidents that most need a log
+  are the ones around a restart. On 2026-11-11 a crash and an update cut turns off, and by the time
+  anyone looked the account of both had gone with the old container. The daemon now also writes
+  `<configDir>/logs/daemon.log`: timestamped lines, 10 MB per file with five files kept, on the
+  config volume that already holds conversations and schedules. The daemon writes it itself, so it
+  works as soon as the image is updated — no compose change, no log driver, and nothing to do on the
+  host.
+
+### Changed
+
+- **A release refuses a CHANGELOG that still carries conflict markers.** `CHANGELOG.md` now has
+  `merge=union`, so two branches that both add entries under `## [Unreleased]` no longer stop the
+  merge: 19 of the 72 merges in the week to 2026-11-13 conflicted there, and once a failed
+  resolution script pushed a `<<<<<<<` line to main. Union can leave two `### Added` headings, so
+  `npm run release` folds same-named subsections into one before stamping the version — and it
+  refuses to run at all while a marker is still in the file.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added
