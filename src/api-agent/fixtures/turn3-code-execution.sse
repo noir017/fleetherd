@@ -1,0 +1,45 @@
+event: interaction.created
+data: {"interaction":{"id":"v1_736c3afbaf","status":"in_progress","created":"2026-11-13T05:24:18Z","updated":"2026-11-13T05:24:18Z","environment_id":"<id:06c1688fce>","service_tier":"standard","object":"interaction","agent":"antigravity-preview-09-2026"},"event_type":"interaction.created"}
+
+event: interaction.status_update
+data: {"interaction_id":"v1_736c3afbaf","status":"in_progress","event_type":"interaction.status_update"}
+
+event: step.start
+data: {"index":0,"step":{"id":"<id:2446b25cce>","signature":"<redacted:528chars>","type":"code_execution_call","arguments":{"language":"bash","code":"echo AG_PROBE_OK; uname -s; python3 -c 'print(6*7)'"}},"event_type":"step.start"}
+
+event: step.stop
+data: {"index":0,"event_type":"step.stop"}
+
+event: step.start
+data: {"index":1,"step":{"call_id":"<id:2446b25cce>","type":"code_execution_result","is_error":false,"result":"[STDOUT]\nAG_PROBE_OK\nLinux\n42\n\n\n[STDERR]\n"},"event_type":"step.start"}
+
+event: step.stop
+data: {"index":1,"usage":{"total_tokens":5490,"total_input_tokens":5360,"input_tokens_by_modality":[{"modality":"text","tokens":5360}],"total_cached_tokens":0,"total_output_tokens":60,"output_tokens_by_modality":[{"modality":"text","tokens":60}],"total_tool_use_tokens":0,"total_thought_tokens":70},"step_usage":{"total_tokens":5490,"total_input_tokens":5360,"input_tokens_by_modality":[{"modality":"text","tokens":5360}],"total_cached_tokens":0,"total_output_tokens":60,"output_tokens_by_modality":[{"modality":"text","tokens":60}],"total_tool_use_tokens":0,"total_thought_tokens":70},"event_type":"step.stop"}
+
+event: step.start
+data: {"index":2,"step":{"type":"model_output"},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":2,"delta":{"text":"```\nAG_PROBE_OK","type":"text"},"event_type":"step.delta"}
+
+event: step.delta
+data: {"index":2,"delta":{"text":"\nLinux\n42\n```","type":"text"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":2,"usage":{"total_tokens":5490,"total_input_tokens":5360,"input_tokens_by_modality":[{"modality":"text","tokens":5360}],"total_cached_tokens":0,"total_output_tokens":60,"output_tokens_by_modality":[{"modality":"text","tokens":60}],"total_tool_use_tokens":0,"total_thought_tokens":70},"event_type":"step.stop"}
+
+event: step.start
+data: {"index":3,"step":{"type":"thought"},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":3,"delta":{"signature":"<redacted:172chars>","type":"thought_signature"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":3,"usage":{"total_tokens":11055,"total_input_tokens":10900,"input_tokens_by_modality":[{"modality":"text","tokens":10900}],"total_cached_tokens":3306,"cached_tokens_by_modality":[{"modality":"text","tokens":3306}],"total_output_tokens":78,"output_tokens_by_modality":[{"modality":"text","tokens":78}],"total_tool_use_tokens":0,"total_thought_tokens":77},"step_usage":{"total_tokens":5565,"total_input_tokens":5540,"input_tokens_by_modality":[{"modality":"text","tokens":5540}],"total_cached_tokens":3306,"cached_tokens_by_modality":[{"modality":"text","tokens":3306}],"total_output_tokens":18,"output_tokens_by_modality":[{"modality":"text","tokens":18}],"total_tool_use_tokens":0,"total_thought_tokens":7},"event_type":"step.stop"}
+
+event: interaction.completed
+data: {"interaction":{"id":"v1_736c3afbaf","status":"completed","usage":{"total_tokens":11055,"total_input_tokens":10900,"input_tokens_by_modality":[{"modality":"text","tokens":10900}],"total_cached_tokens":3306,"cached_tokens_by_modality":[{"modality":"text","tokens":3306}],"total_output_tokens":78,"output_tokens_by_modality":[{"modality":"text","tokens":78}],"total_tool_use_tokens":0,"total_thought_tokens":77},"created":"2026-11-13T05:24:18Z","updated":"2026-11-13T05:24:27Z","environment_id":"<id:06c1688fce>","service_tier":"standard","steps":[{"id":"<id:2446b25cce>","signature":"<redacted:528chars>","type":"code_execution_call","arguments":{"language":"bash","code":"echo AG_PROBE_OK; uname -s; python3 -c 'print(6*7)'"}},{"call_id":"<id:2446b25cce>","type":"code_execution_result","is_error":false,"result":"[STDOUT]\nAG_PROBE_OK\nLinux\n42\n\n\n[STDERR]\n"},{"content":[{"text":"```\nAG_PROBE_OK\nLinux\n42\n```","type":"text"}],"type":"model_output"},{"signature":"<redacted:172chars>","type":"thought"}],"object":"interaction","agent":"antigravity-preview-09-2026","agent_config":{"max_total_tokens":"20000","type":"antigravity"}},"event_type":"interaction.completed"}
+
+event: done
+data: [DONE]
+

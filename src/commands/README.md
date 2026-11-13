@@ -12,6 +12,7 @@ commander; this module implements them.
 | *(top level)* | `program.ts` | The `fleetherd` command and its global options, read only before the subcommand — two subcommand options share their names |
 | *(reverse wiring)* | `reverse-cli.ts` | Registers `REVERSE_COMMANDS` on commander — the one place an omitted optional positional's `undefined` is filtered out before `build()` |
 | `mcp` *(hidden)* | `mcp.ts` | The same actions as native tools: an MCP server on stdio, started by the agent's harness |
+| `api-agent <backend>` | `api-agent.ts` | An ACP agent over an HTTP API, spawned by the daemon for `harness: custom`; the backends are in `src/api-agent/` |
 | *(on a host)* | `remote-cli.ts` | Not a command: what `cli.ts` does first when an agent on a remote host runs this binary — hand argv to the host's `fleetherd` shim, or refuse a management command. See its header. |
 
 ## `doctor` is the default

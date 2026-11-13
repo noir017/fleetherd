@@ -10,6 +10,9 @@ English | [简体中文](zh-CN/agents.md)
 | `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` Google sign-in (OS keyring) |
 | `custom` | your `command` + `args` | any ACP executable | your agent's |
 
+A service that is only an HTTP API needs no harness of its own:
+[`fleetherd api-agent`](#http-apis-api-agent) wraps it as an ACP agent you start as `custom`.
+
 Each agent takes `cwd`, `env`, `args`, a best-effort `model`, pinned
 [session options](#pinned-session-options), a [pre-launch hook](#pre-launch-hook), and a
 [permission policy](#permission-requests). With
@@ -223,3 +226,38 @@ harnesses. What differs:
 > client driving your account — decide accordingly. A `contextBudget` goes
 > further: its relay carries agy's requests, sign-in token included (forwarded,
 > never read or kept), and changes what Google's server tells agy.
+
+## HTTP APIs (`api-agent`)
+
+A service that is only an HTTP API can still be an agent: `fleetherd api-agent <backend>` wraps it
+as an ACP agent, and the daemon starts it as a `custom` harness without knowing anything about the
+service.
+
+```yaml
+agents:
+  - id: agapi
+    harness: custom
+    command: fleetherd
+    args: [api-agent, antigravity]      # optional: --models a,b   --max-tokens N
+    model: gemini-4-hydrogen
+    env: { GEMINI_API_KEY: "${GEMINI_API_KEY}" }
+```
+
+- **Antigravity is the first backend** (Google's Interactions API). Its six models are offered in
+  `/model`, with `gemini-4-hydrogen` as the default; Carbon and Argon are labelled "(paid tier)"
+  because the free tier answers them with a 429 and an upgrade prompt.
+- **What works**: streaming text, the sandbox's code-execution steps as tool rows, `/model`,
+  `/stop`, multi-turn context, context across a daemon restart or an idle reclaim, and images.
+- **What does not**: local files, the `send_file`/`schedule` tools, MCP, skills, and mid-turn
+  steering (a message sent while a turn runs waits for the next one). A non-image attachment
+  reaches the model as a local path it cannot read.
+- **Failures are written to be read in the chat.** An expired context says so and resets the
+  session — the next message starts a new one; hitting the token cap names the cap; a 429 carries
+  the upstream message and `retry-after`.
+- **`/stop` stops the turn here at once.** The server-side cancel is best-effort: the API only
+  accepts it while the interaction is still running.
+- **State**: `<configDir>/api-agent/antigravity.json` (0600, records unused for seven days are
+  dropped). It holds the interaction and environment ids that make the next turn a continuation.
+- **`--max-tokens` defaults to 200000.** One turn is a whole agent loop, and the recorded harness
+  spends ~5.3k input tokens before it says anything; the API's cap is best-effort and answers
+  `status: "incomplete"`.
