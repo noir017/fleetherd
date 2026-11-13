@@ -337,14 +337,27 @@ function renderScheduleList(data: unknown): string {
  * sessions search: one row per hit, with the ids that take the agent to the next step. A hit
  * without its conversation id would only be a tease — the excerpt is where to look, and the id
  * is how to read the rest.
+ *
+ * An empty answer has two very different causes, and the note must not confuse them: a query that
+ * matched nothing, and an `--agent` the library does not know. The old single note ("the library
+ * only holds what went through this gateway") answered both, and sent an agent looking for a
+ * missing history when the id was simply spelled `ag` for `ag@uniagent`.
  */
-function renderSessionSearch(data: unknown): string {
-  const hits = (data as SessionSearchResult | undefined)?.hits ?? [];
+function renderSessionSearch(data: unknown, action: Extract<IpcAction, { kind: 'sessions-search' }>): string {
+  const result = data as SessionSearchResult | undefined;
+  const hits = result?.hits ?? [];
   if (hits.length === 0) {
-    return toon({
-      count: 0,
-      note: 'nothing matches; the library only holds conversations that went through this gateway, from the upgrade onward',
-    });
+    return toon({ count: 0, note: emptySearchNote(result, action) });
+  }
+  const help = [
+    'Read the whole conversation with `sessions read <session>`; read around a hit with `--around <message> --window 10`.',
+    'kind=schedule rows are scheduled-task output and sort after ordinary conversations; kind=background is work reported after its turn.',
+  ];
+  const limit = result?.limit;
+  if (limit !== undefined && hits.length >= limit) {
+    help.push(
+      `Showing the best ${limit}; there may be more — narrow with --days or --agent, or raise --limit (at most 100).`
+    );
   }
   return toon({
     count: hits.length,
@@ -359,14 +372,33 @@ function renderSessionSearch(data: unknown): string {
       role: h.role,
       excerpt: h.excerpt,
     })),
-    help: [
-      'Read the whole conversation with `sessions read <session>`; read around a hit with `--around <message> --window 10`.',
-      'kind=schedule rows are scheduled-task output and sort after ordinary conversations; kind=background is work reported after its turn.',
-    ],
+    help,
   });
 }
 
+/** The note for a search that returned nothing — which of the two empties this is. */
+function emptySearchNote(
+  result: SessionSearchResult | undefined,
+  action: Extract<IpcAction, { kind: 'sessions-search' }>
+): string {
+  const known = result?.agents;
+  if (action.agent !== undefined && known !== undefined) {
+    return known.includes(action.agent)
+      ? `nothing matches those words for agent ${action.agent} in this window; drop --agent or widen --days`
+      : `no agent ${action.agent} in the library; its agents are: ${known.length ? known.join(', ') : '(none recorded yet)'}`;
+  }
+  return 'nothing matches; the library only holds conversations that went through this gateway, from the upgrade onward';
+}
+
 type SessionsReadAction = Extract<IpcAction, { kind: 'sessions-read' }>;
+
+/**
+ * What a `--role tool` answer may be before it stops being readable in context: harnesses persist
+ * a result past ~50 KB to a file the model never sees, and the agent then greps the same calls
+ * again. The note names the flag that was built for exactly this (measured 2026-11-13: two 50–60 KB
+ * tool reads were persisted, followed by six re-reads of the same conversations).
+ */
+const TOOL_READ_NOTE_CHARS = 50_000;
 
 /**
  * sessions read: the conversation header, then its messages oldest first.
@@ -388,14 +420,15 @@ function renderSessionRead(action: SessionsReadAction, data: unknown): string {
       action.turns !== undefined ||
       action.since !== undefined ||
       action.grep !== undefined ||
-      action.tail !== undefined;
+      action.tail !== undefined ||
+      action.limit !== undefined;
     return toon({
       session: { ...result.session, id: `#${result.session.id}` },
       count: 0,
       note: result.note ?? (filtered ? 'no rows match this filter' : 'this conversation has no messages'),
     });
   }
-  return toon({
+  const out: Record<string, unknown> = {
     session: {
       id: `#${result.session.id}`,
       title: result.session.title || '(unnamed)',
@@ -423,20 +456,39 @@ function renderSessionRead(action: SessionsReadAction, data: unknown): string {
           }
     ),
     ...(result.note ? { note: result.note } : {}),
-  });
+  };
+  let text = toon(out);
+  if (action.role === 'tool' && Buffer.byteLength(text, 'utf8') > TOOL_READ_NOTE_CHARS) {
+    const hint =
+      'this answer is over 50 KB and a harness may push it out of context; --tail <n> shows only the newest n calls, and --since <id> continues from the last row shown';
+    out.note = out.note ? `${out.note} ${hint}` : hint;
+    text = toon(out);
+  }
+  return text;
 }
 
-/** sessions list: recent conversations, newest first. */
+/** sessions list: recent conversations, newest first, each with the key `sessions read` also takes. */
 function renderSessionList(data: unknown): string {
-  const result = (data as SessionListResult | undefined) ?? { sessions: [], days: 7 };
+  const result = (data as SessionListResult | undefined) ?? { sessions: [], days: 7, limit: 30 };
   if (result.sessions.length === 0) {
     return toon({ count: 0, note: `no conversations in the last ${result.days} day(s)` });
+  }
+  const help = ['`sessions read <id>` opens one; `sessions search <words>` looks inside them.'];
+  if (result.sessions.length >= result.limit) {
+    const oldest = result.sessions[result.sessions.length - 1]!;
+    // The window is carried into the next page: `--before` alone would fall back to the default
+    // 7 days, and a `--days 30` page would continue in a window its rows are not in — an empty
+    // page that reads as "there is nothing older".
+    help.push(
+      `Showing the newest ${result.limit} of the last ${result.days} day(s); there may be older ones — continue with --days ${result.days} --before ${oldest.id}.`
+    );
   }
   return toon({
     count: result.sessions.length,
     days: result.days,
     sessions: result.sessions.map((s) => ({
       id: `#${s.id}`,
+      key: s.key,
       at: s.lastAt,
       title: s.title || '(unnamed)',
       agent: s.agent,
@@ -444,7 +496,23 @@ function renderSessionList(data: unknown): string {
       kind: s.kind,
       messages: s.messages,
     })),
-    help: ['`sessions read <id>` opens one; `sessions search <words>` looks inside them.'],
+    help,
+  });
+}
+
+/**
+ * pods: the table first, the `gatewayKey` line after it.
+ *
+ * The key is 150 characters and only matters while adding a machine, but it was the first line —
+ * every one of the 20 calls in a week piped the output through `head`, `tail -4` or `grep -v
+ * gatewayKey` to get past it. After the table, the default output is the table.
+ */
+function renderPodList(data: unknown): string {
+  const result = data as { gatewayKey?: string; pods?: Array<Record<string, string>> } | undefined;
+  if (!result) return toon({ ok: true });
+  return toon({
+    pods: result.pods ?? [],
+    ...(result.gatewayKey ? { gatewayKey: result.gatewayKey } : {}),
   });
 }
 
@@ -485,15 +553,18 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown, action: I
   'reload-config': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
   'pod-add': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
   'pod-remove': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
-  'pod-list': (data) => toon(data ?? {}),
+  'pod-list': renderPodList,
   'task-agents': renderTaskAgents,
   'task-list': renderTaskList,
   'task-new': renderTaskProposed,
-  'task-read': renderTaskRead,
+  'task-read': (data, action) => renderTaskRead(action as Extract<IpcAction, { kind: 'task-read' }>, data),
   'task-send': renderTaskAction,
   'task-status': renderTaskStatus,
   'task-stop': renderTaskAction,
-  'sessions-search': renderSessionSearch,
+  // Both need the action: the empty note depends on which agent was asked for, and the cut note on
+  // the limit that was applied.
+  'sessions-search': (data, action) =>
+    renderSessionSearch(data, action as Extract<IpcAction, { kind: 'sessions-search' }>),
   // Needs the action, not just the data: an empty answer says "no messages" for a whole
   // conversation and "no rows match" for a filtered read, and only the request knows which.
   'sessions-read': (data, action) => renderSessionRead(action as SessionsReadAction, data),
@@ -531,12 +602,56 @@ function renderTaskProposed(data: unknown): string {
   return toon(result ? { item: result.item, result: result.result } : { ok: true });
 }
 
-/** task-read: the reply, or the messages and the turn they were selected from. */
-function renderTaskRead(data: unknown): string {
+/**
+ * Header lines, a blank line, then a body printed as it is — the shape `skills show` uses.
+ *
+ * A whole reply or a whole turn is prose, and prose in a TOON cell becomes one quoted line of
+ * `\n` escapes: unreadable in the terminal, and something every reader has to un-escape before it
+ * can find anything (25 of 61 task-read answers over seven days, and six scripts written just to
+ * undo it). Only the header is structured; the text is not encoded at all.
+ */
+function verbatim(header: string[], body: string, note?: string): string {
+  const lines = [...header, '', body.replace(/\n+$/, '')];
+  if (note) lines.push('', `note: ${note}`);
+  return lines.join('\n');
+}
+
+/** One message of a whole-turn read: its id, role and time, then its text verbatim. */
+function verbatimMessage(m: TaskReadResult['messages'][number]): string {
+  return [`#${m.id} ${m.role} ${m.at}`, m.text].join('\n');
+}
+
+/**
+ * task-read: the reply, or the messages and the turn they were selected from.
+ *
+ * Two shapes print the text as prose, because that is what the caller came for: `--reply` (one
+ * turn's whole reply) and `--turn <n> --full` (that turn whole, which is where an update card
+ * points when it had to cut what it quoted). Everything else stays a table.
+ */
+function renderTaskRead(action: Extract<IpcAction, { kind: 'task-read' }>, data: unknown): string {
   const result = data as TaskReadResult | undefined;
   if (!result) return toon({ ok: true });
   if (result.reply) {
-    return toon({ topic: result.topic, reply: result.reply, ...(result.note ? { note: result.note } : {}) });
+    return verbatim(
+      [`topic: ${result.topic}`, `turn: ${result.reply.turn}`, `at: ${result.reply.at}`],
+      result.reply.text,
+      result.note
+    );
+  }
+  if (action.turn !== undefined && action.full === true && result.turn) {
+    const header = [
+      `topic: ${result.topic}`,
+      `turn: ${result.turn.turn}`,
+      `at: ${result.turn.at}`,
+      `outcome: ${result.turn.outcome}`,
+      `agent: ${result.turn.agent}`,
+      `messages: ${result.messages.length}`,
+    ];
+    const sections = [
+      ...(result.turn.detail ? [`detail:\n${result.turn.detail}`] : []),
+      ...result.messages.map(verbatimMessage),
+    ];
+    return verbatim(header, sections.join('\n\n'), result.note);
   }
   if (result.messages.length === 0 && !result.turn) {
     return toon({ count: 0, note: result.note ?? 'nothing has been said there yet' });

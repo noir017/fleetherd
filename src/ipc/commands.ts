@@ -85,6 +85,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     summary: 'Send a file or image into the chat',
     notes: [
       'Relative paths and ~ resolve against your working directory. --name overrides the displayed filename.',
+      'A report or plan you wrote for the user is a file to send, not a path to paste: a path on this machine, or a file:// link, points at the reader\'s own machine and reaches nobody. Send it here.',
       'Where you have a send_file tool, it is this same command.',
     ],
   },
@@ -128,10 +129,11 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'sessions',
     summary: 'Search every earlier conversation the gateway has carried — all agents, all platforms',
     notes: [
+      'When the person says "yesterday", "last time" or asks you to look something up, search here first: your harness\'s own transcripts cover one agent on one machine, and may be a stale copy.',
       'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through fleetherd, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
       'search "<words>" returns the conversation id, the message id, the title, the agent and a matching excerpt. Quote a multi-word query — it is one argument. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations. Tool calls are left out; --tools searches them too, arguments included.',
-      'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail), --grep or --tail selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --role tool lists the calls with their arguments. list [--days <n>] is the recent conversations.',
-      'Pass the ids exactly as printed: session and message are numbers, with or without the leading #.',
+      'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail/--limit), --grep, --tail or --limit selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --role tool lists the calls with their arguments. --full is accepted for task-read\'s sake and changes nothing. list [--days <n>] [--limit <n>] is the recent conversations; a full page says how to continue with --before <id>.',
+      'read takes a session id (#12 or 12) or the topic id other commands print (web:main/c962cd3f). `sessions list` prints both, as id and key.',
     ],
   },
   {
@@ -169,7 +171,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'pods',
     summary: 'The machines agents run on: add one, remove one, declare its agents, ssh between them',
     notes: [
-      'A pod is a machine the gateway reaches over ssh to run agents (the `hosts:` of its config). `pods` lists them with their agents, and prints `gatewayKey` — the line a new machine needs in its ~/.ssh/authorized_keys.',
+      'A pod is a machine the gateway reaches over ssh to run agents (the `hosts:` of its config). `pods` lists them with their agents; the `gatewayKey` line a new machine needs in its ~/.ssh/authorized_keys comes after the table.',
       'Adding one: on the machine, append `gatewayKey` to ~/.ssh/authorized_keys and read its host key there (`cat /etc/ssh/ssh_host_ed25519_key.pub`, or wherever its sshd keeps it) — read it on the machine, not with ssh-keyscan, since this is what every connection will be checked against. Then `pod-add <name> <user@address[:port]> --host-key "<that line>"`. It answers with the agents found there.',
       'Its agents: ~/.fleetherd/pod.yaml on the machine lists them (`agents:`, the fields of a config.yaml agent without `host`); the gateway names them `<id>@<name>`. Without the file it offers each harness command it finds on the login PATH (claude-agent-acp, codex-acp, opencode, agy, codebuddy). After editing the file, `reload`. Values are used as written: ${VAR} is refused.',
       'Pod-to-pod ssh: `peer:` in a machine\'s pod.yaml puts it in the mesh — after a `reload`, every pod with `peer:` can `ssh <name>.pod` (and scp, rsync, git) to every other. `peer: { ssh: user@address:port }` when the others reach it differently from the gateway. Needs the machine\'s sshd to read ~/.fleetherd/ssh/authorized_keys and its ssh to include ~/.fleetherd/ssh/config (uniagent images do).',
@@ -214,14 +216,26 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
 ];
 
-/** `fleetherd help`: one line per topic. */
+/**
+ * `fleetherd help`: one line per topic, and under it the command names that topic documents.
+ *
+ * The names are the point. The index used to give only the topics, and an agent read `history` and
+ * `sessions` as commands and typed them — `fleetherd history` is not one, and cost seven calls in a
+ * week. Rendered from the catalog, so a new command appears without a second list.
+ */
 export function renderHelpIndex(): string {
   const width = Math.max(...HELP_TOPICS.map((t) => t.name.length));
   return [
     'fleetherd commands, by topic.',
     'Run `fleetherd help <topic>` for a topic\'s commands and rules.',
     '',
-    ...HELP_TOPICS.map((t) => `  ${t.name.padEnd(width)}  ${t.summary}`),
+    ...HELP_TOPICS.flatMap((t) => {
+      const commands = REVERSE_COMMANDS.filter((c) => c.topic === t.name).map((c) => c.usage.split(' ')[0]!);
+      return [
+        `  ${t.name.padEnd(width)}  ${t.summary}`,
+        ...(commands.length ? [`  ${' '.repeat(width)}  commands: ${commands.join(', ')}`] : []),
+      ];
+    }),
   ].join('\n');
 }
 
@@ -237,6 +251,47 @@ export function renderHelpTopic(name: string): string | undefined {
   }
   if (topic.notes.length) lines.push('Notes:', ...topic.notes.map((n) => `  - ${n}`));
   return lines.join('\n');
+}
+
+/**
+ * What an agent probably meant by a name that is not a command.
+ *
+ * The refusals used to say only "not a command an agent can run here; `fleetherd help` lists
+ * them", which is true and useless: `history` and `sessions` are help TOPICS, and `status` /
+ * `agents` are the tails of `task-status` / `task-agents` (seven calls lost to this in a week).
+ * A topic gets the page that lists its commands; anything else gets the nearest command name.
+ */
+export function commandHint(name: string): string | undefined {
+  const word = name.trim().toLowerCase();
+  if (!word) return undefined;
+  if (HELP_TOPICS.some((t) => t.name === word)) {
+    return `\`${name}\` is a help topic, not a command; \`fleetherd help ${word}\` lists its commands.`;
+  }
+  const names = [...new Set(REVERSE_COMMANDS.map((c) => c.usage.split(' ')[0]!))];
+  // `status` is inside `task-status` and `agents` inside `task-agents`, while `task` is inside
+  // both `ask` and `tasks` — the longer overlap is the better guess.
+  const scored = names
+    .map((n) => ({ n, score: n.includes(word) ? word.length : word.includes(n) ? n.length : 0 }))
+    .filter((c) => c.score >= 3)
+    // On a tie the shorter name is the closer word: `task` is `tasks` before `task-agents`.
+    .sort((a, b) => b.score - a.score || a.n.length - b.n.length);
+  const near = scored[0]?.n ?? names.find((n) => editDistance(n, word) <= 2);
+  return near ? `Did you mean \`${near}\`?` : undefined;
+}
+
+/** Levenshtein distance, for a mistyped command name (`sesions`). */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0]!;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j]!;
+      row[j] = Math.min(row[j]! + 1, row[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return row[b.length]!;
 }
 
 /**
@@ -288,6 +343,19 @@ const idArg = (label: string) => {
   return (value: string): number => {
     const n = parse(value.trim().replace(/^#/, ''));
     if (n < 1) throw new Error(`${label} must be a positive message id, got ${JSON.stringify(value)}`);
+    return n;
+  };
+};
+
+/**
+ * A conversation id, as `sessions list` prints it (`#42`) or bare (`42`). `--before` continues
+ * after a row a reader copied from that page, and the `#` is part of what the page shows.
+ */
+const sessionArg = (label: string) => {
+  const parse = intArg(label);
+  return (value: string): number => {
+    const n = parse(value.trim().replace(/^#/, ''));
+    if (n < 1) throw new Error(`${label} must be a positive conversation id, got ${JSON.stringify(value)}`);
     return n;
   };
 };
@@ -587,6 +655,20 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
   }
 }
 
+/**
+ * `sessions read --reply`: task-read's name for "the last turn that ended normally, and its reply",
+ * as the selection it is made of. Stands alone, like task-read's own — a filter beside it would
+ * name a different answer.
+ */
+function sessionsReply(session: string, opts: Record<string, unknown>): IpcAction | undefined {
+  if (opts.reply !== true) return undefined;
+  const stray = ['around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail', 'limit'].find(
+    (key) => opts[key] !== undefined
+  );
+  if (stray) throw new Error(`--reply selects one turn's reply itself; --${stray} does not apply`);
+  return { kind: 'sessions-read', session, role: 'agent', turn: 'done' };
+}
+
 /** `sessions <action> [arg]` → one IpcAction, refusing flags that do not belong to the action. */
 function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
   // An omitted optional positional reaches this from commander as `undefined` — `sessions list`
@@ -601,7 +683,7 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
   }
   const num = (key: string): number | undefined => (typeof opts[key] === 'number' ? (opts[key] as number) : undefined);
   const refuse = (allowed: readonly string[]): void => {
-    const all = ['agent', 'days', 'limit', 'tools', 'around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail'];
+    const all = ['agent', 'days', 'limit', 'before', 'tools', 'around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail', 'full', 'reply'];
     const stray = all.find((k) => !allowed.includes(k) && opts[k] !== undefined);
     if (stray) throw new Error(`--${stray} does not apply to \`sessions ${action}\``);
   };
@@ -612,6 +694,7 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
       // passes them) as the phrase the person typed.
       const query = args.slice(1).join(' ').trim();
       if (!query) throw new Error('sessions search needs a word to look for');
+      assertLimit(num('limit'), 100, 'sessions search');
       return {
         kind: 'sessions-search',
         query,
@@ -622,29 +705,60 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
       };
     }
     case 'read': {
-      refuse(['around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail']);
+      refuse(['around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail', 'limit', 'full', 'reply']);
       if (args.length > 2) throw new Error('sessions read takes one conversation id');
+      const session = pos(args, 1, 'session');
+      const reply = sessionsReply(session, opts);
+      if (reply) return reply;
       const filters = readFilters(opts);
       const around = num('around');
-      if (around !== undefined && anyReadFilter(filters)) {
-        throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail');
+      const limit = num('limit');
+      assertLimit(limit, 500, 'sessions read');
+      if (filters.since !== undefined && limit !== undefined) {
+        throw new Error('--since reads forward from a message id; --limit reads the newest messages — use one');
       }
+      if (around !== undefined && (anyReadFilter(filters) || limit !== undefined)) {
+        throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail/--limit');
+      }
+      // `--full` is accepted and does nothing: a read is already whole (its only cut is the
+      // library's 200k answer budget). It exists here because it exists on task-read, and the two
+      // commands are typed from the same memory.
       return {
         kind: 'sessions-read',
-        session: pos(args, 1, 'session'),
+        session,
         around,
         window: num('window'),
+        ...(limit !== undefined ? { limit } : {}),
         ...filters,
       };
     }
     case 'list':
     case 'ls': {
-      refuse(['days', 'limit']);
+      refuse(['days', 'limit', 'before']);
       if (args.length > 1) throw new Error('sessions list takes no arguments');
-      return { kind: 'sessions-list', days: num('days'), limit: num('limit') };
+      assertLimit(num('limit'), 200, 'sessions list');
+      return {
+        kind: 'sessions-list',
+        days: num('days'),
+        limit: num('limit'),
+        ...(num('before') !== undefined ? { before: num('before') } : {}),
+      };
     }
     default:
       throw new Error(`unknown sessions action "${action}"; use search <words> | read <session> | list`);
+  }
+}
+
+/**
+ * A row bound above the schema's own maximum is refused here, in the words of the command.
+ *
+ * The IPC boundary would answer `malformed action: action.limit Number must be less than or equal
+ * to 200` — an internal path, naming a number the caller never typed. Agents hit it four times in
+ * a week with `--limit 300` / `--limit 500`, then lost the error to their own `grep`.
+ */
+function assertLimit(limit: number | undefined, max: number, command: string): void {
+  if (limit !== undefined && limit > max) {
+    throw new Error(`--limit is at most ${max} for ${command}, got ${limit}`);
   }
 }
 
@@ -653,13 +767,17 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
  * and the per-message text cuts (`--full`, its own `--tail`).
  *
  * `--reply` selects a turn by itself, so it stands alone: a filter beside it would name a different
- * selection, and `--full`/`--tail`/`--limit` would cut the one text it promises whole.
+ * selection, and `--tail`/`--limit` would cut the one text it promises whole. `--full` is the
+ * exception — it is already true of a reply, so it is accepted and ignored.
  */
 function buildTaskRead(positionals: string[], opts: Record<string, unknown>): IpcAction {
   refuseChannel('task-read', opts);
   const topic = pos(positionals, 0, 'topic');
   if (opts.reply === true) {
-    const stray = ['limit', 'full', 'tail', 'role', 'turn', 'turns', 'since', 'grep'].find(
+    // `--full` is accepted and ignored: the reply is already whole, and agents type the two
+    // together (one was refused for it on 2026-11-13). The other flags would select or cut a
+    // different answer.
+    const stray = ['limit', 'tail', 'role', 'turn', 'turns', 'since', 'grep'].find(
       (key) => opts[key] !== undefined
     );
     if (stray) throw new Error(`--reply reads one turn's whole reply; --${stray} does not apply`);
@@ -935,14 +1053,21 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'sessions <action> [arg]',
     topic: 'sessions',
     description:
-      'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] [--tools] | read <session> [--around <message>] [--window] | read <session> [filters] | list [--days]',
+      'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] [--tools] | read <session> [--around <message>] [--window] | read <session> [filters] | list [--days] [--limit] [--before]',
     options: [
       { flags: '-a, --agent <id>', description: 'search: only conversations answered by this agent' },
       { flags: '-d, --days <n>', description: 'search/list: only the last n days', parse: intArg('--days') },
-      { flags: '-l, --limit <n>', description: 'search/list: how many rows (search default 10, list 30)', parse: intArg('--limit') },
+      {
+        flags: '-l, --limit <n>',
+        description: 'search/list: how many rows (search default 10, list 30) | read: the newest n messages',
+        parse: intArg('--limit'),
+      },
+      { flags: '--before <session>', description: 'list: continue after this conversation id (the last row of a full page)', parse: sessionArg('--before') },
       { flags: '--tools', description: 'search: include tool calls (commands, edits and their arguments); left out by default' },
       { flags: '--around <message>', description: 'read: a message id from a search hit, to read around', parse: idArg('--around') },
       { flags: '--window <n>', description: 'read: messages on each side of --around (default 10)', parse: intArg('--window') },
+      { flags: '--full', description: 'read: accepted for task-read\'s sake; a read is already whole' },
+      { flags: '--reply', description: 'read: the last turn that ended normally, and its reply — the same as --turn done --role agent' },
       ...READ_FILTER_OPTIONS,
       SESSIONS_READ_TAIL,
     ],

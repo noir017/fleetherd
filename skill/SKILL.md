@@ -3,11 +3,11 @@ name: fleetherd
 description: >-
   Send a file to the user; schedule a prompt or a bash command to run later or repeatedly,
   surviving restarts; post to another chat or topic; read earlier messages in the
-  conversation; search earlier conversations (every agent, every platform); reply to, edit,
-  react to or delete a message; open a thread; ask with buttons; check what a voice message
-  said; read, write and archive the skills every agent shares — all through the `fleetherd`
-  command. Also for diagnosing or reconfiguring fleetherd itself, and the machines its agents
-  run on.
+  conversation; before grepping harness logs or asking the user to repeat, search earlier
+  conversations (every agent, every platform); reply to, edit, react to or delete a message;
+  open a thread; ask with buttons; check what a voice message said; read, write and archive
+  the skills every agent shares — all through the `fleetherd` command. Also for diagnosing or
+  reconfiguring fleetherd itself, and the machines its agents run on.
 ---
 
 # fleetherd
@@ -42,7 +42,9 @@ current. `fleetherd help` lists the topics.
 
 ## Output and errors
 
-Every command prints TOON on stdout, failures included (with exit code 1).
+Most commands print TOON on stdout, failures included (with exit code 1). `skills show`,
+`task-read --reply` and `--turn <n> --full` print a header and then plain text; `ask` prints the
+chosen label.
 
 - `unsupported operation: …` — this platform cannot do that (editing, threads and buttons vary).
   Don't retry; fall back to the nearest thing that works, such as a new message instead of an edit.
