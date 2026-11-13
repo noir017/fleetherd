@@ -117,11 +117,11 @@ fleetherd sessions list --days 7
 ```
 
 `search` 返回会话 id、消息 id、日期、标题、agent、平台和命中的片段。它搜的是人和 agent 说的话；
-加 `--tools` 连工具调用（含参数）一起搜。`--agent` 是精确匹配——用短名 `ag` 去找 `ag@uniagent`
+加 `--tools` 连工具调用（含参数）一起搜。`--agent` 是精确匹配——用短名 `ag` 去找 `ag@laptop`
 什么也找不到，这时 note 会列出库里有的 agent id。`read` 接会话 id（`#12` 或 `12`），
 或别的命令打印的话题 id（`web:main/c962cd3f`），从最早一条往后打印；`--around <消息>` 以某条为中心，
 前后各显示 `--window` 条（默认 10）。`list` 是最近活跃的会话，每行带上 id 和 key；一页满了会说明后面
-可能还有，并给出接着读的 `--before <id>`。
+可能还有，并给出接着读的 `--days … --before <id>`。
 
 检索是关键词检索（BM25），不做向量。中文能搜到靠两点：
 

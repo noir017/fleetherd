@@ -95,7 +95,7 @@ describe('the shim bridge', () => {
     // `history` is a help topic; `agents` is the tail of `task-agents`. Both were typed as
     // commands, and the bare "not a command" sentence left the caller to search.
     expect(run(['history']).out).toContain('`history` is a help topic');
-    expect(run(['agents']).out).toContain('did you mean `task-agents`?');
+    expect(run(['agents']).out).toContain('Did you mean `task-agents`?');
   });
 
   it('lets the reverse commands, mcp and help through to the CLI', () => {

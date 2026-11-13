@@ -72,6 +72,19 @@ describe('planRemoteCli', () => {
     expect(plan.kind === 'refuse' && plan.message).toContain('env -u TALKCODE_REMOTE_SOCK');
   });
 
+  it('tells the reader to unset both names when both are set, or envOf falls back', () => {
+    const plan = planRemoteCli(['start'], {
+      FLEETHERD_REMOTE_SOCK: '/tmp/s',
+      TALKCODE_REMOTE_SOCK: '/tmp/s',
+      FLEETHERD_REMOTE_CLI: '/x',
+    });
+    const message = plan.kind === 'refuse' ? plan.message : '';
+    expect(message).toContain('FLEETHERD_REMOTE_SOCK and TALKCODE_REMOTE_SOCK are set');
+    expect(message).toContain('env -u FLEETHERD_REMOTE_SOCK -u TALKCODE_REMOTE_SOCK fleetherd');
+    // Sentences are joined with a space, not run together: "…lists them FLEETHERD…".
+    expect(message).toContain('lists them). FLEETHERD_REMOTE_SOCK');
+  });
+
   it('refuses an unknown command with the gateway\'s own wording, not as administration', () => {
     const { shim } = fakeShim();
     // A typo is not administration; saying it were would send the reader looking for a switch.
@@ -79,7 +92,8 @@ describe('planRemoteCli', () => {
     expect(plan.kind).toBe('refuse');
     expect(plan.kind === 'refuse' && plan.message).toContain('"task-agent" is not a command an agent can run here');
     expect(plan.kind === 'refuse' && plan.message).not.toMatch(/administration/);
-    expect(plan.kind === 'refuse' && plan.message).toContain('did you mean `task-agents`?');
+    expect(plan.kind === 'refuse' && plan.message).toContain('Did you mean `task-agents`?');
+    expect(plan.kind === 'refuse' && plan.message).toContain('`task-agents`? FLEETHERD_REMOTE_SOCK is set');
   });
 
   it('refuses before forwarding when the host helper is older than this CLI', () => {

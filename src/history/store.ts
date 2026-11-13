@@ -1223,6 +1223,13 @@ export class HistoryStore {
     }
     const count = this.turnCount(session);
     if (count === 0) {
+      // `done` asks what it last answered, and `--reply` is that same selection: a conversation
+      // with no turns has not answered yet, which is an empty answer with a note — the shape
+      // `doneTurn` already gives after `/new`. `last` and a turn number name a turn that must
+      // exist, so those still throw.
+      if (opts.turn === 'done') {
+        return { ids: [], note: `no turn of conversation ${session.id} has ended normally yet — nothing to reply with` };
+      }
       throw new Error(
         `conversation ${session.id} has no recorded turns — it predates turn tracking; read it without --turn`
       );

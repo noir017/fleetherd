@@ -458,7 +458,7 @@ function renderSessionRead(action: SessionsReadAction, data: unknown): string {
     ...(result.note ? { note: result.note } : {}),
   };
   let text = toon(out);
-  if (action.role === 'tool' && text.length > TOOL_READ_NOTE_CHARS) {
+  if (action.role === 'tool' && Buffer.byteLength(text, 'utf8') > TOOL_READ_NOTE_CHARS) {
     const hint =
       'this answer is over 50 KB and a harness may push it out of context; --tail <n> shows only the newest n calls, and --since <id> continues from the last row shown';
     out.note = out.note ? `${out.note} ${hint}` : hint;
@@ -476,8 +476,11 @@ function renderSessionList(data: unknown): string {
   const help = ['`sessions read <id>` opens one; `sessions search <words>` looks inside them.'];
   if (result.sessions.length >= result.limit) {
     const oldest = result.sessions[result.sessions.length - 1]!;
+    // The window is carried into the next page: `--before` alone would fall back to the default
+    // 7 days, and a `--days 30` page would continue in a window its rows are not in — an empty
+    // page that reads as "there is nothing older".
     help.push(
-      `Showing the newest ${result.limit}; there may be older ones in the window — continue with --before ${oldest.id}.`
+      `Showing the newest ${result.limit} of the last ${result.days} day(s); there may be older ones — continue with --days ${result.days} --before ${oldest.id}.`
     );
   }
   return toon({

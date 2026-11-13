@@ -139,12 +139,12 @@ fleetherd sessions list --days 7
 `search` answers with the conversation id, the message id, the date, the title, the agent, the
 platform and a matching excerpt. It searches what the person and the agents said; `--tools`
 searches the tool calls too, arguments included. `--agent` is an exact match — a short name such as
-`ag` for `ag@uniagent` finds nothing, and the note then lists the agent ids the library holds.
+`ag` for `ag@laptop` finds nothing, and the note then lists the agent ids the library holds.
 `read` takes a session id (`#12` or `12`) or the topic id other commands print
 (`web:main/c962cd3f`), and prints it oldest first; `--around <message>` shows a window of `--window`
 messages on each side (10 by default). `list` is the recently active conversations, each with its
-id and key; a full page says there may be more and gives the `--before <id>` that continues after
-its last row.
+id and key; a full page says there may be more and gives the `--days … --before <id>` that
+continues after its last row.
 
 Search is keyword search (BM25), not embeddings. Two details make it work in Chinese:
 

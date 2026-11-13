@@ -146,13 +146,14 @@ describe('sessions list output', () => {
     expect(out).toContain('web#main#c962cd3f');
   });
 
-  it('says a full page may have more, and names the id to continue from', () => {
+  it('says a full page may have more, and names the id and window to continue from', () => {
     const out = renderResult({ kind: 'sessions-list' }, {
       sessions: [row(9, 'web#main#a'), row(5, 'web#main#b')],
-      days: 7,
+      days: 30,
       limit: 2,
     } satisfies SessionListResult).stdout;
-    expect(out).toContain('--before 5');
+    // Without --days the next page would fall back to 7 days, where these rows are not.
+    expect(out).toContain('--days 30 --before 5');
   });
 
   it('says nothing about paging when the page is not full', () => {
@@ -201,13 +202,15 @@ describe('sessions search output', () => {
 });
 
 describe('sessions read output', () => {
-  it('suggests --tail when a --role tool answer is over 50 KB', () => {
+  it('suggests --tail when a --role tool answer is over 50 KB, counting bytes', () => {
+    // 200 Han characters are 600 bytes: the answer is under 50k characters but over 50 KB, which
+    // is the bound a harness persists at.
     const many = Array.from({ length: 150 }, (_, i) => ({
       id: i + 1,
       at: '2026-11-05T00:00:00.000Z',
       role: 'tool',
       kind: 'normal',
-      text: 'x'.repeat(400),
+      text: '汉'.repeat(200),
       turn: 1,
       outcome: 'done',
       agent: 'cc',
@@ -216,7 +219,7 @@ describe('sessions read output', () => {
       { kind: 'sessions-read', session: '#7', role: 'tool' },
       { session, messages: many } satisfies SessionReadResult
     ).stdout;
-    expect(out.length).toBeGreaterThan(50_000);
+    expect(Buffer.byteLength(out, 'utf8')).toBeGreaterThan(50_000);
     expect(out).toContain('--tail <n>');
     expect(out).toContain('--since <id>');
   });

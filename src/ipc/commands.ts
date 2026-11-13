@@ -132,7 +132,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'When the person says "yesterday", "last time" or asks you to look something up, search here first: your harness\'s own transcripts cover one agent on one machine, and may be a stale copy.',
       'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through fleetherd, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
       'search "<words>" returns the conversation id, the message id, the title, the agent and a matching excerpt. Quote a multi-word query — it is one argument. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations. Tool calls are left out; --tools searches them too, arguments included.',
-      'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail), --grep, --tail or --limit selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --role tool lists the calls with their arguments. --full is accepted for task-read\'s sake and changes nothing. list [--days <n>] [--limit <n>] is the recent conversations; a full page says how to continue with --before <id>.',
+      'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail/--limit), --grep, --tail or --limit selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --role tool lists the calls with their arguments. --full is accepted for task-read\'s sake and changes nothing. list [--days <n>] [--limit <n>] is the recent conversations; a full page says how to continue with --before <id>.',
       'read takes a session id (#12 or 12) or the topic id other commands print (web:main/c962cd3f). `sessions list` prints both, as id and key.',
     ],
   },
@@ -172,7 +172,6 @@ export const HELP_TOPICS: HelpTopic[] = [
     summary: 'The machines agents run on: add one, remove one, declare its agents, ssh between them',
     notes: [
       'A pod is a machine the gateway reaches over ssh to run agents (the `hosts:` of its config). `pods` lists them with their agents; the `gatewayKey` line a new machine needs in its ~/.ssh/authorized_keys comes after the table.',
-      'The library skill `talkcode-remote-host` is this procedure end to end: `fleetherd skills search remote host`, then `show` it. Read it before working it out from these pages.',
       'Adding one: on the machine, append `gatewayKey` to ~/.ssh/authorized_keys and read its host key there (`cat /etc/ssh/ssh_host_ed25519_key.pub`, or wherever its sshd keeps it) — read it on the machine, not with ssh-keyscan, since this is what every connection will be checked against. Then `pod-add <name> <user@address[:port]> --host-key "<that line>"`. It answers with the agents found there.',
       'Its agents: ~/.fleetherd/pod.yaml on the machine lists them (`agents:`, the fields of a config.yaml agent without `host`); the gateway names them `<id>@<name>`. Without the file it offers each harness command it finds on the login PATH (claude-agent-acp, codex-acp, opencode, agy, codebuddy). After editing the file, `reload`. Values are used as written: ${VAR} is refused.',
       'Pod-to-pod ssh: `peer:` in a machine\'s pod.yaml puts it in the mesh — after a `reload`, every pod with `peer:` can `ssh <name>.pod` (and scp, rsync, git) to every other. `peer: { ssh: user@address:port }` when the others reach it differently from the gateway. Needs the machine\'s sshd to read ~/.fleetherd/ssh/authorized_keys and its ssh to include ~/.fleetherd/ssh/config (uniagent images do).',
@@ -266,7 +265,7 @@ export function commandHint(name: string): string | undefined {
   const word = name.trim().toLowerCase();
   if (!word) return undefined;
   if (HELP_TOPICS.some((t) => t.name === word)) {
-    return `\`${name}\` is a help topic, not a command; \`fleetherd help ${word}\` lists its commands`;
+    return `\`${name}\` is a help topic, not a command; \`fleetherd help ${word}\` lists its commands.`;
   }
   const names = [...new Set(REVERSE_COMMANDS.map((c) => c.usage.split(' ')[0]!))];
   // `status` is inside `task-status` and `agents` inside `task-agents`, while `task` is inside
@@ -277,7 +276,7 @@ export function commandHint(name: string): string | undefined {
     // On a tie the shorter name is the closer word: `task` is `tasks` before `task-agents`.
     .sort((a, b) => b.score - a.score || a.n.length - b.n.length);
   const near = scored[0]?.n ?? names.find((n) => editDistance(n, word) <= 2);
-  return near ? `did you mean \`${near}\`?` : undefined;
+  return near ? `Did you mean \`${near}\`?` : undefined;
 }
 
 /** Levenshtein distance, for a mistyped command name (`sesions`). */
@@ -714,6 +713,7 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
       const filters = readFilters(opts);
       const around = num('around');
       const limit = num('limit');
+      assertLimit(limit, 500, 'sessions read');
       if (filters.since !== undefined && limit !== undefined) {
         throw new Error('--since reads forward from a message id; --limit reads the newest messages — use one');
       }

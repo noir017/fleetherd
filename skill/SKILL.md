@@ -42,7 +42,9 @@ current. `fleetherd help` lists the topics.
 
 ## Output and errors
 
-Every command prints TOON on stdout, failures included (with exit code 1).
+Most commands print TOON on stdout, failures included (with exit code 1). `skills show`,
+`task-read --reply` and `--turn <n> --full` print a header and then plain text; `ask` prints the
+chosen label.
 
 - `unsupported operation: …` — this platform cannot do that (editing, threads and buttons vary).
   Don't retry; fall back to the nearest thing that works, such as a new message instead of an edit.

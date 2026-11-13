@@ -753,6 +753,10 @@ describe('HistoryStore turns', () => {
     expect(() => store.read(String(session), { since: 1, limit: 2 })).toThrow(/cannot be combined/);
     const old = store.session({ key: 'tg#pre#', platform: 'tg', at: 5 })!;
     expect(() => store.read(String(old), { turn: 'last' })).toThrow(/no recorded turns/);
+    // `done` / `--reply` on the same conversation is "it has not answered yet", not a bad request.
+    const noReply = store.read(String(old), { turn: 'done', role: 'agent' });
+    expect(noReply.messages).toEqual([]);
+    expect(noReply.note).toMatch(/nothing to reply with/);
     store.close();
   });
 

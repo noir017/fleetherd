@@ -42,11 +42,11 @@ describe('help topics', () => {
     // A help topic is a page, not a command.
     expect(commandHint('history')).toMatch(/help topic.*help history/);
     // `status` and `agents` are the tails of real commands.
-    expect(commandHint('status')).toBe('did you mean `task-status`?');
-    expect(commandHint('agents')).toBe('did you mean `task-agents`?');
-    expect(commandHint('task')).toBe('did you mean `tasks`?');
+    expect(commandHint('status')).toBe('Did you mean `task-status`?');
+    expect(commandHint('agents')).toBe('Did you mean `task-agents`?');
+    expect(commandHint('task')).toBe('Did you mean `tasks`?');
     // A typo is still found.
-    expect(commandHint('sesions')).toBe('did you mean `sessions`?');
+    expect(commandHint('sesions')).toBe('Did you mean `sessions`?');
     expect(commandHint('frobnicate')).toBeUndefined();
   });
 
@@ -386,6 +386,7 @@ describe('sessions <action> [arg]', () => {
     // it names a field the caller never typed.
     expect(() => sessions(['list'], { limit: 500 })).toThrow(/--limit is at most 200 for sessions list/);
     expect(() => sessions(['search', 'x'], { limit: 300 })).toThrow(/--limit is at most 100 for sessions search/);
+    expect(() => sessions(['read', '#12'], { limit: 501 })).toThrow(/--limit is at most 500 for sessions read/);
     expect(sessions(['read', '#12'], { limit: 300 })).toMatchObject({ limit: 300 });
   });
 
