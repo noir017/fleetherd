@@ -183,10 +183,18 @@ harnesses. What differs:
   tools the daemon reads the last call's figure from the session's own transcript
   (`~/.gemini/antigravity-cli/brain/<session>/.system_generated/logs/transcript.jsonl`), on the
   agent's machine, at the end of the turn and every few seconds while it runs; if that file cannot
-  be read, such a turn shows none. agy never says how big the window is, so the
-  daemon knows it only for the models it was measured on (Gemini, Claude Sonnet/Opus 4.6, GPT-OSS
-  120B), or from the agent's `contextWindow` — or, with a `contextBudget`, shows the context against
-  the point where agy compacts.
+  be read, such a turn shows none. agy never says how big the window is, and the number the footer
+  needs is where it *compacts*, which is far below the window: the daemon knows it for the models it
+  was measured on — 256k for Gemini 3.8 Flash (a 1M window), 128k for older Gemini models, 160k for
+  Claude Sonnet/Opus 4.6, 80k for GPT-OSS 120B. An agent's `contextWindow` overrides that; with a
+  `contextBudget` the relay's figure is used. A model nobody has measured shows no numbers.
+- **Only stdio MCP servers reach its tool list.** `agy acp` takes the servers in `session/new` —
+  the gateway's own `chat` among them — and shows the model the stdio ones. An HTTP or SSE server
+  sent the same way is accepted and then ignored: agy never connects to it, and its `initialize`
+  declares no `mcpCapabilities` at all (probed 2026-11-13 on 1.5.7). agy's own config can hold an
+  HTTP server, and its generic `call_mcp_tool` reaches that by name, but the server never appears
+  in the model's list — so an agent that must use one has to be told the server and tool names in
+  its instructions.
 - **Where it compacts can be moved: `contextBudget`.** agy compacts where Google tells it to, per
   model, with the model list it fetches when it starts: at 256k for Gemini 3.8 Flash, whose window
   is 1M, and at 160k for Claude 4.6. Nothing on the machine overrides that — not agy's settings, not
@@ -211,7 +219,9 @@ harnesses. What differs:
 - **agy's own warnings are notices, not reply text.** A retry ("API error (attempt 1) …") is said
   once, as a notice. A turn that ended on a warning — a spent quota, retries run out, an overloaded
   server — fails with it, so `hooks.turnFailed` sees it (as `provider`).
-- **A message sent mid-turn waits for the turn to end**: `agy acp` offers no way to join one.
+- **A message sent mid-turn waits for the turn to end**: `agy acp` offers no way to join one. If it
+  is urgent — stop, change direction, answer now — send `/stop` first; the message you send next
+  starts a fresh turn.
 - **Skills** are read from `<cwd>/.agents/skills`, `~/.agents/skills`,
   `~/.gemini/antigravity-cli/skills`, `~/.gemini/skills` and
   `~/.gemini/config/skills`, so `/skills` lists them and `/<name> <request>` runs one.

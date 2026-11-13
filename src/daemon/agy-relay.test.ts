@@ -132,7 +132,7 @@ describe('agyRelay', () => {
 
   it('serves the rewritten list, and the footer then reads the budget agy was given', async () => {
     const def = agy({ id: 'ag-footer', contextBudget: 800_000 });
-    expect(agyWindow(def, 'gemini-3.8-flash')).toBe(1_048_576); // nothing told yet: the window table
+    expect(agyWindow(def, 'gemini-3.8-flash')).toBe(256_000); // nothing told yet: where agy compacts
     const out = await agyRelay(def)!.spec.transform('/v1internal:fetchAvailableModels', Buffer.from(JSON.stringify(CAPTURE)));
     expect(limitOf(JSON.parse(out!.toString()) as typeof CAPTURE, 'gemini-3.8-flash-high')).toBe('800000');
     // `agy acp` names the model without its level; the list has one per level.

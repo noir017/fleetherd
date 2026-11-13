@@ -107,6 +107,19 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       text(sid, 'done');
       return reply(msg.id, { stopReason: 'end_turn', usage: usage(5601, 18176) });
     }
+    if (p === 'tool-mcp-call') {
+      // agy's generic MCP call: kind execute, title Bash, the server and tool only in the input.
+      const call = {
+        toolCallId: 'c4',
+        kind: 'execute',
+        title: 'Bash',
+        rawInput: { ServerName: 'quantlab-research', ToolName: 'get_trading_calendar', Arguments: {} },
+      };
+      update(sid, { sessionUpdate: 'tool_call', status: 'in_progress', ...call });
+      update(sid, { sessionUpdate: 'tool_call_update', status: 'completed', ...call });
+      text(sid, 'done');
+      return reply(msg.id, { stopReason: 'end_turn', usage: usage(300, 6000) });
+    }
     if (p === 'slow-tool') {
       // A tool that runs a while: the first call's context is on the strip before the turn ends.
       call(sid, 2800, 9000);
@@ -303,12 +316,13 @@ describe('agy over ACP: models', () => {
 });
 
 describe('agy over ACP: a turn', () => {
-  it('reports the context of a one-call turn over the measured window, and the quota', async () => {
+  it('reports the context of a one-call turn over the point where agy compacts, and the quota', async () => {
     const { session } = rig();
     const r = record();
     await turn(session, 'plain', r);
     expect(r.text()).toBe('hi');
-    expect(r.usage).toEqual([{ used: 230 + 5696, size: 1_048_576 }]);
+    // 256k, not Gemini's 1M window: that is where agy compacts (agy-meters.ts COMPACTION_POINTS).
+    expect(r.usage).toEqual([{ used: 230 + 5696, size: 256_000 }]);
     const pools = r.quota.at(-1)!;
     expect(pools.map((p) => [p.id, p.active])).toEqual([
       ['3p-weekly', false],
@@ -359,7 +373,7 @@ describe('agy over ACP: a turn', () => {
     await turn(session, 'tool', r);
     expect(r.text()).toBe('done');
     // The last call's input plus cache reads — not 5601 + 18176, the sum over both calls.
-    expect(r.usage.at(-1)).toEqual({ used: 2801 + 9176, size: 1_048_576 });
+    expect(r.usage.at(-1)).toEqual({ used: 2801 + 9176, size: 256_000 });
     // A mid-turn reading may land first, but only ever one of the calls' own figures.
     expect(r.usage.every((u) => u.used === 2800 + 9000 || u.used === 2801 + 9176)).toBe(true);
   });
@@ -384,6 +398,16 @@ describe('agy over ACP: a turn', () => {
     const r = record();
     await turn(session, 'tool-bare', r);
     expect(r.tools.map((t) => t.name)).toEqual(['Task', 'send_file']);
+  });
+
+  it('labels a `call_mcp_tool` as an MCP call, naming the tool and the server', async () => {
+    const { session } = rig();
+    const r = record();
+    await turn(session, 'tool-mcp-call', r);
+    // agy sends kind `execute` / title `Bash`; without the input this row read `Bash: {"ServerName":…}`.
+    expect(r.tools).toHaveLength(1);
+    expect(r.tools[0]?.name).toBe('MCP get_trading_calendar');
+    expect(r.tools[0]?.inputPreview).toBe('quantlab-research');
   });
 
   it('does not hold the turn for a slow quota reading, and reports it when it lands', async () => {

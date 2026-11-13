@@ -1,5 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
-import { agyContextWindow, markActivePools, parseAgyUsagePools } from './agy-meters.js';
+import { agyCompactionPoint, agyContextWindow, markActivePools, parseAgyUsagePools } from './agy-meters.js';
+
+describe('agyCompactionPoint', () => {
+  it('knows where agy compacts, which is well under the model window', () => {
+    // Google's model list, read on 1.5.2 (agy-relay.ts): the budget, not the window.
+    expect(agyCompactionPoint('gemini-3.8-flash-high')).toBe(256_000);
+    expect(agyCompactionPoint('Gemini 3.8 Flash (Low)')).toBe(256_000);
+    expect(agyCompactionPoint('gemini-2.5-pro')).toBe(128_000);
+    expect(agyCompactionPoint('claude-sonnet-4-6')).toBe(160_000);
+    expect(agyCompactionPoint('Claude Opus 4.6 (Thinking)')).toBe(160_000);
+    expect(agyCompactionPoint('gpt-oss-120b-medium')).toBe(80_000);
+  });
+
+  it('has no compaction point for a model nobody measured', () => {
+    expect(agyCompactionPoint('claude-opus-5-5-medium')).toBeUndefined();
+    expect(agyCompactionPoint(undefined)).toBeUndefined();
+  });
+});
 
 describe('agyContextWindow', () => {
   it('knows the windows measured off agy’s own status line, in either spelling', () => {
