@@ -28,11 +28,12 @@ import type { QuotaPool } from '../types.js';
  * exactly the one nobody has measured.
  *
  * This is the model's window, not where agy compacts — and the footer is about compaction. It is
- * used only for a model with no measured compaction point (COMPACTION_POINTS), i.e. one nobody has
- * measured there.
+ * used only for a model whose window was measured but whose compaction point was not; a model in
+ * neither table gets nothing, because a guessed denominator would draw a confident percentage out
+ * of nothing.
  */
 const CONTEXT_WINDOWS: ReadonlyArray<{ match: RegExp; size: number }> = [
-  { match: /^gemini/i, size: 1_048_576 },
+  { match: /^gemini[ -]3\.8[ -]flash/i, size: 1_048_576 },
   { match: /^claude-(sonnet|opus)-4-6|^claude (sonnet|opus) 4\.6\b/i, size: 250_000 },
   { match: /^gpt-oss[- ]120b/i, size: 131_072 },
 ];
@@ -47,25 +48,21 @@ export function agyContextWindow(model: string | undefined): number | undefined 
  * Where agy compacts, by model — the `max_token_limit` Google hands it in its model list
  * (`modelExperiments.CASCADE_USE_EXPERIMENT_CHECKPOINTER`, read on 1.5.2, 2026-11-07; see
  * agy-relay.ts). The window above is what the model can hold; this is the budget agy actually
- * stops at, and it is what the footer's "left before compaction" means:
+ * stops at, and it is the footer's denominator:
  *
  *   Gemini 3.8 Flash               → 256k, on a 1M window
- *   older Gemini                   → 128k
  *   Claude Sonnet / Opus 4.6       → 160k
  *   GPT-OSS 120B                   → 80k
  *
  * Without a `contextBudget` these are the numbers the footer has to show. The window table said
- * 1M for Gemini 3.8 Flash, so a session at 236k — four fifths of the way to agy compacting — read
- * "1M left before compaction", and the compaction arrived as a surprise (2026-11-13).
+ * 1M for Gemini 3.8 Flash, so a session at 236k — 92% of the way to agy compacting — read as
+ * `236k / 1M (23%)`, and the compaction arrived as a surprise (2026-11-13).
  *
- * The catch-all row of a family is deliberately the conservative one: a Gemini newer than 3.8 that
- * Google gives a larger budget shows as 128k rather than as its window, so the footer may
- * understate the room left, never overstate it. A model outside these families still gets its
- * window, and a model nobody measured gets nothing.
+ * Only the models measured are listed. A Gemini newer than 3.8, or any model Google adds later,
+ * gets no number rather than a guessed one — the same rule as the window table.
  */
 const COMPACTION_POINTS: ReadonlyArray<{ match: RegExp; size: number }> = [
-  { match: /^gemini[ -]3\.8/i, size: 256_000 },
-  { match: /^gemini/i, size: 128_000 },
+  { match: /^gemini[ -]3\.8[ -]flash/i, size: 256_000 },
   { match: /^claude-(sonnet|opus)-4-6|^claude (sonnet|opus) 4\.6\b/i, size: 160_000 },
   { match: /^gpt-oss[- ]120b/i, size: 80_000 },
 ];

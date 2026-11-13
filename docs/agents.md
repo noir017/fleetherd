@@ -183,11 +183,9 @@ harnesses. What differs:
   tools the daemon reads the last call's figure from the session's own transcript
   (`~/.gemini/antigravity-cli/brain/<session>/.system_generated/logs/transcript.jsonl`), on the
   agent's machine, at the end of the turn and every few seconds while it runs; if that file cannot
-  be read, such a turn shows none. agy never says how big the window is, and the number the footer
-  needs is where it *compacts*, which is far below the window: the daemon knows it for the models it
-  was measured on — 256k for Gemini 3.8 Flash (a 1M window), 128k for older Gemini models, 160k for
-  Claude Sonnet/Opus 4.6, 80k for GPT-OSS 120B. An agent's `contextWindow` overrides that; with a
-  `contextBudget` the relay's figure is used. A model nobody has measured shows no numbers.
+  be read, such a turn shows none. agy never says how big its window is, and the footer needs the
+  point where it *compacts*, well below the window: 256k for Gemini 3.8 Flash (a 1M window), 160k
+  for Claude Sonnet/Opus 4.6, 80k for GPT-OSS 120B. A model outside those shows no numbers.
 - **Only stdio MCP servers reach its tool list.** `agy acp` takes the servers in `session/new` —
   the gateway's own `chat` among them — and shows the model the stdio ones. An HTTP or SSE server
   sent the same way is accepted and then ignored: agy never connects to it, and its `initialize`
@@ -196,17 +194,18 @@ harnesses. What differs:
   in the model's list — so an agent that must use one has to be told the server and tool names in
   its instructions.
 - **Where it compacts can be moved: `contextBudget`.** agy compacts where Google tells it to, per
-  model, with the model list it fetches when it starts: at 256k for Gemini 3.8 Flash, whose window
-  is 1M, and at 160k for Claude 4.6. Nothing on the machine overrides that — not agy's settings, not
-  `AGY_CLI_AUTO_COMPACT_OVERRIDE`. With `contextBudget: 900000` the daemon starts agy behind a
-  *relay*: a listener on 127.0.0.1 of the agent's machine, which agy is pointed at through
-  `CLOUD_CODE_URL`. It forwards every request as it is, the streamed model calls included, and
-  changes one thing: in that model list, each model whose window can hold the budget (its window
-  less its output reserve) is told to compact there; the others keep Google's figure. An agent that
-  sets its own `CLOUD_CODE_URL` in `env` keeps it — the relay forwards there. If the relay cannot be
-  opened the agent starts without one, on Google's figure, and the log says why. Measured on agy
-  1.5.2 (2026-11-07); a Gemini 3.8 Flash context of 600k was confirmed to work. Every model call
-  then carries a longer context, so quota runs out sooner.
+  model, with the model list it fetches when it starts, at the figures above. Nothing on the
+  machine overrides that — not agy's settings, not `AGY_CLI_AUTO_COMPACT_OVERRIDE`. With
+  `contextBudget: 900000` the daemon starts agy behind a *relay*: a listener on 127.0.0.1 of the
+  agent's machine, which agy is pointed at through `CLOUD_CODE_URL`. It forwards every request as
+  it is, the streamed model calls included, and changes one thing: in that model list, each model
+  whose window can hold the budget (its window less its output reserve) is told to compact there;
+  the others keep Google's figure. An agent that sets its own `CLOUD_CODE_URL` in `env` keeps it —
+  the relay forwards there. If the relay cannot be opened the agent starts without one, on Google's
+  figure, and the log says why. Measured on agy 1.5.2 (2026-11-07); a Gemini 3.8 Flash context of
+  600k was confirmed to work. Every model call then carries a longer context, so quota runs out
+  sooner. With both `contextWindow` and `contextBudget` set, `contextWindow` is what the footer
+  shows; the relay still moves where agy compacts.
 
   ```yaml
   agents:

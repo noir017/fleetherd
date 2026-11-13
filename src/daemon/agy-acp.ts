@@ -318,6 +318,11 @@ export function agyMcpCall(rawInput: unknown): { server: string; tool: string; a
   return { server, tool, args: input.Arguments };
 }
 
+/** The name a `call_mcp_tool` call is drawn under: `MCP <tool>`, truncated like any tool name. */
+export function agyMcpLabel(mcp: { tool: string }): string {
+  return truncateToolName(`MCP ${mcp.tool}`);
+}
+
 // ───────────────────────── quota ─────────────────────────
 
 /** How old a quota reading may get before a turn asks `agy -p=/usage` again. */

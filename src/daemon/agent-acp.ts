@@ -77,6 +77,7 @@ import { AGY_COMMAND, type AgyCliRunner } from './agy-cli.js';
 import {
   agyAcpToolLabel,
   agyMcpCall,
+  agyMcpLabel,
   agySplitModel,
   agyTurnWatch,
   agyWindow,
@@ -2833,7 +2834,14 @@ export const PERMISSION_DECLINED_CODE = -32001;
 
 /** A permission request as the user is shown it: the tool call's title, and the agent's options. */
 export function permissionRequestOf(req: RequestPermissionRequest): AgentPermissionRequest {
-  const title = stripCode(req.toolCall.title ?? '') || buildInputPreview(req.toolCall.rawInput) || 'a tool call';
+  // agy's generic MCP call is titled `Bash` too, and this card has no preview line for the server,
+  // so it is named the way the tool row names it and the server rides in the title.
+  const mcp = agyMcpCall(req.toolCall.rawInput);
+  const title =
+    (mcp && `${agyMcpLabel(mcp)} — ${mcp.server}`) ||
+    stripCode(req.toolCall.title ?? '') ||
+    buildInputPreview(req.toolCall.rawInput) ||
+    'a tool call';
   return { title, options: req.options.map((o) => ({ optionId: o.optionId, label: o.name || o.optionId })) };
 }
 
@@ -3211,7 +3219,7 @@ function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): v
     // agy's generic MCP call is kind `execute` / title `Bash`; only its input names the server and
     // the tool (agy-acp.ts agyMcpCall). Named here, once, so finishTool draws the same row.
     const mcp = agyMcpCall(rec.rawInput);
-    if (mcp) rec.label = truncateToolName(`MCP ${mcp.tool}`);
+    if (mcp) rec.label = agyMcpLabel(mcp);
   }
 
   // Read before maybeStartTool below, which is where the bubble is drawn: it has to know whose it is.

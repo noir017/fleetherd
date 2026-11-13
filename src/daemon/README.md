@@ -1240,7 +1240,8 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   from there (`invoke_subagent` → Task, `mcp_chat_send_file` → `send_file`). agy also sends a `name`
   field, but the SDK's validation strips it. Its generic `call_mcp_tool` is the exception: kind
   `execute`, title `Bash`, and the server and tool only in the input — `agyMcpCall` reads those and
-  labels the row `MCP <tool>` with the server as the preview.
+  labels the row `MCP <tool>` with the server as the preview. The same name heads the permission
+  card (`permissionRequestOf`), with the server in its title because that card has no preview.
 
 `/usage` and the other CLI-answered names still go to one-shots (`agy-cli.ts`): `agy acp` survives
 them but hands them to the model as a question.
