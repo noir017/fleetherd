@@ -767,7 +767,8 @@ function assertLimit(limit: number | undefined, max: number, command: string): v
  * and the per-message text cuts (`--full`, its own `--tail`).
  *
  * `--reply` selects a turn by itself, so it stands alone: a filter beside it would name a different
- * selection, and `--full`/`--tail`/`--limit` would cut the one text it promises whole.
+ * selection, and `--tail`/`--limit` would cut the one text it promises whole. `--full` is the
+ * exception — it is already true of a reply, so it is accepted and ignored.
  */
 function buildTaskRead(positionals: string[], opts: Record<string, unknown>): IpcAction {
   refuseChannel('task-read', opts);
