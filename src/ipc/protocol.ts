@@ -44,6 +44,14 @@ export const DEFAULT_ASK_REMINDER_TEXT =
 export const ASK_CLIENT_TIMEOUT_MARGIN_MS = 10_000;
 
 /**
+ * The longest `schedule run --wait` may wait, in milliseconds.
+ *
+ * Here for the reason the ask timeout is: the CLI refuses a longer wait in words the caller can act
+ * on, and the boundary refuses the same number — one constant, so the two cannot drift apart.
+ */
+export const MAX_RUN_WAIT_MS = 60 * 60_000;
+
+/**
  * How many topic rows `channels` returns when the caller names no `--limit`. Here for the reason the
  * ask timeout is: the CLI prints it in its help line and the daemon applies it, and they must agree.
  * Thirty is a screenful of recent work; the live deployment had 335 conversations on 2026-09-30.
@@ -220,7 +228,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       id: z.string().min(1),
       op: z.enum(['remove', 'pause', 'resume', 'run']),
       /** `run` only: wait this long for the run to end before answering (see ScheduleOpResult). */
-      waitMs: z.number().int().positive().optional(),
+      waitMs: z.number().int().positive().max(MAX_RUN_WAIT_MS).optional(),
     })
     .strict(),
   // Sub-agents (daemon/delegation.ts). None takes a channelId: they act from the asking conversation
@@ -509,8 +517,9 @@ export interface ListChannelsResult {
 
 /**
  * One run of a task, as `schedule show` prints it and `schedule run --wait` answers with
- * (core/schedule.ts runView): flat strings, one row of a table. `conversation` is the topic a
- * new/daily run's output went to, empty for a fixed or bash run.
+ * (core/schedule.ts runView): flat strings, one row of a table. `conversation` is the conversation
+ * its output went to — the topic a new/daily run opened, or the one a fixed run answered in; empty
+ * for a bash run, which has none.
  */
 export interface ScheduleRunView {
   at: string;

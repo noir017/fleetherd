@@ -773,9 +773,9 @@ export class ScheduleService {
    *
    * The second copy is the point: a sub-agent rewrote a task's prompt from a conversation the task
    * never talks in, and the conversation that would run the new text at 18:00 saw nothing at all
-   * (2026-11-13). Whoever will read the output is told what changed. `deleted` included: a target
-   * that stops receiving a brief should know why. Pause and resume are not: they change nothing
-   * about what the target will receive next, and a manual run posts its own output.
+   * (2026-11-13). Whoever will read the output is told what changed — pause, resume and delete
+   * included, since a target that stops, starts or stops for good receiving the task is the one
+   * that notices. A manual run posts no card: its output is the run's own.
    */
   card(conversation: ConversationId, task: ScheduleTask, verb: string): void {
     const text = taskCardText(task, verb, this.clock.now());

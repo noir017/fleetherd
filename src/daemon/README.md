@@ -655,12 +655,13 @@ What each piece is shaped by, one line each:
   out the answer says the run is still going and the run carries on — the output still reaches the
   conversation and the history still keeps the record.
 - **Cards are the daemon's.** Register, edit, pause, resume and delete post the task's card in the
-  caller's conversation, never left to the agent's retelling. Register, edit and delete post it in
-  the task's target conversation as well — whoever will read the output is told what changed — and
-  the prompt is quoted in full rather than cut at 200 characters, chunked by RENDERED length
-  (`splitByMeasure` over `measureRendered`: WeCom counts UTF-8 bytes, and rendering expands). Pause
-  and resume are the caller's business, and a manual run posts its own output. `/setting` (below)
-  answers in its own message instead of posting a second one.
+  caller's conversation, never left to the agent's retelling — and in the task's target
+  conversation as well, because whoever will read the output is the one a change is news to
+  (pause, resume and delete included: the target stops, starts or stops for good receiving the
+  task). The prompt is quoted in full rather than cut at 200 characters, chunked by RENDERED length
+  (`splitByMeasure` over `measureRendered`: WeCom counts UTF-8 bytes, and rendering expands). A
+  manual run posts no card — its own output is the record. `/setting` (below) answers in its own
+  message instead of posting a second one.
 - **Trust.** Registering needs a reverse-command token — an agent the operator already runs with
   full tool access — so a bash task grants nothing that agent could not have written into crontab
   itself. What IS new is persistence past the session: a prompt-injected agent's task outlives the

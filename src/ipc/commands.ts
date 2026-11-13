@@ -1,5 +1,5 @@
 import type { IpcAction } from './protocol.js';
-import { DEFAULT_ASK_TIMEOUT_MS, DEFAULT_CHANNEL_LIMIT } from './protocol.js';
+import { DEFAULT_ASK_TIMEOUT_MS, DEFAULT_CHANNEL_LIMIT, MAX_RUN_WAIT_MS } from './protocol.js';
 
 /**
  * Reverse-command catalog: single source of truth.
@@ -471,9 +471,8 @@ const duration = (label: string) => (value: string): number => {
 
 const durationArg = duration('--timeout');
 
-/** How long `schedule run --wait` waits when it is given no duration, and the most it may ask for. */
+/** How long `schedule run --wait` waits when it is given no duration. The cap is the protocol's. */
 export const DEFAULT_RUN_WAIT_MS = 10 * 60_000;
-export const MAX_RUN_WAIT_MS = 60 * 60_000;
 
 /**
  * `--wait [duration]`: bare means DEFAULT_RUN_WAIT_MS. The tool sends the word "true" for a bare
