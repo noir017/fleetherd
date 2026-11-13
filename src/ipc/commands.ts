@@ -1,5 +1,5 @@
 import type { IpcAction } from './protocol.js';
-import { DEFAULT_ASK_TIMEOUT_MS, DEFAULT_CHANNEL_LIMIT } from './protocol.js';
+import { DEFAULT_ASK_TIMEOUT_MS, DEFAULT_CHANNEL_LIMIT, MAX_RUN_WAIT_MS } from './protocol.js';
 
 /**
  * Reverse-command catalog: single source of truth.
@@ -100,19 +100,22 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'schedule',
     summary: 'Scheduled and recurring tasks that survive restarts — an agent prompt or a bash command, output to any chat',
     notes: [
-      'Use this rather than a scheduling tool built into your own harness: those live inside your process, which the gateway stops after an idle hour and on every restart. Tasks here are kept on disk by the gateway and run from it.',
-      'When the time, the time zone, or where the output should go is not clear from what the user said, ask before adding. The gateway posts a card with the task\'s details when it is registered, changed or deleted; the user can list, pause and delete tasks with /setting schedule.',
+      'Use this rather than a scheduling tool built into your own harness: those live inside your process, which the gateway stops after an idle hour and on every restart. Tasks here are kept on disk by the gateway and run from it. A wait longer than this turn, or a check whose result should arrive later as a message, is a task here — a background process your shell starts dies with the session.',
+      'When the time, the time zone, or where the output should go is not clear from what the user said, ask before adding. The gateway posts a card with the task\'s details when it is registered, changed or deleted — in this conversation and in the one the task posts to, with the prompt in full — and the user can list, pause and delete tasks with /setting schedule.',
       '--prompt with --session fixed (the default): each run is a turn in THIS conversation (or the one --channel names), with the agent answering it — context accumulates and the user can follow up in place. A fixed-session task lives 24h from registration, then expires; anything longer needs --session new.',
       '--prompt with --session new: every run is a fresh session, in a new topic where the platform can open one without a message (web UI, Telegram forum groups), otherwise posted straight into the chat. --agent picks who answers; --cwd where it starts.',
       '--prompt with --session daily: the first run of each day opens a new topic, and later runs that day join it — one conversation per day, named with the date. The day is counted in --tz, by each run\'s planned time, so a catch-up after midnight joins the day it was meant for. Needs --cron and a platform that can open a topic with no message to reply to (web UI, Telegram forum groups); --agent and --cwd work as with new.',
       '--model names the model a --session new or daily task\'s conversations use. A fixed-session task runs in this conversation and keeps the model /model set here, so --model there is refused. The id must be in the agent\'s own /model list: a name it does not offer is refused when the task is added, with the list, and a run that cannot apply the model fails with the reason instead of quietly using another.',
       '--bash: the gateway runs the command with `bash -lc` in --cwd (default: your working directory) and posts the exit code, duration and the end of the output; long output is attached as a file. --timeout defaults to 10m, at most 6h.',
-      '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday). Both are read in --tz, default the gateway\'s own zone.',
+      '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday); several 5-field expressions separated by `;` are one schedule that runs at whichever comes next (`0 9 * * *; 0 15 * * *` is twice a day). Both are read in --tz, default the gateway\'s own zone.',
+      'For a long prompt, let your own shell read the file: --prompt "$(cat prompt.md)". The file is expanded where you run the command, so it is your machine\'s file — the gateway has no flag that reads one of its own.',
       '--channel is where output goes (ids from `fleetherd channels`); default this conversation.',
-      'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped.',
-      '`add` and `show` print the task id; `list` shows every task with its next run and last result; pause / resume / run (run it now, once) / rm take the id.',
+      'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped. A run that is missed, skipped or fails says so in the conversation it posts to, once per reason — silence now means it ran.',
+      '`add` and `show` print the task id; `list` shows every task with its next run and last result; `show` also prints the last 20 runs with their time, result, duration and the topic each output went to; pause / resume / run / rm take the id.',
+      '`run <id>` runs it once, now, without touching its schedule; `--wait` waits for it to end and prints the result (status, exit code, duration) instead of making you poll. `--wait 30m` waits that long; it gives up after 10m by default and says the run is still going. A wait is at most 1h, and at least 1s.',
       '--tag labels a task for the web UI\'s task list: one comma-separated list, at most 5 tags of up to 24 characters each. A tag is letters (Chinese included), digits and - _ . / — no spaces or commas; it is trimmed and lowercased. edit replaces the whole set; --tag "" clears it.',
-      '`edit <id> [options]` changes a task in place: --agent, --cwd, --model, --cron / --at / --tz, --name, --tag, --prompt, and --bash / --timeout for a bash task. The id, the run count and the last result stay; the next run is recomputed from now under the new time rule, and the gateway posts the updated card. What a task IS cannot change: --session, prompt ↔ bash and --channel are refused — `rm` it and add a new one. A daily task whose agent or directory changes opens a new topic for the rest of today; the day\'s earlier topic is left as it is.',
+      '`edit <id> [options]` changes a task in place: --agent, --cwd, --host, --model, --cron / --at / --tz, --name, --tag, --prompt, and --bash / --timeout for a bash task. The id, the run count and the last result stay; the next run is recomputed from now under the new time rule, and the gateway posts the updated card. What a task IS cannot change: --session, prompt ↔ bash and --channel are refused — `rm` it and add a new one. A daily task whose agent or directory changes opens a new topic for the rest of today; the day\'s earlier topic is left as it is.',
+      'A task\'s --cwd is a path on one machine, and the task runs on its agent\'s machine. A --cwd you give without --host is read as a path on the machine this command runs on; for an agent on another host, either run the command from a conversation there, or give --host <that host> — which also checks the directory exists there, and with no --cwd lets the task start in that machine\'s own directory. A fixed-session task has no directory of its own, and a --bash task runs where the agent that registers it does.',
       'Where you have a schedule tool, it is this same command.',
     ],
   },
@@ -534,21 +537,64 @@ const fieldsArg = (value: string, previous: string[] = []): string[] => {
 };
 
 /**
- * Duration parser for --timeout on schedule: `90s`, `10m`, `1h`, or bare milliseconds. Units
- * because a bash task's limit is minutes, and `--timeout 600000` is a number nobody checks.
+ * Duration parser for --timeout and --wait: `90s`, `10m`, `1h`, or bare milliseconds. Units because
+ * a bash task's limit is minutes, and `--timeout 600000` is a number nobody checks.
  */
-const durationArg = (value: string): number => {
+const duration = (label: string) => (value: string): number => {
   const m = /^(\d+)\s*(ms|s|m|h)?$/i.exec(value.trim());
-  if (!m) throw new Error(`--timeout must be a duration like 90s, 10m or 1h, got ${JSON.stringify(value)}`);
+  if (!m) throw new Error(`${label} must be a duration like 90s, 10m or 1h, got ${JSON.stringify(value)}`);
   const unit = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 }[(m[2] ?? 'ms').toLowerCase() as 'ms' | 's' | 'm' | 'h'];
   return Number(m[1]) * unit;
 };
 
+const durationArg = duration('--timeout');
+
+/** How long `schedule run --wait` waits when it is given no duration. The cap is the protocol's. */
+export const DEFAULT_RUN_WAIT_MS = 10 * 60_000;
+
+/**
+ * `--wait [duration]`: bare means DEFAULT_RUN_WAIT_MS. The tool sends the word "true" for a bare
+ * flag (every parameter is a string there), which reads the same as the flag with nothing after it.
+ *
+ * Bounded and refused in words here, before the daemon sees it: `--wait 0` is not a shorter wait but
+ * a meaningless one (the answer would always be "still running"), and a wait of days holds an IPC
+ * connection and an agent's turn open for no reason. The IPC schema would say the same thing in
+ * zod's words, which is not something to hand an agent.
+ */
+const waitArg = (value: string): number => {
+  if (value === 'true') return DEFAULT_RUN_WAIT_MS;
+  const ms = duration('--wait')(value);
+  if (ms < 1_000) throw new Error(`--wait ${value} is too short: give at least 1s, or leave it off for ${DEFAULT_RUN_WAIT_MS / 60_000}m`);
+  if (ms > MAX_RUN_WAIT_MS) {
+    throw new Error(`--wait ${value} is longer than the ${MAX_RUN_WAIT_MS / 60_000}m maximum; the run keeps going after that, and its output still reaches the conversation`);
+  }
+  return ms;
+};
+
 /** `schedule add`'s own options, by commander's camel-cased key — refused on every other action. */
-const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'session', 'cwd', 'model', 'timeout'] as const;
+const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'session', 'cwd', 'host', 'model', 'timeout'] as const;
 
 /** What `schedule edit` may set: add's options minus `--session`, plus nothing of its own. */
-const SCHEDULE_EDIT_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'cwd', 'model', 'timeout'] as const;
+const SCHEDULE_EDIT_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'cwd', 'host', 'model', 'timeout'] as const;
+
+/**
+ * A `--cwd` given with `--host` has to be absolute.
+ *
+ * The CLI resolves a relative path or `~` against the directory the command ran in (reverse.ts
+ * resolvePathArg) — here, on this machine. A path meant for another machine would then arrive
+ * absolute and wrong, naming a place on the wrong host, and nothing downstream could tell. So it is
+ * refused while the caller can still type the path it meant.
+ */
+function checkHostCwd(opts: Record<string, unknown>): void {
+  const host = str(opts.host);
+  const cwd = str(opts.cwd);
+  if (host === undefined || cwd === undefined) return;
+  if (!cwd.startsWith('/')) {
+    throw new Error(
+      `--cwd ${cwd} has to be an absolute path when --host is given: a relative path or ~ is resolved on this machine, not on ${host}; give the path as it is on ${host}`
+    );
+  }
+}
 
 /**
  * `--tag a,b` → the raw pieces. Splitting only: the trim/lowercase/dedupe and the limits are
@@ -560,6 +606,8 @@ const tagList = (v: unknown): string[] | undefined =>
   typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
 
 function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
+  if (opts.wait !== undefined) throw new Error('--wait only applies to `schedule run`');
+  checkHostCwd(opts);
   const session = str(opts.session);
   if (session !== undefined && session !== 'fixed' && session !== 'new' && session !== 'daily') {
     throw new Error(`--session must be fixed, new or daily, got ${JSON.stringify(session)}`);
@@ -577,6 +625,7 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
     agent: str(opts.agent),
     session,
     cwd: str(opts.cwd),
+    host: str(opts.host),
     model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
   };
@@ -589,6 +638,8 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
  * round trip that could only refuse the same thing.
  */
 function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcAction {
+  if (opts.wait !== undefined) throw new Error('--wait only applies to `schedule run`');
+  checkHostCwd(opts);
   const taskId = p[1]?.replace(/^#/, '');
   if (!taskId) throw new Error('schedule edit needs a task id (`fleetherd schedule list` shows them)');
   if (str(opts.session) !== undefined) {
@@ -615,13 +666,14 @@ function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcActio
     bash: str(opts.bash),
     agent: str(opts.agent),
     cwd: str(opts.cwd),
+    host: str(opts.host),
     model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
   };
   const changed = SCHEDULE_EDIT_KEYS.some((k) => opts[k] !== undefined);
   if (!changed) {
     throw new Error(
-      'schedule edit needs something to change: --agent, --cwd, --model, --cron, --at, --tz, --name, --tag, --prompt, --bash or --timeout'
+      'schedule edit needs something to change: --agent, --cwd, --host, --model, --cron, --at, --tz, --name, --tag, --prompt, --bash or --timeout'
     );
   }
   return action;
@@ -635,12 +687,7 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
     return buildScheduleAdd(opts);
   }
   if (action === 'edit') return buildScheduleEdit(p, opts);
-  const stray = SCHEDULE_ADD_KEYS.find((k) => opts[k] !== undefined);
-  if (stray) {
-    const where = stray === 'tag' ? '`schedule add` and `schedule edit`' : '`schedule add`';
-    throw new Error(`--${stray} only applies to ${where}`);
-  }
-  if (str(opts.channel) !== undefined) throw new Error(`--channel only applies to \`schedule add\` (where output goes)`);
+  refuseStrayFlags(action, opts);
   const id = (): string => {
     const v = p[1]?.replace(/^#/, '');
     if (!v) throw new Error(`schedule ${action} needs a task id (\`fleetherd schedule list\` shows them)`);
@@ -654,8 +701,11 @@ function buildSchedule(p: string[], opts: Record<string, unknown>): IpcAction {
       return { kind: 'schedule-list', id: id() };
     case 'pause':
     case 'resume':
-    case 'run':
       return { kind: 'schedule-op', id: id(), op: action };
+    case 'run': {
+      const waitMs = waitOf(opts);
+      return { kind: 'schedule-op', id: id(), op: 'run', ...(waitMs !== undefined ? { waitMs } : {}) };
+    }
     case 'rm':
     case 'remove':
     case 'delete':
@@ -677,6 +727,31 @@ function sessionsReply(session: string, opts: Record<string, unknown>): IpcActio
   );
   if (stray) throw new Error(`--reply selects one turn's reply itself; --${stray} does not apply`);
   return { kind: 'sessions-read', session, role: 'agent', turn: 'done' };
+}
+
+/**
+ * Refuse the add/edit flags — and `--channel` — on an action that has no use for them. Only
+ * `--session` is add-only; every other one is `edit`'s too, and the sentence says so.
+ */
+function refuseStrayFlags(action: string, opts: Record<string, unknown>): void {
+  if (action !== 'run' && opts.wait !== undefined) throw new Error('--wait only applies to `schedule run`');
+  const stray = SCHEDULE_ADD_KEYS.find((k) => opts[k] !== undefined);
+  if (stray) {
+    const where = stray === 'session' ? '`schedule add`' : '`schedule add` and `schedule edit`';
+    throw new Error(`--${flagName(stray)} only applies to ${where}`);
+  }
+  if (str(opts.channel) !== undefined) throw new Error('--channel only applies to `schedule add` (where output goes)');
+}
+
+/** `--wait` as milliseconds: bare (commander's `true`, or the tool's "true") means the default. */
+function waitOf(opts: Record<string, unknown>): number | undefined {
+  if (opts.wait === true) return DEFAULT_RUN_WAIT_MS;
+  return typeof opts.wait === 'number' ? opts.wait : undefined;
+}
+
+/** The CLI spelling of a commander key, for a sentence that names the flag the caller typed. */
+function flagName(key: string): string {
+  return key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
 /** `sessions <action> [arg]` → one IpcAction, refusing flags that do not belong to the action. */
@@ -1090,9 +1165,12 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     usage: 'schedule <action> [id]',
     topic: 'schedule',
     description:
-      'Scheduled tasks kept by the gateway (they survive restarts): add | list | show <id> | edit <id> [options] | pause <id> | resume <id> | run <id> | rm <id>',
+      'Scheduled tasks kept by the gateway (they survive restarts): add | list | show <id> | edit <id> [options] | pause <id> | resume <id> | run <id> [--wait] | rm <id>',
     options: [
-      { flags: '--cron <expr>', description: 'add/edit: recurring, 5-field cron, e.g. "0 8 * * *"' },
+      {
+        flags: '--cron <expr>',
+        description: 'add/edit: recurring, 5-field cron, e.g. "0 8 * * *"; several expressions separated by ; — the task runs at the next one',
+      },
       { flags: '--at <time>', description: 'add/edit: once — +30m, +2h, 08:00, "2026-10-01 08:00", or ISO with a zone' },
       { flags: '--tz <zone>', description: "add/edit: IANA zone for --cron/--at (default: the gateway's; edit keeps the task's)" },
       { flags: '--prompt <text>', description: 'add/edit: the text an agent runs (edit cannot turn a --bash task into a prompt task)' },
@@ -1103,7 +1181,17 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '--name <name>', description: 'add/edit: short name for lists and cards' },
       { flags: '--tag <a,b>', description: 'add/edit: labels for the task list, comma-separated (max 5, 24 chars each, letters/digits/- _ . /); edit replaces the whole set, --tag "" clears it' },
       { flags: '--cwd <dir>', description: 'add/edit: working directory for --bash, --session new or --session daily' },
+      {
+        flags: '--host <id>',
+        description:
+          'add/edit: the machine --cwd is on (a hosts: id), for a task whose agent runs there; with no --cwd the task starts in that machine\'s own directory. Without it a --cwd is read as this machine\'s',
+      },
       { flags: '--timeout <duration>', description: 'add/edit: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
+      {
+        flags: '--wait [duration]',
+        description: `run only: wait for the run to end and print its result (default ${DEFAULT_RUN_WAIT_MS / 60_000}m, at most ${MAX_RUN_WAIT_MS / 60_000}h)`,
+        parse: waitArg,
+      },
     ],
     build: buildSchedule,
   },

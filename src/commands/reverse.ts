@@ -8,6 +8,7 @@ import type {
   IpcAction,
   ListChannelsResult,
   ScheduleListResult,
+  ScheduleRunView,
   ScheduleTaskView,
   SessionListResult,
   SessionReadResult,
@@ -311,10 +312,13 @@ function renderChannels(data: unknown): string {
  * `id` as a tool), since this exact text reaches both.
  */
 function renderScheduleTask(data: unknown): string {
-  const task = (data as { task?: ScheduleTaskView } | undefined)?.task;
+  const result = data as { task?: ScheduleTaskView; run?: ScheduleRunView; note?: string } | undefined;
+  const task = result?.task;
   if (!task) return toon({ ok: true });
   return toon({
     task,
+    ...(result.run ? { run: result.run } : {}),
+    ...(result.note ? { note: result.note } : {}),
     help: [`A card with this task was posted in the conversation. Manage it by its id (${task.id}): pause, resume, run (now, once) or rm.`],
   });
 }

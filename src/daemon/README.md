@@ -631,8 +631,14 @@ What each piece is shaped by, one line each:
   a `--cwd` belongs to the machine the command was typed on (the CLI resolved it there), `add`'s
   default to the registering conversation's, and the directory an edit keeps to the task's machine
   before the edit — so `add --agent` / `edit --agent` naming an agent on another host is refused
-  while the task carries a directory from here. The fix every refusal names is the command from a
-  conversation on the task's machine, which passes the same check. Nothing is written until every
+  while the task carries a directory from here. `--host <id>` is the explicit way through: it says
+  the `--cwd` given in the same command is that machine's, the directory is checked there with
+  `test -d` over the host's own link (`dirOnHostProblem`), and with no `--cwd` the task starts in
+  that machine's own default directory instead of the caller's. A `--cwd` under `--host` must be
+  absolute, refused at parse time: the CLI resolves a relative path or `~` against the caller's
+  directory, so it would arrive naming a place on the wrong machine and nothing downstream could
+  tell. Without `--host` the rule is unchanged, and the refusal names both ways out — `--host`, or
+  the command from a conversation on the task's machine. Nothing is written until every
   check passes, and
   the task is re-read after the one `await` (the model list): a run that finished meanwhile, or a
   delete, is reported rather than overwritten, and `Scheduler.update` refuses an id that is gone.
@@ -640,10 +646,30 @@ What each piece is shaped by, one line each:
   b` forks), the daemon's environment minus the reverse-command token, a 16 KB tail kept for the chat
   and the full output in `<configDir>/schedule-runs/<id>/` (20 per task). Longer than 3000 characters
   inline, the log is attached.
-- **Every run speaks first.** A notice before an agent run, the result for a bash one — output that
-  arrives unasked always says which task produced it.
+- **Every run speaks first, and a run that did not deliver speaks too.** A notice before an agent
+  run, the result for a bash one — output that arrives unasked always says which task produced it.
+  A run that ended failed, one skipped because the previous run of the task was still going, and
+  one missed because the gateway was down each post one line to the task's target (a new/daily run
+  to the topic it opened), deduplicated by REASON — `reportFailure`, keyed on `lastRun.error`, not
+  on its status: the two skip paths record `failed`, so a status comparison let the same skip line
+  through every time. A turn that ends failed is the case this exists for: the merger posts nothing
+  on its own, so before this the start notice was the last thing the chat ever saw.
+- **A task keeps its last 20 runs** (`history` on the task, newest first, capped by
+  `MAX_RUN_HISTORY` because the whole task is rewritten on every run): time, status, duration,
+  exit code, error and the conversation the output went to. Missed and skipped runs are in it too,
+  and `schedule show` prints it. `lastRun` stays the single line lists show.
+- **`schedule run <id> --wait [duration]`** starts the run exactly as run-now does and answers when
+  it ends (`Scheduler.runNow` hands back the run's promise), with the record `schedule show` would
+  print. The wait is 10m by default, at most 1h, refused in words outside that range; when it runs
+  out the answer says the run is still going and the run carries on — the output still reaches the
+  conversation and the history still keeps the record.
 - **Cards are the daemon's.** Register, edit, pause, resume and delete post the task's card in the
-  caller's conversation, never left to the agent's retelling. `/setting` (below) answers in its own
+  caller's conversation, never left to the agent's retelling — and in the task's target
+  conversation as well, because whoever will read the output is the one a change is news to
+  (pause, resume and delete included: the target stops, starts or stops for good receiving the
+  task). The prompt is quoted in full rather than cut at 200 characters, chunked by RENDERED length
+  (`splitByMeasure` over `measureRendered`: WeCom counts UTF-8 bytes, and rendering expands). A
+  manual run posts no card — its own output is the record. `/setting` (below) answers in its own
   message instead of posting a second one.
 - **Trust.** Registering needs a reverse-command token — an agent the operator already runs with
   full tool access — so a bash task grants nothing that agent could not have written into crontab

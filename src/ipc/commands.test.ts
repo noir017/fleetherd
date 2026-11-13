@@ -225,6 +225,7 @@ describe('schedule <action> [id]', () => {
       tz: undefined,
       bash: undefined,
       cwd: undefined,
+      host: undefined,
       timeoutMs: undefined,
     });
   });
@@ -263,9 +264,56 @@ describe('schedule <action> [id]', () => {
       bash: undefined,
       agent: 'oc',
       cwd: '/srv/app',
+      host: undefined,
       model: undefined,
       timeoutMs: undefined,
     });
+  });
+
+  it('--host is the machine a --cwd is on, and rides with add and edit', () => {
+    expect(schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd: '/srv/app', host: 'box' })).toMatchObject({
+      kind: 'schedule-add',
+      cwd: '/srv/app',
+      host: 'box',
+    });
+    expect(schedule(['edit', 'a1b2c3'], { host: 'box', cwd: '/srv/app' })).toMatchObject({ kind: 'schedule-edit', host: 'box' });
+    expect(() => schedule(['list'], { host: 'box' })).toThrow(/--host only applies to `schedule add` and `schedule edit`/);
+  });
+
+  it('refuses a relative or ~ --cwd under --host, since it would be resolved here', () => {
+    // reverse.ts resolves it against the caller's directory, so it would arrive absolute and
+    // naming a place on the wrong machine; nothing downstream could tell.
+    for (const cwd of ['srv/app', './app', '~/app', '~']) {
+      expect(() => schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd, host: 'box' })).toThrow(
+        /has to be an absolute path when --host is given/
+      );
+      expect(() => schedule(['edit', 'a1b2c3'], { cwd, host: 'box' })).toThrow(/has to be an absolute path when --host is given/);
+    }
+    // Without --host, relative is still resolved by the CLI and allowed — that is the local case.
+    expect(schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd: 'srv/app' })).toMatchObject({ cwd: 'srv/app' });
+  });
+
+  it('--wait waits for a run, defaulting to ten minutes, and only on run', () => {
+    expect(schedule(['run', 'a1b2c3'], { wait: true })).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 600_000 });
+    const parse = spec('schedule').options.find((o) => o.flags.startsWith('--wait'))!.parse!;
+    expect(parse('30s')).toBe(30_000);
+    // The native tool sends every value as a string, including a bare flag.
+    expect(parse('true')).toBe(600_000);
+    expect(schedule(['run', 'a1b2c3'], { wait: parse('2m') })).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 120_000 });
+    expect(schedule(['run', 'a1b2c3'])).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run' });
+    expect(() => schedule(['pause', 'a1b2c3'], { wait: true })).toThrow(/--wait only applies to `schedule run`/);
+    // Not silently ignored on the two actions that take options of their own.
+    expect(() => schedule(['add'], { cron: '0 8 * * *', prompt: 'x', wait: true })).toThrow(/--wait only applies to `schedule run`/);
+    expect(() => schedule(['edit', 'a1b2c3'], { name: 'x', wait: true })).toThrow(/--wait only applies to `schedule run`/);
+  });
+
+  it('refuses a --wait of zero and one past an hour, in words rather than zod', () => {
+    const parse = spec('schedule').options.find((o) => o.flags.startsWith('--wait'))!.parse!;
+    expect(parse('1h')).toBe(3_600_000);
+    expect(() => parse('0')).toThrow(/too short: give at least 1s/);
+    expect(() => parse('500ms')).toThrow(/too short: give at least 1s/);
+    expect(() => parse('2h')).toThrow(/longer than the 60m maximum/);
+    expect(() => parse('soon')).toThrow(/duration like 90s/);
   });
 
   it('parses --tag as a comma-separated list, empty pieces dropped, and "" as clearing', () => {
@@ -285,7 +333,7 @@ describe('schedule <action> [id]', () => {
     [['pause'], {}, /needs a task id/],
     [['list'], { tag: 'ci' }, /--tag only applies to `schedule add` and `schedule edit`/],
     [['frobnicate'], {}, /unknown schedule action "frobnicate"/],
-    [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add`/],
+    [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add` and `schedule edit`/],
     [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add`/],
     [['add', 'x'], { cron: '0 8 * * *' }, /takes no id/],
     [['add'], { session: 'forever' }, /--session must be fixed, new or daily/],

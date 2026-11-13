@@ -184,6 +184,37 @@ describe('buildTask', () => {
     expect(taskView(t, NOW, { detail: true })).toMatchObject({ model: 'deepseek-v4-flash' });
   });
 
+  it('--host takes the --cwd as that machine\'s, and infers no directory without one', () => {
+    // With a --cwd: stored as given, because --host says which machine it belongs to.
+    expect(built({ cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'oc', cwd: '/srv/app', host: 'box' }).run).toEqual({
+      kind: 'agent',
+      agent: 'oc',
+      prompt: 'brief',
+      session: 'new',
+      cwd: '/srv/app',
+    });
+    // Without one: no directory at all, so the run starts in that machine's own default — the
+    // caller's /work is a path on a machine the task does not run on.
+    expect(built({ cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'oc', host: 'box' }).run).toEqual({
+      kind: 'agent',
+      agent: 'oc',
+      prompt: 'brief',
+      session: 'new',
+    });
+    // A daily task works the same way.
+    expect(built({ cron: '0 8 * * *', prompt: 'brief', session: 'daily', agent: 'oc', host: 'box' }).run).toEqual({
+      kind: 'agent',
+      agent: 'oc',
+      prompt: 'brief',
+      session: 'daily',
+    });
+  });
+
+  it('refuses --host where there is no directory to place, in each case\'s own words', () => {
+    expect(refusal({ cron: '0 * * * *', prompt: 'x', host: 'box' })).toMatch(/--host names the machine a --cwd belongs to.*fixed-session task has no --cwd/);
+    expect(refusal({ cron: '0 3 * * *', bash: 'ls', host: 'box' })).toMatch(/--host is for a --prompt task on another machine/);
+  });
+
   it('a daily-session task can name its model', () => {
     const t = built({ cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'deepseek-v4-pro' });
     expect(t.run).toMatchObject({ session: 'daily', model: 'deepseek-v4-pro' });
@@ -260,6 +291,7 @@ describe('editTask', () => {
     runs: 3,
     lastPlannedAt: NOW - 2 * HOUR,
     lastRun: { at: NOW - 2 * HOUR, status: 'ok', durationMs: 1_500 },
+    history: [{ at: NOW - 2 * HOUR, status: 'ok', durationMs: 1_500 }],
   });
 
   it('changes only the fields it was given, and keeps the task\'s identity and history', () => {
@@ -271,6 +303,7 @@ describe('editTask', () => {
     expect(after.target).toEqual(before.target);
     expect(after.runs).toBe(3);
     expect(after.lastRun).toEqual(before.lastRun);
+    expect(after.history).toEqual(before.history);
     expect(after.lastPlannedAt).toBe(before.lastPlannedAt);
     expect(after.name).toBe('brief'); // not re-derived from the new prompt
     expect(after.run).toEqual({ kind: 'agent', agent: 'oc', prompt: 'write the brief', session: 'new', cwd: '/work' });
@@ -442,6 +475,50 @@ describe('taskCardText', () => {
     const card = taskCardText(built({ at: '+2m', bash: 'date' }), 'registered', NOW);
     expect(card).toContain('• When: once at 2026-09-30 10:02 (Asia/Shanghai)\n');
     expect(card).not.toContain('next');
+  });
+
+  it('quotes the whole prompt rather than cutting it at 200 characters', () => {
+    // The card is how the conversation that will run the prompt learns what it says; a change to
+    // an unverified prototype read as "…" after 200 characters and nobody saw it (2026-11-13).
+    const long = 'y'.repeat(400);
+    const card = taskCardText(built({ cron: '0 8 * * *', prompt: `first line\n${long}\nlast line`, session: 'new' }), 'updated', NOW);
+    expect(card).toContain(`• Prompt:\n> first line\n> ${long}\n> last line\n`);
+  });
+
+  it('keeps a bash task\'s command on one line, since a command is read as one', () => {
+    const card = taskCardText(built({ at: '+2m', bash: 'for i in 1 2; do\n  echo $i\ndone' }), 'registered', NOW);
+    expect(card).toContain('• Command: for i in 1 2; do echo $i done');
+    expect(card).not.toContain('• Prompt:');
+  });
+});
+
+describe('taskView', () => {
+  it('show prints the last runs, newest first, with the topic each output went to', () => {
+    const t: ScheduleTask = {
+      ...built({ cron: '0 8 * * *', prompt: 'brief', session: 'new' }),
+      history: [
+        { at: NOW + 60_000, status: 'failed', durationMs: 1_200, error: 'exit 2', conversation: 'web#main#new1' },
+        { at: NOW, status: 'ok', durationMs: 300 },
+      ],
+    };
+    expect(taskView(t, NOW, { detail: true })).toMatchObject({
+      history: [
+        { at: '2026-09-30 10:01', status: 'failed', took: '1.2s', conversation: 'web#main#new1', error: 'exit 2' },
+        { at: '2026-09-30 10:00', status: 'ok', took: '300ms', conversation: '', error: '' },
+      ],
+    });
+  });
+
+  it('list stays one row a task: no history without detail', () => {
+    const t: ScheduleTask = {
+      ...built({ cron: '0 8 * * *', prompt: 'brief', session: 'new' }),
+      history: [{ at: NOW, status: 'ok' }],
+    };
+    expect(taskView(t, NOW)).not.toHaveProperty('history');
+  });
+
+  it('omits the field entirely when a task has never run', () => {
+    expect(taskView(built({ cron: '0 8 * * *', prompt: 'brief', session: 'new' }), NOW, { detail: true })).not.toHaveProperty('history');
   });
 });
 

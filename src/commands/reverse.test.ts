@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderResult } from './reverse.js';
-import type { SessionListResult, SessionReadResult, SessionSearchResult, TaskReadResult } from '../ipc/protocol.js';
+import type { ScheduleTaskView, SessionListResult, SessionReadResult, SessionSearchResult, TaskReadResult } from '../ipc/protocol.js';
 
 /** What an agent reads for `sessions read`: the row fields it must not have to guess at. */
 
@@ -243,5 +243,39 @@ describe('pods output', () => {
       pods: [{ pod: 'laptop', ssh: 'user@192.0.2.9:10022', agents: 'cc@laptop' }],
     }).stdout;
     expect(out.indexOf('laptop')).toBeLessThan(out.indexOf('gatewayKey'));
+  });
+});
+
+describe('schedule run --wait output', () => {
+  const task: ScheduleTaskView = {
+    id: 'a1b2c3',
+    name: 'backup',
+    tags: '',
+    state: 'active',
+    when: '`0 3 * * *` (Asia/Shanghai)',
+    next: '2026-11-14 03:00',
+    runs: 'gateway · bash · 10m limit',
+    target: 'web:main/t1',
+    last: 'ok 2026-11-13 03:00',
+    count: 4,
+    expires: '',
+    here: true,
+  };
+
+  it('prints the run\'s own record beside the task, so the agent need not poll', () => {
+    const out = renderResult({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 600_000 }, {
+      task,
+      run: { at: '2026-11-13 10:00', status: 'failed', took: '1.2s', conversation: '', error: 'exit 2' },
+    }).stdout;
+    expect(out).toContain('failed');
+    expect(out).toContain('1.2s');
+    expect(out).toContain('exit 2');
+  });
+
+  it('carries the note when the wait ran out, so "no result" is not read as "no run"', () => {
+    const note = 'still running after 10m; its output is posted to web:main/t1 when it ends';
+    const out = renderResult({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 600_000 }, { task, note }).stdout;
+    expect(out).toContain(note);
+    expect(out).not.toContain('run:');
   });
 });

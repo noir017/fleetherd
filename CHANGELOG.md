@@ -204,6 +204,55 @@ All notable changes to this project are documented here. The format is based on
   while the turn is still winding down, is not handed to that turn any more; it starts the next one
   as soon as it ends. `/new` lets go of kept messages and says which.
 
+- **A scheduled task keeps its last 20 runs, and `schedule show` prints them.** Each row is when it
+  ran, how it ended, how long it took and the topic its output went to; missed and skipped runs are
+  in the list too, because those are the ones nobody sees in the chat. The record a task kept before
+  this was one `last`, so a run that failed at 13:33 was indistinguishable by 15:08 from one that
+  never happened — answering "how did the last few days go" meant a sub-agent reading the
+  conversation library per day (four of them, 58–68 tool calls each, 2026-11-13). Twenty because the
+  whole task is rewritten to disk on every run, and an every-minute task would otherwise grow
+  `schedules.json` without limit.
+- **`schedule run <id> --wait [duration]` waits for the run and answers with its result** — status,
+  exit code, duration, and the topic an agent run's output went to. An agent that wants the outcome
+  used to write `until …; do sleep 5; done` and then read the conversation back, polling a command
+  the gateway already knows the end of. Bare `--wait` waits 10 minutes; `--wait 30m` says how long.
+  A wait is at most an hour — past that the run keeps going on its own and the answer would only
+  hold a connection open — and under a second is refused as meaningless rather than answered
+  instantly. When the wait runs out it says the run is still going, and the run finishes and posts
+  its output as any other does.
+- **`schedule add/edit --host <id>` names the machine a `--cwd` is on**, which is the way to
+  register a task for an agent on another host from a conversation here. The directory is checked
+  on that machine (`test -d`, over the same link the run will use) so a typo is refused while the
+  agent can still retype it; the path has to be absolute, since a relative one or `~` is resolved
+  on the caller's machine and would arrive naming a place on the wrong host; and with no `--cwd`
+  the task starts in that machine's own default directory instead of the caller's. The 2026-11-07
+  rule is unchanged: a `--cwd` without `--host` is still this machine's, and is still refused for
+  a task that runs elsewhere.
+
+### Changed
+
+- **A task's card is posted in the conversation the task posts to, and quotes the prompt in full.**
+  It used to go only where the change was made, with the prompt cut at 200 characters: a sub-agent
+  rewrote a task's prompt from a conversation the task never talks in, the card said "…" and the
+  conversation that would run the new text at 18:00 saw nothing (2026-11-13). Whoever will read the
+  output is now told what changed, and reads the whole text — as a blockquote, chunked to the
+  platform's message limit, since an agent's prompt can outgrow one message.
+- **`help schedule` documents compound cron**, which the code has supported all along and four
+  trading tasks use: several 5-field expressions separated by `;` are one schedule that runs at
+  whichever comes next. The `schedule` tool's description now also says that a wait longer than the
+  turn, or a result that should arrive later as a message, is a task here — a background process a
+  shell starts dies with the session, which is how a two-hour monitor produced nothing at all.
+
+### Fixed
+
+- **A scheduled run that fails, is skipped or is missed now says so in the chat.** A turn that ended
+  failed posted nothing at all: the person had seen the run's start notice and then silence, which
+  reads exactly like a run that is still thinking, while `last` went on showing ok from an earlier
+  run. A run skipped because the previous one was still going, and one missed because the gateway
+  was down, were recorded and never mentioned. Each now posts one line — `⏰ #id name failed at
+  09:26 — reason` — in the conversation the task posts to, deduplicated by reason so a task that
+  keeps failing the same way still reports once rather than every run.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

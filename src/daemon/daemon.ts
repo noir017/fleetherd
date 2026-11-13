@@ -1595,6 +1595,10 @@ export class Daemon {
       case 'schedule-list':
         return schedules.list(caller, action.id);
       case 'schedule-op':
+        // `run --wait` answers once the run has ended, which can take minutes: the client's wait
+        // is raised for it (ipc/client.ts), and the socket's idle timeout is paused while a
+        // handler runs, so nothing cuts it short but the wait itself.
+        if (action.op === 'run' && action.waitMs !== undefined) return schedules.runTask(action.id, caller, action.waitMs);
         return { task: schedules.op(action.id, action.op, caller) };
       default: {
         const _exhaustive: never = action;

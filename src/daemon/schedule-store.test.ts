@@ -44,6 +44,41 @@ describe('ScheduleStore', () => {
     expect(store.get('a1b2c3')!.daySession).toBeUndefined();
   });
 
+  it('loads a task written before run history existed, keeping its last run', () => {
+    // Every schedules.json written before 3.3.0 has no `history`: the field is the migration, and
+    // the task it belongs to must come back whole — including the `lastRun` the list shows.
+    const file = fileWith([
+      {
+        ...base,
+        runs: 7,
+        lastRun: { at: 1_760_000_000_000, status: 'ok', durationMs: 1_500 },
+        run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' },
+      },
+    ]);
+    const store = new ScheduleStore(file);
+    expect(store.get('a1b2c3')).toMatchObject({ runs: 7, lastRun: { status: 'ok' } });
+    expect(store.get('a1b2c3')!.history).toBeUndefined();
+    // And the next write keeps it that way rather than inventing an empty list.
+    store.put({ ...store.get('a1b2c3')! });
+    expect('history' in JSON.parse(fs.readFileSync(file, 'utf8')).tasks[0]).toBe(false);
+  });
+
+  it('drops one bad run from history and keeps the task', () => {
+    // A history row is a log, not the task: a hand-edited file with one bad row must cost that row.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const store = new ScheduleStore(
+      fileWith([
+        {
+          ...base,
+          run: { kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' },
+          history: [{ at: 1, status: 'ok' }, { at: 2, status: 'nonsense' }],
+        },
+      ])
+    );
+    expect(store.get('a1b2c3')!.history).toEqual([{ at: 1, status: 'ok' }]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped a run from history'));
+  });
+
   it('keeps the day session a daily task remembers', () => {
     const daySession = { day: '2026-11-04', conversation: 'web#main#t9', address: { channel: 'main', thread: 't9' } };
     const store = new ScheduleStore(

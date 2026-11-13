@@ -49,6 +49,11 @@ const SKILLS_WRITES: ReadonlySet<string> = new Set([
 export function clientTimeoutFor(action: IpcAction): number | undefined {
   if (action.kind === 'ask') return (action.timeoutMs ?? DEFAULT_ASK_TIMEOUT_MS) + ASK_CLIENT_TIMEOUT_MARGIN_MS;
   if (action.kind === 'skills' && SKILLS_WRITES.has(action.action)) return SLOW_ACTION_TIMEOUT_MS;
+  // `schedule run --wait`: the daemon answers when the run ends, so the client has to outlast the
+  // wait it asked for. The margin is the daemon's own answer time on top of it.
+  if (action.kind === 'schedule-op' && action.op === 'run' && action.waitMs !== undefined) {
+    return action.waitMs + SLOW_ACTION_TIMEOUT_MS;
+  }
   if (SLOW_ACTIONS.has(action.kind)) return SLOW_ACTION_TIMEOUT_MS;
   return undefined;
 }
