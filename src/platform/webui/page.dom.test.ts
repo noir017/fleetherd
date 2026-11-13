@@ -6309,9 +6309,9 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(narrowBlock()).toContain('.chip-x{min-width:44px;min-height:44px}');
   });
 
-  it('enlarges #clear-topics SVG on phones to match header glyphs', () => {
+  it('enlarges the topic list header icons on phones to match header glyphs', () => {
     const css = narrowBlock();
-    expect(css).toContain('#clear-topics svg{width:18px;height:18px}');
+    expect(css).toContain('#clear-topics svg,#read-topics svg{width:18px;height:18px}');
   });
 
   it('gives the drawer toggle a finger-sized target', () => {
