@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-11-13
+
 ### Added
 
 - **Agents that can only poll, through a mailbox: `fleetherd api-agent mailbox`.** Meta's Muse runs
