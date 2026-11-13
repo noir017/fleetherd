@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-11-13
+
 ### Changed
 
 - **A `/btw` answer no longer lands in the middle of the conversation.** In the web UI the question
