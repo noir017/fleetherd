@@ -81,8 +81,8 @@ its ⋯ holds Pause or Resume, Run now and Delete, and the detail a tap opens ho
 removes one, and typing in **+ tag** and pressing Enter adds one. Only the Tasks
 sub-tab has this bar — Sessions and Reviews do not. On a phone the same panel is a drawer from the right, with the chat
 still visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
-session opens topics; the **Sessions** sub-tab lists those topics, and they no longer appear in the
-ordinary topic list. The panel's second outer tab, **Reviews**, is the automatic review of quiet
+session opens topics; the **Sessions** sub-tab lists those topics, with any sub-agents a run opened
+nested under it, and none of them appear in the ordinary topic list. The panel's second outer tab, **Reviews**, is the automatic review of quiet
 conversations — see [skills](skills.md#auto-review) — not scheduled work, and shares the panel only
 because both are background jobs with no conversation of their own.
 `/setting` has a **⏰ Scheduled tasks** button everywhere: every task with its

@@ -250,9 +250,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-item{--row-bg:#171717;display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
 .topic-item:hover{--row-bg:#222}
 .topic-item.on{--row-bg:#252525;border-color:var(--line)}
-/* The selected row's title is the brightest thing in the column. The topic list's state rules
-   below are id-scoped and win where they apply (a selected idle topic stays grey); this is what
-   a selected scheduled run gets, whose row carries no running/idle class. */
+/* The selected row's title is the brightest thing in the column. The state rules below are more
+   specific and win where they apply (a selected idle row stays grey); this is what a selected row
+   with no running/idle class gets. */
 .topic-item.on .topic-title{color:#fff}
 /* Four states, and the dot is the only thing that carries all four. Read as one sentence: the
    colour says whether the agent is there, the pulse says whether it is busy.
@@ -360,15 +360,16 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* Where the group that needs the person ends. A pseudo-element on the first row after it rather
    than a node of its own, so #topics holds rows and nothing else. */
 /* A topic another topic's agent opened (Topic.parent — daemon/delegation.ts), under the one that
-   opened it. Classes rather than a --depth custom property in a style attribute, which the page's
-   CSP would refuse; deeper than three is drawn at three, since a 240px column has no room for a
-   staircase. The elbow is ::before, which is free on these rows: only a depth-0 row draws the
+   opened it — in the switcher, and in the Sessions tab under the scheduled run that opened it, so
+   not scoped to #topics. Classes rather than a --depth custom property in a style attribute, which
+   the page's CSP would refuse; deeper than three is drawn at three, since a 240px column has no room
+   for a staircase. The elbow is ::before, which is free on these rows: only a depth-0 row draws the
    after-needs rule. */
-#topics .topic-item.sub{width:auto}
-#topics .topic-item.d1{margin-left:14px}
-#topics .topic-item.d2{margin-left:28px}
-#topics .topic-item.d3{margin-left:42px}
-#topics .topic-item.sub::before{content:'';position:absolute;left:-9px;top:50%;width:6px;border-top:1px solid #3a3a3a}
+.topic-item.sub{width:auto}
+.topic-item.d1{margin-left:14px}
+.topic-item.d2{margin-left:28px}
+.topic-item.d3{margin-left:42px}
+.topic-item.sub::before{content:'';position:absolute;left:-9px;top:50%;width:6px;border-top:1px solid #3a3a3a}
 /* How many topics this one opened, and the switch that folds them away. Folded, it takes the colour
    of the most pressing state among them — a question, a failure, work — so folding hides the rows
    and not the fact that one of them wants you. At the START of the row's second line, before the
@@ -440,6 +441,12 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* Clear all topics sits in the panel title: quiet until the pointer is on it. Dim, then red. */
 #clear-topics{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
 #clear-topics:hover{color:#f87171;background:rgba(248,113,113,.15)}
+/* Mark all read sits beside it, in the same quiet: the Sessions tab's button, for the topic list.
+   An icon rather than a bar of its own above the rows, which would cost the list a row's height
+   for a control that is greyed out most of the time. */
+#read-topics{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
+#read-topics:hover:not(:disabled){color:var(--fg);background:var(--field)}
+#read-topics:disabled{opacity:.35;cursor:default}
 /* The confirmation for it: names every topic whose agent is about to go, because "close 7 agents"
    does not say whether the one you were about to come back to is among them. A dialog of the page's
    own rather than confirm(), which cannot hold a list a phone can scroll. The list scrolls inside
@@ -543,9 +550,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #sched-filter .filterbar{padding:8px;border-bottom:0}
 #schedules-list{display:flex;flex-direction:column;gap:2px}
 /* A scheduled run, as the Sessions tab draws it: one line per topic, because there can be many
-   and the thing being scanned for is which one is still working or waiting. It is the same row
-   the topic list draws (rowHtml): dot, name, a quiet line under it, and a ⋯ that holds the same
-   Star / End agent / Delete a topic row's does. */
+   and the thing being scanned for is which one is still working or waiting. It is the row the
+   topic list draws (treeRowHtml), with the sub-agents the run opened folded under it the same way:
+   dot, name, a quiet line under it, and a ⋯ that holds the same Star / End agent / Delete. */
 #sched-sessions{display:flex;flex-direction:column;gap:2px}
 /* The one bulk action over the list, and the period headers that keep a long run history
    scannable. A folded header carries what its rows would: the unread count and any run still
@@ -689,6 +696,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #sidebar-header{container-type:inline-size}
 @container (max-width:210px){ .sb-tab .ic{display:block} .sb-word{display:none} .sb-tab{padding:0 9px} .sb-tab:first-child{margin-left:-9px} }
 #sidebar.on-history #clear-topics{display:none}
+#sidebar.on-history #read-topics{display:none}
 #history-pane{flex:1;min-height:0;display:flex;flex-direction:column}
 #history-count:empty{display:none}
 #history-body{flex:1;min-height:0;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:3px}
@@ -1327,7 +1335,7 @@ button:disabled{opacity:.5;cursor:default}
      a target three times its size and reads as a stray mark rather than a control. */
   #kill-agent{min-width:44px;height:44px}
   #kill-agent svg{width:18px;height:18px}
-  #clear-topics svg{width:18px;height:18px}
+  #clear-topics svg,#read-topics svg{width:18px;height:18px}
   /* The panel keeps the drawer's width here rather than taking the whole screen: it is the same
      overlay the 1023px rule makes, sliding in from the right, and a strip of the conversation
      stays visible behind it. Only the header and the targets grow for a finger. */
@@ -1470,7 +1478,7 @@ const SCRIPT = `
       chips=$('chips'), hints=$('hints'), typing=$('typing'), note=$('note'), picker=$('picker'),
       bar=$('topics'), sidebar=$('sidebar'), collapseBtn=$('collapse-sidebar'),
       expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
-      clearBtn=$('clear-topics'), idleBtn=$('close-idle'), noIdleBtn=$('no-idle'), idleCount=$('idle-count'),
+      clearBtn=$('clear-topics'), readBtn=$('read-topics'), idleBtn=$('close-idle'), noIdleBtn=$('no-idle'), idleCount=$('idle-count'),
       notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
       rowMenu=$('row-menu'),
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
@@ -2127,6 +2135,17 @@ const SCRIPT = `
     return out;
   }
 
+  /**
+   * Every topic the Sessions tab draws: the runs, and the sub-agents each opened under it
+   * (runOwners), in the order topics is in. What the tab counts and groups by is still the runs —
+   * schedSessions — and a sub-agent rides with its run, as it does with its topic in the switcher.
+   */
+  function schedMembers(){
+    var runs=runOwners(), out=[];
+    for(var i=0;i<topics.length;i++) if(runs[topics[i].id]) out.push(topics[i]);
+    return out;
+  }
+
   function schedAgo(at){
     if(!at) return '';
     var s=Math.max(0, Math.round((Date.now()-at)/1000));
@@ -2230,19 +2249,25 @@ const SCRIPT = `
   var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   /**
-   * A run's unread replies, as the row's badge counts them. The topic on screen is read by
+   * A topic's unread messages, as its row's badge counts them. The topic on screen is read by
    * definition: opening it stamps readCounts.
    */
-  function sessUnread(t){
+  function unreadOf(t){
     var count=t.msgCount||0;
     return t.id===topic?0:Math.max(0, count-(readCounts[t.id]||0));
   }
 
-  /** Whether a run has anything the mark-all button would clear: a badge, or a reply the daemon
+  /** Whether a topic has anything a Mark all read would clear: a badge, or a reply the daemon
    *  still counts as unseen (stage review). The topic on screen is excluded: reportSeen is
-   *  already clearing it. */
-  function sessNeedsRead(t){
-    return t.id!==topic && (sessUnread(t)>0 || t.stage==='review');
+   *  already clearing it. A sub-agent has only its badge to clear: its finished turn is the news
+   *  of the agent that opened it, not the person's, and its row has no green dot to take away. */
+  function needsRead(t){
+    return t.id!==topic && (unreadOf(t)>0 || unseenReply(t));
+  }
+
+  /** A reply the daemon still counts as unseen — the green dot, cleared by api/seen. */
+  function unseenReply(t){
+    return t.stage==='review' && !t.parent;
   }
 
   /**
@@ -2258,7 +2283,13 @@ const SCRIPT = `
    * than in a day in 1970 the run never had.
    */
   function schedSessionGroups(list){
-    var now=new Date();
+    var runs=runOwners(), below={}, now=new Date();
+    // What a folded header says for its rows has to include the sub-agents under them: a question
+    // from one is as much the person's as a question from the run, and has no other row to show it.
+    for(var b=0;b<topics.length;b++){
+      var r=runs[topics[b].id];
+      if(r && topics[b].asking) below[r]=true;
+    }
     var y=now.getFullYear(), m=now.getMonth();
     var yesterday=new Date(y, m, now.getDate()-1);
     var out=[], byKey={};
@@ -2283,10 +2314,10 @@ const SCRIPT = `
         out.push(g);
       }
       g.items.push(t);
-      if(t.id===topic) g.current=true;
-      g.unread+=sessUnread(t);
-      if(t.running) g.running++;
-      if(t.asking) g.asking++;
+      if(t.id===topic || runs[topic]===t.id) g.current=true;
+      g.unread+=unreadOf(t);
+      if(rowRunning(t) || below[t.id]) g.running++;
+      if(t.asking || below[t.id]) g.asking++;
     }
     // Undated runs belong at the bottom even if the list arrived in another order.
     for(var j=0;j<out.length;j++){
@@ -2336,41 +2367,118 @@ const SCRIPT = `
   }
 
   /**
-   * One scheduled run, as the Sessions tab draws it.
-   *
-   * The row is the only way to reach these topics now that the switcher leaves them out, and the
-   * ⋯ is the operator deciding about this run rather than the whole task — the same menu a topic
-   * row has (Star / End agent / Delete). The dot and the badge say whether it is working,
-   * waiting, unread.
+   * One topic's row, in whichever list draws it: the switcher, and the Sessions tab — a scheduled
+   * run and the sub-agents under it. row is a treeWalker row, so the depth, the fold pill and what
+   * it hides come with it; the list decides the rest:
+   *   attr     the attribute its click handler reads the id from (data-topic, data-sess)
+   *   menu     the prefix of the ⋯'s key, which openRowMenuFor routes on (topic, sess)
+   *   cls/tail classes before / after the depth ones (after-needs, needs)
+   *   attrs    more attributes for the row
+   *   sub/time in place of the directory line and the age: a run's own row says when it ran, how
+   *            many messages and in what state instead
+   * Everything else — the dot, the title, the badge, the terminal and star marks — is one answer
+   * for every list, so a topic looks the same wherever it is found.
    */
-  function schedSessionRow(t){
-    var named=splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
-    var asking=Boolean(t.asking), running=Boolean(t.running);
-    var dot='topic-dot'+(asking?' asking':(running?' running':(t.stage==='failed'?' failed':(t.stage==='review'?' review':(t.live?' live':'')))));
-    var count=t.msgCount||0;
-    var unread=sessUnread(t);
+  function treeRowHtml(row, o){
+    var t=row.t;
+    var isCur=(t.id===topic);
+    var isRunning=rowRunning(t);
+    // A question on screen holds its turn open, so t.running is true at the same time. Asked
+    // first everywhere below: "waiting for you" is the state you can act on, and the one the
+    // running blue would otherwise hide.
+    var isAsking=Boolean(t.asking);
+    var isLive=Boolean(t.live);
+    var unread=unreadOf(t);
+    var cls=(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
+      +(t.starred?' starred':'')+(o.cls||'')
+      +(row.depth?' sub d'+Math.min(row.depth,3):'')
+      +(o.tail||'');
+    var isFailed=t.stage==='failed';
+    // A sub-agent's finished turn is news for the agent that opened it, not for the person
+    // (needsYou says the same): its row keeps the ordinary idle/online grey instead of the
+    // green "unread reply" dot, and the parent turns green when the report is waiting to be
+    // read. Work and a question are still its own — blue and amber — because both are states a
+    // person acts on, or watches, in that topic.
+    var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'&&!t.parent?' review':(isLive?' live':'')))));
     var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
-    var state=asking?'awaiting you':(running?'running':(t.stage==='failed'?'failed':(t.stage==='review'?'finished':'')));
-    // The same age format as the topic rows, so a run read here and its topic read in the
-    // switcher cannot disagree about what "1h" means. Stamped like theirs, so the same tick
-    // keeps it current without repainting the panel. An undated record keeps the empty cell.
+    // Not "a shell is alive over there" — the daemon only sees the connection, so this says a
+    // page has that topic's terminal open (shown or minimized). See terminal-sessions.ts.
+    var term=t.term?'<span class="topic-term" title="A terminal is attached to this topic">&gt;_</span>':'';
+    var line=o.sub!==undefined ? o.sub : topicDirHtml(t);
+    var named=splitTitle(t.title || 'Untitled', t.dir&&t.dir.host);
+    var title='<span class="topic-title">'
+       + (named.tag?'<span class="topic-tag"'+(named.full?' title="'+text(named.full)+'"':'')+'>'+text(named.tag)+'</span> ':'')
+       + text(named.rest)+'</span>';
+    // A lit star on a starred row is a marker, not a button: Star/Unstar lives in the menu now.
+    var starMark=t.starred
+      ? '<span class="topic-star-mark" title="Starred: never removed to make room, and kept by Clear" aria-hidden="true">'+IC.icon.star+'</span>'
+      : '';
+    // Its own button, like the star: folding a parent is not a reason to switch to it.
+    var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
+       + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
+       + ' title="'+(row.shut?'Show':'Hide')+' the '+row.kids+' topic'+(row.kids>1?'s':'')+' its agent opened">'
+       + (row.shut?IC.icon.chevronRight:IC.icon.chevronDown)+' '+row.kids+'</button>':'';
+    return rowHtml({
+      cls:cls,
+      attrs:' '+o.attr+'="'+text(t.id)+'" role="button" tabindex="0"'+(o.attrs||''),
+      key:o.menu+':'+t.id,
+      dot:dotCls,
+      title:title,
+      sub:fold ? '<span class="topic-line">'+fold+line+'</span>' : line,
+      time:o.time!==undefined ? o.time : ageHtml(t),
+      badge:term+badge,
+      mark:starMark,
+      moreTitle:o.moreTitle
+    });
+  }
+
+  /**
+   * Where a topic works, as its row's second line says it: the machine, then the directory's name.
+   *
+   * The full path on the title attribute rather than in the row: two checkouts of one project have
+   * the same last segment, and the column is 240px wide. The machine goes first: it is the short
+   * word, and the one that tells apart two agents of one harness on two hosts — whose directories
+   * usually share a name too — so it is what the ellipsis spares. An offline machine keeps its name
+   * and gains a mark: the line still says where the topic is.
+   */
+  function topicDirHtml(t){
+    if(!t.dir) return '';
+    var offAt=t.dir.host?offSince(t.dir.host):0;
+    var where=t.dir.host
+      ? (offAt ? '<span class="topic-off" title="'+text(offTitle(t.dir.host))+'">'+IC.icon.offline+text(t.dir.host)+'</span> · ' : text(t.dir.host+' · '))
+      : '';
+    return '<span class="topic-dir" title="'+text((t.dir.host?t.dir.host+':':'')+t.dir.path)+'">'+where+text(t.dir.name)+'</span>';
+  }
+
+  /**
+   * One row of the Sessions tab: a scheduled run, or a sub-agent under one — treeRowHtml, the row
+   * the switcher draws, so a sub-agent a run opened is nested and folded exactly as one a topic
+   * opened is.
+   *
+   * The rows are the only way to reach these topics, since the switcher leaves them out, and the
+   * ⋯ is the operator deciding about this topic rather than the whole task — the same menu a topic
+   * row has (Star / End agent / Delete). A run's own second line is what this list is scanned for
+   * instead of where it works: when it was last active, how many messages, and its state. The age
+   * is in the same format as the topic rows, so a run read here and its topic read elsewhere cannot
+   * disagree about what "1h" means; stamped like theirs, so the same tick keeps it current without
+   * repainting the panel. An undated record keeps the empty cell.
+   */
+  function schedSessionRow(row){
+    var t=row.t, run=Boolean(t.scheduled), o={attr:'data-sess', menu:'sess', cls:' sess-item'};
+    if(!run){
+      o.moreTitle='Topic actions';
+      return treeRowHtml(row, o);
+    }
+    var count=t.msgCount||0;
+    var state=t.asking?'awaiting you':(rowRunning(t)?'running':(t.stage==='failed'?'failed':(t.stage==='review'?'finished':'')));
     var when=t.lastAt
       ? '<span class="topic-age" data-age="'+text(t.lastAt)+'" data-age-run="0"'
         + ' title="Ended '+text(ageClock(t.lastAt))+'">'+text(ageText(Date.now()-t.lastAt, true))+'</span>'
       : '';
-    var meta=when+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'');
-    return rowHtml({
-      cls:(t.id===topic?'on ':'')+'sess-item',
-      attrs:' data-sess="'+text(t.id)+'" role="button" tabindex="0"',
-      key:'sess:'+t.id,
-      dot:dot,
-      title:'<span class="topic-title">'
-        + (named.tag?'<span class="topic-tag">'+text(named.tag)+'</span> ':'')+text(named.rest)
-        + '</span>',
-      sub:'<span class="topic-dir">'+meta+'</span>',
-      badge:badge,
-      moreTitle:'Session actions'
-    });
+    o.sub='<span class="topic-dir">'+when+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'')+'</span>';
+    o.time='';
+    o.moreTitle='Session actions';
+    return treeRowHtml(row, o);
   }
 
   /**
@@ -2388,8 +2496,8 @@ const SCRIPT = `
       armAgeTick();
       return;
     }
-    var pending=0;
-    for(var p=0;p<list.length;p++) if(sessNeedsRead(list[p])) pending++;
+    var tree=topicTree(schedMembers()), walker=treeWalker(tree), pending=0;
+    for(var p=0;p<tree.visible.length;p++) if(needsRead(tree.visible[p])) pending++;
     var groups=schedSessionGroups(list);
     var h='<div class="sess-bar"><button type="button" class="sess-readall" data-readall="1"'
       + (pending?'':' disabled') + '>Mark all read</button></div>';
@@ -2402,8 +2510,11 @@ const SCRIPT = `
         if(gr.asking) flags+='<span class="sess-group-flag asking">'+gr.asking+' awaiting you</span>';
         if(gr.running>gr.asking) flags+='<span class="sess-group-flag running">'+(gr.running-gr.asking)+' running</span>';
       }
-      var body='';
-      for(var i=0;i<gr.items.length;i++) body+=schedSessionRow(gr.items[i]);
+      // Each run and, unfolded, the topics under it: a group holds runs, and a run's sub-agents
+      // ride with it rather than being dated on their own.
+      var body='', from=walker.rows.length;
+      for(var i=0;i<gr.items.length;i++) walker.walk(gr.items[i], 0);
+      for(var r=from;r<walker.rows.length;r++) body+=schedSessionRow(walker.rows[r]);
       var id='sess-g-'+gr.key.replace(/:/g,'-');
       h+='<div class="sess-group">'
         + '<button type="button" class="sess-group-head" data-sgroup="'+text(gr.key)+'"'+(gr.current?' data-slock="1"':'')
@@ -2422,33 +2533,36 @@ const SCRIPT = `
   }
 
   /**
-   * Mark every scheduled run read.
+   * Mark a list's topics read: the Sessions tab's Mark all read (every run and the sub-agents under
+   * them) and the topic list's (every topic in it). noun names them in the failure, and say is
+   * where that list reports one.
    *
-   * Two kinds of unread live in this list and both have to go: the badge is this page's own
+   * Two kinds of unread live in a list and both have to go: the badge is this page's own
    * count (readCounts in localStorage), while the green dot is the daemon's stage: review,
    * which clears only when the server is told the topic was seen. api/seen takes one topic
-   * and has no bulk form, so this posts once per run that still has a reply to clear — a
+   * and has no bulk form, so this posts once per topic that still has a reply to clear — a
    * handful of requests on a tap, not a poll.
    *
    * One at a time, not all at once: every markSeen announces the topic list to every open page,
    * and N parallel posts would be N announcements racing each other. And a 4xx/5xx is a
    * resolved response, not a rejection — post() only rejects on a dead link — so r.ok has to be
-   * checked or a refused mark would leave the badge gone here and the run still finished there,
+   * checked or a refused mark would leave the badge gone here and the topic still finished there,
    * with nothing said.
    */
-  function markSessionsRead(){
-    var list=schedSessions(), wrote=false, queue=[];
+  function markAllRead(list, noun, say){
+    var wrote=false, queue=[];
     for(var i=0;i<list.length;i++){
       var count=list[i].msgCount||0;
       if((readCounts[list[i].id]||0)!==count){ readCounts[list[i].id]=count; wrote=true; }
-      if(list[i].stage==='review') queue.push(list[i].id);
+      if(unseenReply(list[i])) queue.push(list[i].id);
     }
     if(wrote) saveReads();
-    paintSessions();
+    // Both lists, and the button that started this: paintTopics repaints the Sessions tab too.
+    paintTopics();
     var failed=0;
     function markOneAt(n){
       if(n>=queue.length){
-        if(failed) showSchedNote('Could not mark '+failed+' session'+(failed===1?'':'s')+' read: the daemon did not accept it. '+(failed===1?'It':'They')+' keep the finished mark.');
+        if(failed) say('Could not mark '+failed+' '+noun+(failed===1?'':'s')+' read: the daemon did not accept it. '+(failed===1?'It':'They')+' keep the finished mark.');
         return;
       }
       post('api/seen',{topic:queue[n]},0).then(function(r){
@@ -2723,15 +2837,16 @@ const SCRIPT = `
   }
 
   /**
-   * The clock's dot: a scheduled run is holding a question and nothing will move until it is
-   * answered. Those topics have no row in the switcher, so this is the one signal that reaches the
-   * operator without opening the panel. The same hint is reflected on the Scheduled outer tab
-   * and the Sessions sub-tab so it is visible even when the panel is open on Reviews.
+   * The clock's dot: a scheduled run, or a sub-agent it opened, is holding a question and nothing
+   * will move until it is answered. Those topics have no row in the switcher, so this is the one
+   * signal that reaches the operator without opening the panel. The same hint is reflected on the
+   * Scheduled outer tab and the Sessions sub-tab so it is visible even when the panel is open on
+   * Reviews.
    */
   function paintSchedAlert(){
-    var waiting=false;
+    var waiting=false, runs=runOwners();
     for(var i=0;i<topics.length;i++){
-      if(topics[i].scheduled && topics[i].stage==='answer'){ waiting=true; break; }
+      if(runs[topics[i].id] && topics[i].stage==='answer'){ waiting=true; break; }
     }
     schedAlert.hidden = !waiting;
     var label = waiting ? 'Side tasks — a run is waiting on your answer' : 'Side tasks';
@@ -2757,7 +2872,7 @@ const SCRIPT = `
     }
     if(schedSubtab==='sessions'){
       var list=schedSessions(), busy=0;
-      for(var i=0;i<list.length;i++) if(list[i].running || list[i].asking) busy++;
+      for(var i=0;i<list.length;i++) if(rowRunning(list[i]) || list[i].asking) busy++;
       schedSummary.textContent = list.length
         ? list.length + (list.length===1?' session':' sessions') + (busy?' · '+busy+' running':'')
         : 'no sessions yet';
@@ -3347,7 +3462,7 @@ const SCRIPT = `
     var readall = e.target.closest ? e.target.closest('[data-readall]') : null;
     if(readall){
       e.stopPropagation();
-      markSessionsRead();
+      markAllRead(schedMembers(), 'session', showSchedNote);
       return;
     }
     var head = e.target.closest ? e.target.closest('[data-sgroup]') : null;
@@ -3375,6 +3490,7 @@ const SCRIPT = `
       else openRowMenuFor(more);
       return;
     }
+    if(foldClick(e)) return;
     var row = e.target.closest ? e.target.closest('[data-sess]') : null;
     if(!row) return;
     var id = row.getAttribute('data-sess');
@@ -3384,7 +3500,7 @@ const SCRIPT = `
 
   schedSessionList.addEventListener('keydown', function(e){
     if(e.key !== 'Enter' && e.key !== ' ') return;
-    if(e.target.closest && e.target.closest('[data-rm]')) return;
+    if(e.target.closest && e.target.closest('[data-rm],[data-fold]')) return;
     var row = e.target.closest ? e.target.closest('[data-sess]') : null;
     if(!row) return;
     e.preventDefault();
@@ -4702,6 +4818,99 @@ const SCRIPT = `
   }
 
   /**
+   * The scheduled run each topic belongs to, by id: a run is its own, and a topic its agent opened —
+   * or one opened under that, any depth — is the run's. A topic in no run has no entry.
+   *
+   * The two lists split the topics on this: the switcher (topicForest) draws what is in no run, and
+   * the Sessions tab (paintSessions) draws every run with the topics under it. Before this, a
+   * sub-agent a scheduled run opened was not a run itself, so the switcher drew it — as a root,
+   * because its parent was not in that list — while the run it belonged to sat in the panel
+   * (reported 2026-11-13). A parent chain that loops, or runs past 32, belongs to no run.
+   */
+  function runOwners(){
+    var byId={}, out={}, i;
+    for(i=0;i<topics.length;i++) byId[topics[i].id]=topics[i];
+    for(i=0;i<topics.length;i++){
+      var t=topics[i], hops=0;
+      while(t && hops++<32){
+        if(t.scheduled){ out[topics[i].id]=t.id; break; }
+        if(!t.parent || t.parent===t.id) break;
+        t=byId[t.parent];
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A list's tree: each topic under the one its agent opened it from (Topic.parent), when that one
+   * is in the same list, and a root otherwise. visible keeps the list's order — the daemon's, most
+   * recently active first — and so does each topic's kids.
+   */
+  function topicTree(list){
+    var byId={}, kids={}, roots=[], i;
+    for(i=0;i<list.length;i++) byId[list[i].id]=list[i];
+    for(i=0;i<list.length;i++){
+      var p=list[i].parent;
+      if(p && p!==list[i].id && byId[p]) (kids[p]=kids[p]||[]).push(list[i]); else roots.push(list[i]);
+    }
+    return {visible:list, byId:byId, kids:kids, roots:roots};
+  }
+
+  /**
+   * A tree's rows, depth-first: walk(t) adds t and, unless it is folded, the topics its agent
+   * opened under it, a level deeper. The one way a sub-agent is nested, in both lists that draw
+   * one: the switcher (topicRows) and the Sessions tab (paintSessions), which choose the roots and
+   * their order and leave the rest to this.
+   *
+   * folded is per browser and keyed by the parent's id, so a run folds the same way a topic does.
+   * The topic on screen is never folded away: its ancestors are drawn open, without that being
+   * saved, so a link into a sub-agent's topic lands on a row you can see. A folded row carries
+   * under, the most pressing state among the topics it hides, for the pill's colour.
+   *
+   * rest(keep) adds whatever no walk reached and no fold hides — only a parent field that loops
+   * (a hand-edited file) leaves one: with no root to start from, the first topic of the loop in the
+   * list's order is drawn as one and the rest under it, rather than lost. keep, when given, limits
+   * it to those ids.
+   */
+  function treeWalker(tree){
+    var byId=tree.byId, kids=tree.kids;
+    var open={}, up=byId[topic], hops=0;
+    while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
+    var rows=[], seen={};
+    function state(t, depth){
+      var ch=kids[t.id]||[], s='';
+      for(var k=0;k<ch.length && depth<32;k++){
+        var c=ch[k];
+        var mine=c.asking?'asking':(c.stage==='failed'?'failed':(c.running?'running':''));
+        var deeper=state(c, depth+1);
+        var pick=[mine, deeper, s];
+        s=pick.indexOf('asking')>=0?'asking':(pick.indexOf('failed')>=0?'failed':(pick.indexOf('running')>=0?'running':''));
+      }
+      return s;
+    }
+    function walk(t, depth){
+      if(seen[t.id]) return;
+      seen[t.id]=true;
+      var ch=kids[t.id]||[];
+      var shut=ch.length>0 && folded[t.id]!==false && !open[t.id];
+      rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
+      if(shut) return;
+      for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
+    }
+    function rest(keep){
+      var list=tree.visible;
+      for(var i=0;i<list.length;i++){
+        if(keep && !keep[list[i].id]) continue;
+        // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
+        var hidden=false, a=list[i], n=0;
+        while(a && a.parent && byId[a.parent] && n++<32){ if(seen[a.parent] && folded[a.parent]!==false && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
+        if(!seen[list[i].id] && !hidden) walk(list[i], 0);
+      }
+    }
+    return {rows:rows, walk:walk, rest:rest};
+  }
+
+  /**
    * The list's tree and its conversations, built from the topics in hand. A conversation is a
    * root and everything its agent opened under it — the unit the filter keeps or drops whole
    * (topicRows) and the unit the chips count (topicFilterGroups), so one tree is one result in
@@ -4709,8 +4918,9 @@ const SCRIPT = `
    * the first topic of it met in the list starts the conversation and the rest hang under it the
    * way the walk reaches them — a two-topic loop is drawn as the first root with the second folded
    * under it, and the conversation is exactly that pair. Scheduled runs are conversations, but not
-   * ones the person opened: the panel's Sessions tab is where they live, and leaving them out here
-   * also keeps their unread badges and "needs you" rows out of the switcher.
+   * ones the person opened: the panel's Sessions tab is where they live, with the sub-agents they
+   * opened (runOwners), and leaving them out here also keeps their unread badges and "needs you"
+   * rows out of the switcher.
    *
    * Each conversation carries what the filter decides on: its most pressing state, whether any
    * topic in it is starred, and every agent and host it touches. State and star are whole-tree
@@ -4718,13 +4928,9 @@ const SCRIPT = `
    * union, because a root and a sub-agent may well run on different ones.
    */
   function topicForest(){
-    var visible=[], byId={}, kids={}, roots=[], i;
-    for(i=0;i<topics.length;i++) if(!topics[i].scheduled) visible.push(topics[i]);
-    for(i=0;i<visible.length;i++) byId[visible[i].id]=visible[i];
-    for(i=0;i<visible.length;i++){
-      var p=visible[i].parent;
-      if(p && p!==visible[i].id && byId[p]) (kids[p]=kids[p]||[]).push(visible[i]); else roots.push(visible[i]);
-    }
+    var runs=runOwners(), list=[], i;
+    for(i=0;i<topics.length;i++) if(!runs[topics[i].id]) list.push(topics[i]);
+    var tree=topicTree(list), visible=tree.visible, kids=tree.kids, roots=tree.roots;
     var convs={}, convOrder=[], seenC={};
     function mark(t, id){
       if(seenC[t.id]) return;
@@ -4747,7 +4953,9 @@ const SCRIPT = `
     }
     for(i=0;i<roots.length;i++) start(roots[i]);
     for(i=0;i<visible.length;i++) start(visible[i]);
-    return {visible:visible, byId:byId, kids:kids, roots:roots, convs:convs, convOrder:convOrder};
+    tree.convs=convs;
+    tree.convOrder=convOrder;
+    return tree;
   }
 
   /**
@@ -4764,15 +4972,10 @@ const SCRIPT = `
    * matches (convMatch), and is then drawn by this same order, with its own fold state, its own
    * fold count and the needs-you block — there is no second way of drawing a result.
    *
-   * The topic on screen is never folded away: its ancestors are drawn open, without that being
-   * saved, so a link into a sub-agent's topic lands on a row you can see. A parent field that loops
-   * (only a hand-edited file could) has no root to start from; the walk picks the first topic of
-   * the loop in the list order and draws the rest under it, rather than losing them.
+   * The nesting and folding are treeWalker's, the walk the Sessions tab draws its runs with too.
    */
   function topicRows(forest){
-    var visible=forest.visible, byId=forest.byId, kids=forest.kids, roots=forest.roots, i;
-    var open={}, up=byId[topic], hops=0;
-    while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
+    var visible=forest.visible, roots=forest.roots, i;
     // The bar's state, read once: which conversations match. A match keeps the whole tree, so
     // every row under a surviving root is drawn exactly as it is without a filter — nothing is
     // dimmed, and no child is dropped for failing a search its parent answered.
@@ -4793,29 +4996,9 @@ const SCRIPT = `
         }
       }
     }
-    var rows=[], seen={}, dividers={};
-    function state(t, depth){
-      var ch=kids[t.id]||[], s='';
-      for(var k=0;k<ch.length && depth<32;k++){
-        var c=ch[k];
-        var mine=c.asking?'asking':(c.stage==='failed'?'failed':(c.running?'running':''));
-        var deeper=state(c, depth+1);
-        var pick=[mine, deeper, s];
-        s=pick.indexOf('asking')>=0?'asking':(pick.indexOf('failed')>=0?'failed':(pick.indexOf('running')>=0?'running':''));
-      }
-      return s;
-    }
-    function walk(t, depth){
-      if(seen[t.id]) return;
-      seen[t.id]=true;
-      var ch=kids[t.id]||[];
-      // Folded means folded with a filter on as well: the pill and its count are how the whole
-      // conversation is browsed, and a result must not open a tree the person keeps shut.
-      var shut=ch.length>0 && folded[t.id]!==false && !open[t.id];
-      rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
-      if(shut) return;
-      for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
-    }
+    // Folded means folded with a filter on as well: the pill and its count are how the whole
+    // conversation is browsed, and a result must not open a tree the person keeps shut.
+    var w=treeWalker(forest), walk=w.walk, rows=w.rows, dividers={};
     // What needs the person first (needsYou), most pressing first, each with the topics it
     // opened. A filtered list keeps the block: a conversation that waits on an answer belongs
     // at the top of the list whether or not the bar is in use.
@@ -4836,13 +5019,7 @@ const SCRIPT = `
       return d || (b.starred?1:0)-(a.starred?1:0);
     });
     for(i=0;i<ordered.length;i++) walk(ordered[i], 0);
-    for(i=0;i<visible.length;i++){
-      if(keep && !keep[visible[i].id]) continue;
-      // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
-      var hidden=false, a=visible[i], n2=0;
-      while(a && a.parent && byId[a.parent] && n2++<32){ if(seen[a.parent] && folded[a.parent]!==false && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
-      if(!seen[visible[i].id] && !hidden) walk(visible[i], 0);
-    }
+    w.rest(keep);
     if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
     // Any starred topic counts, not just a starred root: the label decides whether Clear would
     // spare anything, and the daemon spares a starred sub-agent too.
@@ -5448,67 +5625,14 @@ const SCRIPT = `
     }
     var stars=painted.stars;
     for(i=0;i<painted.rows.length;i++){
-      var row=painted.rows[i];
-      var t=row.t;
-      var isCur=(t.id===topic);
-      var isRunning=rowRunning(t);
-      // A question on screen holds its turn open, so t.running is true at the same time. Asked
-      // first everywhere below: "waiting for you" is the state you can act on, and the one the
-      // running blue would otherwise hide.
-      var isAsking=Boolean(t.asking);
-      var isLive=Boolean(t.live);
-      var count=t.msgCount||0;
-      var unread=isCur?0:Math.max(0, count - readCounts[t.id]);
-      var cls=(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
-        +(t.starred?' starred':'')+(painted.dividers[i]?' after-needs':'')
-        +(row.depth?' sub d'+Math.min(row.depth,3):'')
-        +(needsYou(t)?' needs':'');
-      var isFailed=t.stage==='failed';
-      // A sub-agent's finished turn is news for the agent that opened it, not for the person
-      // (needsYou says the same): its row keeps the ordinary idle/online grey instead of the
-      // green "unread reply" dot, and the parent turns green when the report is waiting to be
-      // read. Work and a question are still its own — blue and amber — because both are states a
-      // person acts on, or watches, in that topic.
-      var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'&&!t.parent?' review':(isLive?' live':'')))));
+      var t=painted.rows[i].t;
       // What the Needs-you block used to say on a second line, now on hover: the row keeps its shape.
-      var says=needsYou(t)?' title="'+text(NEEDS_WHAT[t.stage]+(t.line?': '+t.line:''))+'"':'';
-      var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
-      // Not "a shell is alive over there" — the daemon only sees the connection, so this says a
-      // page has that topic's terminal open (shown or minimized). See terminal-sessions.ts.
-      var term=t.term?'<span class="topic-term" title="A terminal is attached to this topic">&gt;_</span>':'';
-      // The full path on the title attribute rather than in the row: two checkouts of one
-      // project have the same last segment, and the column is 240px wide. The machine goes
-      // first: it is the short word, and the one that tells apart two agents of one harness on two
-      // hosts — whose directories usually share a name too — so it is what the ellipsis spares.
-      // An offline machine keeps its name and gains a mark: the line still says where the topic is.
-      var offAt=t.dir&&t.dir.host?offSince(t.dir.host):0;
-      var where=t.dir&&t.dir.host
-        ? (offAt ? '<span class="topic-off" title="'+text(offTitle(t.dir.host))+'">'+IC.icon.offline+text(t.dir.host)+'</span> · ' : text(t.dir.host+' · '))
-        : '';
-      var dir=t.dir?'<span class="topic-dir" title="'+text((t.dir.host?t.dir.host+':':'')+t.dir.path)+'">'+where+text(t.dir.name)+'</span>':'';
-      var named=splitTitle(t.title || 'Untitled', t.dir&&t.dir.host);
-      var title='<span class="topic-title">'
-         + (named.tag?'<span class="topic-tag"'+(named.full?' title="'+text(named.full)+'"':'')+'>'+text(named.tag)+'</span> ':'')
-         + text(named.rest)+'</span>';
-      // A lit star on a starred row is a marker, not a button: Star/Unstar lives in the menu now.
-      var starMark=t.starred
-        ? '<span class="topic-star-mark" title="Starred: never removed to make room, and kept by Clear" aria-hidden="true">'+IC.icon.star+'</span>'
-        : '';
-      // Its own button, like the star: folding a parent is not a reason to switch to it.
-      var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
-         + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
-         + ' title="'+(row.shut?'Show':'Hide')+' the '+row.kids+' topic'+(row.kids>1?'s':'')+' its agent opened">'
-         + (row.shut?IC.icon.chevronRight:IC.icon.chevronDown)+' '+row.kids+'</button>':'';
-      h += rowHtml({
-        cls:cls,
-        attrs:' data-topic="'+text(t.id)+'" role="button" tabindex="0"'+says,
-        key:'topic:'+t.id,
-        dot:dotCls,
-        title:title,
-        sub:fold ? '<span class="topic-line">'+fold+dir+'</span>' : dir,
-        time:ageHtml(t),
-        badge:term+badge,
-        mark:starMark,
+      h += treeRowHtml(painted.rows[i], {
+        attr:'data-topic',
+        menu:'topic',
+        cls:(painted.dividers[i]?' after-needs':''),
+        tail:(needsYou(t)?' needs':''),
+        attrs:needsYou(t)?' title="'+text(NEEDS_WHAT[t.stage]+(t.line?': '+t.line:''))+'"':'',
         moreTitle:'Topic actions'
       });
     }
@@ -5527,6 +5651,12 @@ const SCRIPT = `
     // The row menu lives at the body, so the innerHTML above cannot take it with it. Follow the
     // button's replacement, and close the menu only if its row is gone from the list.
     rowMenuFollow();
+    // Greyed while there is nothing in the list to mark, as the Sessions tab's is. The whole list,
+    // not the filtered rows, like Clear: a search narrows what is shown, not what is unread.
+    var toRead=0;
+    for(i=0;i<forest.visible.length;i++) if(needsRead(forest.visible[i])) toRead++;
+    readBtn.disabled = !toRead;
+    readBtn.title = toRead ? 'Mark all read ('+toRead+' topic'+(toRead===1?'':'s')+')' : 'Mark all read — nothing unread';
     // Says what it will do: with stars in the list it no longer clears all of them.
     var clearLabel = stars ? 'Clear unstarred topics' : 'Clear all topics';
     clearBtn.title = clearLabel;
@@ -5833,7 +5963,7 @@ const SCRIPT = `
 
   /**
    * The topics worth fetching now, in the sidebar's own order for them: one that needs a person,
-   * is not a scheduled run, is not on screen (needsYou says that), is not already held whole, and
+   * is not a scheduled run or under one, is not on screen (needsYou says that), is not already held whole, and
    * whose copy is missing or older than the row — a new reply moves lastAt, and a copy that
    * predates it is the one thing a prefetch must not do.
    *
@@ -5843,10 +5973,10 @@ const SCRIPT = `
   function prefetchWanted(){
     if(document.visibilityState === 'hidden' || parked || !epoch) return [];
     if(!stream || stream.readyState !== 1) return [];
-    var targets=[];
+    var targets=[], runs=runOwners();
     for(var i=0;i<topics.length;i++){
       var t=topics[i];
-      if(!needsYou(t) || t.scheduled) continue;
+      if(!needsYou(t) || runs[t.id]) continue;
       var h=held[t.id];
       if(h && h.epoch === epoch) continue;
       targets.push(t);
@@ -6750,20 +6880,7 @@ const SCRIPT = `
       else openRowMenuFor(more);
       return;
     }
-    var fold = e.target.closest ? e.target.closest('[data-fold]') : null;
-    if(fold){
-      e.stopPropagation();
-      var foldId = fold.getAttribute('data-fold');
-      if(foldId){
-        // Folded is the default (an absent entry), so both choices are written down: false is
-        // "I opened this one", true is "I put it back".
-        var shutNow = folded[foldId] !== false;
-        folded[foldId] = !shutNow;
-        saveFolded();
-        paintTopics();
-      }
-      return;
-    }
+    if(foldClick(e)) return;
     var b = e.target.closest ? e.target.closest('[data-topic]') : null;
     if(!b) return;
     var id = b.getAttribute('data-topic');
@@ -6771,6 +6888,26 @@ const SCRIPT = `
     switchTopic(id);
     if(narrow()) setSidebar(false);
   });
+
+  /**
+   * A tap on a fold pill, in either list that draws one (treeRowHtml): flip it and repaint. Not a
+   * tap on the row — folding a parent is not a reason to switch to it. paintTopics repaints the
+   * Sessions tab too when it is on screen, so one call covers a pill in either.
+   */
+  function foldClick(e){
+    var fold = e.target.closest ? e.target.closest('[data-fold]') : null;
+    if(!fold) return false;
+    e.stopPropagation();
+    var foldId = fold.getAttribute('data-fold');
+    if(foldId){
+      // Folded is the default (an absent entry), so both choices are written down: false is
+      // "I opened this one", true is "I put it back".
+      folded[foldId] = folded[foldId] === false;
+      saveFolded();
+      paintTopics();
+    }
+    return true;
+  }
 
   bar.addEventListener('keydown', function(e){
     if(e.key==='Enter' || e.key===' '){
@@ -7074,6 +7211,11 @@ const SCRIPT = `
     termMinBtn.addEventListener('click', minTerm);
     termEndBtn.addEventListener('click', endTerm);
   }
+
+  readBtn.addEventListener('click', function(){
+    setMenu(null, false);
+    markAllRead(topicForest().visible, 'topic', function(msg){ note.textContent=msg; });
+  });
 
   clearBtn.addEventListener('click', function(){
     setMenu(null, false);
@@ -9848,7 +9990,7 @@ __GATE__
     <div id="sidebar-header" class="panel-head">
       <!-- Topics | History: two tabs where the title was. History lists every conversation the
            library recorded, and one opened from it takes the transcript's place (openLib). -->
-      <span class="panel-title"><span class="sb-tabs" role="tablist" aria-label="Topics and history"><button type="button" class="sb-tab on" id="sb-tab-topics" role="tab" aria-selected="true" aria-controls="topics" aria-label="Topics" title="Topics on this page">${icon('chat')}<span class="sb-word">Topics</span></button><button type="button" class="sb-tab" id="sb-tab-history" role="tab" aria-selected="false" aria-controls="history-pane" aria-label="History" title="Every conversation the gateway recorded">${icon('history')}<span class="sb-word">History</span></button></span><button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button></span>
+      <span class="panel-title"><span class="sb-tabs" role="tablist" aria-label="Topics and history"><button type="button" class="sb-tab on" id="sb-tab-topics" role="tab" aria-selected="true" aria-controls="topics" aria-label="Topics" title="Topics on this page">${icon('chat')}<span class="sb-word">Topics</span></button><button type="button" class="sb-tab" id="sb-tab-history" role="tab" aria-selected="false" aria-controls="history-pane" aria-label="History" title="Every conversation the gateway recorded">${icon('history')}<span class="sb-word">History</span></button></span><button type="button" class="btn-icon" id="clear-topics" title="Clear all topics" aria-label="Clear all topics"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v7"/><path d="M8.5 9h7v3h-7z"/><path d="M7.5 12h9l2.5 9.5H5z"/><path d="M10 15.5 9.3 21.5"/><path d="M14 15.5l.7 6"/></svg></button><button type="button" class="btn-icon" id="read-topics" title="Mark all read" aria-label="Mark all read" disabled>${icon('done')}</button></span>
       <button type="button" class="btn-icon add" id="new-topic" data-new="1" title="New topic">+</button>
       <button type="button" class="btn-icon panel-close" id="collapse-sidebar" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>

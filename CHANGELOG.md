@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Mark all read in the topic list.** The web UI's Sessions tab could clear every unread badge
+  and finished reply at once; the topic list, where most of them pile up, could not. An icon
+  beside Clear all topics now does the same there, through the same code, and is greyed out
+  while there is nothing to mark. Scheduled runs are left to their own tab's button.
+
+### Fixed
+
+- **A sub-agent opened by a scheduled run is listed under that run.** The web UI keeps scheduled
+  runs out of the topic list and in the side panel's Sessions tab, but a sub-agent a run started
+  is not a run itself, so the topic list drew it as a conversation of its own, with no sign of
+  where it came from. It now goes where its run is: nested under the run in Sessions, folded
+  behind the same count pill a topic's sub-agents are, and a question from it lights the clock
+  like a question from the run. Both lists now draw their trees with one walk and one row, so
+  the two cannot drift apart again.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

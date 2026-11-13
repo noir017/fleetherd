@@ -105,6 +105,9 @@ then says which were closed. The count is on Manage's own face, so you see it wi
 anything (with no idle agents, Manage shows a disabled "No idle agents" line instead). Each conversation is kept, and the next message in a topic starts its agent again where
 it left off. A topic that starts working in the meantime is left running, and starred topics are
 closed like the rest. **Clear all topics** is an icon button beside Topics in the sidebar header.
+Beside it, **Mark all read** clears every unread badge in the topic list and tells the daemon the
+finished replies it had not seen have been read, as the Sessions tab's button does for scheduled
+runs; it is greyed out while there is nothing to mark.
 
 **Side tasks.** The clock at the right of the chat header opens a panel with two tabs at its
 foot: **Scheduled** and **Reviews**. Inside **Scheduled**, two sub-tabs under the header separate
@@ -119,7 +122,8 @@ a task with nothing to sort by stays last. The keyword, the filters and the sort
 browser, and **Showing N of M** with **Clear** says what survived. **Sessions** lists the
 topics a new-session run opened; those topics are kept out of the main topic list, so this is where
 they live, and tapping one opens it (its ⋯ holds **Star**, **End agent** and **Delete topic**, the
-same menu a topic row has). The list groups this month's runs by day and
+same menu a topic row has). A sub-agent a run opened is listed under that run, folded behind the
+same count pill a topic's sub-agents are, rather than in the topic list. The list groups this month's runs by day and
 older ones by month, each header folding on its own and the choice kept in this browser — the newest
 group and the one holding the topic on screen start open, and a folded header still says how many
 replies are unread and whether a run is working or waiting on an answer. **Mark all read** clears
@@ -133,8 +137,8 @@ each with **Adopt** and **Dismiss**. Adopt opens a new topic with a draft that a
 the suggestion to your instructions; nothing is sent, so you can edit it, switch agent with
 `/agent` first, or throw it away. The suggestion leaves the list only once a message that still
 carries it goes out from that topic. Dismiss takes it off the list without doing anything else.
-A run waiting on an answer puts an amber dot on the clock itself, on the Scheduled tab, and on the
-Sessions sub-tab, since it has no row in the topic list to show it.
+A run — or a sub-agent under one — waiting on an answer puts an amber dot on the clock itself, on
+the Scheduled tab, and on the Sessions sub-tab, since it has no row in the topic list to show it.
 The panel is a column of its own on a wide screen. It is the same component as the topic sidebar
 on the other edge — same header and footer rows, same ×, same slide and backdrop — and only its
 default width and the width at which it stops being a column differ. Below 1024px it is a drawer
