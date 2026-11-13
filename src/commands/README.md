@@ -78,6 +78,11 @@ Two deliberate choices:
   long-running daemon; an occasional network blip — a transient TLS drop while sending a
   reaction — must not take down the process. Log and keep running.
 
+`start` also installs the daemon's log file (`log-file.ts`) before anything else: every line
+written to stdout or stderr is copied, timestamped, to `<configDir>/logs/daemon.log` — 10 MB per
+file, five files kept. `docker logs` is the live view but dies with the container, and the incidents
+worth reading about are the ones around a restart (docs/docker.md).
+
 `start` is **lazy-imported** by `cli.ts` (`import('./commands/start.js')`) because it
 pulls in the whole Koishi + ACP SDK stack. Keeping it off the eager path is what makes
 `--help`, `setup`, `doctor`, and every reverse command start fast — and reverse commands

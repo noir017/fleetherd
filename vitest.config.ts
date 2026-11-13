@@ -2,8 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // Run only colocated unit tests under src/.
-    include: ['src/**/*.test.ts'],
+    // Run only colocated unit tests: src/**, plus the release scripts' pure helpers.
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
     // A throwaway HOME per test file: see the file for what reached the real one.
     setupFiles: ['./vitest.setup.ts'],
     /**

@@ -62,7 +62,10 @@ docker compose up -d
 - **No agent runs inside.** The image leaves out the Claude Code binary that `harness: claude`
   would use locally (about 220 MB), so an agent without `host:` fails to start with "native binary
   not found".
-- **The log is `docker logs fleetherd`** (`-t` adds timestamps). Nothing is written to a log file.
+- **The log is `docker logs fleetherd`** (`-t` adds timestamps). The gateway also writes a copy to
+  `config/logs/daemon.log`, rotated at 10 MB with five files kept, so a container recreated by an
+  update does not take the account of what happened around the restart with it. `docker logs` is
+  still the live view; the file is the one that outlives the container.
 - **Restarting the container stops the agents it started on the hosts.** An update is a restart.
   The gateway first lets the turns in progress finish, as described under
   [Updating](#updating). See also [When the connection drops](remote-hosts.md#when-the-connection-drops).
