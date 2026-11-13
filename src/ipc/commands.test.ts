@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -233,36 +230,6 @@ describe('schedule <action> [id]', () => {
     });
   });
 
-  it('--prompt-file reads the prompt where the command runs, and keeps it verbatim', () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'aa-commands-'));
-    try {
-      const file = path.join(dir, 'prompt.md');
-      writeFileSync(file, 'Summarise `git log` (last 20)\nand post it\n\n');
-      expect(schedule(['add'], { cron: '0 8 * * *', promptFile: file })).toMatchObject({
-        prompt: 'Summarise `git log` (last 20)\nand post it',
-      });
-      // Not both, and not an empty file.
-      expect(() => schedule(['add'], { cron: '0 8 * * *', prompt: 'x', promptFile: file })).toThrow(/not both/);
-      writeFileSync(file, '\n\n');
-      expect(() => schedule(['add'], { cron: '0 8 * * *', promptFile: file })).toThrow(/is empty/);
-      expect(() => schedule(['add'], { cron: '0 8 * * *', promptFile: path.join(dir, 'gone.md') })).toThrow(/could not be read/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('--prompt-file is something to change, and only for add and edit', () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'aa-commands-'));
-    try {
-      const file = path.join(dir, 'prompt.md');
-      writeFileSync(file, 'new text');
-      expect(schedule(['edit', 'a1b2c3'], { promptFile: file })).toMatchObject({ kind: 'schedule-edit', prompt: 'new text' });
-      expect(() => schedule(['list'], { promptFile: file })).toThrow(/--prompt-file only applies to `schedule add`/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it('--host is the machine a --cwd is on, and rides with add and edit', () => {
     expect(schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd: '/srv/app', host: 'box' })).toMatchObject({
       kind: 'schedule-add',
@@ -270,7 +237,20 @@ describe('schedule <action> [id]', () => {
       host: 'box',
     });
     expect(schedule(['edit', 'a1b2c3'], { host: 'box', cwd: '/srv/app' })).toMatchObject({ kind: 'schedule-edit', host: 'box' });
-    expect(() => schedule(['list'], { host: 'box' })).toThrow(/--host only applies to `schedule add`/);
+    expect(() => schedule(['list'], { host: 'box' })).toThrow(/--host only applies to `schedule add` and `schedule edit`/);
+  });
+
+  it('refuses a relative or ~ --cwd under --host, since it would be resolved here', () => {
+    // reverse.ts resolves it against the caller's directory, so it would arrive absolute and
+    // naming a place on the wrong machine; nothing downstream could tell.
+    for (const cwd of ['srv/app', './app', '~/app', '~']) {
+      expect(() => schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd, host: 'box' })).toThrow(
+        /has to be an absolute path when --host is given/
+      );
+      expect(() => schedule(['edit', 'a1b2c3'], { cwd, host: 'box' })).toThrow(/has to be an absolute path when --host is given/);
+    }
+    // Without --host, relative is still resolved by the CLI and allowed — that is the local case.
+    expect(schedule(['add'], { cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'oc', cwd: 'srv/app' })).toMatchObject({ cwd: 'srv/app' });
   });
 
   it('--wait waits for a run, defaulting to ten minutes, and only on run', () => {
@@ -282,6 +262,18 @@ describe('schedule <action> [id]', () => {
     expect(schedule(['run', 'a1b2c3'], { wait: parse('2m') })).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 120_000 });
     expect(schedule(['run', 'a1b2c3'])).toEqual({ kind: 'schedule-op', id: 'a1b2c3', op: 'run' });
     expect(() => schedule(['pause', 'a1b2c3'], { wait: true })).toThrow(/--wait only applies to `schedule run`/);
+    // Not silently ignored on the two actions that take options of their own.
+    expect(() => schedule(['add'], { cron: '0 8 * * *', prompt: 'x', wait: true })).toThrow(/--wait only applies to `schedule run`/);
+    expect(() => schedule(['edit', 'a1b2c3'], { name: 'x', wait: true })).toThrow(/--wait only applies to `schedule run`/);
+  });
+
+  it('refuses a --wait of zero and one past an hour, in words rather than zod', () => {
+    const parse = spec('schedule').options.find((o) => o.flags.startsWith('--wait'))!.parse!;
+    expect(parse('1h')).toBe(3_600_000);
+    expect(() => parse('0')).toThrow(/too short: give at least 1s/);
+    expect(() => parse('500ms')).toThrow(/too short: give at least 1s/);
+    expect(() => parse('2h')).toThrow(/longer than the 60m maximum/);
+    expect(() => parse('soon')).toThrow(/duration like 90s/);
   });
 
   it('parses --tag as a comma-separated list, empty pieces dropped, and "" as clearing', () => {
@@ -301,7 +293,7 @@ describe('schedule <action> [id]', () => {
     [['pause'], {}, /needs a task id/],
     [['list'], { tag: 'ci' }, /--tag only applies to `schedule add` and `schedule edit`/],
     [['frobnicate'], {}, /unknown schedule action "frobnicate"/],
-    [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add`/],
+    [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add` and `schedule edit`/],
     [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add`/],
     [['add', 'x'], { cron: '0 8 * * *' }, /takes no id/],
     [['add'], { session: 'forever' }, /--session must be fixed, new or daily/],

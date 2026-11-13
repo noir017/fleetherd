@@ -1056,6 +1056,27 @@ describe('schedule runs: what the chat hears', () => {
     expect(view.history?.[0]?.conversation).toBeTruthy();
   });
 
+  it('reports the same skip reason once, not on every run', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', name: 'brief' });
+    // The topic now has another agent, so every run is skipped — and the run's record says
+    // `failed`, which is why the deduplication is keyed on the reason and not on the status.
+    await r.inbound(WEB, '/agent oc');
+    r.sent.length = 0;
+    await r.callFrom(WEB_KEY, { kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle(300);
+    await r.callFrom(WEB_KEY, { kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle(300);
+    const skips = r.sent.filter((s) => s.text.includes('**brief** skipped at'));
+    expect(skips).toHaveLength(1);
+    expect(skips[0]!.text).toContain('this topic is now answered by oc, not cc');
+    // Only the message is deduplicated: the record and the history keep both runs.
+    const shown = (await r.call({ kind: 'schedule-list', id: task.id })) as { data: ScheduleListResult };
+    expect(shown.data.tasks[0]!.last).toMatch(/^failed /);
+    expect(shown.data.tasks[0]!.history).toHaveLength(2);
+  });
+
   it('run --wait answers with the run\'s result instead of leaving the agent to poll', async () => {
     const r = await rig();
     await r.inbound(WEB, 'hello');

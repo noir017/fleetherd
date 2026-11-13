@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { findAgent, type Config } from '../config/schema.js';
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
-import { splitIntoChunks } from '../core/stream-buffer.js';
+import { splitByMeasure } from '../core/stream-buffer.js';
 import {
   bashResultText,
   bashStatus,
@@ -679,8 +679,13 @@ export class ScheduleService {
   }
 
   /**
-   * Tell the chat a run did not deliver — failed, skipped, missed — unless the previous run ended
-   * the same way with the same reason.
+   * Tell the chat a run did not deliver — failed, skipped, missed — unless the previous run gave
+   * the same reason.
+   *
+   * Keyed on the reason alone, not the status: two of the paths that skip a run (a topic now
+   * answered by another agent, a daily topic that moved) record `failed` because that is what the
+   * run's record is, so comparing statuses let the "skipped" line through every single time — the
+   * opposite of what the help and the changelog promise.
    *
    * A five-minute task whose topic cannot be opened would otherwise post hundreds of identical
    * lines a day. The first one says everything, and the task's record and history keep every
@@ -698,7 +703,7 @@ export class ScheduleService {
     at: number
   ): Promise<void> {
     const previous = task.lastRun;
-    if (previous?.status === verb && previous.error === capError(why)) return;
+    if (previous?.error !== undefined && previous.error === capError(why)) return;
     await platform
       .sendMessage(address, `⏰ \`#${task.id}\` **${task.name}** ${verb} at ${formatInZone(at, task.when.tz)} — ${why}.`)
       .catch((e) => warn(`${verb} notice`, e));
@@ -769,8 +774,8 @@ export class ScheduleService {
    * The second copy is the point: a sub-agent rewrote a task's prompt from a conversation the task
    * never talks in, and the conversation that would run the new text at 18:00 saw nothing at all
    * (2026-11-13). Whoever will read the output is told what changed. `deleted` included: a target
-   * that stops receiving a brief should know why. Paused, resumed and run now are not — those are
-   * the caller's business, and the target's next run says what happened.
+   * that stops receiving a brief should know why. Pause and resume are not: they change nothing
+   * about what the target will receive next, and a manual run posts its own output.
    */
   card(conversation: ConversationId, task: ScheduleTask, verb: string): void {
     const text = taskCardText(task, verb, this.clock.now());
@@ -784,12 +789,16 @@ export class ScheduleService {
   /**
    * Send, chunked to the platform's own limit. A card now carries a whole prompt — the reason for
    * the change — and an agent's prompt can be longer than one message on every platform here.
+   *
+   * Split by RENDERED length, not characters: the limit counts what the platform renders, and the
+   * renderers do not agree with the raw string — a table becomes bullets (Telegram), and WeCom
+   * counts UTF-8 bytes, where one Chinese character is three. Same rule the stream path uses.
    */
   private post(platformId: string, address: ConversationAddress, text: string, what: string): void {
     const platform = this.platforms.get(platformId);
     if (!platform) return;
     const limit = platform.capabilities.maxMessageLength;
-    const parts = limit > 0 ? splitIntoChunks(text, limit) : [text];
+    const parts = limit > 0 ? splitByMeasure(text, limit, (part) => platform.measureRendered(part)) : [text];
     void (async () => {
       for (const part of parts) await platform.sendMessage(address, part);
     })().catch((e) => warn(what, e));

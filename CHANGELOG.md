@@ -19,18 +19,18 @@ All notable changes to this project are documented here. The format is based on
   exit code, duration, and the topic an agent run's output went to. An agent that wants the outcome
   used to write `until …; do sleep 5; done` and then read the conversation back, polling a command
   the gateway already knows the end of. Bare `--wait` waits 10 minutes; `--wait 30m` says how long.
-  When the wait runs out it says the run is still going, and the run finishes and posts its output
-  as any other does.
+  A wait is at most an hour — past that the run keeps going on its own and the answer would only
+  hold a connection open — and under a second is refused as meaningless rather than answered
+  instantly. When the wait runs out it says the run is still going, and the run finishes and posts
+  its output as any other does.
 - **`schedule add/edit --host <id>` names the machine a `--cwd` is on**, which is the way to
   register a task for an agent on another host from a conversation here. The directory is checked
   on that machine (`test -d`, over the same link the run will use) so a typo is refused while the
-  agent can still retype it; with no `--cwd` the task starts in that machine's own default
-  directory instead of the caller's. The 2026-11-07 rule is unchanged: a `--cwd` without `--host`
-  is still this machine's, and is still refused for a task that runs elsewhere.
-- **`schedule add/edit --prompt-file <path>` reads the prompt from a file.** A prompt is often a
-  paragraph with backticks, brackets and arrows in it, and pasting one into a shell is where
-  quoting breaks — a 1.5k-character prompt of exactly that shape reached an agent twice in one
-  week. The file is read where the command runs, capped at the protocol's 20,000 characters.
+  agent can still retype it; the path has to be absolute, since a relative one or `~` is resolved
+  on the caller's machine and would arrive naming a place on the wrong host; and with no `--cwd`
+  the task starts in that machine's own default directory instead of the caller's. The 2026-11-07
+  rule is unchanged: a `--cwd` without `--host` is still this machine's, and is still refused for
+  a task that runs elsewhere.
 
 ### Changed
 

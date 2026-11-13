@@ -55,8 +55,9 @@ day, including after the gateway restarts: the task records that the topic was s
 stops applying its own model.
 
 Change a task in place with `fleetherd schedule edit <id>`: `--agent`, `--cwd`, `--host`,
-`--model`, `--cron` / `--at` / `--tz`, `--name`, `--prompt` (or `--prompt-file <path>`), and
-`--bash` / `--timeout` for a bash task. The
+`--model`, `--cron` / `--at` / `--tz`, `--name`, `--prompt`, and `--bash` / `--timeout` for a bash
+task. A long prompt is best passed through your own shell — `--prompt "$(cat prompt.md)"` — so the
+file is read on the machine you type the command on, not by the gateway. The
 id, the run count, the run history and the last result stay, and the next run is computed from the
 edit under the
 new time rule — a task edited to a time that already passed today waits for tomorrow instead of
@@ -70,8 +71,7 @@ earlier one is left as it is.
 `--wait` it answers when the run has ended, with the status, exit code and duration, instead of
 leaving you (or an agent) to poll: `--wait 30m` waits that long, and bare `--wait` ten minutes.
 When the wait runs out the answer says the run is still going; it finishes and posts its output as
-any other run does. `--prompt-file <path>` reads a long prompt from a file, so quotes, backticks
-and newlines arrive exactly as written.
+any other run does. A wait is at most an hour and at least a second.
 
 Label a task with `--tag ci,release` when it is registered, or with `fleetherd schedule edit <id>
 --tag …` later: up to five tags, each at most 24 characters, lowercased, made of letters (Chinese
@@ -85,7 +85,8 @@ directory. So when the task runs on another machine — an agent on a [remote ho
 — the command is refused rather than storing a directory that means something else there: an `add`
 for that agent, an edit giving it a `--cwd`, and an edit moving a task to it with `--agent` while
 the task keeps a directory from the old machine. `--host <id>` is the way through: it says the
-`--cwd` you are giving belongs to that machine, and the gateway checks it exists there before
+`--cwd` you are giving belongs to that machine, and that path must be absolute — a relative one or
+`~` would be resolved here, on the wrong machine — and the gateway checks it exists there before
 storing anything; with no `--cwd` at all, `--host` makes the task start in that machine's own
 default directory instead of this conversation's. Without `--host`, a `--cwd` is still read as this
 machine's — run the command from a conversation on that machine if you would rather do it there

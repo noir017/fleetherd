@@ -63,10 +63,20 @@ describe('toolInputSchema', () => {
     const p = props('schedule');
     expect(p.action!.enum).toEqual(['add', 'list', 'show', 'edit', 'pause', 'resume', 'run', 'rm']);
     expect(p.session!.enum).toEqual(['fixed', 'new', 'daily']);
-    for (const key of ['cron', 'at', 'tz', 'prompt', 'bash', 'agent', 'model', 'name', 'tag', 'cwd', 'timeout', 'channel']) {
+    for (const key of ['cron', 'at', 'tz', 'prompt', 'bash', 'agent', 'model', 'name', 'tag', 'cwd', 'host', 'timeout', 'wait', 'channel']) {
       expect(p[key], key).toBeDefined();
     }
     expect(toolInputSchema(tool('schedule')).required).toEqual(['action']);
+  });
+
+  it('has no parameter that reads a file: the gateway runs this CLI, so a path is a gateway path', () => {
+    // `--prompt-file` was removed rather than fixed. An agent on a host runs the gateway's own CLI
+    // (remote-hosts.ts runCli), so the file would have been read here — any path on the gateway,
+    // with its content coming back in the tool's answer and on the card. `--prompt "$(cat …)"` is
+    // expanded in the caller's own shell, where the file is the caller's.
+    expect(Object.keys(props('schedule'))).not.toContain('promptFile');
+    const flags = REVERSE_COMMANDS.find((c) => c.usage.startsWith('schedule'))!.options.map((o) => o.flags).join(' ');
+    expect(flags).not.toContain('--prompt-file');
   });
 
   it('declares every parameter a string, the type every option is parsed from', () => {

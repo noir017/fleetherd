@@ -508,9 +508,9 @@ export interface ListChannelsResult {
 }
 
 /**
- * One run of a task, as `schedule show` prints it (core/schedule.ts runView): flat strings, one row
- * of a table. `conversation` is the topic a new/daily run's output went to, empty for a fixed or
- * bash run.
+ * One run of a task, as `schedule show` prints it and `schedule run --wait` answers with
+ * (core/schedule.ts runView): flat strings, one row of a table. `conversation` is the topic a
+ * new/daily run's output went to, empty for a fixed or bash run.
  */
 export interface ScheduleRunView {
   at: string;
@@ -522,7 +522,8 @@ export interface ScheduleRunView {
 
 /**
  * One scheduled task as the CLI prints it (core/schedule.ts taskView). Flat, so a list renders as
- * one TOON table; the detail fields appear only on `schedule show` and `schedule add`.
+ * one TOON table; the detail fields (prompt or command, cwd) appear only on `schedule show`, `add`
+ * and `edit`, and `history` only on `show` — `list` stays one row a task.
  */
 export interface ScheduleTaskView {
   id: string;
