@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-13
+
 ### Added
 
 - **An HTTP API is enough to be an agent: `fleetherd api-agent <backend>`.** It speaks ACP on
