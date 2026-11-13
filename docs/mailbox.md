@@ -6,11 +6,13 @@ agent through a mailbox relay that both sides poll, so neither the agent nor the
 connection.
 
 ```
-fleetherd ──ACP──► api-agent mailbox ──HTTPS──► agent-mailbox relay ◄──polls every 5 s── Muse
+fleetherd ──ACP──► api-agent mailbox ──HTTPS──► agent-mailbox relay ◄──polls every 5–30 s── Muse
 ```
 
 The relay is [agent-mailbox](https://github.com/noir017/agent-mailbox), a Cloudflare Worker that
-fits the free plan (four accounts polling every 5 seconds; the arithmetic is in its README). Its
+fits the free plan. Muse polls every 5 seconds while messages are going back and forth and every
+30 after an idle hour, so an idle account costs 2,880 requests a day out of 100,000 (the arithmetic
+is in its README). Its
 `integrations/muse/` is what goes into Muse: a connector, a hook and the rules Muse follows.
 
 ## Setup
@@ -40,7 +42,8 @@ would show in `ps` and sit in config.yaml as written. It runs on the gateway's o
 
 ## What a turn looks like
 
-- Your message goes into the mailbox; Muse picks it up within a few seconds and sends a progress
+- Your message goes into the mailbox; Muse picks it up within a few seconds (up to 30 after an idle
+  hour) and sends a progress
   line, shown as a row: `progress: "…"`. Each new one closes the last with its duration.
 - Its answer is the reply. Muse ends every turn with a final, which ends the turn here.
 - Each conversation is a session of its own on Muse's side, with its own context; `/new` starts a
@@ -67,6 +70,7 @@ under 600.
 - No model menu, local files, `send_file`/`schedule`, MCP or skills on the gateway's side, and no
   mid-turn steering.
 - `/stop` is a request: Muse stops at its next step.
-- The relay's daily quota is shared: each account polls 17,280 times a day, and the gateway adds a
+- The relay's daily quota is shared: each account polls 2,880 times a day when idle and 17,280 when in
+  use all day, and the gateway adds a
   poll every 2 seconds in a turn and every 20 seconds between turns while a conversation's process
   lives.

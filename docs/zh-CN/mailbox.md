@@ -3,10 +3,10 @@
 有些智能体调不到。Meta 的 Muse 跑在它自己的云端 VM 里：能每隔几秒跑个脚本、发 HTTPS 请求，仅此而已。`fleetherd api-agent mailbox` 经一个两边都去轮询的信箱中继够到这类智能体，智能体和网关都不用开入口。
 
 ```
-fleetherd ──ACP──► api-agent mailbox ──HTTPS──► agent-mailbox 中继 ◄──每 5 秒轮询── Muse
+fleetherd ──ACP──► api-agent mailbox ──HTTPS──► agent-mailbox 中继 ◄──每 5–30 秒轮询── Muse
 ```
 
-中继是 [agent-mailbox](https://github.com/noir017/agent-mailbox)，一个 Cloudflare Worker，免费计划够用（每 5 秒轮询一次，能撑 4 个账号，算式在它的 README 里）。它的 `integrations/muse/` 是装进 Muse 的东西：一个 connector、一个 hook 和 Muse 要遵守的规则。
+中继是 [agent-mailbox](https://github.com/noir017/agent-mailbox)，一个 Cloudflare Worker，免费计划够用：有消息往来时 Muse 每 5 秒来取一次，闲了一小时后每 30 秒一次，一个闲着的账号每天只用 2,880 次请求（额度 10 万次，算式在它的 README 里）。它的 `integrations/muse/` 是装进 Muse 的东西：一个 connector、一个 hook 和 Muse 要遵守的规则。
 
 ## 配置
 
@@ -32,7 +32,7 @@ agents:
 
 ## 一轮是什么样
 
-- 你的消息进信箱；Muse 几秒内取走，先发一条进度，显示成一行 `progress: "…"`，每来一条新的，上一条就带上耗时收起。
+- 你的消息进信箱；Muse 几秒内取走（闲了一小时后最多 30 秒），先发一条进度，显示成一行 `progress: "…"`，每来一条新的，上一条就带上耗时收起。
 - 它的回答就是回复正文。Muse 每轮都以 final 结束，final 到了这一轮就结束。
 - 每个对话在 Muse 那边是一个独立的 session，各自维护上下文；`/new` 开一个新的。网关重启后 session 不变。
 - **2 分钟没人取走**：消息撤回，本轮失败，并说明对方上次来取是什么时候——通常是 hook 没开，或者账号额度用完了。
@@ -47,4 +47,4 @@ agents:
 - 只传文字。图片和文件不发，回复里会说明；一条消息只有附件时什么都不发。
 - 网关这边没有模型菜单、本地文件、`send_file`/`schedule`、MCP 和技能，也不能在一轮进行中插话。
 - `/stop` 是个请求：Muse 到下一步才会停。
-- 中继的每日额度是共用的：每个账号每天轮询 17,280 次，网关一轮中每 2 秒、两轮之间每 20 秒（对话进程还在时）再各取一次。
+- 中继的每日额度是共用的：每个账号闲着时每天轮询 2,880 次，全天在用时 17,280 次，网关一轮中每 2 秒、两轮之间每 20 秒（对话进程还在时）再各取一次。
