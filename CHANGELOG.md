@@ -82,6 +82,42 @@ All notable changes to this project are documented here. The format is based on
   own transcripts, that a report written for the user is a file to send, and which library skill
   carries the remote-host procedure.
 
+- **`task-send --forward` hands a reply to another sub-agent without retyping it.** Half of the
+  `task-send` calls in a week's conversations (99 of 194) were a coordinator passing on a review
+  verdict or a commit range by hand, and every copy cost a whole turn: read the update card, write
+  the retelling. `task-send <topic> --forward <other topic> "<what to fix>"` now attaches
+  `<other topic>`'s last normally-ended reply — the same turn `task-read --reply` answers with —
+  whole, under a heading that names the topic and its turn. It is shown in the target topic as a
+  folded report bubble, one row per line, and reaches the agent whole in the message it reads. Both
+  topics must be ones the asking conversation opened; a source with no normally-ended reply is
+  refused before anything is sent, and the answer says so when that source is still working, so
+  the forwarded turn is not read as its latest word.
+
+### Changed
+
+- **A sub-agent's update card says its turn ended, not that it finished.** A turn that ends after
+  "the tests are running in the background, I will report when they are done" is a normal end, so
+  the card called it finished, and a parent reading only the stage stopped waiting for work that
+  was still going. The stage is `turn ended` now — all the gateway knows — and the tally line says
+  the same. The `super` skill adds that a reply promising to carry on, or only waiting for a
+  command, does not count as done.
+- **The `super` skill ends the turn after handing out the parts, instead of polling.** Updates
+  arrive as the next turn, so a coordinator that stayed in this one could only sleep and re-read
+  `tasks` — 44 of the 50 same-turn repeat queries in a week were cbc's — and sometimes started the
+  work it had just handed out. The skill says to end the turn, not to poll, and not to do a part's
+  work while waiting.
+- **`fleetherd help` no longer lists `--channel` on the commands that refuse it.** The page is
+  rendered from the command catalog, which appended `-c, --channel` to every command, so `help
+  tasks` advertised a flag `tasks` rejects — the mismatch that made `tasks -c web:main` look
+  supported. A command that does not accept the flag says so in the catalog now, and the help page
+  leaves it out.
+- **`task-new --cwd` says it takes an absolute path, and the `super` skill uses it.** It always
+  did — an absolute or `~` path is resolved as given — but the help and a comment described a name
+  from `task-agents`, and the skill told the coordinator to write the worktree into the task text
+  instead. 38 of 43 sub-agents sent to a named worktree started in the main checkout. The skill now
+  has the coordinator make the worktree on the machine that runs the part and pass its path with
+  `--cwd`.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

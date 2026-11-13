@@ -43,6 +43,7 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'task-new', agent: 'cc', text: 'go', model: 'fast-model', cwd: '/tmp', title: 'part' },
     { kind: 'task-send', topic: 'web:main/t1', text: 'go' },
     { kind: 'task-send', topic: 'web:main/t1', text: 'go', interrupt: true },
+    { kind: 'task-send', topic: 'web:main/t1', text: 'go', forward: 'web:main/t2' },
     { kind: 'task-read', topic: 'web:main/t1' },
     { kind: 'task-read', topic: 'web:main/t1', limit: 5, full: true, tail: 20 },
     { kind: 'task-read', topic: 'web:main/t1', role: 'tool', turn: 'last', grep: 'x', tail: 20 },
@@ -112,6 +113,7 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['task-read zero tail', { token: TOKEN, action: { kind: 'task-read', topic: 't', tail: 0 } }],
     ['task-read unknown field', { token: TOKEN, action: { kind: 'task-read', topic: 't', noTruncate: true } }],
     ['task-send non-boolean interrupt', { token: TOKEN, action: { kind: 'task-send', topic: 't', text: 'x', interrupt: 'yes' } }],
+    ['task-send empty forward', { token: TOKEN, action: { kind: 'task-send', topic: 't', text: 'x', forward: '' } }],
     ['task-status missing topic', { token: TOKEN, action: { kind: 'task-status' } }],
     // The library arms: a query is text, a session is an id, and none targets a channel.
     ['sessions-search empty query', { token: TOKEN, action: { kind: 'sessions-search', query: '' } }],

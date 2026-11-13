@@ -124,7 +124,7 @@ function manualClock() {
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-function rig(opts: { answer?: string | null; failOpen?: string; failModel?: string } = {}) {
+function rig(opts: { answer?: string | null; failOpen?: string; failModel?: string; noHistory?: boolean } = {}) {
   const clock = manualClock();
   const posted: Array<{ to: string; text: string; kind?: string }> = [];
   const parents = new Map<string, string>(); // child key → parent key
@@ -169,8 +169,8 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
       // behind the `[agent] ` tag formatLaneTitle adds.
       return { key, address: addrOf(key), title: `[${o.agentId}] ${o.title ?? 'part'}` };
     },
-    handTo: async (key: string, _p: string, _a: ConversationAddress, text: string, header: string, opts?: { queue?: boolean }) => {
-      calls.push(['handTo', { key, text, header, ...(opts?.queue ? { queue: true } : {}) }]);
+    handTo: async (key: string, _p: string, _a: ConversationAddress, text: string, header: string, opts?: { queue?: boolean; forward?: unknown }) => {
+      calls.push(['handTo', { key, text, header, ...(opts?.queue ? { queue: true } : {}), ...(opts?.forward ? { forward: opts.forward } : {}) }]);
       return handResult;
     },
     isBusy: (k: string) => busy.has(k),
@@ -244,7 +244,8 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     ]),
     registry: registry as unknown as DelegationDeps['registry'],
     clock,
-    history,
+    // A gateway without node:sqlite has no library at all (see DelegationDeps.history).
+    ...(opts.noHistory ? {} : { history }),
     questionOf: (k: string) => questions.get(k),
     confirm: ({ text, labels, signal }) => {
       cards.push({ text, labels, signal });
@@ -941,6 +942,105 @@ describe('Delegation: acting on the topics it opened, and only those', () => {
     await expect(r.d.handle(P, { kind: 'task-send', topic: 'bbbbbbbb', text: 'x' })).rejects.toThrow(/not a topic this conversation opened/);
     await expect(r.d.handle('web#main#c1000000', { kind: 'task-stop', topic: 'c1000000' })).rejects.toThrow(/not a topic/);
   });
+
+  /** A second child, so one topic has a reply the other can be sent. */
+  async function withTwoChildren() {
+    const r = await withChild();
+    await r.d.handle(P, task('cc', 'Review it'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    return r;
+  }
+
+  it('--forward attaches the other topic’s last normally-ended reply, whole, and says so', async () => {
+    const r = await withTwoChildren();
+    const review = '## Review\n\nVerdict: merge after one fix.\n\n- rename the flag';
+    seedTurn(r.history, 'web#main#c2000000', [
+      { role: 'user', text: 'review it' },
+      { role: 'agent', text: review },
+    ]);
+    const out = (await r.d.handle(P, {
+      kind: 'task-send',
+      topic: 'c1000000',
+      text: 'Fix the flag.',
+      forward: 'c2000000',
+    })) as TaskActionResult;
+    const call = r.calls.find(([c]) => c === 'handTo')![1] as {
+      text: string;
+      forward?: { heading: string; text: string; note: string };
+    };
+    // The message is the agent's own words; the reply travels beside it, not retyped into it.
+    expect(call.text).toBe('Fix the flag.');
+    expect(call.forward).toEqual({
+      heading: '↳ Forwarded from "part" · web:main/c2000000 · turn 1',
+      text: review,
+      note: 'Forwarded "part" (turn 1) with it.',
+    });
+    expect(out.result).toContain('Forwarded "part" (turn 1) with it.');
+  });
+
+  it('--forward refuses a source it did not open, and one with no normally-ended reply', async () => {
+    const r = await withTwoChildren();
+    r.bound.set('web#main#bbbbbbbb', 'cx');
+    await expect(
+      r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'x', forward: 'bbbbbbbb' })
+    ).rejects.toThrow(/not a topic this conversation opened/);
+    await expect(r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'x', forward: 'c2000000' })).rejects.toThrow(
+      /nothing to forward from "c2000000"/
+    );
+    // Refused before anything was sent: the target topic is left as it was.
+    expect(r.calls.filter(([c]) => c === 'handTo')).toEqual([]);
+  });
+
+  it('--forward follows the source topic’s current generation, so /new does not carry the reply it discarded', async () => {
+    const r = await withTwoChildren();
+    seedTurn(r.history, 'web#main#c2000000', [{ role: 'agent', text: 'old verdict' }]);
+    // The topic was /new'd: the turn above belongs to the generation it discarded, and `--reply`
+    // (the same source) does not answer with it either.
+    r.deps.currentContext = () => ({ agent: 'cc', generation: 1 });
+    await expect(
+      r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'x', forward: 'c2000000' })
+    ).rejects.toThrow(/nothing to forward from "c2000000"/);
+  });
+
+  it('--forward says the library is unavailable rather than forwarding nothing', async () => {
+    const r = rig({ noHistory: true });
+    await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    await r.d.handle(P, task('cc', 'b'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    await expect(
+      r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'x', forward: 'c2000000' })
+    ).rejects.toThrow(/conversation library is unavailable/);
+  });
+
+  it('--forward says when the source has more coming, so its reply is not read as the latest word', async () => {
+    const cases = [
+      ['working', 'is still working'],
+      ['retrying', 'failed and is continuing automatically'],
+      ['answer', 'is waiting on a question'],
+    ] as const;
+    for (const [stage, phrase] of cases) {
+      const r = await withTwoChildren();
+      const source = 'web#main#c2000000';
+      seedTurn(r.history, source, [{ role: 'agent', text: 'verdict so far' }]);
+      if (stage === 'working') r.busy.add(source);
+      if (stage === 'retrying') r.activity.set(source, { retry: { attempt: 1, max: 3, at: 0 } });
+      if (stage === 'answer') r.asking.add(source);
+      const out = (await r.d.handle(P, {
+        kind: 'task-send',
+        topic: 'c1000000',
+        text: 'x',
+        forward: 'c2000000',
+      })) as TaskActionResult;
+      expect(out.result, stage).toContain(`"part" ${phrase}; this is turn 1, not what it is doing now.`);
+    }
+  });
 });
 
 describe('Delegation: seeing what a sub-agent is doing', () => {
@@ -1379,12 +1479,12 @@ describe('Delegation: [sub-agent updates]', () => {
     expect(prompt.agentId).toBe('cc');
     expect(prompt.user).toBe(UPDATE_SENDER);
     expect(prompt.prompt.split('\n')).toEqual([
-      '[sub-agent updates] 1 of 2 sub-agents have finished or stopped; 1 still working.',
-      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/fleetherd · finished',
+      '[sub-agent updates] 1 of 2 sub-agents have ended their turn or stopped; 1 still working.',
+      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/fleetherd · turn ended',
       '  reply: Done: all green, 12 tests.',
       '  link: ?t=c1000000',
     ]);
-    expect(r.posted).toContainEqual({ to: P, text: '🔔 part (cc @ near) — finished: Done: all green.', kind: 'report' });
+    expect(r.posted).toContainEqual({ to: P, text: '🔔 part (cc @ near) — turn ended: Done: all green.', kind: 'report' });
   });
 
   it('carries a finished reply whole, line breaks and lists intact, with no separate first line', async () => {
@@ -1734,22 +1834,22 @@ describe('Delegation: what the person writes in a sub-agent’s topic', () => {
     expect(sent).toHaveLength(2);
     expect(sent[1]!.key).toBe(P);
     expect(sent[1]!.prompt.split('\n')).toEqual([
-      '[sub-agent updates] 1 of 1 sub-agent has finished or stopped.',
-      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/fleetherd · finished',
+      '[sub-agent updates] 1 of 1 sub-agent has ended its turn or stopped.',
+      '- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/fleetherd · turn ended',
       '  the person wrote to it directly: also cover the CLI,',
       '  not only the API',
       '  reply: Done: CLI covered too.',
       '  link: ?t=c1000000',
     ]);
     expect(r.posted.filter((p) => p.kind === 'report').at(-1)?.text).toBe(
-      '🔔 part (cc @ near) — finished after you wrote there: Done: CLI covered too.'
+      '🔔 part (cc @ near) — turn ended after you wrote there: Done: CLI covered too.'
     );
   });
 
   it('leaves a handed-out turn’s card as it was when the person wrote nothing', async () => {
     const r = await reported();
     expect(prompts(r)[0]!.prompt).not.toContain('the person wrote');
-    expect(r.posted.find((p) => p.kind === 'report')?.text).toBe('🔔 part (cc @ near) — finished: Done.');
+    expect(r.posted.find((p) => p.kind === 'report')?.text).toBe('🔔 part (cc @ near) — turn ended: Done.');
   });
 
   it('cuts long words at CARD_SAID_CHARS, saying how long they were and which turn holds them, and keeps the reply whole', async () => {
@@ -1881,12 +1981,12 @@ describe('Delegation: what the person writes in a sub-agent’s topic', () => {
     ends(r, 'Seven, two of them blank.');
     r.clock.advance(CARD_DELAY_MS);
     expect(prompts(r)[0]!.prompt.split('\n').slice(1, 4)).toEqual([
-      '- topic web:main/c1000000 · "Count lines" · cc @ near in ~/workspace/fleetherd · finished',
+      '- topic web:main/c1000000 · "Count lines" · cc @ near in ~/workspace/fleetherd · turn ended',
       '  the person wrote to it directly: and the blank ones too',
       '  reply: Seven, two of them blank.',
     ]);
     expect(r.posted.filter((p) => p.kind === 'report').at(-1)?.text).toBe(
-      '🔔 Count lines (cc @ near) — finished after you wrote there: Seven, two of them blank.'
+      '🔔 Count lines (cc @ near) — turn ended after you wrote there: Seven, two of them blank.'
     );
   });
 

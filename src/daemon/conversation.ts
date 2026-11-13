@@ -3979,7 +3979,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * Hand `text` to a sub-agent's conversation — `task-new` (once confirmed) and `task-send`. It is
    * shown there first under `header`, which says whose words these are (the reactions land on that
    * bubble), then goes in like a message typed there: into the running turn when the harness takes
-   * one, else as the next turn. The agent receives `text` alone. Answers which of the three.
+   * one, else as the next turn. The agent receives `text` alone — plus the forwarded reply, when
+   * `opts.forward` attaches one. Answers which of the three.
    *
    * `queued` is not a failure: the message is delivered, just after the turn it could not join.
    * It is a separate answer because the harness's ability to take input mid-turn is not knowable
@@ -3991,6 +3992,12 @@ ${formatTokens(left)} left before compaction — ${name}`;
    *
    * `opts.queue` skips the offer entirely: the caller has just stopped the turn (task-send
    * --interrupt) and the message must wait for the new turn, not be handed to the dying one.
+   *
+   * `opts.forward` is `task-send --forward`'s attachment: another of this conversation's topics'
+   * last normally-ended reply. It is posted first as a `report` bubble — line-based, so the page
+   * folds it instead of letting a long review fill the topic — and goes into the agent's message
+   * whole, under its heading. A failure to post it throws before anything is handed over: the
+   * person must see the material the task is about, not a task that refers to nothing.
    */
   async handTo(
     key: ConversationId,
@@ -3998,7 +4005,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
     address: ConversationAddress,
     text: string,
     header: string,
-    opts: { queue?: boolean } = {}
+    opts: { queue?: boolean; forward?: { heading: string; text: string } } = {}
   ): Promise<'started' | 'joined' | 'queued'> {
     const agentId = this.boundAgentOf(key);
     if (!agentId || !findAgent(this.config, agentId)) throw new Error('nobody answers that conversation yet; open it with task-new');
@@ -4006,6 +4013,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
     if (!adapter) throw new Error(`platform instance "${platformId}" is not running`);
     const state = this.ensureState(key, platformId, agentId);
     if (this.draining && state.merger.isIdle()) throw new Error('the gateway is restarting; send it again in a minute');
+    if (opts.forward) {
+      await adapter.sendMessage(address, `${opts.forward.heading}\n${opts.forward.text}`, { kind: 'report' });
+    }
     // Marked a dispatch: this is the `↳ From …` line (or a later task-send) a sub-agent's topic
     // receives, and the web UI draws it apart from the agent's own replies. Every chat platform
     // ignores the kind.
@@ -4024,7 +4034,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
         user: DELEGATE_SENDER,
       },
       messageId: posted.messageId,
-      content: text,
+      content: opts.forward ? `${text}\n\n${opts.forward.heading}\n\n${opts.forward.text}` : text,
       timestamp: this.clock.now(),
     };
     // `queue` is --interrupt's: never offer it to the turn that is being stopped (see

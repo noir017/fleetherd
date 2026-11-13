@@ -236,6 +236,12 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       topic: z.string().min(1).max(200),
       text: z.string().min(1).max(20_000),
       interrupt: z.boolean().optional(),
+      /**
+       * Another of this conversation's topics, whose last normally-ended reply is attached to the
+       * message whole (`task-send --forward`). The daemon refuses one this conversation did not
+       * open, like `topic` itself.
+       */
+      forward: z.string().min(1).max(200).optional(),
     })
     .strict(),
   z
@@ -408,7 +414,7 @@ export type IpcAction =
   | { kind: 'task-agents' }
   | { kind: 'task-list'; limit?: number }
   | { kind: 'task-new'; agent?: string; text: string; cwd?: string; title?: string; model?: string }
-  | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean }
+  | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean; forward?: string }
   | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number; role?: 'user' | 'agent' | 'tool'; turn?: string; turns?: number; since?: number; grep?: string; reply?: boolean }
   | { kind: 'task-status'; topic: string }
   | { kind: 'task-stop'; topic: string }

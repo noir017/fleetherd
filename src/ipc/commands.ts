@@ -37,6 +37,13 @@ export interface ReverseCommandSpec {
    * bundled skill, are how every command that is not a native tool gets discovered (see HELP_TOPICS).
    */
   topic: HelpTopicName;
+  /**
+   * `false` for a command that does not accept `--channel` — a gateway-wide one, or one acting on
+   * what this conversation owns. The flag stays registered (so passing it gets a sentence rather
+   * than commander's "unknown option"), but the help page leaves it out: a page that advertises a
+   * flag the command refuses teaches an agent to distrust the page.
+   */
+  channel?: false;
 }
 
 /**
@@ -113,7 +120,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     name: 'channels',
     summary: 'Post to another chat or topic, on any platform',
     notes: [
-      'Every command takes --channel <id>. A bare <channel>[/<thread>] stays on the platform you are answering on; <instance>:<channel>[/<thread>] (what `channels` prints) names any platform.',
+      'Most commands take --channel <id>; the gateway-wide ones and the ones acting on what this conversation owns do not — `task-*`, `pods`, `skills`, `sessions`, `channels`, `voice`, `reload`. A bare <channel>[/<thread>] stays on the platform you are answering on; <instance>:<channel>[/<thread>] (what `channels` prints) names any platform.',
       'The list only holds places the gateway has answered in — most platforms cannot enumerate a bot\'s chats. kind=channel rows are chat roots (where a new topic would be opened); current=true is this conversation.',
     ],
   },
@@ -205,6 +212,8 @@ export const HELP_TOPICS: HelpTopic[] = [
       '`tasks` shows what a working sub-agent is doing now: the tool it is running, its step count, how long the turn has gone and its context. `task-status` is one topic in detail, with its last three tool calls. `task-read <topic>` reads its messages from the conversation library, cut at 1500 characters each; `--tail 20` shows the newest lines, `--full` raises the cut, `--role`/`--turn`/`--turns`/`--since`/`--grep` select rows as they do for `sessions read`.',
       '`task-read <topic> --reply` is the last turn that ended normally, its reply whole — what a finished sub-agent concluded. `--turn <n>` is one turn\'s record, including the whole error when it failed. A cut update card names the turn it quoted (`--turn <n>`): read that one, not `--turn last` — the topic may have run again since.',
       'task-send only reaches a turn that is still running when the harness accepts input mid-turn (claude and codex do; agy does not). The answer says which happened: joined, queued behind the turn, or started. To redirect a harness that is not listening, `--interrupt` stops the turn and sends the message as the next one — its context is kept.',
+      '`task-send <topic> --forward <other>` sends <text> with <other>\'s last normally-ended reply attached whole, under a heading naming the topic and its turn: a review verdict reaches the agent that must act on it without being retyped. Both topics must be ones this conversation opened; a topic with no normally-ended reply yet is refused.',
+      'A reply that says it will carry on, or is only waiting for a command in the background, is not a finished job: the update card says `turn ended`, not done.',
     ],
   },
   {
@@ -246,7 +255,8 @@ export function renderHelpTopic(name: string): string | undefined {
   const lines = [`${topic.name} — ${topic.summary}`, ''];
   for (const spec of REVERSE_COMMANDS.filter((c) => c.topic === topic.name)) {
     lines.push(`  fleetherd ${spec.usage}`, `    ${spec.description}`);
-    for (const opt of [...spec.options, CHANNEL_OPTION]) lines.push(`      ${opt.flags}${opt.description ? `  ${opt.description}` : ''}`);
+    const options = spec.channel === false ? spec.options : [...spec.options, CHANNEL_OPTION];
+    for (const opt of options) lines.push(`      ${opt.flags}${opt.description ? `  ${opt.description}` : ''}`);
     lines.push('');
   }
   if (topic.notes.length) lines.push('Notes:', ...topic.notes.map((n) => `  - ${n}`));
@@ -1006,6 +1016,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'voice-log',
     topic: 'voice',
+    channel: false,
     description:
       "List this conversation's recent voice-message transcripts: what the user said, what was sent on, and the saved audio file (TOON table on stdout)",
     options: [{ flags: '-l, --limit <n>', description: 'number of transcripts (default 10)', parse: intArg('--limit') }],
@@ -1025,6 +1036,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'channels',
     topic: 'channels',
+    channel: false,
     description:
       'List the chats and topics this gateway can post to, with the ids --channel accepts (TOON table on stdout)',
     options: [
@@ -1052,6 +1064,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'sessions <action> [arg]',
     topic: 'sessions',
+    channel: false,
     description:
       'The gateway\'s library of past conversations: search "<words>" [--agent] [--days] [--limit] [--tools] | read <session> [--around <message>] [--window] | read <session> [filters] | list [--days] [--limit] [--before]',
     options: [
@@ -1097,6 +1110,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-agents',
     topic: 'tasks',
+    channel: false,
     description: 'The agents a sub-task can go to: the machine each runs on (here=true: yours), its model, and the project directories it can start in',
     options: [],
     build: (_positionals, opts) => {
@@ -1107,8 +1121,9 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'tasks',
     topic: 'tasks',
+    channel: false,
     description:
-      'The sub-agent topics this conversation opened, most recent first: agent, directory, stage (review | answer | failed | retrying | working | idle), one line, and while one works the tool it is running, its step count, elapsed time and context',
+      'The sub-agent topics this conversation opened, most recent first: agent, directory, stage (review = its turn ended, answer | failed | retrying | working | idle), one line, and while one works the tool it is running, its step count, elapsed time and context',
     options: [{ flags: '-l, --limit <n>', description: 'how many (default 30)', parse: intArg('--limit') }],
     build: (_positionals, opts) => {
       refuseChannel('tasks', opts);
@@ -1118,10 +1133,15 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-new <text>',
     topic: 'tasks',
+    channel: false,
     description: 'Propose a sub-task: <text> for one agent, in a topic of its own — started once the person confirms, or at once when confirmation is off',
     options: [
       { flags: '--agent <id>', description: "who does the work: an id from task-agents (default: this conversation's agent)" },
-      { flags: '--cwd <dir>', description: "where it starts: a directory task-agents lists (default: the agent's own)" },
+      {
+        flags: '--cwd <dir>',
+        description:
+          "where it starts, on the machine that runs it: a directory name from task-agents, or an absolute path such as a git worktree there (default: the agent's own root)",
+      },
       { flags: '--title <title>', description: 'the topic’s name (default: named from <text>)' },
       { flags: '--model <id>', description: "the model it runs on, from that agent's /model list (default: the agent's configured model)" },
     ],
@@ -1140,12 +1160,18 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-send <topic> <text>',
     topic: 'tasks',
+    channel: false,
     description:
       "Send <text> to one of this conversation's sub-agents: into its turn when the harness takes input mid-turn, else as its next turn",
     options: [
       {
         flags: '--interrupt',
         description: 'stop the turn it is running first, then send this as its next one (the only way to redirect a harness with no mid-turn input, such as agy)',
+      },
+      {
+        flags: '--forward <topic>',
+        description:
+          "attach that topic's last normally-ended reply, whole, under a heading that names it — for passing a review verdict to the agent that must act on it",
       },
     ],
     build: (positionals, opts) => {
@@ -1155,12 +1181,14 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         topic: pos(positionals, 0, 'topic'),
         text: pos(positionals, 1, 'text'),
         interrupt: opts.interrupt === true ? true : undefined,
+        forward: str(opts.forward),
       };
     },
   },
   {
     usage: 'task-read <topic>',
     topic: 'tasks',
+    channel: false,
     description:
       'A sub-agent topic from the conversation library: its messages, oldest first, cut at 1500 characters each; --full raises the cut, --tail shows the end of each, --reply the last finished reply whole, and the read filters select rows as they do for `sessions read`',
     options: [
@@ -1178,6 +1206,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-status <topic>',
     topic: 'tasks',
+    channel: false,
     description:
       'One sub-agent topic in detail: stage, current tool, step, elapsed, context and cost, plus the last three tool calls and its last reply',
     options: [],
@@ -1189,6 +1218,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'task-stop <topic>',
     topic: 'tasks',
+    channel: false,
     description: "Stop what one of this conversation's sub-agents is doing; its topic and context stay",
     options: [],
     build: (positionals, opts) => {
@@ -1199,6 +1229,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'pods',
     topic: 'pods',
+    channel: false,
     description: 'The machines agents run on: address, agents (and where they were read from), whether in the ssh mesh, the last read; and the authorized_keys line for a new one',
     options: [],
     build: (_positionals, opts) => {
@@ -1209,6 +1240,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'pod-add <name> <ssh>',
     topic: 'pods',
+    channel: false,
     description: 'Add a machine: <name> for its agents (<id>@<name>), <ssh> as user@address[:port]; prints what was found there',
     options: [{ flags: '--host-key <line>', description: "the machine's public host key line, read on the machine (required)" }],
     build: (positionals, opts) => {
@@ -1221,6 +1253,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'pod-remove <name>',
     topic: 'pods',
+    channel: false,
     description: 'Remove a machine and its agents from the gateway (the machine itself is not touched)',
     options: [],
     build: (positionals, opts) => {
@@ -1231,6 +1264,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'skills <action> [name] [file]',
     topic: 'skills',
+    channel: false,
     description:
       'The skills the gateway keeps for every agent: search <what you need> | show <name> [file] | list | categories | create <name> --description … | patch <name> --version … --content … | write-file | remove-file | archive | restore | pin | unpin | history | revert <name> <id>',
     options: [
@@ -1245,6 +1279,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
   {
     usage: 'reload',
     topic: 'config',
+    channel: false,
     description: 'Apply an edited config.yaml (and its .env) to the running gateway, without a restart; prints what changed',
     options: [],
     build: (_positionals, opts) => {

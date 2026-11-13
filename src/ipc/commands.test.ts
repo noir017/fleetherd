@@ -77,6 +77,17 @@ describe('help topics', () => {
     expect(renderHelpTopic('nope')).toBeUndefined();
     expect(renderHelpTopic('SCHEDULE')).toBeDefined();
   });
+
+  it('leaves --channel off the pages of the commands that refuse it', () => {
+    // Each of these refuses the flag with its own sentence; a page that lists it anyway is the
+    // mismatch that made `tasks -c web:main` look supported (reported 11-07).
+    for (const topic of ['tasks', 'pods', 'skills', 'sessions', 'voice', 'channels', 'config']) {
+      expect(renderHelpTopic(topic), topic).not.toContain('-c, --channel <id>');
+    }
+    // The ones that do take it still say so.
+    expect(renderHelpTopic('messages')).toContain('-c, --channel <id>');
+    expect(renderHelpTopic('files')).toContain('-c, --channel <id>');
+  });
 });
 
 describe('task commands', () => {
@@ -93,6 +104,12 @@ describe('task commands', () => {
       topic: 'web:main/t1',
       text: 'go',
       interrupt: true,
+    });
+    expect(spec('task-send').build(['web:main/t1', 'go'], { forward: 'web:main/t2' })).toEqual({
+      kind: 'task-send',
+      topic: 'web:main/t1',
+      text: 'go',
+      forward: 'web:main/t2',
     });
     expect(spec('task-status').build(['web:main/t1'], {})).toEqual({ kind: 'task-status', topic: 'web:main/t1' });
   });
@@ -127,8 +144,8 @@ describe('task commands', () => {
   });
 
   it('refuses --channel: each names its conversation itself', () => {
-    for (const usage of ['task-send', 'task-read', 'task-status', 'task-stop']) {
-      expect(() => spec(usage).build(['t'], { channel: 'c1' })).toThrow(/names its conversation itself/);
+    for (const usage of ['task-agents', 'tasks', 'task-new', 'task-send', 'task-read', 'task-status', 'task-stop']) {
+      expect(() => spec(usage).build(['t'], { channel: 'c1' }), usage).toThrow(/names its conversation itself/);
     }
   });
 });
