@@ -91,6 +91,7 @@ import {
   agyWindow,
   createAgyQuotaMeter,
   forgetsModelOnLoad,
+  takesPromptMidTurn,
   type AgyQuotaMeter,
   type AgyTurnWatch,
 } from './agy-acp.js';
@@ -1730,7 +1731,8 @@ function createAcpSession(
       });
       progress.answered = true;
       loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
-      steeringMode = steeringModeOf(initResult);
+      // agy takes a second prompt into a running turn without advertising it (agy-acp.ts).
+      steeringMode = steeringModeOf(initResult, takesPromptMidTurn(def));
       imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
       forkSupport = forkSupportOf(initResult);
 
@@ -3434,6 +3436,13 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
       ingestText(u, st);
       break;
 
+    // A message the person sent mid-turn, as the harness takes it in (agy echoes each one; so does the
+    // opening of every turn, before anything is said). What the agent says next answers it, so it
+    // starts a segment of its own — run on, agy's "…provide its output.6 × 7 = 42" was one paragraph.
+    case 'user_message_chunk':
+      breakBeforeNextText(st);
+      break;
+
     // tool_call and tool_call_update are handled identically: merge this tool's latest fields into the
     // ledger, then render based on status / rawInput readiness. Generic across all ACP agents.
     case 'tool_call':
@@ -3733,6 +3742,19 @@ function finishTool(st: TurnState, id: string, ok: boolean): void {
     ok,
     durationMs: nowMs() - rec.startAt,
   });
+  // A call that ends after the agent has spoken — a command agy put in the background, finishing
+  // while the turn waits for it (agy-plugin.ts) — puts what comes next in a segment of its own: that
+  // text answers the result. Run on after the words before it, it read "…report its
+  // output.**Background task completed**".
+  breakBeforeNextText(st);
+}
+
+/**
+ * Something happened after the agent spoke that its next words answer: start them in a new segment.
+ * Only the next text breaks, so nothing said afterwards means nothing split.
+ */
+function breakBeforeNextText(st: TurnState): void {
+  if (st.lastSegment === 'text') st.lastSegment = 'tool';
 }
 
 /**

@@ -5,6 +5,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **agy comes back from a background command.** agy runs a command in the foreground for ten
+  seconds at most; anything longer goes to the background and the turn ends. When the command
+  finished, agy went on in a turn of its own that `agy acp` sends nothing of — and the first step of
+  it that needed permission waited for the person's next message, so a scheduled job that started a
+  long script never reported at all. The gateway cannot reach into that turn without writing to the
+  model itself (an empty prompt is refused), so it now ships an agy plugin, linked like the bundled
+  skills into `~/.gemini/config/plugins/fleetherd` on every machine agy runs on. Its Stop hook keeps
+  the turn open while a background command runs, silently, until agy's mailbox says the command
+  finished or the person wrote; the result, the permission request and the reply then arrive in the
+  same turn, with no model calls while it waits — and what agy says once the command finished
+  starts a message of its own instead of running on after "started". It lets the model go once
+  after twenty minutes with nothing new, so the silence watchdog never fails the wait as a hang.
+  This replaces a hand-installed hook that re-prompted the model every twenty seconds: agy allows a
+  turn ten forced continuations, so it gave up after three and a half minutes, and the model,
+  reading why, polled with `sleep 9.2` loops instead — one model call per poll.
+
+### Changed
+
+- **A message sent to agy mid-turn joins the turn.** `agy acp` 1.5.8 takes a second prompt the way
+  Claude Code does — at the next tool boundary, one reply for both — without advertising it, so the
+  gateway held every such message until the turn ended. Now that a turn waits for its background
+  commands, that could be most of an hour; it is sent at once instead. The answer to it starts a
+  message of its own, as does the answer to a message joined mid-turn on any harness that echoes it.
+
 ## [3.5.1] - 2026-11-14
 
 ### Fixed

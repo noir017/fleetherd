@@ -20,6 +20,7 @@ import {
   type InstructionsResult,
 } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
+import { AGY_PLUGIN_DIR, AGY_PLUGIN_NAME, agyPluginHome, agyPluginSource } from './agy-plugin.js';
 import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes, type SkillHome } from './skill-link.js';
 import { deliveredTo, managedSkillsHome } from './managed-skills.js';
 import { activeSkillFiles, archivedSkillNames } from './skills-store.js';
@@ -81,6 +82,8 @@ export class RemoteHosts {
   private ns: string | undefined;
   /** host id + version → the skill is on that host for that version. */
   private readonly skillPlaced = new Set<string>();
+  /** host id + version + daemon instance → the agy plugin's files are on that host for that version. */
+  private readonly agyPluginPlaced = new Set<string>();
   /**
    * host id + daemon instance + the harness's file → what was last delivered there and settled (a
    * hash of the text, or `none` / `too-big`), so an unchanged text costs no round trip per spawn.
@@ -210,6 +213,35 @@ export class RemoteHosts {
       await this.removeLegacySkillLinks(host, homes, w);
     } catch (e) {
       console.warn(`[skill] ${host.id}: could not place the skill:`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  /**
+   * Put the agy plugin where an agy agent's harness finds plugins on the host — the remote twin of
+   * agy-plugin.ts ensureAgyPlugin, which says why. Like the bundled skills: the files go into the
+   * version's own directory once per version, the link is made at every spawn (so an upgrade
+   * repoints it), and once per version a link an older build left into a directory that is gone is
+   * swept, because agy would otherwise try to load a plugin that is not there. Best-effort.
+   */
+  async placeAgyPlugin(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<void> {
+    const where = agyPluginHome(def.harness, home);
+    if (!where || envOf('NO_SKILL_LINK')) return;
+    const target = `${w.home}/.fleetherd/remote/${w.version}/${AGY_PLUGIN_DIR}`;
+    const key = `${host.id}@${w.version}@${w.instance}`;
+    try {
+      if (!this.agyPluginPlaced.has(key)) {
+        const source = agyPluginSource();
+        for (const rel of listFiles(source)) {
+          await host.writeFile(`${target}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
+        }
+        for (const link of await host.sweepSkillLinks(where.dir)) console.log(`[agy] ${host.id}: removed dead link ${link}`);
+        this.agyPluginPlaced.add(key);
+      }
+      const r = await host.ensureLink(target, `${where.dir}/${AGY_PLUGIN_NAME}`, where.requires);
+      if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[agy] ${host.id}: linked ${r.link} → ${target}`);
+      else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[agy] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
+    } catch (e) {
+      console.warn(`[agy] ${host.id}: could not place the plugin:`, e instanceof Error ? e.message : e);
     }
   }
 

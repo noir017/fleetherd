@@ -32,6 +32,9 @@ import type { SteerOutcome } from '../types.js';
  * - `none` — everything else. opencode 2.0.26 rejects a second `session/prompt` with -32603
  *   "Session already has an active ACP prompt" and the message is gone, so it must never be tried.
  *
+ * `agy acp` advertises nothing and behaves as `prompt`, so agent-acp.ts says so through
+ * steeringModeOf's second argument (agy-acp.ts takesPromptMidTurn has the measurement).
+ *
  * claude-agent-acp advertises `steering` too, and `prompt` is preferred on purpose: its steer is
  * delivered at priority `now`, which pre-empts. Probed with the same script, Claude Code moved the
  * running foreground command to the background to let the message through, answered it at once, and
@@ -53,13 +56,17 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-/** Which mode this harness supports, from what it advertised in `initialize` (see SteeringMode). */
-export function steeringModeOf(init: Pick<InitializeResponse, '_meta' | 'agentCapabilities'>): SteeringMode {
+/**
+ * Which mode this harness supports, from what it advertised in `initialize` (see SteeringMode).
+ * `promptUnadvertised` is for a harness measured to take a second prompt that says nothing about it
+ * (agy-acp.ts takesPromptMidTurn): `prompt` unless it advertised something of its own.
+ */
+export function steeringModeOf(init: Pick<InitializeResponse, '_meta' | 'agentCapabilities'>, promptUnadvertised = false): SteeringMode {
   const claude = init.agentCapabilities?._meta?.['claudeCode'];
   if (isRecord(claude) && claude['promptQueueing'] === true) return 'prompt';
   const steering = init._meta?.['steering'];
   if (isRecord(steering) && steering['supported'] === true) return 'steer';
-  return 'none';
+  return promptUnadvertised ? 'prompt' : 'none';
 }
 
 /**

@@ -85,6 +85,28 @@ export function forgetsModelOnLoad(def: Pick<AgentDef, 'harness'>): boolean {
   return def.harness === 'agy';
 }
 
+// ───────────────────────── a message mid-turn ─────────────────────────
+
+/**
+ * Whether a harness takes a second `session/prompt` into a running turn — the `prompt` steering mode
+ * (acp-steering.ts) — although its `initialize` does not say so.
+ *
+ * `agy acp` does. Measured on 1.5.8 (2026-11-14, project-scripts/agy-bg-probe/probe-hold.mjs, modes
+ * `midtool` and `steer`): a second prompt sent during an 8 s foreground command was taken at the tool
+ * boundary — the command ran its full time, one reply answered both, the first prompt settled
+ * `end_turn` at once and the reply streamed under the second; sent while the turn waited for a
+ * background task (agy-plugin.ts), it ended the wait, was answered, and the wait went on until the
+ * task finished, all under the second prompt. That is claude-agent-acp's `promptQueueing` exactly,
+ * but agy advertises neither marker steeringModeOf reads, so every message waited for the turn to
+ * end — which, since a turn waits for its background tasks, can be most of an hour.
+ *
+ * ⚠️ HYRUM'S LAW: unadvertised behaviour. If a release refuses a second prompt the way opencode does,
+ * the turn fails with that refusal, in the chat; this is the line to take out.
+ */
+export function takesPromptMidTurn(def: Pick<AgentDef, 'harness'>): boolean {
+  return def.harness === 'agy';
+}
+
 // ───────────────────────── warnings in the message stream ─────────────────────────
 
 /**
