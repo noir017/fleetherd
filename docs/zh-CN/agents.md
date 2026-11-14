@@ -251,11 +251,17 @@ agy 可以不登录 Google，把模型调用发给一个 Gemini API 格式的网
 [`quotaCommand`](#额度命令)），`contextBudget` 不起作用，压缩点由 agy 自己定——Gemini 3.8 Flash 约 256k，
 与网关报的窗口无关。在 agy 1.5.8 上实测（2026-11-14）。
 
+agy 最多保留 32 个它不认识的模型，其余丢弃。一个把所有供应商的模型都列出来、顺序还不固定的代理，每次丢掉的
+都是不同的一半——新模型也可能在里面。`gatewayModels` 先把列表收窄：一组按模型 id 匹配的 `*` 通配符，由一个
+中继执行（和 `contextBudget` 一样，是 127.0.0.1 上的监听端口，其余请求原样转发），在网关的模型列表交给 agy
+之前过滤。网关新加的模型只要匹配，马上就能选。过滤后一个不剩时不生效，日志里写明。
+
 ```yaml
 agents:
   - id: ag
     harness: agy
     model: gemini-3.8-flash-high
+    gatewayModels: [gemini-*]
     quotaCommand: ~/.local/bin/pool-quota
     env:
       AGY_LLM_GATEWAY_URL: https://gateway.example
@@ -270,7 +276,7 @@ agents:
 > 凭据（登录全程在 `agy` 内部完成），但守护进程终究是一个非 Google 客户端在
 > 驱动你的账号——请自行判断。`contextBudget` 走得更远：它的中继会经手 agy 的
 > 请求，包括登录 token（只转发，不读取、不保存），并且改动了 Google 服务端
-> 告诉 agy 的内容。
+> 告诉 agy 的内容。`gatewayModels` 的中继同样会经手网关的 key。
 
 ## HTTP API（`api-agent`）
 

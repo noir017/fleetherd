@@ -105,6 +105,15 @@ const AgentDefFields = z
      */
     contextBudget: z.number().int().min(64_000).max(2_000_000).optional(),
     /**
+     * The models an agy behind a model gateway (`AGY_LLM_GATEWAY_URL` in `env`) is offered, as
+     * `*`-globs on the model id (`gemini-*`). agy takes its list from the gateway and keeps at most 32
+     * models it does not know, dropping the rest — from a proxy listing every provider's models in no
+     * fixed order, a different half each time. With this set the gateway's list reaches agy through a
+     * relay (daemon/agy-relay.ts) that keeps only the matches, so a model the gateway adds is offered
+     * as soon as it matches. Unset = the gateway's whole list.
+     */
+    gatewayModels: z.array(z.string().min(1)).min(1).optional(),
+    /**
      * A `bash -lc` command that prints this agent's usage quota, run on the agent's machine with its
      * environment, for when the harness cannot report it: agy through a model gateway
      * (`AGY_LLM_GATEWAY_URL`), whose `agy -p=/usage` prints nothing, or any harness on a pooled
@@ -196,7 +205,7 @@ const AgentDefFields = z
   });
 
 /** The cross-field rules every agent definition obeys, wherever it was written. */
-function agentRules<O extends { harness: string; command?: string; contextBudget?: number }, I>(
+function agentRules<O extends { harness: string; command?: string; contextBudget?: number; gatewayModels?: string[] }, I>(
   schema: z.ZodType<O, z.ZodTypeDef, I>
 ) {
   return schema
@@ -207,6 +216,10 @@ function agentRules<O extends { harness: string; command?: string; contextBudget
     .refine((a) => a.contextBudget === undefined || a.harness === 'agy', {
       message: 'contextBudget is supported for harness agy only (see docs/agents.md)',
       path: ['contextBudget'],
+    })
+    .refine((a) => a.gatewayModels === undefined || a.harness === 'agy', {
+      message: 'gatewayModels is supported for harness agy only (see docs/agents.md)',
+      path: ['gatewayModels'],
     });
 }
 

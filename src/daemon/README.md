@@ -31,7 +31,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
 | `quota-meter.ts` | The quota for the status strip: an agent's `quotaCommand`, else agy's `agy -p=/usage`; once a minute per source, shared across conversations |
-| `agy-relay.ts` | agy behind a relay, for `contextBudget`: rewrites the compaction point in the model list Google sends it, and remembers what each model was told for the footer |
+| `agy-relay.ts` | agy behind a relay: for `contextBudget`, rewrites the compaction point in the model list Google sends it, and remembers what each model was told for the footer; behind a model gateway, for `gatewayModels`, narrows the gateway's model list to the matches |
 | `relay.ts` | Relays: a loopback forwarder between an agent and its API that lets a harness's transform replace the responses on paths it names. Here for a local agent; on a host through fleetherd-remote (`remote/relay.go`), which hands those responses back over the link. Which harness uses one, and for what, is `harnessRelay` |
 | `agy-transcript.ts` | agy's context after a turn that ran tools, read off agy's own transcript here or on a host (its prompt usage is a sum over the turn's calls) |
 | `status-board.ts` | Each conversation's live agent status, pushed (deduped, throttled) to a platform that can show one — the web UI's strip |

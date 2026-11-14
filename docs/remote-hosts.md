@@ -266,5 +266,5 @@ The key in `~/.config/fleetherd/ssh/` opens a shell on every host it is authoriz
 same thing an agent on that host can do for anyone in `access.allowFrom`, so protect the gateway the
 way you already must. The helper opens no network port: it talks over ssh and an owner-only socket
 under `~/.fleetherd/remote/run/`. The one exception is an agy agent's relay, when it has a
-[`contextBudget`](agents.md#antigravity-agy): a listener on 127.0.0.1 that forwards that agent's API
-calls to where they were going anyway.
+[`contextBudget`](agents.md#antigravity-agy) or [`gatewayModels`](agents.md#through-a-model-gateway):
+a listener on 127.0.0.1 that forwards that agent's API calls to where they were going anyway.

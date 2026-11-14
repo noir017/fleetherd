@@ -160,6 +160,7 @@ DMs always get a response regardless of `requireMention` (frozen behavior).
   host: devbox          # runs on hosts.devbox (see `hosts` below); absent = this machine
   group: build boxes    # the label /agent groups it under; default its host
   quotaCommand: ~/bin/pool-quota   # bash -lc on the agent's machine; prints agy's /usage table
+  gatewayModels: [gemini-*]        # agy behind AGY_LLM_GATEWAY_URL only: models it is offered (globs)
   hooks:
     preLaunch: docker start my-agent   # bash -lc, run to completion before every spawn
     turnFailed:                        # optional: what happens after a failed turn

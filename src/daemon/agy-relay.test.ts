@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentDefSchema } from '../config/schema.js';
 import { agyWindow } from './agy-acp.js';
-import { AGY_DEFAULT_UPSTREAM, agyBudget, agyRelay, applyAgyBudget } from './agy-relay.js';
+import { AGY_DEFAULT_UPSTREAM, agyBudget, agyRelay, applyAgyBudget, filterGatewayModels } from './agy-relay.js';
 
 /**
  * A trimmed capture of agy 1.5.2's `fetchAvailableModels` answer (2026-11-07,
@@ -168,6 +168,66 @@ describe('agyRelay', () => {
   it('declines when nothing changes (the budget is already Google\'s)', async () => {
     const { transform } = agyRelay(agy({ contextBudget: 256_000 }))!.spec;
     expect(await transform('/v1internal:fetchAvailableModels', Buffer.from(JSON.stringify(CAPTURE)))).toBeUndefined();
+  });
+});
+
+describe('through a model gateway', () => {
+  /** A Gemini-API model list as CLIProxyAPI v8.0.63 serves it (trimmed, 2026-11-14). */
+  const LIST = {
+    models: [
+      { name: 'models/claude-opus-5', displayName: 'Claude Opus 5' },
+      { name: 'models/gemini-3.8-flash-high', displayName: 'Gemini 3.8 Flash' },
+      { name: 'models/grok-4.7', displayName: 'Grok 4.7' },
+      { name: 'models/Gemini-9-Test', displayName: 'Gemini 9 Test' },
+    ],
+  };
+  const body = Buffer.from(JSON.stringify(LIST));
+  const names = (b: Buffer | undefined) => (JSON.parse(b!.toString()) as typeof LIST).models.map((m) => m.name);
+
+  it('keeps the models whose id matches a glob, case-insensitively', () => {
+    const r = filterGatewayModels(body, ['gemini-*']);
+    expect(r && { kept: r.kept, of: r.of }).toEqual({ kept: 2, of: 4 });
+    expect(names(r?.body)).toEqual(['models/gemini-3.8-flash-high', 'models/Gemini-9-Test']);
+    expect(names(filterGatewayModels(body, ['grok-4.7', 'claude-*'])?.body)).toEqual(['models/claude-opus-5', 'models/grok-4.7']);
+    // A dot is a dot, not any character.
+    expect(filterGatewayModels(body, ['gemini-3x8-*'])).toBeUndefined();
+  });
+
+  it('serves the list as it came when nothing would be left, or it is not a model list', () => {
+    expect(filterGatewayModels(body, ['gpt-*'])).toBeUndefined();
+    expect(filterGatewayModels(Buffer.from('{"error":{}}'), ['gemini-*'])).toBeUndefined();
+    expect(filterGatewayModels(Buffer.from('not json'), ['gemini-*'])).toBeUndefined();
+  });
+
+  it('puts agy behind a relay to the gateway when gatewayModels narrows it', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const r = agyRelay(agy({ gatewayModels: ['gemini-*'], env: { AGY_LLM_GATEWAY_URL: 'https://gw.example/v1beta/' } }))!;
+      expect(r.envVar).toBe('AGY_LLM_GATEWAY_URL');
+      // agy adds its own /v1beta; the relay must not forward to /v1beta/v1beta.
+      expect(r.spec.upstream).toBe('https://gw.example');
+      expect(r.spec.paths).toEqual(['/v1beta/models']);
+      expect(r.spec.id).toMatch(/^agy-gw\.[0-9a-f]{8}$/);
+      expect(names(await r.spec.transform('/v1beta/models', body))).toEqual(['models/gemini-3.8-flash-high', 'models/Gemini-9-Test']);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('starts none for gatewayModels without a gateway, and says so once', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const def = agy({ id: 'ag-nogw', gatewayModels: ['gemini-*'] });
+      expect(agyRelay(def)).toBeUndefined();
+      expect(agyRelay(def)).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('is for harness agy only', () => {
+    expect(() => AgentDefSchema.parse({ id: 'c', harness: 'claude', gatewayModels: ['gemini-*'] })).toThrow(/agy only/);
   });
 });
 

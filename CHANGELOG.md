@@ -14,6 +14,13 @@ All notable changes to this project are documented here. The format is based on
   `quotaCommand` is a `bash -lc` command, run on the agent's machine with its environment, that
   prints the same table `agy -p=/usage` prints; the status strip reads it beside a turn at most once
   a minute, and agy's `/usage` answers with it. It works for any harness, not only agy.
+- **`gatewayModels`: which of a model gateway's models agy is offered.** Behind
+  `AGY_LLM_GATEWAY_URL` agy takes its model list from the gateway, keeps at most 32 models it does
+  not know and drops the rest. A proxy that lists every provider's models in no fixed order — sixty
+  of them on the one measured — lost a different half each time, so a new model could simply not be
+  there. `gatewayModels` is a list of `*`-globs (`gemini-*`); a relay on the agent's machine filters
+  the gateway's list before agy counts it, and forwards everything else, the model calls included,
+  as it is. A model the gateway adds is offered as soon as it matches.
 
 ### Changed
 

@@ -301,11 +301,19 @@ sent as listed. `agy -p=/usage` prints nothing (give the agent a [`quotaCommand`
 `contextBudget` has no effect, and agy compacts where it decides — about 256k for Gemini 3.8 Flash,
 whatever window the gateway reports. Measured on agy 1.5.8 (2026-11-14).
 
+agy keeps at most 32 models it does not know and drops the rest. A proxy that lists every model of
+every provider it serves, in no fixed order, therefore loses a different half each time — a new
+model included. `gatewayModels` narrows the list first: a list of `*`-globs on the model id, kept
+by a relay (as for `contextBudget`, a listener on 127.0.0.1 that forwards everything else as it is)
+that filters the gateway's model list on its way to agy. A model the gateway adds is offered as soon
+as it matches. A filter that would leave nothing is ignored, and the log says so.
+
 ```yaml
 agents:
   - id: ag
     harness: agy
     model: gemini-3.8-flash-high
+    gatewayModels: [gemini-*]
     quotaCommand: ~/.local/bin/pool-quota
     env:
       AGY_LLM_GATEWAY_URL: https://gateway.example
@@ -321,7 +329,8 @@ agents:
 > (sign-in stays entirely inside `agy`), but the daemon is still a non-Google
 > client driving your account — decide accordingly. A `contextBudget` goes
 > further: its relay carries agy's requests, sign-in token included (forwarded,
-> never read or kept), and changes what Google's server tells agy.
+> never read or kept), and changes what Google's server tells agy. A
+> `gatewayModels` relay carries the gateway's key the same way.
 
 ## HTTP APIs (`api-agent`)
 
