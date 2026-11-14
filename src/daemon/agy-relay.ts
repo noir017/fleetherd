@@ -96,8 +96,99 @@ function transformModels(id: string, budget: number, body: Buffer): Buffer | und
   return result.changed > 0 ? Buffer.from(JSON.stringify(json), 'utf8') : undefined;
 }
 
-/** agy's relay, for an agent with a `contextBudget`. */
+// ───────────────────────── through a model gateway ─────────────────────────
+
+/**
+ * agy behind a model gateway (`AGY_LLM_GATEWAY_URL`, agy 1.5.8), measured 2026-11-14 against a fake
+ * gateway and a CLIProxyAPI (project-scripts/agy-gateway-probe/):
+ *
+ *   - **Its model list is the gateway's.** At start agy asks `GET <gateway>/v1beta/models?pageSize=1000`
+ *     and offers what comes back, so a model the gateway adds is there with no agy update.
+ *   - **It keeps at most 32 models it does not know.** The rest are dropped ("exceeded the maximum
+ *     placeholder limit (32); skipped", agy's log). A proxy that lists sixty models from every
+ *     provider it serves, in no fixed order, loses a different half each time — the new model the
+ *     operator wanted included. `gatewayModels` narrows the list here, before agy counts it.
+ *   - **No Cloud Code.** agy never fetches Google's model list, so `contextBudget`'s rewrite has
+ *     nothing to work on, and agy compacts at a figure of its own — ~256k for Gemini 3.8 Flash,
+ *     whatever window the gateway reports and whatever AGY_CLI_AUTO_COMPACT_OVERRIDE says.
+ *
+ * ⚠️ HYRUM'S LAW: the path, the `models[].name` shape (`models/<id>`) and the cap are agy's and the
+ * Gemini API's. A response without that shape is served as it came, and the first miss is logged.
+ */
+const GATEWAY_MODELS_PATH = '/v1beta/models';
+
+/** `*` matches any run of characters; everything else is literal. Case-insensitive, like model ids. */
+function globMatcher(globs: readonly string[]): (id: string) => boolean {
+  const literal = (part: string): string => part.replace(/[.+?^$()|[\]{}\\]/g, '\\$&');
+  const res = globs.map((g) => new RegExp('^' + g.split('*').map(literal).join('.*') + '$', 'i'));
+  return (id) => res.some((re) => re.test(id));
+}
+
+/**
+ * Keep the models whose id matches `globs`. Undefined — serve as it came — when the body is not the
+ * Gemini API's model list, or when nothing would be left: a filter that empties agy's list is a
+ * mistake to be logged, not a reason to start agy with no models at all.
+ */
+export function filterGatewayModels(body: Buffer, globs: readonly string[]): { body: Buffer; kept: number; of: number } | undefined {
+  let json: { models?: unknown } | undefined;
+  try {
+    json = JSON.parse(body.toString('utf8')) as { models?: unknown };
+  } catch {
+    return undefined;
+  }
+  if (!json || !Array.isArray(json.models)) return undefined;
+  const match = globMatcher(globs);
+  const all = json.models as Array<{ name?: unknown }>;
+  const kept = all.filter((m) => typeof m?.name === 'string' && match(m.name.replace(/^models\//, '')));
+  if (kept.length === 0) return undefined;
+  json.models = kept;
+  return { body: Buffer.from(JSON.stringify(json), 'utf8'), kept: kept.length, of: all.length };
+}
+
+/** Agents already told something about their gateway relay, by what: logged once, not per footer. */
+const gatewayNoted = new Set<string>();
+function noteOnce(key: string, message: string): void {
+  if (gatewayNoted.has(key)) return;
+  gatewayNoted.add(key);
+  console.warn(message);
+}
+
+function gatewayRelay(def: AgentDef, gateway: string): HarnessRelay | undefined {
+  if (def.contextBudget !== undefined) {
+    noteOnce(`${def.id}:budget`, `[relay] ${def.id}: contextBudget has no effect with AGY_LLM_GATEWAY_URL (agy does not fetch Google's model list through a gateway)`);
+  }
+  const globs = def.gatewayModels;
+  if (!globs?.length) return undefined;
+  // agy ignores a trailing /v1beta on the gateway's URL and adds its own; the relay must not add a
+  // second one in front of agy's.
+  const upstream = expandEnv(gateway).replace(/\/v1beta\/?$/, '').replace(/\/$/, '');
+  const id = `agy-gw.${createHash('sha256').update(`${upstream}\n${globs.join('\n')}`).digest('hex').slice(0, 8)}`;
+  return {
+    envVar: 'AGY_LLM_GATEWAY_URL',
+    spec: {
+      id,
+      upstream,
+      paths: [GATEWAY_MODELS_PATH],
+      transform: (_path, body) => {
+        const r = filterGatewayModels(body, globs);
+        if (!r) noteOnce(`${id}:miss`, `[relay] ${id}: the gateway's model list was not the shape expected, or gatewayModels ${JSON.stringify(globs)} matched none of it; served as it came (see daemon/agy-relay.ts)`);
+        else console.log(`[relay] ${id}: offered agy ${r.kept} of the gateway's ${r.of} models`);
+        return r?.body;
+      },
+    },
+  };
+}
+
+/**
+ * agy's relay: in front of its model gateway for an agent with `gatewayModels`, else in front of
+ * Cloud Code for one with a `contextBudget`.
+ */
 export function agyRelay(def: AgentDef): HarnessRelay | undefined {
+  const gateway = def.env['AGY_LLM_GATEWAY_URL'];
+  if (gateway) return gatewayRelay(def, gateway);
+  if (def.gatewayModels?.length) {
+    noteOnce(`${def.id}:nogw`, `[relay] ${def.id}: gatewayModels needs AGY_LLM_GATEWAY_URL in the agent's env; no relay started`);
+  }
   const budget = def.contextBudget;
   if (budget === undefined) return undefined;
   // An operator's own CLOUD_CODE_URL (a proxy of theirs, another endpoint) is chained to, not lost.

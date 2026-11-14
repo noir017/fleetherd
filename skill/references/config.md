@@ -159,6 +159,8 @@ DMs always get a response regardless of `requireMention` (frozen behavior).
   permissions: auto     # auto (default) | ask — see below
   host: devbox          # runs on hosts.devbox (see `hosts` below); absent = this machine
   group: build boxes    # the label /agent groups it under; default its host
+  quotaCommand: ~/bin/pool-quota   # bash -lc on the agent's machine; prints agy's /usage table
+  gatewayModels: [gemini-*]        # agy behind AGY_LLM_GATEWAY_URL only: models it is offered (globs)
   hooks:
     preLaunch: docker start my-agent   # bash -lc, run to completion before every spawn
     turnFailed:                        # optional: what happens after a failed turn
@@ -183,6 +185,11 @@ Notes:
   declined, and the agent is told no one answered (not that the user refused). Scheduled runs
   are always approved. Only harnesses that ask at all are affected — Claude Code and `agy` do
   in their default modes; Codex and OpenCode did not ask when measured.
+- `quotaCommand` is for an agent whose harness cannot report its quota — agy through a model
+  gateway (`AGY_LLM_GATEWAY_URL` in `env`), or anything behind a pooled proxy. It prints one
+  tab-separated row per pool (pool, window, remaining %, ISO reset), as `agy -p=/usage` does; the
+  status strip reads it beside a turn, at most once a minute, and agy's `/usage` answers with it.
+  See docs/agents.md.
 - `hooks.preLaunch` runs before every start of the agent's process; a non-zero exit or 60s
   without finishing fails the turn and the agent is not started. See docs/agents.md.
 - `hooks.turnFailed.continue.on` takes: `service`, `limit`, `connection`, `access`, `request`

@@ -5,6 +5,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`quotaCommand`: an agent's quota from a command of your own.** The status strip showed a quota
+  only for agy signed in to Google, through `agy -p=/usage`. An agy that reaches its models through
+  a model gateway (`AGY_LLM_GATEWAY_URL`, agy 1.5.8) prints nothing there — its quota belongs to
+  whatever is behind the gateway, such as a proxy pooling several accounts — so it showed none.
+  `quotaCommand` is a `bash -lc` command, run on the agent's machine with its environment, that
+  prints the same table `agy -p=/usage` prints; the status strip reads it beside a turn at most once
+  a minute, and agy's `/usage` answers with it. It works for any harness, not only agy.
+- **`gatewayModels`: which of a model gateway's models agy is offered.** Behind
+  `AGY_LLM_GATEWAY_URL` agy takes its model list from the gateway, keeps at most 32 models it does
+  not know and drops the rest. A proxy that lists every provider's models in no fixed order — sixty
+  of them on the one measured — lost a different half each time, so a new model could simply not be
+  there. `gatewayModels` is a list of `*`-globs (`gemini-*`); a relay on the agent's machine filters
+  the gateway's list before agy counts it, and forwards everything else, the model calls included,
+  as it is. A model the gateway adds is offered as soon as it matches.
+
+### Changed
+
+- **No `contextBudget` relay behind a model gateway.** Through `AGY_LLM_GATEWAY_URL` agy never asks
+  Google for the model list the relay rewrites, so the relay had nothing to do: it is no longer
+  started, and the log says once why `contextBudget` has no effect there. agy then compacts where it
+  decides itself — about 256k for Gemini 3.8 Flash, whatever window the gateway reports and whatever
+  `AGY_CLI_AUTO_COMPACT_OVERRIDE` says (measured on 1.5.8). `doctor` no longer asks such an agent
+  for a Google sign-in.
+
 ## [3.6.0] - 2026-11-14
 
 ### Fixed

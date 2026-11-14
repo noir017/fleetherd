@@ -104,6 +104,25 @@ const AgentDefFields = z
      * Unset = no relay, the harness's own.
      */
     contextBudget: z.number().int().min(64_000).max(2_000_000).optional(),
+    /**
+     * The models an agy behind a model gateway (`AGY_LLM_GATEWAY_URL` in `env`) is offered, as
+     * `*`-globs on the model id (`gemini-*`). agy takes its list from the gateway and keeps at most 32
+     * models it does not know, dropping the rest — from a proxy listing every provider's models in no
+     * fixed order, a different half each time. With this set the gateway's list reaches agy through a
+     * relay (daemon/agy-relay.ts) that keeps only the matches, so a model the gateway adds is offered
+     * as soon as it matches. Unset = the gateway's whole list.
+     */
+    gatewayModels: z.array(z.string().min(1)).min(1).optional(),
+    /**
+     * A `bash -lc` command that prints this agent's usage quota, run on the agent's machine with its
+     * environment, for when the harness cannot report it: agy through a model gateway
+     * (`AGY_LLM_GATEWAY_URL`), whose `agy -p=/usage` prints nothing, or any harness on a pooled
+     * proxy. It prints what `agy -p=/usage` prints — one tab-separated row per pool: pool, window,
+     * remaining %, ISO reset. When set it replaces the harness's own source: the status strip reads
+     * it beside a turn at most once a minute (daemon/quota-meter.ts), and agy's `/usage` answers with
+     * it. Not in the `/setting` table: a chat-side edit here would be remote shell execution.
+     */
+    quotaCommand: z.string().min(1).optional(),
     /** Env vars injected into the subprocess (credentials etc.); supports ${VAR} expansion. */
     env: z.record(z.string()).default({}),
     /**
@@ -186,7 +205,7 @@ const AgentDefFields = z
   });
 
 /** The cross-field rules every agent definition obeys, wherever it was written. */
-function agentRules<O extends { harness: string; command?: string; contextBudget?: number }, I>(
+function agentRules<O extends { harness: string; command?: string; contextBudget?: number; gatewayModels?: string[] }, I>(
   schema: z.ZodType<O, z.ZodTypeDef, I>
 ) {
   return schema
@@ -197,6 +216,10 @@ function agentRules<O extends { harness: string; command?: string; contextBudget
     .refine((a) => a.contextBudget === undefined || a.harness === 'agy', {
       message: 'contextBudget is supported for harness agy only (see docs/agents.md)',
       path: ['contextBudget'],
+    })
+    .refine((a) => a.gatewayModels === undefined || a.harness === 'agy', {
+      message: 'gatewayModels is supported for harness agy only (see docs/agents.md)',
+      path: ['gatewayModels'],
     });
 }
 

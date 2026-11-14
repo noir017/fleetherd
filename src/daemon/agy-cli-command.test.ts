@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ConversationRegistry } from './conversation.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -20,12 +20,14 @@ import type { InboundMessage } from '../types.js';
  * untouched.
  */
 
-const parsed = parseConfig({
-  platforms: { discord: { type: 'discord', token: 't' } },
-  agents: [{ id: 'agy', harness: 'agy' }],
-  routing: { default: 'agy' },
-});
-const cfg: Config = { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
+function configWith(agent: Record<string, unknown> = {}): Config {
+  const parsed = parseConfig({
+    platforms: { discord: { type: 'discord', token: 't' } },
+    agents: [{ id: 'agy', harness: 'agy', ...agent }],
+    routing: { default: 'agy' },
+  });
+  return { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
+}
 
 const clock = {
   now: () => Date.now(),
@@ -36,7 +38,8 @@ const clock = {
 };
 const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
 
-function rig(cliOutput: { ok: true; output: string } | { ok: false; error: string }) {
+function rig(cliOutput: { ok: true; output: string } | { ok: false; error: string }, agent: Record<string, unknown> = {}) {
+  const cfg = configWith(agent);
   const prompts: string[] = [];
   const sent: string[] = [];
   const ran: string[] = [];
@@ -124,6 +127,21 @@ describe('agy’s own CLI commands', () => {
     await send('/usage');
     expect(prompts).toEqual([]);
     expect(replies().at(-1)).toContain('Quota:');
+  });
+
+  it('answers /usage from the agent\'s quotaCommand when it has one, without asking agy', async () => {
+    // Through a model gateway agy's own /usage prints nothing (quota-meter.ts); the command prints
+    // the same table, so the reply renders the same way.
+    const { send, prompts, replies, ran } = rig(
+      { ok: true, output: '' },
+      { quotaCommand: "printf 'Gemini Models\\tWeekly Limit Remaining\\t42%%\\t2099-01-01T00:00:00Z\\n'" }
+    );
+    await send('/usage');
+    // A real shell runs the command, so the reply lands when it exits, not within drain()'s 20 ms.
+    await vi.waitFor(() => expect(replies().at(-1)).toContain('Quota:'), { timeout: 10_000 });
+    expect(prompts).toEqual([]);
+    expect(ran).toEqual([]);
+    expect(replies().at(-1)).toContain('42%');
   });
 
   it('reports why when the CLI could not be run, and still runs no turn', async () => {

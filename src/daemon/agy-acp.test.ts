@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import {
   agyAcpToolLabel,
@@ -7,12 +7,10 @@ import {
   agyTurnWatch,
   agyWarningOf,
   agyWindow,
-  createAgyQuotaMeter,
   takesPromptMidTurn,
 } from './agy-acp.js';
 import { TurnFailure } from './agent.js';
 import type { AgentDef } from '../config/schema.js';
-import type { AgyCliRunner } from './agy-cli.js';
 
 /** `configOptions` as `agy acp` 1.5.1 reported them for a fresh session (probe, 2026-11-06). */
 const OPTIONS: SessionConfigOption[] = [
@@ -234,43 +232,6 @@ describe('agyMcpCall', () => {
     expect(agyMcpCall({ ToolName: 'x' })).toBeUndefined();
     expect(agyMcpCall('Bash')).toBeUndefined();
     expect(agyMcpCall(undefined)).toBeUndefined();
-  });
-});
-
-describe('createAgyQuotaMeter', () => {
-  const def = (over: Partial<AgentDef> = {}) => ({ id: 'agy', harness: 'agy', env: { HOME: '/h' }, ...over }) as unknown as AgentDef;
-  const OUT = 'Gemini Models\tWeekly Limit Remaining\t74%\t2026-11-07T04:24:11Z';
-
-  it('shares one run between callers, and keeps the reading for a minute', async () => {
-    const cli = vi.fn<AgyCliRunner>(async () => ({ ok: true, output: OUT }));
-    const m = createAgyQuotaMeter(cli);
-    await Promise.all([m.refresh(def(), '/w'), m.refresh(def(), '/w')]);
-    await m.refresh(def(), '/w');
-    expect(cli).toHaveBeenCalledTimes(1);
-    expect(m.read(def())).toEqual([{ id: 'gemini-weekly', remaining: 0.74, resetsAt: Date.parse('2026-11-07T04:24:11Z') }]);
-  });
-
-  it('keeps the last reading when a run fails', async () => {
-    let fail = false;
-    const cli: AgyCliRunner = async () => (fail ? { ok: false, error: 'offline' } : { ok: true, output: OUT });
-    vi.useFakeTimers({ now: Date.now() });
-    try {
-      const m = createAgyQuotaMeter(cli);
-      await m.refresh(def(), '/w');
-      fail = true;
-      vi.advanceTimersByTime(61_000);
-      await m.refresh(def(), '/w');
-      expect(m.read(def())?.[0]?.remaining).toBe(0.74);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('reads per account: another HOME is another reading', async () => {
-    const cli = vi.fn<AgyCliRunner>(async () => ({ ok: true, output: OUT }));
-    const m = createAgyQuotaMeter(cli);
-    await m.refresh(def(), '/w');
-    expect(m.read(def({ env: { HOME: '/other' } }))).toBeUndefined();
   });
 });
 
