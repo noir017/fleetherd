@@ -21,8 +21,8 @@ import type { QuotaPool, ToolEvent } from '../types.js';
  *   call through ends `end_turn` with no `usage`;
  * - usage comes once, in the prompt response, summed over the turn's model calls — unless the rig
  *   asks for 1.5.8's `usage_update`s too (measured 2026-11-14, project-scripts/fleetherd-agy-usage-update/):
- *   one after session/new or /load, and one after every model call, that call's total against the
- *   model's 1M window;
+ *   one after session/new, and one after every model call, that call's total against the model's
+ *   1M window;
  * - a tool call of kind `other` is titled `Run <tool name>` (it also carries a `name` field, which
  *   the SDK strips before the gateway sees it);
  * - each model call is a `PLANNER_RESPONSE` line in the session's transcript under HOME, written as
@@ -90,8 +90,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   // agy 1.5.1: a reload comes back on the default model, whatever the session was on.
   if (msg.method === 'session/load') {
     state.model = 'gemini-3.8-flash';
-    reply(msg.id, { sessionId: msg.params.sessionId, configOptions: options() });
-    return report(msg.params.sessionId, 7000);
+    return reply(msg.id, { sessionId: msg.params.sessionId, configOptions: options() });
   }
   if (msg.method === 'session/set_config_option') {
     if (msg.params.configId === 'model') state.model = msg.params.value;
@@ -464,15 +463,19 @@ describe('agy over ACP: a turn', () => {
 });
 
 describe('agy over ACP: 1.5.8, which reports its context itself', () => {
+  /**
+   * The model calls' reports. The one agy sends after session/new reaches the turn or comes just
+   * before it, by timing — and before it there is no turn to take it — so it is left out.
+   */
+  const calls = (r: Recorded): AgentUsage[] => r.usage.filter((u) => u.used > 0);
+
   it('shows each report against where agy compacts, not the 1M window it names', async () => {
     const { session } = rig({ reports: true });
     const r = record();
     await turn(session, 'plain', r);
     // agy's report alone: not also the turn's end, which leaves the call's output out (5926).
-    expect(r.usage).toEqual([
-      { used: 0, size: 256_000 },
-      { used: 5936, size: 256_000 },
-    ]);
+    expect(calls(r)).toEqual([{ used: 5936, size: 256_000 }]);
+    expect(r.usage.every((u) => u.size === 256_000)).toBe(true);
   });
 
   it('follows its reports through a turn that ran tools, and leaves the transcript unread', async () => {
@@ -482,11 +485,11 @@ describe('agy over ACP: 1.5.8, which reports its context itself', () => {
     // A transcript read is not waited for mid-turn; give a stray one the time to land.
     await new Promise((res) => setTimeout(res, 100));
     // The transcript would have said 11800 and 11977.
-    expect(r.usage).toEqual([
-      { used: 0, size: 256_000 },
+    expect(calls(r)).toEqual([
       { used: 11_810, size: 256_000 },
       { used: 11_987, size: 256_000 },
     ]);
+    expect(r.usage.every((u) => u.size === 256_000)).toBe(true);
   });
 
   it('prefers a configured window to both', async () => {
@@ -494,16 +497,6 @@ describe('agy over ACP: 1.5.8, which reports its context itself', () => {
     const r = record();
     await turn(session, 'plain', r);
     expect(r.usage.at(-1)).toEqual({ used: 5936, size: 200_000 });
-  });
-
-  it('after a reload, shows the context agy reports for the session it loaded', async () => {
-    const { session } = rig({ reports: true, stored: 'agy-old' });
-    const r = record();
-    await turn(session, 'plain', r);
-    expect(r.usage).toEqual([
-      { used: 7000, size: 256_000 },
-      { used: 5936, size: 256_000 },
-    ]);
   });
 });
 
