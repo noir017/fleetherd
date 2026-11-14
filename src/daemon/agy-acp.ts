@@ -26,9 +26,11 @@ import { agentHome } from './skills-scan.js';
  *   - **Diagnostics in the reply.** A retry, a refusal and a spent quota all arrive as an
  *     `agent_message_chunk` of the form `"\n⚠ <text>\n"` — no failure record, no error. See
  *     agyWarningOf and AgyTurnWatch.
- *   - **No `usage_update`.** Usage comes once, in the `session/prompt` response, summed over every
- *     model call the turn made. See AgyTurnWatch.settle; a turn that ran tools reads its context
- *     off agy's transcript instead (agy-transcript.ts).
+ *   - **Usage once per turn — on the versions measured here.** It comes in the `session/prompt`
+ *     response, summed over every model call the turn made. See AgyTurnWatch.settle; a turn that
+ *     ran tools reads its context off agy's transcript instead (agy-transcript.ts). 1.5.8 also sends
+ *     a `usage_update` after each model call, but against the model's window rather than where agy
+ *     compacts — see AgyTurnWatch.usage.
  *   - **No quota over ACP**, so it is still a one-shot `agy -p=/usage` (createAgyQuotaMeter).
  *   - **Tool names in the title.** `kind` is good for the common tools; the rest are `other`, titled
  *     `Run <tool name>` (`Run invoke_subagent`, `Run mcp_chat_send_file`). See agyAcpToolLabel.
@@ -134,6 +136,11 @@ export interface AgyTurnWatch {
   text(chunk: string): boolean;
   /** A tool call opened. */
   tool(): void;
+  /**
+   * agy reported its context itself (a `usage_update`): the window to show it against, or undefined
+   * when none is known. See AgyWatchHooks.window.
+   */
+  usage(size: unknown): number | undefined;
   /** The prompt settled: what to report, and whether the turn failed. */
   settle(usage: unknown): AgyTurnOutcome;
 }
@@ -145,20 +152,36 @@ export interface AgyTurnOutcome {
   contextTokens?: number;
   /**
    * Why the usage gives no context tokens. On `tools` it is a sum over several calls, and the
-   * runtime reads the context off agy's transcript instead (agy-transcript.ts).
+   * runtime reads the context off agy's transcript instead (agy-transcript.ts). On `reported` agy
+   * already said it, call by call, and that stands.
    */
-  noContext?: 'tools' | 'no-usage';
+  noContext?: 'tools' | 'no-usage' | 'reported';
 }
 
-/**
- * `onModelCall` runs on every tool call the turn opens: each one ends a model call, after which agy's
- * transcript has a newer context to read (agent-acp.ts refreshAgyContext).
- */
+export interface AgyWatchHooks {
+  /**
+   * Runs on every tool call the turn opens, until agy reports its context itself: each one ends a
+   * model call, after which agy's transcript has a newer context to read (agent-acp.ts
+   * refreshAgyContext).
+   */
+  onModelCall?: () => void;
+  /**
+   * What to show agy's own context against, given the `size` it sent (agent-acp.ts → agyWindow).
+   *
+   * 1.5.8 sends a `usage_update` after every model call — `used` is that call's total, output
+   * included — and `size` is the model's window: 1048576 for Gemini 3.8 Flash, where agy compacts at
+   * 256k, or at whatever `contextBudget` told it (measured 2026-11-14,
+   * project-scripts/fleetherd-agy-usage-update/). Taken as it came, that 1M took turns on the strip
+   * with the 256k the turn's end reported, the two a few tokens apart as well.
+   */
+  window?: (reported: number | undefined) => number | undefined;
+}
+
 export function agyTurnWatch(
   agentId: string,
   notice: (text: string) => void,
   inTurn: boolean,
-  onModelCall?: () => void
+  hooks: AgyWatchHooks = {}
 ): AgyTurnWatch {
   /** Keys already said this turn: a retry loop repeats itself, the chat should not. */
   const said = new Set<string>();
@@ -171,6 +194,13 @@ export function agyTurnWatch(
   let lastWarning: string | undefined;
   let endedInWarning = false;
   let tools = 0;
+  /**
+   * agy has reported this turn's context itself. One source for the turn, then: the turn-end figure
+   * leaves the call's output out and the transcript is read on its own clock, so either would put a
+   * number a little off agy's back on the strip. 1.5.8 sends each call's report before the tools that
+   * call asked for, so no transcript read starts first.
+   */
+  let reported = false;
   return {
     text(chunk) {
       const warning = agyWarningOf(chunk);
@@ -193,13 +223,18 @@ export function agyTurnWatch(
     tool() {
       tools++;
       endedInWarning = false;
-      onModelCall?.();
+      if (!reported) hooks.onModelCall?.();
+    },
+    usage(size) {
+      reported = true;
+      return hooks.window?.(typeof size === 'number' && size > 0 ? size : undefined);
     },
     settle(usage) {
       if (endedInWarning && lastWarning) {
         return { failure: new TurnFailure(`agy: ${lastWarning}`, 'provider') };
       }
       for (const w of held) say(w, `⚠️ ${agentId} hit an error and recovered: ${w}`);
+      if (reported) return { noContext: 'reported' };
       const tokens = contextTokensOf(usage);
       if (tokens === undefined) return { noContext: 'no-usage' };
       // One model call per tool round and one for the answer: a turn that ran a tool made several,
@@ -232,10 +267,11 @@ function contextTokensOf(usage: unknown): number | undefined {
  * What to show agy's context against: the configured window; else, behind a relay, the compaction
  * budget agy was given for this model (agy-relay.ts); else where Google tells agy to compact
  * (agy-meters.ts COMPACTION_POINTS) — the `/context` line reads "left before compaction", and that
- * is where it compacts; else the measured window of a model nobody has seen compact.
+ * is where it compacts; else, for a model nobody has seen compact, the window agy `reported` itself
+ * (AgyWatchHooks.window), and failing that the one measured off its status line.
  */
-export function agyWindow(def: AgentDef, model: string | undefined): number | undefined {
-  return def.contextWindow ?? agyBudget(def, model) ?? agyCompactionPoint(model) ?? agyContextWindow(model);
+export function agyWindow(def: AgentDef, model: string | undefined, reported?: number): number | undefined {
+  return def.contextWindow ?? agyBudget(def, model) ?? agyCompactionPoint(model) ?? reported ?? agyContextWindow(model);
 }
 
 // ───────────────────────── tool labels ─────────────────────────

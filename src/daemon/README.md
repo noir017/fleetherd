@@ -27,7 +27,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `session-failure.ts` | Failures read off the ACP wire: claude-agent-acp's typed failure records (the capability that asks for them), and a prompt that ended in `stopReason: "refusal"` with whatever cause the harness attached |
 | `acp-steering.ts` | How an ACP harness takes a message into a running turn (a second prompt, `_session/steering`, or not at all), read off `initialize` |
 | `acp-side-question.ts` | A side question (`/btw`): `session/fork` the live session, ask the copy, delete it; which harnesses may be asked while a turn runs |
-| `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, per-turn usage, the quota one-shot, tool labels |
+| `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, which context report to trust and against what, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
 | `agy-relay.ts` | agy behind a relay, for `contextBudget`: rewrites the compaction point in the model list Google sends it, and remembers what each model was told for the footer |
@@ -987,7 +987,7 @@ Each harness reports a different subset, and an absent field is shown as nothing
 | Field | Source |
 |---|---|
 | model, effort | `onModel` / `onEffort` — ACP config options, `agy acp` included |
-| context | `onUsage` — ACP `usage_update`; for agy the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`), shown against the point where agy compacts (`agy-meters.ts`) or the budget its relay gave it (`agy-relay.ts`) |
+| context | `onUsage` — ACP `usage_update`; for an agy that sends none, the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`); agy's either way shown against the point where agy compacts (`agy-meters.ts`) or the budget its relay gave it (`agy-relay.ts`) |
 | cost | `onUsage.cost` — claude and opencode; kept across the mid-stream snapshots that carry none |
 | cache expiry | claude only: `claude-transcript.ts`, read once a moment after each model cycle ends |
 | quota | agy only: `agy -p=/usage`, via `onQuota` |
@@ -1381,9 +1381,12 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   calls: input plus cache reads is the context only for a turn that ran no tool. A turn that ran
   tools reads the last call's figure off agy's own transcript instead (`agy-transcript.ts`, a file
   tail here or a filtered `readTail` on a host): once at the end, which the footer waits for, and
-  at most every 10 s while it runs, on each tool call. Either way it is reported against the point
-  where agy compacts for that model (`agy-meters.ts` COMPACTION_POINTS), `contextWindow` when the
-  agent sets one, or the budget its relay gave it.
+  at most every 10 s while it runs, on each tool call. 1.5.8 also sends a `usage_update` after every
+  model call; once one arrives in a turn, it is the turn's only source (`AgyTurnWatch.usage`) — no
+  transcript reads, nothing at the end — but its `size` is the model's window, so it is replaced like
+  the others. Every figure is reported against the point where agy compacts for that model
+  (`agy-meters.ts` COMPACTION_POINTS), `contextWindow` when the agent sets one, or the budget its
+  relay gave it.
 - **Quota** has no ACP channel: `createAgyQuotaMeter` runs `agy -p=/usage` (`agy-cli.ts`) beside the
   turn, at most once a minute per account. It is reported whenever it lands, even after the turn,
   and nothing waits for it: quota feeds the conversation's status strip, not the turn's footer. (A

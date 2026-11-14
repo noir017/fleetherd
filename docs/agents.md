@@ -203,14 +203,16 @@ harnesses. What differs:
   lists it (`gemini-3.8-flash-high`), still works in `model:` and in a conversation's earlier
   choice: it is split into the model and the level. agy forgets the model when a session is
   reloaded, so the daemon sets it again after every reload.
-- **Context numbers come from agy's transcript.** agy reports token usage once per turn, summed
-  over every model call in it, which is the context only for a turn of one call. For a turn that ran
-  tools the daemon reads the last call's figure from the session's own transcript
+- **Where the context numbers come from.** From 1.5.8 on, agy reports its context after every model
+  call, and the footer follows it. Earlier versions report token usage once per turn, summed over
+  every model call in it, which is the context only for a turn of one call. For a turn that ran
+  tools the daemon then reads the last call's figure from the session's own transcript
   (`~/.gemini/antigravity-cli/brain/<session>/.system_generated/logs/transcript.jsonl`), on the
   agent's machine, at the end of the turn and every few seconds while it runs; if that file cannot
-  be read, such a turn shows none. agy never says how big its window is, and the footer needs the
-  point where it *compacts*, well below the window: 256k for Gemini 3.8 Flash (a 1M window), 160k
-  for Claude Sonnet/Opus 4.6, 80k for GPT-OSS 120B. A model outside those shows no numbers.
+  be read, such a turn shows none. Either way the footer measures against the point where agy
+  *compacts*, well below the window: 256k for Gemini 3.8 Flash (a 1M window, which is what 1.5.8
+  reports), 160k for Claude Sonnet/Opus 4.6, 80k for GPT-OSS 120B. A model outside those is shown
+  against the window agy reports, and with no numbers where it reports none.
 - **Only stdio MCP servers reach its tool list.** `agy acp` takes the servers in `session/new` —
   the gateway's own `chat` among them — and shows the model the stdio ones. An HTTP or SSE server
   sent the same way is accepted and then ignored: agy never connects to it, and its `initialize`

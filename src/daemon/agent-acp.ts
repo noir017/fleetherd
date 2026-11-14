@@ -1886,7 +1886,10 @@ function createAcpSession(
       subagents: subagentNames,
       agy:
         def.harness === 'agy'
-          ? agyTurnWatch(def.id, (text) => handlers.onNotice?.(text), inTurn, () => refreshAgyContext(handlers))
+          ? agyTurnWatch(def.id, (text) => handlers.onNotice?.(text), inTurn, {
+              onModelCall: () => refreshAgyContext(handlers),
+              window: (reported) => agyWindow(def, currentModelValue(), reported),
+            })
           : undefined,
     };
   }
@@ -2262,7 +2265,8 @@ function createAcpSession(
   /**
    * The end of an agy turn that came back `end_turn`: fail it on agy's own word, or report its
    * context — from the prompt's usage when that can vouch for it, else from agy's transcript
-   * (agy-acp.ts AgyTurnWatch, agy-transcript.ts). Nothing for any other harness.
+   * (agy-acp.ts AgyTurnWatch, agy-transcript.ts). Nothing when agy already reported the context
+   * itself during the turn, and nothing for any other harness.
    *
    * Waits for the transcript read, because the footer is drawn from the turn's last usage once this
    * returns: a local read is a file tail, a remote one a single filtered request with a short cap.
@@ -3365,9 +3369,10 @@ export interface TurnState {
    */
   subagents?: Map<string, string>;
   /**
-   * agy only: what its text and tools come to, for a harness that writes its own diagnostics into
-   * the message stream and reports usage once per turn (agy-acp.ts AgyTurnWatch). Its presence also
-   * means a `Run <tool>` title names agy's own tool, which labels the bubble (agyAcpToolLabel).
+   * agy only: what its text, tools and usage come to, for a harness that writes its own diagnostics
+   * into the message stream and measures its context its own way (agy-acp.ts AgyTurnWatch). Its
+   * presence also means a `Run <tool>` title names agy's own tool, which labels the bubble
+   * (agyAcpToolLabel).
    */
   agy?: AgyTurnWatch;
   /**
@@ -3456,9 +3461,10 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
     // Live context usage: tokens in context + window size. Both are the harness's own numbers
     // (claude-agent-acp reads them from the SDK's context tally and learns the real window from the
     // model's reported capabilities), so the footer never has to guess a limit. Emitted several
-    // times per turn as full snapshots — the consumer keeps the latest.
+    // times per turn as full snapshots — the consumer keeps the latest. agy's `size` is the model's
+    // window, not where it compacts, so its watch picks the window instead (AgyTurnWatch.usage).
     case 'usage_update': {
-      ingestUsage(st, u.used, u.size, u.cost);
+      ingestUsage(st, u.used, st.agy ? st.agy.usage(u.size) : u.size, u.cost);
       break;
     }
 
