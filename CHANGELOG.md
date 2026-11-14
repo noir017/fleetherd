@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-11-14
+
 ### Fixed
 
 - **agy's context stops jumping between 256k and 1M.** agy 1.5.8 started reporting its context
