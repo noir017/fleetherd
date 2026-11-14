@@ -173,12 +173,13 @@ agents:
 - **模型按 `agy acp` 的叫法。** `/model` 里是 `gemini-3.8-flash`，思考档位在 `/effort` 下（仅
   Gemini 有）。按 `agy models` 的旧写法（`gemini-3.8-flash-high`）写在 `model:` 里、或对话之前选过
   的，照样能用：会被拆成模型加档位。agy 在会话重新加载时会忘掉模型，守护进程每次加载后都会重新设上。
-- **上下文数字来自 agy 的会话记录。** agy 每轮只报一次 token 用量，是这一轮所有模型调用的总和，
-  只有只调一次模型的一轮，这个数才是上下文。调过工具的一轮，守护进程到智能体所在机器上读这个会话自己的
-  记录（`~/.gemini/antigravity-cli/brain/<会话>/.system_generated/logs/transcript.jsonl`），取最后一次
-  调用的数，一轮结束时读一次，进行中每隔几秒读一次；读不到这个文件时，这样的一轮不显示。agy 从不告诉窗口
-  有多大，而页脚要的是它**在哪儿压缩**，这个数远小于窗口：Gemini 3.8 Flash 256k（窗口 1M）、Claude
-  Sonnet/Opus 4.6 160k、GPT-OSS 120B 80k。这些之外的模型不显示数字。
+- **上下文数字从哪来。** agy 1.5.8 起每次模型调用后自己报一次上下文，页脚就跟着它走。更早的版本
+  每轮只报一次 token 用量，是这一轮所有模型调用的总和，只有只调一次模型的一轮，这个数才是上下文。调过
+  工具的一轮，守护进程到智能体所在机器上读这个会话自己的记录
+  （`~/.gemini/antigravity-cli/brain/<会话>/.system_generated/logs/transcript.jsonl`），取最后一次
+  调用的数，一轮结束时读一次，进行中每隔几秒读一次；读不到这个文件时，这样的一轮不显示。分母都是 agy
+  **在哪儿压缩**，不是窗口，这个数远小于窗口：Gemini 3.8 Flash 256k（窗口 1M，1.5.8 自己报的就是这个
+  1M）、Claude Sonnet/Opus 4.6 160k、GPT-OSS 120B 80k。这些之外的模型用 agy 自己报的窗口，没报就不显示。
 - **只有 stdio MCP server 会进它的工具表。** `agy acp` 接收 `session/new` 里的 server——网关自己的
   `chat` 就是其中之一——并把 stdio 的那些给模型看。同样方式传进去的 HTTP 或 SSE server 会被接受，然后
   被忽略：agy 根本不去连它，它的 `initialize` 也完全没有声明 `mcpCapabilities`（2026-11-13 在 1.5.7 上

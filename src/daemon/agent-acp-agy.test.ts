@@ -19,7 +19,10 @@ import type { QuotaPool, ToolEvent } from '../types.js';
  * - `session/load` answers on the DEFAULT model, whatever the session was on;
  * - diagnostics arrive as `agent_message_chunk`s framed `"\n⚠ …\n"`, and a turn that got no model
  *   call through ends `end_turn` with no `usage`;
- * - usage comes once, in the prompt response, summed over the turn's model calls;
+ * - usage comes once, in the prompt response, summed over the turn's model calls — unless the rig
+ *   asks for 1.5.8's `usage_update`s too (measured 2026-11-14, project-scripts/fleetherd-agy-usage-update/):
+ *   one after session/new or /load, and one after every model call, that call's total against the
+ *   model's 1M window;
  * - a tool call of kind `other` is titled `Run <tool name>` (it also carries a `name` field, which
  *   the SDK strips before the gateway sees it);
  * - each model call is a `PLANNER_RESPONSE` line in the session's transcript under HOME, written as
@@ -61,6 +64,9 @@ const call = (sid, input, cached) => {
   fs.appendFileSync(file, JSON.stringify({ source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', input_tokens: input, cache_read_tokens: cached, output_tokens: 10 }) + '\\n');
 };
 const usage = (input, cached) => ({ inputTokens: input, outputTokens: 10, cachedReadTokens: cached, cachedWriteTokens: 0, thoughtTokens: 0, totalTokens: input + cached + 10 });
+const report = (sid, used) => {
+  if (process.env.FAKE_AGY_REPORTS === '1') update(sid, { sessionUpdate: 'usage_update', used, size: 1048576 });
+};
 
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   let msg;
@@ -77,11 +83,15 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       .then((body) => fs.appendFileSync(LOG, JSON.stringify({ method: 'models', params: { url: process.env.CLOUD_CODE_URL, body } }) + '\\n'))
       .then(ok, ok);
   }
-  if (msg.method === 'session/new') return reply(msg.id, { sessionId: 'agy-session-1', configOptions: options() });
+  if (msg.method === 'session/new') {
+    reply(msg.id, { sessionId: 'agy-session-1', configOptions: options() });
+    return report('agy-session-1', 0);
+  }
   // agy 1.5.1: a reload comes back on the default model, whatever the session was on.
   if (msg.method === 'session/load') {
     state.model = 'gemini-3.8-flash';
-    return reply(msg.id, { sessionId: msg.params.sessionId, configOptions: options() });
+    reply(msg.id, { sessionId: msg.params.sessionId, configOptions: options() });
+    return report(msg.params.sessionId, 7000);
   }
   if (msg.method === 'session/set_config_option') {
     if (msg.params.configId === 'model') state.model = msg.params.value;
@@ -91,12 +101,14 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (msg.method === 'session/prompt') {
     const p = msg.params.prompt.map((b) => b.text || '').join('');
     if (p === 'plain') {
+      report(sid, 230 + 5696 + 10);
       text(sid, 'hi');
       return reply(msg.id, { stopReason: 'end_turn', usage: usage(230, 5696) });
     }
     if (p === 'tool' || p === 'tool-bare') {
       // Two model calls: one asked for the tools, one answered. Their sum is what the prompt reports.
       if (p === 'tool') call(sid, 2800, 9000);
+      report(sid, 2800 + 9000 + 10);
       const sub = { toolCallId: 'c1', name: 'invoke_subagent', kind: 'other', title: 'Run invoke_subagent', rawInput: { Prompt: 'echo SUB-OK' } };
       update(sid, { sessionUpdate: 'tool_call', status: 'in_progress', ...sub });
       update(sid, { sessionUpdate: 'tool_call_update', status: 'completed', ...sub });
@@ -104,6 +116,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       update(sid, { sessionUpdate: 'tool_call', status: 'in_progress', ...mcp });
       update(sid, { sessionUpdate: 'tool_call_update', status: 'completed', ...mcp });
       if (p === 'tool') call(sid, 2801, 9176);
+      report(sid, 2801 + 9176 + 10);
       text(sid, 'done');
       return reply(msg.id, { stopReason: 'end_turn', usage: usage(5601, 18176) });
     }
@@ -186,6 +199,8 @@ function rig(
     cloudCodeUrl?: string;
     /** Hold every `agy -p=/usage` until this settles — a one-shot slower than the turn. */
     quotaGate?: Promise<void>;
+    /** Behave like agy 1.5.8, which sends `usage_update`s of its own. */
+    reports?: boolean;
   } = {}
 ): {
   session: AgentSession;
@@ -212,7 +227,12 @@ function rig(
         harness: 'agy',
         args: [logPath],
         cwd: dir,
-        env: { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: home, ...(opts.cloudCodeUrl ? { CLOUD_CODE_URL: opts.cloudCodeUrl } : {}) },
+        env: {
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          HOME: home,
+          ...(opts.cloudCodeUrl ? { CLOUD_CODE_URL: opts.cloudCodeUrl } : {}),
+          ...(opts.reports ? { FAKE_AGY_REPORTS: '1' } : {}),
+        },
         ...(opts.model ? { model: opts.model } : {}),
         ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}),
         ...(opts.contextBudget ? { contextBudget: opts.contextBudget } : {}),
@@ -440,6 +460,50 @@ describe('agy over ACP: a turn', () => {
     await turn(session, 'plain', record());
     await turn(session, 'plain', record());
     expect(quotaRuns()).toBe(1);
+  });
+});
+
+describe('agy over ACP: 1.5.8, which reports its context itself', () => {
+  it('shows each report against where agy compacts, not the 1M window it names', async () => {
+    const { session } = rig({ reports: true });
+    const r = record();
+    await turn(session, 'plain', r);
+    // agy's report alone: not also the turn's end, which leaves the call's output out (5926).
+    expect(r.usage).toEqual([
+      { used: 0, size: 256_000 },
+      { used: 5936, size: 256_000 },
+    ]);
+  });
+
+  it('follows its reports through a turn that ran tools, and leaves the transcript unread', async () => {
+    const { session } = rig({ reports: true });
+    const r = record();
+    await turn(session, 'tool', r);
+    // A transcript read is not waited for mid-turn; give a stray one the time to land.
+    await new Promise((res) => setTimeout(res, 100));
+    // The transcript would have said 11800 and 11977.
+    expect(r.usage).toEqual([
+      { used: 0, size: 256_000 },
+      { used: 11_810, size: 256_000 },
+      { used: 11_987, size: 256_000 },
+    ]);
+  });
+
+  it('prefers a configured window to both', async () => {
+    const { session } = rig({ reports: true, contextWindow: 200_000 });
+    const r = record();
+    await turn(session, 'plain', r);
+    expect(r.usage.at(-1)).toEqual({ used: 5936, size: 200_000 });
+  });
+
+  it('after a reload, shows the context agy reports for the session it loaded', async () => {
+    const { session } = rig({ reports: true, stored: 'agy-old' });
+    const r = record();
+    await turn(session, 'plain', r);
+    expect(r.usage).toEqual([
+      { used: 7000, size: 256_000 },
+      { used: 5936, size: 256_000 },
+    ]);
   });
 });
 

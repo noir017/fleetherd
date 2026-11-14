@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **agy's context stops jumping between 256k and 1M.** agy 1.5.8 started reporting its context
+  after every model call, and the gateway took those reports as they came — measured against the
+  model's 1M window, where everything else it drew for agy is measured against the 256k at which
+  agy compacts (or the budget `contextBudget` gave it). The web UI's strip then switched between
+  the two with each report, and between two slightly different counts as well, since the turn's
+  end leaves the last call's output out. agy's own report is now drawn against the same compaction
+  point, and once it has sent one in a turn it is that turn's only source: no transcript reads, no
+  figure at the end. An agy that sends none is measured as before.
+
 ## [3.5.0] - 2026-11-13
 
 ### Added

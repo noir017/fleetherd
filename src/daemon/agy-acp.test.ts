@@ -6,6 +6,7 @@ import {
   agySplitModel,
   agyTurnWatch,
   agyWarningOf,
+  agyWindow,
   createAgyQuotaMeter,
 } from './agy-acp.js';
 import { TurnFailure } from './agent.js';
@@ -93,10 +94,42 @@ describe('agyTurnWatch', () => {
 
   it('says when a model call ended in a tool, so the runtime can read the newer context', () => {
     let calls = 0;
-    const w = agyTurnWatch('agy', () => {}, true, () => calls++);
+    const w = agyTurnWatch('agy', () => {}, true, { onModelCall: () => calls++ });
     w.tool();
     w.tool();
     expect(calls).toBe(2);
+  });
+
+  it('once agy reports its context itself (1.5.8), shows it against the window it is given', () => {
+    const seen: Array<number | undefined> = [];
+    const w = agyTurnWatch('agy', () => {}, true, {
+      window: (reported) => {
+        seen.push(reported);
+        return 256_000;
+      },
+    });
+    expect(w.usage(1_048_576)).toBe(256_000);
+    expect(w.usage(undefined)).toBe(256_000);
+    expect(w.usage(0)).toBe(256_000);
+    // agy's own window reaches the hook only when it is a usable number.
+    expect(seen).toEqual([1_048_576, undefined, undefined]);
+  });
+
+  it('leaves the context to agy’s own reports: no transcript reads, nothing at the turn’s end', () => {
+    let calls = 0;
+    const w = agyTurnWatch('agy', () => {}, true, { onModelCall: () => calls++, window: () => 256_000 });
+    w.usage(1_048_576);
+    w.tool();
+    w.text('done');
+    expect(calls).toBe(0);
+    expect(w.settle(usage)).toEqual({ noContext: 'reported' });
+  });
+
+  it('still fails a turn that ended in a warning after agy reported its context', () => {
+    const w = agyTurnWatch('agy', () => {}, true, { window: () => 256_000 });
+    w.usage(1_048_576);
+    w.text('\n⚠ You have exhausted your quota on this model.\n');
+    expect(w.settle(undefined).failure).toBeInstanceOf(TurnFailure);
   });
 
   it('declines a turn with no usage at all', () => {
@@ -151,6 +184,20 @@ describe('agyTurnWatch', () => {
     w.text('\n⚠ You have exhausted your quota on this model.\n');
     w.text('\n');
     expect(w.settle(undefined).failure).toBeInstanceOf(TurnFailure);
+  });
+});
+
+describe('agyWindow', () => {
+  const def = { id: 'agy', harness: 'agy', env: {} } as unknown as AgentDef;
+
+  it('measures against where agy compacts, not the window agy reports', () => {
+    expect(agyWindow(def, 'gemini-3.8-flash', 1_048_576)).toBe(256_000);
+    expect(agyWindow({ ...def, contextWindow: 500_000 }, 'gemini-3.8-flash', 1_048_576)).toBe(500_000);
+  });
+
+  it('takes agy’s own window for a model nobody has seen compact, and nothing without one', () => {
+    expect(agyWindow(def, 'gemini-9-pro', 2_000_000)).toBe(2_000_000);
+    expect(agyWindow(def, 'gemini-9-pro')).toBeUndefined();
   });
 });
 
