@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-11-14
+
 ### Added
 
 - **`quotaCommand`: an agent's quota from a command of your own.** The status strip showed a quota
