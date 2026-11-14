@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-11-14
+
 ### Fixed
 
 - **agy comes back from a background command.** agy runs a command in the foreground for ten
