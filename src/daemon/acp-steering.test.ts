@@ -25,6 +25,11 @@ describe('steeringModeOf', () => {
     expect(steeringModeOf({ _meta: { steering: true } })).toBe('none');
     expect(steeringModeOf({ _meta: null, agentCapabilities: { _meta: null } })).toBe('none');
   });
+
+  it('queues a second prompt for a harness measured to take one unadvertised (agy), unless it advertises its own', () => {
+    expect(steeringModeOf({ agentCapabilities: { loadSession: true } }, true)).toBe('prompt');
+    expect(steeringModeOf({ _meta: { steering: { supported: true } } }, true)).toBe('steer');
+  });
 });
 
 describe('the steering request', () => {

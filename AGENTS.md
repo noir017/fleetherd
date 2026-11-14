@@ -60,6 +60,7 @@ it. Do not duplicate that content here.
 | `scripts/` | Dev utilities (`stop.mjs` kills stray daemons, `probe.mjs` Discord gateway probe) | [README](scripts/README.md) |
 | `skill/` | The bundled agent skill: how an agent finds the reverse CLI. The daemon links it into each harness's skill directory (`daemon/skill-link.ts`) | [SKILL.md](skill/SKILL.md) |
 | `skill-super/` | The second bundled skill, `super`: how an agent splits a job across sub-agents (`/super`, `daemon/delegation.ts`). Linked the same way | [SKILL.md](skill-super/SKILL.md) |
+| `agy-plugin/` | The bundled agy plugin: a Stop hook that keeps an agy turn open while a command it put in the background runs, so the result reaches the chat. Linked into `~/.gemini/config/plugins` like the skills (`daemon/agy-plugin.ts`) | [agy-plugin.ts](src/daemon/agy-plugin.ts) |
 
 ## Layering
 

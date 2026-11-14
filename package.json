@@ -15,7 +15,8 @@
   "files": [
     "dist",
     "skill",
-    "skill-super"
+    "skill-super",
+    "agy-plugin"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/build-remote.mjs",

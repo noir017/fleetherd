@@ -11,6 +11,7 @@ import { placeInstructions } from './instructions.js';
 import { placeManagedSkills } from './managed-skills.js';
 import { ensureReverseCliShim } from './reverse-cli-shim.js';
 import { ensureSkillLink } from './skill-link.js';
+import { ensureAgyPlugin } from './agy-plugin.js';
 import { withLegacyNames } from '../legacy-name.js';
 
 /**
@@ -147,6 +148,8 @@ export function buildAgentEnv(
   // The skill goes under the home THIS agent runs as — an `env.HOME` override included — because
   // that is where its harness will look (see skill-link). The operator's instructions likewise.
   ensureSkillLink(def.harness, env.HOME || homedir(), def.command);
+  // agy's background results come back only through its plugin (agy-plugin.ts).
+  ensureAgyPlugin(def.harness, env.HOME || homedir());
   placeInstructions(def, env.HOME || homedir());
   // The skills the gateway keeps itself, delivered the same way and from the same moment.
   placeManagedSkills(def, env.HOME || homedir());
@@ -231,6 +234,7 @@ export async function prepareRemoteSpawn(
     }
   }
   await remoteHosts.placeSkill(host, def, remoteAgentHome(def, welcome), welcome);
+  await remoteHosts.placeAgyPlugin(host, def, remoteAgentHome(def, welcome), welcome);
   await remoteHosts.placeInstructions(host, def, remoteAgentHome(def, welcome), welcome);
   await remoteHosts.placeManagedSkills(host, def, remoteAgentHome(def, welcome), welcome);
   return { welcome, cwd: dir };

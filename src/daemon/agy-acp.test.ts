@@ -8,6 +8,7 @@ import {
   agyWarningOf,
   agyWindow,
   createAgyQuotaMeter,
+  takesPromptMidTurn,
 } from './agy-acp.js';
 import { TurnFailure } from './agent.js';
 import type { AgentDef } from '../config/schema.js';
@@ -270,5 +271,14 @@ describe('createAgyQuotaMeter', () => {
     const m = createAgyQuotaMeter(cli);
     await m.refresh(def(), '/w');
     expect(m.read(def({ env: { HOME: '/other' } }))).toBeUndefined();
+  });
+});
+
+describe('takesPromptMidTurn', () => {
+  it('is agy alone: claude says so itself, and opencode loses a second prompt', () => {
+    expect(takesPromptMidTurn({ harness: 'agy' })).toBe(true);
+    for (const harness of ['claude', 'codex', 'opencode', 'gemini', 'dsh', 'custom'] as const) {
+      expect(takesPromptMidTurn({ harness })).toBe(false);
+    }
   });
 });

@@ -99,6 +99,37 @@ describe('translateUpdate tool state machine (ACP generic)', () => {
     expect(events).toEqual(["text:I'll run it", 'seg', 'start:Bash|ls']);
   });
 
+  /**
+   * agy's background command, as `agy acp` 1.5.8 sent it while the turn waited for it (agy-plugin.ts):
+   * the call stays open, the model says it started, and the call's end and the model's next words
+   * arrive after the wait. Without the break the two answers ran together in one paragraph.
+   */
+  it('a call that ends after the agent spoke starts a new segment for the words that follow', () => {
+    const { st, events } = recorder();
+    feed(st, { sessionUpdate: 'tool_call', toolCallId: 't1', kind: 'execute', rawInput: { command: 'sleep 45' }, status: 'in_progress' });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started.' } });
+    feed(st, { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed' });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done: 42' } });
+    expect(events).toEqual(['start:Bash|sleep 45', 'seg', 'text:Started.', 'finish:Bash|true', 'seg', 'text:Done: 42']);
+  });
+
+  it('a message taken in mid-turn starts a new segment for its answer, and the opening echo does not', () => {
+    const { st, events } = recorder();
+    feed(st, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'Run it' } });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started.' } });
+    feed(st, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'Also: 6 times 7?' } });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '42' } });
+    expect(events).toEqual(['text:Started.', 'seg', 'text:42']);
+  });
+
+  it('a call that ends after the agent spoke, with nothing said after it, splits nothing', () => {
+    const { st, events } = recorder();
+    feed(st, { sessionUpdate: 'tool_call', toolCallId: 't1', kind: 'execute', rawInput: { command: 'sleep 45' }, status: 'in_progress' });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Started.' } });
+    feed(st, { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed' });
+    expect(events).toEqual(['start:Bash|sleep 45', 'seg', 'text:Started.', 'finish:Bash|true']);
+  });
+
   it('falls back to the truncated title (backticks stripped) when there is no kind', () => {
     const { st, events } = recorder();
     feed(st, { sessionUpdate: 'tool_call', toolCallId: 't1', title: '`do-thing`', rawInput: { x: 1 }, status: 'in_progress' });

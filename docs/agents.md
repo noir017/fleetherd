@@ -245,9 +245,20 @@ harnesses. What differs:
 - **agy's own warnings are notices, not reply text.** A retry ("API error (attempt 1) …") is said
   once, as a notice. A turn that ended on a warning — a spent quota, retries run out, an overloaded
   server — fails with it, so `hooks.turnFailed` sees it (as `provider`).
-- **A message sent mid-turn waits for the turn to end**: `agy acp` offers no way to join one. If it
-  is urgent — stop, change direction, answer now — send `/stop` first; the message you send next
-  starts a fresh turn.
+- **A command it puts in the background is waited for.** agy runs a command in the foreground for
+  10 seconds at most, then moves it to the background and ends the turn; what it did once the
+  command finished never reached the chat, and a step that needed permission stopped it outright.
+  The daemon links a plugin into `~/.gemini/config/plugins/fleetherd` whose Stop hook keeps the
+  turn open instead, silently, until the command finishes: its result, and whatever agy does next,
+  arrive in the same reply. While it waits the turn shows as running and the model is not called.
+  After 20 minutes with nothing new the model is let go once — it usually says the task is still
+  running — so the daemon does not take the quiet for a hang. `/stop` ends the wait. agy lets a
+  hook continue a turn ten times, so a turn whose commands finish more often than that stops
+  waiting after the tenth. The hook is added beside your own `~/.gemini/config/hooks.json`, and
+  does nothing in an agy you run yourself, which waits for its tasks already.
+- **A message sent mid-turn joins it**, as with Claude Code: agy takes it at the next tool
+  boundary, or at once while the turn waits for a background command, and one reply answers both.
+  To interrupt instead, send `/stop` first; the message you send next starts a fresh turn.
 - **Skills** are read from `<cwd>/.agents/skills`, `~/.agents/skills`,
   `~/.gemini/antigravity-cli/skills`, `~/.gemini/skills` and
   `~/.gemini/config/skills`, so `/skills` lists them and `/<name> <request>` runs one.

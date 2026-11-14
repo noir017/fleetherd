@@ -50,6 +50,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `schedule-bash.ts` | One `--bash` run: its own process group, a bounded output tail, the full log on disk. Also runs `preLaunch` hooks |
 | `restart-drain.ts` | A SIGTERM with turns or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
+| `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
 | `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
 | `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
 | `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`, a git repository): names, paths and size rules, content versions, the usage file, `archive/`, and history and `revert` read from git |
@@ -1402,6 +1403,14 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
 `/usage` and the other CLI-answered names still go to one-shots (`agy-cli.ts`): `agy acp` survives
 them but hands them to the model as a question.
 
+- **A second prompt mid-turn is taken** (`takesPromptMidTurn`, measured on 1.5.8), the way
+  claude-agent-acp's `promptQueueing` is, but unadvertised — so `steeringModeOf` is told.
+- **A background command ends the prompt**, and what agy does when it finishes is never sent: its
+  own turn has no prompt to stream under, and its first permission request waits for the next one.
+  `agy-plugin.ts` ships a Stop hook (`agy-plugin/` at the package root) that holds the turn open,
+  silently, until agy's mailbox has something new. Linked like the skills: `ensureAgyPlugin` here,
+  `RemoteHosts.placeAgyPlugin` on a host. The file header has the measurements and the limits.
+
 ### `agent-common.ts`
 
 Protocol-agnostic pieces every spawn must get *identically* right: the child
@@ -1411,7 +1420,7 @@ SIGKILL after `KILL_GRACE_MS` — harness CLIs may ignore SIGTERM mid-turn).
 
 `buildAgentEnv` runs at every spawn, which makes it the one place that provisions
 what the reverse CLI depends on: the shim at the front of `PATH`, the skill link
-(`skill-link.ts`) under the home this agent runs as, and the gateway's own managed skills
+(`skill-link.ts`) and, for agy, its plugin (`agy-plugin.ts`) under the home this agent runs as, and the gateway's own managed skills
 (`managed-skills.ts`). It also places the operator's instructions (`instructions.ts`) there; an
 agent on a remote host gets all of them from `prepareRemoteSpawn`.
 

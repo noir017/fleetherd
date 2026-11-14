@@ -1,0 +1,11 @@
+{
+  "wait-background": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "sh ./wait-background.sh",
+        "timeout": 1260
+      }
+    ]
+  }
+}
