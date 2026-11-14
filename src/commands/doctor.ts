@@ -120,9 +120,11 @@ function adapterResolves(resolve: () => string): boolean {
  * `claude /login` subscription session; if ANTHROPIC_API_KEY is set (via env or
  * environment) it uses an API key. harness=agy reuses the Google sign-in `agy` cached in the OS
  * keyring — headless runs never prompt, so a never-signed-in agy fails at the first turn, and
- * saying so here is the only warning the operator gets. Other harnesses aren't noted (own mechanisms).
+ * saying so here is the only warning the operator gets — unless it reaches its models through a
+ * gateway (`AGY_LLM_GATEWAY_URL`), which needs no sign-in. Other harnesses aren't noted (own mechanisms).
  */
 function authNote(def: import('../config/schema.js').AgentDef): string {
+  if (def.harness === 'agy' && def.env?.AGY_LLM_GATEWAY_URL) return ' [agy through a model gateway: AGY_LLM_GATEWAY_URL]';
   if (def.harness === 'agy') return ' [agy Google sign-in from the OS keyring; run `agy` once interactively if never signed in]';
   if (def.harness !== 'claude') return '';
   const hasKey = Boolean(def.env?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);

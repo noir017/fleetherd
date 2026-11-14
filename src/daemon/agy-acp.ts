@@ -1,12 +1,9 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import type { AgentDef } from '../config/schema.js';
-import type { QuotaPool } from '../types.js';
 import { TurnFailure } from './agent.js';
 import { truncateToolName } from './agent-common.js';
-import { runAgyCliCommand, runAgyCliFor, type AgyCliRunner } from './agy-cli.js';
-import { agyCompactionPoint, agyContextWindow, parseAgyUsagePools } from './agy-meters.js';
+import { agyCompactionPoint, agyContextWindow } from './agy-meters.js';
 import { agyBudget } from './agy-relay.js';
-import { agentHome } from './skills-scan.js';
 
 /**
  * What the ACP runtime does differently for `agy` — the Google Antigravity CLI, served by
@@ -31,7 +28,7 @@ import { agentHome } from './skills-scan.js';
  *     ran tools reads its context off agy's transcript instead (agy-transcript.ts). 1.5.8 also sends
  *     a `usage_update` after each model call, but against the model's window rather than where agy
  *     compacts — see AgyTurnWatch.usage.
- *   - **No quota over ACP**, so it is still a one-shot `agy -p=/usage` (createAgyQuotaMeter).
+ *   - **No quota over ACP**, so it is still a one-shot `agy -p=/usage` (quota-meter.ts).
  *   - **Tool names in the title.** `kind` is good for the common tools; the rest are `other`, titled
  *     `Run <tool name>` (`Run invoke_subagent`, `Run mcp_chat_send_file`). See agyAcpToolLabel.
  *
@@ -379,55 +376,4 @@ export function agyMcpCall(rawInput: unknown): { server: string; tool: string; a
 /** The name a `call_mcp_tool` call is drawn under: `MCP <tool>`, truncated like any tool name. */
 export function agyMcpLabel(mcp: { tool: string }): string {
   return truncateToolName(`MCP ${mcp.tool}`);
-}
-
-// ───────────────────────── quota ─────────────────────────
-
-/** How old a quota reading may get before a turn asks `agy -p=/usage` again. */
-const QUOTA_REFRESH_MS = 60_000;
-
-export interface AgyQuotaMeter {
-  /** Re-read the pools for this agent's account, unless a recent reading or one in flight makes it pointless. */
-  refresh(def: AgentDef, cwd: string): Promise<void>;
-  /** The latest reading for this agent's account. */
-  read(def: AgentDef): QuotaPool[] | undefined;
-}
-
-/**
- * The quota pools, per account: a one-shot `agy -p=/usage` (agy-cli.ts), at most once a minute per
- * home and never two at once. `agy acp` 1.5.1 has nothing in its place — no method, no `_meta`, and
- * a `/usage` prompt is answered by the model as a question about usage.
- *
- * Keyed by account: the quota belongs to whoever agy is signed in as, so every conversation on a
- * home shares one reading, and the same HOME on two hosts is two.
- */
-export function createAgyQuotaMeter(cli: AgyCliRunner = runAgyCliCommand): AgyQuotaMeter {
-  const byHome = new Map<string, { pools?: QuotaPool[]; at: number; pending?: Promise<void> }>();
-  const homeOf = (def: AgentDef): string => (def.host ? `${def.host}:${def.env['HOME'] ?? '~'}` : agentHome(def));
-  return {
-    refresh(def, cwd) {
-      const home = homeOf(def);
-      let entry = byHome.get(home);
-      if (!entry) byHome.set(home, (entry = { at: 0 }));
-      if (entry.pending) return entry.pending;
-      // Stamped when the run starts, so a failing one is not retried on every turn either.
-      if (Date.now() - entry.at < QUOTA_REFRESH_MS) return Promise.resolve();
-      entry.at = Date.now();
-      const e = entry;
-      e.pending = runAgyCliFor(def, 'usage', cwd, cli)
-        .then((r) => {
-          if (!r.ok) {
-            console.debug(`[acp] could not read agy's quota (${def.id}):`, r.error);
-            return;
-          }
-          const pools = parseAgyUsagePools(r.output);
-          if (pools) e.pools = pools;
-        })
-        .finally(() => {
-          e.pending = undefined;
-        });
-      return e.pending;
-    },
-    read: (def) => byHome.get(homeOf(def))?.pools,
-  };
 }

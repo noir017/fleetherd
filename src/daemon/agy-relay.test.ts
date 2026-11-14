@@ -130,6 +130,19 @@ describe('agyRelay', () => {
     expect(r.spec.id).not.toBe(agyRelay(agy({ contextBudget: 900_000 }))!.spec.id);
   });
 
+  it('starts none behind a model gateway, where agy never fetches the list it rewrites', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const def = agy({ id: 'ag-gateway', contextBudget: 900_000, env: { AGY_LLM_GATEWAY_URL: 'https://gw.example' } });
+      expect(agyRelay(def)).toBeUndefined();
+      expect(agyRelay(def)).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1); // said once per agent, not on every footer
+      expect(agyWindow(def, 'gemini-3.8-flash')).toBe(256_000);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('serves the rewritten list, and the footer then reads the budget agy was given', async () => {
     const def = agy({ id: 'ag-footer', contextBudget: 800_000 });
     expect(agyWindow(def, 'gemini-3.8-flash')).toBe(256_000); // nothing told yet: where agy compacts

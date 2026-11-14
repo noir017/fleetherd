@@ -7,15 +7,15 @@ English | [简体中文](zh-CN/agents.md)
 | `claude` | bundled [claude-agent-acp](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp) | none | `claude /login` or `ANTHROPIC_API_KEY` |
 | `codex` | `codex-acp` | [@agentclientprotocol/codex-acp](https://www.npmjs.com/package/@agentclientprotocol/codex-acp) (`npm i -g`) | Codex CLI's login |
 | `opencode` | `opencode acp` | OpenCode CLI | OpenCode's login |
-| `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` Google sign-in (OS keyring) |
+| `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` Google sign-in (OS keyring), or a [model gateway](#through-a-model-gateway) |
 | `custom` | your `command` + `args` | any ACP executable | your agent's |
 
 A service that is only an HTTP API needs no harness of its own:
 [`fleetherd api-agent`](#http-apis-api-agent) wraps it as an ACP agent you start as `custom`.
 
 Each agent takes `cwd`, `env`, `args`, a best-effort `model`, pinned
-[session options](#pinned-session-options), a [pre-launch hook](#pre-launch-hook), and a
-[permission policy](#permission-requests). With
+[session options](#pinned-session-options), a [pre-launch hook](#pre-launch-hook), a
+[permission policy](#permission-requests), and a [quota command](#quota-command). With
 `host:` it runs on another machine, reached over ssh — see [Remote hosts](remote-hosts.md). Sessions
 persist where the agent supports it; the commands an agent advertises are
 reachable through its own `/<agent>` menu rather than registered globally (see
@@ -187,6 +187,30 @@ agents:
   without asking when measured; `agy` asks before commands, not before writing in its working
   directory.
 
+## Quota command
+
+The web UI's status strip shows an agent's usage quota when its harness reports one — today agy,
+through `agy -p=/usage`. `quotaCommand` supplies it when the harness cannot: agy through a
+[model gateway](#through-a-model-gateway), or any agent behind a proxy that pools several accounts.
+It is a `bash -lc` command, run on the agent's machine with the agent's environment, beside a turn
+and at most once a minute. It prints what `agy -p=/usage` prints, one tab-separated row per pool —
+pool, window, remaining percentage, reset time:
+
+```
+Gemini Models	Five Hour Limit Remaining	54%	2026-11-14T08:13:48Z
+```
+
+A pool is Gemini, or Claude and GPT; a window is weekly, five-hour or daily. A row that is neither
+is left out and logged. On agy the command also answers `/usage`. One that fails or prints nothing
+leaves the last reading in place.
+
+```yaml
+agents:
+  - id: ag
+    harness: agy
+    quotaCommand: ~/.local/bin/pool-quota
+```
+
 ## Antigravity (`agy`)
 
 `agy` runs as `agy acp`, the ACP server agy ships since 1.5, so streaming, tool bubbles,
@@ -232,7 +256,9 @@ harnesses. What differs:
   figure, and the log says why. Measured on agy 1.5.2 (2026-11-07); a Gemini 3.8 Flash context of
   600k was confirmed to work. Every model call then carries a longer context, so quota runs out
   sooner. With both `contextWindow` and `contextBudget` set, `contextWindow` is what the footer
-  shows; the relay still moves where agy compacts.
+  shows; the relay still moves where agy compacts. Through a [model gateway](#through-a-model-gateway)
+  agy fetches no model list from Google, so there is nothing to rewrite: no relay is started, and
+  the log says so.
 
   ```yaml
   agents:
@@ -241,7 +267,7 @@ harnesses. What differs:
       contextBudget: 900000
   ```
 - **Quota comes from its CLI**: `agy -p=/usage`, run alongside a turn at most once a minute, in
-  whole percentages.
+  whole percentages — or from the agent's [`quotaCommand`](#quota-command) when it has one.
 - **agy's own warnings are notices, not reply text.** A retry ("API error (attempt 1) …") is said
   once, as a notice. A turn that ended on a warning — a spent quota, retries run out, an overloaded
   server — fails with it, so `hooks.turnFailed` sees it (as `provider`).
@@ -262,6 +288,29 @@ harnesses. What differs:
 - **Skills** are read from `<cwd>/.agents/skills`, `~/.agents/skills`,
   `~/.gemini/antigravity-cli/skills`, `~/.gemini/skills` and
   `~/.gemini/config/skills`, so `/skills` lists them and `/<name> <request>` runs one.
+
+### Through a model gateway
+
+agy can send its model calls to a Gemini-API gateway instead of Google, with no sign-in: set
+`AGY_LLM_GATEWAY_URL` and `AGY_LLM_GATEWAY_API_KEY` in `env` (a gateway on another machine must be
+`https`). It then offers whatever the gateway's `/v1beta/models` lists, so a model the gateway adds
+is there without an agy update — and it starts a session on the first of them, so pin `model:`. A
+model agy already knows is sent without its level suffix (`gemini-3.8-flash` with a thinking level,
+for `gemini-3.8-flash-high`), and the gateway has to answer to that name; one it does not know is
+sent as listed. `agy -p=/usage` prints nothing (give the agent a [`quotaCommand`](#quota-command)),
+`contextBudget` has no effect, and agy compacts where it decides — about 256k for Gemini 3.8 Flash,
+whatever window the gateway reports. Measured on agy 1.5.8 (2026-11-14).
+
+```yaml
+agents:
+  - id: ag
+    harness: agy
+    model: gemini-3.8-flash-high
+    quotaCommand: ~/.local/bin/pool-quota
+    env:
+      AGY_LLM_GATEWAY_URL: https://gateway.example
+      AGY_LLM_GATEWAY_API_KEY: ${GATEWAY_KEY}
+```
 
 `args` are passed after `agy acp` (see `agy acp --help`).
 

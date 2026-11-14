@@ -104,6 +104,16 @@ const AgentDefFields = z
      * Unset = no relay, the harness's own.
      */
     contextBudget: z.number().int().min(64_000).max(2_000_000).optional(),
+    /**
+     * A `bash -lc` command that prints this agent's usage quota, run on the agent's machine with its
+     * environment, for when the harness cannot report it: agy through a model gateway
+     * (`AGY_LLM_GATEWAY_URL`), whose `agy -p=/usage` prints nothing, or any harness on a pooled
+     * proxy. It prints what `agy -p=/usage` prints — one tab-separated row per pool: pool, window,
+     * remaining %, ISO reset. When set it replaces the harness's own source: the status strip reads
+     * it beside a turn at most once a minute (daemon/quota-meter.ts), and agy's `/usage` answers with
+     * it. Not in the `/setting` table: a chat-side edit here would be remote shell execution.
+     */
+    quotaCommand: z.string().min(1).optional(),
     /** Env vars injected into the subprocess (credentials etc.); supports ${VAR} expansion. */
     env: z.record(z.string()).default({}),
     /**

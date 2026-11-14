@@ -30,6 +30,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, which context report to trust and against what, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
+| `quota-meter.ts` | The quota for the status strip: an agent's `quotaCommand`, else agy's `agy -p=/usage`; once a minute per source, shared across conversations |
 | `agy-relay.ts` | agy behind a relay, for `contextBudget`: rewrites the compaction point in the model list Google sends it, and remembers what each model was told for the footer |
 | `relay.ts` | Relays: a loopback forwarder between an agent and its API that lets a harness's transform replace the responses on paths it names. Here for a local agent; on a host through fleetherd-remote (`remote/relay.go`), which hands those responses back over the link. Which harness uses one, and for what, is `harnessRelay` |
 | `agy-transcript.ts` | agy's context after a turn that ran tools, read off agy's own transcript here or on a host (its prompt usage is a sum over the turn's calls) |
@@ -991,7 +992,7 @@ Each harness reports a different subset, and an absent field is shown as nothing
 | context | `onUsage` — ACP `usage_update`; for an agy that sends none, the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`); agy's either way shown against the point where agy compacts (`agy-meters.ts`) or the budget its relay gave it (`agy-relay.ts`) |
 | cost | `onUsage.cost` — claude and opencode; kept across the mid-stream snapshots that carry none |
 | cache expiry | claude only: `claude-transcript.ts`, read once a moment after each model cycle ends |
-| quota | agy only: `agy -p=/usage`, via `onQuota` |
+| quota | `onQuota` — an agent's `quotaCommand`, else agy's `agy -p=/usage` (`quota-meter.ts`) |
 
 **Why the cache expiry comes off a transcript.** Headless Claude Code runs no status line at all
 (probed on 2.1.291: zero invocations in a whole turn), so the `prompt_cache` its TUI status line is
@@ -1388,8 +1389,9 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   the others. Every figure is reported against the point where agy compacts for that model
   (`agy-meters.ts` COMPACTION_POINTS), `contextWindow` when the agent sets one, or the budget its
   relay gave it.
-- **Quota** has no ACP channel: `createAgyQuotaMeter` runs `agy -p=/usage` (`agy-cli.ts`) beside the
-  turn, at most once a minute per account. It is reported whenever it lands, even after the turn,
+- **Quota** has no ACP channel: `createQuotaMeter` (`quota-meter.ts`) runs `agy -p=/usage` (`agy-cli.ts`)
+  — or the agent's `quotaCommand`, which through a model gateway is the only source — beside the
+  turn, at most once a minute per source. It is reported whenever it lands, even after the turn,
   and nothing waits for it: quota feeds the conversation's status strip, not the turn's footer. (A
   5 s wait at the turn's end, which dropped a later reading, lost the quota on the first turn after
   a restart on a remote host, measured 2026-11-06.)

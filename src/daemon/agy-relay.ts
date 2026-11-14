@@ -96,10 +96,24 @@ function transformModels(id: string, budget: number, body: Buffer): Buffer | und
   return result.changed > 0 ? Buffer.from(JSON.stringify(json), 'utf8') : undefined;
 }
 
+/** Agents already told their contextBudget does nothing behind a model gateway. */
+const gatewayNoted = new Set<string>();
+
 /** agy's relay, for an agent with a `contextBudget`. */
 export function agyRelay(def: AgentDef): HarnessRelay | undefined {
   const budget = def.contextBudget;
   if (budget === undefined) return undefined;
+  // Through a model gateway (AGY_LLM_GATEWAY_URL) agy never asks Cloud Code for its model list, so
+  // there is nothing here to rewrite, and it compacts at a figure of its own: ~256k for Gemini 3.8
+  // Flash, whatever the gateway says the window is and whatever AGY_CLI_AUTO_COMPACT_OVERRIDE says
+  // (measured on 1.5.8 against a fake gateway, 2026-11-14). A relay would only sit there.
+  if (def.env['AGY_LLM_GATEWAY_URL']) {
+    if (!gatewayNoted.has(def.id)) {
+      gatewayNoted.add(def.id);
+      console.warn(`[relay] ${def.id}: contextBudget has no effect with AGY_LLM_GATEWAY_URL (agy does not fetch Google's model list through a gateway); no relay started`);
+    }
+    return undefined;
+  }
   // An operator's own CLOUD_CODE_URL (a proxy of theirs, another endpoint) is chained to, not lost.
   const own = def.env['CLOUD_CODE_URL'];
   const upstream = own ? expandEnv(own) : AGY_DEFAULT_UPSTREAM;

@@ -7,14 +7,14 @@
 | `claude` | 内置 [claude-agent-acp](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp) | 无 | `claude /login` 或 `ANTHROPIC_API_KEY` |
 | `codex` | `codex-acp` | [@agentclientprotocol/codex-acp](https://www.npmjs.com/package/@agentclientprotocol/codex-acp)（`npm i -g`） | Codex CLI 登录态 |
 | `opencode` | `opencode acp` | OpenCode CLI | OpenCode 登录态 |
-| `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` 的 Google 登录态（系统钥匙串） |
+| `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` 的 Google 登录态（系统钥匙串），或[模型网关](#经模型网关) |
 | `custom` | 你的 `command` + `args` | 任意 ACP 可执行文件 | 由智能体自身决定 |
 
 只有 HTTP API 的服务不需要单独的 harness：[`fleetherd api-agent`](#http-apiapi-agent) 把它包成
 ACP 智能体，按 `custom` 启动。
 
 每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[固定会话选项](#固定会话选项)、
-[启动前钩子](#启动前钩子)，以及[权限策略](#权限请求)。
+[启动前钩子](#启动前钩子)、[权限策略](#权限请求)，以及[额度命令](#额度命令)。
 设了 `host:` 就跑在另一台机器上、经 ssh 连接，见[远程主机](remote-hosts.md)。支持会话恢复
 的智能体，上下文可跨重启保留；智能体自己声明的斜杠命令不会全局注册，而是通过
 它的 `/<agent>` 菜单调出（见[聊天命令](chat-commands.md#智能体命令)）。
@@ -161,6 +161,28 @@ agents:
 - 没有按钮的平台（钉钉、企业微信）没法问，请求会被拒绝，同样会告诉智能体原因。
 - 只影响会请求权限的智能体。实测 Codex（`agent` 模式）和 OpenCode 执行写文件的命令时都没有问；`agy` 执行命令前会问，在工作目录里写文件不问。
 
+## 额度命令
+
+Web 界面的状态栏会显示智能体的用量额度——前提是它的 harness 报得出来，目前只有 agy，靠 `agy -p=/usage`。
+harness 报不出来时，用 `quotaCommand` 补上：经[模型网关](#经模型网关)的 agy，或者挂在一个多账号池
+代理后面的任何智能体。它是一条 `bash -lc` 命令，在智能体所在机器上、带智能体的环境变量运行，与一轮同时
+进行，最多每分钟一次。输出与 `agy -p=/usage` 相同，每个额度池一行、用制表符分隔——池、窗口、剩余百分比、
+重置时间：
+
+```
+Gemini Models	Five Hour Limit Remaining	54%	2026-11-14T08:13:48Z
+```
+
+池是 Gemini，或 Claude 与 GPT；窗口是每周、5 小时或每天。两者都对不上的行会被跳过并写进日志。agy
+的 `/usage` 也改由这条命令回答。命令失败或没有输出时，保留上一次的读数。
+
+```yaml
+agents:
+  - id: ag
+    harness: agy
+    quotaCommand: ~/.local/bin/pool-quota
+```
+
 ## Antigravity（`agy`）
 
 `agy` 以 `agy acp` 运行——agy 从 1.5 起自带的 ACP 服务端——所以流式输出、工具气泡、
@@ -193,7 +215,8 @@ agents:
   里自己设了 `CLOUD_CODE_URL` 的，照样生效——中继转发到那里。中继打不开时，智能体不带中继启动，按 Google
   的值压缩，日志里写明原因。在 agy 1.5.2 上实测（2026-11-07），已确认 Gemini 3.8 Flash 上下文到 600k
   可用。代价是每次模型调用带的上下文更长，额度用得更快。`contextWindow` 和 `contextBudget` 都设了时，
-  页脚以 `contextWindow` 为准；中继照样会挪动 agy 实际压缩的位置。
+  页脚以 `contextWindow` 为准；中继照样会挪动 agy 实际压缩的位置。经[模型网关](#经模型网关)时 agy
+  不向 Google 拉模型列表，中继无处可改：不会启动中继，日志里写明。
 
   ```yaml
   agents:
@@ -201,7 +224,8 @@ agents:
       harness: agy
       contextBudget: 900000
   ```
-- **额度来自它的 CLI**：`agy -p=/usage`，与一轮同时进行，最多每分钟一次，精度是整数百分比。
+- **额度来自它的 CLI**：`agy -p=/usage`，与一轮同时进行，最多每分钟一次，精度是整数百分比；智能体设了
+  [`quotaCommand`](#额度命令) 的，改读它。
 - **agy 自己的警告是通知，不进回复正文。** 重试（「API error (attempt 1) …」）只提示一次；以警告收尾
   的一轮——额度用完、重试耗尽、服务器过载——按失败处理，`hooks.turnFailed` 能看到（归为 `provider`）。
 - **转到后台的命令会等它跑完。** agy 前台最多等一条命令 10 秒，超过就转到后台并结束这一轮；命令跑完后
@@ -216,6 +240,27 @@ agents:
 - **skills** 从 `<cwd>/.agents/skills`、`~/.agents/skills`、
   `~/.gemini/antigravity-cli/skills`、`~/.gemini/skills`、`~/.gemini/config/skills`
   读取，所以 `/skills` 能列出它们，`/<名字> <请求>` 能直接调用。
+
+### 经模型网关
+
+agy 可以不登录 Google，把模型调用发给一个 Gemini API 格式的网关：在 `env` 里设 `AGY_LLM_GATEWAY_URL` 和
+`AGY_LLM_GATEWAY_API_KEY`（不在本机的网关必须是 `https`）。这时可选的模型就是网关 `/v1beta/models` 列出的
+那些，网关加了新模型，不用等 agy 更新就能选——但新会话默认用列表里的第一个，所以要固定 `model:`。agy
+认识的模型发出去时会去掉档位后缀（`gemini-3.8-flash-high` 发成 `gemini-3.8-flash` 加思考档位），网关得认
+这个名字；不认识的模型按列表里的名字原样发。`agy -p=/usage` 什么都不输出（给智能体配
+[`quotaCommand`](#额度命令)），`contextBudget` 不起作用，压缩点由 agy 自己定——Gemini 3.8 Flash 约 256k，
+与网关报的窗口无关。在 agy 1.5.8 上实测（2026-11-14）。
+
+```yaml
+agents:
+  - id: ag
+    harness: agy
+    model: gemini-3.8-flash-high
+    quotaCommand: ~/.local/bin/pool-quota
+    env:
+      AGY_LLM_GATEWAY_URL: https://gateway.example
+      AGY_LLM_GATEWAY_API_KEY: ${GATEWAY_KEY}
+```
 
 `args` 追加在 `agy acp` 之后（见 `agy acp --help`）。
 

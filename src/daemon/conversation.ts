@@ -118,6 +118,7 @@ import type { WorkdirUsageStore } from './workdir-usage.js';
 import { expandHome, expandRemoteHome, resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
 import { join } from 'node:path';
 import { formatAgyCliOutput, runAgyCliCommand, runAgyCliFor } from './agy-cli.js';
+import { runQuotaCommandFor } from './quota-meter.js';
 import { formatRuntimeFooter, formatTokens } from '../core/runtime-footer.js';
 import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
 import { InboundMerger, stopInputNote, type SoloOutcome } from '../core/inbound-merger.js';
@@ -2824,8 +2825,13 @@ export class ConversationRegistry {
       reply(`${label} has no way to answer /${name} outside a turn.`);
       return;
     }
-    console.log(`[command] /${name} run as a one-shot agy process for ${key} (${state.agentId})`);
-    const result = await runAgyCliFor(def, name, resolveConversationCwd(def, key, this.store), this.runHarnessCli);
+    const cwd = resolveConversationCwd(def, key, this.store);
+    // An agent with its own quotaCommand gets its /usage from there: through a model gateway agy's
+    // own answer is empty (quota-meter.ts), and the command prints the same table, so it renders
+    // the same way.
+    const own = name === 'usage' && def.quotaCommand !== undefined;
+    console.log(`[command] /${name} run as ${own ? 'the agent\'s quotaCommand' : 'a one-shot agy process'} for ${key} (${state.agentId})`);
+    const result = own ? await runQuotaCommandFor(def, cwd) : await runAgyCliFor(def, name, cwd, this.runHarnessCli);
     if (!result.ok) {
       reply(`Could not ask ${label} for /${name}: ${result.error}`);
       return;

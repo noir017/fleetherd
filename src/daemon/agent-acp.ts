@@ -89,14 +89,13 @@ import {
   agySplitModel,
   agyTurnWatch,
   agyWindow,
-  createAgyQuotaMeter,
   forgetsModelOnLoad,
   takesPromptMidTurn,
-  type AgyQuotaMeter,
   type AgyTurnWatch,
 } from './agy-acp.js';
 import { markActivePools } from './agy-meters.js';
 import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
+import { createQuotaMeter, hasQuotaSource, type QuotaMeter } from './quota-meter.js';
 import { relayEnv } from './relay.js';
 
 /**
@@ -345,7 +344,7 @@ export function createAcpAgentFactory(
   const sessions = new Map<string, AgentSession>();
   const turnTimeoutMs = cfg.session.turnTimeoutMs;
   // One reading per agy account for the whole runtime, whichever conversation asked (agy-acp.ts).
-  const agyQuota = createAgyQuotaMeter(agyCli);
+  const quota = createQuotaMeter({ agy: agyCli });
 
   return {
     getOrCreate(sessionId: string, agentId: string): AgentSession {
@@ -353,7 +352,7 @@ export function createAcpAgentFactory(
       if (!s) {
         const def = findAgent(cfg, agentId);
         if (!def) throw new Error(`unknown agent id: ${agentId} (check the routing and agents config)`);
-        s = createAcpSession(def, socketPath, sessionId, turnTimeoutMs, store, def.harness === 'agy' ? agyQuota : undefined);
+        s = createAcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined);
         sessions.set(sessionId, s);
       }
       return s;
@@ -994,8 +993,8 @@ function createAcpSession(
   conversationId: string,
   turnTimeoutMs: number,
   store?: ConversationStore,
-  /** agy's quota pools, which no ACP message carries (agy-acp.ts). Only for an agy agent. */
-  agyQuota?: AgyQuotaMeter
+  /** The quota pools, which no ACP message carries (quota-meter.ts): agy's, or the agent's quotaCommand. */
+  quota?: QuotaMeter
 ): AgentSession {
   /**
    * The directory this session's child runs in. Resolved per SPAWN, not once per session, so a
@@ -2239,7 +2238,7 @@ function createAcpSession(
   }
 
   /**
-   * agy's quota for one turn (agy-acp.ts createAgyQuotaMeter): the last reading reported at once,
+   * The quota for one turn (quota-meter.ts): the last reading reported at once,
    * and a refresh started beside the turn, reported whenever it lands — for as long as this session
    * is the conversation's, not only while the turn runs.
    *
@@ -2253,8 +2252,8 @@ function createAcpSession(
    * The run that lost the race showed no quota until the next turn, and every turn whose reading
    * was slow ended up to 5 s late for nothing.
    */
-  function agyQuotaForTurn(handlers: AgentStreamHandlers): void {
-    const meter = agyQuota;
+  function quotaForTurn(handlers: AgentStreamHandlers): void {
+    const meter = quota;
     if (!meter) return;
     const report = (): void => {
       const pools = meter.read(def);
@@ -2542,8 +2541,8 @@ function createAcpSession(
       // preference to fall back on, so the list is the whole of what is known about it.
       const effort = liveEffortName(liveConfigOptions);
       if (effort) handlers.onEffort?.(effort);
-      // agy's quota, which no ACP message carries: the last reading now, a fresh one beside the turn.
-      agyQuotaForTurn(handlers);
+      // The quota, which no ACP message carries: the last reading now, a fresh one beside the turn.
+      quotaForTurn(handlers);
 
       // Silence watchdog: one timer, re-armed by the pump on every update it hands to this turn, so
       // it bounds SILENCE rather than turn length. A hung agent — alive but never sending `stop` nor
