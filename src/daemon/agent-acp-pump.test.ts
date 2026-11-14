@@ -813,7 +813,8 @@ describe('a turn the harness will not stop', () => {
     const stoppedAt = Date.now();
     session.abort();
     // Shown, and marked: the tool it STARTED after the stop says so; the one it was in does not.
-    await until(() => turn.starts.some((s) => s.preview.includes('carry-on')));
+    // The tool call and the text after it are two notifications: wait for both.
+    await until(() => turn.starts.some((s) => s.preview.includes('carry-on')) && turn.turn.join('').includes('still going'));
     expect(turn.starts).toEqual([
       { name: 'Bash', preview: './long-job.sh' },
       { name: 'Bash', preview: './carry-on.sh', afterStop: true },
