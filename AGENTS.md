@@ -56,7 +56,7 @@ it. Do not duplicate that content here.
 | `src/commands/` | CLI entry points: `setup`, `doctor`, `start`, reverse commands | [README](src/commands/README.md) |
 | `src/types.ts` | Domain data shapes shared across modules. Types only, no behavior. | — |
 | `src/legacy-name.ts` | Everything 3.0.0 still reads or writes under the name `talkcode`; `remote/legacy.go` is its Go twin | [below](#compatibility-with-the-name-talkcode) |
-| `src/cli.ts` | Commander wiring. `start` is lazy-imported to keep `--help`/`doctor` fast. | — |
+| `src/cli.ts` | Commander wiring. `start`, `setup` and `doctor` are lazy-imported: a remote agent's every command runs this binary on the gateway, and they would double what it loads. | — |
 | `scripts/` | Dev utilities (`stop.mjs` kills stray daemons, `probe.mjs` Discord gateway probe) | [README](scripts/README.md) |
 | `skill/` | The bundled agent skill: how an agent finds the reverse CLI. The daemon links it into each harness's skill directory (`daemon/skill-link.ts`) | [SKILL.md](skill/SKILL.md) |
 | `skill-super/` | The second bundled skill, `super`: how an agent splits a job across sub-agents (`/super`, `daemon/delegation.ts`). Linked the same way | [SKILL.md](skill-super/SKILL.md) |

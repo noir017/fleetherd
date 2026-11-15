@@ -72,7 +72,9 @@ agent can do here reaches it through its harness's own mechanisms, in three laye
 1. **Three native tools**, `send_file`, `schedule` and `skills` (`tools.ts`). `fleetherd mcp`
    (`commands/mcp.ts`) serves them over MCP on stdio, and the daemon lists that server in every
    ACP session's `session/new` (`daemon/agent-acp.ts` `acpMcpServers`), so the harness starts one
-   per session. Same socket, same session token, same TOON answer as the shell command.
+   per session. Same socket, same session token, same TOON answer as the shell command. An agent
+   on a remote host starts its host's shim instead, and the gateway serves that session in its own
+   process rather than spawning the server (`daemon/remote-hosts.ts` runCli, `mcpSession`).
 2. **The bundled skill** (`skill/SKILL.md`), whose one-line description is the only thing in
    context until an agent needs it. Its body sends the agent to `fleetherd help`. The daemon
    links it into the skill directories the harnesses read (`daemon/skill-link.ts`).

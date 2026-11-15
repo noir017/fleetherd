@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline';
+import { PassThrough, type Readable } from 'node:stream';
 import { encode } from '@toon-format/toon';
-import { callDaemon, clientTimeoutFor } from '../ipc/client.js';
+import { callDaemon, clientTimeoutFor, parseEnvTimeout } from '../ipc/client.js';
 import type { IpcAction, IpcResponse } from '../ipc/protocol.js';
 import { findNativeTool, NATIVE_TOOLS, toolAction, toolInputSchema } from '../ipc/tools.js';
 import { friendlyError, normalizeActionPaths, renderResult } from './reverse.js';
@@ -33,6 +34,14 @@ import { envOf } from '../legacy-name.js';
  *
  * stdout is the protocol stream and nothing else: one JSON-RPC message per line. Anything meant
  * for a human goes to stderr, which the harness keeps out of the stream.
+ *
+ * An agent on a remote host gets the same server without a process of its own: the host's shim
+ * carries `fleetherd mcp` back to the gateway, and the daemon serves it in-process (`mcpSession`)
+ * instead of spawning this CLI. That is the gateway's memory, not a convenience. A spawned server
+ * lives as long as its session — an hour past the last message, by `session.idleTimeoutMs` — and
+ * each one cost about 60 MB of its own (measured 2026-11-15 in the gateway's container: two
+ * sessions, Pss_Anon 60 MB apiece next to a 187 MB daemon, under a 1 GB limit). Every remote
+ * session holding one, a handful of sub-agents was enough to fill the container.
  */
 
 /** MCP revisions this server can answer in, newest first. The tool surface used is the same in all. */
@@ -52,6 +61,8 @@ export interface McpDeps {
   call(action: IpcAction): Promise<IpcResponse>;
   /** The session's working directory: relative paths resolve against it. */
   cwd: string;
+  /** What `~` means; unset, the CLI's own answer (normalizeActionPaths). */
+  home?: string;
   /** The daemon's socket, named in connection errors. */
   socket: string;
   /** This CLI's version, reported as serverInfo. */
@@ -205,7 +216,7 @@ async function callTool(params: unknown, deps: McpDeps): Promise<Outcome> {
 
   let action: IpcAction;
   try {
-    action = normalizeActionPaths(toolAction(tool, p.arguments), deps.cwd);
+    action = normalizeActionPaths(toolAction(tool, p.arguments), deps.cwd, deps.home);
   } catch (e) {
     return toolText(encode({ error: e instanceof Error ? e.message : String(e) }), true);
   }
@@ -230,33 +241,138 @@ export async function runMcp(version: string): Promise<void> {
             error: 'FLEETHERD_SOCKET is not set: this server is started by a fleetherd session, not by hand',
           }),
   };
-  const write = (r: JsonRpcResponse | JsonRpcResponse[]): void => {
-    process.stdout.write(`${JSON.stringify(r)}\n`);
-  };
+  await serveMcp(process.stdin, (line) => process.stdout.write(line), deps);
+}
+
+/**
+ * Answer the JSON-RPC lines read from `input` until it ends, each answer one line handed to `write`.
+ * Resolves once the input has ended and every call in flight has been answered.
+ */
+export async function serveMcp(input: Readable, write: (line: string) => void, deps: McpDeps): Promise<void> {
+  const send = (r: JsonRpcResponse | JsonRpcResponse[]): void => write(`${JSON.stringify(r)}\n`);
   // Calls are answered as they finish, not in arrival order: a slow upload must not hold up a ping.
   const inFlight = new Set<Promise<void>>();
-  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const lines = createInterface({ input, crlfDelay: Infinity });
   for await (const line of lines) {
     if (!line.trim()) continue;
     let msg: unknown;
     try {
       msg = JSON.parse(line);
     } catch {
-      write(fail(null, PARSE_ERROR, 'Parse error'));
+      send(fail(null, PARSE_ERROR, 'Parse error'));
       continue;
     }
     const answer = Array.isArray(msg)
       ? Promise.all(msg.map((one) => handleMcpMessage(one, deps))).then((rs) => {
           // A batch (allowed by revisions before 2025-06-18) is answered as one array, or not at all.
           const answered = rs.filter((r): r is JsonRpcResponse => r !== undefined);
-          if (answered.length) write(answered);
+          if (answered.length) send(answered);
         })
       : handleMcpMessage(msg, deps).then((r) => {
-          if (r) write(r);
+          if (r) send(r);
         });
     const tracked = answer.catch((e: unknown) => console.error('[mcp]', e instanceof Error ? e.message : e));
     inFlight.add(tracked);
     void tracked.finally(() => inFlight.delete(tracked));
   }
   await Promise.allSettled(inFlight);
+}
+
+/**
+ * The longest line an in-process session reads before giving up on it. A spawned server had no
+ * limit and needed none — what it buffered was its own memory, and the kernel's to reclaim when it
+ * died; in-process the line would sit in the daemon. Generous on purpose: the daemon refuses any
+ * request over 1 MiB itself (ipc/server.ts MAX_LINE_BYTES), so nothing this cuts could have gone
+ * through, and a tool call is JSON-escaped once more than the request it becomes.
+ */
+export const MAX_SESSION_LINE_BYTES = 4 << 20;
+
+/** One remote session's server, as the daemon serves it in-process (see the header). */
+export interface McpSessionOptions {
+  /** The session's turn token, which every call carries: the daemon checks it like any other. */
+  token: string;
+  socket: string;
+  cwd: string;
+  /** The host's home, which `~` means. */
+  home: string;
+  version: string;
+  /** The caller's FLEETHERD_IPC_TIMEOUT_MS, which a spawned server would have read itself. */
+  ipcTimeoutMs?: string;
+}
+
+/**
+ * Serve one session in this process. The shapes are remote/host.ts's `CliIO` and `CliSession`,
+ * restated rather than imported because commands/ does not reach into remote/ (AGENTS.md
+ * Layering); TypeScript holds them to it structurally where daemon/remote-hosts.ts passes this on.
+ *
+ * Killed, it answers nothing more and exits at once, as a killed process would. A call already on
+ * its way to the daemon is not called back — it runs to its own timeout and its answer is dropped.
+ */
+export function mcpSession(
+  opts: McpSessionOptions,
+  io: { out(fd: 1 | 2, data: Buffer): void; exit(code: number): void }
+): { write(data: Buffer): void; end(): void; kill(): void } {
+  const callerTimeout = parseEnvTimeout(opts.ipcTimeoutMs);
+  const deps: McpDeps = {
+    socket: opts.socket,
+    version: opts.version,
+    cwd: opts.cwd,
+    home: opts.home,
+    call: (action) => {
+      // The same bound callDaemon works out from its environment, with the caller's variable in
+      // place of this process's: the larger of the two for a blocking call, the caller's otherwise.
+      const own = clientTimeoutFor(action);
+      return callDaemon(opts.socket, action, opts.token, own !== undefined ? Math.max(callerTimeout ?? 0, own) : callerTimeout);
+    },
+  };
+  const input = new PassThrough();
+  let closed = false;
+  let pending = 0;
+  const finish = (code: number): void => {
+    if (closed) return;
+    closed = true;
+    io.exit(code);
+  };
+  const stop = (code: number): void => {
+    finish(code);
+    input.destroy();
+  };
+  serveMcp(input, (line) => (closed ? undefined : io.out(1, Buffer.from(line))), deps).then(
+    () => finish(0),
+    (e: unknown) => {
+      console.error('[mcp]', e instanceof Error ? e.message : e);
+      finish(1);
+    }
+  );
+  return {
+    write: (data) => {
+      if (closed) return;
+      pending = lineTail(data, pending);
+      if (pending > MAX_SESSION_LINE_BYTES) {
+        io.out(2, Buffer.from(`fleetherd mcp: a message longer than ${MAX_SESSION_LINE_BYTES} bytes; closing\n`));
+        stop(1);
+        return;
+      }
+      input.write(data);
+    },
+    end: () => input.end(),
+    kill: () => stop(1),
+  };
+}
+
+/**
+ * The length of the line still open after `data`, given `pending` bytes of it before; Infinity as
+ * soon as any line in it runs past the limit, so a long line in the middle of a chunk counts too.
+ */
+function lineTail(data: Buffer, pending: number): number {
+  let open = pending;
+  let from = 0;
+  for (;;) {
+    const nl = data.indexOf(0x0a, from);
+    open += (nl === -1 ? data.length : nl) - from;
+    if (open > MAX_SESSION_LINE_BYTES) return Infinity;
+    if (nl === -1) return open;
+    open = 0;
+    from = nl + 1;
+  }
 }

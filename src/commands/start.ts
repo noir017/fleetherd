@@ -17,6 +17,7 @@ import { backUpForRenames, readAgentRenames, renameAgentsInConfig, setRenamesAsi
 import { HistoryStore } from '../history/store.js';
 import { importWebuiTranscripts } from '../history/import-webui.js';
 import { installDaemonLog } from './log-file.js';
+import { mcpSession } from './mcp.js';
 import { legacyConfigDirNote, migrateHostDir } from '../legacy-name.js';
 
 /**
@@ -77,6 +78,7 @@ export async function runStart(): Promise<void> {
   // The host table every agent's spawn resolves against, before the factory exists. The Daemon
   // configures them again; that keeps every live connection (RemoteHosts.configure).
   remoteHosts.configure(cfg, socket);
+  remoteHosts.serveMcpWith(mcpSession);
   const agents = createAcpAgentFactory(cfg, socket, store);
   // Scheduled tasks: their own file (a task is not a property of a conversation), and a directory
   // of bash-run logs beside it. See daemon/schedule-store.ts for why that file is 0600 and atomic.

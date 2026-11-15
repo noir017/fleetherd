@@ -1467,7 +1467,8 @@ What replaced it:
 
 - **Native tools**, ACP only. `acpMcpServers` lists `fleetherd mcp` — named `chat`, so Claude
   Code shows `mcp__chat__send_file` — in `session/new` *and* `session/load`, as a stdio server the
-  harness starts per session. Stdio because every ACP agent must support it (2026-10-09: cc, cx and
+  harness starts per session (for an agent on a remote host the gateway serves that session
+  in-process instead: `remote-hosts.ts` runCli). Stdio because every ACP agent must support it (2026-10-09: cc, cx and
   oc also advertise http, which would mean a listening port where there is only a 0600 socket).
   Its environment is spelled out — token, socket, and the session's cwd for relative paths —
   because a harness may not pass its own on (codex gives MCP servers an allowlist), and ACP's stdio

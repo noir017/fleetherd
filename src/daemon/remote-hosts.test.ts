@@ -105,6 +105,40 @@ describe('the shim bridge', () => {
       expect(run(argv).out).toContain('this gateway is not running as the fleetherd CLI');
     }
   });
+
+  describe('with a native-tools server to serve in-process', () => {
+    type Served = Parameters<Parameters<RemoteHosts['serveMcpWith']>[0]>[0];
+    const host = { id: 'box', conn: { welcome: { ...welcome, home: '/home/me' } } } as unknown as RemoteHost;
+    const runWith = (argv: string[], env: Record<string, string> = {}) => {
+      const served: Served[] = [];
+      const hosts = new RemoteHosts();
+      hosts.serveMcpWith((session) => {
+        served.push(session);
+        return { write: () => {}, end: () => {}, kill: () => {} };
+      });
+      let out = '';
+      hosts.runCli({ argv, cwd: '/fallback', token: 't', env, host }, { out: (_fd, d) => void (out += d.toString()), exit: () => {} });
+      return { served, out };
+    };
+
+    it('serves bare `mcp` here, with what a spawned server would have found in its environment', () => {
+      const r = runWith(['mcp'], { FLEETHERD_CWD: '/home/me/work', FLEETHERD_IPC_TIMEOUT_MS: '5000' });
+      expect(r.served).toHaveLength(1);
+      expect(r.served[0]).toMatchObject({ token: 't', cwd: '/home/me/work', home: '/home/me', ipcTimeoutMs: '5000' });
+      expect(r.served[0]!.version).toMatch(/^\d+\.\d+\.\d+/);
+    });
+
+    it('leaves everything else to the CLI, and still turns away what is not allowed', () => {
+      for (const argv of [['mcp', '--help'], ['send-file', 'x']]) {
+        const r = runWith(argv);
+        expect(r.served).toEqual([]);
+        expect(r.out).toContain('this gateway is not running as the fleetherd CLI');
+      }
+      const r = runWith(['start']);
+      expect(r.served).toEqual([]);
+      expect(r.out).toContain('"start" is not a command an agent can run here');
+    });
+  });
 });
 
 describe('gatewayNamespace', () => {

@@ -128,7 +128,7 @@ export async function callDaemon(
  * Note: 0 is treated as bad here — a 0 timeout is meaningless, and rejecting it
  * explicitly avoids a misconfig making every IPC call time out instantly.
  */
-function parseEnvTimeout(raw: string | undefined): number | undefined {
+export function parseEnvTimeout(raw: string | undefined): number | undefined {
   if (raw === undefined || raw === '') return undefined;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {

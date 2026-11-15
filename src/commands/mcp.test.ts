@@ -1,7 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decode } from '@toon-format/toon';
-import type { IpcAction, IpcResponse } from '../ipc/protocol.js';
-import { LIBRARY_NAMES_MAX, MCP_PROTOCOL_VERSIONS, handleMcpMessage, libraryLine, type JsonRpcResponse, type McpDeps } from './mcp.js';
+import type { IpcAction, IpcRequest, IpcResponse } from '../ipc/protocol.js';
+import {
+  LIBRARY_NAMES_MAX,
+  MAX_SESSION_LINE_BYTES,
+  MCP_PROTOCOL_VERSIONS,
+  handleMcpMessage,
+  libraryLine,
+  mcpSession,
+  type JsonRpcResponse,
+  type McpDeps,
+} from './mcp.js';
 
 /**
  * The MCP server as a harness drives it: one JSON-RPC message in, one answer (or none) out. The
@@ -172,3 +185,105 @@ describe('libraryLine', () => {
     expect(libraryLine({ total: 2, library: 1, categories: [{ name: '运维', count: 2, library: [] }] })).toBe('');
   });
 });
+
+/**
+ * A remote session's server as the daemon serves it in-process. The daemon is a real socket here,
+ * not a fake `call`: what this path must keep is that every call still goes over the socket with
+ * the session's token, so the daemon checks it exactly as it checks a spawned server's.
+ */
+describe('mcpSession', () => {
+  const cleanup: (() => void)[] = [];
+  afterEach(() => {
+    for (const c of cleanup.splice(0)) c();
+  });
+
+  /** A daemon socket that records each request and answers it — or holds it, when `hold` is set. */
+  async function daemon(hold = false): Promise<{ socket: string; got: IpcRequest[]; release: () => void }> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-mcp-'));
+    const socket = path.join(dir, 'd.sock');
+    const got: IpcRequest[] = [];
+    const held: net.Socket[] = [];
+    const reply = (c: net.Socket) => c.end(`${JSON.stringify({ ok: true, data: { messageId: 'm1' } })}\n`);
+    const server = net.createServer((c) => {
+      let buf = '';
+      c.on('data', (d) => {
+        buf += d.toString();
+        if (!buf.includes('\n')) return;
+        got.push(JSON.parse(buf.slice(0, buf.indexOf('\n'))) as IpcRequest);
+        if (hold) held.push(c);
+        else reply(c);
+      });
+    });
+    await new Promise<void>((r) => server.listen(socket, r));
+    cleanup.push(() => {
+      server.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+    return { socket, got, release: () => held.splice(0).forEach(reply) };
+  }
+
+  function open(socket: string) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const exits: number[] = [];
+    let exited: (code: number) => void = () => {};
+    const done = new Promise<number>((r) => (exited = r));
+    const s = mcpSession(
+      { token: 'tok', socket, cwd: '/work/project', home: '/home/agent', version: '9.9.9' },
+      {
+        out: (fd, d) => (fd === 1 ? out : err).push(d.toString()),
+        exit: (code) => {
+          exits.push(code);
+          exited(code);
+        },
+      }
+    );
+    const send = (...msgs: unknown[]) => s.write(Buffer.from(msgs.map((m) => `${JSON.stringify(m)}\n`).join('')));
+    return { s, out, err, exits, done, send };
+  }
+
+  const sendFile = (id: number, p: string) => req('tools/call', { name: 'send_file', arguments: { path: p } }, id);
+
+  it('answers on fd 1 and carries the session token to the daemon, with ~ as the host home', async () => {
+    const d = await daemon();
+    const m = open(d.socket);
+    m.send(req('initialize', {}, 1), sendFile(2, '~/out.png'), sendFile(3, 'rel.png'));
+    m.s.end();
+    expect(await m.done).toBe(0);
+    const answers = m.out.join('').trim().split('\n').map((l) => JSON.parse(l) as JsonRpcResponse);
+    expect(answers.map((a) => a.id).sort()).toEqual([1, 2, 3]);
+    expect(answers.every((a) => a.error === undefined)).toBe(true);
+    expect(d.got.map((r) => r.token)).toEqual(['tok', 'tok']);
+    expect(d.got.map((r) => (r.action as { path: string }).path).sort()).toEqual(['/home/agent/out.png', '/work/project/rel.png']);
+  });
+
+  it('gives up on a line past the limit, even one sent in pieces, and forwards none of it', async () => {
+    const d = await daemon();
+    const m = open(d.socket);
+    const half = Buffer.alloc(MAX_SESSION_LINE_BYTES / 2 + 1, 0x61);
+    m.s.write(half);
+    m.s.write(half);
+    expect(await m.done).toBe(1);
+    expect(m.err.join('')).toContain('longer than');
+    m.send(sendFile(1, '/x'));
+    m.s.end();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(d.got).toEqual([]);
+    expect(m.out).toEqual([]);
+    expect(m.exits).toEqual([1]);
+  });
+
+  it('is gone the moment it is killed: exits once, and an answer still on its way is dropped', async () => {
+    const d = await daemon(true);
+    const m = open(d.socket);
+    m.send(sendFile(1, '/x'));
+    await vi.waitFor(() => expect(d.got).toHaveLength(1));
+    m.s.kill();
+    expect(await m.done).toBe(1);
+    d.release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(m.out).toEqual([]);
+    expect(m.exits).toEqual([1]);
+  });
+});
+

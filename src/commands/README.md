@@ -117,6 +117,14 @@ Two details that exist for correctness, not style:
 ([`src/ipc/README.md`](../ipc/README.md#why-exactly-these-three-tools) says why those three). The daemon
 lists it in every ACP session, and the harness starts one per session as its own child.
 
+- **A remote session's server runs inside the daemon** (`mcpSession`). Its host's shim carries
+  `fleetherd mcp` back to the gateway, which used to spawn this CLI for it — one process of ~60 MB
+  per session, alive until the session's idle reclaim. `start` hands `mcpSession` to
+  `remoteHosts.serveMcpWith`, because daemon/ does not import commands/. The loop is `serveMcp`,
+  shared with the stdio entry; only the environment differs, passed in rather than read: the token,
+  the session's directory, the host's home for `~`, and the caller's `FLEETHERD_IPC_TIMEOUT_MS`. A
+  line is capped at `MAX_SESSION_LINE_BYTES`, which a process of its own never needed.
+
 - **Hand-rolled**, not `@modelcontextprotocol/sdk`: four stateless methods (`initialize`, `ping`,
   `tools/list`, `tools/call`), and `handleMcpMessage` stays a pure function the tests drive.
 - **Configured by its environment only** — `FLEETHERD_TURN_TOKEN`, `FLEETHERD_SOCKET`,
