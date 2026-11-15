@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-11-15
+
 ### Changed
 
 - **An agent on a remote host no longer costs the gateway a process.** Every agent session gets the
