@@ -103,7 +103,10 @@ describe('prepareSkillsRepo', () => {
     fs.mkdirSync(path.join(old, '.archive', 'old-one'), { recursive: true });
     fs.writeFileSync(path.join(old, '.archive', 'old-one', 'SKILL.md'), skillMd('old-one', 'Use when never'));
     fs.mkdirSync(path.join(old, '.history', 'email-reader', '1'), { recursive: true });
-    const usage = { version: 1, skills: { 'email-reader': { source: { agent: 'ag' }, createdAt: '2026-11-01T00:00:00.000Z', uses: 2, agents: [], status: 'active', pinned: false } } };
+    // Made now, not on a fixed date: a skill untouched for EXPIRY_DAYS lists as expired, and this
+    // one, made on 2026-11-01, did from 2026-11-15 on.
+    const createdAt = new Date().toISOString();
+    const usage = { version: 1, skills: { 'email-reader': { source: { agent: 'ag' }, createdAt, uses: 2, agents: [], status: 'active', pinned: false } } };
     fs.writeFileSync(path.join(old, '.usage.json'), JSON.stringify(usage));
 
     expect(prepareSkillsRepo(dir, (m) => logs.push(m))).toBe(true);
