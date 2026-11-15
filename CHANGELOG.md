@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **An agent on a remote host no longer costs the gateway a process.** Every agent session gets the
+  native tools (`send_file`, `schedule`, `skills`) from a `fleetherd mcp` server. For an agent on a
+  host, that server ran on the gateway, as a process of its own that lived as long as the session —
+  an hour past the last message — at about 60 MB apiece: four sessions took a test gateway from
+  121 MB to 361 MB, and a few sub-agents were enough to press a gateway container against a 1 GB
+  limit. The gateway now serves those sessions in its own process. The calls are unchanged: each
+  still goes over the daemon's socket with the session's token.
+- **Each command an agent on a host runs costs the gateway about half the memory.** Such a command
+  runs on the gateway as a short-lived `fleetherd` process, and that process loaded `setup` and
+  `doctor` — the ACP SDK and the setup wizard's prompts — on every run: 110 MB where a command needs
+  61. They are now loaded only when they are the command.
+
 ## [3.7.0] - 2026-11-14
 
 ### Added

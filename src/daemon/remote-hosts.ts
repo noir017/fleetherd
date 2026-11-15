@@ -74,6 +74,15 @@ export function gatewayNamespace(dir = configDir()): string {
   return id;
 }
 
+/**
+ * One remote session's `fleetherd mcp`, served in the daemon (commands/mcp.ts mcpSession). What it
+ * is given is what a spawned server would have found in its environment.
+ */
+export type InProcessMcp = (
+  session: { token: string; socket: string; cwd: string; home: string; version: string; ipcTimeoutMs?: string },
+  io: Parameters<CliBridge>[1]
+) => CliSession;
+
 export class RemoteHosts {
   private readonly hosts = new Map<string, { key: string; host: RemoteHost }>();
   /** One per gateway process: a host that sees a new one knows the old gateway is gone. */
@@ -101,6 +110,17 @@ export class RemoteHosts {
   private readonly managedArchived = new Set<string>();
   /** Told each time a host's connection comes up or drops (host-availability.ts listens). */
   private connectionListener: ((id: string, up: boolean) => void) | undefined;
+  /** Serves a host's `fleetherd mcp` in this process; unset, it is spawned like any command. */
+  private mcp: InProcessMcp | undefined;
+
+  /**
+   * Serve the native-tools server of every agent on a host in this process (commands/mcp.ts
+   * mcpSession says why). Handed in by `start` because the server is commands/'s, and daemon/ does
+   * not import commands/ (AGENTS.md Layering).
+   */
+  serveMcpWith(mcp: InProcessMcp): void {
+    this.mcp = mcp;
+  }
 
   /** Hear about every host's connection coming up or dropping — one listener, the daemon's. */
   onConnection(listener: (id: string, up: boolean) => void): void {
@@ -434,6 +454,9 @@ export class RemoteHosts {
    *
    * Public because it is the security boundary itself: the test drives it directly rather than
    * asserting on the list it consults, which would stay green with the call removed.
+   *
+   * Bare `mcp` is the exception to "spawned": served in this process when `serveMcpWith` was given
+   * a server — after the same allowlist check, and with the same token on every call it makes.
    */
   runCli(req: Parameters<CliBridge>[0], io: Parameters<CliBridge>[1]): CliSession {
     const refuse = (message: string): CliSession => {
@@ -450,17 +473,26 @@ export class RemoteHosts {
           (hint ? `. ${hint}` : '')
       );
     }
+    const cwd = envOf('CWD', req.env) || req.cwd;
+    const home = (): string => req.host.conn.welcome?.home || '/';
+    const timeout = envOf('IPC_TIMEOUT_MS', req.env);
+    // Bare `mcp` only: anything after it (`mcp --help`) is the CLI's to answer.
+    if (this.mcp && req.argv.length === 1 && req.argv[0] === 'mcp') {
+      return this.mcp(
+        { token: req.token, socket: this.socketPath, cwd, home: home(), version: packageVersion(), ipcTimeoutMs: timeout },
+        io
+      );
+    }
     const self = selfInvocation();
     if (!self) return refuse('this gateway is not running as the fleetherd CLI, so it cannot run reverse commands');
     const env: Record<string, string | undefined> = {
       ...process.env,
       FLEETHERD_TURN_TOKEN: req.token,
       FLEETHERD_SOCKET: this.socketPath,
-      FLEETHERD_CWD: envOf('CWD', req.env) || req.cwd,
-      FLEETHERD_REMOTE_HOME: req.host.conn.welcome?.home || '/',
+      FLEETHERD_CWD: cwd,
+      FLEETHERD_REMOTE_HOME: home(),
       FLEETHERD_REMOTE_HOST: req.host.id,
     };
-    const timeout = envOf('IPC_TIMEOUT_MS', req.env);
     if (timeout) env.FLEETHERD_IPC_TIMEOUT_MS = timeout;
     const child = spawn(self.command, [...self.args, ...req.argv], { env, cwd: os.tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] });
     child.stdout.on('data', (d: Buffer) => io.out(1, d));

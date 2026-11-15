@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
 import { encode } from '@toon-format/toon';
-import { runSetup } from './commands/setup.js';
-import { runDoctor } from './commands/doctor.js';
 import { runReverse } from './commands/reverse.js';
 import { registerReverseCommand } from './commands/reverse-cli.js';
 import { handOffRemoteCli } from './commands/remote-cli.js';
@@ -19,6 +17,14 @@ if (remoteExit !== null) process.exit(remoteExit);
 // Note: the start path pulls in the heavy koishi + claude agent sdk stack, so it's
 // lazy-loaded to keep --help / setup / doctor / reverse commands lightweight to start.
 const runStart = () => import('./commands/start.js').then((m) => m.runStart());
+// setup and doctor too, though they are cheap to start for a person. What is not cheap is the
+// imports they would add to every OTHER run of this binary: doctor reaches the ACP SDK through
+// daemon/agent-acp.ts and setup brings @inquirer/prompts, together 110 MB of RSS where a reverse
+// command needs 61 (measured 2026-11-15, node 24). An agent on a remote host has each of its
+// commands run here, as a process of the gateway's (daemon/remote-hosts.ts runCli), so the
+// difference is the gateway's memory, once per command in flight.
+const runSetup = () => import('./commands/setup.js').then((m) => m.runSetup());
+const runDoctor = (opts: { migrateConfig?: boolean }) => import('./commands/doctor.js').then((m) => m.runDoctor(opts));
 
 /**
  * The real installed version, read from package.json at runtime.

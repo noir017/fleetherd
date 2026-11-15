@@ -55,10 +55,7 @@ export interface ReverseOutput {
  * would become a malformed/wrong address like `file://./x.png` on the daemon side, so we must
  * resolve to absolute here.
  */
-function resolvePathArg(p: string, base: string): string {
-  // An agent on a remote host runs this CLI through the gateway (daemon/remote-hosts.ts), so `~` is
-  // that host's home, which the bridge passes in; locally it is ours.
-  const home = envOf('REMOTE_HOME') || os.homedir();
+function resolvePathArg(p: string, base: string, home: string): string {
   let expanded = p;
   if (p === '~') expanded = home;
   else if (p.startsWith('~/')) expanded = path.posix.join(home, p.slice(2));
@@ -68,14 +65,22 @@ function resolvePathArg(p: string, base: string): string {
 /**
  * Normalize the relative/`~` path in a send-file action to absolute (see resolvePathArg).
  * Other actions are returned unchanged.
+ *
+ * `home` is what `~` means. An agent on a remote host has its commands run on the gateway
+ * (daemon/remote-hosts.ts), so there it is that host's home: a spawned CLI gets it as
+ * FLEETHERD_REMOTE_HOME, and the native-tools server the daemon serves in-process is handed it.
  */
-export function normalizeActionPaths(action: IpcAction, base = process.cwd()): IpcAction {
+export function normalizeActionPaths(
+  action: IpcAction,
+  base = process.cwd(),
+  home = envOf('REMOTE_HOME') || os.homedir()
+): IpcAction {
   if (action.kind === 'send-file') {
-    return { ...action, path: resolvePathArg(action.path, base) };
+    return { ...action, path: resolvePathArg(action.path, base, home) };
   }
   // Same reason: a schedule's --cwd is read by the daemon, whose own CWD is not the agent's.
   if ((action.kind === 'schedule-add' || action.kind === 'schedule-edit') && action.cwd !== undefined) {
-    return { ...action, cwd: resolvePathArg(action.cwd, base) };
+    return { ...action, cwd: resolvePathArg(action.cwd, base, home) };
   }
   return action;
 }
