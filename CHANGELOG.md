@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-11-16
+
 ### Added
 
 - **A scheduled task has a page of its own in the web UI, and can be edited there.** Tapping a task
