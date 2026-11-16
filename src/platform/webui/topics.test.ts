@@ -251,6 +251,30 @@ describe('TopicStore', () => {
     expect(reopened.get(normal.id)).not.toHaveProperty('scheduled');
   });
 
+  it("keeps the task a run belongs to across a restart, and drops one that is not a task id", () => {
+    // The task's page lists its sessions from this, so it has to outlive the restart an update is.
+    const store = new TopicStore(file);
+    const run = store.create('[cc] ⏰ Morning CI · 2026-11-04', undefined, { scheduled: true, task: 'a1b2c3' });
+    // Only a scheduled run belongs to a task: a person's topic carries no task whatever is passed.
+    const normal = store.create('[cc] mine', undefined, { task: 'a1b2c3' });
+    expect(new TopicStore(file).get(run.id)).toMatchObject({ scheduled: true, task: 'a1b2c3' });
+    expect(new TopicStore(file).get(normal.id)).not.toHaveProperty('task');
+
+    // The page puts the id into a selector: a hand-edited value outside the store's alphabet goes.
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        aaaaaaaa: { title: '[cc] ⏰ a', lastAt: 5, scheduled: true, task: '"><img>' },
+        bbbbbbbb: { title: '[cc] ⏰ b', lastAt: 4, scheduled: true, task: 'b2c3d4' },
+        cccccccc: { title: 'c', lastAt: 3, task: 'b2c3d4' },
+      })
+    );
+    const read = new TopicStore(file);
+    expect(read.get('aaaaaaaa')).not.toHaveProperty('task');
+    expect(read.get('bbbbbbbb')?.task).toBe('b2c3d4');
+    expect(read.get('cccccccc')).not.toHaveProperty('task');
+  });
+
   it('recognises the scheduled runs a file written before the flag existed', () => {
     // `openScheduledConversation` names a run `[agent] ⏰ <task> · <time>` and the automatic
     // namer never replaces that title, so it is the one trace an older file has left.

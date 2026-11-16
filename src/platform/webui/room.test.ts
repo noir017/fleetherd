@@ -5,7 +5,7 @@ import { RETRY_PREFIX } from '../../core/turn-retry.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
-import type { SchedulePanelTask, SkillPanelEntry } from '../adapter.js';
+import type { SchedulePanel, SchedulePanelTask, SchedulePanelTaskDetail, SkillPanelEntry } from '../adapter.js';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import {
   CHANNEL,
@@ -2432,21 +2432,61 @@ describe('WebRoom: the scheduled-task panel', () => {
     detail: 'summarise the failures',
     kind: 'agent',
   };
+  const NO_DETAIL: Pick<SchedulePanel, 'detail' | 'edit'> = {
+    detail: () => undefined,
+    edit: async () => ({ ok: false, error: 'not in this test' }),
+  };
 
-  it('says the daemon offered none rather than pretending there are no tasks', () => {
+  it('says the daemon offered none rather than pretending there are no tasks', async () => {
     const { room } = attached();
 
     expect(room.schedules()).toEqual({ enabled: false, tasks: [] });
-    expect(room.scheduleOp('a1b2c3', 'pause')).toEqual({
-      ok: false,
-      error: 'scheduled tasks are not enabled in this daemon',
+    const off = { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
+    expect(room.scheduleOp('a1b2c3', 'pause')).toEqual(off);
+    expect(room.scheduleDetail('a1b2c3')).toEqual(off);
+    expect(await room.scheduleEdit('a1b2c3', { name: 'x' })).toEqual(off);
+  });
+
+  it("forwards a task's page and an edit, and names a task that is not there", async () => {
+    const { room } = attached();
+    const page: SchedulePanelTaskDetail = {
+      task,
+      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'p', agent: 'cc', session: 'fixed' },
+      editable: ['name'],
+      agents: ['cc'],
+      runs: [],
+    };
+    const edits: unknown[] = [];
+    room.useSchedulePanel({
+      list: () => [task],
+      op: () => ({ ok: true, tasks: [task] }),
+      detail: (id) => (id === 'a1b2c3' ? page : undefined),
+      edit: async (id, edit) => {
+        edits.push([id, edit]);
+        return { ok: true, detail: page, tasks: [task] };
+      },
     });
+
+    expect(room.scheduleDetail('a1b2c3')).toEqual({ ok: true, detail: page });
+    expect(room.scheduleDetail('ffff00')).toEqual({ ok: false, error: 'no scheduled task #ffff00' });
+    expect(await room.scheduleEdit('a1b2c3', { model: null })).toEqual({ ok: true, detail: page, tasks: [task] });
+    expect(edits).toEqual([['a1b2c3', { model: null }]]);
+  });
+
+  it('records the task a scheduled run opened its topic for, and nothing on a topic a person opened', () => {
+    const { room } = attached();
+    const run = room.createTopic('[cc] ⏰ CI · 2026-11-16', undefined, { scheduled: true, task: 'a1b2c3' });
+    const mine = room.createTopic('mine', undefined, { task: 'a1b2c3' });
+    const list = room.topicList();
+    expect(list.find((t) => t.id === run.id)).toMatchObject({ scheduled: true, task: 'a1b2c3' });
+    expect(list.find((t) => t.id === mine.id)?.task).toBeUndefined();
   });
 
   it('reads the list through the daemon and forwards each action', () => {
     const { room } = attached();
     const ops: string[] = [];
     room.useSchedulePanel({
+      ...NO_DETAIL,
       list: () => [task],
       op: (id, action) => {
         ops.push(`${id}:${action}`);
@@ -2463,6 +2503,7 @@ describe('WebRoom: the scheduled-task panel', () => {
     const { room } = attached();
     const calls: Array<{ id: string; action: string; tags?: string[] }> = [];
     room.useSchedulePanel({
+      ...NO_DETAIL,
       list: () => [task],
       op: (id, action, tags) => {
         calls.push({ id, action, ...(tags !== undefined ? { tags } : {}) });

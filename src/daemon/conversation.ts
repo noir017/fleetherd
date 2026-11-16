@@ -3982,8 +3982,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * whole list, because the reader is the agent that just typed the wrong id and can retry in the
    * same turn.
    */
-  async scheduledModelProblem(agentId: string, model: string, from: ConversationId): Promise<string | undefined> {
-    const same = this.boundAgentOf(from) === agentId;
+  async scheduledModelProblem(agentId: string, model: string, from: ConversationId | undefined): Promise<string | undefined> {
+    // `from` is undefined for the web UI's task page, which has no conversation to borrow a session from.
+    const same = from !== undefined && this.boundAgentOf(from) === agentId;
     const key = same ? from : `__schedule-model__#${agentId}#${++this.modelProbeSeq}`;
     const session = this.agents.getOrCreate(key, agentId);
     try {
@@ -4449,6 +4450,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     title: string;
     cwd?: string;
     ephemeralKey: ConversationId;
+    /** The task this run belongs to, recorded on the topic where a platform keeps one (the web UI). */
+    task?: string;
     /**
      * The caller cannot use a throwaway conversation: a daily session must be a topic the user can
      * reply into, so a platform without one, or a failed create, is an error rather than a silent
@@ -4465,7 +4468,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
       throw new Error('the target does not map to a conversation of its own under this deployment\'s scope; a daily-session task needs one');
     }
     const title = formatLaneTitle(opts.agentId, opts.title);
-    const opened = await this.openScheduledTopic(adapter, opts.address, title, opts.mustOpen === true);
+    const opened = await this.openScheduledTopic(adapter, opts.address, title, opts.mustOpen === true, opts.task);
     const conv = opened ? this.conversationAt(opts.platform, opened) : undefined;
     if (opts.mustOpen && !conv) {
       throw new Error('the new topic does not map to a conversation of its own under this deployment\'s scope');
@@ -4492,7 +4495,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     adapter: PlatformAdapter,
     address: ConversationAddress,
     title: string,
-    mustOpen: boolean
+    mustOpen: boolean,
+    task: string | undefined
   ): Promise<ConversationAddress | undefined> {
     if (!adapter.capabilities.thread) {
       if (mustOpen) throw new Error(`platform instance "${adapter.platform}" cannot open a topic`);
@@ -4500,9 +4504,11 @@ ${formatTokens(left)} left before compaction — ${name}`;
     }
     try {
       // `scheduled` is the web UI's: it keeps these lanes out of the topic switcher and lists
-      // them in the panel's Sessions tab. A chat platform has nowhere else to put a
-      // conversation and ignores it.
-      const opened = (await adapter.createThread({ address, messageId: '' }, title, { scheduled: true })).address;
+      // them in the panel's Sessions tab, and `task` lets the task's own page list them. A chat
+      // platform has nowhere else to put a conversation and ignores both.
+      const opened = (
+        await adapter.createThread({ address, messageId: '' }, title, { scheduled: true, ...(task !== undefined ? { task } : {}) })
+      ).address;
       // A topic is a lane of its own; an answer without one names the channel instead. Slack does
       // this by returning the `messageId` it was given (empty here), and a channel is not a new
       // conversation: posting there would put the run into the person's own topic, and a daily

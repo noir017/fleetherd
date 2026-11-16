@@ -60,6 +60,8 @@ type Menu = { text: string; buttons: Array<{ id: string; label: string }> };
 
 type Fake = PlatformAdapter & {
   threads: string[];
+  /** The options each createThread was given, in order: what the web UI records on the topic. */
+  threadOpts: unknown[];
   /** Topic ids that still exist; a test removes one to stand in for the user deleting it. */
   alive: Set<string>;
   /** Topic ids a send to which fails, as a deleted topic does on a platform without hasThread. */
@@ -86,6 +88,7 @@ function adapter(
   }
 ): Fake {
   const threads: string[] = [];
+  const threadOpts: unknown[] = [];
   const alive = opts.alive ?? new Set<string>();
   const dead = new Set<string>();
   const menus = opts.menus ?? [];
@@ -94,6 +97,7 @@ function adapter(
     platform: id,
     platformType: type,
     threads,
+    threadOpts,
     alive,
     dead,
     failCreate: (msg: string) => {
@@ -127,10 +131,11 @@ function adapter(
     ...(opts.hasThread === false
       ? {}
       : { hasThread: (address: Sent['address']) => address.thread !== undefined && alive.has(address.thread) }),
-    createThread: async (ref: { address: { channel: string } }, name: string) => {
+    createThread: async (ref: { address: { channel: string } }, name: string, how?: unknown) => {
       if (createError) throw new Error(createError);
       if (opts.emptyThread) return { address: { channel: ref.address.channel, thread: '' } };
       threads.push(name);
+      threadOpts.push(how);
       const thread = `new${threads.length}`;
       alive.add(thread);
       return { address: { channel: ref.address.channel, thread } };
@@ -423,6 +428,8 @@ describe('schedule over IPC', () => {
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     await settle();
     expect(r.web.threads).toEqual([expect.stringMatching(/^\[oc\] ⏰ brief · /)]);
+    // Marked as a scheduled run of THIS task, so the task's page can list the topic.
+    expect(r.web.threadOpts).toEqual([{ scheduled: true, task: task.id }]);
     expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new1', agent: 'oc' });
     // The conversation is kept: the user can carry on in the new topic.
     expect(r.disposed).not.toContain('web#main#new1');
@@ -452,6 +459,7 @@ describe('schedule over IPC', () => {
     await settle();
     expect(r.web.threads).toHaveLength(1);
     expect(r.web.threads[0]).toMatch(/^\[cc\] ⏰ brief · \d{4}-\d{2}-\d{2}$/);
+    expect(r.web.threadOpts).toEqual([{ scheduled: true, task: task.id }]);
     const briefs = r.turns.filter((t) => t.prompt === 'brief');
     expect(briefs).toHaveLength(2);
     expect(briefs[1]!.conversation).toBe(first.conversation);

@@ -8,7 +8,14 @@ import { brotliDecompressSync, createGunzip, gunzipSync, inflateSync } from 'nod
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
-import type { ReviewPanelEntry, SchedulePanelTask, SkillPanelEntry } from '../adapter.js';
+import type {
+  ReviewPanelEntry,
+  SchedulePanel,
+  SchedulePanelEdit,
+  SchedulePanelTask,
+  SchedulePanelTaskDetail,
+  SkillPanelEntry,
+} from '../adapter.js';
 import { WebAuth } from './auth.js';
 import { diskUploadStore } from './index.js';
 import { MAX_READ_BYTES } from './reading.js';
@@ -1571,6 +1578,17 @@ describe('webui server: traffic', () => {
       detail: 'summarise the failures',
       kind: 'agent',
     };
+    const NO_DETAIL: Pick<SchedulePanel, 'detail' | 'edit'> = {
+      detail: () => undefined,
+      edit: async () => ({ ok: false, error: 'not in this test' }),
+    };
+    const page: SchedulePanelTaskDetail = {
+      task,
+      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'summarise the failures', agent: 'cc', session: 'fixed' },
+      editable: ['name', 'cron', 'at', 'tz', 'prompt', 'agent'],
+      agents: ['cc'],
+      runs: [{ at: 1, atText: '2026-11-04 08:00', status: 'ok', topic: 'a1b2c3d4' }],
+    };
 
     it('lists what the daemon handed the room, and says when it offered none', async () => {
       const { base, room } = await boot();
@@ -1580,7 +1598,7 @@ describe('webui server: traffic', () => {
         tasks: [],
       });
 
-      room.useSchedulePanel({ list: () => [task], op: () => ({ ok: true, tasks: [task] }) });
+      room.useSchedulePanel({ ...NO_DETAIL, list: () => [task], op: () => ({ ok: true, tasks: [task] }) });
       const res = await fetch(`${base}/api/schedules`, { headers: { cookie } });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ enabled: true, tasks: [task] });
@@ -1592,6 +1610,7 @@ describe('webui server: traffic', () => {
       const calls: string[] = [];
       const paused: SchedulePanelTask = { ...task, state: 'paused' };
       room.useSchedulePanel({
+        ...NO_DETAIL,
         list: () => [task],
         op: (id, action) => {
           calls.push(`${id}:${action}`);
@@ -1614,6 +1633,7 @@ describe('webui server: traffic', () => {
       const cookie = await signIn(base);
       const calls: Array<{ id: string; action: string; tags?: string[] }> = [];
       room.useSchedulePanel({
+        ...NO_DETAIL,
         list: () => [task],
         op: (id, action, tags) => {
           calls.push({ id, action, ...(tags !== undefined ? { tags } : {}) });
@@ -1644,6 +1664,7 @@ describe('webui server: traffic', () => {
       const cookie = await signIn(base);
       let called = 0;
       room.useSchedulePanel({
+        ...NO_DETAIL,
         list: () => [task],
         op: () => {
           called += 1;
@@ -1668,9 +1689,65 @@ describe('webui server: traffic', () => {
       expect(called).toBe(1);
     });
 
+    it("answers a task's page by id, 404 for a task that is not there, 400 for an id the store cannot hold", async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      room.useSchedulePanel({ ...NO_DETAIL, list: () => [task], op: () => ({ ok: true, tasks: [task] }), detail: (id) => (id === 'a1b2c3' ? page : undefined) });
+
+      const res = await fetch(`${base}/api/schedules/task?id=a1b2c3`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, detail: page });
+      const gone = await fetch(`${base}/api/schedules/task?id=ffff00`, { headers: { cookie } });
+      expect(gone.status).toBe(404);
+      expect(await gone.json()).toEqual({ ok: false, error: 'no scheduled task #ffff00' });
+      expect((await fetch(`${base}/api/schedules/task?id=../x`, { headers: { cookie } })).status).toBe(400);
+    });
+
+    it('carries an edit through as the fields the page sent, and hands back the refusal in the service words', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const calls: Array<{ id: string; edit: SchedulePanelEdit }> = [];
+      let refuse = false;
+      room.useSchedulePanel({
+        ...NO_DETAIL,
+        list: () => [task],
+        op: () => ({ ok: true, tasks: [task] }),
+        edit: async (id, edit) => {
+          calls.push({ id, edit });
+          return refuse ? { ok: false, error: '--cron: invalid' } : { ok: true, detail: page, tasks: [task] };
+        },
+      });
+      const post = (body: unknown): Promise<Response> =>
+        fetch(`${base}/api/schedules/edit`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
+
+      const res = await post({ id: 'a1b2c3', edit: { prompt: 'new text', cwd: null } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, detail: page, tasks: [task] });
+      expect(calls).toEqual([{ id: 'a1b2c3', edit: { prompt: 'new text', cwd: null } }]);
+
+      refuse = true;
+      const refused = await post({ id: 'a1b2c3', edit: { cron: 'nope' } });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ ok: false, error: '--cron: invalid' });
+
+      // Nothing the form cannot send reaches the daemon: an empty edit, a field it has no input
+      // for (the session and the target are what a task IS), a wrong type.
+      for (const bad of [{ id: 'a1b2c3', edit: {} }, { id: 'a1b2c3', edit: { session: 'new' } }, { id: 'a1b2c3', edit: { timeoutMs: '10m' } }, { id: 'a1b2c3', edit: { name: 'x' }, extra: 1 }]) {
+        expect((await post(bad)).status).toBe(400);
+      }
+      expect(calls).toHaveLength(2);
+    });
+
     it('is behind the session like every other route', async () => {
       const { base } = await boot();
       expect((await fetch(`${base}/api/schedules`)).status).toBe(401);
+      expect((await fetch(`${base}/api/schedules/task?id=a1b2c3`)).status).toBe(401);
+      const edit = await fetch(`${base}/api/schedules/edit`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ id: 'a1b2c3', edit: { name: 'x' } }),
+      });
+      expect(edit.status).toBe(401);
       const res = await fetch(`${base}/api/schedules/op`, {
         method: 'POST',
         headers: JSON_HEADERS,

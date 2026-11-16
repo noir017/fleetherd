@@ -718,10 +718,17 @@ export interface EditTaskInput {
   prompt?: string;
   bash?: string;
   agent?: string;
-  cwd?: string;
+  /**
+   * `null` drops the task's directory, so it starts in its agent's own default (or, for a bash
+   * task, the gateway's). Only the web UI's form sends it: a field a person empties has to mean
+   * something, and "keep the old value" would be a form that half works. The CLI has no way to
+   * say it — `--cwd ""` is resolved to the shell's directory before it gets here.
+   */
+  cwd?: string | null;
   /** The machine the `--cwd` this edit gives belongs to; see NewTaskInput.host. */
   host?: string;
-  model?: string;
+  /** `null` drops the task's model, so its conversations start on the agent's own; see `cwd`. */
+  model?: string | null;
   timeoutMs?: number;
 }
 
@@ -755,14 +762,24 @@ export function editTask(task: ScheduleTask, input: EditTaskInput, ctx: NewTaskC
   return { ok: true, task: withoutStaleDayTopic(task, next) };
 }
 
-/** What an edit refuses before `buildTask` is even asked: a task that is over, or a type change. */
-function editRefusal(task: ScheduleTask, input: EditTaskInput): string | undefined {
+/**
+ * Why no edit of this task can succeed, whatever it changes: the task is over. Exported for the web
+ * UI's task page, which says so instead of offering a form every save of which would be refused.
+ */
+export function editLockOf(task: ScheduleTask): string | undefined {
   if (task.state === 'expired') {
     return `#${task.id} has expired (a fixed-session task lives ${FIXED_SESSION_WINDOW_MS / 3_600_000}h); add a new task instead`;
   }
   if (task.state === 'done') {
     return `#${task.id} was a one-time task and has already had its run; add a new task instead`;
   }
+  return undefined;
+}
+
+/** What an edit refuses before `buildTask` is even asked: a task that is over, or a type change. */
+function editRefusal(task: ScheduleTask, input: EditTaskInput): string | undefined {
+  const locked = editLockOf(task);
+  if (locked) return locked;
   if (input.prompt !== undefined && input.bash !== undefined) {
     return 'give at most one of --prompt <text> or --bash <command>';
   }
@@ -841,7 +858,7 @@ function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
     ...(input.tags !== undefined ? { tags: input.tags } : task.tags !== undefined ? { tags: task.tags } : {}),
     ...mergedTime(task, input),
     tz: input.tz ?? task.when.tz,
-    ...(input.cwd !== undefined ? { cwd: input.cwd } : run.cwd !== undefined ? { cwd: run.cwd } : {}),
+    ...(input.cwd === null ? {} : input.cwd !== undefined ? { cwd: input.cwd } : run.cwd !== undefined ? { cwd: run.cwd } : {}),
     // Only what the caller named: the task's machine is its agent's, and a --host that agreed with
     // it yesterday must not be assumed to agree with a --agent this edit moves the task to.
     ...(input.host !== undefined ? { host: input.host } : {}),
@@ -853,7 +870,7 @@ function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
       timeoutMs: input.timeoutMs ?? run.timeoutMs,
       // Passed through, not merged away: buildBashTask is what refuses them, in its own words.
       ...(input.agent !== undefined ? { agent: input.agent } : {}),
-      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(typeof input.model === 'string' ? { model: input.model } : {}),
     };
   }
   return {
@@ -861,7 +878,13 @@ function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
     prompt: input.prompt ?? run.prompt,
     session: run.session,
     agent: input.agent ?? run.agent,
-    ...(input.model !== undefined ? { model: input.model } : run.model !== undefined ? { model: run.model } : {}),
+    ...(input.model === null
+      ? {}
+      : input.model !== undefined
+        ? { model: input.model }
+        : run.model !== undefined
+          ? { model: run.model }
+          : {}),
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
   };
 }

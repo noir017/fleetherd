@@ -87,6 +87,7 @@ import type {
   ReviewPanel,
   SchedulePanel,
   SchedulePanelTask,
+  SchedulePanelTaskDetail,
 } from '../platform/adapter.js';
 import { OutboundPacer } from '../core/outbound-pacer.js';
 import { splitIntoChunks } from '../core/stream-buffer.js';
@@ -169,7 +170,7 @@ import {
 } from '../ipc/protocol.js';
 import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
-import { panelTasks } from './schedule-panel.js';
+import { panelEditInput, panelTaskDetail, panelTasks } from './schedule-panel.js';
 import { buildSkillsPanel } from './skills-panel.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
 import { SkillLibrary, type LibraryAsker } from './skill-library.js';
@@ -2025,6 +2026,17 @@ export class Daemon {
     if (!schedules) return undefined;
     const list = (): SchedulePanelTask[] =>
       panelTasks(schedules.tasks(), schedules.now(), (id) => schedules.scheduler.isRunning(id), instance);
+    const detail = (id: string): SchedulePanelTaskDetail | undefined => {
+      const task = schedules.get(id);
+      if (!task) return undefined;
+      return panelTaskDetail(task, {
+        now: schedules.now(),
+        running: schedules.scheduler.isRunning(id),
+        instance,
+        agents: this.config.agents.map((a) => a.id),
+        laneOf: (key) => this.registry.laneFor(key),
+      });
+    };
     return {
       list,
       op: (id, action, tags) => {
@@ -2032,6 +2044,17 @@ export class Daemon {
           if (action === 'tags') schedules.setTags(id, tags ?? []);
           else schedules.op(id, action, undefined, false);
           return { ok: true, tasks: list() };
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+      detail,
+      edit: async (id, change) => {
+        try {
+          await schedules.editFromPanel(id, panelEditInput(change));
+          const page = detail(id);
+          if (!page) return { ok: false, error: `#${id} was removed just after this edit` };
+          return { ok: true, detail: page, tasks: list() };
         } catch (e) {
           return { ok: false, error: e instanceof Error ? e.message : String(e) };
         }

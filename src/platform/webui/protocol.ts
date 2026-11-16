@@ -181,9 +181,9 @@ export const KillTopicRequestSchema = z
  *
  * No free text anywhere in this body: the panel lists and manages, it does not create. Creation
  * stays in the conversation with the agent, which is the one path that can be asked what a task
- * should do.
+ * should do. Changing a task's text is the edit below, a request of its own.
  */
-const ScheduleTaskId = z.string().regex(/^[a-z0-9]{4,16}$/, 'not a task id');
+export const ScheduleTaskId = z.string().regex(/^[a-z0-9]{4,16}$/, 'not a task id');
 
 export const ScheduleOpRequestSchema = z.discriminatedUnion('action', [
   z.object({ id: ScheduleTaskId, action: z.enum(['pause', 'resume', 'run', 'remove']) }).strict(),
@@ -194,6 +194,38 @@ export const ScheduleOpRequestSchema = z.discriminatedUnion('action', [
     .object({ id: ScheduleTaskId, action: z.literal('tags'), tags: z.array(z.string().max(200)).max(50) })
     .strict(),
 ]);
+
+/**
+ * One edit from a task's page: the fields the person changed, and nothing else.
+ *
+ * Free text, unlike the op above — a prompt an agent will run, a command the gateway will — and that
+ * is no new reach: whoever holds this page's session can already ask an agent to do the same in any
+ * topic. What it gets is what `fleetherd schedule edit` gets: `ScheduleService.editFromPanel` runs
+ * the same `editTask`, so every value here is only bounded in size, and refused or accepted there
+ * in the CLI's words. `null` empties a directory or a model (EditTaskInput). Strict, and at least
+ * one field: an empty edit would post an "updated" card for nothing.
+ */
+export const ScheduleEditRequestSchema = z
+  .object({
+    id: ScheduleTaskId,
+    edit: z
+      .object({
+        name: z.string().max(200),
+        cron: z.string().max(200),
+        at: z.string().max(64),
+        tz: z.string().max(64),
+        prompt: z.string().max(100_000),
+        command: z.string().max(100_000),
+        agent: z.string().max(200),
+        model: z.string().max(200).nullable(),
+        cwd: z.string().max(4096).nullable(),
+        timeoutMs: z.number().int().positive().max(1e9),
+      })
+      .partial()
+      .strict()
+      .refine((e) => Object.keys(e).length > 0, 'nothing to change'),
+  })
+  .strict();
 
 /**
  * The status line's model switch: this topic, this model. The value is matched by the daemon
@@ -280,6 +312,7 @@ export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;
 export type KillTopicRequest = z.infer<typeof KillTopicRequestSchema>;
 export type ScheduleOpRequest = z.infer<typeof ScheduleOpRequestSchema>;
+export type ScheduleEditRequest = z.infer<typeof ScheduleEditRequestSchema>;
 export type ModelChooseRequest = z.infer<typeof ModelChooseRequestSchema>;
 export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;
 

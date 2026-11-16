@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { findAgent, type Config } from '../config/schema.js';
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
@@ -144,36 +145,82 @@ export class ScheduleService {
    * model list, which is read only after the shape is valid.
    */
   async edit(id: string, input: EditTaskInput, caller: ConversationId): Promise<ScheduleTaskView> {
+    const task = this.editableTask(id);
+    const built = editTask(task, input, this.editContext(task));
+    if (!built.ok) throw new Error(built.error);
+    const hostProblem = this.hostProblem(input.host, built.task);
+    if (hostProblem) throw new Error(hostProblem);
+    const given = input.cwd ?? undefined;
+    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'edit', before: task }, given, input.host);
+    if (cwdProblem) throw new Error(cwdProblem);
+    const dirProblem = await this.dirOnHostProblem(input.host, given);
+    if (dirProblem) throw new Error(dirProblem);
+    await this.commitEdit(task, built.task, input, caller);
+    return taskView(built.task, this.clock.now(), { detail: true, here: caller });
+  }
+
+  /**
+   * The web UI's edit: a person on the task's page rather than an agent in a conversation. Every
+   * rule is `edit`'s — the same `editTask`, the same model check, the same race guard, the same
+   * card in the conversation the task posts to — except where a directory belongs.
+   *
+   * A browser is on none of the gateway's machines, so there is no "this machine" for a path to be
+   * read on, and `--host` would be a question the page could only answer one way. A directory typed
+   * there is a path on the machine the task runs on after the edit — the one reading under which
+   * it can work — and `panelDirProblem` checks it is there before anything is stored. No card goes
+   * to a conversation of the editor's: the page is the acknowledgement, as it is for `op`.
+   */
+  async editFromPanel(id: string, input: Omit<EditTaskInput, 'host'>): Promise<ScheduleTask> {
+    const task = this.editableTask(id);
+    const built = editTask(task, input, this.editContext(task));
+    if (!built.ok) throw new Error(built.error);
+    const dirProblem = await this.panelDirProblem(task, built.task, input.cwd);
+    if (dirProblem) throw new Error(dirProblem);
+    await this.commitEdit(task, built.task, input, undefined);
+    return built.task;
+  }
+
+  /** The task an edit starts from, or the reason it cannot start. */
+  private editableTask(id: string): ScheduleTask {
     const task = this.scheduler.get(id);
     if (!task) throw new Error(`no scheduled task #${id}; \`fleetherd schedule list\` shows them all`);
     // The run in flight is using the values as they were when it started, and a daily run writes
     // its day's topic back when it opens one — both would race the edit. Editing is quick to retry;
     // a run is not.
     if (this.scheduler.isRunning(id)) throw new Error(`#${id} is running right now; edit it once that run finishes`);
+    return task;
+  }
 
-    const built = editTask(task, input, this.editContext(task));
-    if (!built.ok) throw new Error(built.error);
-    const hostProblem = this.hostProblem(input.host, built.task);
-    if (hostProblem) throw new Error(hostProblem);
-    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'edit', before: task }, input.cwd, input.host);
-    if (cwdProblem) throw new Error(cwdProblem);
-    const dirProblem = await this.dirOnHostProblem(input.host, input.cwd);
-    if (dirProblem) throw new Error(dirProblem);
-    if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
-      const why = await this.registry.scheduledModelProblem(built.task.run.agent, built.task.run.model, caller);
+  /**
+   * The last check, then the write: the model against the agent's own list, the race guard, and the
+   * card. `caller` is the conversation that asked, or undefined for the web UI's page.
+   *
+   * The model is asked about only when this edit names a model or an agent. It was checked when it
+   * was set, and asking means starting a session of that agent — a cold process, an ssh round trip
+   * for a remote one — which a rename or a new prompt has no reason to pay for. A model the agent
+   * has since dropped is still caught: the run that uses it fails with the reason (applyScheduledModel).
+   */
+  private async commitEdit(
+    task: ScheduleTask,
+    next: ScheduleTask,
+    input: Pick<EditTaskInput, 'model' | 'agent'>,
+    caller: ConversationId | undefined
+  ): Promise<void> {
+    const named = input.model !== undefined || input.agent !== undefined;
+    if (named && next.run.kind === 'agent' && next.run.model !== undefined) {
+      const why = await this.registry.scheduledModelProblem(next.run.agent, next.run.model, caller);
       if (why) throw new Error(why);
     }
     // Nothing above writes. While the model list was being read (a cold session, an ssh round trip
     // for a remote agent), a run may have finished — the scheduler writes runs, lastRun and
-    // lastPlannedAt — or the task may have been removed. Writing `built` then would put the old
+    // lastPlannedAt — or the task may have been removed. Writing `next` then would put the old
     // snapshot back: a planned time already run would run again, or a deleted task would come back
     // and post a second card. Every write replaces the stored object, so identity is the test.
     this.assertUnchanged(task);
-    if (!this.scheduler.update(built.task)) {
-      throw new Error(`#${id} was removed while this edit was being checked; nothing was changed`);
+    if (!this.scheduler.update(next)) {
+      throw new Error(`#${task.id} was removed while this edit was being checked; nothing was changed`);
     }
-    this.card(caller, built.task, 'updated');
-    return taskView(built.task, this.clock.now(), { detail: true, here: caller });
+    this.card(caller, next, 'updated');
   }
 
   /**
@@ -314,17 +361,48 @@ export class ScheduleService {
    * use. A path that is not there is refused while the agent can still retype it, rather than
    * discovered at the next run ("working directory … does not exist").
    */
-  private async dirOnHostProblem(host: string | undefined, dir: string | undefined): Promise<string | undefined> {
+  private async dirOnHostProblem(host: string | undefined, dir: string | undefined, label = `--cwd ${dir}`): Promise<string | undefined> {
     if (host === undefined || dir === undefined) return undefined;
     const remote = remoteHosts.get(host);
-    if (!remote) return `host "${host}" is not connected right now, so --cwd ${dir} could not be checked; nothing was stored — try again once it is back`;
+    if (!remote) return `host "${host}" is not connected right now, so ${label} could not be checked; nothing was stored — try again once it is back`;
     try {
       const r = await remote.run({ argv: ['test', '-d', dir], timeoutMs: DIR_CHECK_TIMEOUT_MS });
       if (r.code === 0) return undefined;
-      return `--cwd ${dir} is not a directory on ${host}; nothing was stored`;
+      return `${label} is not a directory on ${host}; nothing was stored`;
     } catch (e) {
-      return `could not check --cwd ${dir} on ${host} (${e instanceof Error ? e.message : String(e)}); nothing was stored`;
+      return `could not check ${label} on ${host} (${e instanceof Error ? e.message : String(e)}); nothing was stored`;
     }
+  }
+
+  /**
+   * `cwdHostProblem` and `dirOnHostProblem` for the web UI's page (see `editFromPanel`). A directory
+   * typed there must be absolute — there is no shell directory to resolve it against, and `~` would
+   * be expanded nowhere — and is checked on the machine the task runs on. A directory the edit keeps
+   * belongs to the machine the task ran on before, and an edit that moves the task to another (an
+   * agent on another host) is refused rather than stored with a path that means nothing there.
+   */
+  private async panelDirProblem(before: ScheduleTask, after: ScheduleTask, given: string | null | undefined): Promise<string | undefined> {
+    const dir = after.run.cwd;
+    if (dir === undefined) return undefined;
+    const host = this.hostOfTask(after);
+    const where = host ?? "the gateway's machine";
+    if (given === undefined || given === null) {
+      const was = this.hostOfTask(before);
+      if (was === host) return undefined;
+      return (
+        `this task runs on ${where} after this edit, but keeps its directory ${dir}, a path on ${was ?? "the gateway's machine"}; ` +
+        `give it a directory on ${where} as well, or empty the directory to start in the agent's own`
+      );
+    }
+    if (!path.isAbsolute(dir)) return `the directory has to be an absolute path on ${where}; "${dir}" is not`;
+    const label = `the directory ${dir}`;
+    if (host !== undefined) return this.dirOnHostProblem(host, dir, label);
+    try {
+      if ((await fs.promises.stat(dir)).isDirectory()) return undefined;
+    } catch {
+      // Missing or unreadable: either way the run could not start there.
+    }
+    return `${label} is not a directory on the gateway's machine; nothing was stored`;
   }
 
   /** The host the caller's agent runs on, which is where its `fleetherd` command ran. Undefined = here. */
@@ -552,6 +630,7 @@ export class ScheduleService {
       title: `⏰ ${task.name} · ${formatInZone(planned, task.when.tz)}`,
       ...optional('cwd', run.cwd),
       ephemeralKey: `schedule#${task.id}#${planned}`,
+      task: task.id,
     });
     try {
       if (run.model) {
@@ -622,6 +701,7 @@ export class ScheduleService {
           title: `⏰ ${task.name} · ${day}`,
           ...optional('cwd', run.cwd),
           ephemeralKey: `schedule#${task.id}#${planned}`,
+          task: task.id,
           mustOpen: true,
         });
       } catch (e) {
@@ -777,9 +857,9 @@ export class ScheduleService {
    * included, since a target that stops, starts or stops for good receiving the task is the one
    * that notices. A manual run posts no card: its output is the run's own.
    */
-  card(conversation: ConversationId, task: ScheduleTask, verb: string): void {
+  card(conversation: ConversationId | undefined, task: ScheduleTask, verb: string): void {
     const text = taskCardText(task, verb, this.clock.now());
-    const lane = this.registry.laneFor(conversation);
+    const lane = conversation !== undefined ? this.registry.laneFor(conversation) : undefined;
     if (lane) this.post(lane.platformId, lane.address, text, `${verb} card`);
     const target = { platform: task.target.platform, address: targetAddress(task) };
     if (lane && lane.platformId === target.platform && sameAddress(lane.address, target.address)) return;
