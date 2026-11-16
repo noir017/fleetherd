@@ -146,7 +146,99 @@ export interface SchedulePanel {
   list(): SchedulePanelTask[];
   /** `tags` is the whole new set; every other action ignores it. */
   op(id: string, action: SchedulePanelAction, tags?: string[]): SchedulePanelResult;
+  /** One task's page, or undefined when there is no such task. */
+  detail(id: string): SchedulePanelTaskDetail | undefined;
+  /** Change a task in place: `ScheduleService.editFromPanel`, so every rule is `schedule edit`'s. */
+  edit(id: string, edit: SchedulePanelEdit): Promise<SchedulePanelDetailResult>;
 }
+
+/**
+ * One finished run, as a task's page lists it — `ScheduleRunRecord` with its conversation turned
+ * into something the page can open.
+ *
+ * `topic` when the output went to a topic of the instance showing the page; otherwise `where`
+ * names it the way `targetId` does (another platform, another web UI instance), so the row still
+ * says where to look. Neither when the run never had a conversation (a bash run, a missed one).
+ */
+export interface SchedulePanelRun {
+  at: number;
+  /** `at` in the task's own zone, already formatted. */
+  atText: string;
+  status: 'ok' | 'failed' | 'interrupted' | 'skipped' | 'missed';
+  durationMs?: number;
+  exitCode?: number;
+  error?: string;
+  topic?: string;
+  where?: string;
+}
+
+/**
+ * The fields a task's form can hold; which of them a given task offers is `editable`. `cron` and
+ * `at` are separate because a daily-session task takes only a cron: a one-shot has no rest of the
+ * day to join.
+ */
+export type SchedulePanelEditField = 'name' | 'cron' | 'at' | 'tz' | 'prompt' | 'command' | 'agent' | 'model' | 'cwd' | 'timeout';
+
+/**
+ * What a task's page shows, and what its form starts from.
+ *
+ * `fields` are the task's own values, raw — the cron as written, the whole prompt, the directory and
+ * model only when the task has them — because a form filled from the panel's sentences would save
+ * the sentences back. `editable` is decided by the daemon from the same rules `schedule edit`
+ * applies (a fixed-session task has no directory or model of its own, a bash task no agent), so the
+ * page offers no field whose every value would be refused.
+ */
+export interface SchedulePanelTaskDetail {
+  task: SchedulePanelTask;
+  fields: {
+    name: string;
+    /** Exactly one of `cron` and `at`. `at` is the wall-clock time in `tz`, as `formatInZone` writes it. */
+    cron?: string;
+    at?: string;
+    tz: string;
+    prompt?: string;
+    command?: string;
+    agent?: string;
+    session?: 'fixed' | 'new' | 'daily';
+    model?: string;
+    cwd?: string;
+    timeoutMs?: number;
+    /** The machine a bash task runs on; it is the registering agent's, and no edit moves it. */
+    host?: string;
+  };
+  editable: SchedulePanelEditField[];
+  /** Why no edit of this task can succeed (it expired, or a one-time task has had its run). */
+  locked?: string;
+  /** The configured agents, for the agent picker. */
+  agents: string[];
+  /** The task's recorded runs, newest first. */
+  runs: SchedulePanelRun[];
+}
+
+/**
+ * One edit from a task's page: only what the person changed. `null` empties a directory or a model
+ * (see EditTaskInput); a time and a zone travel as the strings `schedule edit --at/--tz` takes.
+ */
+export interface SchedulePanelEdit {
+  name?: string;
+  cron?: string;
+  at?: string;
+  tz?: string;
+  prompt?: string;
+  command?: string;
+  agent?: string;
+  model?: string | null;
+  cwd?: string | null;
+  timeoutMs?: number;
+}
+
+/**
+ * The outcome of an edit: the task's page as it now is, and the list, which the panel behind the
+ * page redraws from the same answer for the reason `SchedulePanelResult` carries one.
+ */
+export type SchedulePanelDetailResult =
+  | { ok: true; detail: SchedulePanelTaskDetail; tasks: SchedulePanelTask[] }
+  | { ok: false; error: string };
 
 /**
  * One managed skill as the web UI's skills page lists it.
@@ -550,6 +642,12 @@ export interface PlatformAdapter {
        * has nowhere else to put a conversation, so every other adapter ignores this.
        */
       scheduled?: boolean;
+      /**
+       * The task whose run opened it, with `scheduled`. The web UI records it on the topic, so a
+       * task's page can list every session the task opened rather than only the runs its history
+       * still holds. Ignored by every other adapter, for the reason `scheduled` is.
+       */
+      task?: string;
     }
   ): Promise<{ address: ConversationAddress }>;
 

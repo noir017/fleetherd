@@ -119,6 +119,13 @@ export interface Topic {
    */
   scheduled?: boolean;
   /**
+   * The scheduled task whose run opened it (`createThread`'s `task`), beside `scheduled`. Persisted:
+   * it is how the task's page lists every session the task opened, where the task's own run history
+   * keeps only the last twenty runs — an hourly daily-session task would show one day of topics.
+   * Absent on topics opened before it was recorded; the page still finds those through the runs.
+   */
+  task?: string;
+  /**
    * When the operator last looked at this topic, by this server's clock (`api/seen`). Persisted:
    * "you have not read this reply" has to survive the restart that an update is.
    */
@@ -251,7 +258,7 @@ export class TopicStore {
     return oldest;
   }
 
-  create(title = '', parent?: string, opts: { scheduled?: boolean } = {}): Topic {
+  create(title = '', parent?: string, opts: { scheduled?: boolean; task?: string } = {}): Topic {
     if (this.full()) {
       throw new Error(`[webui] this instance already has ${MAX_TOPICS} topics; close one before opening another`);
     }
@@ -263,6 +270,7 @@ export class TopicStore {
       lastAt: Date.now(),
       ...(parent !== undefined && this.topics.has(parent) ? { parent } : {}),
       ...(opts.scheduled ? { scheduled: true } : {}),
+      ...(opts.scheduled && opts.task !== undefined && TASK_ID.test(opts.task) ? { task: opts.task } : {}),
     };
     this.topics.set(topic.id, topic);
     this.flush();
@@ -422,6 +430,7 @@ export class TopicStore {
         lastAt: t.lastAt,
         ...(t.starred ? { starred: true } : {}),
         ...(t.scheduled ? { scheduled: true } : {}),
+        ...(t.task !== undefined ? { task: t.task } : {}),
         ...(t.parent !== undefined ? { parent: t.parent } : {}),
         ...(t.seenAt !== undefined ? { seenAt: t.seenAt } : {}),
         ...(t.outcome ? { outcome: t.outcome } : {}),
@@ -439,6 +448,12 @@ export class TopicStore {
   }
 }
 
+/**
+ * A task id as the daemon makes them (`schedule-store.ts` TaskSchema). The page puts it into a
+ * selector and an attribute, so a hand-edited file holding anything else drops the field.
+ */
+const TASK_ID = /^[a-z0-9]{4,16}$/;
+
 function dirOf(file: string): string {
   const at = file.lastIndexOf('/');
   return at <= 0 ? '.' : file.slice(0, at);
@@ -452,6 +467,7 @@ function toTopic(id: string, value: unknown): Topic | undefined {
     lastAt?: unknown;
     starred?: unknown;
     scheduled?: unknown;
+    task?: unknown;
     parent?: unknown;
     seenAt?: unknown;
     outcome?: unknown;
@@ -467,6 +483,7 @@ function toTopic(id: string, value: unknown): Topic | undefined {
     lastAt,
     ...(rec.starred === true ? { starred: true } : {}),
     ...(rec.scheduled === true ? { scheduled: true } : {}),
+    ...(rec.scheduled === true && typeof rec.task === 'string' && TASK_ID.test(rec.task) ? { task: rec.task } : {}),
     ...(typeof rec.parent === 'string' && /^[0-9a-f]{8}$/.test(rec.parent) && rec.parent !== id ? { parent: rec.parent } : {}),
     ...(typeof rec.seenAt === 'number' && Number.isFinite(rec.seenAt) ? { seenAt: rec.seenAt } : {}),
     ...(outcome ? { outcome } : {}),

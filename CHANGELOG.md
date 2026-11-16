@@ -5,6 +5,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A scheduled task has a page of its own in the web UI, and can be edited there.** Tapping a task
+  folded open a few lines under its row — the prompt and the tags, in a panel 240–320px wide — and
+  changing anything else meant asking an agent to run `fleetherd schedule edit`. The tap now opens a
+  window with everything about the task, its actions as buttons, every topic its runs opened, and
+  its recorded runs, each with a link to the topic it posted into. **Edit** (also in the row's ⋯)
+  turns it into a form for what `schedule edit` can change: name, time and zone, prompt or command,
+  agent, model, directory and timeout. Only the fields changed are sent, and the gateway applies them
+  through the same rules as the CLI, so a refusal reads the same; emptying the directory or the model
+  goes back to the agent's own. A directory typed there is a path on the machine the task runs on and
+  is checked there before it is stored. The conversation the task posts to gets the updated card, as
+  it does for an edit made by an agent. Topics a run opens now record the task, so the page lists
+  every one still in the web UI rather than only those the last twenty runs name.
+
+### Changed
+
+- **`schedule edit` asks an agent for its model list only when the edit names a model or an agent.**
+  It asked on every edit of a task with a model, which starts a session of that agent — a cold
+  process, an ssh round trip for a remote one — to rename a task or change its prompt. The model was
+  checked when it was set, and a run whose model the agent no longer offers still fails with the
+  reason.
+
 ## [3.8.0] - 2026-11-15
 
 ### Changed

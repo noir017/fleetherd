@@ -77,8 +77,11 @@ import type {
   ReviewPanel,
   ReviewPanelList,
   SchedulePanelAction,
+  SchedulePanelDetailResult,
+  SchedulePanelEdit,
   SchedulePanelResult,
   SchedulePanelTask,
+  SchedulePanelTaskDetail,
   SkillPanelEntry,
   SkillPanelOp,
   SkillPanelResult,
@@ -525,9 +528,9 @@ export class WebRoom {
    * operator will get for a + that did nothing.
    *
    * `parent` nests it under the topic whose agent opened it (Topic.parent), and `scheduled` marks
-   * a lane a scheduled run opened for itself (Topic.scheduled).
+   * a lane a scheduled run opened for itself (Topic.scheduled), `task` the task it ran (Topic.task).
    */
-  createTopic(title = '', parent?: string, opts: { scheduled?: boolean } = {}): Topic {
+  createTopic(title = '', parent?: string, opts: { scheduled?: boolean; task?: string } = {}): Topic {
     if (this.topics.full()) this.makeRoom();
     const topic = this.topics.create(title, parent, opts);
     this.announceTopics();
@@ -824,6 +827,19 @@ export class WebRoom {
   scheduleOp(id: string, action: SchedulePanelAction, tags?: string[]): SchedulePanelResult {
     if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
     return this.schedulePanel.op(id, action, tags);
+  }
+
+  /** One task's page, or why there is none. */
+  scheduleDetail(id: string): { ok: true; detail: SchedulePanelTaskDetail } | { ok: false; error: string } {
+    if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
+    const detail = this.schedulePanel.detail(id);
+    return detail ? { ok: true, detail } : { ok: false, error: `no scheduled task #${id}` };
+  }
+
+  /** Change a task in place, with its page and the list as they are after the change. */
+  async scheduleEdit(id: string, edit: SchedulePanelEdit): Promise<SchedulePanelDetailResult> {
+    if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
+    return this.schedulePanel.edit(id, edit);
   }
 
   /**

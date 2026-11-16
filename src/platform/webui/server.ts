@@ -61,7 +61,9 @@ import {
   SendRequestSchema,
   PushSubscribeSchema,
   PushUnsubscribeSchema,
+  ScheduleEditRequestSchema,
   ScheduleOpRequestSchema,
+  ScheduleTaskId,
   ModelChooseRequestSchema,
   SeenRequestSchema,
   SkillOpRequestSchema,
@@ -400,6 +402,9 @@ const GUARDED: Route[] = [
   // everything else; the four verbs are validated in protocol.ts before they reach the daemon.
   { method: 'GET', path: '/api/schedules', run: scheduleList },
   { method: 'POST', path: '/api/schedules/op', run: scheduleOp },
+  // A task's page: its detail and runs, and an edit — `schedule edit`, with its rules, from a form.
+  { method: 'GET', path: '/api/schedules/task', run: scheduleDetail },
+  { method: 'POST', path: '/api/schedules/edit', run: scheduleEdit },
   // The skills page: the gateway's managed skills, and one operation on one of them. Behind the
   // same session as everything else, and the operation is a closed union in protocol.ts — there
   // is no hard delete among the verbs, because the store has none.
@@ -979,6 +984,25 @@ async function scheduleOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, ScheduleOpRequestSchema);
   if (!parsed) return;
   const result = ctx.room.scheduleOp(parsed.id, parsed.action, 'tags' in parsed ? parsed.tags : undefined);
+  send(req, res, result.ok ? 200 : 400, result);
+}
+
+/** One task's page, by `?id=`. 404 when there is no such task: the page closes and says so. */
+function scheduleDetail({ req, res, url }: Req, ctx: Ctx): void {
+  const id = ScheduleTaskId.safeParse(url.searchParams.get('id') ?? '');
+  if (!id.success) return send(req, res, 400, { ok: false, error: 'not a task id' });
+  const result = ctx.room.scheduleDetail(id.data);
+  send(req, res, result.ok ? 200 : 404, result);
+}
+
+/**
+ * Change a task from its page. A refusal is the service's own sentence, as for `scheduleOp`, and
+ * the answer carries the page and the list as they now are.
+ */
+async function scheduleEdit({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, ScheduleEditRequestSchema);
+  if (!parsed) return;
+  const result = await ctx.room.scheduleEdit(parsed.id, parsed.edit);
   send(req, res, result.ok ? 200 : 400, result);
 }
 

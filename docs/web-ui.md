@@ -151,12 +151,14 @@ is. It is narrower than the topic sidebar — drag its left edge to resize it, d
 for the default width. A task is a row like a topic's: a state dot, the name, and one line under it
 with what it is doing (a countdown, `running now`, or the state word), where it posts, how the last
 run ended (red when it was not ok) and its tags. The cron expression, the next run in full, the
-target and the run mode are on the row's hover card and in the detail a tap opens; the detail also
-holds the full prompt or command and the tag editor, with the × on a tag to remove it and the
-**+ tag** field, saved with Enter, to add one. The row's ⋯ holds **Pause** or **Resume**, **Run
-now** (greyed while a run is in flight, with the reason) and **Delete**, which asks once, like
-deleting a topic. Tasks are still registered by asking an agent in a topic — the panel manages
-them, it does not create them.
+target and the run mode are on the row's hover card and on the task's page a tap opens. The page
+holds the full prompt or command, the tag editor (the × on a tag removes it, the **+ tag** field,
+saved with Enter, adds one), the topics its runs opened, and its recent runs, each with a link to
+the topic it posted into; its **Edit** changes the task in place — see
+[Scheduled tasks](scheduled-tasks.md). The row's ⋯ holds **Pause** or **Resume**, **Run now** and
+**Edit** (both greyed while a run is in flight, with the reason) and **Delete**, which asks once,
+like deleting a topic. Tasks are still registered by asking an agent in a topic — the panel
+manages and edits them, it does not create them.
 
 **What needs you.** Every topic waiting on you moves to the top of the list, its title in green,
 with a line under the group: a question to answer first (amber dot), then a turn that failed (red

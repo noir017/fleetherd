@@ -310,6 +310,19 @@ describe('editTask', () => {
     expect(after.when).toEqual(before.when);
   });
 
+  it('empties a directory or a model on null, which the web UI form sends for a field it cleared', () => {
+    const before = built({ cron: '0 8 * * *', prompt: 'brief', session: 'new', model: 'm1' });
+    expect(before.run).toMatchObject({ cwd: '/work', model: 'm1' });
+    const after = edited(before, { cwd: null, model: null });
+    expect(after.run).toEqual({ kind: 'agent', agent: 'cc', prompt: 'brief', session: 'new' });
+    const bash = edited(built({ cron: '0 8 * * *', bash: 'ls' }), { cwd: null });
+    expect(bash.run.cwd).toBeUndefined();
+    // A fixed session has neither to empty: nothing to refuse.
+    expect(edited(built({ cron: '0 8 * * *', prompt: 'x' }), { cwd: null, model: null }).run).toEqual(
+      built({ cron: '0 8 * * *', prompt: 'x' }).run
+    );
+  });
+
   it('keeps a paused task paused', () => {
     const paused = { ...built({ cron: '0 8 * * *', prompt: 'x', session: 'new' }), state: 'paused' as const };
     expect(edited(paused, { name: 'renamed' }).state).toBe('paused');
