@@ -858,7 +858,7 @@ function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
     ...(input.tags !== undefined ? { tags: input.tags } : task.tags !== undefined ? { tags: task.tags } : {}),
     ...mergedTime(task, input),
     tz: input.tz ?? task.when.tz,
-    ...(input.cwd === null ? {} : input.cwd !== undefined ? { cwd: input.cwd } : run.cwd !== undefined ? { cwd: run.cwd } : {}),
+    ...kept('cwd', input.cwd, run.cwd),
     // Only what the caller named: the task's machine is its agent's, and a --host that agreed with
     // it yesterday must not be assumed to agree with a --agent this edit moves the task to.
     ...(input.host !== undefined ? { host: input.host } : {}),
@@ -878,15 +878,15 @@ function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
     prompt: input.prompt ?? run.prompt,
     session: run.session,
     agent: input.agent ?? run.agent,
-    ...(input.model === null
-      ? {}
-      : input.model !== undefined
-        ? { model: input.model }
-        : run.model !== undefined
-          ? { model: run.model }
-          : {}),
+    ...kept('model', input.model, run.model),
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
   };
+}
+
+/** A field an edit can set, empty (`null`) or leave alone: what it gave, else the task's own. */
+function kept<K extends 'cwd' | 'model'>(key: K, given: string | null | undefined, own: string | undefined): Partial<Record<K, string>> {
+  const value = given === null ? undefined : (given ?? own);
+  return value !== undefined ? ({ [key]: value } as Partial<Record<K, string>>) : {};
 }
 
 function sameWhen(a: ScheduleWhen, b: ScheduleWhen): boolean {

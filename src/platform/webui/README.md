@@ -570,9 +570,9 @@ behave identically in both panels. It leads with the name; one line under it hol
 (a countdown, `running now`, or the state word for paused/expired/done), where it posts, how the last
 run ended (red only when it was not `ok`) and its tags as `#tag`. The cron expression is deliberately
 not on the row: it is on the row's `title` with the next run in full, the target and the run mode, and
-in the detail a tap opens — with the prompt or command, the tag editor and the bookkeeping. The row's
-actions are in its ⋯ (Pause or Resume, Run now greyed while a run is in flight with the reason, then
-Delete, which asks once like deleting a topic does). The dot reuses `.topic-dot`: running is the blue
+on the task's page a tap opens (below). The row's actions are in its ⋯ (Pause or Resume, Run now and
+Edit, both greyed while a run is in flight with the reason, then Delete, which asks once like deleting
+a topic does). The dot reuses `.topic-dot`: running is the blue
 pulse, a last run that did not end `ok` is red, an active task is the dim blue of a resident agent,
 and paused/expired/done are the grey of an idle row, with the title dimmed to match. The list is
 still a poll, so an open menu re-finds its row after every repaint and closes when the task is gone.
@@ -582,6 +582,30 @@ because that list is redrawn with innerHTML on every poll. Its search covers the
 or command and the target; its sort is Status, Next run, Last run or Created, either direction,
 with a row that has no value for the field kept last. The keyword, selection and sort persist in
 the browser. Only the Tasks sub-tab shows it — Sessions and Reviews do not.
+
+**A task's page** (`#task-page`, `openTaskPage`) is a window like Skills', at z-index 21 because it
+is opened from the panel, which on a phone is a drawer at 20 later in the document. It replaced a
+fold under the row: the panel is 240–320px wide, room to show a prompt but not to edit one. The view
+has the row's actions as buttons, the schedule, how it runs, its directory, where it posts, the
+prompt or command, the tag editor, and two lists. **Sessions** are the topics its runs opened that
+this page still has: every topic marked with the task (`Topic.task`, recorded since 3.9.0 from
+`createThread`'s `task`) and every topic a recorded run names — the second is how an older topic, and
+a fixed session's own topic, are found; the run history alone holds only the last twenty runs, one
+day of an hourly daily task. **Runs** is that history, each with an Open for its topic, the name of a
+place elsewhere, or "topic gone". The page follows the list: every poll answer goes through
+`taskPageFollow`, which closes it when the task is gone, redraws the view unless a tag is being typed,
+and reads the detail again when a run started or ended.
+
+**Edit** turns the view into a form of the fields `editable` lists — the daemon's reading of
+`schedule edit`'s rules (`daemon/schedule-panel.ts` panelTaskDetail), so a fixed session offers no
+directory or model and a daily task no one-shot time — with what a task *is* (its kind, session and
+target) said once below rather than shown as greyed fields. Save sends only what changed
+(`taskEditDiff`): an emptied directory or model as `null`, and a one-shot task's time again when its
+zone changed so the time is read in the new zone. Values are set on the elements after the markup is
+in, because a textarea drops a leading newline it is parsed with. A refusal is the service's own
+sentence in `#task-note`, with the form kept; Close, Cancel or Escape on a form with changes asks
+first. Tag edits and refusals of the row actions are said on the page when it is open for that task,
+since it covers the panel's own note.
 
 A group marked `pinned` is drawn as one always-visible row under the search instead of folding
 into the panel, and both bars use it for their state filter: Status here (Running, Active,
@@ -630,9 +654,13 @@ three-state.
 **Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the five
 operations (pause, resume, run, remove and `tags`); the daemon builds it in
 `daemon/schedule-panel.ts` from `ScheduleService`, the same
-service the agent's `schedule` commands and `/setting schedule` use. Two routes carry it:
-`GET api/schedules` and `POST api/schedules/op`, the latter validated by
-`ScheduleOpRequestSchema`. The task list pulls when the panel opens, after every action, and on a
+service the agent's `schedule` commands and `/setting schedule` use, plus `detail(id)` and
+`edit(id, change)` for the task's page. Four routes carry it: `GET api/schedules`,
+`POST api/schedules/op` (`ScheduleOpRequestSchema`), `GET api/schedules/task?id=` and
+`POST api/schedules/edit` (`ScheduleEditRequestSchema`: only the changed fields, each bounded in size,
+strict). An edit is `ScheduleService.editFromPanel` — `schedule edit`'s rules, with a typed directory
+read as an absolute path on the machine the task runs on and checked there, and the updated card
+posted to the conversation the task posts to. The task list pulls when the panel opens, after every action, and on a
 timer while visible (5s while a run is in flight, 30s otherwise) — the daemon has no event for a
 run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
 arrives formatted in the task's own zone.

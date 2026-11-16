@@ -102,9 +102,28 @@ Paused, and Ended (expired and done together) — and by **Tags**, which offers 
 **Untagged**. The sort is Status (the default, the list's own order), Next run, Last run or Created,
 ascending or descending; a task with no next run, or one that has never run, stays at the bottom
 either way. The keyword, filters and sort are kept in this browser. A task is a row like a topic's:
-its ⋯ holds Pause or Resume, Run now and Delete, and the detail a tap opens holds the tags — the ×
-removes one, and typing in **+ tag** and pressing Enter adds one. Only the Tasks
-sub-tab has this bar — Sessions and Reviews do not. On a phone the same panel is a drawer from the right, with the chat
+its ⋯ holds Pause or Resume, Run now, Edit and Delete. Only the Tasks sub-tab has this bar —
+Sessions and Reviews do not.
+
+A tap on a task opens **its page**: the schedule and the next run, how it runs (agent, model,
+session), its directory, where it posts, the whole prompt or command, and the same actions as
+buttons. The tags are edited there — the × removes one, and typing in **+ tag** and pressing Enter
+adds one. Below are its **Sessions**, the topics its runs opened that the web UI still has, and its
+**Runs**, the last twenty with how each ended, how long it took, and an **Open** for the topic it
+posted into. A tap on a session or an Open goes to that topic.
+
+**Edit** — on the page, or in the row's ⋯ — turns the page into a form for what `schedule edit` can
+change: the name, the time (a cron, or one run at a date and time) and its zone, the prompt or
+command, the agent, the model, the directory and a bash task's timeout. Only what you change is
+sent, and it is checked by the same rules as `schedule edit`, so a refusal says what the CLI would.
+An empty model or directory goes back to the agent's own. A directory is a path on the machine the
+task runs on — on a [remote host](remote-hosts.md), that host's — and must be absolute; it is
+checked there before anything is stored. The conversation the task posts to gets the updated card.
+The form offers only what can change: a fixed-session task has no directory or model of its own (they
+are its topic's, changed with `/cd` and `/model` there), a daily task takes only a cron, and what a
+task *is* — prompt or bash, its session, where it posts — is said under the form rather than offered
+in it. A task that is running cannot be edited until the run ends, and one that has expired or had
+its one run cannot be edited at all. Closing a form with changes asks first. On a phone the same panel is a drawer from the right, with the chat
 still visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
 session opens topics; the **Sessions** sub-tab lists those topics, with any sub-agents a run opened
 nested under it, and none of them appear in the ordinary topic list. The panel's second outer tab, **Reviews**, is the automatic review of quiet

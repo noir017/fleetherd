@@ -8816,6 +8816,26 @@ describe('webui page: the scheduled-task panel', () => {
     ...over,
   });
   const listReply = (tasks: Array<Record<string, unknown>>): Record<string, unknown> => ({ enabled: true, tasks });
+  const TASK_URL = 'api/schedules/task?id=a1b2c3';
+  /** A task's page as the daemon answers it: a new-session task with a directory and a model. */
+  const detail = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    task: task(),
+    fields: {
+      name: 'Morning CI',
+      cron: '0 8 * * *',
+      tz: 'Asia/Shanghai',
+      prompt: 'summarise the failures',
+      agent: 'cc',
+      session: 'new',
+      model: 'm1',
+      cwd: '/srv/app',
+    },
+    editable: ['name', 'cron', 'tz', 'at', 'prompt', 'agent', 'model', 'cwd'],
+    agents: ['cc', 'oc'],
+    runs: [],
+    ...over,
+  });
+  const pageReply = (d: Record<string, unknown>): Record<string, unknown> => ({ ok: true, detail: d });
   /** Open a task row's ⋯ menu, as a person would: one box, so the selector is inside #row-menu. */
   const taskMenu = async (h: Harness, id: string): Promise<HTMLElement> => {
     await h.click(`[data-rm="task:${id}"]`);
@@ -9219,10 +9239,11 @@ describe('webui page: the scheduled-task panel', () => {
     await h.click('#schedules-toggle');
     await taskMenu(h, 'a1b2c3');
 
-    // Pause and Run now, then Delete below its divider: the row's actions are all in here now.
+    // Pause, Run now and Edit, then Delete below its divider: the row's actions are all in here.
     expect(Array.from(h.el('row-menu').querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Pause',
       'Run now',
+      'Edit',
       'Delete',
     ]);
     expect(h.el('row-menu').querySelector('[role="separator"]')).not.toBeNull();
@@ -9300,67 +9321,71 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.el('schedules-list').textContent).toContain('Morning CI');
   });
 
-  it('opens a card for the full prompt without treating the tap as an action', async () => {
-    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+  it("opens the task's page on a tap, without treating the tap as an action", async () => {
+    const h = await open({
+      replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) },
+    });
     await h.emit(sync(A, [], [A]));
     await h.click('#schedules-toggle');
-    const card = h.doc.querySelector('.sched-item') as HTMLElement;
-    const detail = card.querySelector('.sched-detail') as HTMLElement;
+    expect(h.el('task-page').hidden).toBe(true);
 
-    expect(detail.hidden).toBe(true);
-    card.click();
-    await tick();
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await until("the task's page", () => h.el('task-view').textContent!.includes('summarise the failures'));
 
-    expect(detail.hidden).toBe(false);
-    expect(detail.textContent).toContain('summarise the failures');
-    // The detail names the target in full, as the hover card does.
-    expect(detail.textContent).toContain('Posts to');
-    expect(detail.textContent).toContain('Topic ' + A);
+    expect(h.el('task-page').hidden).toBe(false);
+    expect(h.el('task-title').textContent).toBe('Morning CI');
+    expect(h.calls.some((c) => c.path === TASK_URL)).toBe(true);
+    // The page names the target in full, as the hover card does, resolved to the topic's title.
+    expect(h.el('task-view').textContent).toContain('Posts to');
+    expect(h.el('task-view').textContent).toContain('Topic ' + A);
+    expect(h.el('task-view').textContent).toContain('/srv/app');
     expect(h.calls.some((c) => c.path === 'api/schedules/op')).toBe(false);
+
+    await h.click('#task-close');
+    expect(h.el('task-page').hidden).toBe(true);
   });
 
-  it('opens and folds a task from the keyboard, and Space does not scroll the page', async () => {
-    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+  it('opens a task from the keyboard, and Space does not scroll the page', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) } });
     await h.emit(sync(A, [], [A]));
     await h.click('#schedules-toggle');
     const row = h.doc.querySelector('.sched-item .topic-item') as HTMLElement;
-    const detail = h.doc.querySelector('.sched-detail') as HTMLElement;
-    const press = (key: string): KeyboardEvent => {
+    const press = (target: HTMLElement, key: string): KeyboardEvent => {
       const ev = new h.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
-      row.dispatchEvent(ev);
+      target.dispatchEvent(ev);
       return ev;
     };
 
     // The row says role=button, so Enter and Space do what a click does — and Space is not left
     // to the browser's scroll.
-    expect(press('Enter').defaultPrevented).toBe(true);
+    expect(press(row, 'Enter').defaultPrevented).toBe(true);
     await tick();
-    expect(detail.hidden).toBe(false);
-    expect(press(' ').defaultPrevented).toBe(true);
+    expect(h.el('task-page').hidden).toBe(false);
+    await h.click('#task-close');
+    expect(press(row, ' ').defaultPrevented).toBe(true);
     await tick();
-    expect(detail.hidden).toBe(true);
+    expect(h.el('task-page').hidden).toBe(false);
+    await h.click('#task-close');
 
-    // The ⋯ is its own control: Enter on it must not also fold the row.
-    const more = h.doc.querySelector('[data-rm="task:a1b2c3"]') as HTMLElement;
-    more.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    // The ⋯ is its own control: Enter on it must not also open the page.
+    press(h.doc.querySelector('[data-rm="task:a1b2c3"]') as HTMLElement, 'Enter');
     await tick();
-    expect(detail.hidden).toBe(true);
+    expect(h.el('task-page').hidden).toBe(true);
   });
 
-  it('lets Enter on a tag' + "'s × delete the tag instead of folding the row", async () => {
+  it('lets Enter on a tag' + "'s × delete the tag, on the task's page", async () => {
     const replies = {
       'api/schedules': listReply([task({ tags: ['ci'] })]),
       'api/schedules/op': { ok: true, tasks: [task({ tags: [] })] },
+      [TASK_URL]: pageReply(detail({ task: task({ tags: ['ci'] }) })),
     };
     const h = await open({ replies });
     await h.emit(sync(A, [], [A]));
     await h.click('#schedules-toggle');
     (h.doc.querySelector('.sched-item') as HTMLElement).click();
-    await tick();
-    const detail = h.doc.querySelector('.sched-detail') as HTMLElement;
-    expect(detail.hidden).toBe(false);
+    await until('the chip', () => h.doc.querySelector('#task-view [data-tag-del="ci"]') !== null);
 
-    const del = h.doc.querySelector('[data-tag-del="ci"]') as HTMLElement;
+    const del = h.doc.querySelector('#task-view [data-tag-del="ci"]') as HTMLElement;
     del.focus();
     // A browser turns Enter on a focused button into a click unless the keydown was cancelled;
     // jsdom performs no default actions, so the test does that step itself.
@@ -9370,12 +9395,297 @@ describe('webui page: the scheduled-task panel', () => {
     if (live) del.click();
     await until('the tags request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
 
-    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({
-      id: 'a1b2c3',
-      action: 'tags',
-      tags: [],
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({ id: 'a1b2c3', action: 'tags', tags: [] });
+    await until('no chip', () => h.doc.querySelectorAll('#task-view .sched-tag').length === 0);
+    expect(h.el('task-page').hidden).toBe(false);
+  });
+
+  /** Open the panel and the task's page, and wait for the detail to be drawn. */
+  const openTaskPage = async (h: Harness, topics?: Array<Record<string, unknown>>): Promise<void> => {
+    await h.emit(sync(A, [], [A]));
+    if (topics) await h.emit({ t: 'topics', topics });
+    await h.click('#schedules-toggle');
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await until("the task's page", () => h.el('task-view').querySelector('.tp-acts') !== null);
+  };
+  const setField = (h: Harness, id: string, value: string): void => {
+    const el = h.el(id) as HTMLInputElement;
+    el.value = value;
+    el.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  };
+
+  it('lists the topics its runs opened, and every run with where its output went', async () => {
+    const R1 = 'c3d4e5f6';
+    const R2 = 'd4e5f6a7';
+    const OLD = 'e5f6a7b8';
+    const runs = [
+      { at: 3, atText: '2026-11-16 08:00', status: 'ok', durationMs: 42_000, topic: R1 },
+      { at: 2, atText: '2026-11-15 08:00', status: 'failed', error: 'the harness exited mid-turn', topic: OLD },
+      { at: 1, atText: '2026-11-14 08:00', status: 'missed', error: 'the gateway was down' },
+      { at: 0, atText: '2026-11-13 08:00', status: 'ok', where: 'tg:-100/7' },
+      { at: -1, atText: '2026-11-12 08:00', status: 'ok', topic: 'f6a7b8c9' },
+    ];
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail({ runs })) } });
+    await openTaskPage(h, [
+      { id: A, title: 'an ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
+      // Marked with the task: listed even though no recorded run names it.
+      { id: R2, title: '[cc] ⏰ Morning CI · 2026-11-01 08:00', lastAt: 500, msgCount: 2, stage: 'idle', scheduled: true, task: 'a1b2c3' },
+      { id: R1, title: '[cc] ⏰ Morning CI · 2026-11-16 08:00', lastAt: 900, msgCount: 4, stage: 'review', scheduled: true, task: 'a1b2c3' },
+      // Opened before topics were marked: found through the run that names it.
+      { id: OLD, title: '[cc] ⏰ Morning CI · 2026-11-15 08:00', lastAt: 800, msgCount: 1, stage: 'failed', scheduled: true },
+      // Another task's run is not this one's.
+      { id: 'a7b8c9d0', title: '[cc] ⏰ Other', lastAt: 700, scheduled: true, task: 'ffff00' },
+    ]);
+
+    const sessions = Array.from(h.doc.querySelectorAll('#task-view .tp-sess')).map((n) => n.getAttribute('data-tp-topic'));
+    expect(sessions).toEqual([R1, OLD, R2]);
+    expect(h.doc.querySelector('#tp-sessions .tp-label')!.textContent).toBe('Sessions3');
+    const rows = Array.from(h.doc.querySelectorAll('#task-view .tp-run')).map((n) => n.textContent);
+    expect(rows[0]).toContain('ok · 2026-11-16 08:00 · 42.0s');
+    expect(rows[1]).toContain('the harness exited mid-turn');
+    expect(rows[2]).toContain('missed');
+    expect(rows[3]).toContain('tg:-100/7');
+    // A run whose topic this page no longer has says so, rather than offering a dead link.
+    expect(rows[4]).toContain('topic gone');
+    expect(h.doc.querySelectorAll('#task-view .tp-run-open')).toHaveLength(2);
+
+    // A run's Open and a session row both go to the topic, and put the page away.
+    await h.click(`#task-view .tp-run-open[data-tp-topic="${R1}"]`);
+    expect(h.el('task-page').hidden).toBe(true);
+    expect(h.window.location.search).toContain(R1);
+  });
+
+  it('follows the topic list while open: a new run topic appears among the sessions', async () => {
+    const R1 = 'c3d4e5f6';
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) } });
+    await openTaskPage(h);
+    expect(h.doc.querySelectorAll('#task-view .tp-sess')).toHaveLength(0);
+    expect(h.el('task-view').textContent).toContain('None on this page yet');
+
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'an ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
+        { id: R1, title: '[cc] ⏰ Morning CI · now', lastAt: 1200, msgCount: 1, stage: 'working', running: true, scheduled: true, task: 'a1b2c3' },
+      ],
     });
-    expect(detail.hidden).toBe(false);
+    const row = h.doc.querySelector(`#task-view .tp-sess[data-tp-topic="${R1}"]`) as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.textContent).toContain('running');
+
+    // Enter on a session row opens it, as a click does.
+    row.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await tick();
+    expect(h.el('task-page').hidden).toBe(true);
+    expect(h.window.location.search).toContain(R1);
+  });
+
+  it('edits in place: the form holds the raw values, and Save sends only what changed', async () => {
+    const saved = detail({ fields: { ...(detail().fields as object), prompt: 'summarise the failures and the flakes' } });
+    delete (saved.fields as Record<string, unknown>).cwd;
+    const replies = {
+      'api/schedules': listReply([task()]),
+      [TASK_URL]: pageReply(detail()),
+      'api/schedules/edit': { ok: true, detail: saved, tasks: [task({ detail: 'summarise the failures and the flakes' })] },
+    };
+    const h = await open({ replies });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+
+    expect((h.el('tp-name') as HTMLInputElement).value).toBe('Morning CI');
+    expect((h.el('tp-cron') as HTMLInputElement).value).toBe('0 8 * * *');
+    expect((h.el('tp-tz') as HTMLInputElement).value).toBe('Asia/Shanghai');
+    expect((h.el('tp-text') as HTMLTextAreaElement).value).toBe('summarise the failures');
+    expect((h.el('tp-agent') as HTMLSelectElement).value).toBe('cc');
+    expect(Array.from((h.el('tp-agent') as HTMLSelectElement).options).map((o) => o.value)).toEqual(['cc', 'oc']);
+    expect((h.el('tp-model') as HTMLInputElement).value).toBe('m1');
+    expect((h.el('tp-cwd') as HTMLInputElement).value).toBe('/srv/app');
+    // What a task is cannot be edited, and the form says so once rather than greying fields.
+    expect(h.el('task-view').textContent).toContain('a new topic each run');
+    expect(h.el('task-view').textContent).toContain('cannot be edited');
+
+    setField(h, 'tp-text', 'summarise the failures and the flakes');
+    setField(h, 'tp-cwd', '');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+
+    expect(h.calls.find((c) => c.path === 'api/schedules/edit')?.body).toEqual({
+      id: 'a1b2c3',
+      edit: { prompt: 'summarise the failures and the flakes', cwd: null },
+    });
+    await until('the view again', () => h.el('task-view').querySelector('#tp-form') === null);
+    expect(h.el('task-view').textContent).toContain('summarise the failures and the flakes');
+    expect(h.el('task-view').textContent).not.toContain('/srv/app');
+    expect(h.el('task-note').className).toBe('ok');
+    // The list behind the page took the same answer.
+    expect((h.doc.querySelector('.sched-item .topic-item') as HTMLElement).getAttribute('title')).toBeTruthy();
+  });
+
+  it('keeps the form and says the refusal when the daemon will not take the edit', async () => {
+    const replies = {
+      'api/schedules': listReply([task()]),
+      [TASK_URL]: pageReply(detail()),
+      'api/schedules/edit': { ok: false, error: '--cron: Invalid cron expression' },
+    };
+    const h = await open({ replies, status: { 'api/schedules/edit': 400 } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    setField(h, 'tp-cron', '0 25 * * *');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the refusal', () => !h.el('task-note').hidden);
+
+    expect(h.calls.find((c) => c.path === 'api/schedules/edit')?.body).toEqual({ id: 'a1b2c3', edit: { cron: '0 25 * * *' } });
+    expect(h.el('task-note').textContent).toBe('--cron: Invalid cron expression');
+    expect(h.el('task-note').className).toBe('error');
+    expect((h.el('tp-cron') as HTMLInputElement).value).toBe('0 25 * * *');
+    expect((h.doc.querySelector('[data-tp-act="save"]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('sends nothing when nothing changed, and refuses a timeout that is not a length of time', async () => {
+    const bash = detail({
+      task: task({ kind: 'bash', run: 'bash · 10m', detail: 'pg_dump app' }),
+      fields: { name: 'Backup', cron: '0 2 * * *', tz: 'Asia/Shanghai', command: 'pg_dump app', timeoutMs: 600_000 },
+      editable: ['name', 'cron', 'tz', 'at', 'command', 'timeout', 'cwd'],
+    });
+    const h = await open({ replies: { 'api/schedules': listReply([task({ kind: 'bash' })]), [TASK_URL]: pageReply(bash) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+
+    // A bash task: a command and a timeout, no agent or model to choose.
+    expect((h.el('tp-text') as HTMLTextAreaElement).value).toBe('pg_dump app');
+    expect((h.el('tp-timeout') as HTMLInputElement).value).toBe('10m');
+    expect(h.doc.getElementById('tp-agent')).toBeNull();
+    expect(h.doc.getElementById('tp-model')).toBeNull();
+    expect(h.el('task-view').textContent).toContain('Command');
+
+    await h.click('#task-view [data-tp-act="save"]');
+    expect(h.calls.some((c) => c.path === 'api/schedules/edit')).toBe(false);
+    expect(h.el('task-note').textContent).toBe('Nothing was changed.');
+
+    await h.click('#task-view [data-tp-act="edit"]');
+    setField(h, 'tp-timeout', 'soon');
+    await h.click('#task-view [data-tp-act="save"]');
+    expect(h.el('task-note').textContent).toContain('90s, 10m or 1h');
+    expect(h.calls.some((c) => c.path === 'api/schedules/edit')).toBe(false);
+    setField(h, 'tp-timeout', '90s');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(h.calls.find((c) => c.path === 'api/schedules/edit')?.body).toEqual({ id: 'a1b2c3', edit: { timeoutMs: 90_000 } });
+  });
+
+  it('switches a task to one run, and sends the time again when the zone changes', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+
+    expect(h.el('tp-at').hidden).toBe(true);
+    await h.click('#task-view [data-tp-when="at"]');
+    expect(h.el('tp-at').hidden).toBe(false);
+    expect(h.el('tp-cron').hidden).toBe(true);
+    setField(h, 'tp-at', '2026-11-20T09:30');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(h.calls.find((c) => c.path === 'api/schedules/edit')?.body).toEqual({ id: 'a1b2c3', edit: { at: '2026-11-20 09:30' } });
+
+    // A one-time task whose zone changes sends its time with it, so the time is read in the new zone.
+    const once = detail({ fields: { ...(detail().fields as object), cron: undefined, at: '2026-11-20 09:30' } });
+    const r = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(once) } });
+    await openTaskPage(r);
+    await r.click('#task-view [data-tp-act="edit"]');
+    expect((r.el('tp-at') as HTMLInputElement).value).toBe('2026-11-20T09:30');
+    setField(r, 'tp-tz', 'Europe/Berlin');
+    await r.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => r.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(r.calls.find((c) => c.path === 'api/schedules/edit')?.body).toEqual({
+      id: 'a1b2c3',
+      edit: { tz: 'Europe/Berlin', at: '2026-11-20 09:30' },
+    });
+  });
+
+  it('offers only what an edit of that kind can change: a fixed session has no directory, model or one-shot switch for daily', async () => {
+    const fixed = detail({
+      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'p', agent: 'cc', session: 'fixed' },
+      editable: ['name', 'cron', 'tz', 'at', 'prompt', 'agent'],
+    });
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(fixed) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect(h.doc.getElementById('tp-model')).toBeNull();
+    expect(h.doc.getElementById('tp-cwd')).toBeNull();
+    expect(h.el('task-view').textContent).toContain('/cd and /model there');
+
+    const daily = detail({ fields: { ...(detail().fields as object), session: 'daily' }, editable: ['name', 'cron', 'tz', 'prompt', 'agent', 'model', 'cwd'] });
+    const r = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(daily) } });
+    await openTaskPage(r);
+    await r.click('#task-view [data-tp-act="edit"]');
+    expect(r.doc.querySelector('[data-tp-when]')).toBeNull();
+  });
+
+  it('has no Edit on a task that is over, and says why', async () => {
+    const over = detail({ task: task({ state: 'expired' }), locked: '#a1b2c3 has expired (a fixed-session task lives 24h); add a new task instead' });
+    const h = await open({ replies: { 'api/schedules': listReply([task({ state: 'expired' })]), [TASK_URL]: pageReply(over) } });
+    await openTaskPage(h);
+    expect(h.doc.querySelector('[data-tp-act="edit"]')).toBeNull();
+    expect(h.el('task-view').textContent).toContain('has expired');
+  });
+
+  it('opens on the form from the row menu, and asks before throwing away changes', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) }, confirm: false });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    await taskMenu(h, 'a1b2c3');
+    await h.click('[data-rmk="edit"]');
+    await until('the form', () => h.doc.getElementById('tp-name') !== null);
+    expect(h.doc.activeElement).toBe(h.el('tp-name'));
+
+    // Untouched: closes without asking.
+    await h.click('#task-close');
+    expect(h.el('task-page').hidden).toBe(true);
+    expect(h.confirms).toEqual([]);
+
+    await taskMenu(h, 'a1b2c3');
+    await h.click('[data-rmk="edit"]');
+    await until('the form', () => h.doc.getElementById('tp-name') !== null);
+    setField(h, 'tp-name', 'Renamed');
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick();
+    // Refused: still open, still holding the change, and the panel behind it is not closed either.
+    expect(h.confirms).toEqual(['Discard your changes to this task?']);
+    expect(h.el('task-page').hidden).toBe(false);
+    expect((h.el('tp-name') as HTMLInputElement).value).toBe('Renamed');
+    expect(h.el('app').classList.contains('sched-open')).toBe(true);
+  });
+
+  it('goes when its task goes, and reads the detail again when a run ends', async () => {
+    const replies: Record<string, unknown> = { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) };
+    const h = await open({ replies, shortenLong: true });
+    await openTaskPage(h);
+    const reads = (): number => h.calls.filter((c) => c.path === TASK_URL).length;
+    const first = reads();
+
+    replies['api/schedules'] = listReply([task({ runs: 3, last: { at: 5, atText: 'x', status: 'ok' } })]);
+    await within('a second read of the detail', 1000, () => reads() > first);
+
+    replies['api/schedules'] = listReply([]);
+    await within('the page to close', 1000, () => h.el('task-page').hidden);
+  });
+
+  it('pauses, runs and deletes from its page, through the same operation the menu uses', async () => {
+    const replies = {
+      'api/schedules': listReply([task()]),
+      [TASK_URL]: pageReply(detail()),
+      'api/schedules/op': { ok: true, tasks: [task({ state: 'paused' })] },
+    };
+    const h = await open({ replies, confirm: true });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="pause"]');
+    await until('the op', () => h.calls.some((c) => c.path === 'api/schedules/op'));
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({ id: 'a1b2c3', action: 'pause' });
+    await until('Resume', () => h.doc.querySelector('#task-view [data-tp-act="resume"]') !== null);
+    expect(h.el('task-sub').textContent).toContain('paused');
+
+    await h.click('#task-view [data-tp-act="remove"]');
+    expect(h.confirms.at(-1)).toBe('Delete task "Morning CI"?');
   });
 
   it('does not open a menu with a separator when the task has no state change', async () => {
@@ -10258,17 +10568,25 @@ describe('webui page: the task list filter', () => {
     expect(ids(h)).toEqual(['d0d0d0', 'b0b0b0', 'e0e0e0', 'a0a0a0']);
   });
 
-  it('adds a tag from the card and keeps the card open through the repaint', async () => {
+  /** A task's page, for the tag editor on it: the tags shown are the list row's (taskPageFollow). */
+  const tagPage = { ok: true, detail: { task: task(), fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'x', agent: 'cc', session: 'fixed' }, editable: ['name'], agents: ['cc'], runs: [] } };
+  const openTask = async (h: Harness): Promise<HTMLInputElement> => {
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await until('the tag field', () => h.doc.querySelector('#task-view [data-tag-input]') !== null);
+    return h.doc.querySelector('#task-view [data-tag-input]') as HTMLInputElement;
+  };
+
+  it("adds a tag on the task's page, and the row and the page both show it", async () => {
     const replies = {
       'api/schedules': listReply([task({ tags: ['ci'] })]),
       'api/schedules/op': { ok: true, tasks: [task({ tags: ['ci', 'deploy'] })] },
+      'api/schedules/task?id=a1b2c3': tagPage,
     };
     const h = await open({ replies });
     await openPanel(h);
 
-    (h.doc.querySelector('.sched-item') as HTMLElement).click();
-    await tick();
-    const input = h.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    const input = await openTask(h);
+    input.focus();
     input.value = 'deploy';
     input.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await until('the tags request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
@@ -10278,67 +10596,67 @@ describe('webui page: the task list filter', () => {
       action: 'tags',
       tags: ['ci', 'deploy'],
     });
-    await until('the new chip', () => h.doc.querySelectorAll('.sched-tag-edit .sched-tag').length === 2);
+    await until('the new chip', () => h.doc.querySelectorAll('#task-view .sched-tag').length === 2);
     expect(h.el('schedules-list').textContent).toContain('deploy');
-    // A poll or the answer's repaint must not fold a card being edited.
-    expect((h.doc.querySelector('.sched-detail') as HTMLElement).hidden).toBe(false);
+    // The field is emptied and keeps the focus, for the next tag.
+    const again = h.doc.querySelector('#task-view [data-tag-input]') as HTMLInputElement;
+    expect(again.value).toBe('');
+    expect(h.doc.activeElement).toBe(again);
   });
 
-  it('removes a tag with its ×, and shows the daemon sentence when a save is refused', async () => {
+  it("removes a tag with its ×, and says a refusal on the page, where the person is looking", async () => {
     const removed = {
       'api/schedules': listReply([task({ tags: ['ci'] })]),
       'api/schedules/op': { ok: true, tasks: [task({ tags: [] })] },
+      'api/schedules/task?id=a1b2c3': tagPage,
     };
     const h = await open({ replies: removed });
     await openPanel(h);
-    (h.doc.querySelector('.sched-item') as HTMLElement).click();
-    await tick();
-    (h.doc.querySelector('[data-tag-del="ci"]') as HTMLElement).click();
+    await openTask(h);
+    (h.doc.querySelector('#task-view [data-tag-del="ci"]') as HTMLElement).click();
     await until('the tags request', () => h.calls.some((c) => c.path === 'api/schedules/op'));
 
-    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({
-      id: 'a1b2c3',
-      action: 'tags',
-      tags: [],
-    });
-    await until('no chip', () => h.doc.querySelectorAll('.sched-tag-edit .sched-tag').length === 0);
+    expect(h.calls.find((c) => c.path === 'api/schedules/op')?.body).toEqual({ id: 'a1b2c3', action: 'tags', tags: [] });
+    await until('no chip', () => h.doc.querySelectorAll('#task-view .sched-tag').length === 0);
 
     const refused = {
       'api/schedules': listReply([task({ tags: ['ci'] })]),
       'api/schedules/op': { ok: false, error: 'a task takes at most 5 tags, got 6' },
+      'api/schedules/task?id=a1b2c3': tagPage,
     };
     const r = await open({ replies: refused, status: { 'api/schedules/op': 400 } });
     await openPanel(r);
-    (r.doc.querySelector('.sched-item') as HTMLElement).click();
-    await tick();
-    const input = r.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    const input = await openTask(r);
     input.value = 'x';
     input.dispatchEvent(new r.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await until('the refusal', () => !r.el('schedules-note').hidden);
+    await until('the refusal', () => !r.el('task-note').hidden);
 
-    expect(r.el('schedules-note').textContent).toBe('a task takes at most 5 tags, got 6');
-    expect(r.el('schedules-list').textContent).toContain('Morning CI');
+    expect(r.el('task-note').textContent).toBe('a task takes at most 5 tags, got 6');
+    expect(r.el('task-note').className).toBe('error');
+    // The panel behind the page is not where it is said: nobody can see it there.
+    expect(r.el('schedules-note').hidden).toBe(true);
+    // What was typed is still there to correct.
+    expect((r.doc.querySelector('#task-view [data-tag-input]') as HTMLInputElement).value).toBe('x');
   });
 
-  it('keeps a tag being typed and its caret through a poll repaint', async () => {
-    const replies = { 'api/schedules': listReply([task()]) };
+  it('keeps a tag being typed and its caret through a poll', async () => {
+    const replies = { 'api/schedules': listReply([task()]), 'api/schedules/task?id=a1b2c3': tagPage };
     // The 30s poll is shortened to 30ms, which is the repaint a person editing a tag would see.
     const h = await open({ replies, shortenLong: true });
     await openPanel(h);
-    (h.doc.querySelector('.sched-item') as HTMLElement).click();
-    await tick();
-
-    const input = h.doc.querySelector('[data-tag-input]') as HTMLInputElement;
+    const input = await openTask(h);
     input.value = 'deploy';
     input.focus();
     input.setSelectionRange(3, 3);
+    const polls = h.calls.filter((c) => c.path === 'api/schedules').length;
 
-    await within('a poll repaint', 1000, () => !h.doc.contains(input));
-    const next = h.doc.querySelector('[data-tag-input]') as HTMLInputElement;
-    expect(next).not.toBe(input);
-    expect(next.value).toBe('deploy');
-    expect(h.doc.activeElement).toBe(next);
-    expect(next.selectionStart).toBe(3);
+    await within('a poll', 1000, () => h.calls.filter((c) => c.path === 'api/schedules').length > polls);
+    await tick();
+    // Not redrawn while it holds text: the same field, its value, its focus and its caret.
+    expect(h.doc.contains(input)).toBe(true);
+    expect(input.value).toBe('deploy');
+    expect(h.doc.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(3);
   });
 
   it('keeps Loading until the first answer arrives, even when the bar is used', async () => {

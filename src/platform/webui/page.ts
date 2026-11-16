@@ -570,8 +570,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sess-group-flag.running{color:#38bdf8}
 .sess-group-rows{display:flex;flex-direction:column;gap:2px}
 /* A task, as the Tasks tab draws it: the same row every list uses, with the schedule on its hover
-   card and in the detail rather than on the row, because a cron expression is the one thing on a
-   task nobody reads at a glance. This wrapper only holds the detail a tap opens under it. */
+   card and on the task's page rather than on the row, because a cron expression is the one thing
+   on a task nobody reads at a glance. A tap opens that page (#task-page). */
 .sched-item{display:flex;flex-direction:column}
 /* The row's second line: what it is doing (a countdown, a state word), where it posts, how last
    time went, its tags — one line, ellipsised as a whole by .topic-dir. */
@@ -579,21 +579,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-item.running .sched-next{color:#38bdf8}
 .sched-last.bad{color:#f87171}
 .sched-row-tag{color:#8a8a8a}
-.sched-detail{margin:2px 0 6px;padding:8px 9px 0;border-top:1px solid var(--line)}
-.sched-detail-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
-.sched-detail-label+.sched-detail-label{margin-top:8px}
-.sched-detail-when{margin-top:4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:#a8a8a8;overflow-wrap:anywhere}
-.sched-detail-body{margin-top:4px;max-height:220px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#c9c9c9}
-.sched-detail-meta{margin-top:6px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
-/* A task's labels, in the detail's editor: the same chip the filter panel's Tags group draws, so
-   a tag reads as one thing in both places. */
+/* A task's labels, in its page's editor: the same chip the filter panel's Tags group draws, so a
+   tag reads as one thing in both places. */
 .sched-tag{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:10.5px;color:#a8a8a8;background:#232323;line-height:1.55}
 .sched-tag .ic{width:9px;height:9px;flex:none;opacity:.8}
 .sched-tag>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sched-tag-x{display:inline-flex;align-items:center;background:none;border:0;color:inherit;cursor:pointer;padding:0 0 0 1px;line-height:1}
 .sched-tag-x:hover{color:#f87171}
 .sched-tag-x .ic{width:9px;height:9px;opacity:1}
-.sched-detail-tags{margin-top:8px}
 .sched-tag-edit{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:4px}
 .sched-tag-add{display:inline-flex;align-items:center;gap:3px;padding:0 6px;border:1px dashed #3a3a3a;border-radius:9px;color:var(--dim);line-height:1.55}
 .sched-tag-add .ic{width:9px;height:9px;flex:none}
@@ -655,6 +648,56 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    A window over the transcript rather than a column: an editor needs width, and a history row
    needs more than a sidebar's 240px. The backdrop dims the chat for the same reason the reader's
    does — this is a surface of its own, not a third column competing with the conversation. */
+/* A task's own page (openTaskPage): its detail, the topics its runs opened, its runs, and the form
+   that changes it. A window like Skills' rather than the inline fold it replaced, because the side
+   panel is 240–320px wide: that had room to show a prompt, not to edit one. One layer above the
+   other windows: it is opened FROM the panel, and on a phone the panel is a drawer at z-index 20
+   that comes later in the document — at 20 the drawer covered the page and took its taps. */
+#task-page{position:fixed;inset:0;z-index:21;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#task-page[hidden]{display:none}
+#task-box{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#task-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh)}
+#task-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#task-sub{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#task-close{font-size:18px;padding:6px 10px}
+#task-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+#task-note{margin:0 0 12px;padding:8px 12px;border-radius:6px;border:1px solid var(--line);border-left-width:3px;font-size:12.5px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere}
+#task-note.error{border-color:rgba(248,113,113,.35);border-left-color:#f87171;background:#261616;color:#fecaca}
+#task-note.ok{border-color:rgba(74,222,128,.35);border-left-color:#4ade80;background:#15201a}
+.tp-empty{padding:6px 0;font-size:12.5px;color:var(--dim)}
+.tp-label{display:block;margin-top:16px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.tp-label .tp-n{margin-left:6px;color:#6b7683}
+.tp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0 18px}
+.tp-val{margin-top:4px;font-size:12.5px;color:#d0d0d0;overflow-wrap:anywhere}
+/* Also on a .skill-field, whose font:inherit comes later in this sheet at the same weight. */
+.tp-mono,.skill-field.tp-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.tp-body{margin-top:6px;max-height:320px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;color:#c9c9c9;background:#111;border:1px solid var(--line);border-radius:5px;padding:8px 10px}
+.tp-meta{margin-top:12px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+.tp-locked{margin-top:10px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
+.tp-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}
+.tp-run{display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:5px;font-size:12px;line-height:1.45}
+.tp-run:hover{background:#1e1e1e}
+.tp-run>.topic-dot{margin-top:5px}
+.tp-run-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.tp-run-head{color:#bdbdbd;overflow-wrap:anywhere}
+.tp-run-status{font-weight:600;color:#d0d0d0}
+.tp-run-status.bad{color:#f87171}
+.tp-run-err{color:#f8a5a5;overflow-wrap:anywhere}
+.tp-run-where{flex:none;max-width:45%;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tp-run-open{flex:none;background:none;border:1px solid var(--line);border-radius:5px;color:#7dd3fc;font:inherit;font-size:11.5px;padding:2px 9px;cursor:pointer}
+.tp-run-open:hover{border-color:#38bdf8;background:rgba(56,189,248,.08)}
+.tp-hint{margin-top:4px;font-size:11.5px;line-height:1.45;color:var(--dim)}
+.tp-row2{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:0 10px}
+.tp-when{margin-top:8px}
+.tp-text{display:block;width:100%;box-sizing:border-box;margin-top:8px;min-height:180px;resize:vertical;background:#111;border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;white-space:pre-wrap;overflow-wrap:anywhere}
+select.skill-field{appearance:auto}
+.tp-fixed{margin-top:16px;padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:#181818;font-size:12px;line-height:1.55;color:var(--dim)}
+.tp-fixed b{color:#c9c9c9;font-weight:600}
+.tp-acts{margin-bottom:4px}
+.tp-acts.editor{margin-top:16px}
+.tp-acts button .ic{margin-right:4px}
+.tp-acts button.primary{background:#1d4ed8;border-color:#2563eb;color:#fff}
+.tp-acts button.primary:hover:not(:disabled){background:#2563eb;border-color:#3b82f6}
 #skills{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
 #skills[hidden]{display:none}
 #skills-box{display:flex;flex-direction:column;width:min(980px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
@@ -798,13 +841,13 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .skill-problem{font-size:11.5px;color:#f87171;overflow-wrap:anywhere;margin-top:2px}
 .skill-head{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
 .skill-head .skill-name{flex:1 1 220px;font-size:15px}
-.skill-acts{display:flex;flex-wrap:wrap;gap:6px}
+.skill-acts,.tp-acts{display:flex;flex-wrap:wrap;gap:6px}
 .skill-acts.editor{margin-top:8px}
-.skill-acts button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
-.skill-acts button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
-.skill-acts button:disabled{opacity:.45;cursor:default}
-.skill-acts button.danger{color:var(--dim);border-color:transparent;background:none}
-.skill-acts button.danger:hover:not(:disabled){color:#f87171;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12)}
+.skill-acts button,.tp-acts button{display:inline-flex;align-items:center;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
+.skill-acts button:hover:not(:disabled),.tp-acts button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
+.skill-acts button:disabled,.tp-acts button:disabled{opacity:.45;cursor:default}
+.skill-acts button.danger,.tp-acts button.danger{color:var(--dim);border-color:transparent;background:none}
+.skill-acts button.danger:hover:not(:disabled),.tp-acts button.danger:hover:not(:disabled){color:#f87171;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12)}
 .skill-section{margin-top:16px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
 .skill-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .skill-file{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 9px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -1378,6 +1421,17 @@ button:disabled{opacity:.5;cursor:default}
   /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
      phone is an editor with a sliver of transcript behind it, and the transcript is not what the
      operator opened. */
+  /* A task's page too, for the same reason, with the finger-sized controls the rest of the
+     phone layout has. */
+  #task-page{padding:0}
+  #task-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #task-bar{padding:0 4px 0 12px;min-height:49px}
+  #task-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  #task-body{padding:12px 12px calc(16px + env(safe-area-inset-bottom,0px))}
+  .tp-acts button{min-height:40px;padding:0 14px}
+  .tp-run-open{min-height:36px;padding:0 12px}
+  .tp-row2{grid-template-columns:minmax(0,1fr)}
+  #task-page .skill-field,#task-page .tp-text{font-size:16px}
   #skills{padding:0}
   #skills-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
   #skills-bar{padding:0 4px 0 12px;min-height:49px}
@@ -1542,6 +1596,8 @@ const SCRIPT = `
       libLog=$('lib-log'), libTitle=$('lib-title'), libNote=$('lib-note'), libWhy=$('lib-why'),
       libTopicBtn=$('lib-topic'), libCloseBtn=$('lib-close'),
       settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
+      taskPage=$('task-page'), taskTitle=$('task-title'), taskSub=$('task-sub'), taskClose=$('task-close'),
+      taskNote=$('task-note'), taskView=$('task-view'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
       updateEl=$('update'),
@@ -1610,7 +1666,7 @@ const SCRIPT = `
   var schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
   // The task list's bar, and which cards are open across a repaint. The bar's own state is in
   // makeFilterBar; this is only the instance, and null until the DOM below is reached.
-  var schedFilter=null, schedOpen={}, schedTagDraft={};
+  var schedFilter=null;
   // Which of the panel's lists is on screen: Scheduled vs Reviews, and Tasks vs Sessions inside Scheduled.
   // Persisted, because it is a preference about the workspace rather than about one visit.
   var schedTab='scheduled', schedSubtab='tasks';
@@ -3251,13 +3307,12 @@ const SCRIPT = `
   /**
    * One task, as a row like a topic: the name, then what it is doing, where it posts, how last
    * time went and its tags on one line. Everything that made the old card tall — the schedule,
-   * the next run in full, the run mode, the prompt — is on the row's hover card and behind the
-   * tap that opens the detail. Its actions are in the ⋯, like every other row's.
+   * the next run in full, the run mode, the prompt — is on the row's hover card and on the task's
+   * page a tap opens (openTaskPage). Its actions are in the ⋯, like every other row's.
    */
   function schedCard(t){
     var state = t.state || 'active';
-    var open = schedOpen[t.id] === true;
-    var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + (open ? ' open' : '') + '" data-id="' + text(t.id) + '">';
+    var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + '" data-id="' + text(t.id) + '">';
     h += rowHtml({
       // running is on the row, not only on the wrapper, because the row's own state colours
       // (.topic-item.running .topic-title, .topic-item.running .sched-next) are keyed off it.
@@ -3269,71 +3324,7 @@ const SCRIPT = `
       sub:schedRowLine(t, state),
       moreTitle:'Task actions'
     });
-    h += '<div class="sched-detail"' + (open ? '' : ' hidden') + '>';
-    h += '<div class="sched-detail-label">Schedule</div>';
-    h += '<div class="sched-detail-when">' + text(t.when) + (t.next ? ' · next ' + text(t.next) : '') + '</div>';
-    // The row shows the target short and ellipsised; this is the full name, as the hover card has it.
-    h += '<div class="sched-detail-label">Posts to</div>';
-    h += '<div class="sched-detail-when">' + text(schedTargetShort(t)) + '</div>';
-    h += '<div class="sched-detail-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div>';
-    h += '<div class="sched-detail-body">' + text(t.detail) + '</div>';
-    h += '<div class="sched-detail-tags"><div class="sched-detail-label">Tags</div><div class="sched-tag-edit">';
-    var tags = schedTags(t);
-    for(var i=0;i<tags.length;i++){
-      h += '<span class="sched-tag">' + IC.icon.tag + '<span>' + text(tags[i]) + '</span>'
-        + '<button type="button" class="sched-tag-x" data-tag-del="' + text(tags[i]) + '" title="Remove ' + text(tags[i]) + '" aria-label="Remove ' + text(tags[i]) + '">' + IC.icon.cross + '</button></span>';
-    }
-    h += '<span class="sched-tag-add">' + IC.icon.plus
-      + '<input type="text" data-tag-input placeholder="tag" aria-label="Add a tag" autocomplete="off" spellcheck="false"></span>';
-    h += '</div></div>';
-    var meta = t.run + ' · #' + t.id + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs');
-    if(t.cwd) meta += ' · ' + t.cwd;
-    if(t.expires) meta += ' · until ' + t.expires;
-    h += '<div class="sched-detail-meta">' + text(meta) + '</div></div></div>';
-    return h;
-  }
-
-  /**
-   * The tag field a poll would otherwise erase. The list is redrawn with innerHTML, so a value
-   * being typed and the caret in it are read off the DOM before the redraw and put back after it,
-   * keyed by task id: a card can stay open while its row moves under a sort, and the field
-   * belongs to the task rather than to the node.
-   */
-  function captureSchedTagDraft(){
-    var inputs = schedList.querySelectorAll('[data-tag-input]');
-    for(var i=0;i<inputs.length;i++){
-      var input = inputs[i];
-      var item = input.closest ? input.closest('.sched-item') : null;
-      var id = item ? item.getAttribute('data-id') : '';
-      if(!id) continue;
-      var focused = document.activeElement === input;
-      if(input.value || focused){
-        schedTagDraft[id] = {
-          value: input.value,
-          start: input.selectionStart == null ? 0 : input.selectionStart,
-          end: input.selectionEnd == null ? 0 : input.selectionEnd,
-          focus: focused
-        };
-      } else {
-        delete schedTagDraft[id];
-      }
-    }
-  }
-
-  function restoreSchedTagDraft(){
-    var inputs = schedList.querySelectorAll('[data-tag-input]');
-    for(var i=0;i<inputs.length;i++){
-      var input = inputs[i];
-      var item = input.closest ? input.closest('.sched-item') : null;
-      var id = item ? item.getAttribute('data-id') : '';
-      var draft = id ? schedTagDraft[id] : null;
-      if(!draft) continue;
-      input.value = draft.value;
-      if(draft.focus){
-        input.focus();
-        try { input.setSelectionRange(draft.start, draft.end); } catch(x){}
-      }
-    }
+    return h + '</div>';
   }
 
   /** Draw the rows that survive the bar, and tell the bar how many did. */
@@ -3346,7 +3337,6 @@ const SCRIPT = `
       rowMenuFollow();
       return;
     }
-    captureSchedTagDraft();
     var fs = schedFilter ? schedFilter.state() : {q:'', sel:{}, sort:'status', dir:'asc'};
     var words = fs.q.trim() ? fs.q.trim().toLowerCase().split(/\\s+/) : [];
     var rows = [], total = schedTasks ? schedTasks.length : 0;
@@ -3365,7 +3355,6 @@ const SCRIPT = `
       for(i=0;i<rows.length;i++) h += schedCard(rows[i].t);
       schedList.innerHTML = h;
     }
-    restoreSchedTagDraft();
     if(schedFilter) schedFilter.setCounts(rows.length, total);
     rowMenuFollow();
   }
@@ -3376,19 +3365,24 @@ const SCRIPT = `
     paintSchedTasks();
     paintSchedCounts();
     paintSummary();
+    taskPageFollow();
   }
 
   /**
    * tags is the whole new set for the "tags" action; every other action sends none. The panel
    * is the acknowledgement, so no card is posted — the fresh list it answers with is what shows
-   * the change.
+   * the change. A refusal is said where the person is looking: on the task's page when it is open
+   * for this task (it covers the panel), else in the panel.
    */
   function schedOp(id, action, btn, tags, clearDraft){
     if(schedBusy) return;
     schedBusy = true;
     if(btn) btn.disabled = true;
     schedNote.hidden = true;
+    var onPage = !taskPage.hidden && tp.id === id;
+    if(onPage) taskSay(null);
     var body = tags !== undefined ? {id:id, action:action, tags:tags} : {id:id, action:action};
+    var say = function(msg){ if(onPage && !taskPage.hidden && tp.id === id) taskSay(msg, 'error'); else showSchedNote(msg); };
     fetch('api/schedules/op', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -3398,18 +3392,17 @@ const SCRIPT = `
       return r.json().catch(function(){ return { ok:false, error:'HTTP ' + r.status }; });
     }).then(function(d){
       if(d && d.ok && d.tasks){
-        // A tag that was just sent is now a chip: emptying the field before the repaint keeps
-        // the draft restore from putting it back as text, and captures the focus for the next one.
+        // A tag that was just sent is now a chip: emptying the field before the repaint lets the
+        // page redraw its chips (a field holding text is left alone — taskPageFollow), and the
+        // focus is put back for the next one.
         if(clearDraft){
-          delete schedTagDraft[id];
-          var item = schedList.querySelector('.sched-item[data-id="' + id + '"]');
-          var field = item ? item.querySelector('[data-tag-input]') : null;
+          var field = taskView.querySelector('[data-tag-input]');
           if(field) field.value = '';
         }
         paintSchedulesList(d.tasks);
-      } else showSchedNote((d && d.error) || 'That did not work.');
+      } else say((d && d.error) || 'That did not work.');
     }).catch(function(e){
-      showSchedNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+      say('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
     }).then(function(){
       schedBusy = false;
       if(btn) btn.disabled = false;
@@ -3561,67 +3554,508 @@ const SCRIPT = `
       else openRowMenuFor(more);
       return;
     }
-    var tagDel = e.target.closest ? e.target.closest('[data-tag-del]') : null;
-    if(tagDel){
-      e.stopPropagation();
-      var tagItem = tagDel.closest ? tagDel.closest('.sched-item') : null;
-      var tagId = tagItem ? tagItem.getAttribute('data-id') : '';
-      var tag = tagDel.getAttribute('data-tag-del');
-      var tagged = tagId ? schedTask(tagId) : null;
-      if(tagged && tag) schedOp(tagId, 'tags', null, schedTags(tagged).filter(function(x){ return x !== tag; }));
-      return;
-    }
-    // The tag editor is inside the detail, and clicking its field is not a tap on the row.
-    if(e.target.closest && e.target.closest('.sched-tag-edit')) return;
     var card = e.target.closest ? e.target.closest('.sched-item') : null;
     if(!card) return;
-    toggleSchedCard(card);
+    openTaskPage(card.getAttribute('data-id'), false);
   });
 
-  /**
-   * Fold or open one task's detail, and remember the choice so a poll's repaint does not fold a
-   * row the person is reading. Shared by the row's click and its Enter/Space: the row says
-   * role=button, and a button that only answers a pointer is not one.
-   */
-  function toggleSchedCard(card){
-    var detail = card.querySelector('.sched-detail');
-    if(!detail) return;
-    detail.hidden = !detail.hidden;
-    card.classList.toggle('open', !detail.hidden);
-    var cardId = card.getAttribute('data-id');
-    if(cardId) schedOpen[cardId] = !detail.hidden;
-  }
-
-  // Enter and Space open a task, as they do a topic row and a scheduled run. The ⋯ and the whole
-  // tag editor are their own controls: Space in the field is a space, Enter there saves a tag,
-  // and Enter on a tag's × is that button's click — swallowing it would fold the row instead.
+  // Enter and Space open a task, as they do a topic row and a scheduled run. The ⋯ is its own
+  // control: Enter there is that button's click, and swallowing it would open the page instead.
   schedList.addEventListener('keydown', function(e){
     if(e.key !== 'Enter' && e.key !== ' ') return;
-    if(e.target.closest && e.target.closest('.sched-tag-edit,[data-rm]')) return;
+    if(e.target.closest && e.target.closest('[data-rm]')) return;
     var card = e.target.closest ? e.target.closest('.sched-item') : null;
     if(!card) return;
     e.preventDefault();
-    toggleSchedCard(card);
+    openTaskPage(card.getAttribute('data-id'), false);
   });
 
   /**
-   * The tag editor's one gesture: type a tag (or a comma-separated few) and press Enter. The
-   * whole set goes back, because that is what the operation replaces; core's normalizeTags
-   * trims, lowercases, dedupes and enforces the limits, and a refusal comes back as the panel's
-   * note like any other failed operation.
+   * A task's own page: what its row folds away, the topics its runs opened, every recorded run,
+   * and the form that changes it. One task at a time; tp.id is which, tp.detail the daemon's
+   * answer (api/schedules/task), tp.mode whether the view or the form is drawn.
+   *
+   * The row facts (state, next run, last run, running) come from the list as well as from the
+   * detail, and the list is the fresher: it is polled while the panel is open, so paintSchedulesList
+   * hands every answer on (taskPageFollow) and the page asks for the detail again only when a run
+   * started or ended — the one change that adds to the runs and the sessions.
    */
-  schedList.addEventListener('keydown', function(e){
-    if(e.key !== 'Enter' || e.isComposing) return;
-    var input = e.target.closest ? e.target.closest('[data-tag-input]') : null;
-    if(!input) return;
+  var tp = {id:null, detail:null, mode:'view', seq:0, busy:false};
+
+  function openTaskPage(id, edit){
+    if(!id) return;
+    var same = tp.id === id && !taskPage.hidden;
+    if(same && tp.mode === 'edit' && !edit) return;
+    tp.id = id;
+    tp.mode = edit ? 'edit' : 'view';
+    if(!same) tp.detail = null;
+    taskSay(null);
+    taskPage.hidden = false;
+    paintTaskPage();
+    loadTaskPage();
+    taskClose.focus();
+  }
+
+  /**
+   * Put the page away. An open form with changes asks first — a tap on the dimmed area is the
+   * easiest gesture on the page to make by accident — unless force says the task is gone anyway.
+   * Returns whether it closed.
+   */
+  function closeTaskPage(force){
+    if(taskPage.hidden) return true;
+    if(!force && tp.mode === 'edit' && tp.detail && taskDirty() && !confirm('Discard your changes to this task?')) return false;
+    taskPage.hidden = true;
+    tp.id = null;
+    tp.detail = null;
+    tp.mode = 'view';
+    tp.seq++;
+    return true;
+  }
+
+  function taskSay(msg, kind){
+    if(!msg){ taskNote.hidden = true; taskNote.textContent = ''; return; }
+    taskNote.hidden = false;
+    taskNote.className = kind || '';
+    taskNote.textContent = msg;
+  }
+
+  function loadTaskPage(){
+    var id = tp.id, seq = ++tp.seq;
+    fetch('api/schedules/task?id=' + encodeURIComponent(id), {credentials:'same-origin'}).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(seq !== tp.seq || tp.id !== id || taskPage.hidden) return;
+      if(d && d.ok && d.detail){
+        // The list may have answered after this request left; its row facts are the fresher.
+        var row = schedTask(id);
+        if(row) d.detail.task = row;
+        var form = tp.mode === 'edit' && taskView.querySelector('#tp-form');
+        tp.detail = d.detail;
+        // A form already on screen keeps what is typed in it: only the title line follows.
+        if(form) paintTaskHead();
+        else paintTaskPage();
+      } else {
+        taskSay((d && d.error) || 'Could not load this task.', 'error');
+        if(!tp.detail) taskView.innerHTML = '';
+      }
+    }).catch(function(e){
+      if(seq !== tp.seq) return;
+      taskSay('Could not reach the daemon: ' + ((e && e.message) || 'network error'), 'error');
+      if(!tp.detail) taskView.innerHTML = '';
+    });
+  }
+
+  /**
+   * The list moved (a poll, or the answer to an action). A task deleted here or elsewhere takes
+   * its page with it. Otherwise the title line follows, the view is redrawn — unless a tag is
+   * being typed, which a redraw would throw away — and a run that started or ended since asks for
+   * the detail again, since it is the runs and the sessions that changed.
+   */
+  function taskPageFollow(){
+    if(taskPage.hidden || !tp.id || schedTasks === null) return;
+    var t = schedTask(tp.id);
+    if(!t){ closeTaskPage(true); return; }
+    var d = tp.detail;
+    if(!d) return;
+    var was = d.task;
+    var moved = t.runs !== was.runs || Boolean(t.running) !== Boolean(was.running) || t.state !== was.state
+      || (t.last ? t.last.at : 0) !== (was.last ? was.last.at : 0);
+    d.task = t;
+    paintTaskHead();
+    if(tp.mode === 'view'){
+      var field = taskView.querySelector('[data-tag-input]');
+      if(!field || !field.value){
+        var focused = Boolean(field) && document.activeElement === field;
+        paintTaskPage();
+        if(focused){ var again = taskView.querySelector('[data-tag-input]'); if(again) again.focus(); }
+      }
+    }
+    if(moved) loadTaskPage();
+  }
+
+  /** The title line: the name, and where the task stands — the row's second line, in full. */
+  function paintTaskHead(){
+    var t = tp.detail ? tp.detail.task : schedTask(tp.id);
+    taskTitle.textContent = t ? t.name : 'Task';
+    var bits = [];
+    if(t){
+      var state = t.state || 'active';
+      if(t.running) bits.push('running now');
+      else if(state === 'active' && t.nextAt) bits.push('next ' + (t.next || '') + ' (' + schedIn(t.nextAt) + ')');
+      else bits.push(state);
+      var last = schedLast(t);
+      if(last) bits.push(last);
+    }
+    taskSub.textContent = bits.join(' · ');
+    taskSub.title = taskSub.textContent;
+  }
+
+  function paintTaskPage(){
+    paintTaskHead();
+    var d = tp.detail;
+    if(!d){ taskView.innerHTML = '<div class="tp-empty">Loading…</div>'; return; }
+    if(tp.mode === 'edit' && !d.locked){
+      taskView.innerHTML = taskFormHtml(d);
+      fillTaskForm(d);
+      return;
+    }
+    tp.mode = 'view';
+    taskView.innerHTML = taskViewHtml(d);
+    armAgeTick();
+  }
+
+  /** One labelled fact in the view's grid. */
+  function taskFact(label, value, mono){
+    return '<div><div class="tp-label">' + text(label) + '</div><div class="tp-val' + (mono ? ' tp-mono' : '') + '">' + value + '</div></div>';
+  }
+
+  function taskViewHtml(d){
+    var t = d.task, f = d.fields, state = t.state || 'active', h = '<div class="tp-acts">';
+    var busyNote = ' disabled title="A run is in progress — wait for it to finish"';
+    if(!d.locked) h += '<button type="button" data-tp-act="edit"' + (t.running ? busyNote : '') + '>' + IC.icon.pencil + 'Edit</button>';
+    if(state === 'active') h += '<button type="button" data-tp-act="pause">' + IC.icon.pause + 'Pause</button>';
+    if(state === 'paused') h += '<button type="button" data-tp-act="resume">' + IC.icon.play + 'Resume</button>';
+    if(state === 'active' || state === 'paused') h += '<button type="button" data-tp-act="run"' + (t.running ? busyNote : '') + '>' + IC.icon.clock + 'Run now</button>';
+    h += '<button type="button" class="danger" data-tp-act="remove">' + IC.icon.trash + 'Delete</button></div>';
+    if(d.locked) h += '<div class="tp-locked">' + text(d.locked) + '</div>';
+    h += '<div class="tp-grid">';
+    h += taskFact('Schedule', text(t.when) + (t.next ? ' · next ' + text(t.next) : ''), true);
+    h += taskFact('Runs as', text(t.run));
+    if(f.cwd) h += taskFact('Directory', text(f.cwd), true);
+    h += taskFact('Posts to', text(schedTargetShort(t)));
+    h += '</div>';
+    h += '<div class="tp-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div><div class="tp-body">' + text(t.detail) + '</div>';
+    h += '<div class="tp-label">Tags</div><div class="sched-tag-edit">';
+    var tags = schedTags(t);
+    for(var i=0;i<tags.length;i++){
+      h += '<span class="sched-tag">' + IC.icon.tag + '<span>' + text(tags[i]) + '</span>'
+        + '<button type="button" class="sched-tag-x" data-tag-del="' + text(tags[i]) + '" title="Remove ' + text(tags[i]) + '" aria-label="Remove ' + text(tags[i]) + '">' + IC.icon.cross + '</button></span>';
+    }
+    h += '<span class="sched-tag-add">' + IC.icon.plus
+      + '<input type="text" data-tag-input placeholder="tag" aria-label="Add a tag" autocomplete="off" spellcheck="false"></span></div>';
+    var meta = '#' + t.id + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs') + (t.createdAt ? ' · created ' + ageClock(t.createdAt) : '');
+    if(t.expires) meta += ' · until ' + t.expires;
+    h += '<div class="tp-meta">' + text(meta) + '</div>';
+    h += '<div id="tp-sessions">' + taskSessionsHtml(d) + '</div>';
+    h += '<div class="tp-label">Runs<span class="tp-n">' + d.runs.length + '</span></div><div class="tp-list">';
+    if(!d.runs.length) h += '<div class="tp-empty">No runs yet.</div>';
+    for(var r=0;r<d.runs.length;r++) h += taskRunRow(d.runs[r]);
+    h += '</div>';
+    return h;
+  }
+
+  /**
+   * The topics this task's runs opened that this page still has: every one marked with the task
+   * (Topic.task, recorded since the topic was opened) and every one a recorded run names — the
+   * second is how a topic opened before the mark existed, and a fixed session's own topic, are
+   * found. Most recently active first, which for runs is newest first.
+   */
+  function taskSessions(d){
+    var named = {}, out = [], i;
+    for(i=0;i<d.runs.length;i++) if(d.runs[i].topic) named[d.runs[i].topic] = true;
+    for(i=0;i<topics.length;i++){
+      if(topics[i].task === d.task.id || named[topics[i].id]) out.push(topics[i]);
+    }
+    return out.sort(function(a, b){ return (b.lastAt || 0) - (a.lastAt || 0); });
+  }
+
+  function taskSessionsHtml(d){
+    var list = taskSessions(d), h = '<div class="tp-label">Sessions<span class="tp-n">' + list.length + '</span></div><div class="tp-list">';
+    if(!list.length){
+      h += '<div class="tp-empty">' + (d.task.kind === 'bash'
+        ? 'A bash task runs without a conversation; its output is posted where it posts.'
+        : 'None on this page yet. Each run that opens a topic lists it here.') + '</div>';
+    }
+    for(var i=0;i<list.length;i++) h += taskSessionRow(list[i]);
+    return h + '</div>';
+  }
+
+  /**
+   * One topic a run opened: the dot, the title and the unread count the switcher would show for it,
+   * and its last activity, messages and state as the Sessions tab writes them. No ⋯: what to do
+   * with the topic is decided in the topic, which the row opens.
+   */
+  function taskSessionRow(t){
+    var running = rowRunning(t), asking = Boolean(t.asking), unread = unreadOf(t), count = t.msgCount || 0;
+    var dot = 'topic-dot' + (asking ? ' asking' : (running ? ' running' : (t.stage === 'failed' ? ' failed' : (t.stage === 'review' ? ' review' : ''))));
+    var state = asking ? 'awaiting you' : (running ? 'running' : (t.stage === 'failed' ? 'failed' : ''));
+    var when = t.lastAt
+      ? '<span class="topic-age" data-age="' + text(t.lastAt) + '" data-age-run="0" title="' + text(ageClock(t.lastAt)) + '">' + text(ageText(Date.now() - t.lastAt, true)) + '</span>'
+      : '';
+    var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
+    return '<div class="topic-item tp-sess' + (t.id === topic ? ' on' : '') + (running ? ' running' : ' idle') + '" data-tp-topic="' + text(t.id) + '" role="button" tabindex="0">'
+      + '<span class="' + dot + '"></span>'
+      + '<span class="topic-main"><span class="topic-title">' + text(named.rest) + '</span>'
+      + '<span class="topic-sub"><span class="topic-dir">' + when + (count ? ' · ' + count + ' message' + (count === 1 ? '' : 's') : '') + (state ? ' · ' + state : '') + '</span></span></span>'
+      + (unread > 0 ? '<span class="topic-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '')
+      + '</div>';
+  }
+
+  /** The topic list moved: the sessions on an open page follow it, and nothing else does. */
+  function taskPageTopics(){
+    if(taskPage.hidden || !tp.detail || tp.mode !== 'view') return;
+    var host = taskView.querySelector('#tp-sessions');
+    if(host) host.innerHTML = taskSessionsHtml(tp.detail);
+  }
+
+  /**
+   * One recorded run: how it ended, when, how long, and where its output is — a topic of this
+   * page to open, a place elsewhere by name, or a topic this page no longer has.
+   */
+  function taskRunRow(r){
+    var word = {ok:'ok', failed:'failed', interrupted:'interrupted', skipped:'skipped', missed:'missed'}[r.status] || r.status;
+    var bits = [text(r.atText)];
+    if(r.durationMs != null) bits.push(text(schedDur(r.durationMs)));
+    if(r.exitCode != null) bits.push('exit ' + text(r.exitCode));
+    var where = '';
+    if(r.topic){
+      var t = topicById(r.topic);
+      where = t
+        ? '<button type="button" class="tp-run-open" data-tp-topic="' + text(r.topic) + '" title="' + text(t.title || '') + '">Open</button>'
+        : '<span class="tp-run-where" title="The topic this run used is no longer on this page">topic gone</span>';
+    } else if(r.where) where = '<span class="tp-run-where" title="' + text(r.where) + '">' + text(r.where) + '</span>';
+    return '<div class="tp-run"><span class="topic-dot' + (r.status === 'ok' ? '' : ' failed') + '"></span>'
+      + '<span class="tp-run-main"><span class="tp-run-head"><span class="tp-run-status' + (r.status === 'ok' ? '' : ' bad') + '">' + text(word) + '</span> · ' + bits.join(' · ') + '</span>'
+      + (r.error ? '<span class="tp-run-err">' + text(r.error) + '</span>' : '')
+      + '</span>' + where + '</div>';
+  }
+
+  /** A timeout as a person writes one, and back: the CLI's units (90s, 10m, 1h). */
+  function taskDurText(ms){
+    if(ms % 3600000 === 0) return (ms / 3600000) + 'h';
+    if(ms % 60000 === 0) return (ms / 60000) + 'm';
+    if(ms % 1000 === 0) return (ms / 1000) + 's';
+    return ms + 'ms';
+  }
+  function taskDurParse(s){
+    var m = /^(\\d+(?:\\.\\d+)?)\\s*(ms|s|m|h)?$/i.exec(String(s).trim());
+    if(!m) return null;
+    var unit = (m[2] || 's').toLowerCase();
+    return Math.round(parseFloat(m[1]) * ({ms:1, s:1000, m:60000, h:3600000})[unit]);
+  }
+
+  var TP_SESSION = {fixed:'its topic (fixed session)', 'new':'a new topic each run', daily:'one topic a day'};
+
+  /**
+   * The form: the fields an edit of this task can change (d.editable, the daemon's reading of
+   * schedule edit's rules), and below them, said once, what it cannot. Values are put in by
+   * fillTaskForm rather than written into the markup: a textarea drops a leading newline it is
+   * parsed with, and a prompt may begin with one.
+   */
+  function taskFormHtml(d){
+    var f = d.fields, can = function(k){ return d.editable.indexOf(k) >= 0; };
+    var once = f.at !== undefined, h = '<form id="tp-form" novalidate>';
+    h += '<label class="tp-label" for="tp-name">Name</label><input id="tp-name" class="skill-field" type="text" autocomplete="off" spellcheck="false">';
+    h += '<div class="tp-label">When</div>';
+    if(can('cron') && can('at')){
+      h += '<div class="skill-seg tp-when" role="group" aria-label="Repeats or once">'
+        + '<button type="button" data-tp-when="cron" aria-pressed="' + (once ? 'false' : 'true') + '">Repeats</button>'
+        + '<button type="button" data-tp-when="at" aria-pressed="' + (once ? 'true' : 'false') + '">Once</button></div>';
+    }
+    h += '<div class="tp-row2"><div>'
+      + '<input id="tp-cron" class="skill-field tp-mono" type="text" placeholder="0 8 * * *" aria-label="Cron expression" autocomplete="off" spellcheck="false"' + (once ? ' hidden' : '') + '>'
+      + '<input id="tp-at" class="skill-field" type="datetime-local" step="1" aria-label="Time of the run"' + (once ? '' : ' hidden') + '>'
+      + '</div><div><input id="tp-tz" class="skill-field" type="text" list="tp-tzs" aria-label="Time zone" autocomplete="off" spellcheck="false">'
+      + taskZonesHtml() + '</div></div>';
+    h += '<div class="tp-hint" id="tp-when-hint">' + (once ? 'One run, at this time in the task\u2019s time zone.' : 'Five fields: minute, hour, day of month, month, weekday — read in the task\u2019s time zone.') + '</div>';
+    if(can('prompt')) h += '<label class="tp-label" for="tp-text">Prompt</label><textarea id="tp-text" class="tp-text" spellcheck="false"></textarea>';
+    if(can('command')) h += '<label class="tp-label" for="tp-text">Command</label><textarea id="tp-text" class="tp-text" spellcheck="false"></textarea><div class="tp-hint">Run with bash -lc, on ' + text(f.host || "the gateway's machine") + '.</div>';
+    if(can('agent')){
+      var agents = d.agents.slice();
+      if(f.agent && agents.indexOf(f.agent) < 0) agents.unshift(f.agent);
+      h += '<label class="tp-label" for="tp-agent">Agent</label><select id="tp-agent" class="skill-field">';
+      for(var i=0;i<agents.length;i++) h += '<option value="' + text(agents[i]) + '">' + text(agents[i]) + '</option>';
+      h += '</select>';
+    }
+    if(can('model')) h += '<label class="tp-label" for="tp-model">Model</label><input id="tp-model" class="skill-field" type="text" placeholder="the agent’s own" autocomplete="off" spellcheck="false"><div class="tp-hint">An id the agent’s /model list offers. Empty: the model the agent starts with.</div>';
+    if(can('cwd')) h += '<label class="tp-label" for="tp-cwd">Directory</label><input id="tp-cwd" class="skill-field tp-mono" type="text" placeholder="the default directory" autocomplete="off" spellcheck="false"><div class="tp-hint">An absolute path on the machine the task runs on; it is checked there before saving. Empty: the default directory.</div>';
+    if(can('timeout')) h += '<label class="tp-label" for="tp-timeout">Timeout</label><input id="tp-timeout" class="skill-field" type="text" placeholder="10m" autocomplete="off" spellcheck="false"><div class="tp-hint">How long a run may take: 90s, 10m, 1h — at most 6h.</div>';
+    var kind = d.task.kind === 'bash' ? 'a bash command' : 'a prompt for an agent';
+    h += '<div class="tp-fixed">This task is <b>' + text(kind) + '</b>' + (f.session ? ' that runs in <b>' + text(TP_SESSION[f.session] || f.session) + '</b>' : '')
+      + ' and posts to <b>' + text(schedTargetShort(d.task)) + '</b>. Those are what it is, so they cannot be edited: delete it and ask an agent for a new one.'
+      + (f.session === 'fixed' ? ' Its directory and model are its topic’s — /cd and /model there change them.' : '') + '</div>';
+    h += '<div class="tp-acts editor"><button type="submit" class="primary" data-tp-act="save">Save</button><button type="button" data-tp-act="cancel">Cancel</button></div>';
+    return h + '</form>';
+  }
+
+  /** Every zone the browser knows, offered to the zone field. Built once: the list is ~400 names. */
+  var tpZones = null;
+  function taskZonesHtml(){
+    if(tpZones === null){
+      var names = [];
+      try { names = Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : []; } catch(x){}
+      tpZones = '<datalist id="tp-tzs">';
+      for(var i=0;i<names.length;i++) tpZones += '<option value="' + text(names[i]) + '">';
+      tpZones += '</datalist>';
+    }
+    return tpZones;
+  }
+
+  function tpEl(id){ return taskView.querySelector('#' + id); }
+  function tpVal(id){ var e = tpEl(id); return e ? String(e.value) : ''; }
+
+  function fillTaskForm(d){
+    var f = d.fields, set = function(id, v){ var e = tpEl(id); if(e) e.value = v == null ? '' : v; };
+    set('tp-name', f.name);
+    set('tp-cron', f.cron || '');
+    set('tp-at', f.at ? f.at.replace(' ', 'T') : '');
+    set('tp-tz', f.tz);
+    set('tp-text', f.prompt !== undefined ? f.prompt : f.command);
+    set('tp-agent', f.agent || '');
+    set('tp-model', f.model || '');
+    set('tp-cwd', f.cwd || '');
+    if(f.timeoutMs) set('tp-timeout', taskDurText(f.timeoutMs));
+    var first = tpEl('tp-name');
+    if(first) first.focus();
+  }
+
+  function taskWhenMode(){
+    var at = tpEl('tp-at');
+    return at && !at.hidden ? 'at' : 'cron';
+  }
+
+  /**
+   * What the form changed, as the edit to send: a field left as it was is not sent, so the task
+   * keeps its own value (schedule edit's rule). An emptied directory or model is sent as null,
+   * which empties it. A one-time task whose zone changed sends its time again, so the time typed
+   * is read in the new zone rather than kept as the instant it was.
+   */
+  function taskEditDiff(){
+    var d = tp.detail, f = d.fields, can = function(k){ return d.editable.indexOf(k) >= 0; }, out = {}, v;
+    v = tpVal('tp-name').trim();
+    if(v !== f.name) out.name = v;
+    var tz = tpVal('tp-tz').trim();
+    if(tz !== f.tz) out.tz = tz;
+    if(taskWhenMode() === 'at'){
+      v = tpVal('tp-at').replace('T', ' ');
+      if(!v) return {error:'Pick a date and time for the run.'};
+      if(f.at === undefined || v !== f.at || out.tz !== undefined) out.at = v;
+    } else {
+      v = tpVal('tp-cron').trim();
+      if(f.cron === undefined || v !== f.cron) out.cron = v;
+    }
+    if(can('prompt')){ v = tpVal('tp-text'); if(v !== f.prompt) out.prompt = v; }
+    if(can('command')){ v = tpVal('tp-text'); if(v !== f.command) out.command = v; }
+    if(can('agent')){ v = tpVal('tp-agent'); if(v && v !== f.agent) out.agent = v; }
+    if(can('model')){ v = tpVal('tp-model').trim(); if(v !== (f.model || '')) out.model = v || null; }
+    if(can('cwd')){ v = tpVal('tp-cwd').trim(); if(v !== (f.cwd || '')) out.cwd = v || null; }
+    if(can('timeout')){
+      var ms = taskDurParse(tpVal('tp-timeout'));
+      if(ms === null || ms <= 0) return {error:'The timeout is a length of time: 90s, 10m or 1h.'};
+      if(ms !== f.timeoutMs) out.timeoutMs = ms;
+    }
+    return {edit:out};
+  }
+
+  function taskDirty(){
+    if(!tpEl('tp-form')) return false;
+    var diff = taskEditDiff();
+    return Boolean(diff.error) || Object.keys(diff.edit).length > 0;
+  }
+
+  function saveTaskEdit(){
+    if(tp.busy || !tp.detail) return;
+    var diff = taskEditDiff();
+    if(diff.error){ taskSay(diff.error, 'error'); return; }
+    if(!Object.keys(diff.edit).length){
+      tp.mode = 'view';
+      paintTaskPage();
+      taskSay('Nothing was changed.');
+      return;
+    }
+    var id = tp.id, btn = taskView.querySelector('[data-tp-act="save"]');
+    tp.busy = true;
+    if(btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    taskSay(null);
+    fetch('api/schedules/edit', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id, edit:diff.edit}),
+      credentials:'same-origin'
+    }).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(tp.id !== id || taskPage.hidden) return;
+      if(d && d.ok && d.detail){
+        tp.detail = d.detail;
+        tp.mode = 'view';
+        tp.seq++;
+        paintTaskPage();
+        taskSay('Saved. The conversation it posts to was sent the updated task.', 'ok');
+        if(d.tasks) paintSchedulesList(d.tasks);
+      } else taskSay((d && d.error) || 'That did not work.', 'error');
+    }).catch(function(e){
+      if(tp.id === id) taskSay('Could not reach the daemon: ' + ((e && e.message) || 'network error'), 'error');
+    }).then(function(){
+      tp.busy = false;
+      var again = taskView.querySelector('[data-tp-act="save"]');
+      if(again){ again.disabled = false; again.textContent = 'Save'; }
+    });
+  }
+
+  taskClose.addEventListener('click', function(){ closeTaskPage(false); });
+  taskPage.addEventListener('click', function(e){
+    if(e.target === taskPage){ closeTaskPage(false); return; }
+    var go = e.target.closest ? e.target.closest('[data-tp-topic]') : null;
+    if(go){
+      var tid = go.getAttribute('data-tp-topic');
+      if(closeTaskPage(false)) switchTopic(tid);
+      return;
+    }
+    var when = e.target.closest ? e.target.closest('[data-tp-when]') : null;
+    if(when){
+      var once = when.getAttribute('data-tp-when') === 'at';
+      var seg = when.parentNode.querySelectorAll('[data-tp-when]');
+      for(var i=0;i<seg.length;i++) seg[i].setAttribute('aria-pressed', seg[i] === when ? 'true' : 'false');
+      tpEl('tp-cron').hidden = once;
+      tpEl('tp-at').hidden = !once;
+      tpEl('tp-when-hint').textContent = once ? 'One run, at this time in the task\u2019s time zone.' : 'Five fields: minute, hour, day of month, month, weekday — read in the task\u2019s time zone.';
+      (once ? tpEl('tp-at') : tpEl('tp-cron')).focus();
+      return;
+    }
+    var del = e.target.closest ? e.target.closest('[data-tag-del]') : null;
+    if(del){
+      var tag = del.getAttribute('data-tag-del'), tagged = schedTask(tp.id);
+      if(tagged && tag) schedOp(tp.id, 'tags', null, schedTags(tagged).filter(function(x){ return x !== tag; }));
+      return;
+    }
+    var act = e.target.closest ? e.target.closest('[data-tp-act]') : null;
+    if(!act || act.disabled) return;
+    var what = act.getAttribute('data-tp-act'), t = tp.detail ? tp.detail.task : null;
+    if(what === 'edit'){ tp.mode = 'edit'; taskSay(null); paintTaskPage(); return; }
+    if(what === 'cancel'){
+      if(taskDirty() && !confirm('Discard your changes to this task?')) return;
+      tp.mode = 'view';
+      taskSay(null);
+      paintTaskPage();
+      return;
+    }
+    if(what === 'save') return;
+    if(!t) return;
+    if(what === 'remove' && !confirm('Delete task "' + (t.name || t.id) + '"?')) return;
+    schedOp(t.id, what, act);
+  });
+  taskPage.addEventListener('submit', function(e){
     e.preventDefault();
-    e.stopPropagation();
-    var item = input.closest ? input.closest('.sched-item') : null;
-    var id = item ? item.getAttribute('data-id') : '';
-    var task = id ? schedTask(id) : null;
-    var added = String(input.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
-    if(!task || !added.length) return;
-    schedOp(id, 'tags', null, schedTags(task).concat(added), true);
+    saveTaskEdit();
+  });
+  taskPage.addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && !e.isComposing){
+      var input = e.target.closest ? e.target.closest('[data-tag-input]') : null;
+      if(input){
+        e.preventDefault();
+        var task = schedTask(tp.id);
+        var added = String(input.value || '').split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+        if(task && added.length) schedOp(task.id, 'tags', null, schedTags(task).concat(added), true);
+        return;
+      }
+    }
+    // A session row is role=button: Enter and Space open it, as a click does.
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    var row = e.target.closest ? e.target.closest('.tp-sess') : null;
+    if(!row) return;
+    e.preventDefault();
+    if(closeTaskPage(false)) switchTopic(row.getAttribute('data-tp-topic'));
   });
 
   // A timer is not worth running behind a hidden tab; ask once on the way back instead.
@@ -5936,6 +6370,8 @@ const SCRIPT = `
     paintSchedAlert();
     if(schedPane.isOpen() && schedTab==='scheduled' && schedSubtab==='sessions') paintSessions();
     else if(schedPane.isOpen() && schedTab==='reviews') paintReviews();
+    // A task's page lists the topics its runs opened, and they move like any other.
+    taskPageTopics();
   }
 
   /**
@@ -7292,11 +7728,16 @@ const SCRIPT = `
     if(state==='paused') items.push({key:'resume', icon:IC.icon.play, label:'Resume', title:'Put this task back on its schedule'});
     if(state==='active'||state==='paused') items.push({key:'run', icon:IC.icon.clock, label:'Run now', disabled:Boolean(t.running),
       title:t.running?'A run is in progress — wait for it to finish':'Run this task now, without waiting for its next scheduled time'});
+    // Edit opens the task's page on its form. Greyed rather than hidden while a run is in flight,
+    // like Run now; absent on a task that is over, which no edit can change.
+    if(state==='active'||state==='paused') items.push({key:'edit', icon:IC.icon.pencil, label:'Edit', disabled:Boolean(t.running),
+      title:t.running?'A run is in progress — edit it once that run finishes':'Change its schedule, prompt or command, agent, model or directory'});
     // Delete is below a divider only when there is something above it: an expired or done task
     // has no state change to offer, and a menu that opens with a line is a menu that looks cut.
     if(items.length) items.push({sep:true});
     items.push({key:'remove', icon:IC.icon.trash, label:'Delete', danger:true});
     openRowMenu(btn, btn.getAttribute('data-rm')||('task:'+id), items, function(what){
+      if(what==='edit'){ openTaskPage(id, true); return; }
       if(what==='remove'){
         // One question, like deleting a topic: the task is gone for good, and a tap that opened
         // the menu is not a decision to remove it.
@@ -8181,8 +8622,10 @@ const SCRIPT = `
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
     var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !rowMenu.hidden
-      || openMenu() || !skillsWin.hidden || !settingsPage.hidden;
+      || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !taskPage.hidden;
     closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
+    // Its own confirm when a form holds changes; a refused one leaves everything as it was.
+    closeTaskPage(false);
     // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
     closeRowMenu(true);
     if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
@@ -10335,6 +10778,24 @@ __GATE__
         <div id="skills-note" hidden></div>
         <div id="skills-list"></div>
         <div id="skills-detail" hidden></div>
+      </div>
+    </div>
+  </div>
+  <!-- A scheduled task's own page: what its row folds away, the topics its runs opened, its runs,
+       and the form that changes it. Filled from api/schedules/task; a save goes to
+       api/schedules/edit, which is fleetherd schedule edit with its rules. See openTaskPage. -->
+  <div id="task-page" hidden role="dialog" aria-modal="true" aria-labelledby="task-title">
+    <div id="task-box">
+      <div id="task-bar">
+        <div class="set-heading">
+          <span id="task-title">Task</span>
+          <span id="task-sub"></span>
+        </div>
+        <button type="button" class="btn-icon" id="task-close" title="Close (Esc)" aria-label="Close">&times;</button>
+      </div>
+      <div id="task-body">
+        <div id="task-note" hidden role="status"></div>
+        <div id="task-view"></div>
       </div>
     </div>
   </div>
