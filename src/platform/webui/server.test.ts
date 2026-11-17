@@ -783,10 +783,19 @@ describe('webui server: one topic, fetched before it is opened', () => {
 
     const res = await fetch(`${base}/api/topic?t=${topic}`, { headers: { cookie } });
     expect(res.status).toBe(200);
-    const snap = (await res.json()) as { topic: string; epoch: number; last: string; messages: Array<{ html: string }> };
+    const snap = (await res.json()) as {
+      topic: string;
+      epoch: number;
+      last: string;
+      lastAt: number;
+      messages: Array<{ html: string; at: number }>;
+    };
     expect(snap.topic).toBe(topic);
     expect(snap.messages.map((m) => m.html)).toEqual(['<p>one</p>', '<p>two</p>']);
     expect(typeof snap.epoch).toBe('number');
+    // The row's lastAt as of these messages: what the page compares a cached copy with.
+    expect(snap.lastAt).toBe(room.topicList().find((t) => t.id === topic)?.lastAt);
+    expect(snap.lastAt).toBe(snap.messages[1]?.at);
 
     // The same id the sync carries, so a page that entered the topic on the strength of this
     // snapshot would resume from exactly here.
@@ -2455,7 +2464,8 @@ describe('webui server: notifications and what the operator has seen', () => {
     expect(sw.status).toBe(200);
     expect(sw.headers.get('content-type')).toMatch(/javascript/);
     expect(sw.headers.get('cache-control')).toBe('no-cache');
-    expect(sw.headers.get('content-security-policy')).toBe("default-src 'none'; img-src 'self'");
+    // Its own origin and nothing else: the icon, and the topic a push is about (sw.ts keepTopic).
+    expect(sw.headers.get('content-security-policy')).toBe("default-src 'none'; img-src 'self'; connect-src 'self'");
     const body = await sw.text();
     expect(body).toContain("addEventListener('push'");
     // No fetch handler: a worker that cached the app would serve last week's page after an upgrade.

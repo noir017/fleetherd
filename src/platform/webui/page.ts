@@ -33,6 +33,7 @@
 import { createHash } from 'node:crypto';
 
 import { escapeHtml } from '../web-markdown.js';
+import { CACHE_CORE } from './cache-script.js';
 import { clientIcons, icon } from './icons.js';
 
 /**
@@ -1775,17 +1776,17 @@ const SCRIPT = `
   // one transcript with code blocks in it runs to hundreds of kilobytes, and localStorage's ~5MB
   // is shared with everything else this origin keeps.
   //
-  // One record per topic, holding the message list as a STRING rather than an object graph. The
-  // byte budget below is then something that can actually be measured, and nothing rests on how
-  // a structured clone treats these objects.
-  var DB_NAME='aa_cache', DB_VER=1, STORE='topics';
-  // Rotation, because a cache that only grows is just a slower version of the bug being fixed:
-  // the TAIL of a topic is kept, and the least recently written topics go first.
-  var MAX_CACHE_TOPICS=24, MAX_CACHE_MSGS=200, MAX_CACHE_BYTES=512*1024;
+  // The database, the record and the rotation are cache-script.ts's, shared with the service
+  // worker, which writes here too (a push's topic). Rotation, because a cache that only grows is
+  // just a slower version of the bug being fixed: the least recently written topics go first.
+  ${CACHE_CORE}
   // How long writes are held together. A streamed reply upserts the same message every second or
   // so, and each one would otherwise re-serialise the whole topic.
   var SAVE_MS=400;
   var db=null, dbOff=false, saveTimer=null;
+  // When this page last wrote each topic's record. A fetch that went out before that write (see
+  // takePrefetched) carries an older copy than the one it would replace.
+  var wroteAt={};
 
   function cacheOff(why){
     if(dbOff) return;
@@ -1798,19 +1799,10 @@ const SCRIPT = `
   function idb(){
     if(db) return Promise.resolve(db);
     if(dbOff || !window.indexedDB) return Promise.resolve(null);
-    return new Promise(function(res){
-      var rq;
-      try { rq = window.indexedDB.open(DB_NAME, DB_VER); } catch(x){ cacheOff(x); return res(null); }
-      rq.onupgradeneeded = function(){
-        var d = rq.result;
-        if(d.objectStoreNames.contains(STORE)) return;
-        // The at field is indexed so eviction can walk oldest-first over KEYS alone — a cursor
-        // over the records would read every cached transcript into memory to delete one of them.
-        d.createObjectStore(STORE, {keyPath:'topic'}).createIndex('at','at');
-      };
-      rq.onsuccess = function(){ db = rq.result; res(db); };
-      rq.onerror = function(){ cacheOff(rq.error); res(null); };
-      rq.onblocked = function(){ cacheOff('another tab holds an older version'); res(null); };
+    return cacheOpen(window.indexedDB).then(function(r){
+      if(r.db){ db = r.db; return db; }
+      cacheOff(r.error);
+      return null;
     });
   }
 
@@ -1830,52 +1822,45 @@ const SCRIPT = `
     });
   }
 
-  /** The slice of a topic worth keeping: its tail, trimmed to the byte budget. */
-  function cacheBody(msgs){
-    var out = msgs.length > MAX_CACHE_MSGS ? msgs.slice(-MAX_CACHE_MSGS) : msgs;
-    var json = JSON.stringify(out);
-    // A quarter at a time rather than one message at a time: a topic of long answers would
-    // otherwise re-serialise itself dozens of times on the way under the budget.
-    while(json.length > MAX_CACHE_BYTES && out.length > 1){
-      out = out.slice(Math.max(1, Math.round(out.length/4)));
-      json = JSON.stringify(out);
-    }
-    return json;
-  }
-
-  function cacheWrite(tId, msgs, retried){
-    var rec = { topic: tId, at: Date.now(), json: cacheBody(msgs) };
-    return cacheTx('readwrite', function(store){ store.put(rec); evict(store, tId, false); return null; })
+  /** Write a topic's record (cacheRecord says what meta is). Resolves whether it was written. */
+  function cacheWrite(tId, msgs, meta, retried){
+    var rec = cacheRecord(tId, msgs, meta);
+    wroteAt[tId] = rec.at;
+    return cacheTx('readwrite', function(store){ store.put(rec); cacheEvict(store, tId, false); return null; })
       .then(function(r){
-        if(r.ok || dbOff) return;
-        if(retried) return cacheOff(r.error || 'the write was refused twice');
+        if(r.ok){ noteLocal(rec); return true; }
+        if(dbOff) return false;
+        if(retried){ cacheOff(r.error || 'the write was refused twice'); return false; }
         // Out of room, most likely. Everything except the topic being read goes, and the write
         // is tried once more before the cache is written off for this session.
-        return cacheTx('readwrite', function(store){ evict(store, tId, true); return null; })
-          .then(function(){ return cacheWrite(tId, msgs, true); });
+        return cacheTx('readwrite', function(store){ cacheEvict(store, tId, true); return null; })
+          .then(function(){ return cacheWrite(tId, msgs, meta, true); });
       });
   }
 
-  /** Drop the least recently written topics. all throws away everything except keep. */
-  function evict(store, keep, all){
-    var count = store.count();
-    count.onsuccess = function(){
-      var over = all ? count.result : count.result - MAX_CACHE_TOPICS;
-      if(over <= 0) return;
-      var cur = store.index('at').openKeyCursor();
-      cur.onsuccess = function(){
-        var at = cur.result;
-        if(!at || over <= 0) return;
-        if(at.primaryKey !== keep){ store.delete(at.primaryKey); over--; }
-        at.continue();
-      };
-    };
-  }
-
+  /**
+   * A topic's record as {list, epoch, lastAt, last, stale}, or null when there is none. Whatever is
+   * read is also noted (noteLocal), so the page knows what it holds without reading it again.
+   */
   function cacheRead(tId){
     return cacheTx('readonly', function(store){ return store.get(tId); }).then(function(r){
-      if(!r.ok || !r.value || !r.value.json) return null;
-      try { var list = JSON.parse(r.value.json); return (list && list.length) ? list : null; } catch(x){ return null; }
+      if(!r.ok) return null;
+      var v = r.value, list = null;
+      if(v && v.json) try { list = JSON.parse(v.json); } catch(x){ list = null; }
+      if(!v || !Array.isArray(list)){ local[tId] = null; return null; }
+      noteLocal(v);
+      return {list:list, epoch:v.epoch || 0, lastAt:v.lastAt || 0, last:v.last || '', stale:Boolean(v.stale)};
+    });
+  }
+
+  /**
+   * Learn what a topic's record is a copy of (noteLocal) without parsing it: the prefetch asks this
+   * of every topic it has not looked at, and a whole topic is up to 2M characters of JSON.
+   */
+  function cachePeek(tId){
+    return cacheTx('readonly', function(store){ return store.get(tId); }).then(function(r){
+      if(!r.ok) return;
+      if(r.value && r.value.json) noteLocal(r.value); else local[tId] = null;
     });
   }
 
@@ -1917,12 +1902,27 @@ const SCRIPT = `
     return out;
   }
 
+  /**
+   * What the record of the topic on screen is a copy of (cacheRecord). Only once this topic's sync
+   * or resumed has arrived: before that the screen holds whatever the cache painted, which says
+   * nothing about the row's latest reply, and stamping it as of that row would have the prefetch
+   * take an old copy for a current one. And it can be resumed from lastEv only when lastEv names
+   * this topic — the screen is then every message the room had as of that event, the same claim
+   * hold() makes.
+   */
+  function liveMeta(){
+    if(!synced || !epoch) return null;
+    var row=null;
+    for(var i=0;i<topics.length;i++) if(topics[i].id===topic){ row=topics[i]; break; }
+    return {epoch:epoch, lastAt:row ? row.lastAt : 0, stale:stale, last:(lastEv && lastEv.indexOf(topic+'.') === 0) ? lastEv : ''};
+  }
+
   /** Remember the current topic, at most once every SAVE_MS. */
   function cacheSave(){
     if(!topic || dbOff || saveTimer) return;
     saveTimer = setTimeout(function(){
       saveTimer = null;
-      if(topic) cacheWrite(topic, cacheable(), false);
+      if(topic) cacheWrite(topic, cacheable(), liveMeta(), false);
     }, SAVE_MS);
   }
 
@@ -1930,7 +1930,7 @@ const SCRIPT = `
   function cacheFlush(){
     if(!saveTimer) return;
     clearTimeout(saveTimer); saveTimer = null;
-    if(topic) cacheWrite(topic, cacheable(), false);
+    if(topic) cacheWrite(topic, cacheable(), liveMeta(), false);
   }
 
   // The one place the narrow-screen breakpoint lives on this side of the wire. It has to stay
@@ -4179,9 +4179,10 @@ const SCRIPT = `
    * is going to land.
    *
    * A message rather than a scrollTop, because the transcript a topic comes back to is not the one
-   * it was left with: it is rebuilt from the cache, which keeps the last 200 messages, and then
-   * reconciled against a ring of 1000 — so the sync can put a few hundred older messages above the
-   * one being read. A pixel offset would land in the middle of those; a message does not move.
+   * it was left with: it is rebuilt from the cache, which keeps only the tail of a topic too large
+   * for its budget, and then reconciled against a ring of 1000 — so the sync can put older messages
+   * above the one being read. A pixel offset would land in the middle of those; a message does not
+   * move.
    *
    * In memory only, and with no scroll listener. The whole cost is one measurement on the way out
    * of a topic, and one or two on the way back in (see land).
@@ -5433,8 +5434,8 @@ const SCRIPT = `
     if(!tId || restoreFor === tId) return;
     restoreFor = tId;
     var mine = ++restoreToken;
-    cacheRead(tId).then(function(list){
-      if(list && mine === restoreToken && tId === topic) adopt(list);
+    cacheRead(tId).then(function(rec){
+      if(rec && rec.list.length && mine === restoreToken && tId === topic) adopt(rec.list);
     });
   }
 
@@ -6464,8 +6465,12 @@ const SCRIPT = `
       alert('Could not turn notifications on: ' + ((e && e.message) || e));
     }).then(paintNotify);
   });
-  // A notification tapped while this page is open: the worker asks it to show the topic.
+  // A notification tapped while this page is open: the worker asks it to show the topic. And a
+  // topic the worker has just written to the cache (sw.ts keepTopic), noted so the prefetch does not
+  // fetch it a second time.
   if(PUSH_OK) navigator.serviceWorker.addEventListener('message', function(e){
+    var kept = e.data && e.data.cached;
+    if(kept && typeof kept === 'object' && typeof kept.topic === 'string'){ noteLocal(kept); return; }
     var goId = e.data && e.data.goto;
     if(goId && goId!==topic && topics.some(function(t){ return t.id===goId; })){
       switchTopic(goId);
@@ -6588,20 +6593,18 @@ const SCRIPT = `
 
   // ── Topics held in memory ────────────────────────────────────────────────────
   // Switching back to a topic used to cost the whole of it again: the sync carries up to 1000
-  // messages (85 KB gzipped for a long topic, 3.4 s at 500 kbps), the cache keeps the last 200 and
-  // a switch empties memory — so going back and forth between two long topics was a full download
-  // every time, cache or no cache. Now the topic being left is kept here, every message it had and
-  // the id of the last event that reached it, and coming back puts the messages up at once and
-  // resumes the stream from that id: the daemon replays what was said meanwhile from its backlog,
-  // or sends the whole topic as before when the backlog no longer reaches. Memory only, so it is
-  // the same tab going back and forth that this helps, which is the case it was measured in.
-  // Bounded both ways: HELD_TOPICS topics, HELD_MSGS messages between them, least recent first.
+  // messages (85 KB gzipped for a long topic, 3.4 s at 500 kbps), and a switch empties memory — so
+  // going back and forth between two long topics was a full download every time. Now the topic
+  // being left is kept here, every message it had and the id of the last event that reached it, and
+  // coming back puts the messages up at once and resumes the stream from that id: the daemon
+  // replays what was said meanwhile from its backlog, or sends the whole topic as before when the
+  // backlog no longer reaches. The cache's record of the topic says the same since 3.10.0
+  // (enterFromCache); this is the copy that needs no database read, and the one a browser without
+  // IndexedDB still has. Bounded both ways: HELD_TOPICS topics, HELD_MSGS messages between them,
+  // least recent first.
   var held={}, HELD_TOPICS=8, HELD_MSGS=4000;
   function hold(id){
     delete held[id];
-    // The whole topic is here now; a copy fetched while it waited is dead weight against the
-    // prefetch budget.
-    delete pre[id];
     // Only a topic whose stream has said where it got to (lastEv names this topic): the first
     // thing a stream delivers is a sync or a replay, both numbered, so a page that has an id for
     // the topic holds every message the daemon's ring had as of that id. Without one — left before
@@ -6620,24 +6623,44 @@ const SCRIPT = `
 
   // ── Topics fetched before they are opened ───────────────────────────────────
   // A topic in "needs you" is one the person is about to open, and opening it used to cost a full
-  // sync: up to 1000 messages and 83 KB gzipped, seconds of a 500 kbps link. The row already says
-  // what the reply is; the transcript behind it can be fetched while the person is still deciding,
-  // so tapping the row paints at once and the stream only replays what came after. Its own budget,
-  // separate from held's: these are topics nobody has opened yet, and letting them evict what the
-  // person just left would make the way back slow again.
-  var pre={}, PRE_TOPICS=4, PRE_MSGS=2000, PRE_DEBOUNCE_MS=400, PRE_RETRY_MS=60000, PRE_TIMEOUT_MS=60000;
-  var preBusy=false, preTimer=0, preFail={};
+  // sync. The row already says what the reply is; the transcript behind it can be fetched while the
+  // person is still deciding and written to the cache, so tapping the row paints the reply at once
+  // and the stream only replays what came after (enterFromCache).
+  //
+  // Through 3.9.0 these copies lived in memory, four at most, and that was the trouble: a fifth
+  // topic was never fetched, a reload or a PWA the phone had closed lost them all, and since the
+  // fetching starts only when the page is looked at, the person was tapping a row before its copy
+  // had come in. In the cache they outlive the page; the service worker writes the topic a push is
+  // about while the page is not even open (sw.ts); and every topic in the block is fetched, three at
+  // a time, nearest the top first. Without IndexedDB there is nowhere to keep them, and nothing is
+  // fetched.
+  var PRE_TOPICS=20, PRE_PARALLEL=3, PRE_DEBOUNCE_MS=400, PRE_RETRY_MS=60000, PRE_TIMEOUT_MS=60000;
+  var preTimer=0, preBusy={}, preCount=0, preFail={};
+  // What the cache holds of each topic as far as this page knows, {epoch, lastAt, last}: learnt from
+  // every record this page writes or reads and from the service worker. Absent = not looked at
+  // since the page loaded; null = nothing there.
+  var local={};
+
+  function noteLocal(rec){
+    local[rec.topic] = rec.epoch ? {epoch:rec.epoch, lastAt:rec.lastAt || 0, last:rec.last || ''} : null;
+  }
+
+  /** Whether the cache's copy of a row is this daemon's and has the row's latest reply. */
+  function cachedFresh(t){
+    var l = local[t.id];
+    return Boolean(l) && l.epoch === epoch && l.lastAt === t.lastAt;
+  }
 
   /**
    * The topics worth fetching now, in the sidebar's own order for them: one that needs a person,
-   * is not a scheduled run or under one, is not on screen (needsYou says that), is not already held whole, and
-   * whose copy is missing or older than the row — a new reply moves lastAt, and a copy that
-   * predates it is the one thing a prefetch must not do.
+   * is not a scheduled run or under one, is not on screen (needsYou says that), is not already held
+   * whole, and whose cached copy is missing or older than the row — a new reply moves lastAt.
    *
    * A topic held in memory is never fetched: its stream resumes from the id it was left at, which
    * is a few hundred bytes against the whole topic.
    */
   function prefetchWanted(){
+    if(dbOff || !window.indexedDB) return [];
     if(document.visibilityState === 'hidden' || parked || !epoch) return [];
     if(!stream || stream.readyState !== 1) return [];
     var targets=[], runs=runOwners();
@@ -6649,17 +6672,13 @@ const SCRIPT = `
       targets.push(t);
     }
     // The order the needs-you rows are drawn in (topicRows): what needs a decision first, then
-    // most recent. With more than PRE_TOPICS waiting, the four fetched are the four nearest the
-    // top of the sidebar, not the four the daemon happened to list first.
+    // most recent — the row nearest the top is the one most likely to be tapped next.
     targets.sort(function(a, b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
-    // The set is the first PRE_TOPICS that qualify, cached or not: fetching a fifth only because
-    // the first four are already here would evict one of them, which would put it back in this
-    // list, and the two would take turns for ever.
     targets = targets.slice(0, PRE_TOPICS);
     var out=[];
     for(var j=0;j<targets.length;j++){
-      var want=targets[j], p=pre[want.id], f=preFail[want.id];
-      if(p && p.epoch === epoch && p.lastAt === want.lastAt) continue;
+      var want=targets[j], f=preFail[want.id];
+      if(preBusy[want.id] || cachedFresh(want)) continue;
       if(f && f.lastAt === want.lastAt && Date.now() - f.at < PRE_RETRY_MS) continue;
       out.push(want);
     }
@@ -6673,80 +6692,77 @@ const SCRIPT = `
   }
 
   /**
-   * Fetch the next one, if any, and only ever one at a time: these are up to 1.5 MB each, and four
-   * of them at once is the whole of a weak link for the one topic the person is actually reading.
-   *
-   * Every way this can end goes through finish — an answer, a refusal, a body that does not parse,
-   * and a request that never comes back, which is aborted after PRE_TIMEOUT_MS. A rejected
-   * r.json() used to skip the only line that cleared preBusy, and one such answer stopped the page
-   * prefetching for the rest of its life.
+   * Start what is wanted, up to PRE_PARALLEL at once. Not one at a time, as through 3.9.0: the
+   * median topic is 11 KB gzipped (measured on the live gateway, 2026-11-17), so on a slow link
+   * each fetch is mostly round trip, and one at a time a sixth topic waited out five of them.
    */
   function pumpPrefetch(){
     preTimer=0;
-    if(preBusy) return;
     var want=prefetchWanted();
-    if(!want.length) return;
-    var t=want[0], done=false, timer=0;
+    for(var i=0;i<want.length && preCount < PRE_PARALLEL;i++) prefetchOne(want[i]);
+  }
+
+  /**
+   * Fetch one topic into the cache. Every way this can end goes through finish — an answer, a
+   * refusal, a body that does not parse, and a request that never comes back, which is aborted
+   * after PRE_TIMEOUT_MS. A rejected r.json() once skipped the only line that freed the slot, and
+   * one such answer stopped the page prefetching for the rest of its life.
+   */
+  function prefetchOne(t){
+    var done=false, started=Date.now();
     var ctl = typeof AbortController === 'function' ? new AbortController() : null;
-    preBusy=true;
-    function finish(d){
+    preBusy[t.id]=true;
+    preCount++;
+    function finish(ok){
       if(done) return;
       done=true;
       clearTimeout(timer);
-      preBusy=false;
+      delete preBusy[t.id];
+      preCount--;
       // One bad answer is not retried until the row moves or a minute has passed: a daemon that
       // is refusing them would otherwise be asked again the moment this one came back. The next
       // list event after that minute is what tries again (prefetchWanted is asked each time).
-      if(!takePrefetched(t, d)) preFail[t.id]={lastAt:t.lastAt, at:Date.now()};
+      if(!ok) preFail[t.id]={lastAt:t.lastAt, at:Date.now()};
       pumpPrefetch();
     }
-    timer = setTimeout(function(){
+    var timer = setTimeout(function(){
       if(ctl){ try{ ctl.abort(); }catch(x){} }
-      finish(null);
+      finish(false);
     }, PRE_TIMEOUT_MS);
-    fetch('api/topic?t='+encodeURIComponent(t.id), {credentials:'same-origin', cache:'no-store', signal:ctl ? ctl.signal : undefined})
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(finish, function(){ finish(null); });
+    // A topic not looked at since the page loaded may be in the cache already — written by an
+    // earlier page, or by the service worker when its push came — and reading it is cheaper than
+    // asking the daemon for it again.
+    var look = local[t.id] === undefined ? cachePeek(t.id) : Promise.resolve();
+    look.then(function(){
+      if(done) return;
+      if(local[t.id] === undefined) local[t.id] = null;
+      if(cachedFresh(t) || t.id === topic) return finish(true);
+      fetch('api/topic?t='+encodeURIComponent(t.id), {credentials:'same-origin', cache:'no-store', signal:ctl ? ctl.signal : undefined})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){ return takePrefetched(t, d, started); })
+        .then(finish, function(){ finish(false); });
+    });
   }
 
-  /** Whether the answer was kept — or was simply no longer needed (see takePrefetched). */
-  function takePrefetched(t, d){
+  /** Whether the answer was kept — or was simply no longer needed. May be a promise of it. */
+  function takePrefetched(t, d, started){
     if(!d || d.topic !== t.id) return false;
-    // The person opened it while this was in flight: the switch already did its own work, and
-    // putting these messages under it now would paint a transcript nobody asked for.
+    // The person opened it while this was in flight: the topic on screen writes its own record.
     if(t.id === topic) return true;
     // Another run of the daemon: these ids name something else. Not retried at once — a page
     // whose epoch is a restart behind would otherwise ask again the moment this came back — and
-    // the sync that brings the new epoch clears both, so the next pass fetches it properly.
+    // the sync that brings the new epoch clears the refusals, so the next pass fetches it properly.
     if(!epoch || d.epoch !== epoch) return false;
-    var live=null;
-    for(var i=0;i<topics.length;i++) if(topics[i].id === t.id){ live=topics[i]; break; }
+    var live=false;
+    for(var i=0;i<topics.length;i++) if(topics[i].id === t.id){ live=true; break; }
     if(!live) return true;
-    var msgs=[], list=d.messages || [];
-    for(var j=0;j<list.length;j++){
-      var m=list[j];
-      if(!m || !m.id || m.settings || m.wasSettings) continue;
-      // The rule reconcile applies: a message a topic kept from an earlier run says which run it
-      // belongs to, and one that does not is this daemon's.
-      m._g = m.g || d.epoch;
-      msgs.push(m);
-    }
-    // The row's lastAt as it was when the fetch went out, not as it is now: if it moved while the
-    // answer was in flight, this copy is missing that reply and the next pass fetches it again.
-    // What is here still saves the whole transcript, and ?last= replays the rest.
-    pre[t.id]={msgs:msgs, last:d.last, epoch:d.epoch, stale:Boolean(d.stale), lastAt:t.lastAt, at:Date.now()};
-    trimPrefetch();
-    return true;
-  }
-
-  /** The same rotation hold() does, over its own budget: PRE_TOPICS topics, PRE_MSGS messages. */
-  function trimPrefetch(){
-    var ids=Object.keys(pre).sort(function(a, b){ return pre[b].at - pre[a].at; });
-    var total=0;
-    for(var i=0;i<ids.length;i++){
-      total += pre[ids[i]].msgs.length;
-      if(i >= PRE_TOPICS || (i > 0 && total > PRE_MSGS)) delete pre[ids[i]];
-    }
+    // Opened and left while this was on the wire: what the page wrote on the way out is newer.
+    if(wroteAt[t.id] && wroteAt[t.id] >= started) return true;
+    // Stamped with the row's lastAt as it was when the fetch went out — not the daemon's, which
+    // this page's row may never show (a list event it missed, a clock it rounds): the copy is then
+    // fresh exactly until the row moves, and a row that moved while this was in flight is fetched
+    // once more. Stamped with the daemon's, a row that never matched it would be fetched for ever.
+    return cacheWrite(t.id, snapshotMsgs(d), {epoch:d.epoch, last:d.last, stale:Boolean(d.stale), lastAt:t.lastAt}, false);
   }
 
   function switchTopic(id){
@@ -6813,43 +6829,92 @@ const SCRIPT = `
     // cache normally answers first and replaces it; nothing about that is guaranteed, which is
     // why the placeholders go in regardless.
     showSkeleton();
+    settleOnResume = false;
     // A topic still held in memory from this daemon is put up whole, now, and its stream resumed
-    // from where it was left; otherwise the cache and a sync, as on any first visit.
-    var back = held[id], fetched = false;
+    // from where it was left. Held wins over the cache's record, deliberately: it is the topic this
+    // tab left, and needs no database read to be put up.
+    var back = held[id];
     delete held[id];
-    // Held wins when it is this run's, and deliberately: it is the topic this tab left, and its
-    // stream resumes from the exact event it was left at. A fetched copy is the fallback for one
-    // this tab has not had open. Either way the copy is used once — neither is a second cache.
-    var fetchedCopy = pre[id];
-    delete pre[id];
-    if(!back || back.epoch !== epoch){
-      back = fetchedCopy || null;
-      fetched = Boolean(back);
-    }
     if(back && back.epoch === epoch){
       stale = back.stale;
       // Marked as read from the cache, so the sync that follows a resume the daemon could not
       // honour does not read it in a second time.
       restoreFor = id;
-      // A fetched copy is the first thing this page sees of the topic, so it has to answer what a
-      // sync answers: an echo inside it claims the bubble still saying "not confirmed", and a send
-      // of this page's that the snapshot does not carry is a failure. Without this, a reload with
-      // a send in flight showed the message twice — once from the snapshot, once as "Not
-      // confirmed" — and the unsure record was never settled.
-      if(fetched){
-        for(var c=0;c<back.msgs.length;c++) claim(back.msgs[c]);
-      }
       adopt(back.msgs);
-      if(fetched) settleUnsure();
       lastEv = back.last;
-    } else {
-      back = null;
-      restore(id);
+      // What was sent into this topic and not acknowledged — including a send still in flight
+      // from before the switch, whose bubble went with the transcript it was in.
+      showUnsent(id);
+      connect(true);
+      return;
     }
-    // What was sent into this topic and not acknowledged — including a send still in flight from
-    // before the switch, whose bubble went with the transcript it was in.
+    // A record this page knows to be whole and this daemon's (local, filled by every write, read
+    // and prefetch) decides how the stream opens, so it is read first — and so is one this page has
+    // not looked at yet, which after a reload is every topic until the prefetch gets to it: a row
+    // tapped in the first moments after a reload is exactly the one the service worker kept. A
+    // topic known to have no such record opens at once, as on any first visit — the cache painted
+    // when it comes, a sync behind it.
+    var l = local[id];
+    if(!dbOff && window.indexedDB && (l === undefined || (l && l.last && l.epoch === epoch))){ enterFromCache(id); return; }
+    restore(id);
     showUnsent(id);
-    connect(Boolean(back));
+    connect(false);
+  }
+
+  // How long a switch waits for the cache to say where a topic's stream can resume from before it
+  // opens the stream with a sync instead. A read is a few milliseconds; this is for a database that
+  // hangs, which mobile Safari's has been known to do.
+  var LOCAL_WAIT_MS=300;
+  // Set when a topic is entered from the cache's record: the record and what the resumed stream
+  // replays after it are the whole room, so the end of the replay can judge the previous page's
+  // unsure sends the way a sync does (see resumed).
+  var settleOnResume=false;
+
+  /**
+   * Into a topic from the cache's record of it: painted, and its stream resumed from the record's
+   * last event — the daemon replays what came after, or sends the whole topic when its backlog no
+   * longer reaches. This is what makes a topic fetched before it was opened (prefetchOne, or the
+   * service worker on a push) cost a few hundred bytes to open.
+   *
+   * The record may be older than the person's last page — a send that page left "Not confirmed"
+   * can postdate it — so the echoes inside it are claimed here, and a send it does not carry is
+   * left for the end of the replay to judge, never failed on the record alone.
+   */
+  function enterFromCache(id){
+    restoreFor = id;
+    var mine = ++restoreToken, started = false;
+    // The topic being left has to stop talking now, not when the read comes back: everything its
+    // stream delivered in between would be drawn into this topic. Its handlers check es !== stream.
+    if(stream){ stream.close(); stream = null; }
+    function start(rec){
+      if(started) return;
+      started = true;
+      if(mine !== restoreToken || id !== topic) return;
+      if(rec && rec.last && epoch && rec.epoch === epoch){
+        stale = rec.stale;
+        // Before the unsent bubbles go up, as a sync would: an echo takes over its bubble's
+        // record instead of leaving a node behind that the messages below would skip.
+        for(var c=0;c<rec.list.length;c++) claim(rec.list[c]);
+        if(rec.list.length) adopt(rec.list);
+        lastEv = rec.last;
+        settleOnResume = true;
+        showUnsent(id);
+        connect(true);
+        return;
+      }
+      showUnsent(id);
+      if(rec && rec.list.length) adopt(rec.list);
+      connect(false);
+    }
+    cacheRead(id).then(function(rec){
+      // Too late to choose how the stream opens; still worth painting, as restore would.
+      if(started){
+        if(rec && rec.list.length && mine === restoreToken && id === topic) adopt(rec.list);
+        return;
+      }
+      start(rec);
+    });
+    setTimeout(function(){ start(null); }, LOCAL_WAIT_MS);
   }
 
   function deleteTopic(delId){
@@ -7207,7 +7272,9 @@ const SCRIPT = `
       if(epoch && ev.epoch && ev.epoch !== epoch) checkBuild();
       // Whatever was fetched from the daemon that went away is about ids this one hands out
       // again for different messages; the refusals to retry go with it.
-      if(ev.epoch && epoch && ev.epoch !== epoch){ pre={}; preFail={}; }
+      if(ev.epoch && epoch && ev.epoch !== epoch) preFail={};
+      // A sync settles the previous page's sends itself, below.
+      settleOnResume = false;
       epoch = ev.epoch || 0;
       synced = true;
       // What the server says about this room BEFORE the transcript is reconciled, so the drops
@@ -7334,6 +7401,10 @@ const SCRIPT = `
       if(synced) return;
       synced = true;
       entering = false;
+      // Entered from the cache's record: that and the replay just finished are the whole room, so a
+      // send the previous page left unsure that neither carried never arrived — a sync's judgement,
+      // which a resume has to make for itself when no sync is coming.
+      if(settleOnResume){ settleOnResume = false; settleUnsure(); }
       clearSyncing();
       placeDivider();
       syncEmptyNote();
@@ -7828,6 +7899,8 @@ const SCRIPT = `
     }).then(function(d){
       if(d && d.error){ alert('Could not open a new topic: '+d.error); return false; }
       if(!d || !d.topic) return false;
+      // Just made, so there is no record of it to look for: entered at once, as before (switchTopic).
+      local[d.topic.id] = null;
       switchTopic(d.topic.id);
       if(narrow()) setSidebar(false);
       if(seed){
@@ -7927,6 +8000,7 @@ const SCRIPT = `
       // case where switchTopic would do nothing and leave a wiped transcript on screen. A starred
       // topic on screen is left alone, so its view and draft are saved like any other switch.
       if(!keep[topic]) topic='';
+      local[d.topic.id] = null;
       switchTopic(d.topic.id);
       if(narrow()) setSidebar(false);
     });
@@ -9660,7 +9734,7 @@ const SCRIPT = `
   function forget(id){
     delete views[id];
     delete held[id];
-    delete pre[id];
+    delete local[id];
     delete preFail[id];
     for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === id) dropUnsent(n);
     if(!drafts[id]) return;
@@ -9680,7 +9754,7 @@ const SCRIPT = `
     for(var i=0;i<topics.length;i++) known[topics[i].id]=1;
     for(id in views) if(!known[id]) delete views[id];
     for(id in held) if(!known[id]) delete held[id];
-    for(id in pre) if(!known[id]) delete pre[id];
+    for(id in local) if(!known[id]) delete local[id];
     for(id in preFail) if(!known[id]) delete preFail[id];
     for(id in drafts) if(!known[id]) forget(id);
     for(id in unsent) if(Object.prototype.hasOwnProperty.call(unsent, id) && !known[unsent[id].t]) dropUnsent(id);

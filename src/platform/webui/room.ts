@@ -1292,18 +1292,19 @@ export class WebRoom {
   /**
    * One topic's state as a sync would carry it, without attaching to it.
    *
-   * The page fetches this for the topics that need a person, so tapping one paints at once
-   * instead of waiting for a sync — on a long topic that sync is up to 1000 messages, 1.5 MB of
-   * JSON and seconds of a weak link. Read-only, deliberately and completely: it subscribes
-   * nothing, announces no topic list, logs nothing and does not mark the topic seen. A fetch
-   * nobody is waiting on must leave no trace in the room.
+   * The page fetches this for the topics that need a person, and the service worker for the topic a
+   * push is about, so tapping one paints at once instead of waiting for a sync. Read-only,
+   * deliberately and completely: it subscribes nothing, announces no topic list, logs nothing and
+   * does not mark the topic seen. A fetch nobody is waiting on must leave no trace in the room.
    *
    * `last` is the id a sync of this room would be numbered with (see `subscribe`), so the page
    * enters the topic exactly as it does one held in memory: paint these messages, then open the
-   * stream with `?last=` and be handed only what was said after them.
+   * stream with `?last=` and be handed only what was said after them. `lastAt` is the row's, read
+   * in the same turn as the messages, so a copy can be told apart from one missing a later reply.
    */
   snapshot(topicId: string): TopicSnapshot | undefined {
-    if (!this.topics.has(topicId)) return undefined;
+    const topic = this.topics.get(topicId);
+    if (!topic) return undefined;
     // `rooms.get`, not `roomOf`: the latter creates an empty room, which would be this request
     // changing the daemon's state. An absent room is an empty one here, which is what a sync
     // would find too.
@@ -1312,6 +1313,7 @@ export class WebRoom {
       topic: topicId,
       ...this.roomState(topicId, room),
       last: `${topicId}.${this.run}.${room?.seq ?? 0}`,
+      lastAt: topic.lastAt,
     };
   }
 

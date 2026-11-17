@@ -460,10 +460,10 @@ export type WebEvent =
  * One topic's state, as `GET api/topic` answers it.
  *
  * The same three things a sync says about the room itself, plus the event id that sync would
- * have been numbered with. The web UI fetches it for the topics that need a person, so opening
- * one paints at once instead of waiting for the sync — on a long topic 1.5 MB of JSON and
- * seconds of a weak link — and then enters it exactly as it enters a topic held in memory:
- * paint these messages, open the stream with `?last=`.
+ * have been numbered with. The web UI fetches it for the topics that need a person — the page
+ * while it is on screen, the service worker when a push about the topic arrives — and keeps it in
+ * the browser's transcript cache, so opening one paints at once and enters it the way a topic held
+ * in memory is entered: paint these messages, open the stream with `?last=`.
  *
  * Read-only: asking for one attaches nothing, announces no list, and marks nothing seen.
  */
@@ -473,6 +473,12 @@ export interface TopicSnapshot {
   epoch: number;
   /** `<topic>.<run>.<seq>`, the id a sync of this room would carry; usable as `?last=`. */
   last: string;
+  /**
+   * The topic row's `lastAt` as of these messages. The page compares it with the row to tell a
+   * cached copy that has the latest reply from one that does not; the service worker, which has no
+   * topic list, has no other way to stamp what it keeps.
+   */
+  lastAt: number;
   /** The room is empty because the topic predates this daemon (the sync's `stale`). */
   stale?: boolean;
   messages: WebMessage[];

@@ -878,14 +878,16 @@ async function deleteTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
 /**
  * The service worker. `no-cache`, so the browser asks again on every check — an old worker keeping
  * an old notification handler alive across an upgrade is the kind of stale copy this page avoids —
- * and a CSP of its own, which is the one a worker runs under: no network at all except this origin's
- * icon.
+ * and a CSP of its own, which is the one a worker runs under: no network at all except this
+ * origin's icon, and this origin's own routes, for the topic a push is about (`api/topic`, sw.ts
+ * keepTopic). Same-origin is the whole of it: a redirect elsewhere — an expired access session's
+ * sign-in page — is refused rather than followed.
  */
 function sendServiceWorker(req: IncomingMessage, res: ServerResponse): void {
   body(req, res, 200, Buffer.from(SERVICE_WORKER, 'utf8'), {
     'Content-Type': 'text/javascript; charset=utf-8',
     'Cache-Control': 'no-cache',
-    'Content-Security-Policy': "default-src 'none'; img-src 'self'",
+    'Content-Security-Policy': "default-src 'none'; img-src 'self'; connect-src 'self'",
     'X-Content-Type-Options': 'nosniff',
   });
 }

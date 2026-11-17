@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A topic waiting for you opens at once, however many are waiting, and after a reload or a
+  notification too.** The web UI fetched topics in "needs you" ahead of time, but only the first
+  four, one at a time, into memory, and only while the page was on screen: a fifth was never
+  fetched, a reload or a phone closing the app lost them all, and on a phone the fetching began when
+  the person came back — the moment they were already tapping. Every waiting topic (up to 20) is now
+  fetched, three at a time, into the browser's transcript cache, which keeps whole topics — up to
+  1000 messages, 100 topics — instead of the last 200 messages of 24. A topic with a current copy
+  there opens from it and only fetches what was said since, also after a reload. With
+  notifications on, the topic a push is about is fetched into the cache when the push arrives, so a
+  tapped notification opens on the reply already there. The service worker's own security policy
+  now allows requests to the page's own address, and nothing else.
+
 ## [3.9.0] - 2026-11-16
 
 ### Added
