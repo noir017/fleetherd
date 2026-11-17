@@ -1,16 +1,65 @@
 /**
  * The service worker: `sw.js`, registered by the page only when the operator turns notifications on.
  *
- * It does two things and nothing else — shows a push as a notification, and opens (or focuses) the
- * page on the topic when the notification is tapped. In particular it has NO `fetch` handler and
- * caches nothing. The web UI README's rule against a service worker was about exactly that: a worker
- * that caches the app shell serves last week's page after an upgrade, with no error to say so. This
- * one cannot, because every request still goes to the network as if it did not exist.
+ * It does three things and nothing else — shows a push as a notification, keeps the topic the push
+ * is about in the page's transcript cache, and opens (or focuses) the page on the topic when the
+ * notification is tapped. In particular it has NO `fetch` handler and caches no part of the page.
+ * The web UI README's rule against a service worker was about exactly that: a worker that caches
+ * the app shell serves last week's page after an upgrade, with no error to say so. This one cannot,
+ * because every request the page makes still goes to the network as if it did not exist. What it
+ * writes is a transcript, into the store the page itself writes them to, in the record format both
+ * take from `cache-script.ts`.
  *
  * Plain ES5-ish JavaScript like the page's own script, kept as a string so it ships inside the
  * package with no build step and no file to locate at runtime.
  */
+import { CACHE_CORE } from './cache-script.js';
+
 export const SERVICE_WORKER = `'use strict';
+${CACHE_CORE}
+
+/**
+ * Fetch the topic a push is about into the cache, so the page that opens it — from the
+ * notification, or the person coming back to it — paints the reply at once and resumes the stream
+ * from there (page.ts enterFromCache).
+ *
+ * This is the case the page cannot cover by itself: it fetches only while it is on screen, and on a
+ * phone the page is in the background, or not running at all, exactly when a push arrives. A page
+ * that IS on screen fetches what needs the person itself (prefetchOne), so then this does nothing.
+ * Every failure is silent: the notification is the point of a push, and a topic not kept is a topic
+ * opened the way it always was.
+ */
+function keepTopic(topic){
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) if (list[i].visibilityState === 'visible') return null;
+    if (!self.indexedDB) return null;
+    return fetch('api/topic?t=' + encodeURIComponent(topic), { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || d.topic !== topic || !d.epoch) return null;
+        var rec = cacheRecord(topic, snapshotMsgs(d), { epoch: d.epoch, last: d.last, stale: Boolean(d.stale), lastAt: d.lastAt });
+        return cacheOpen(self.indexedDB).then(function (o) {
+          if (!o.db) return null;
+          return new Promise(function (res) {
+            var tx;
+            try { tx = o.db.transaction(STORE, 'readwrite'); } catch (x) { o.db.close(); return res(null); }
+            var store = tx.objectStore(STORE);
+            store.put(rec);
+            cacheEvict(store, topic, false);
+            tx.oncomplete = function () { o.db.close(); res(rec); };
+            tx.onabort = tx.onerror = function () { o.db.close(); res(null); };
+          });
+        });
+      })
+      .then(function (rec) {
+        if (!rec) return;
+        // A page that is open but hidden would otherwise read the record again, or fetch it.
+        var kept = { topic: rec.topic, epoch: rec.epoch, lastAt: rec.lastAt || 0, last: rec.last || '' };
+        for (var j = 0; j < list.length; j++) list[j].postMessage({ cached: kept });
+      });
+  }).catch(function () {});
+}
+
 // A push, as webpush.ts sends it: {topic, title, body}, encrypted to this browser.
 self.addEventListener('push', function (e) {
   var d = {};
@@ -19,13 +68,15 @@ self.addEventListener('push', function (e) {
   var body = typeof d.body === 'string' ? d.body : '';
   var topic = typeof d.topic === 'string' ? d.topic : '';
   // One notification per topic (the tag): a second update replaces the first instead of stacking.
-  e.waitUntil(self.registration.showNotification(title, {
+  // Shown first and at once — a push that shows nothing is one a browser holds against the site.
+  var shown = self.registration.showNotification(title, {
     body: body,
     tag: topic || 'fleetherd',
     renotify: true,
     icon: 'icon.png',
     data: { topic: topic }
-  }));
+  });
+  e.waitUntil(Promise.all([shown, topic ? keepTopic(topic) : null]));
 });
 
 // Tapped: bring an open page to the topic, or open one there.

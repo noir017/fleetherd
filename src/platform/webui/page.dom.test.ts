@@ -348,6 +348,21 @@ async function untilAsync(what: string, ok: () => Promise<boolean>): Promise<voi
 }
 
 /**
+ * Wait for the stream to open at url. A topic the page has not looked at yet is entered only once
+ * its cache record has been read (page.ts enterFromCache), since that read decides whether the
+ * stream resumes or asks for a sync — so the stream opens an IndexedDB turn after the click.
+ */
+async function opens(h: Harness, url: string): Promise<void> {
+  await within(`the stream opens at ${url}`, 1000, () => {
+    try {
+      return h.live().url === url;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
  * The names on the composer's attachment chips, in order. Read off `.chip-name` rather than the
  * chips' text, because a chip also carries its × — and a thumbnail's alt, which is not text.
  */
@@ -677,6 +692,10 @@ async function open(
     photos: photoLog,
     cached: (topic) => readCache(idb, topic),
     emit: async (ev) => {
+      // A switch to a topic the page has not looked at opens its stream only once the cache has
+      // been read (enterFromCache), and the stream of the topic left is closed at once — so an event
+      // emitted straight after a click waits for the stream it is meant for.
+      await within('a stream to deliver to', 1000, () => streams.some((s) => !s.closed));
       live().onmessage?.({ data: JSON.stringify(ev) });
       await tick();
     },
@@ -699,13 +718,21 @@ async function open(
   };
 }
 
+/** One topic's record as it sits in the database — the messages and what the copy is of. */
+interface CacheRecord {
+  list: Array<Record<string, unknown>>;
+  epoch?: number;
+  lastAt?: number;
+  last?: string;
+}
+
 /**
- * Read one topic's cached transcript straight out of the database.
+ * Read one topic's cached record straight out of the database.
  *
  * Deliberately not through the page: what is asserted is what a RELOAD would find, so it is read
  * the way the next page would read it rather than the way this one remembers writing it.
  */
-function readCache(idb: IDBFactory | null, topic: string): Promise<Array<Record<string, unknown>> | null> {
+function readRecord(idb: IDBFactory | null, topic: string): Promise<CacheRecord | null> {
   if (!idb) return Promise.resolve(null);
   return new Promise((resolve) => {
     const rq = idb.open('aa_cache', 1);
@@ -722,12 +749,19 @@ function readCache(idb: IDBFactory | null, topic: string): Promise<Array<Record<
         resolve(null);
       };
       get.onsuccess = () => {
-        const rec = get.result as { json?: string } | undefined;
+        const rec = get.result as { json?: string; epoch?: number; lastAt?: number; last?: string } | undefined;
         db.close();
-        resolve(rec?.json ? (JSON.parse(rec.json) as Array<Record<string, unknown>>) : null);
+        if (!rec?.json) return resolve(null);
+        const { json, ...meta } = rec;
+        resolve({ list: JSON.parse(json) as Array<Record<string, unknown>>, ...meta });
       };
     };
   });
+}
+
+/** Just the messages of readRecord. */
+async function readCache(idb: IDBFactory | null, topic: string): Promise<Array<Record<string, unknown>> | null> {
+  return (await readRecord(idb, topic))?.list ?? null;
 }
 
 /**
@@ -745,7 +779,7 @@ describe('webui page: rendering', () => {
     // client's topic is '' and `stream()` answers for `topics.current()` — a sync carrying an id
     // the page never asked for. Dropping it left an empty shell behind a healthy event stream.
     const h = await open({ url: 'http://localhost:8787/' });
-    expect(h.live().url).toBe('api/events');
+    await opens(h, 'api/events');
 
     await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>'), message('m2', '<p>hi</p>', true)], ['a1b2c3d4']));
 
@@ -1312,7 +1346,7 @@ describe('webui page: a daemon that restarts under an open page', () => {
     expect(h.el('note').textContent).not.toContain('Reload');
     await within('a new stream after a second', 2500, () => h.streams.length === 2);
     // A new EventSource has no resume point to send, so the daemon that answers sends a full sync.
-    expect(h.live().url).toBe('api/events?t=a1b2c3d4');
+    await opens(h, 'api/events?t=a1b2c3d4');
     // The transcript stayed on screen meanwhile; the restarted daemon's sync takes over — the
     // message it kept from the run before carries that run (g), and lands on the copy on screen.
     expect(h.painted()).toBe(1);
@@ -1399,6 +1433,7 @@ describe('webui page: a tab in the background', () => {
   };
   /** An event the way a browser delivers one that carried an `id:`. */
   const numbered = async (h: Harness, ev: Record<string, unknown>, id: string): Promise<void> => {
+    await within('a stream to deliver to', 1000, () => h.streams.some((s) => !s.closed));
     h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
     await tick();
   };
@@ -1416,7 +1451,7 @@ describe('webui page: a tab in the background', () => {
     setVisible(h, true);
     // A new stream, told where the old one got to: the daemon replays what came after it.
     expect(h.streams).toHaveLength(2);
-    expect(h.live().url).toBe('api/events?t=a1b2c3d4&last=a1b2c3d4.run.7');
+    await opens(h, 'api/events?t=a1b2c3d4&last=a1b2c3d4.run.7');
     // And the transcript never left the screen.
     expect(h.painted()).toBe(2);
     expect(h.skeletons()).toBe(0);
@@ -1503,7 +1538,7 @@ describe('webui page: what changed in the topic list', () => {
     const h = await open();
     await h.emit(sync('a1b2c3d4', [message('m1', '<p>hi</p>')], ['a1b2c3d4', 'b2c3d4e5']));
     await h.emit({ t: 'topic-rows', tv: 2, rows: [], gone: ['a1b2c3d4'] });
-    expect(h.live().url).toBe('api/events?t=b2c3d4e5');
+    await opens(h, 'api/events?t=b2c3d4e5');
     // Nothing was created to replace it: there was somewhere to go.
     expect(h.calls.map((c) => c.path)).not.toContain('api/topics');
   });
@@ -1518,7 +1553,7 @@ describe('webui page: what changed in the topic list', () => {
     await until('the stream is closed', () => h.streams[0]!.closed);
     Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'visible' });
     h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
-    expect(h.live().url).toBe('api/events?t=a1b2c3d4&last=a1b2c3d4.run.3&tv=6');
+    await opens(h, 'api/events?t=a1b2c3d4&last=a1b2c3d4.run.3&tv=6');
   });
 });
 
@@ -1533,7 +1568,7 @@ describe('webui page: topics', () => {
     // shape of a transcript rather than either an empty panel or a message.
     expect(h.painted()).toBe(0);
     expect(h.skeletons()).toBeGreaterThan(0);
-    expect(h.live().url).toBe('api/events?t=b2c3d4e5');
+    await opens(h, 'api/events?t=b2c3d4e5');
 
     await h.click('[data-topic="a1b2c3d4"]');
     // A came back with no sync emitted at all — this is the cache, and the point of it. It is
@@ -1593,7 +1628,9 @@ describe('webui page: topics', () => {
 
     await h.click('[data-topic="b2c3d4e5"]');
 
+    // At once, before the cache has been read: nothing of A's may reach B in the meantime.
     expect(first.closed).toBe(true);
+    await opens(h, 'api/events?t=b2c3d4e5');
     expect(h.streams.filter((s) => !s.closed)).toHaveLength(1);
   });
 
@@ -1762,7 +1799,7 @@ describe('webui page: topics', () => {
 
     expect(h.calls.find((c) => c.path === 'api/topics/clear')?.body).toEqual({});
     // Landed in the replacement rather than waiting for the broadcast list to say where to go.
-    expect(h.live().url).toBe('api/events?t=deadbeef');
+    await opens(h, 'api/events?t=deadbeef');
     expect(h.window.location.search).toBe('?t=deadbeef');
     expect(h.painted()).toBe(0);
     expect(h.rows()).toBe(1);
@@ -2522,7 +2559,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     await until('the refusal is on screen', () => h.alerts.length > 0);
 
     expect(h.alerts[0]).toBe(`Could not open a new topic: ${refusal}`);
-    expect(h.live().url).toBe(`api/events?t=${A}`);
+    await opens(h, `api/events?t=${A}`);
   });
 
   it('stars a topic from its row without opening it, and lists it first', async () => {
@@ -2544,7 +2581,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     // A star leads its peers inside its state; it is not a group of its own, so no divider.
     expect(h.doc.querySelector('#topics .after-needs')).toBeNull();
     // Starring is not a reason to switch to it.
-    expect(h.live().url).toBe(`api/events?t=${A}`);
+    await opens(h, `api/events?t=${A}`);
     // And the sweep now says it spares what was starred.
     expect(h.el('clear-topics').getAttribute('title')).toBe('Clear unstarred topics');
     expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear unstarred topics');
@@ -2558,7 +2595,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
         { id: C, title: 'c', lastAt: 998, msgCount: 0, starred: true },
       ],
     });
-    expect(h.live().url).toBe(`api/events?t=${B}`);
+    await opens(h, `api/events?t=${B}`);
   });
 
   it('says Clear unstarred topics when only a sub-agent is starred', async () => {
@@ -2615,7 +2652,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     await h.click('#clear-topics');
 
     expect(h.confirms.at(-1)).toBe('Delete 1 topic? The 1 starred one is kept. This cannot be undone.');
-    expect(h.live().url).toBe('api/events?t=deadbeef');
+    await opens(h, 'api/events?t=deadbeef');
     expect(h.rows()).toBe(2);
     await untilAsync('the cleared topic' + "'s cache is gone", async () => (await h.cached(A)) === null);
     expect(await h.cached(B)).toHaveLength(1);
@@ -2728,6 +2765,7 @@ describe('webui page: a topic held in memory', () => {
   const B = 'b2c3d4e5';
   /** An event as a browser delivers one that carried an `id:` — a sync is numbered too. */
   const numbered = async (h: Harness, ev: Record<string, unknown>, id: string): Promise<void> => {
+    await within('a stream to deliver to', 1000, () => h.streams.some((s) => !s.closed));
     h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
     await tick();
   };
@@ -2746,7 +2784,7 @@ describe('webui page: a topic held in memory', () => {
     await h.click(`[data-topic="${A}"]`);
     // On screen at once, every one of them, before the stream has said anything.
     expect(h.painted()).toBe(300);
-    expect(h.live().url).toBe(`api/events?t=${A}&last=${encodeURIComponent(`${A}.run.300`)}`);
+    await opens(h, `api/events?t=${A}&last=${encodeURIComponent(`${A}.run.300`)}`);
     expect(h.waiting()).not.toBeNull();
     // What was said meanwhile is replayed; then the daemon says the catch-up is over.
     await numbered(h, { t: 'msg', msg: message('w301', '<p>said while away</p>') }, `${A}.run.301`);
@@ -2778,7 +2816,7 @@ describe('webui page: a topic held in memory', () => {
     // Left again before B's sync arrived: there is no position to resume B from.
     await h.click(`[data-topic="${A}"]`);
     await h.click(`[data-topic="${B}"]`);
-    expect(h.live().url).toBe(`api/events?t=${B}`);
+    await opens(h, `api/events?t=${B}`);
   });
 
   it('does not put back a topic held from a daemon that has since restarted', async () => {
@@ -2787,11 +2825,12 @@ describe('webui page: a topic held in memory', () => {
     await h.click(`[data-topic="${B}"]`);
     await numbered(h, sync(B, [], [A, B], { epoch: 2 }), `${B}.other.0`);
     await h.click(`[data-topic="${A}"]`);
-    expect(h.live().url).toBe(`api/events?t=${A}`);
+    await opens(h, `api/events?t=${A}`);
   });
 
   it('forgets what it held for a topic the list no longer has', async () => {
-    const h = await open();
+    // No IndexedDB, so the cache's record of A — resumable too — cannot stand in for what was held.
+    const h = await open({ idb: null });
     await numbered(h, sync(A, many(3), [A, B, 'c3d4e5f6']), `${A}.run.3`);
     await h.click(`[data-topic="${B}"]`);
     await numbered(h, sync(B, [], [A, B, 'c3d4e5f6']), `${B}.run.0`);
@@ -2800,7 +2839,7 @@ describe('webui page: a topic held in memory', () => {
     await h.emit({ t: 'topic-rows', tv: 2, rows: [], gone: [A] });
     await h.emit({ t: 'topics', tv: 3, topics: (sync(B, [], [A, B, 'c3d4e5f6']).topics as unknown[]) });
     await h.click(`[data-topic="${A}"]`);
-    expect(h.live().url).toBe(`api/events?t=${A}`);
+    await opens(h, `api/events?t=${A}`);
   });
 });
 
@@ -2818,30 +2857,37 @@ describe('webui page: a topic fetched before it is opened', () => {
     msgCount: 0,
     ...over,
   });
-  /** A snapshot as `api/topic` answers one. */
-  const snap = (topic: string, messages: Array<Record<string, unknown>>, last: string): Record<string, unknown> => ({
-    topic,
-    epoch: 1,
-    last,
-    messages,
-  });
+  /** A snapshot as `api/topic` answers one; `lastAt` is the row's as of these messages. */
+  const snap = (
+    topic: string,
+    messages: Array<Record<string, unknown>>,
+    last: string,
+    lastAt = 1000,
+    epoch = 1
+  ): Record<string, unknown> => ({ topic, epoch, last, lastAt, messages });
   const fetched = (h: Harness, id: string): boolean => h.calls.some((c) => c.path === url(id));
+  const asked = (h: Harness): string[] => h.calls.filter((c) => c.path.startsWith('api/topic')).map((c) => c.path);
+  /** Whether the topic's record has been written, by the prefetch or by anyone. */
+  const kept = (h: Harness, id: string) => async (): Promise<boolean> => (await readRecord(h.idb, id)) !== null;
 
-  it('fetches a topic that needs an answer, and opening it paints before the stream says anything', async () => {
-    const h = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`) } });
+  it('fetches a topic that needs an answer into the cache, and opening it paints before the stream says anything', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`, 900) } });
     await h.emit(
       sync(A, [message('a1', '<p>in A</p>')], [A, B], { topics: [row(A), row(B, { stage: 'answer', lastAt: 900 })] })
     );
     await within('the prefetch goes out', 2000, () => fetched(h, B));
-    await tick();
+    await untilAsync('the copy is in the cache', kept(h, B));
+    const rec = await readRecord(h.idb, B);
+    // Whole, so it says where its stream can be resumed from; and as of which reply.
+    expect(rec).toMatchObject({ epoch: 1, lastAt: 900, last: `${B}.run.4` });
     expect(h.painted()).toBe(1);
 
     await h.click(`[data-topic="${B}"]`);
+    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('from B'));
     // The whole point: no sync for B has been sent, and its reply is already on screen.
     expect(h.painted()).toBe(1);
-    expect(h.el('log').textContent).toContain('from B');
     // And the stream resumes from the snapshot's id, so only what came after it is replayed.
-    expect(h.live().url).toBe(`api/events?t=${B}&last=${encodeURIComponent(`${B}.run.4`)}`);
+    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.4`)}`);
   });
 
   it('leaves the topic on screen and a scheduled run alone', async () => {
@@ -2853,24 +2899,37 @@ describe('webui page: a topic fetched before it is opened', () => {
     );
     await new Promise((r) => setTimeout(r, 600));
     // A is being read already, B is a scheduled lane the switcher does not even list.
-    expect(h.calls.filter((c) => c.path.startsWith('api/topic'))).toEqual([]);
+    expect(asked(h)).toEqual([]);
   });
 
-  it('fetches the first four that need an answer, and no more', async () => {
+  it('fetches every topic that needs the person, three at a time', async () => {
+    // Through 3.9.0 it was the first four and no more, one at a time — so the fifth row of a busy
+    // morning was never fetched, and the fourth only after three others had come in.
     const ids = ['11111111', '22222222', '33333333', '44444444', '55555555', '66666666'];
     const replies: Record<string, unknown> = {};
-    for (const id of ids) replies[url(id)] = snap(id, [message(`m${id}`, '<p>x</p>')], `${id}.run.1`);
-    const h = await open({ replies });
+    const gates: Record<string, Promise<void>> = {};
+    const open1: Record<string, () => void> = {};
+    for (const id of ids) {
+      replies[url(id)] = snap(id, [message(`m${id}`, '<p>x</p>')], `${id}.run.1`);
+      gates[url(id)] = new Promise<void>((r) => (open1[id] = r));
+    }
+    const h = await open({ replies, held: gates });
     await h.emit(sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id) => row(id, { stage: 'answer' }))] }));
-    await within('four prefetches', 4000, () => ids.filter((id) => fetched(h, id)).length === 4);
-    await new Promise((r) => setTimeout(r, 600));
-    expect(ids.filter((id) => fetched(h, id))).toEqual(ids.slice(0, 4));
+    await within('three in flight', 2000, () => asked(h).length === 3);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(asked(h)).toHaveLength(3);
+
+    open1[ids[0]!]!();
+    await within('a fourth once one is in', 2000, () => asked(h).length === 4);
+    for (const id of ids) open1[id]!();
+    await within('all six', 2000, () => asked(h).length === 6);
+    for (const id of ids) await untilAsync(`${id} is cached`, kept(h, id));
   });
 
-  it('picks the four nearest the top of the sidebar, not the four the daemon listed first', async () => {
+  it('fetches them nearest the top of the sidebar first, not in the order the daemon listed them', async () => {
     // Questions beat failures, failures beat finished replies, and within one stage the newest
     // is first — the order topicRows draws the needs-you block in. The daemon's own order here is
-    // the reverse, so a prefetch that took topics as they came would fetch the wrong four.
+    // the reverse, so a prefetch that took topics as they came would start at the bottom.
     const ans1 = 'a1a1a1a1';
     const ans2 = 'a2a2a2a2';
     const failed = 'f0f0f0f0';
@@ -2893,22 +2952,16 @@ describe('webui page: a topic fetched before it is opened', () => {
         ],
       })
     );
-    await within('four prefetches', 4000, () =>
-      [ans1, ans2, failed, rev1, rev2, rev3].filter((id) => fetched(h, id)).length === 4
-    );
-    await new Promise((r) => setTimeout(r, 600));
-    // In the order they were fetched, which is the order they sit in the list.
-    expect(h.calls.filter((c) => c.path.startsWith('api/topic')).map((c) => c.path)).toEqual(
-      [ans1, ans2, failed, rev1].map(url)
-    );
+    await within('all six', 4000, () => asked(h).length === 6);
+    expect(asked(h)).toEqual([ans1, ans2, failed, rev1, rev2, rev3].map(url));
   });
 
   it('fetches it again when a new reply moves the row', async () => {
-    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>one</p>')], `${B}.run.1`) } });
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>one</p>')], `${B}.run.1`, 900) } });
     const list = [row(A), row(B, { stage: 'answer', lastAt: 900 })];
     await h.emit(sync(A, [], [A, B], { topics: list }));
     await within('the first prefetch', 2000, () => fetched(h, B));
-    await new Promise((r) => setTimeout(r, 100));
+    await untilAsync('the first copy', kept(h, B));
 
     await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', lastAt: 1200, msgCount: 2 })] });
     await within('the second prefetch', 2000, () => h.calls.filter((c) => c.path === url(B)).length === 2);
@@ -2929,7 +2982,8 @@ describe('webui page: a topic fetched before it is opened', () => {
     await tick();
     await h.click(`[data-topic="${A}"]`);
     await h.click(`[data-topic="${B}"]`);
-    expect(h.live().url).toBe(`api/events?t=${B}`);
+    expect(await readRecord(h.idb, B)).toBeNull();
+    await opens(h, `api/events?t=${B}`);
   });
 
   it('fetches nothing while the tab is hidden', async () => {
@@ -2938,6 +2992,13 @@ describe('webui page: a topic fetched before it is opened', () => {
     await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
     await new Promise((r) => setTimeout(r, 600));
     expect(fetched(h, B)).toBe(false);
+  });
+
+  it('fetches nothing in a browser with no IndexedDB, where there is nowhere to keep it', async () => {
+    const h = await open({ idb: null, replies: { [url(B)]: snap(B, [], `${B}.run.0`) } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(asked(h)).toEqual([]);
   });
 
   it('does not ask again at once when the daemon refused one', async () => {
@@ -2954,12 +3015,74 @@ describe('webui page: a topic fetched before it is opened', () => {
     const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>x</p>')], `${B}.run.1`) } });
     await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
     await within('the prefetch', 2000, () => fetched(h, B));
-    await new Promise((r) => setTimeout(r, 100));
+    await untilAsync('the copy', kept(h, B));
 
     // The same row, sent again: another list event must not be read as "this copy is stale".
     await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer' })] });
     await new Promise((r) => setTimeout(r, 600));
     expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
+  });
+
+  it('keeps every topic it fetched: a full house of long ones does not push the top one out', async () => {
+    // What 3.9.0 did with four topics of a thousand messages: fetch the first, the second, the
+    // third — evicting the first to make room — then the first again, for ever. The cache holds a
+    // hundred topics, and nothing it fetched is taken back to make room for the next.
+    const ids = ['11111111', '22222222', '33333333', '44444444'];
+    const replies: Record<string, unknown> = {};
+    const long = (id: string) => Array.from({ length: 1000 }, (_, i) => message(`${id}-${i}`, `<p>${i}</p>`));
+    for (const id of ids) replies[url(id)] = snap(id, long(id), `${id}.run.1000`);
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id) => row(id, { stage: 'answer', msgCount: 1000 }))] }));
+    await within('all four', 4000, () => asked(h).length === 4);
+    for (const id of ids) await untilAsync(`${id} is cached`, kept(h, id));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(asked(h)).toHaveLength(4);
+    expect((await readRecord(h.idb, ids[0]!))?.list).toHaveLength(1000);
+  });
+
+  it('opens it from the cache after a reload, and does not fetch it again', async () => {
+    // The copy outlives the page: a reload, or a PWA the phone closed, finds it where it was.
+    const first = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`) } });
+    const list = [row(A), row(B, { stage: 'answer' })];
+    await first.emit(sync(A, [], [A, B], { topics: list }));
+    await within('the prefetch', 2000, () => fetched(first, B));
+    await untilAsync('the copy', kept(first, B));
+    first.window.close();
+
+    const h = await open({ idb: first.idb });
+    await h.emit(sync(A, [], [A, B], { topics: list }));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(asked(h)).toEqual([]);
+
+    await h.click(`[data-topic="${B}"]`);
+    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('from B'));
+    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.4`)}`);
+  });
+
+  it('paints a copy from another run of the daemon, but asks for the whole topic', async () => {
+    // Its ids name messages of a process that has gone, so its last event is no place to resume
+    // from — the copy is history until the sync says otherwise.
+    const first = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`) } });
+    const list = [row(A), row(B, { stage: 'answer' })];
+    await first.emit(sync(A, [], [A, B], { topics: list }));
+    await within('the prefetch', 2000, () => fetched(first, B));
+    await untilAsync('the copy', kept(first, B));
+    first.window.close();
+
+    const h = await open({ idb: first.idb, status: { [url(B)]: 500 } });
+    await h.emit(sync(A, [], [A, B], { topics: list, epoch: 2 }));
+    await within('the new run is asked', 2000, () => fetched(h, B));
+    await h.click(`[data-topic="${B}"]`);
+    await opens(h, `api/events?t=${B}`);
+    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('from B'));
+  });
+
+  it('does not fetch a topic the service worker has just kept', async () => {
+    const h = await open({ push: { permission: 'granted', subscribed: true }, replies: { [url(B)]: snap(B, [], `${B}.run.3`, 900) } });
+    for (const fn of h.push.listeners) fn({ data: { cached: { topic: B, epoch: 1, lastAt: 900, last: `${B}.run.3` } } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', lastAt: 900 })] }));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(asked(h)).toEqual([]);
   });
 
   it('asks again after a restart, even for a topic it had just failed on', async () => {
@@ -2974,53 +3097,57 @@ describe('webui page: a topic fetched before it is opened', () => {
     await within('the retry', 2000, () => h.calls.filter((c) => c.path === url(B)).length === 2);
   });
 
-  it('starts again after a body that does not parse', async () => {
-    const h = await open({ badJson: [url(B)], replies: { [url(C)]: snap(C, [], `${C}.run.0`) } });
+  it('starts again after bodies that do not parse', async () => {
+    // A rejected r.json() used to leave its slot busy for good. Three of them would now fill every
+    // slot, and the fourth topic would never be asked for.
+    const ids = ['11111111', '22222222', '33333333', '44444444'];
+    const h = await open({ badJson: ids.slice(0, 3).map(url), replies: { [url(ids[3]!)]: snap(ids[3]!, [], `${ids[3]}.run.0`) } });
     await h.emit(
-      sync(A, [], [A, B, C], {
-        topics: [row(A), row(B, { stage: 'answer', lastAt: 900 }), row(C, { stage: 'answer', lastAt: 800 })],
-      })
+      sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id, i) => row(id, { stage: 'answer', lastAt: 900 - i }))] })
     );
-    await within('the failed one', 2000, () => fetched(h, B));
-    // A rejected r.json() used to leave the pump busy for good, so this second one never came.
-    await within('the next one', 2000, () => fetched(h, C));
+    await within('the fourth', 2000, () => fetched(h, ids[3]!));
   });
 
-  it('starts again after a request that never comes back', async () => {
-    const hang = [url(B)];
-    const h = await open({ hang, shortenLong: true, replies: { [url(C)]: snap(C, [], `${C}.run.0`) } });
+  it('starts again after requests that never come back', async () => {
+    const ids = ['11111111', '22222222', '33333333', '44444444'];
+    const h = await open({
+      hang: ids.slice(0, 3).map(url),
+      shortenLong: true,
+      replies: { [url(ids[3]!)]: snap(ids[3]!, [], `${ids[3]}.run.0`) },
+    });
     await h.emit(
-      sync(A, [], [A, B, C], {
-        topics: [row(A), row(B, { stage: 'answer', lastAt: 900 }), row(C, { stage: 'answer', lastAt: 800 })],
-      })
+      sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id, i) => row(id, { stage: 'answer', lastAt: 900 - i }))] })
     );
-    await within('the hung one', 2000, () => fetched(h, B));
+    await within('the hung ones', 2000, () => asked(h).length >= 3);
     // The 60-second limit is 30 ms here: when it fires the request is aborted and the next starts.
     expect(h.longTimers).toContain(60000);
-    await within('the next one', 2000, () => fetched(h, C));
+    await within('the next one', 2000, () => fetched(h, ids[3]!));
   });
 
   it('leaves a topic it holds in memory alone, and goes back to it from what it held', async () => {
     const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>from B</p>')], `${B}.run.1`) } });
     await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
     await within('the prefetch', 2000, () => fetched(h, B));
+    await untilAsync('the copy', kept(h, B));
     await h.click(`[data-topic="${B}"]`);
+    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('from B'));
     h.live().onmessage?.({ data: JSON.stringify({ t: 'typing', on: false }), lastEventId: `${B}.run.1` });
     await tick();
     await h.click(`[data-topic="${A}"]`);
 
     // A new reply moves the row, but B is held whole and its stream can resume: a fetch would be
-    // a few hundred kilobytes against a few hundred bytes.
+    // the whole topic against a few hundred bytes.
     await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', lastAt: 1200 })] });
     await new Promise((r) => setTimeout(r, 600));
     expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
     await h.click(`[data-topic="${B}"]`);
-    expect(h.live().url).toBe(`api/events?t=${B}&last=${encodeURIComponent(`${B}.run.1`)}&tv=2`);
+    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.1`)}&tv=2`);
   });
 
   it('prefers what it held over a copy that landed after the person left', async () => {
-    // The fetch was in flight when B was opened and left again, so it lands while B is held: both
-    // copies exist, and the held one is the topic this tab actually saw, resumed from its own id.
+    // The fetch was in flight when B was opened and left again, so it lands while B is held: the
+    // held copy is the topic this tab actually saw, resumed from its own id — and the record the
+    // page wrote on the way out is newer than the answer, which is not written over it.
     let release = (): void => {};
     const gate = new Promise<void>((r) => (release = r));
     const h = await open({
@@ -3038,7 +3165,9 @@ describe('webui page: a topic fetched before it is opened', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     await h.click(`[data-topic="${B}"]`);
-    expect(h.live().url).toBe(`api/events?t=${B}&last=${encodeURIComponent(`${B}.run.7`)}`);
+    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.7`)}`);
+    await untilAsync('the record the page wrote', kept(h, B));
+    expect((await readRecord(h.idb, B))?.list.map((m) => m.id)).toEqual(['b1']);
   });
 
   it('takes the echo in a fetched copy over the bubble still saying it was not confirmed', async () => {
@@ -3055,23 +3184,57 @@ describe('webui page: a topic fetched before it is opened', () => {
     const storage = { aa_unsent: first.window.localStorage.getItem('aa_unsent')! };
     first.window.close();
 
+    // The echo moved the row: the copy the last page wrote is older than it.
     const echo = { ...message('w1', '<div class="raw">on its way</div>', true), nonce };
     const h = await open({
       url: `http://localhost:8787/?t=${A}`,
       idb: first.idb,
       storage,
-      replies: { [url(B)]: snap(B, [echo], `${B}.run.1`) },
+      replies: { [url(B)]: snap(B, [echo], `${B}.run.1`, 1100) },
     });
     expect(h.el('log').textContent).not.toContain('on its way');
-    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', lastAt: 1100 })] }));
     await within('the prefetch', 2000, () => fetched(h, B));
-    await tick();
+    await untilAsync('the copy', async () => (await readRecord(h.idb, B))?.lastAt === 1100);
 
     await h.click(`[data-topic="${B}"]`);
-    expect(h.painted()).toBe(1);
+    await until('B is painted from the cache', () => h.painted() === 1);
     expect(h.el('log').textContent).toContain('on its way');
     expect(h.el('log').textContent).not.toContain('Not confirmed');
     expect(h.window.localStorage.getItem('aa_unsent')).toBeNull();
+  });
+
+  it('says a send the last page left unsure never arrived once the replay after the copy is over', async () => {
+    // The copy is older than the send — fetched before it was made — so its silence proves
+    // nothing. The copy and the replay after it are the whole room, though: once the replay is
+    // over and neither carried the echo, the same daemon never got it.
+    const fetchFirst = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>before</p>')], `${B}.run.1`) } });
+    await fetchFirst.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await within('the prefetch', 2000, () => fetched(fetchFirst, B));
+    await untilAsync('the copy', kept(fetchFirst, B));
+    const idb = fetchFirst.idb;
+    fetchFirst.window.close();
+
+    const sender = await open({ url: `http://localhost:8787/?t=${A}`, idb, hang: ['api/send'] });
+    await sender.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await sender.click(`[data-topic="${B}"]`);
+    await opens(sender, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.1`)}`);
+    await sender.emit({ t: 'resumed' });
+    (sender.el('input') as HTMLTextAreaElement).value = 'did it land';
+    await sender.click('#composer button[type="submit"]');
+    const storage = { aa_unsent: sender.window.localStorage.getItem('aa_unsent')! };
+    sender.window.close();
+
+    const h = await open({ url: `http://localhost:8787/?t=${A}`, idb, storage });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await h.click(`[data-topic="${B}"]`);
+    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('before'));
+    expect(h.live().url).toContain('&last=');
+    // Not judged on the copy alone.
+    expect(h.el('log').textContent).toContain('Not confirmed');
+
+    await h.emit({ t: 'resumed' });
+    expect(h.el('log').textContent).toContain('Not delivered');
   });
 });
 
@@ -3101,21 +3264,24 @@ describe('webui page: coming back to a topic', () => {
   });
 
   it('finds that message again when the sync puts older ones above it', async () => {
-    // The cache keeps the last 200 messages and the ring holds 1000, so a long topic comes back
+    // The cache keeps a topic's tail within its byte budget, so a topic of long answers comes back
     // short and the sync then adds the head of it — above the message being read. Restoring a
-    // scrollTop would land a hundred rows off; this is the reason the view is a message.
+    // scrollTop would land rows off; this is the reason the view is a message. Each line here is
+    // 12K characters, so 210 of them are over the 2M budget and the cache keeps the last 157.
+    const pad = `<!--${'x'.repeat(12_000)}-->`;
+    const long = lines(210).map((m) => ({ ...m, html: `${m.html as string}${pad}` }));
     const h = await open();
     const log = layout(h);
-    await h.emit(sync(A, lines(210), [A, B]));
+    await h.emit(sync(A, long, [A, B]));
     log.scrollTop = 100 * ROW + 30;
     expect(onTop(log).text).toBe('line 101');
 
     await h.click(`[data-topic="${B}"]`);
     await h.click(`[data-topic="${A}"]`);
-    await until('A is painted from cache', () => h.painted() === 200);
+    await until('A is painted from cache', () => h.painted() === 157);
     expect(onTop(log)).toEqual({ text: 'line 101', hidden: 30 });
 
-    await h.emit(sync(A, lines(210), [A, B]));
+    await h.emit(sync(A, long, [A, B]));
     expect(h.painted()).toBe(210);
     expect(onTop(log)).toEqual({ text: 'line 101', hidden: 30 });
   });
@@ -5428,18 +5594,38 @@ describe('webui page: the local transcript cache', () => {
     expect(h.el('log').lastElementChild?.textContent).toContain('progress?');
   });
 
-  it('keeps only the tail of a long topic', async () => {
-    const many: Array<Record<string, unknown>> = [];
-    for (let i = 0; i < 210; i++) many.push(message(`m${i}`, `<p>line ${i}</p>`));
-    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+  it('keeps a whole topic, and where its stream had got to', async () => {
+    // Through 3.9.0 the last 200 messages, which could only be painted. The longest topic on the
+    // live gateway was 356 messages (2026-11-17): whole, a record can be resumed from.
+    const T = 'a1b2c3d4';
+    const many = Array.from({ length: 400 }, (_, i) => message(`m${i}`, `<p>line ${i}</p>`));
+    const h = await open({ url: `http://localhost:8787/?t=${T}` });
 
-    await h.emit(sync('a1b2c3d4', many, ['a1b2c3d4']));
+    h.live().onmessage?.({ data: JSON.stringify(sync(T, many, [T])), lastEventId: `${T}.run.400` });
     await saved();
 
-    const kept = await h.cached('a1b2c3d4');
-    expect(kept).toHaveLength(200);
-    expect(kept?.[0]?.id).toBe('m10');
-    expect(kept?.[199]?.id).toBe('m209');
+    const rec = await readRecord(h.idb, T);
+    expect(rec?.list).toHaveLength(400);
+    expect(rec).toMatchObject({ epoch: 1, last: `${T}.run.400` });
+  });
+
+  it('keeps only the tail of a topic too large for its budget, and nothing to resume it from', async () => {
+    // 210 answers of 12K characters are over the 2M budget, so the record is cut to the last 157 —
+    // painted on the way in, but a resume would replay onto a transcript with a hole at the top.
+    const T = 'a1b2c3d4';
+    const pad = `<!--${'x'.repeat(12_000)}-->`;
+    const many = Array.from({ length: 210 }, (_, i) => message(`m${i}`, `<p>line ${i}</p>${pad}`));
+    const h = await open({ url: `http://localhost:8787/?t=${T}` });
+
+    h.live().onmessage?.({ data: JSON.stringify(sync(T, many, [T])), lastEventId: `${T}.run.210` });
+    await saved();
+
+    const rec = await readRecord(h.idb, T);
+    expect(rec?.list).toHaveLength(157);
+    expect(rec?.list[0]?.id).toBe('m53');
+    expect(rec?.list[156]?.id).toBe('m209');
+    expect(rec?.epoch).toBe(1);
+    expect(rec?.last).toBeUndefined();
   });
 
   it('works on a browser with no IndexedDB at all', async () => {
@@ -6465,7 +6651,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     expect(menu.hidden).toBe(false);
     expect(menu.getAttribute('role')).toBe('menu');
     expect(h.el('topics').contains(menu)).toBe(false);
-    expect(h.live().url).toBe(`api/events?t=${A}`);
+    await opens(h, `api/events?t=${A}`);
     expect(h.doc.querySelector(`[data-rm="topic:${D}"]`)?.getAttribute('aria-expanded')).toBe('true');
     expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Star',
@@ -7813,7 +7999,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'topics', topics: list({ [C]: { stage: 'failed', line: 'x' } }) });
     await h.click(`#topics .topic-item.needs[data-topic="${C}"]`);
-    expect(h.live().url).toBe(`api/events?t=${C}`);
+    await opens(h, `api/events?t=${C}`);
   });
 
   it('offers Stop over a topic whose sub-agents still work after its own turn ended', async () => {
@@ -7868,7 +8054,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     await h.click(`#topics [data-fold="${D}"]`);
     expect(rows(h)).toEqual([D, B, C, A]);
     expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [D]: false });
-    expect(h.live().url).toBe(`api/events?t=${A}`);
+    await opens(h, `api/events?t=${A}`);
     await h.click(`#topics [data-fold="${D}"]`);
     expect(rows(h)).toEqual([D, A]);
     expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [D]: true });
@@ -8056,7 +8242,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     );
     const before = h.streams.length;
     await h.click('#log a[data-goto]');
-    expect(h.live().url).toBe(`api/events?t=${C}`);
+    await opens(h, `api/events?t=${C}`);
     expect(h.streams.length).toBe(before + 1);
     // Not a navigation: the page is the same page.
     expect(h.window.location.search).toBe(`?t=${C}`);
@@ -8066,7 +8252,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     const h = await open({ url: `http://localhost:8787/?t=${D}` });
     await h.emit(sync(D, [message('w1', '<p><a href="?t=99999999" data-goto="99999999">gone</a></p>')], [D, A]));
     await h.click('#log a[data-goto]');
-    expect(h.live().url).toBe(`api/events?t=${D}`);
+    await opens(h, `api/events?t=${D}`);
   });
 });
 
@@ -8154,8 +8340,7 @@ describe('webui page: notifications on this device', () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}`, push: {}, replies: { 'api/push': { enabled: true, key: KEY } } });
     await ready(h);
     h.push.listeners.forEach((fn) => fn({ data: { goto: C } }));
-    await tick();
-    expect(h.live().url).toBe(`api/events?t=${C}`);
+    await opens(h, `api/events?t=${C}`);
   });
 });
 
@@ -10220,7 +10405,7 @@ describe('webui page: sub-agents a scheduled run opened', () => {
     expect(face(row(h, S).querySelector('[data-fold]'))).toBe('[chevronRight] 1');
     // Folding is remembered like a topic's, and is not a reason to switch.
     expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [R]: false });
-    expect(h.live().url).toBe(stream);
+    await opens(h, stream);
 
     await h.click(`#sched-sessions [data-fold="${S}"]`);
     expect(sessions(h)).toEqual([R, S, G]);
@@ -12703,6 +12888,7 @@ describe('webui page: the History tab', () => {
     (h.el('lib-log').querySelector('a[data-goto]') as HTMLElement).click();
     await until('the switch', () => h.window.location.search.includes(A));
     expect(libOn(h)).toBe(false);
+    await opens(h, `api/events?t=${A}`);
 
     // A link to the topic already underneath: nothing to switch to, but the view still has to go.
     await h.emit(sync(A, [message('w1', '<p>underneath</p>')], [A, B]));
