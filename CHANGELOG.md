@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-11-17
+
 ### Fixed
 
 - **A topic waiting for you opens at once, however many are waiting, and after a reload or a
