@@ -324,6 +324,57 @@ export const ReviewOpRequestSchema = z.object({ action: z.literal('dismiss'), te
 export type ReviewOpRequest = z.infer<typeof ReviewOpRequestSchema>;
 
 /**
+ * The file window's writes.
+ *
+ * Every one names its topic, because the files are that conversation's — on that conversation's
+ * machine. `path` is a path, not free text: the daemon normalizes it against the topic's workspace
+ * and refuses anything outside, so the check that matters is there, not here; what this bounds is
+ * only the buffer a body can be.
+ *
+ * `mtimeMs` and `size` are the version check: the file as the page last read it. `missing: true`
+ * is the create case. A missing expectation would be a write with no check at all, so the schema
+ * asks for both, and the page sends what it read.
+ */
+export const FilesWriteRequestSchema = z
+  .object({
+    topic: TopicId,
+    path: z.string().min(1).max(4096),
+    /** Characters, not bytes; the daemon refuses one over 1 MiB of UTF-8. */
+    text: z.string().max(1_100_000),
+    mtimeMs: z.number().int().min(0).optional(),
+    size: z.number().int().min(0).optional(),
+    missing: z.boolean().optional(),
+    /** The person chose "overwrite" after a conflict: skip the version check, nothing else. */
+    force: z.boolean().optional(),
+  })
+  .strict();
+export type FilesWriteRequest = z.infer<typeof FilesWriteRequestSchema>;
+
+export const FilesCreateRequestSchema = z
+  .object({
+    topic: TopicId,
+    path: z.string().min(1).max(4096),
+    /** A directory, rather than an empty file. */
+    dir: z.boolean().default(false),
+  })
+  .strict();
+export type FilesCreateRequest = z.infer<typeof FilesCreateRequestSchema>;
+
+export const FilesRenameRequestSchema = z
+  .object({
+    topic: TopicId,
+    from: z.string().min(1).max(4096),
+    to: z.string().min(1).max(4096),
+  })
+  .strict();
+export type FilesRenameRequest = z.infer<typeof FilesRenameRequestSchema>;
+
+export const FilesRemoveRequestSchema = z
+  .object({ topic: TopicId, path: z.string().min(1).max(4096) })
+  .strict();
+export type FilesRemoveRequest = z.infer<typeof FilesRemoveRequestSchema>;
+
+/**
  * Validate one inbound body against a schema.
  *
  * Returns a result rather than throwing, and names the offending path, so the server answers

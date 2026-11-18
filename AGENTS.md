@@ -368,6 +368,23 @@ Do not weaken these without saying so explicitly in the PR:
    instructions. Like invariant 6's, this is an interface boundary, not code enforcement: an agent
    that holds the operator's push access to the repository can commit the line itself.
 
+9. **The web UI's file window writes files on the agent's machine, and is off by default.**
+   `platforms.<id>.files.enabled` is the fifth security decision in that schema, for the same reason
+   the terminal is the fourth: with it on, the login secret stops guarding *talking to an agent* and
+   starts guarding *writing files where the agent runs*, which is running commands by another route.
+   With it off there is no button and every route answers 404 — the terminal's arrangement, not a
+   hidden control over live endpoints. Reach is each topic's working directory plus `files.roots`;
+   a path is normalized and must land under one of them, and a `..` that climbs out is refused
+   (`daemon/file-panel.ts` `locate`). Symlinks are followed and NOT resolved for that check, so
+   whatever a link inside a root points at is writable through it — deliberate, because a workspace
+   laid out as links into mounted volumes is the normal arrangement on these machines
+   (`workdir-scan.ts`), and the operator is told so where they configure it. Every write goes
+   through `Workspace.writeFile`, which both machines implement alike: it follows the link, keeps
+   the file's mode (a new file gets the umask default), and refuses a save whose size or mtime is
+   not the one the page read — the person's overwrite is an explicit `force`. Every write is logged
+   with who, which machine and which file. Do not add a route that writes without that check, a
+   second root rule that resolves links, or a page-side path check standing in for the daemon's.
+
 ## Adding things
 
 - **A platform** → `platform/config-schemas.ts` (schema) + `platform/profiles/<name>.ts`

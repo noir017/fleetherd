@@ -709,6 +709,7 @@ function lifecycle(
   | 'useSkillsPanel'
   | 'useReviewPanel'
   | 'useHistoryPanel'
+  | 'useFilesPanel'
   | 'useIdleReclaim'
   | 'useTopicKill'
   | 'useAgentCatalog'
@@ -762,6 +763,11 @@ function lifecycle(
      * has a window to put the list, the search and the transcript in.
      */
     useHistoryPanel: (panel) => room.useHistoryPanel(panel),
+    /**
+     * The only implementor, and the same reason once more: a chat app has no file window, and the
+     * editor's write is a write on the machine the agent runs on — off unless `files.enabled`.
+     */
+    useFilesPanel: (panel) => room.useFilesPanel(panel),
     /**
      * The only implementor because it is the only platform that lists its conversations' agents
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".

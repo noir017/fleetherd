@@ -1623,6 +1623,42 @@ commands is not.
   iframe (`display:block`) beats the user agent's `[hidden]{display:none}`, and the loser of
   that fight is not obvious from reading either rule.
 
+## The file window
+
+Off by default. Turned on, the chat header grows a folder button that opens a window over the
+transcript: a directory tree on the left (a drawer on a phone), breadcrumbs and a filename search
+above, and an editor on the right. It shows the files of **whichever machine the topic's agent runs
+on** — this one, or a remote host — because `ConversationRegistry.workspaceForRef` answers that
+with one interface on both (`daemon/workspace.ts`).
+
+The work is in `daemon/file-panel.ts`; this directory owns the page and the routes. Three
+decisions shape it:
+
+- **Reach is a path rule, not a sandbox.** Each topic's working directory, plus
+  `platforms.<id>.files.roots`. A path from the page is normalized and must sit under one of them;
+  a `..` that climbs out is refused, never clamped. Symlinks are followed and not resolved for
+  that check — a workspace of links into mounted volumes is normal here — so what a link inside a
+  root points at is writable through it. The ceiling is the agent's own tool access, which is why
+  this is opt-in like the terminal.
+- **A save is checked, and the file stays the file it was.** The write follows a symlink to its
+  target, keeps the existing file's permission bits (a new file gets the umask default), writes a
+  temporary beside it, fsyncs and renames. It carries the size and mtime the page read; a mismatch
+  comes back as a conflict, which the page puts to the person as reload / overwrite / cancel.
+  Overwrite is an explicit `force`, not an unchecked default. Both machines implement the same
+  rules (`remote/ops.go` `opEditWrite` is the host's half).
+- **What can be edited is decided by content, not by name.** ≤ 1 MiB, valid UTF-8, no NUL — past
+  that (or for an image, which is shown as a `data:` URL up to 5 MiB) the file is shown with its
+  details and no editor. Markdown gets a rendered preview tab, built by `web-markdown.ts` on the
+  server, so the preview cannot be more permissive than a message.
+
+A file can be opened from elsewhere: `window.openFileEditor(path)` takes a path relative to the
+topic's working directory or absolute on that machine, and the git panel uses it.
+
+Routes are `GET /api/files/list|read|search` and `POST /api/files/write|create|rename|remove`.
+Every one answers 404 when the feature is off, and the page is told at render time (`FILES_OK`),
+so a page older than the config has no button to press. A successful write is a log line naming
+the operator, the machine and the file.
+
 ## Security
 
 New trust boundary, so it is spelled out. The port binds every interface by default and what
@@ -1663,6 +1699,16 @@ is behind it is an agent with full tool access.
    in the `<title>` of the equally-open page, so this widens nothing.
 8. **An upgrade is gated separately, because it has to be** — it never reaches `route()`, so
    nothing above applies to it automatically. See [the terminal pane](#the-terminal-pane).
+9. **The file window is a second writer on the agent's machine, and is off unless asked for.**
+   `platforms.<id>.files.enabled` puts the login secret in front of *writing files where the agent
+   runs*; that is running commands by another route, so it is opt-in like the terminal, and with
+   it off every `/api/files/…` route is 404 rather than a hidden button over live endpoints. The
+   reach rule is the daemon's, not the page's: a normalized path under the topic's working
+   directory or a configured `files.roots`, with `..` refused (`daemon/file-panel.ts` `locate`).
+   Symlinks are followed, so a link inside a root carries the write to its target — the same
+   statement `docs/web-ui.md` makes to the operator, and the reason this is not sold as a sandbox.
+   Every save is version-checked and every write is logged. Do not add a write route that skips
+   that check, or a page-side path rule standing in for the daemon's.
 
 **Not solved here:** TLS (put a reverse proxy in front), and DNS rebinding — a `Host`
 allowlist would break the reverse-proxy deployment this is expected to run behind, so the

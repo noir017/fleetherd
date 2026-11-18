@@ -619,6 +619,162 @@ func TestWriteFileAtomicReplacesAReadOnlyFile(t *testing.T) {
 	}
 }
 
+// The editor's write: through a symlink, keeping the file's mode, fsynced and renamed. The three
+// things opWriteFileAtomic gets deliberately wrong for someone else's file are pinned here.
+func TestEditWriteKeepsModeAndFollowsASymlink(t *testing.T) {
+	d := testDaemon(t, "editwrite")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	home := homeDir()
+	dir := filepath.Join(home, "ws")
+	_ = os.MkdirAll(dir, 0o755)
+	real := filepath.Join(dir, "real.txt")
+	if err := os.WriteFile(real, []byte("first\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, res, _ := rpc(t, g, &Header{Op: "stat", Path: "~/ws/real.txt"}, nil)
+	if res["mode"] != float64(0o640) {
+		t.Fatalf("stat must report the mode: %v", res)
+	}
+
+	write := func(path, want string) map[string]any {
+		t.Helper()
+		st, err := os.Stat(real)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, res, _ := rpc(t, g, &Header{
+			Op: "editWrite", Path: path, Size: st.Size(), MtimeMs: st.ModTime().UnixMilli(),
+		}, []byte(want))
+		if r.T != "rpc-ok" {
+			t.Fatalf("editWrite %s: %+v", path, r)
+		}
+		got, _ := os.ReadFile(real)
+		if string(got) != want {
+			t.Fatalf("after writing through %s: %q", path, got)
+		}
+		return res
+	}
+
+	res = write("~/ws/link.txt", "second\n")
+	st, _ := os.Stat(real)
+	if res["ok"] != true || res["size"] != float64(st.Size()) || res["mtimeMs"] != float64(st.ModTime().UnixMilli()) {
+		t.Fatalf("the answer must carry the new size and mtime: %v", res)
+	}
+	if st.Mode().Perm() != 0o640 {
+		t.Fatalf("the file's mode must be kept: %v", st.Mode().Perm())
+	}
+	if li, err := os.Lstat(filepath.Join(dir, "link.txt")); err != nil || li.Mode()&fs.ModeSymlink == 0 {
+		t.Fatalf("the link must still be a link: %v %v", li, err)
+	}
+
+	// The temporary is gone, and no 0600 file was left beside the target.
+	entries, _ := os.ReadDir(dir)
+	names := []string{}
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	if strings.Join(names, " ") != "link.txt real.txt" {
+		t.Fatalf("left something behind: %v", names)
+	}
+
+	// A new file gets the umask's answer, not 0600.
+	r, res, _ := rpc(t, g, &Header{Op: "editWrite", Path: "~/ws/new.txt", ExpectMissing: true}, []byte("x\n"))
+	if r.T != "rpc-ok" || res["ok"] != true {
+		t.Fatalf("creating a file: %+v %v", r, res)
+	}
+	st, _ = os.Stat(filepath.Join(dir, "new.txt"))
+	umask := syscall.Umask(0)
+	syscall.Umask(umask)
+	if want := fs.FileMode(0o666 &^ umask); st.Mode().Perm() != want {
+		t.Fatalf("a new file must get the umask default %o, got %o", want, st.Mode().Perm())
+	}
+}
+
+// A stale size or mtime is a CONFLICT, not an error: the page has to tell "someone else changed
+// it" (reload / overwrite / cancel) from "the write failed".
+func TestEditWriteRefusesAFileThatChanged(t *testing.T) {
+	d := testDaemon(t, "editconflict")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	file := filepath.Join(homeDir(), "ws", "a.txt")
+	_ = os.MkdirAll(filepath.Dir(file), 0o755)
+	_ = os.WriteFile(file, []byte("old\n"), 0o644)
+	st, _ := os.Stat(file)
+
+	// Someone else writes; the page's size and mtime are now stale.
+	_ = os.WriteFile(file, []byte("changed by someone else\n"), 0o644)
+	r, res, _ := rpc(t, g, &Header{
+		Op: "editWrite", Path: "~/ws/a.txt", Size: st.Size(), MtimeMs: st.ModTime().UnixMilli(),
+	}, []byte("from the page\n"))
+	if r.T != "rpc-ok" || res["ok"] != false || res["conflict"] != true {
+		t.Fatalf("a stale write must be a conflict: %+v %v", r, res)
+	}
+	if got, _ := os.ReadFile(file); string(got) != "changed by someone else\n" {
+		t.Fatalf("a conflicted write must change nothing: %q", got)
+	}
+
+	// Expected to exist, and it is gone.
+	r, res, _ = rpc(t, g, &Header{Op: "editWrite", Path: "~/ws/gone.txt", Size: 1, MtimeMs: 1}, []byte("x"))
+	if r.T != "rpc-ok" || res["conflict"] != true || res["exists"] != false {
+		t.Fatalf("a vanished file must be a conflict: %+v %v", r, res)
+	}
+	// Expected to be new, and it is not.
+	r, res, _ = rpc(t, g, &Header{Op: "editWrite", Path: "~/ws/a.txt", ExpectMissing: true}, []byte("x"))
+	if r.T != "rpc-ok" || res["conflict"] != true || res["exists"] != true {
+		t.Fatalf("an existing file where a new one was expected must conflict: %+v %v", r, res)
+	}
+}
+
+func TestRenameAndRemoveEntryStayInRoot(t *testing.T) {
+	d := testDaemon(t, "rename")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	home := homeDir()
+	root := filepath.Join(home, "ws")
+	_ = os.MkdirAll(filepath.Join(root, "sub"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0o600)
+
+	r, res, _ := rpc(t, g, &Header{Op: "rename", Path: "~/ws/a.txt", Target: "~/ws/b.txt", Owned: "~/ws"}, nil)
+	if r.T != "rpc-ok" || res["path"] != filepath.Join(root, "b.txt") {
+		t.Fatalf("rename: %+v %v", r, res)
+	}
+	if _, err := os.Stat(filepath.Join(root, "b.txt")); err != nil {
+		t.Fatalf("renamed file is not there: %v", err)
+	}
+	if r, _, _ := rpc(t, g, &Header{Op: "rename", Path: "~/ws/b.txt", Target: "~/elsewhere.txt", Owned: "~/ws"}, nil); r.T != "rpc-err" {
+		t.Fatalf("a rename out of the root must be refused: %+v", r)
+	}
+	_ = os.WriteFile(filepath.Join(root, "c.txt"), []byte("c"), 0o600)
+	if r, _, _ := rpc(t, g, &Header{Op: "rename", Path: "~/ws/c.txt", Target: "~/ws/b.txt", Owned: "~/ws"}, nil); r.T != "rpc-err" {
+		t.Fatalf("overwriting an existing entry must be refused: %+v", r)
+	}
+
+	// A file and an empty directory go; a directory with something in it does not.
+	if r, res, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/b.txt", Owned: "~/ws"}, nil); r.T != "rpc-ok" || res["removed"] != true {
+		t.Fatalf("remove a file: %+v %v", r, res)
+	}
+	if r, _, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/sub", Owned: "~/ws"}, nil); r.T != "rpc-ok" {
+		t.Fatalf("remove an empty directory: %+v", r)
+	}
+	_ = os.MkdirAll(filepath.Join(root, "full"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "full", "keep"), []byte("k"), 0o600)
+	if r, _, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/full", Owned: "~/ws"}, nil); r.T != "rpc-err" {
+		t.Fatalf("a non-empty directory must be refused: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(root, "full", "keep")); err != nil {
+		t.Fatalf("a refused delete must leave the tree alone: %v", err)
+	}
+	if r, _, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/../../x", Owned: "~/ws"}, nil); r.T != "rpc-err" {
+		t.Fatalf("a path escaping the root must be refused: %+v", r)
+	}
+	if r, _, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/full", Owned: ""}, nil); r.T != "rpc-err" {
+		t.Fatalf("an empty owned must be refused: %+v", r)
+	}
+}
+
 // The managed-skill copy is pruned and, when archived, removed whole — but only inside the copy
 // directory the gateway owns. A symlinked directory is not a way out of it.
 func TestRemovePathStaysInRoot(t *testing.T) {

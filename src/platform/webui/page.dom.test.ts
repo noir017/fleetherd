@@ -494,6 +494,8 @@ async function open(
     terminal?: boolean;
     /** Whether the daemon was given a way to END a terminal session (terminal.endCommand). */
     terminalEnd?: boolean;
+    /** Whether the daemon has the file window (platforms.<id>.files.enabled). */
+    files?: boolean;
     /** Whether the shared secret is still a way in, i.e. which of the two gates is served. */
     password?: boolean;
     /**
@@ -551,6 +553,7 @@ async function open(
     confirm = true,
     terminal = false,
     terminalEnd = false,
+    files = false,
     password = true,
     mic,
     hang = [],
@@ -577,7 +580,7 @@ async function open(
   const confirms: string[] = [];
   const longTimers: number[] = [];
 
-  const dom = new JSDOM(renderPage('Chat', terminal, password, terminalEnd), {
+  const dom = new JSDOM(renderPage('Chat', terminal, password, terminalEnd, files), {
     url,
     runScripts: 'dangerously',
     pretendToBeVisual: true,
@@ -13016,5 +13019,237 @@ describe('webui page: the History tab', () => {
 
     expect(h.el('history-count').textContent).toBe('');
     expect(h.el('history-more').hidden).toBe(true);
+  });
+});
+
+/**
+ * The file window: a topic's machine, a tree, and an editor (page.ts "the file window").
+ *
+ * The daemon's side is tested where it lives (`daemon/file-panel.test.ts`); what is asserted here
+ * is what a person would see and do — the button appearing only when the feature is on, a file
+ * opening, the editor holding what was typed, a save carrying the version it read, the conflict
+ * dialog's three answers, and the confirmation that keeps a tap from throwing an edit away.
+ *
+ * Two editor paths, because the page has two: the plain textarea it always has, and CodeMirror
+ * behind `window.__fhCodeView` (which is null in production until the asset lands).
+ */
+describe('webui page: the file window', () => {
+  const T = 'aaaaaaaa';
+  const LIST = `api/files/list?topic=${T}`;
+  const READ = `api/files/read?topic=${T}&path=${encodeURIComponent('/w/a.txt')}`;
+  const rootEntry = { name: 'a.txt', dir: false };
+  const listing = { ok: true, path: '/w', rel: '', entries: [rootEntry, { name: 'sub', dir: true }] };
+  const file = {
+    ok: true,
+    path: '/w/a.txt',
+    rel: 'a.txt',
+    name: 'a.txt',
+    size: 3,
+    mtimeMs: 5,
+    mode: 420,
+    kind: 'text',
+    text: 'abc',
+  };
+
+  async function openFiles(over: Record<string, unknown> = {}) {
+    const h = await open({
+      files: true,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: { [LIST]: listing, [READ]: file, ...over },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length > 0);
+    return h;
+  }
+
+  async function openA(h: Harness): Promise<void> {
+    await h.click('[data-fx-file="/w/a.txt"]');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+  }
+
+  const editorText = (h: Harness): HTMLTextAreaElement =>
+    h.el('files-editor').querySelector('textarea') as HTMLTextAreaElement;
+
+  it('hides the button and does nothing when the daemon has the feature off', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${T}`, replies: { [LIST]: listing, [READ]: file } });
+    expect(h.el('files-toggle').hidden).toBe(true);
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/a.txt');
+    await tick();
+    expect(h.el('files').hidden).toBe(true);
+    expect(h.calls.some((c) => c.path.startsWith('api/files/'))).toBe(false);
+  });
+
+  it('opens a file from the tree, edits it in the plain-text fallback and saves with its version', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 6, size: 4 } });
+    expect(h.el('files-toggle').hidden).toBe(false);
+    expect(h.el('files-title').textContent).toBe('Files');
+
+    await openA(h);
+    expect(h.el('files-title').textContent).toBe('a.txt');
+    expect(editorText(h).value).toBe('abc');
+    // The fallback, not the code view: nothing put a CodeMirror node there.
+    expect(h.el('files-editor').querySelector('.fake-cm')).toBeNull();
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(true);
+
+    const ta = editorText(h);
+    ta.value = 'abcd';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(h.el('files-dirty').hidden).toBe(false);
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(false);
+
+    await h.click('#files-save');
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    const save = h.calls.find((c) => c.path === 'api/files/write')!;
+    expect(save.body).toEqual({ topic: T, path: '/w/a.txt', text: 'abcd', mtimeMs: 5, size: 3 });
+    expect(h.el('files-dirty').hidden).toBe(true);
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(true);
+  });
+
+  it('saves from Ctrl+S as well as from the button', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 6, size: 5 } });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'abcde';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    ta.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the keyed save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('abcde');
+  });
+
+  it('uses the code view when it is there, and saves the document it holds', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 7, size: 6 } });
+    type Fake = { type: (v: string) => void; save: () => void };
+    let fake: Fake | null = null;
+    (h.window as unknown as { __fhCodeView: unknown }).__fhCodeView = {
+      editor(parent: HTMLElement, o: { doc: string; onChange?: (d: string) => void; onSave?: () => void }) {
+        const el = h.doc.createElement('div');
+        el.className = 'fake-cm';
+        el.textContent = o.doc;
+        parent.appendChild(el);
+        const state = { doc: o.doc };
+        fake = {
+          type: (v: string) => {
+            state.doc = v;
+            el.textContent = v;
+            o.onChange?.(v);
+          },
+          save: () => o.onSave?.(),
+        };
+        return { getDoc: () => state.doc, setDoc: (v: string) => (state.doc = v), focus: () => {}, destroy: () => {} };
+      },
+    };
+    await h.click('[data-fx-file="/w/a.txt"]');
+    await until('the code view', () => Boolean(h.el('files-editor').querySelector('.fake-cm')));
+    expect(h.el('files-editor').querySelector('textarea')).toBeNull();
+
+    (fake as Fake | null)!.type('abcdef');
+    expect(h.el('files-dirty').hidden).toBe(false);
+    (fake as Fake | null)!.save();
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('abcdef');
+  });
+
+  it('offers reload, overwrite or cancel when the file changed under the editor', async () => {
+    // One object, mutated between requests: the harness hands back whatever `replies` holds when
+    // the answer is read, and replacement would leave the page's copy pointing at the old one.
+    const writeReply: Record<string, unknown> = { ok: true, mtimeMs: 6, size: 4 };
+    const h = await openFiles({ 'api/files/write': writeReply });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'mine';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    h.status['api/files/write'] = 409;
+    writeReply.ok = false;
+    writeReply.conflict = true;
+    writeReply.exists = true;
+    writeReply.size = 9;
+    writeReply.mtimeMs = 10;
+    await h.click('#files-save');
+    await until('the conflict dialog', () => !h.el('files-conflict').hidden);
+    expect(h.el('files-conflict-text').textContent).toMatch(/changed on the machine/);
+    // Nothing was thrown away: the editor still holds the typed text.
+    expect(editorText(h).value).toBe('mine');
+
+    // Overwrite is the same write with the check skipped.
+    h.status['api/files/write'] = 200;
+    writeReply.ok = true;
+    writeReply.mtimeMs = 11;
+    writeReply.size = 4;
+    writeReply.conflict = false;
+    await h.click('#files-overwrite');
+    await until('the forced save', () => h.calls.filter((c) => c.path === 'api/files/write').length >= 2);
+    const forced = h.calls.filter((c) => c.path === 'api/files/write')[1]!;
+    expect(forced.body).toEqual({ topic: T, path: '/w/a.txt', text: 'mine', force: true });
+    expect(h.el('files-conflict').hidden).toBe(true);
+  });
+
+  it('asks before a close or another file throws unsaved changes away', async () => {
+    const h = await openFiles({ [READ.replace('/w/a.txt', '/w/a.txt')]: file });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-close');
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
+    // Answered yes (the harness's confirm does): the window is gone.
+    expect(h.el('files').hidden).toBe(true);
+  });
+
+  it('keeps the window open when the unsaved confirmation is refused', async () => {
+    const h = await open({
+      files: true,
+      confirm: false,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: { [LIST]: listing, [READ]: file },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length > 0);
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-close');
+    expect(h.el('files').hidden).toBe(false);
+    expect(editorText(h).value).toBe('unsaved');
+  });
+
+  it('opens a file named by another panel (window.openFileEditor) and shows a Markdown preview', async () => {
+    const h = await open({
+      files: true,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: {
+        [LIST]: listing,
+        [READ]: file,
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/notes.md')}&preview=1`]: {
+          ...file,
+          path: '/w/notes.md',
+          rel: 'notes.md',
+          name: 'notes.md',
+          html: '<h1>Hi</h1>',
+        },
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/notes.md')}`]: {
+          ...file,
+          path: '/w/notes.md',
+          rel: 'notes.md',
+          name: 'notes.md',
+          text: '# Hi\n',
+        },
+      },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/notes.md');
+    await until('the file from another panel', () => h.el('files-title').textContent === 'notes.md');
+    expect(h.el('files').hidden).toBe(false);
+
+    await h.click('#files-preview-toggle');
+    await until('the preview', () => h.el('files-preview').querySelector('h1') !== null);
+    expect(h.el('files-editor').hidden).toBe(true);
+    expect(h.el('files-preview-toggle').textContent).toBe('Edit');
+
+    await h.click('#files-preview-toggle');
+    expect(h.el('files-preview').hidden).toBe(true);
+    expect(h.el('files-editor').hidden).toBe(false);
   });
 });

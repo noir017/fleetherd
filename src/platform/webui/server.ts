@@ -68,6 +68,10 @@ import {
   SeenRequestSchema,
   SkillOpRequestSchema,
   ReviewOpRequestSchema,
+  FilesWriteRequestSchema,
+  FilesCreateRequestSchema,
+  FilesRenameRequestSchema,
+  FilesRemoveRequestSchema,
   StarTopicRequestSchema,
   TOPIC_ID,
   parseBody,
@@ -436,6 +440,18 @@ const GUARDED: Route[] = [
   // Ending a session, as opposed to closing a pane. Guarded like everything else, and refused
   // outright when the operator configured no way to do it — see `terminal-sessions.ts`.
   { method: 'POST', path: '/api/terminal/end', run: endTerminal },
+  // ── The file window (platforms.<id>.files) ────────────────────────────────
+  // Listed as a group, and like the terminal's routes they answer 404 when the feature is off
+  // (`filesOn`) — the table stays the complete list of what exists, the answer says whether this
+  // deployment has it. Reads are GET with every parameter in the query string; writes are POST
+  // with a `.strict()` body in protocol.ts.
+  { method: 'GET', path: '/api/files/list', run: filesList },
+  { method: 'GET', path: '/api/files/read', run: filesRead },
+  { method: 'GET', path: '/api/files/search', run: filesSearch },
+  { method: 'POST', path: '/api/files/write', run: filesWrite },
+  { method: 'POST', path: '/api/files/create', run: filesCreate },
+  { method: 'POST', path: '/api/files/rename', run: filesRename },
+  { method: 'POST', path: '/api/files/remove', run: filesRemove },
 ];
 
 /**
@@ -573,6 +589,7 @@ function servedPage(ctx: Ctx): ServedPage {
     ctx.terminal.enabled,
     passwordLogin(ctx.instance),
     ctx.terminal.sessions.canEnd,
+    filesOn(ctx),
   ] as const;
   const key = JSON.stringify(args);
   if (ctx.page?.key === key) return ctx.page;
@@ -1237,6 +1254,113 @@ async function endTerminal({ req, res }: Req, ctx: Ctx): Promise<void> {
   const result = await ctx.terminal.sessions.end(parsed.topic);
   if (!result.ok) return send(req, res, 500, { error: result.error });
   send(req, res, 200, { ok: true });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The file window
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether this deployment has the file window at all.
+ *
+ * A route that exists while the feature is off answers 404, not 403 — the same choice the terminal
+ * makes, and for the same reason: a page built before the operator turned it on should not be able
+ * to tell "this daemon has no such thing" from "you may not use it". The page hides the button
+ * either way; this is the answer to a hand-written request.
+ */
+function filesOn(ctx: Ctx): boolean {
+  // `?.` because a hand-built instance in a test predates the field; the parsed config always has
+  // it, and a missing block means "off", which is the safe answer.
+  return ctx.instance.files?.enabled === true;
+}
+
+/** `topic` and `path` from a query string, checked by shape. Returns the pair or a reason. */
+function filesQuery(url: URL): { topic: string; path: string } | { error: string } {
+  const topic = url.searchParams.get('topic') ?? '';
+  if (!TOPIC_ID.test(topic)) return { error: 'not a topic id' };
+  const path = url.searchParams.get('path') ?? '';
+  if (path.length > 4096) return { error: 'that path is too long' };
+  return { topic, path };
+}
+
+/** One directory of a topic's machine. */
+async function filesList({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const q = filesQuery(url);
+  if ('error' in q) return send(req, res, 400, q);
+  const r = await ctx.room.filesList(q.topic, q.path);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** One file, whole, or what it is instead (image, binary, too big). */
+async function filesRead({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const q = filesQuery(url);
+  if ('error' in q) return send(req, res, 400, q);
+  const preview = url.searchParams.get('preview') === '1';
+  const r = await ctx.room.filesRead(q.topic, q.path, preview);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** Filename matches, from git where there is a repository and a bounded walk where there is not. */
+async function filesSearch({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const topic = url.searchParams.get('topic') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const q = (url.searchParams.get('q') ?? '').trim();
+  if (!q) return send(req, res, 400, { error: 'a search needs a word to look for' });
+  if (q.length > 200) return send(req, res, 400, { error: 'that search is too long' });
+  const r = await ctx.room.filesSearch(topic, q);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/**
+ * One save. A conflict answers 409 with what the file is now, so the page can put the three
+ * choices to the person instead of reporting a save that did not happen; everything else that
+ * failed is 400 with the machine's own sentence.
+ */
+async function filesWrite({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const parsed = await readBody(req, res, FilesWriteRequestSchema);
+  if (!parsed) return;
+  const r = await ctx.room.filesWrite(
+    parsed.topic,
+    parsed.path,
+    parsed.text,
+    parsed.force
+      ? { force: true }
+      : parsed.missing === true
+        ? { missing: true }
+        : { ...(parsed.mtimeMs !== undefined ? { mtimeMs: parsed.mtimeMs } : {}), ...(parsed.size !== undefined ? { size: parsed.size } : {}) }
+  );
+  send(req, res, r.ok ? 200 : 'conflict' in r ? 409 : 400, r);
+}
+
+/** A new empty file, or a new directory. */
+async function filesCreate({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const parsed = await readBody(req, res, FilesCreateRequestSchema);
+  if (!parsed) return;
+  const r = await ctx.room.filesCreate(parsed.topic, parsed.path, parsed.dir === true);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** Move or rename one entry. */
+async function filesRename({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const parsed = await readBody(req, res, FilesRenameRequestSchema);
+  if (!parsed) return;
+  const r = await ctx.room.filesRename(parsed.topic, parsed.from, parsed.to);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** Delete one file or one empty directory. */
+async function filesRemove({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const parsed = await readBody(req, res, FilesRemoveRequestSchema);
+  if (!parsed) return;
+  const r = await ctx.room.filesRemove(parsed.topic, parsed.path);
+  send(req, res, r.ok ? 200 : 400, r);
 }
 
 /**

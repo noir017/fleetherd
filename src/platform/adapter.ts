@@ -546,6 +546,109 @@ export interface HistoryPanelRead {
 }
 
 /**
+ * What `useFilesPanel` hands a platform: the files of the machine a topic's agent runs on, and the
+ * writes an editor needs.
+ *
+ * Every method takes the conversation's `ref`, because the machine and the directory are that
+ * conversation's — one browser tab can have two topics open on two hosts. Paths are absolute on
+ * that machine; the daemon decides whether one is inside the topic's workspace (the conversation's
+ * working directory plus `platforms.<id>.files.roots`) and refuses the rest.
+ *
+ * The two read shapes are split on purpose: a file that cannot be edited is still worth showing,
+ * so `read` answers what it is and why it is read-only rather than failing.
+ */
+export type FilesPanelKind = 'text' | 'image' | 'binary' | 'big';
+
+/** One entry of a directory listing. `dir` is decided after following links, as everywhere else. */
+export interface FilesPanelEntry {
+  name: string;
+  dir: boolean;
+}
+
+export interface FilesPanelListing {
+  /** The directory as the daemon resolved it (absolute on that machine). */
+  path: string;
+  /** The same directory relative to the workspace root; absent for a path inside an extra root. */
+  rel?: string;
+  entries: FilesPanelEntry[];
+}
+
+/** One file's content, or what it is instead of text. */
+export interface FilesPanelFile {
+  path: string;
+  rel?: string;
+  name: string;
+  size: number;
+  mtimeMs: number;
+  mode?: number;
+  kind: FilesPanelKind;
+  /** Present for `text`: the whole file, decoded as UTF-8. */
+  text?: string;
+  /** Present for `image`: a `data:` URL (CSP's `img-src` already allows those). */
+  dataUrl?: string;
+  /** Present for `text` when the caller asked for a preview and the name is Markdown. */
+  html?: string;
+  /** Why a file is shown rather than edited — the sentence the page puts above it. */
+  note?: string;
+}
+
+/**
+ * A conflict, told apart from a failure. `exists: false` means the file the caller wanted to
+ * replace is gone; `true` means someone else has it now, and `size`/`mtimeMs` say what it is.
+ */
+export interface FilesPanelConflict {
+  ok: false;
+  conflict: true;
+  exists: boolean;
+  size?: number;
+  mtimeMs?: number;
+  error: string;
+}
+
+export type FilesPanelError = { ok: false; error: string };
+
+export type FilesPanelListResult = ({ ok: true } & FilesPanelListing) | FilesPanelError;
+export type FilesPanelReadResult = ({ ok: true } & FilesPanelFile) | FilesPanelError;
+export type FilesPanelWriteResult = { ok: true; mtimeMs: number; size: number } | FilesPanelConflict | FilesPanelError;
+export type FilesPanelCreateResult = { ok: true; path: string; dir: boolean } | FilesPanelError;
+export type FilesPanelRenameResult = { ok: true; path: string } | FilesPanelError;
+export type FilesPanelRemoveResult = { ok: true } | FilesPanelError;
+
+export interface FilesPanelHit {
+  path: string;
+  rel?: string;
+  name: string;
+  dir: boolean;
+}
+
+export interface FilesPanelSearchResult {
+  ok: true;
+  hits: FilesPanelHit[];
+  /** More matched than one answer carries, so the page says "first N" rather than "N". */
+  truncated: boolean;
+}
+
+/** One write's expectation: the size and mtime the page last read, or `missing` for a new file. */
+export interface FilesPanelExpect {
+  mtimeMs?: number;
+  size?: number;
+  missing?: boolean;
+  /** Overwrite whatever is there — the person's answer to a conflict. */
+  force?: boolean;
+}
+
+export interface FilesPanel {
+  list(ref: ConversationRef, path: string): Promise<FilesPanelListResult>;
+  /** `preview` also renders a Markdown file's HTML (`web-markdown.ts`), for the md tab. */
+  read(ref: ConversationRef, path: string, opts?: { preview?: boolean }): Promise<FilesPanelReadResult>;
+  write(ref: ConversationRef, path: string, text: string, expect: FilesPanelExpect): Promise<FilesPanelWriteResult>;
+  create(ref: ConversationRef, path: string, dir: boolean): Promise<FilesPanelCreateResult>;
+  rename(ref: ConversationRef, from: string, to: string): Promise<FilesPanelRenameResult>;
+  remove(ref: ConversationRef, path: string): Promise<FilesPanelRemoveResult>;
+  search(ref: ConversationRef, query: string): Promise<FilesPanelSearchResult | FilesPanelError>;
+}
+
+/**
  * Platform capability interface. One layer above Satori so the core classes depend only on
  * capabilities, not concrete platforms; missing capabilities degrade gracefully in the
  * implementation (see capabilities).
@@ -774,6 +877,15 @@ export interface PlatformAdapter {
    * `fleetherd sessions list/search/read` for this, and no surface to draw a list on.
    */
   useHistoryPanel?(panel: HistoryPanel): void;
+
+  /**
+   * Hand the platform the files of the machines topics run on, for the web UI's file window.
+   *
+   * Web-UI-only for the reason the panels above are, and off unless the operator turned
+   * `platforms.<id>.files.enabled` on — writing a file is running commands by another route, so
+   * the page's login secret is the only thing in front of it, exactly as for the terminal.
+   */
+  useFilesPanel?(panel: FilesPanel): void;
 
   /**
    * Hand the platform a way to end the agent process behind a conversation that is idle — what the
