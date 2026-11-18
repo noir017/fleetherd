@@ -164,6 +164,8 @@ export interface TurnChangesOptions {
   log?: (line: string) => void;
   /** Tests only: override the budgets below so a suite need not wait seconds for them. */
   startTimeoutMs?: number;
+  /** Tests only: the floor below, so a test can leave room for a slow machine on both sides of it. */
+  minQueuedBudgetMs?: number;
   keepTurns?: number;
 }
 
@@ -539,7 +541,7 @@ export class TurnChanges {
       // A snapshot that waited its turn may have too little budget left to be worth starting: a
       // scan killed mid-`add` reads as "no answer" and would mark a busy directory as slow. Only
       // a call that actually queued is held to the floor; a fresh budget is never this small.
-      if (queued && deadline - Date.now() < MIN_QUEUED_BUDGET_MS) return { slow: false };
+      if (queued && deadline - Date.now() < (this.opts.minQueuedBudgetMs ?? MIN_QUEUED_BUDGET_MS)) return { slow: false };
       if (Date.now() >= deadline) return { slow: false };
       return this.treeOnce(ws, repo, deadline);
     });

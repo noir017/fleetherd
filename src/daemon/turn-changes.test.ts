@@ -81,6 +81,9 @@ function bench(o: { files?: Record<string, string>; ws?: (ws: Workspace) => Work
     clock: { now: () => 1_700_000_000_000 },
     workspaceFor: () => ws,
     log: () => {},
+    // Real git under a loaded machine (the full suite) can take seconds; the production 3 s budget
+    // would turn that into a flaky "no snapshot". A test about the budget sets its own.
+    startTimeoutMs: 30_000,
     ...o.opts,
   });
   // Hands back each entry once, in the order they arrived — a test that runs two turns asks twice.
@@ -208,15 +211,17 @@ describe('turn changes: bounded, and not repeated when a directory is slow', () 
   });
 
   it('does not pay the wait again in the same directory', async () => {
+    // A 2 s budget against a 1 s bound: paying the wait again would show as two seconds, and a
+    // loaded machine's event loop cannot stretch an in-memory skip that far.
     const slow = bench({
-      opts: { startTimeoutMs: 100 },
+      opts: { startTimeoutMs: 2_000 },
       ws: (ws) => ({ ...ws, run: (argv, o) => (argv[1] === 'rev-parse' ? new Promise(() => {}) : ws.run(argv, o)) }),
     });
     expect(await slow.changes.start(ID, REF, slow.platform, ADDRESS)).toBeUndefined();
     const calls = slow.ran.length;
     const began = Date.now();
     expect(await slow.changes.start(ID, REF, slow.platform, ADDRESS)).toBeUndefined();
-    expect(Date.now() - began).toBeLessThan(50);
+    expect(Date.now() - began).toBeLessThan(1_000);
     expect(slow.ran.length).toBe(calls);
   });
 
@@ -225,7 +230,8 @@ describe('turn changes: bounded, and not repeated when a directory is slow', () 
     fs.writeFileSync(path.join(b.repo, 'a.txt'), 'changed\n');
     const began = Date.now();
     b.changes.finish(handle);
-    expect(Date.now() - began).toBeLessThan(50);
+    // finish returns before git is even started; the bound only has to beat one git process.
+    expect(Date.now() - began).toBeLessThan(250);
     await b.next();
   });
 });
@@ -370,7 +376,6 @@ describe('turn changes: the repository it keeps', () => {
     // the documented case, not a bad repository.
     let adds = 0;
     const contended = bench({
-      opts: { startTimeoutMs: 100 },
       ws: (ws) => ({
         ...ws,
         run: (argv, o) => {
@@ -413,7 +418,6 @@ describe('turn changes: the repository it keeps', () => {
           return ws.run(argv, o);
         },
       }),
-      opts: { startTimeoutMs: 200 },
     });
     // The bench above has its own repository: build a warm index there first.
     const warm = await slow.changes.start(ID, REF, slow.platform, ADDRESS);
@@ -432,7 +436,6 @@ describe('turn changes: the repository it keeps', () => {
 
   it('keeps the shared index when write-tree is the one that timed out', async () => {
     const timed = bench({
-      opts: { startTimeoutMs: 300 },
       ws: (ws) => ({
         ...ws,
         run: (argv, o) => {
@@ -453,8 +456,11 @@ describe('turn changes: the repository it keeps', () => {
     // killed add reads as "no answer" and would mark a busy directory as slow for ten minutes.
     let adds = 0;
     let holdFirst = true;
+    // Wide margins on both sides, so a loaded machine cannot move the outcome: the first snapshot
+    // has 20 s to finish, and the queued one finds less than the 18 s floor left once the first
+    // has held its add for 3 s — busy, whatever the real git calls cost.
     const slow = bench({
-      opts: { startTimeoutMs: 700 },
+      opts: { startTimeoutMs: 20_000, minQueuedBudgetMs: 18_000 },
       ws: (ws) => ({
         ...ws,
         run: async (argv, o) => {
@@ -462,7 +468,7 @@ describe('turn changes: the repository it keeps', () => {
             adds += 1;
             if (holdFirst) {
               holdFirst = false;
-              await new Promise((r) => setTimeout(r, 400));
+              await new Promise((r) => setTimeout(r, 3_000));
             }
           }
           return ws.run(argv, o);
@@ -480,13 +486,16 @@ describe('turn changes: the repository it keeps', () => {
     // And nothing was remembered as slow: the next turn runs its own snapshot.
     expect(await slow.changes.start(ID, REF, slow.platform, ADDRESS)).toBeDefined();
     expect(adds).toBe(2);
-  });
+  }, 60_000);
 
   it('takes one snapshot at a time per repository', async () => {
     // add releases index.lock when it returns and write-tree reads the index after it. Two turns
     // of one repository interleaving there would write one turn's state into the other's tree.
     const order: string[] = [];
     const queued = bench({
+      // The order is the point, not the budget: room enough that a loaded machine cannot turn the
+      // second snapshot into "busy" (2026-11-18, the full suite did).
+      opts: { startTimeoutMs: 30_000 },
       ws: (ws) => ({
         ...ws,
         run: async (argv, o) => {
@@ -505,7 +514,7 @@ describe('turn changes: the repository it keeps', () => {
     expect(one).toBeDefined();
     expect(two).toBeDefined();
     expect(order).toEqual(['add', 'write-tree', 'add', 'write-tree']);
-  });
+  }, 60_000);
 
   it('falls back to a temporary index when the shared one is busy', async () => {
     // What a second turn in the same directory meets: `git add` cannot take the index.lock.
