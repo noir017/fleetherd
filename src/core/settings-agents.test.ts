@@ -180,3 +180,27 @@ describe('the Agents group', () => {
     expect(view.buttons).toEqual(plain.buttons);
   });
 });
+
+describe('the Agents group with an unset permission level', () => {
+  // The two halves of this screen were built apart: the permission row decides what an unset
+  // level reads as (core/permission-levels.ts unsetLevel), and the merge turns that row into a
+  // field. A field that dropped `unset` or its note would show a level nobody chose as if it had
+  // been saved — the ambiguity the unset reading exists to remove.
+  it('carries the unset mark and its note into the permissions field', () => {
+    const modes = (id: string) =>
+      id === 'cc'
+        ? ({ kind: 'list', options: MODES, current: 'bypassPermissions' } as const)
+        : ({ kind: 'none' } as const);
+    const rows = settingsRows(cfg, undefined, modes);
+    const view = buildSettingsMenu({
+      reqId: 'r1',
+      rows,
+      screen: { cfg, options: (r) => settingOptions(r, cfg, { ...ctx, modes }), here: ctx.boundAgent },
+    });
+    if (view.screen?.level !== 'list') throw new Error('no list screen');
+    const cc = view.screen.rows.find((r) => r.target === 'cc');
+    const perm = cc && fieldsOf(cc).find((f) => f.label === 'Permissions');
+    expect(perm).toMatchObject({ value: 'full', unset: true });
+    expect(perm?.valueNote).toMatch(/^not set/);
+  });
+});

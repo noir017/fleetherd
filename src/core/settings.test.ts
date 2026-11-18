@@ -532,8 +532,10 @@ describe("an agent's permission level", () => {
       screen: { cfg: pinned, options: (r) => settingOptions(r, pinned, ctx) },
     });
     if (view.screen?.level !== 'list') throw new Error('no list screen');
-    const screenRow = view.screen.rows.find((r) => r.group === 'Permissions')!;
-    expect(screenRow).toMatchObject({ value: 'full', unset: true, valueNote: 'not set · from its pinned mode' });
+    // The permission row is a field of cx's row in the Agents group (settingsListScreen).
+    const agentRow = view.screen.rows.find((r) => r.target === 'cx')!;
+    const field = agentRow.control.kind === 'agent' ? agentRow.control.fields.find((f) => f.label === 'Permissions') : undefined;
+    expect(field).toMatchObject({ value: 'full', unset: true, valueNote: 'not set · from its pinned mode' });
 
     const perm = rows.find((r) => r.id === 'permissions')!;
     const values = buildSettingValueMenu({
