@@ -5,6 +5,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The settings page's agents are a table.** 3.13.0 put each agent's settings on its row, but
+  every row repeated the words Model, Permissions and Instructions above its own controls, in
+  fixed pixel columns: on a gateway with sixteen agents a model id was cut to a dozen letters, an
+  instruction summary to two words, and the permission control was five segments on one row, two on
+  the next and a line of text on the third. The agents are now one table — a header naming the
+  columns once, then a row per agent whose cells line up under it, in a window wide enough to hold
+  them. A permission level is a dropdown on every row, or plain text where it is the only level an
+  agent has, rather than a one-segment control that could not change anything. A value that is not
+  set is in italics, as an unset model always was, with one line under the table saying so; the
+  line under a value now says only where it comes from — a pinned mode, a running session's — and
+  no longer repeats "not set" on fifteen rows of sixteen. An agent's instruction files are **Edit
+  files**, the summary of where they come from in its title. On a phone each agent is a card.
+
+### Fixed
+
+- **A topic whose directory is gone says so in the git window.** A sub-agent's topic works in a
+  worktree that is removed once its branch is merged, and git cannot start in a directory that does
+  not exist — which both machines report as the program missing, so the window said `git rev-parse
+  could not run: fork/exec /usr/bin/git: no such file or directory`, as if git were not installed.
+  It now says the topic's directory no longer exists, and which one.
+
 ## [3.13.0] - 2026-11-18
 
 ### Added

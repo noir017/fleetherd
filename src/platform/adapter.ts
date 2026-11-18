@@ -166,7 +166,7 @@ export interface TurnChangeRepo {
 /** One turn's change list, or why there is none. */
 export type TurnChangeStatusResult =
   | { ok: true; repo: TurnChangeRepo; files: TurnChangeFile[]; truncated?: true }
-  | { ok: false; reason: 'not-git' | 'error'; text: string };
+  | { ok: false; reason: 'not-git' | 'missing' | 'error'; text: string };
 
 /**
  * One changed file of one turn, read out of the two trees.
@@ -248,7 +248,9 @@ export interface GitStatusFile {
  * `truncated` means the change list itself was too large to read whole — never "here are the last
  * few files", because the host keeps the END of a command's output and a tail of records is not a
  * list. A failure is a sentence for the person, with `not-git` told apart so the page can say
- * "this directory is not a repository" rather than "git failed".
+ * "this directory is not a repository" rather than "git failed", and `missing` for a topic whose
+ * directory is gone — which git cannot report itself: run in a directory that does not exist, it
+ * does not start at all.
  */
 export type GitStatusResult =
   | {
@@ -257,7 +259,7 @@ export type GitStatusResult =
       files: GitStatusFile[];
       truncated?: true;
     }
-  | { ok: false; reason: 'not-git' | 'error'; text: string };
+  | { ok: false; reason: 'not-git' | 'missing' | 'error'; text: string };
 
 /**
  * One file's two sides and its patch, for the diff view.
@@ -306,7 +308,7 @@ export interface GitCommitSummary {
  */
 export type GitLogResult =
   | { ok: true; repo: { root: string; branch?: string }; commits: GitCommitSummary[]; more: boolean }
-  | { ok: false; reason: 'not-git' | 'error'; text: string };
+  | { ok: false; reason: 'not-git' | 'missing' | 'error'; text: string };
 
 /**
  * One commit and what it changed, for the history list's detail view.
@@ -323,7 +325,7 @@ export type GitCommitResult =
       files: GitStatusFile[];
       truncated?: true;
     }
-  | { ok: false; reason: 'not-git' | 'error'; text: string };
+  | { ok: false; reason: 'not-git' | 'missing' | 'error'; text: string };
 
 /**
  * What `useGitPanel` hands a platform: read-only git for a conversation's directory, on whichever

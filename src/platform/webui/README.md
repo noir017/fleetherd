@@ -1098,10 +1098,15 @@ blue text and ›. Now:
   setting cannot compile without one): `switch` for on/off, `choice` for a short closed list — the
   page draws up to five short values as a segmented control and anything longer as a `<select>` —
   `list` for a row that opens its own value screen (a model), and `agent` for the per-agent row,
-  whose `fields` (`SettingsScreenField`) are each a `choice` or a `list` drawn as one labelled
-  control beside the agent's name. Every such control's accessible name carries the agent id. The
-  page adds an `Instructions` field of its own to that row when the instruction editor is on and
-  the agent has files of its own. `link` is the scheduled tasks.
+  whose `fields` (`SettingsScreenField`) are each a `choice` or a `list`. The agent rows are a
+  table: `settingsAgentCols` decides the columns once for the whole list (the fields' labels, then
+  `Instructions` when the instruction editor is on and any agent has files of its own), one
+  header row names them, and every row is a grid on the same `minmax(0,…fr)` template so its cells
+  sit under their headings. A `choice` field is always a `<select>` there — a segment bar does not
+  fit a column — and plain text when it offers one value; a value that is not set is in italics,
+  with one legend under the table, and the line under a value says only where it comes from.
+  Every control's accessible name carries the agent id, since the header is hidden from a reader.
+  `link` is the scheduled tasks.
 - **A switch and a choice write from the row.** Their ids are `sts:<reqId>:<n>`, an index into the
   `choices` the daemon froze when it drew the list (`PendingSettingsMenu.choices`), the same rule
   `stv:` follows. A switch carries one id, the one that writes the *other* side, so a retried request
@@ -1119,8 +1124,9 @@ blue text and ›. Now:
 
 Focus is put back on the control that was used when the answer redraws the page (`data-fk`), and a
 move between the list and a value screen starts at the top. On a phone each row's control goes
-under its text at full width — except a switch, which stays on the right — and an agent's fields go
-under its name; touch targets are 44px, and a select is 16px so Safari does not zoom.
+under its text at full width — except a switch, which stays on the right — and the agents table
+becomes a card per agent, its settings one labelled line each under its name; touch targets are
+44px, and a select is 16px so Safari does not zoom.
 
 The page opens from **All settings** in the ⚙ menu, or when the daemon answers a typed
 `/setting`. The menu's request is sent with `quiet: true` (`SendRequestSchema`, `WebRoom.record`),

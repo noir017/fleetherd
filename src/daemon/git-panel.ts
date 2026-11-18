@@ -210,9 +210,9 @@ type Prepared =
       to?: string;
       listing: Listing;
     }
-  | { ok: false; reason: 'not-git' | 'error'; text: string };
+  | { ok: false; reason: 'not-git' | 'missing' | 'error'; text: string };
 
-type Rooted = { ok: true; root: string } | { ok: false; reason: 'not-git' | 'error'; text: string };
+type Rooted = { ok: true; root: string } | { ok: false; reason: 'not-git' | 'missing' | 'error'; text: string };
 
 /**
  * Where the repository is. A directory that is not in one is an answer; a timeout or a spawn
@@ -221,7 +221,17 @@ type Rooted = { ok: true; root: string } | { ok: false; reason: 'not-git' | 'err
 async function repoRoot(ws: Workspace): Promise<Rooted> {
   const r = await git(ws, ['rev-parse', '--show-toplevel']);
   const hard = hardProblem(r, 'rev-parse');
-  if (hard) return { ok: false, reason: 'error', text: hard.message };
+  if (hard) {
+    // A topic whose directory was removed — a worktree cleaned up once its work was merged — makes
+    // git fail to start, and both machines word a missing working directory as a missing program:
+    // "fork/exec /usr/bin/git: no such file or directory" on a host, "spawn git ENOENT" here. That
+    // read as git not being installed. The directory is looked at only after a failure, so a
+    // working one costs nothing.
+    if (r.spawnError && (await directoryGone(ws))) {
+      return { ok: false, reason: 'missing', text: `This topic's directory no longer exists: ${ws.root}` };
+    }
+    return { ok: false, reason: 'error', text: hard.message };
+  }
   const root = r.text.trim();
   if (r.code === 0 && root) return { ok: true, root };
   // The whole of stderr, not its last line: on a working directory in a mounted volume git
@@ -232,6 +242,16 @@ async function repoRoot(ws: Workspace): Promise<Rooted> {
   }
   const why = lastLine(r.stderr);
   return { ok: false, reason: 'error', text: `git rev-parse failed: ${why}` };
+}
+
+/** Whether the workspace's own directory is missing; a stat that fails says nothing either way. */
+async function directoryGone(ws: Workspace): Promise<boolean> {
+  try {
+    const st = await ws.stat(ws.root);
+    return !st.exists || !st.dir;
+  } catch {
+    return false;
+  }
 }
 
 function joinAbs(root: string, rel: string): string {
@@ -817,7 +837,8 @@ async function fileOf(ws: Workspace, prepared: Prepared, path: string): Promise<
 /**
  * The whole change list for one comparison.
  *
- * `not-git` is answered for a directory that is not inside a repository; everything else that stops
+ * `not-git` is answered for a directory that is not inside a repository, `missing` for one that no
+ * longer exists (repoRoot); everything else that stops
  * a read is `error` with a sentence that names what failed, because "no changes" and "git could not
  * tell" must not look alike in a window a person is using to decide whether work is done.
  */
@@ -864,7 +885,7 @@ export async function gitBranches(ws: Workspace): Promise<GitBranchesResult> {
 }
 
 /** The repository a history read starts from, with the branch its HEAD is on. */
-type HistoryRoot = { ok: true; root: string; branch?: string } | { ok: false; reason: 'not-git' | 'error'; text: string };
+type HistoryRoot = { ok: true; root: string; branch?: string } | { ok: false; reason: 'not-git' | 'missing' | 'error'; text: string };
 
 async function historyRoot(ws: Workspace): Promise<HistoryRoot> {
   const rooted = await repoRoot(ws);
