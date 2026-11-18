@@ -64,6 +64,11 @@ import type {
 import type {
   ButtonSpec,
   ConversationWorkdir,
+  GitBranchesResult,
+  GitFileResult,
+  GitMode,
+  GitPanel,
+  GitStatusResult,
   HistoryPanel,
   HistoryPanelHit,
   HistoryPanelPage,
@@ -465,6 +470,8 @@ export class WebRoom {
   private schedulePanel: SchedulePanel | null = null;
   /** The model switch for a topic's conversation — see `useModelPicker`. */
   private modelPicker: ModelPicker | null = null;
+  /** Read-only git for a topic's directory — see `useGitPanel`. */
+  private gitPanel: GitPanel | null = null;
   /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
   private skillsPanel: SkillsPanel | null = null;
   /** The automatic reviews the daemon recorded — see `useReviewPanel`. */
@@ -815,6 +822,36 @@ export class WebRoom {
     if (!this.modelPicker) return { ok: false, text: 'This daemon offers no model switch.' };
     if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
     return this.modelPicker.choose(this.conversation(topic), value);
+  }
+
+  /**
+   * Accept the daemon's read-only view of the repository a topic's directory sits in. A facade
+   * like the panels above: the git commands run on the machine the agent runs on, through
+   * `ConversationRegistry.workspaceForRef`, so this side never assumes the daemon's own filesystem.
+   */
+  useGitPanel(panel: GitPanel): void {
+    this.gitPanel = panel;
+  }
+
+  /** One comparison's change list, for the git window. */
+  async gitStatus(topic: string, mode: GitMode, base?: string): Promise<GitStatusResult> {
+    if (!this.gitPanel) return { ok: false, reason: 'error', text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'error', text: 'No such topic.' };
+    return this.gitPanel.status(this.conversation(topic), mode, base);
+  }
+
+  /** One changed file's two sides and patch, for the git window's diff. */
+  async gitFile(topic: string, mode: GitMode, base: string | undefined, path: string): Promise<GitFileResult> {
+    if (!this.gitPanel) return { ok: false, text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.gitPanel.file(this.conversation(topic), mode, base, path);
+  }
+
+  /** The branches a base may name, for the git window's picker. */
+  async gitBranches(topic: string): Promise<GitBranchesResult> {
+    if (!this.gitPanel) return { ok: false, text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.gitPanel.branches(this.conversation(topic));
   }
 
   /** Every task, for the panel. `enabled: false` when the daemon offered none (a test daemon). */

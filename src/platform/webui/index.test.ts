@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
 import { PAGE_SIZE, PAGE_SIZE_MAX, WORKDIR_PAGE_SIZE_MAX, resolvePageSize } from '../../core/paging.js';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import { createWebuiAdapter, diskTranscriptStore, diskUploadStore } from './index.js';
-import { CHANNEL, type Kept } from './room.js';
+import { CHANNEL, WebRoom, type Kept } from './room.js';
 import type { ConversationAddress } from '../../core/conversation.js';
 import type { PlatformAdapter } from '../adapter.js';
 
@@ -101,6 +101,23 @@ describe('webui adapter: what it says it can do', () => {
     // fraction of the stated limit for no reason.
     const src = '```\nconst a = 1 < 2 && 3 > 2;\n```';
     expect(adapter().measureRendered(src)).toBe(src.length);
+  });
+});
+
+describe('webui adapter: the daemon\'s panels', () => {
+  it('hands the git panel to the room, which is the only place the page can reach it', () => {
+    // The adapter's optional member is easy to leave undefined: it type-checks, and the window
+    // then answers "This daemon offers no git window" while every other test is green.
+    const handed = vi.spyOn(WebRoom.prototype, 'useGitPanel');
+    const a = adapter();
+    const panel = {
+      status: async () => ({ ok: false as const, reason: 'not-git' as const, text: 'no' }),
+      file: async () => ({ ok: false as const, text: 'no' }),
+      branches: async () => ({ ok: false as const, text: 'no' }),
+    };
+    a.useGitPanel?.(panel);
+    expect(handed).toHaveBeenCalledWith(panel);
+    handed.mockRestore();
   });
 });
 

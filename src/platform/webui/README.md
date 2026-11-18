@@ -711,6 +711,63 @@ taken away. A refresh button asks by hand and reports a failure; on a skill's pa
 unless the editor holds unsaved text. Every name has a copy button, with the `execCommand` fallback a plain-http
 origin needs.
 
+## The git window
+
+The branch icon in the chat header opens the repository the topic's directory sits in: what changed,
+one file's diff, and line comments that go back into the composer. It is a window over the transcript
+like the skills page, and full-screen on a phone. **Read-only** — there is no stage, commit, discard
+or checkout in it, here or in the daemon behind it; changing a repository while an agent works in it
+belongs in the conversation, where the agent can be asked what it meant.
+
+**Three comparisons.** `working` is the working tree against HEAD, untracked files included;
+`branch` is the working tree against the merge base of HEAD and a base branch, so committed and
+uncommitted changes read together; `committed` is HEAD against that merge base. The base starts as
+`origin/HEAD`, else `main`, else `master`, and can be picked from the branch list. A repository
+with no commits works too: `working` and `branch` list its files as additions, `committed` is empty.
+Every path in the window is relative to the **repository root**, not to the topic's directory, which
+may be a subdirectory of it. A directory that is not in a repository is answered as `not-git` with a
+sentence, not as an empty list.
+
+**Data.** [`useGitPanel`](../adapter.ts) hands the room `status`, `file` and `branches`;
+[`daemon/git-panel.ts`](../../daemon/git-panel.ts) implements them over
+`ConversationRegistry.workspaceForRef`, so the commands run on whichever machine the conversation's
+agent runs on. Three routes carry it — `GET api/git/status?t=&mode=&base=`,
+`GET api/git/file?t=&mode=&base=&path=` and `GET api/git/branches?t=` — with the query validated by
+`GitStatusQuerySchema` / `GitFileQuerySchema` in `protocol.ts`. A refusal from git (`not-git`, a
+comparison with no merge base, a path not in the list) is a 200 with its own sentence, like the model
+list's "no models"; only a malformed query is a 400.
+
+**How the commands are run.** Every call is argv, never a shell. The path a person names is placed
+only after `--`, and it is first checked against the change list git itself returned, so a path the
+list did not name cannot be read even if a request invents one. Git runs with
+`-c core.quotepath=off -c color.ui=never`, `--no-ext-diff --no-renames` and `-z`, and with
+`GIT_OPTIONAL_LOCKS=0` (an agent is usually working in the repository at the same moment, and
+`git status` must not take the index lock to refresh it) and `LC_ALL=C`.
+
+**Caps, and why a truncated answer is not content.** One side of a file may be 1 MiB; past that the
+file is `tooLarge` and all three strings are empty. A NUL byte in either side, or a numstat `-`, is
+`binary` and likewise empty. The workspace keeps the END of a command's output past its cap (the
+remote host's ring buffer), so a truncated listing is reported as `truncated` rather than parsed from
+its tail, and truncated file content or patch is `tooLarge` / no patch. The line counts for an
+untracked file come from `git diff --no-index --numstat` — the same text `git add --intent-to-add`
+would produce — rather than a temporary index, because a remote host has no way to delete one and
+leaving it behind in the repository would be worse than one extra command per untracked file.
+
+**Line comments.** Selecting lines in a diff (the code view's `onSelect`) offers **Comment**; the
+text is inserted into the composer — never sent — as the file and line range, a fenced block of the
+selected lines, then the comment, with several comments separated by a blank line. Without
+`codeView()` there is no selection, so the comment affordance is **not offered**: the fallback is the
+unified patch with `+` and `−` coloured, which is readable but cannot say which lines were chosen.
+
+**Two callers.** `openGitWindow()` with no argument is the header's view. `openGitWindow({ title,
+statusUrl, fileUrl })` fixes the two addresses, hides the mode controls, and appends `&path=` to
+`fileUrl`; the turn-changes view uses that. Both refresh the change list when a turn in the topic
+ends, and neither reloads an open diff under the reader.
+
+**The editor button.** Each row offers **Edit** only when the page has an `openFileEditor` function,
+and calls it with the repository-relative path. That function is another part of this page; until it
+exists the button is not drawn rather than drawn dead.
+
 ## The History tab
 
 The sidebar's header is two tabs, **Topics** and **History** (since 2026-11-11; 2.58.0 shipped the

@@ -713,6 +713,7 @@ function lifecycle(
   | 'useTopicKill'
   | 'useAgentCatalog'
   | 'useModelPicker'
+  | 'useGitPanel'
   | 'registerCommands'
   | 'start'
   | 'stop'
@@ -782,6 +783,11 @@ function lifecycle(
      * in: a chat app has `/model` and its menu, which is a message.
      */
     useModelPicker: (picker) => room.useModelPicker(picker),
+    /**
+     * The only implementor because it is the only platform with a window to put a diff in: a chat
+     * app's agent reports what it changed as a message. Read-only; see `useGitPanel`.
+     */
+    useGitPanel: (panel) => room.useGitPanel(panel),
     /**
      * Accepted and never called.
      *

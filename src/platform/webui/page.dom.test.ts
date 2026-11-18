@@ -13018,3 +13018,242 @@ describe('webui page: the History tab', () => {
     expect(h.el('history-more').hidden).toBe(true);
   });
 });
+
+/** A fake `window.__fhCodeView`, recording what the page asked it to draw. */
+interface FakeDiff {
+  parent: HTMLElement;
+  options: {
+    name: string;
+    original: string;
+    modified: string;
+    layout: string;
+    onSelect?: (sel: { side: 'old' | 'new'; from: number; to: number; text: string } | null) => void;
+  };
+  layouts: string[];
+  destroyed: number;
+}
+
+function installCodeView(h: Harness): FakeDiff[] {
+  const diffs: FakeDiff[] = [];
+  (h.window as any).__fhCodeView = {
+    diff(parent: HTMLElement, options: FakeDiff['options']) {
+      const rec: FakeDiff = { parent, options, layouts: [], destroyed: 0 };
+      diffs.push(rec);
+      return {
+        setLayout(layout: string) {
+          rec.layouts.push(layout);
+        },
+        destroy() {
+          rec.destroyed++;
+        },
+      };
+    },
+  };
+  return diffs;
+}
+
+describe('webui page: the git window', () => {
+  const A = 'a1b2c3d4';
+  const statusPath = (mode: string, base = ''): string =>
+    `api/git/status?t=${A}&mode=${mode}${base ? `&base=${encodeURIComponent(base)}` : ''}`;
+  const filePath = (mode: string, file: string, base = ''): string =>
+    `api/git/file?t=${A}&mode=${mode}${base ? `&base=${encodeURIComponent(base)}` : ''}&path=${encodeURIComponent(file)}`;
+
+  /** A complete change list, and one file that both sides of the diff can read. */
+  const replies = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    [`api/git/branches?t=${A}`]: { ok: true, branch: 'main', base: 'main', branches: ['main', 'origin/main'] },
+    [statusPath('working')]: {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [
+        { path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1 },
+        { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+      ],
+    },
+    [statusPath('branch')]: {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [{ path: 'src/a.ts', status: 'modified', additions: 4, deletions: 1 }],
+    },
+    [filePath('working', 'src/a.ts')]: {
+      ok: true,
+      path: 'src/a.ts',
+      status: 'modified',
+      original: 'one\ntwo\n',
+      modified: 'one\nTWO\nthree\n',
+      patch: '@@ -1,2 +1,3 @@\n one\n-two\n+TWO\n+three\n',
+    },
+    [filePath('working', 'new.txt')]: {
+      ok: true,
+      path: 'new.txt',
+      status: 'added',
+      original: '',
+      modified: 'new\nlines\n',
+      patch: '@@ -0,0 +1,2 @@\n+new\n+lines\n',
+    },
+    ...extra,
+  });
+
+  async function openWindow(h: Harness): Promise<void> {
+    await h.emit(sync(A, [message('m1', '<p>work</p>')], [A]));
+    await h.click('#git-toggle');
+    await until('the change list', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+  }
+
+  it('opens from the chat header with the change list, and switches comparison from the bar', async () => {
+    const h = await open({ replies: replies() });
+    await openWindow(h);
+
+    expect(h.el('git').hidden).toBe(false);
+    expect(h.el('git-title').textContent).toBe('Changes');
+    expect(h.el('git-branch').textContent).toBe('main');
+    expect(h.el('git-modes').hidden).toBe(false);
+    expect(h.el('git-base').hidden).toBe(true);
+    const rows = Array.from(h.el('git-files').querySelectorAll('.git-file'));
+    expect(rows.map((r) => [r.querySelector('.gf-path')?.textContent, r.querySelector('.gf-status')?.textContent])).toEqual([
+      ['src/a.ts', 'M'],
+      ['new.txt', 'A'],
+    ]);
+    expect(rows[0]?.querySelector('.gf-stat')?.textContent).toContain('+3');
+
+    await h.click('[data-gm="branch"]');
+    await until('the branch comparison', () => h.calls.some((c) => c.path === statusPath('branch')));
+    expect(Array.from(h.el('git-modes').querySelectorAll('.git-mode.on')).map((b) => b.getAttribute('data-gm'))).toEqual([
+      'branch',
+    ]);
+    // The base picker appears with the branches the daemon named, and the answer's base is chosen.
+    await until('the base picker', () => !h.el('git-base').hidden);
+    expect(Array.from(h.el('git-base').querySelectorAll('option')).map((o) => o.textContent)).toEqual([
+      'main',
+      'origin/main',
+    ]);
+    expect((h.el('git-base') as HTMLSelectElement).value).toBe('main');
+  });
+
+  it('draws a file through codeView, and falls back to the coloured patch when it is not there', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+    const first = diffs[0]!;
+    expect(first.options.name).toBe('src/a.ts');
+    expect(first.options.original).toBe('one\ntwo\n');
+    expect(first.options.modified).toBe('one\nTWO\nthree\n');
+    // A desktop page opens the two-column diff, and the button offers the other way.
+    expect(first.options.layout).toBe('split');
+    expect(h.el('git-layout').hidden).toBe(false);
+    expect(h.el('git-layout').textContent).toBe('Unified');
+
+    await h.click('#git-layout');
+    expect(first.layouts).toEqual(['unified']);
+    expect(h.el('git-layout').textContent).toBe('Split');
+
+    // No code view on this page: the same read, as a plain patch with + and − coloured. There is
+    // no selection there, so the comment affordance must stay hidden.
+    delete (h.window as any).__fhCodeView;
+    await h.click('[data-gpath="new.txt"]');
+    await until('the plain patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    expect(first.destroyed).toBe(1);
+    expect(h.el('git-diff').querySelectorAll('.git-patch .pa').length).toBeGreaterThanOrEqual(2);
+    expect(h.el('git-layout').hidden).toBe(true);
+    // No code view means no selection, so the comment affordance stays hidden.
+    expect(h.el('git-sel').hidden).toBe(true);
+  });
+
+  it('turns a selected range into a line comment in the composer, and never sends it', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+
+    diffs[0]!.options.onSelect?.({ side: 'new', from: 2, to: 3, text: 'two\nTHREE\n' });
+    await tick();
+    expect(h.el('git-sel').hidden).toBe(false);
+    expect(h.el('git-sel-what').textContent).toBe('New lines 2\u20133');
+
+    await h.click('#git-comment-open');
+    expect(h.el('git-comment').hidden).toBe(false);
+    expect(h.el('git-comment-what').textContent).toBe('src/a.ts:L2-L3');
+    (h.el('git-comment-text') as HTMLTextAreaElement).value = 'Looks good';
+    await h.click('#git-comment-add');
+
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe(
+      ['src/a.ts:L2-L3', '```', 'two', 'THREE', '```', 'Looks good'].join('\n')
+    );
+    expect(h.el('git-comment').hidden).toBe(true);
+    expect(h.el('git-note').textContent).toContain('Added to the message');
+    // Inserting is all it does: nothing has been sent to the daemon.
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+  });
+
+  it('re-reads the change list when the topic turn ends, but leaves the open diff alone', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+    const before = h.calls.filter((c) => c.path === statusPath('working')).length;
+
+    await h.emit({ t: 'typing', on: false });
+    await until('a refreshed list', () => h.calls.filter((c) => c.path === statusPath('working')).length === before + 1);
+    expect(diffs[0]?.destroyed).toBe(0);
+  });
+
+  it('opens a fixed pair of URLs for the turn-change view, with no comparison controls', async () => {
+    const h = await open({
+      replies: {
+        'api/git/status?t=turn1&mode=working': {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'feature' },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+        },
+        'api/git/file?t=turn1&mode=working&path=src%2Fa.ts': {
+          ok: true,
+          path: 'src/a.ts',
+          status: 'modified',
+          original: 'one\n',
+          modified: 'two\n',
+          patch: '@@ -1 +1 @@\n-one\n+two\n',
+        },
+      },
+    });
+    await h.emit(sync(A, [message('m1', '<p>work</p>')], [A]));
+    (h.window as any).openGitWindow({
+      title: 'Changes this turn',
+      statusUrl: 'api/git/status?t=turn1&mode=working',
+      fileUrl: 'api/git/file?t=turn1&mode=working',
+    });
+    await until('the fixed list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+
+    expect(h.el('git-title').textContent).toBe('Changes this turn');
+    expect(h.el('git-modes').hidden).toBe(true);
+    expect(h.el('git-base').hidden).toBe(true);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the fixed diff', () => h.calls.some((c) => c.path === 'api/git/file?t=turn1&mode=working&path=src%2Fa.ts'));
+    await until('the plain patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    expect(h.el('git-diff').textContent).toContain('+two');
+  });
+
+  it('closes on Escape, its button and the backdrop', async () => {
+    const h = await open({ replies: replies() });
+    await openWindow(h);
+
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(h.el('git').hidden).toBe(true);
+
+    await h.click('#git-toggle');
+    await until('the list again', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+    await h.click('#git-close');
+    expect(h.el('git').hidden).toBe(true);
+
+    await h.click('#git-toggle');
+    await until('the list a third time', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+    h.el('git').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    expect(h.el('git').hidden).toBe(true);
+  });
+});

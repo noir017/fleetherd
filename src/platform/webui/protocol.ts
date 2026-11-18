@@ -240,6 +240,35 @@ export const ModelChooseRequestSchema = z
   .strict();
 
 /**
+ * The git window's query string (`GET api/git/status`, `api/git/file`).
+ *
+ * The query is checked by hand rather than by a schema because these are GETs, but the three
+ * values still go through zod so the vocabulary lives in one place: the mode is the closed set the
+ * panel understands, and the base and path are bounded strings. Neither is trusted by the daemon:
+ * the base has to name a branch the repository lists, and the path has to be one the change list
+ * returned, before either reaches a git command.
+ */
+export const GIT_MODES = ['working', 'branch', 'committed'] as const;
+
+export const GitStatusQuerySchema = z
+  .object({
+    mode: z.enum(GIT_MODES),
+    base: z.string().min(1).max(300).optional(),
+  })
+  .strict();
+
+export const GitFileQuerySchema = z
+  .object({
+    mode: z.enum(GIT_MODES),
+    base: z.string().min(1).max(300).optional(),
+    path: z.string().min(1).max(4096),
+  })
+  .strict();
+
+export type GitStatusQuery = z.infer<typeof GitStatusQuerySchema>;
+export type GitFileQuery = z.infer<typeof GitFileQuerySchema>;
+
+/**
  * One operation on one managed skill.
  *
  * A discriminated union, so each verb carries exactly the fields it needs and a body carrying

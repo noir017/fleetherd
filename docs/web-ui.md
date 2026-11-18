@@ -286,6 +286,31 @@ says nothing; the refresh button in the window's header asks by hand and reports
 page that button also re-reads the skill — unless the editor holds unsaved text, which it never
 overwrites.
 
+## Changes
+
+The branch icon in the chat header opens the repository the topic's working directory sits in. It
+is read-only: it lists what changed, shows a diff, and takes comments into the composer — nothing
+here stages, commits or discards, because an agent is usually working in that repository at the
+same time.
+
+The bar has three comparisons. **Working** is the working tree against `HEAD`, untracked files
+included; **Branch** is the working tree against the merge base of `HEAD` and a base branch, so
+committed and uncommitted work read together; **Committed** is `HEAD` against that merge base. The
+base starts at the repository's default branch (`origin/HEAD`, else `main` or `master`) and can be
+changed in the picker. A repository with no commits works too. Every path is relative to the
+repository root, also when the topic's directory is a subdirectory of it.
+
+Clicking a file shows its diff — one column or two, from the button in the bar; a phone opens on one
+column. Selecting lines in the diff offers **Comment**; the file, the line range, the selected lines
+in a code block and your comment are inserted into the composer, where you can edit them and send
+when you are ready. Several comments accumulate. Nothing is sent from the window. A browser where
+the code view is unavailable gets the plain patch with added and removed lines coloured instead;
+there is no line selection in that mode, so **Comment** is not offered.
+
+The list refreshes when a turn in the topic ends, so it follows what the agent just did. Each row
+has an **Edit** button when the page also has a file editor; it opens that file at its path in the
+repository.
+
 ## History
 
 The topic list has two tabs at its top: **Topics** and **History**. History lists every

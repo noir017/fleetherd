@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI shows what changed in the repository a topic works in, and takes comments on the
+  lines.** A branch icon in the chat header opens a read-only window: the changed files with their
+  `+x −y`, and one file's diff on click. Three comparisons are offered — the working tree against
+  `HEAD` (untracked files included), the working tree against the merge base of `HEAD` and a base
+  branch, and `HEAD` against that merge base — with the base chosen from the branch list and
+  defaulting to the repository's own. Git runs on whichever machine the topic's agent runs on, and
+  every path is relative to the repository root even when the topic works in a subdirectory.
+  Selecting lines in a diff and writing a comment inserts the file, the line range, a code block of
+  the selected lines and the comment into the composer; nothing is sent from the window. Without
+  the code view the window falls back to the coloured patch, which has no line selection and so
+  offers no **Comment**. The list refreshes by itself when a turn in the topic ends.
+
 ## [3.10.0] - 2026-11-17
 
 ### Fixed

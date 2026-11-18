@@ -141,6 +141,82 @@ export interface ModelPicker {
   choose(ref: ConversationRef, value: string): Promise<ModelPickerResult>;
 }
 
+/**
+ * Which comparison the web UI's git window is showing (`useGitPanel`).
+ *
+ * `working` is the working tree against HEAD, untracked files included; `branch` is the working
+ * tree against the merge base of HEAD and a base branch, so a committed change and an uncommitted
+ * one read together; `committed` is HEAD against that merge base. Every path is relative to the
+ * REPOSITORY root, which is not the conversation's directory when that directory is a subdirectory
+ * of the repo.
+ */
+export type GitMode = 'working' | 'branch' | 'committed';
+
+/** One changed file as the git window's list draws it. `binary` has no line counts to show. */
+export interface GitStatusFile {
+  path: string;
+  status: 'added' | 'deleted' | 'modified';
+  additions: number;
+  deletions: number;
+  binary?: true;
+}
+
+/**
+ * What one comparison currently holds.
+ *
+ * `truncated` means the change list itself was too large to read whole — never "here are the last
+ * few files", because the host keeps the END of a command's output and a tail of records is not a
+ * list. A failure is a sentence for the person, with `not-git` told apart so the page can say
+ * "this directory is not a repository" rather than "git failed".
+ */
+export type GitStatusResult =
+  | {
+      ok: true;
+      repo: { root: string; branch?: string; base?: string };
+      files: GitStatusFile[];
+      truncated?: true;
+    }
+  | { ok: false; reason: 'not-git' | 'error'; text: string };
+
+/**
+ * One file's two sides and its patch, for the diff view.
+ *
+ * `original` and `modified` are whole texts — what `codeView().diff` takes — and `patch` is the
+ * unified diff for the plain-text fallback. `binary` or `tooLarge` sets all three to empty strings:
+ * there is no text to show, and half a file would read as a diff that lost lines.
+ */
+export type GitFileResult =
+  | {
+      ok: true;
+      path: string;
+      status: 'added' | 'deleted' | 'modified';
+      original: string;
+      modified: string;
+      patch: string;
+      binary?: true;
+      tooLarge?: true;
+    }
+  | { ok: false; text: string };
+
+/** The base branches the window can compare against, and the two it starts from. */
+export type GitBranchesResult =
+  | { ok: true; branch?: string; base?: string; branches: string[] }
+  | { ok: false; text: string };
+
+/**
+ * What `useGitPanel` hands a platform: read-only git for a conversation's directory, on whichever
+ * machine its agent runs.
+ *
+ * There is deliberately no stage, commit, discard or checkout here. The window is for reading what
+ * changed while an agent works; a write would race that agent and belongs in the conversation,
+ * where the agent can be asked what it meant.
+ */
+export interface GitPanel {
+  status(ref: ConversationRef, mode: GitMode, base?: string): Promise<GitStatusResult>;
+  file(ref: ConversationRef, mode: GitMode, base: string | undefined, path: string): Promise<GitFileResult>;
+  branches(ref: ConversationRef): Promise<GitBranchesResult>;
+}
+
 /** What `useSchedulePanel` hands a platform: the list, and the operations on one task. */
 export interface SchedulePanel {
   list(): SchedulePanelTask[];
@@ -832,6 +908,18 @@ export interface PlatformAdapter {
    * are: a chat app has `/model` and its menu, and nowhere persistent to put a control.
    */
   useModelPicker?(picker: ModelPicker): void;
+
+  /**
+   * Hand the platform a read-only view of the git repository the conversation's directory sits in:
+   * the change list for one of three comparisons, one file's two sides and patch, and the branches
+   * a base can be chosen from. `daemon/git-panel.ts` runs the git commands on the machine the
+   * agent runs on (`ConversationRegistry.workspaceForRef`), so a browser sees a remote host's
+   * repository the same way it sees the gateway's own.
+   *
+   * Optional and web-UI-only for the reason the seams above are: a chat app has no window to put a
+   * diff in, and the agent already reports what it changed.
+   */
+  useGitPanel?(panel: GitPanel): void;
 
   /**
    * Show the agent's live status for the conversation at an address — model, context, cost, cache

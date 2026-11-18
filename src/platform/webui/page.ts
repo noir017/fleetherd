@@ -714,6 +714,90 @@ select.skill-field{appearance:auto}
 /* Sticky, because the switches are on every row of a long list: a refusal (a description too long
    for a resident skill) written above the first row would be out of sight of the row tapped. */
 #skills-note{position:sticky;top:-12px;z-index:1;margin:-12px -16px 10px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
+/* ── The git window ──────────────────────────────────────────────────────────
+   What changed in the repository the topic's directory sits in: the file list, one file's diff,
+   and line comments that go back into the composer. A window over the transcript like Skills',
+   because a diff needs width a message never had. It reads through the daemon on whichever
+   machine the agent runs; nothing here runs a command. Read-only: there is no stage or commit. */
+#git{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#git[hidden]{display:none}
+#git-box{display:flex;flex-direction:column;width:min(1180px,100%);height:100%;max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#git-bar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
+#git-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34ch}
+#git-branch{font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:26ch}
+#git-modes{display:flex;gap:2px;background:#161616;border:1px solid var(--line);border-radius:6px;padding:2px}
+#git-modes[hidden]{display:none}
+.git-mode{background:none;border:0;border-radius:4px;color:var(--dim);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
+.git-mode:hover{color:var(--fg)}
+.git-mode.on{background:#2a2a2a;color:var(--fg)}
+#git-base{appearance:auto;max-width:22ch;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 6px}
+#git-base[hidden]{display:none}
+#git-spacer{flex:1;min-width:8px}
+#git-layout{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
+#git-layout:hover{border-color:#3a3a3a;background:#2a2a2a}
+#git-layout[hidden]{display:none}
+#git-refresh,#git-close{font-size:18px;padding:6px 10px}
+#git-refresh:disabled{opacity:.45;cursor:default}
+#git-body{flex:1;min-height:0;display:flex}
+#git-files{width:300px;flex:none;min-height:0;overflow-y:auto;border-right:1px solid var(--line);padding:6px}
+.git-empty{padding:10px 4px;font-size:12.5px;line-height:1.6;color:var(--dim);overflow-wrap:anywhere}
+.git-file{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:5px;cursor:pointer;font-size:12px}
+.git-file:hover{background:#1e1e1e}
+.git-file.on{background:#252525}
+.gf-status{flex:none;width:17px;text-align:center;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.gf-status.added{color:#4ade80}
+.gf-status.deleted{color:#f87171}
+.gf-status.modified{color:#fbbf24}
+.gf-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+.gf-stat{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--dim)}
+.gf-add{color:#4ade80}
+.gf-del{color:#f87171}
+.gf-edit{flex:none;background:none;border:1px solid var(--line);border-radius:4px;color:#7dd3fc;font:inherit;font-size:10.5px;padding:1px 6px;cursor:pointer}
+.gf-edit:hover{border-color:#38bdf8;background:rgba(56,189,248,.08)}
+#git-pane{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+#git-note{margin:8px 10px 0;padding:7px 10px;border-radius:6px;border:1px solid var(--line);font-size:12px;line-height:1.5;overflow-wrap:anywhere;color:var(--dim)}
+#git-note[hidden]{display:none}
+#git-note.bad{color:#fca5a5;border-color:rgba(248,113,113,.35);background:#261616}
+#git-sel{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px;color:#9fb3c8}
+#git-sel[hidden]{display:none}
+#git-sel span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#git-sel button{flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 10px;cursor:pointer}
+#git-sel button:hover{border-color:#3a3a3a;background:#2a2a2a}
+#git-diff{flex:1;min-height:0;overflow:auto;padding:8px}
+.git-patch{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre;color:#c9c9c9}
+.git-patch .pa{color:#4ade80;background:rgba(74,222,128,.08)}
+.git-patch .pd{color:#f87171;background:rgba(248,113,113,.08)}
+.git-patch .ph{color:#7dd3fc}
+#git-comment{flex:none;border-top:1px solid var(--line);padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:6px}
+#git-comment[hidden]{display:none}
+#git-comment-what{font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+#git-comment-text{width:100%;box-sizing:border-box;min-height:72px;resize:vertical;background:#111;border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:13px;line-height:1.5;padding:8px 10px}
+#git-comment-acts{display:flex;justify-content:flex-end;gap:8px}
+#git-comment-acts button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}
+#git-comment-acts button.primary{background:#1d4ed8;border-color:#2563eb;color:#fff}
+#git-comment-acts button.primary:hover{background:#2563eb;border-color:#3b82f6}
+@media (max-width:640px){
+  #git{padding:0}
+  #git-box{border:0;border-radius:0}
+  #git-bar{padding:4px 6px 4px 12px;gap:4px 6px}
+  /* Two rows by intent rather than by shrinking: the name and the way out first, the comparison
+     and its controls under them. The spacer becomes a zero-height full-width item, which is a
+     line break in a wrapping flex row. */
+  #git-title{order:1;flex:1;max-width:none}
+  #git-close{order:2}
+  #git-spacer{display:block;order:3;flex:0 0 100%;height:0;min-width:0}
+  #git-modes{order:4}
+  #git-branch{order:5;max-width:18ch}
+  #git-base{order:6}
+  #git-body{flex-direction:column}
+  #git-files{width:auto;max-height:36%;border-right:0;border-bottom:1px solid var(--line)}
+  #git-close,#git-refresh{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
+  .git-mode{min-height:36px;padding:4px 8px}
+  #git-layout{min-height:36px}
+  .git-file{padding:8px 7px}
+  .gf-edit{min-height:32px}
+  #git-comment-text{font-size:16px}
+}
 /* ── History ──────────────────────────────────────────────────────────────────
    The sidebar's second tab, and the conversation it opens in the transcript's place. Every row
    is a conversation this gateway recorded — not a topic it still has — so it is a list beside the
@@ -6775,6 +6859,9 @@ const SCRIPT = `
     // agent and model, and its buttons name a message that topic holds. Following another topic
     // puts it away rather than leaving it pointing at the one being left.
     closeSettings();
+    // The git window reads the directory of the topic it was opened on; following another topic
+    // puts it away rather than leaving it pointing at the one being left.
+    closeGit();
     // The panel stays where it is: it is part of the workspace, and following a run out of it
     // should leave the list of runs beside the transcript. The one exception is the overlay under
     // 1024px, which covers the chat it just opened — there is nothing to keep it beside there.
@@ -7362,6 +7449,9 @@ const SCRIPT = `
         }
       }
       paintTopics();
+      // A turn just ended — the moment its changes are all on disk. The git window, if it is
+      // open on this topic, re-reads the list; an open diff is left where the reader put it.
+      if(!ev.on && !gitWin.hidden) gitLoadStatus();
     }
     else if(ev.t==='commands'){ commands = ev.commands || []; }
     else if(ev.t==='status'){ setStatus(ev.status); }
@@ -8696,8 +8786,8 @@ const SCRIPT = `
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
     var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !rowMenu.hidden
-      || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !taskPage.hidden;
-    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
+      || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !taskPage.hidden || !gitWin.hidden;
+    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings(); closeGit();
     // Its own confirm when a form holds changes; a refused one leaves everything as it was.
     closeTaskPage(false);
     // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
@@ -8773,6 +8863,387 @@ const SCRIPT = `
   // The dimmed page behind the window is a way out too, as it is for the lightbox — but only the
   // backdrop itself: a click that lands in the document must not close what is being read.
   reader.addEventListener('click', function(e){ if(e.target === reader) closeReader(); });
+
+  // ── The git window ─────────────────────────────────────────────────────────
+  // What changed in the repository the topic's directory sits in, one file's diff, and line
+  // comments that go into the composer (never sent from here). Everything is read through the
+  // daemon — daemon/git-panel.ts runs on the machine the agent runs on — so this half only draws.
+  //
+  // openGitWindow(source) has two callers: the chat header, with no argument, and the turn-change
+  // view, with { title, statusUrl, fileUrl }. The second fixes the two URLs, hides the mode
+  // controls, and appends &path= to fileUrl; the rest of the window is the same code.
+  var gitWin=$('git'), gitTitleEl=$('git-title'), gitBranchEl=$('git-branch'), gitModesEl=$('git-modes'),
+      gitBaseEl=$('git-base'), gitFilesEl=$('git-files'), gitDiffEl=$('git-diff'), gitNoteEl=$('git-note'),
+      gitSelEl=$('git-sel'), gitSelWhat=$('git-sel-what'), gitCommentEl=$('git-comment'),
+      gitCommentWhat=$('git-comment-what'), gitCommentText=$('git-comment-text'),
+      gitLayoutBtn=$('git-layout'), gitRefreshBtn=$('git-refresh'), gitToggleBtn=$('git-toggle'),
+      gitCloseBtn=$('git-close');
+  var gitState = {
+    source:null, mode:'working', base:'', repo:null, files:[], path:'', sel:null,
+    statusSeq:0, fileSeq:0, view:null, kind:'',
+    // A phone opens on one column: a split diff at 390px gives each side five characters of code.
+    layout: (window.innerWidth < 900 ? 'unified' : 'split')
+  };
+
+  function gitCustom(){ return gitState.source; }
+
+  function gitBaseParam(){
+    // The working comparison never uses a base; sending one would only let a stale picker value
+    // reach the daemon's check.
+    return gitState.mode !== 'working' && gitState.base ? '&base='+encodeURIComponent(gitState.base) : '';
+  }
+  function gitStatusUrl(){
+    if(gitCustom()) return gitCustom().statusUrl;
+    return 'api/git/status?t='+encodeURIComponent(topic)+'&mode='+encodeURIComponent(gitState.mode)+gitBaseParam();
+  }
+  function gitFileUrl(path){
+    if(gitCustom()) return gitCustom().fileUrl+'&path='+encodeURIComponent(path);
+    return 'api/git/file?t='+encodeURIComponent(topic)+'&mode='+encodeURIComponent(gitState.mode)+gitBaseParam()
+      +'&path='+encodeURIComponent(path);
+  }
+
+  function gitNote(message, bad){
+    gitNoteEl.hidden = !message;
+    gitNoteEl.className = bad ? 'bad' : '';
+    gitNoteEl.textContent = message || '';
+  }
+
+  function gitDestroyView(){
+    if(gitState.view && typeof gitState.view.destroy === 'function'){
+      try { gitState.view.destroy(); } catch(x){}
+    }
+    gitState.view = null;
+    gitState.kind = '';
+  }
+
+  function gitHideComment(){
+    gitCommentEl.hidden = true;
+    gitCommentText.value = '';
+  }
+
+  function gitClearSelection(){
+    gitState.sel = null;
+    gitSelEl.hidden = true;
+  }
+
+  function gitPaintBase(base){
+    if(gitCustom() || gitState.mode === 'working'){ gitBaseEl.hidden = true; return; }
+    if(base && !gitState.base) gitState.base = base;
+    if(gitState.base) gitBaseEl.value = gitState.base;
+    gitBaseEl.hidden = gitBaseEl.options.length === 0;
+  }
+
+  /** Put the branch list into the picker; the selection stays whatever the status answer says. */
+  function gitLoadBranches(){
+    if(gitCustom()) return;
+    fetch('api/git/branches?t='+encodeURIComponent(topic), {credentials:'same-origin', cache:'no-store'})
+      .then(function(r){ return r.json(); }).then(function(d){
+        if(!d || !d.ok || !d.branches || !d.branches.length) return;
+        gitBaseEl.innerHTML = '';
+        for(var i=0;i<d.branches.length;i++){
+          var o=document.createElement('option');
+          o.value=d.branches[i]; o.textContent=d.branches[i];
+          gitBaseEl.appendChild(o);
+        }
+        gitPaintBase(d.base);
+      }).catch(function(){});
+  }
+
+  function gitFileRow(f){
+    var letter = f.status === 'added' ? 'A' : f.status === 'deleted' ? 'D' : 'M';
+    var stat = f.binary
+      ? '<span class="gf-del">bin</span>'
+      : '<span class="gf-add">+'+f.additions+'</span> <span class="gf-del">\\u2212'+f.deletions+'</span>';
+    // The editor is another branch's window (openFileEditor). Its absence is normal: it is only
+    // offered when the page actually has one, rather than drawn as a button that does nothing.
+    var edit = typeof openFileEditor === 'function'
+      ? '<button type="button" class="gf-edit" data-gedit="'+text(f.path)+'" title="Edit this file">Edit</button>'
+      : '';
+    return '<div class="git-file'+(f.path === gitState.path ? ' on' : '')+'" data-gpath="'+text(f.path)+'"'
+      +' role="button" tabindex="0">'
+      +'<span class="gf-status '+f.status+'">'+letter+'</span>'
+      +'<span class="gf-path" title="'+text(f.path)+'">'+text(f.path)+'</span>'
+      +'<span class="gf-stat">'+stat+'</span>'+edit+'</div>';
+  }
+
+  function gitPaintFiles(){
+    if(!gitState.files.length){
+      gitFilesEl.innerHTML = '<div class="git-empty">No changes.</div>';
+      return;
+    }
+    var html='';
+    for(var i=0;i<gitState.files.length;i++) html += gitFileRow(gitState.files[i]);
+    gitFilesEl.innerHTML = html;
+  }
+
+  function gitLoadStatus(){
+    var mine = ++gitState.statusSeq;
+    gitRefreshBtn.disabled = true;
+    return fetch(gitStatusUrl(), {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      return r.json();
+    }).then(function(d){
+      if(mine !== gitState.statusSeq) return;
+      gitRefreshBtn.disabled = false;
+      if(!d || !d.ok){
+        gitState.repo = null;
+        gitState.files = [];
+        gitFilesEl.innerHTML = '';
+        gitBranchEl.textContent = '';
+        gitNote((d && d.text) || 'Could not read the changes.', true);
+        return;
+      }
+      gitState.repo = d.repo || null;
+      gitState.files = d.files || [];
+      gitBranchEl.textContent = (d.repo && d.repo.branch) || '';
+      gitPaintBase(d.repo && d.repo.base);
+      if(d.truncated){
+        // Not a list with holes in it: the daemon refused to use the tail of a cut-off answer, so
+        // there is no list at all to draw.
+        gitFilesEl.innerHTML = '<div class="git-empty">Too many changes to list.</div>';
+        gitNote('There are too many changes to list. Narrow the comparison, or refresh once some are committed.', true);
+      } else {
+        gitPaintFiles();
+        gitNote('', false);
+      }
+      // The file that was open may have been committed away since the last list. Its old diff
+      // would then be a picture of something that is no longer there.
+      if(gitState.path && !gitState.files.some(function(f){ return f.path === gitState.path; })){
+        gitState.path = '';
+        gitClearSelection();
+        gitHideComment();
+        gitDestroyView();
+        gitDiffEl.innerHTML = '<div class="git-empty">That file is no longer in the changes.</div>';
+      }
+    }).catch(function(){
+      if(mine !== gitState.statusSeq) return;
+      gitRefreshBtn.disabled = false;
+      gitNote('Could not reach the server.', true);
+    });
+  }
+
+  /** The unified diff as coloured text: the fallback when codeView() answers null. */
+  function gitPaintPatch(patch){
+    var lines = String(patch || '').split('\\n'), out='';
+    for(var i=0;i<lines.length;i++){
+      var line = lines[i];
+      var cls = (line.charAt(0) === '+' && line.slice(0,3) !== '+++') ? 'pa'
+        : (line.charAt(0) === '-' && line.slice(0,3) !== '---') ? 'pd'
+        : (line.slice(0,2) === '@@' ? 'ph' : '');
+      out += cls ? '<span class="'+cls+'">'+text(line)+'</span>\\n' : text(line)+'\\n';
+    }
+    return out;
+  }
+
+  function gitSelect(sel){
+    gitState.sel = sel || null;
+    if(!sel){ gitSelEl.hidden = true; return; }
+    var from = Math.min(sel.from, sel.to), to = Math.max(sel.from, sel.to);
+    gitSelWhat.textContent = (sel.side === 'old' ? 'Original' : 'New')
+      +' lines '+from+(to !== from ? '\\u2013'+to : '');
+    gitSelEl.hidden = false;
+    gitHideComment();
+  }
+
+  function gitRenderDiff(d, mine){
+    gitDiffEl.innerHTML = '';
+    codeView().then(function(cv){
+      if(mine !== gitState.fileSeq) return;
+      if(cv && typeof cv.diff === 'function'){
+        gitState.kind = 'code';
+        gitState.view = cv.diff(gitDiffEl, {name:d.path, original:d.original, modified:d.modified,
+          layout:gitState.layout, onSelect:function(sel){ gitSelect(sel); }});
+        gitLayoutBtn.hidden = false;
+        gitLayoutBtn.textContent = gitState.layout === 'split' ? 'Unified' : 'Split';
+      } else {
+        // No code view on this page: the patch is still readable as text, but there is no line
+        // selection, so line comments are not offered (the README says so).
+        gitState.kind = 'text';
+        gitState.view = null;
+        gitDiffEl.innerHTML = d.patch
+          ? '<pre class="git-patch">'+gitPaintPatch(d.patch)+'</pre>'
+          : '<div class="git-empty">No text to show for this change.</div>';
+        gitLayoutBtn.hidden = true;
+      }
+    }, function(){
+      if(mine !== gitState.fileSeq) return;
+      gitState.kind = 'text';
+      gitDiffEl.innerHTML = '<pre class="git-patch">'+gitPaintPatch(d.patch || '')+'</pre>';
+      gitLayoutBtn.hidden = true;
+    });
+  }
+
+  function gitOpenFile(path){
+    gitState.path = path;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitPaintFiles();
+    gitDiffEl.innerHTML = '<div class="git-empty">Loading\\u2026</div>';
+    gitLayoutBtn.hidden = true;
+    var mine = ++gitState.fileSeq;
+    fetch(gitFileUrl(path), {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      return r.json();
+    }).then(function(d){
+      if(mine !== gitState.fileSeq) return;
+      if(!d || !d.ok){
+        gitDiffEl.innerHTML = '<div class="git-empty">'+text((d && d.text) || 'Could not read this file.')+'</div>';
+        return;
+      }
+      if(d.tooLarge){
+        gitDiffEl.innerHTML = '<div class="git-empty">This file is too large to show: one side is over 1 MB.</div>';
+        return;
+      }
+      if(d.binary){
+        gitDiffEl.innerHTML = '<div class="git-empty">Binary file: there is no text diff to show.</div>';
+        return;
+      }
+      gitRenderDiff(d, mine);
+    }).catch(function(){
+      if(mine === gitState.fileSeq) gitDiffEl.innerHTML = '<div class="git-empty">Could not reach the server.</div>';
+    });
+  }
+
+  function gitShowComment(){
+    if(!gitState.sel) return;
+    var from = Math.min(gitState.sel.from, gitState.sel.to), to = Math.max(gitState.sel.from, gitState.sel.to);
+    gitCommentWhat.textContent = gitState.path+':L'+from+(to !== from ? '-L'+to : '');
+    gitCommentEl.hidden = false;
+    gitCommentText.value = '';
+    gitCommentText.focus();
+  }
+
+  /**
+   * One line comment in the shape the agent reads: the file and line range, the selected lines in
+   * a fence, then the person's words. A fence longer than any run of backticks inside the code
+   * keeps the block closed. Multiple comments accumulate, separated by a blank line.
+   */
+  function gitCommentBlock(){
+    var sel = gitState.sel;
+    if(!sel) return '';
+    var from = Math.min(sel.from, sel.to), to = Math.max(sel.from, sel.to);
+    var fence = String.fromCharCode(96,96,96);
+    while(sel.text.indexOf(fence) >= 0) fence += String.fromCharCode(96);
+    return gitState.path+':L'+from+(to !== from ? '-L'+to : '')
+      +'\\n'+fence+'\\n'+String(sel.text).replace(/\\s+$/, '')+'\\n'+fence+'\\n'+gitCommentText.value.trim();
+  }
+
+  /** Put text in the composer without sending it: the person still presses Send. */
+  function gitInsertMessage(s){
+    var cur = input.value.replace(/\\s+$/, '');
+    input.value = (cur ? cur+'\\n\\n' : '')+s;
+    // A programmatic value assignment fires no input event; the composer's own listener is what
+    // grows the box and refreshes the command hints.
+    input.dispatchEvent(new Event('input', {bubbles:true}));
+    input.focus();
+  }
+
+  function gitAddComment(){
+    if(!gitState.sel) return;
+    if(!gitCommentText.value.trim()){ gitCommentText.focus(); return; }
+    gitInsertMessage(gitCommentBlock());
+    gitHideComment();
+    gitClearSelection();
+    gitNote('Added to the message.', false);
+  }
+
+  function gitSetLayout(){
+    gitState.layout = gitState.layout === 'split' ? 'unified' : 'split';
+    gitLayoutBtn.textContent = gitState.layout === 'split' ? 'Unified' : 'Split';
+    if(gitState.view && typeof gitState.view.setLayout === 'function') gitState.view.setLayout(gitState.layout);
+  }
+
+  function openGitWindow(source){
+    gitState.source = source || null;
+    gitState.mode = 'working';
+    gitState.base = '';
+    gitState.repo = null;
+    gitState.files = [];
+    gitState.path = '';
+    gitState.statusSeq += 1;
+    gitState.fileSeq += 1;
+    gitDestroyView();
+    gitHideComment();
+    gitClearSelection();
+    gitNote('', false);
+    gitModesEl.hidden = !!gitCustom();
+    gitBaseEl.hidden = true;
+    gitBaseEl.innerHTML = '';
+    gitTitleEl.textContent = gitCustom() ? (gitCustom().title || 'Changes') : 'Changes';
+    gitBranchEl.textContent = '';
+    gitFilesEl.innerHTML = '<div class="git-empty">Loading\\u2026</div>';
+    gitDiffEl.innerHTML = '';
+    gitLayoutBtn.hidden = true;
+    var modes = gitModesEl.querySelectorAll('[data-gm]');
+    for(var i=0;i<modes.length;i++) modes[i].classList.toggle('on', modes[i].getAttribute('data-gm') === 'working');
+    gitWin.hidden = false;
+    if(!gitCustom()) gitLoadBranches();
+    gitLoadStatus();
+    gitCloseBtn.focus();
+  }
+  // The turn-change view (another part of this page) opens this window with its own two URLs.
+  window.openGitWindow = openGitWindow;
+
+  function closeGit(){
+    if(!gitWin || gitWin.hidden) return;
+    gitWin.hidden = true;
+    gitState.statusSeq += 1;
+    gitState.fileSeq += 1;
+    gitDestroyView();
+    gitHideComment();
+    gitClearSelection();
+    gitDiffEl.textContent = '';
+    gitFilesEl.textContent = '';
+    gitState.files = [];
+    gitState.path = '';
+  }
+
+  gitToggleBtn.addEventListener('click', function(){ setMenu(null, false); openGitWindow(); });
+  gitCloseBtn.addEventListener('click', closeGit);
+  gitWin.addEventListener('click', function(e){ if(e.target === gitWin) closeGit(); });
+  gitRefreshBtn.addEventListener('click', function(){ gitLoadStatus(); });
+  gitLayoutBtn.addEventListener('click', gitSetLayout);
+  gitBaseEl.addEventListener('change', function(){
+    gitState.base = gitBaseEl.value || '';
+    gitState.path = '';
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitDiffEl.innerHTML = '';
+    gitLoadStatus();
+  });
+  gitModesEl.addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('[data-gm]') : null;
+    if(!btn) return;
+    var mode = btn.getAttribute('data-gm');
+    if(mode === gitState.mode) return;
+    gitState.mode = mode;
+    gitState.path = '';
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitDiffEl.innerHTML = '';
+    gitBaseEl.hidden = mode === 'working' || !!gitCustom();
+    var all = gitModesEl.querySelectorAll('[data-gm]');
+    for(var i=0;i<all.length;i++) all[i].classList.toggle('on', all[i].getAttribute('data-gm') === mode);
+    gitLoadStatus();
+  });
+  gitFilesEl.addEventListener('click', function(e){
+    var edit = e.target.closest ? e.target.closest('[data-gedit]') : null;
+    if(edit){
+      if(typeof openFileEditor === 'function') openFileEditor(edit.getAttribute('data-gedit'));
+      return;
+    }
+    var row = e.target.closest ? e.target.closest('[data-gpath]') : null;
+    if(row) gitOpenFile(row.getAttribute('data-gpath'));
+  });
+  gitFilesEl.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    var row = e.target.closest ? e.target.closest('[data-gpath]') : null;
+    if(row){ e.preventDefault(); gitOpenFile(row.getAttribute('data-gpath')); }
+  });
+  $('git-comment-open').addEventListener('click', gitShowComment);
+  $('git-comment-add').addEventListener('click', gitAddComment);
+  $('git-comment-cancel').addEventListener('click', function(){ gitHideComment(); });
 
   // ── The skills page ────────────────────────────────────────────────────────
   // The gateway's managed skills (daemon/skills-store.ts), the same records the "fleetherd skills"
@@ -10903,6 +11374,45 @@ __GATE__
       <div id="settings-body"></div>
     </div>
   </div>
+  <!-- The repository the topic's directory sits in, as a window over the transcript. Three
+       comparisons (working tree, branch, committed), a file list, one file's diff, and line
+       comments that go into the composer — never sent from here. The same window is used by the
+       turn-changes view through openGitWindow(source), which fixes its two URLs and hides the
+       comparison controls. -->
+  <div id="git" hidden role="dialog" aria-modal="true" aria-labelledby="git-title">
+    <div id="git-box">
+      <div id="git-bar">
+        <span id="git-title">Changes</span>
+        <span id="git-branch"></span>
+        <div id="git-modes" role="tablist" aria-label="Compare">
+          <button type="button" class="git-mode on" data-gm="working">Working</button>
+          <button type="button" class="git-mode" data-gm="branch">Branch</button>
+          <button type="button" class="git-mode" data-gm="committed">Committed</button>
+        </div>
+        <select id="git-base" title="Compare against this branch" aria-label="Compare against this branch" hidden></select>
+        <span id="git-spacer"></span>
+        <button type="button" id="git-layout" title="Switch between one column and two" hidden>Split</button>
+        <button type="button" class="btn-icon" id="git-refresh" title="Refresh changes" aria-label="Refresh changes">${icon('refresh')}</button>
+        <button type="button" class="btn-icon" id="git-close" title="Close (Esc)" aria-label="Close">&times;</button>
+      </div>
+      <div id="git-body">
+        <div id="git-files"></div>
+        <div id="git-pane">
+          <div id="git-note" hidden role="status"></div>
+          <div id="git-sel" hidden><span id="git-sel-what"></span><button type="button" id="git-comment-open">Comment</button></div>
+          <div id="git-diff"></div>
+          <div id="git-comment" hidden>
+            <div id="git-comment-what"></div>
+            <textarea id="git-comment-text" placeholder="What about these lines?" aria-label="Comment"></textarea>
+            <div id="git-comment-acts">
+              <button type="button" id="git-comment-cancel">Cancel</button>
+              <button type="button" class="primary" id="git-comment-add">Add to message</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- A list row's menu, opened by its ⋯. One box for every list on the page — topic rows,
        scheduled runs, scheduled tasks — filled by openRowMenu. At the body, not inside a list:
        every one of them is rebuilt with innerHTML on a poll or on a streaming reply, and a menu
@@ -10947,6 +11457,9 @@ __GATE__
            where scheduled tasks are managed. A clock rather than an emoji for the same reason
            the power button is an SVG — it has to sit on the header's text baseline. -->
       <button type="button" class="btn-icon" id="schedules-toggle" aria-expanded="false" aria-controls="schedules" title="Side tasks" aria-label="Side tasks"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="sched-alert" id="sched-alert" hidden></span></button>
+      <!-- The repository the topic's directory sits in: what changed, and one file's diff. Read
+           only — committing stays in the conversation, where the agent can be asked what it meant. -->
+      <button type="button" class="btn-icon" id="git-toggle" title="Changes in this directory" aria-label="Changes">${icon('git')}</button>
     </div>
     <div id="log"></div>
     <!-- A conversation from the History tab, in the transcript's place (openLib). Its own element

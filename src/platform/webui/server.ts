@@ -56,6 +56,8 @@ import {
   DeleteTopicRequestSchema,
   EndTerminalRequestSchema,
   FramedSendHeaderSchema,
+  GitFileQuerySchema,
+  GitStatusQuerySchema,
   LoginRequestSchema,
   MAX_BODY_BYTES,
   SendRequestSchema,
@@ -417,6 +419,13 @@ const GUARDED: Route[] = [
   { method: 'GET', path: '/api/reviews', run: reviewsList },
   // Dismissing a preference suggestion — the Reviews tab's only write, to reviews.json alone.
   { method: 'POST', path: '/api/reviews/op', run: reviewsOp },
+  // The git window: the change list for one comparison, one file's two sides and patch, and the
+  // branches a base may name. Read-only — there is no stage, commit or discard route here, and
+  // nothing in `daemon/git-panel.ts` writes to a repository. All three take `?t=` and run on the
+  // machine the topic's agent runs on.
+  { method: 'GET', path: '/api/git/status', run: gitStatusView },
+  { method: 'GET', path: '/api/git/file', run: gitFileView },
+  { method: 'GET', path: '/api/git/branches', run: gitBranchesView },
   // The history page: every conversation in the library, a keyword search over them, and one
   // opened whole. Read-only, and the same store `fleetherd sessions` reads. Every parameter is in
   // the query string rather than a body, so the checks are here — there is no schema to hold them.
@@ -1068,6 +1077,44 @@ async function reviewsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   if (!parsed) return;
   const result = ctx.room.reviewOp(parsed);
   send(req, res, result.ok ? 200 : 400, result.ok ? result.list : { error: result.error });
+}
+
+/**
+ * The git window's change list. 200 even for "not a git repository" and for a comparison git
+ * could not make: those are answers with a sentence, like the model list's "no models", not a
+ * failure of the request. Only a malformed query is a 400.
+ */
+async function gitStatusView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const base = url.searchParams.get('base');
+  const parsed = parseBody(GitStatusQuerySchema, {
+    mode: url.searchParams.get('mode') ?? '',
+    ...(base ? { base } : {}),
+  });
+  if (!parsed.ok) return send(req, res, 400, { error: parsed.error });
+  send(req, res, 200, await ctx.room.gitStatus(topic, parsed.value.mode, parsed.value.base));
+}
+
+/** One file's two sides and patch, for the diff. The path is checked again in git-panel.ts. */
+async function gitFileView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const base = url.searchParams.get('base');
+  const parsed = parseBody(GitFileQuerySchema, {
+    mode: url.searchParams.get('mode') ?? '',
+    ...(base ? { base } : {}),
+    path: url.searchParams.get('path') ?? '',
+  });
+  if (!parsed.ok) return send(req, res, 400, { error: parsed.error });
+  send(req, res, 200, await ctx.room.gitFile(topic, parsed.value.mode, parsed.value.base, parsed.value.path));
+}
+
+/** The branches a base may name, for the git window's picker. */
+async function gitBranchesView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  send(req, res, 200, await ctx.room.gitBranches(topic));
 }
 
 /** How many conversations one page may carry. The store's own ceiling; a page asks for 50. */
