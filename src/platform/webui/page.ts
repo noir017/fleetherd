@@ -1209,6 +1209,14 @@ button:disabled{opacity:.5;cursor:default}
 .chip-x{background:none;border:0;padding:0 7px;font-size:15px;line-height:1;color:var(--dim)}
 .chip-x:hover{color:var(--fg)}
 .files{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px}
+/* What a turn changed, under its reply (the daemon's turn-changes): a quiet footnote rather than
+   a control in the flow of the answer, and one line even on a phone — the counts are what is read
+   at a glance, the file count is what says how much. */
+.tc{margin-top:8px}
+.tc button{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 8px;font:inherit;font-size:12px;color:var(--dim);background:none;border:1px solid var(--line);border-radius:3px;cursor:pointer}
+.tc button:hover{color:var(--fg);border-color:var(--dim)}
+.tc .add{color:#4ade80}
+.tc .del{color:#f87171}
 /* A picture the agent sent, drawn in the bubble. Capped in both directions: a screenshot of a
    4K display would otherwise push the timestamp and everything after it off the fold, and the
    point of showing it here is to recognise it, not to read it — that is what tapping is for. */
@@ -4500,6 +4508,12 @@ const SCRIPT = `
       if(m.file.view && !hist) h += '<a class="view" href="'+text(m.file.url)+'" download>Download</a>';
       h += '</div>';
     }
+    // What the turn changed, when the daemon recorded it. Not gated on a message being history:
+    // the records outlive the run that took the snapshots, so the entry still opens its window for
+    // a reply restored from a previous run. (A message from the History tab never carries one —
+    // that transcript has no turn records behind it.) Nothing is drawn unless the page has a
+    // window to open (see turnChangeRow).
+    if(m.turnChanges) h += turnChangeRow(m);
     // Buttons are dropped from a message that came out of the cache: the process that would
     // answer them is gone, and the id they name now means a different message or nothing at
     // all. A control that cannot act is worse than no control.
@@ -4508,6 +4522,47 @@ const SCRIPT = `
     var meta = text(clock(m.at)) + (m.reactions && m.reactions.length ? '  '+m.reactions.map(reactionMark).join(' ') : '');
     h += '<div class="t">'+meta+(folded ? allToggle(key) : '')+'</div>';
     return { cls: cls, h: h };
+  }
+
+  /**
+   * What one turn changed, under the reply it ended: "3 files changed +12 -4", and a tap opens the
+   * git panel's window on it.
+   *
+   * Nothing is drawn when the page has no such window (window.openGitWindow, which the git panel
+   * provides): an entry that opens nothing is worse than no entry, and a page served by a daemon
+   * built without that panel must not show a dead control. The check is at draw time rather than at
+   * click time for exactly that reason.
+   *
+   * The entry itself is part of the message (WebMessage.turnChanges), so a reload, a reconnect and
+   * a restart all bring it back with the transcript it belongs to.
+   */
+  function turnChangeRow(m){
+    if(typeof window.openGitWindow !== 'function') return '';
+    var c = m.turnChanges;
+    var files = c.files === 1 ? '1 file changed' : c.files + ' files changed';
+    return '<div class="tc"><button type="button" data-turns="'+text(String(c.turn))+'">'
+      + IC.icon.diff
+      + '<span>' + text(files) + '</span>'
+      + '<span class="add">+' + text(String(c.additions)) + '</span>'
+      + '<span class="del">-' + text(String(c.deletions) + (c.truncated ? '+' : '')) + '</span>'
+      + '</button></div>';
+  }
+
+  /**
+   * Open the git panel's window on one turn's changes.
+   *
+   * The two URLs answer the JSON shapes turnChangesStatusForRef / turnChangesFileForRef build;
+   * fileUrl is the prefix the window appends a URL-encoded repository-relative path to, which is
+   * why it ends at a bare "path=". The topic is the page's own — a transcript row is always in it.
+   */
+  function openTurnChanges(turn){
+    if(typeof window.openGitWindow !== 'function' || !turn) return;
+    var q = '?t=' + encodeURIComponent(topic) + '&turn=' + encodeURIComponent(String(turn));
+    window.openGitWindow({
+      title: 'Turn ' + turn + ' changes',
+      statusUrl: 'api/turn-changes/status' + q,
+      fileUrl: 'api/turn-changes/file' + q + '&path=',
+    });
   }
 
   /**
@@ -8234,6 +8289,10 @@ const SCRIPT = `
     if(all) return toggleAll(all.getAttribute('data-tl-all'));
     var line = e.target.closest ? e.target.closest('.tl') : null;
     if(line) return toggleLine(line);
+    // The entry under a reply opens what that turn changed, in the git panel's window. Answered
+    // here and never posted: opening a diff says nothing to the daemon.
+    var turns = e.target.closest ? e.target.closest('button[data-turns]') : null;
+    if(turns) return openTurnChanges(Number(turns.getAttribute('data-turns')));
     var b = e.target.closest ? e.target.closest('button[data-btn]') : null;
     if(!b) return;
     postButton(b, topic);

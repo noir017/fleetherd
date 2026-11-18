@@ -2094,6 +2094,14 @@ export class Daemon {
       list: (ref) => this.registry.modelPickerForRef(ref),
       choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
     });
+    /**
+     * A turn's changed files: the list the change entry opens, and one file out of the two trees.
+     * Read-only, and the same records the turn wrote — see TurnChanges.
+     */
+    adapter.useTurnChanges?.({
+      status: (ref, turn) => this.registry.turnChangesStatusForRef(ref, turn),
+      file: (ref, turn, path) => this.registry.turnChangesFileForRef(ref, turn, path),
+    });
   }
 
   /**

@@ -2633,3 +2633,65 @@ describe('WebRoom: a conversation from the library, drawn as a topic', () => {
     expect('note' in room.historyRead(1)).toBe(false);
   });
 });
+
+describe('room: a turn’s changes', () => {
+  it('hangs the entry off the last message and tells the page', () => {
+    const { room, topic, seen } = attached();
+    const posted = room.post(topic, { own: false, html: 'done' }, 'done');
+    seen.length = 0;
+    room.attachTurnChanges(topic, { turn: 3, files: 2, additions: 12, deletions: 4 });
+    const ev = lastOf(seen, 'msg');
+    expect(ev && ev.t === 'msg' ? ev.msg.id : undefined).toBe(posted.id);
+    expect(ev && ev.t === 'msg' ? ev.msg.turnChanges : undefined).toEqual({ turn: 3, files: 2, additions: 12, deletions: 4 });
+    // The entry is part of the message, so a topic read back from disk carries it.
+    expect(seen.filter((s) => s.ev.t === 'msg')).toHaveLength(1);
+  });
+
+  it('leaves a message that already carries one, and an operator’s own message, alone', () => {
+    const { room, topic, seen } = attached();
+    room.post(topic, { own: true, html: 'mine' }, 'mine');
+    room.attachTurnChanges(topic, { turn: 1, files: 1, additions: 1, deletions: 0 });
+    expect(seen.filter((s) => s.ev.t === 'msg' && s.ev.msg.turnChanges)).toHaveLength(0);
+
+    room.post(topic, { own: false, html: 'reply' }, 'reply');
+    room.attachTurnChanges(topic, { turn: 1, files: 1, additions: 1, deletions: 0 });
+    seen.length = 0;
+    room.attachTurnChanges(topic, { turn: 2, files: 9, additions: 90, deletions: 9 });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('reads a turn through the panel it was given', async () => {
+    const { room, topic } = attached();
+    const asked: Array<[string, number, string | undefined]> = [];
+    room.useTurnChanges({
+      status: async (ref, turn) => {
+        asked.push(['status', turn, ref.thread]);
+        return { ok: true, repo: { root: '/r' }, files: [{ path: 'a', status: 'added', additions: 1, deletions: 0 }] };
+      },
+      file: async (ref, turn, path) => {
+        asked.push(['file', turn, `${ref.thread}:${path}`]);
+        return { ok: true, path, status: 'added', original: '', modified: 'x', patch: '+x' };
+      },
+    });
+    const status = await room.turnChangesStatus(topic, 2);
+    expect(status.ok && status.repo.root).toBe('/r');
+    const file = await room.turnChangesFile(topic, 2, 'a');
+    expect(file.ok && file.patch).toBe('+x');
+    expect(asked).toEqual([
+      ['status', 2, topic],
+      ['file', 2, `${topic}:a`],
+    ]);
+  });
+
+  it('refuses without a panel, and for a topic it does not have', async () => {
+    const { room, topic } = attached();
+    expect(await room.turnChangesStatus(topic, 1)).toMatchObject({ ok: false, reason: 'error' });
+    expect(await room.turnChangesFile(topic, 1, 'a')).toMatchObject({ ok: false });
+    room.useTurnChanges({
+      status: async () => ({ ok: false, reason: 'not-git', text: 'nope' }),
+      file: async () => ({ ok: false, text: 'nope' }),
+    });
+    expect(await room.turnChangesStatus('ffffffff', 1)).toMatchObject({ ok: false });
+    expect(await room.turnChangesFile('ffffffff', 1, 'a')).toMatchObject({ ok: false });
+  });
+});

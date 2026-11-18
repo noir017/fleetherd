@@ -141,6 +141,77 @@ export interface ModelPicker {
   choose(ref: ConversationRef, value: string): Promise<ModelPickerResult>;
 }
 
+/**
+ * One file a turn changed, as `git diff --numstat` counts it — the shape both workspace windows
+ * read (the git panel's status list and a turn's change list), so neither invents its own.
+ *
+ * `path` is always relative to the repository root. `binary` means the two sides are not text:
+ * `additions`/`deletions` are 0 because git counts no lines for it.
+ */
+export interface TurnChangeFile {
+  path: string;
+  status: 'added' | 'deleted' | 'modified';
+  additions: number;
+  deletions: number;
+  binary?: true;
+}
+
+/** Where a turn's two trees are from, for a window's header. `base` is the tree it started at. */
+export interface TurnChangeRepo {
+  root: string;
+  branch?: string;
+  base?: string;
+}
+
+/** One turn's change list, or why there is none. */
+export type TurnChangeStatusResult =
+  | { ok: true; repo: TurnChangeRepo; files: TurnChangeFile[]; truncated?: true }
+  | { ok: false; reason: 'not-git' | 'error'; text: string };
+
+/**
+ * One changed file of one turn, read out of the two trees.
+ *
+ * `original` and `modified` are the whole file on each side (empty for a side that does not have
+ * it), which is what a code view's diff takes; `patch` is the file's unified diff, the plain-text
+ * way out when no code view is available. For a binary or oversized file all three are empty and
+ * the flag says which.
+ */
+export type TurnChangeFileResult =
+  | {
+      ok: true;
+      path: string;
+      status: 'added' | 'deleted' | 'modified';
+      original: string;
+      modified: string;
+      patch: string;
+      binary?: true;
+      tooLarge?: true;
+    }
+  | { ok: false; text: string };
+
+/**
+ * The entry a finished turn hangs off its reply: how many files, and the line counts. The page
+ * draws one line for it and opens `openGitWindow` on the turn's two routes; a message that came
+ * out of the transcript cache carries it too, so it survives a reload and a reconnect.
+ */
+export interface TurnChangeEntry {
+  turn: number;
+  files: number;
+  additions: number;
+  deletions: number;
+  truncated?: true;
+}
+
+/**
+ * What `useTurnChanges` hands a platform: one turn's change list and one changed file. Read only,
+ * and the same snapshot pair the entry was counted from.
+ */
+export interface TurnChangesPanel {
+  status(ref: ConversationRef, turn: number): Promise<TurnChangeStatusResult>;
+  /** `path` must be one of the turn's changed files; anything else is refused. */
+  file(ref: ConversationRef, turn: number, path: string): Promise<TurnChangeFileResult>;
+}
+
 /** What `useSchedulePanel` hands a platform: the list, and the operations on one task. */
 export interface SchedulePanel {
   list(): SchedulePanelTask[];
@@ -832,6 +903,23 @@ export interface PlatformAdapter {
    * are: a chat app has `/model` and its menu, and nowhere persistent to put a control.
    */
   useModelPicker?(picker: ModelPicker): void;
+
+  /**
+   * Hand the platform one turn's change list and one changed file — what the page's change entry
+   * opens. Optional and web-UI-only for the reason the seams above are: a chat app has no window
+   * to show a diff in, and its reply has no room for a control that opens one.
+   */
+  useTurnChanges?(panel: TurnChangesPanel): void;
+
+  /**
+   * Hang a finished turn's change summary off the reply it ends. Called by the daemon after the
+   * turn, so the page can draw the entry under it — and, because the message keeps it, after a
+   * reload and a reconnect as well.
+   *
+   * Its presence is also the daemon's answer to "does this platform show turn changes at all":
+   * the snapshots are only taken where something can show them.
+   */
+  attachTurnChanges?(address: ConversationAddress, entry: TurnChangeEntry): void;
 
   /**
    * Show the agent's live status for the conversation at an address — model, context, cost, cache

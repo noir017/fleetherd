@@ -87,6 +87,10 @@ import type {
   SkillPanelResult,
   SkillsPanel,
   SkillPanelSearches,
+  TurnChangeEntry,
+  TurnChangeFileResult,
+  TurnChangesPanel,
+  TurnChangeStatusResult,
 } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -465,6 +469,8 @@ export class WebRoom {
   private schedulePanel: SchedulePanel | null = null;
   /** The model switch for a topic's conversation — see `useModelPicker`. */
   private modelPicker: ModelPicker | null = null;
+  /** A turn's changed files, for the transcript's change entry — see `useTurnChanges`. */
+  private turnChangesPanel: TurnChangesPanel | null = null;
   /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
   private skillsPanel: SkillsPanel | null = null;
   /** The automatic reviews the daemon recorded — see `useReviewPanel`. */
@@ -815,6 +821,51 @@ export class WebRoom {
     if (!this.modelPicker) return { ok: false, text: 'This daemon offers no model switch.' };
     if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
     return this.modelPicker.choose(this.conversation(topic), value);
+  }
+
+  /**
+   * Accept the daemon's turn changes: one turn's changed files, and one of them read whole.
+   * The records themselves are written by the turn (daemon/turn-changes.ts), not here — this is
+   * the read side the page's window calls.
+   */
+  useTurnChanges(panel: TurnChangesPanel): void {
+    this.turnChangesPanel = panel;
+  }
+
+  /** One turn's changed files, for the window the change entry opens. */
+  async turnChangesStatus(topic: string, turn: number): Promise<TurnChangeStatusResult> {
+    if (!this.turnChangesPanel) return { ok: false, reason: 'error', text: 'This daemon records no turn changes.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'error', text: 'No such topic.' };
+    return this.turnChangesPanel.status(this.conversation(topic), turn);
+  }
+
+  /** One changed file of one turn: both sides and its unified diff. */
+  async turnChangesFile(topic: string, turn: number, rel: string): Promise<TurnChangeFileResult> {
+    if (!this.turnChangesPanel) return { ok: false, text: 'This daemon records no turn changes.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.turnChangesPanel.file(this.conversation(topic), turn, rel);
+  }
+
+  /**
+   * Hang a finished turn's change summary off the reply it ended — the last message in the topic
+   * that is the agent's, not the operator's.
+   *
+   * The page draws one line under it and opens the diff window from there, and because the entry
+   * is part of the message the transcript store keeps, it is still there after a reload, a
+   * reconnect and a restart. A turn that posted nothing (an agent that answered with no visible
+   * output) has no reply to hang it off, so the last message's own entry is left alone rather than
+   * being overwritten by a turn that is not its own.
+   */
+  attachTurnChanges(topicId: string, entry: TurnChangeEntry): void {
+    if (!this.topics.has(topicId)) return;
+    const room = this.rooms.get(topicId);
+    if (!room) return;
+    let last: Stored | undefined;
+    for (const s of room.stored.values()) last = s;
+    if (!last || last.msg.own || last.msg.turnChanges) return;
+    last.msg = { ...last.msg, turnChanges: entry };
+    this.emit(topicId, { t: 'msg', msg: last.msg });
+    this.keep(topicId);
   }
 
   /** Every task, for the panel. `enabled: false` when the daemon offered none (a test daemon). */

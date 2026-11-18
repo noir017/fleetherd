@@ -54,7 +54,14 @@ import type {
   InboundMessage,
   MessageRef,
 } from '../types.js';
-import type { ConversationWorkdir, ModelPickerList, ModelPickerResult, PlatformAdapter } from '../platform/adapter.js';
+import type {
+  ConversationWorkdir,
+  ModelPickerList,
+  ModelPickerResult,
+  PlatformAdapter,
+  TurnChangeFileResult,
+  TurnChangeStatusResult,
+} from '../platform/adapter.js';
 import { SideQuestionRefused, type AgentFactory, type AgentSession, type AgentUsage } from './agent.js';
 import type { EffortSelector, ModelSelector, ToolEvent, TopicActivity } from '../types.js';
 import {
@@ -140,6 +147,7 @@ import {
 } from './claude-transcript.js';
 import { remoteHosts } from './remote-hosts.js';
 import { workspaceFor, type Workspace } from './workspace.js';
+import { TurnChanges } from './turn-changes.js';
 import type { ConversationStore } from './conversation-store.js';
 import { buildChannelList } from '../core/channel-list.js';
 import type { ListChannelsResult } from '../ipc/protocol.js';
@@ -519,6 +527,14 @@ export class ConversationRegistry {
   /** Single-turn orchestrator; buildMerger's runTurn delegates to it (see class doc). */
   private readonly turnRunner: TurnRunner;
   /**
+   * What each turn changed in its workspace (turn-changes.ts): the snapshots taken around a web UI
+   * turn, the records they leave behind, and the two reads the page's diff window makes.
+   *
+   * Built here rather than in `daemon.ts` because both sides of it are the registry's — the turn
+   * (through `workspaceForRef`) and the panel the page reads. Its file is under `configDir()`.
+   */
+  private readonly turnChanges: TurnChanges;
+  /**
    * Each conversation's live agent status, for a platform that shows one (the web UI's status
    * strip). Fed by the same reports as `lastUsage`, from the same TurnRunner deps — see
    * status-board.ts for why it is its own object.
@@ -803,6 +819,7 @@ export class ConversationRegistry {
     // rather than passing the whole registry and creating a circular dependency.
     this.progress = new TurnProgressBoard(this.clock);
     this.modelCatalog = this.makeModelCatalog();
+    this.turnChanges = this.makeTurnChanges();
     this.status = new StatusBoard({
       laneOf: (id) => this.laneOf(id),
       platforms: this.platforms,
@@ -865,6 +882,10 @@ export class ConversationRegistry {
         recordHistory: (id, event) => this.recordHistory(id, event),
         beginHistoryTurn: (id, start) => this.beginHistoryTurn(id, start),
         endHistoryTurn: (turnId, end) => this.endHistoryTurn(turnId, end),
+        // Around the prompt, and only where a page can show the answer: `start` itself refuses a
+        // platform with no `attachTurnChanges`, so every chat platform skips it for free.
+        turnChangesStart: (id, ref, platform, address) => this.turnChanges.start(id, ref, platform, address),
+        turnChangesEnd: (handle) => this.turnChanges.finish(handle),
       },
       this.hooks
     );
@@ -2290,6 +2311,20 @@ export class ConversationRegistry {
     };
   }
 
+  /**
+   * The turn-change records (turn-changes.ts), over this registry's own workspaces. A factory
+   * rather than four lines in the constructor, which is at its line budget: the workspace lookup
+   * is lazy because the service is built before the turn runner that calls it, not before this
+   * object exists.
+   */
+  private makeTurnChanges(): TurnChanges {
+    return new TurnChanges({
+      dir: configDir(),
+      clock: this.clock,
+      workspaceFor: (ref) => this.workspaceForRef(ref),
+    });
+  }
+
   /** The catalog of every agent's model list (model-catalog.ts), over this registry's sessions. */
   private makeModelCatalog(): ModelCatalog {
     return new ModelCatalog({
@@ -3423,6 +3458,20 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const id = this.idForRef(ref);
     const def = findAgent(this.config, this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId));
     return def ? workspaceFor(def, resolveConversationCwd(def, id, this.store)) : undefined;
+  }
+
+  /**
+   * One turn's changed files, and one of those files read out of the turn's two trees — the two
+   * reads behind the web UI's change entry (`TurnChanges`) and the only way the page reaches them.
+   * The turn's records are per conversation, so the ref is resolved to one the same way every
+   * other panel does; the trees themselves are on that conversation's machine.
+   */
+  turnChangesStatusForRef(ref: ConversationRef, turn: number): Promise<TurnChangeStatusResult> {
+    return this.turnChanges.status(this.idForRef(ref), ref, turn);
+  }
+
+  turnChangesFileForRef(ref: ConversationRef, turn: number, path: string): Promise<TurnChangeFileResult> {
+    return this.turnChanges.file(this.idForRef(ref), ref, turn, path);
   }
 
   /**

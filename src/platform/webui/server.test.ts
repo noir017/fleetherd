@@ -2530,3 +2530,79 @@ describe('webui server: notifications and what the operator has seen', () => {
     expect(room.topicList().find((t) => t.id === child.id)?.parent).toBeUndefined();
   });
 });
+
+describe('WebServer: a turn’s changes', () => {
+  const status = {
+    ok: true as const,
+    repo: { root: '/work/app', branch: 'main', base: 'abc' },
+    files: [{ path: 'src/a.ts', status: 'modified' as const, additions: 3, deletions: 1 }],
+  };
+  const file = {
+    ok: true as const,
+    path: 'src/a.ts',
+    status: 'modified' as const,
+    original: 'a\n',
+    modified: 'b\n',
+    patch: '-a\n+b\n',
+  };
+
+  it('answers one turn’s file list and one of its files, both read through the room', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const asked: string[] = [];
+    room.useTurnChanges({
+      status: async (ref, turn) => {
+        asked.push(`status ${ref.thread} ${turn}`);
+        return status;
+      },
+      file: async (ref, turn, path) => {
+        asked.push(`file ${ref.thread} ${turn} ${path}`);
+        return file;
+      },
+    });
+
+    const list = await fetch(`${base}/api/turn-changes/status?t=${topic}&turn=2`, { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual(status);
+
+    const one = await fetch(`${base}/api/turn-changes/file?t=${topic}&turn=2&path=${encodeURIComponent('src/a.ts')}`, {
+      headers: { cookie },
+    });
+    expect(one.status).toBe(200);
+    expect(await one.json()).toEqual(file);
+    expect(asked).toEqual([`status ${topic} 2`, `file ${topic} 2 src/a.ts`]);
+  });
+
+  it('answers a record it does not have with the failure shape, and refuses a malformed query', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    room.useTurnChanges({
+      status: async () => ({ ok: false, reason: 'error', text: 'no changes were recorded for turn 9' }),
+      file: async () => ({ ok: false, text: 'src/a.ts did not change in that turn' }),
+    });
+
+    const missing = await fetch(`${base}/api/turn-changes/status?t=${topic}&turn=9`, { headers: { cookie } });
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toMatchObject({ ok: false, reason: 'error' });
+
+    const noFile = await fetch(`${base}/api/turn-changes/file?t=${topic}&turn=9&path=nope`, { headers: { cookie } });
+    expect(noFile.status).toBe(404);
+
+    for (const path of [
+      '/api/turn-changes/status',
+      `/api/turn-changes/status?t=${topic}`,
+      '/api/turn-changes/status?t=zzzz&turn=1',
+      `/api/turn-changes/status?t=${topic}&turn=0`,
+      `/api/turn-changes/file?t=${topic}&turn=1`,
+    ]) {
+      expect((await fetch(`${base}${path}`, { headers: { cookie } })).status, path).toBe(400);
+    }
+  });
+
+  it('is behind the session like every other route', async () => {
+    const { base, topic } = await boot();
+    for (const path of ['/api/turn-changes/status?t=' + topic + '&turn=1', '/api/turn-changes/file?t=' + topic + '&turn=1&path=a']) {
+      expect((await fetch(`${base}${path}`)).status, path).toBe(401);
+    }
+  });
+});

@@ -16,7 +16,7 @@
  */
 import { z } from 'zod';
 
-import type { ButtonSpec, MessageKind } from '../adapter.js';
+import type { ButtonSpec, MessageKind, TurnChangeEntry } from '../adapter.js';
 import type { AgentCatalog, AgentStatus, OfflineMachine, SettingsScreen, SlashCommandSpec } from '../../types.js';
 import { MAX_TOPICS, type Topic } from './topics.js';
 
@@ -564,6 +564,16 @@ export interface WebMessage {
    * folded lines of a tool bubble.
    */
   kind?: MessageKind;
+  /**
+   * What this turn changed in the workspace (`daemon/turn-changes.ts`): how many files, and the
+   * line counts. Set on the last message of a finished turn, by `WebRoom.attachTurnChanges`.
+   *
+   * Part of the message rather than a separate event on purpose: the transcript store and the
+   * browser's cache keep the whole message, so the entry is still under the reply after a reload,
+   * a reconnect or a daemon restart — and it is drawn only while the page has somewhere to open
+   * the diff (`window.openGitWindow`), which is what keeps it off a page without that panel.
+   */
+  turnChanges?: TurnChangeEntry;
   /**
    * The run of the daemon this message was said in (that run's sync `epoch`), set only on a message
    * kept on disk from an EARLIER run — a topic's transcript, restored at startup.
