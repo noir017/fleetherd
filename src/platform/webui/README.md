@@ -744,11 +744,32 @@ list did not name cannot be read even if a request invents one. Git runs with
 `GIT_OPTIONAL_LOCKS=0` (an agent is usually working in the repository at the same moment, and
 `git status` must not take the index lock to refresh it) and `LC_ALL=C`.
 
+**The listing a file open reuses.** A status answer hands the panel everything the comparison
+resolved — the repository root, the branch list, the merge base, the changed paths and their stats —
+and `buildGitPanel` keeps it for 15 seconds. Opening a file in that window is then only its two
+sides and its patch; without the reuse every file click re-ran the whole comparison, which on a
+remote host is a round trip per command and one numstat per untracked file. A refresh, a mode change
+or a base change calls `status` again and overwrites the entry, and the key includes the comparison,
+so one comparison's rows are never read under another's.
+
+**Untracked files and symlinks.** `git status` runs with `--untracked-files=all`, so a directory the
+agent just created is listed as its files rather than one `dir/` row that could only be refused. The
+per-file numstat calls are bounded to 200 per answer and four in flight; a row past that cap says
+its counts were not read (`statsUnknown`) instead of showing a `+0 −0` nobody measured. A symlink is
+compared by its TARGET TEXT, on both sides: the committed side is the blob, which already holds the
+target, and the working side is read with `readlink` rather than followed. A non-zero exit from
+`readlink` is its ordinary "not a symlink" answer; a timeout or a spawn failure is an error, because
+a link whose target could not be read must not be shown as the target's bytes.
+
 **Caps, and why a truncated answer is not content.** One side of a file may be 1 MiB; past that the
 file is `tooLarge` and all three strings are empty. A NUL byte in either side, or a numstat `-`, is
 `binary` and likewise empty. The workspace keeps the END of a command's output past its cap (the
-remote host's ring buffer), so a truncated listing is reported as `truncated` rather than parsed from
-its tail, and truncated file content or patch is `tooLarge` / no patch. The line counts for an
+remote host's ring buffer), so a truncated change list is reported as `truncated` rather than parsed
+from its tail, and truncated file content is `tooLarge`. A patch is capped separately (4 MiB): a
+rewrite of a large file can produce a diff bigger than either side, and one that may be the tail of
+a bigger one is not a diff — it comes back `tooLarge` with `patchTooLarge`, which the page words as
+the diff being too large, not the file. `truncated` on a status answer means only the LIST is
+incomplete; a cut-off numstat merely leaves the counts out. The line counts for an
 untracked file come from `git diff --no-index --numstat` — the same text `git add --intent-to-add`
 would produce — rather than a temporary index, because a remote host has no way to delete one and
 leaving it behind in the repository would be worse than one extra command per untracked file.
@@ -767,8 +788,11 @@ statusUrl, fileUrl })` fixes the two addresses, hides the mode controls, and app
 ends, and neither reloads an open diff under the reader.
 
 **The editor button.** Each row offers **Edit** only when the page has an `openFileEditor` function,
-and calls it with the repository-relative path. That function is another part of this page; until it
-exists the button is not drawn rather than drawn dead.
+and calls it with the file's ABSOLUTE path — the repository root joined with the root-relative path
+this list shows, because the editor resolves a relative one against the topic's directory. The
+editor keeps its own workspace fence, so a file outside the topic's directory can still be refused
+there. `openFileEditor` is that function; until it exists the button is not drawn rather than drawn
+dead.
 
 ## The History tab
 

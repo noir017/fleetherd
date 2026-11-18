@@ -159,6 +159,11 @@ export interface GitStatusFile {
   additions: number;
   deletions: number;
   binary?: true;
+  /**
+   * The line counts were not read: more untracked files than the panel stats in one answer, or the
+   * per-file stats command failed. The row says so rather than showing a `+0 −0` it did not measure.
+   */
+  statsUnknown?: true;
 }
 
 /**
@@ -183,7 +188,9 @@ export type GitStatusResult =
  *
  * `original` and `modified` are whole texts — what `codeView().diff` takes — and `patch` is the
  * unified diff for the plain-text fallback. `binary` or `tooLarge` sets all three to empty strings:
- * there is no text to show, and half a file would read as a diff that lost lines.
+ * there is no text to show, and half a file would read as a diff that lost lines. `patchTooLarge`
+ * says the two sides are within their cap but the unified diff was not, so the page can name the
+ * diff rather than the file.
  */
 export type GitFileResult =
   | {
@@ -195,6 +202,7 @@ export type GitFileResult =
       patch: string;
       binary?: true;
       tooLarge?: true;
+      patchTooLarge?: true;
     }
   | { ok: false; text: string };
 

@@ -153,6 +153,8 @@ interface Entry {
   binary: boolean;
   /** Listed by `git status` as `??` — its diff has to come from `--no-index`. */
   untracked: boolean;
+  /** Counts were not read (past the per-answer cap, or the stats command said nothing). */
+  statsUnknown: boolean;
 }
 
 interface Listing {
@@ -233,6 +235,7 @@ function parseStatus(text: string): Entry[] {
       deletions: 0,
       binary: false,
       untracked: rec.slice(0, 2) === '??',
+      statsUnknown: false,
     });
   }
   return out;
@@ -246,7 +249,7 @@ function parseNameStatus(text: string): Entry[] {
     const code = parts[i] ?? '';
     const path = parts[i + 1] ?? '';
     if (!code || !path) continue;
-    out.push({ path, status: nameStatusKind(code), additions: 0, deletions: 0, binary: false, untracked: false });
+    out.push({ path, status: nameStatusKind(code), additions: 0, deletions: 0, binary: false, untracked: false, statsUnknown: false });
   }
   return out;
 }
@@ -321,12 +324,22 @@ async function eachLimit<T>(items: readonly T[], limit: number, fn: (item: T) =>
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-/** Give the untracked entries their counts, a few at a time. */
+/**
+ * Give the untracked entries their counts, a few at a time.
+ *
+ * The cap is per answer, and it is not silent: entries past it (or whose own numstat said nothing)
+ * carry `statsUnknown`, so the page says the counts were not read instead of showing a +0 −0 it
+ * never measured. A new directory of a few hundred files is exactly the case that reaches it.
+ */
 async function statUntracked(ws: Workspace, entries: readonly Entry[], cwd: string): Promise<void> {
-  const list = entries.filter((e) => e.untracked && !e.path.endsWith('/')).slice(0, MAX_UNTRACKED_STATS);
-  await eachLimit(list, UNTRACKED_CONCURRENCY, async (e) => {
+  const candidates = entries.filter((e) => e.untracked && !e.path.endsWith('/'));
+  for (const e of candidates.slice(MAX_UNTRACKED_STATS)) e.statsUnknown = true;
+  await eachLimit(candidates.slice(0, MAX_UNTRACKED_STATS), UNTRACKED_CONCURRENCY, async (e) => {
     const stat = await untrackedNumstat(ws, e.path, cwd);
-    if (!stat) return;
+    if (!stat) {
+      e.statsUnknown = true;
+      return;
+    }
     e.additions = stat.additions;
     e.deletions = stat.deletions;
     e.binary = stat.binary;
@@ -422,8 +435,12 @@ async function workingChanges(ws: Workspace, head: boolean, cwd: string): Promis
   const badStats = problemOf(stats, 'diff');
   if (badStats) throw badStats;
   // A cut-off stats answer only costs the counts; the list itself is whole, so `truncated` stays
-  // false and the files are still shown.
-  if (!stats.truncated) applyNumstat(entries, stats.text);
+  // false and the files are still shown — but none of them claims a +0 −0 it did not measure.
+  if (stats.truncated) {
+    for (const e of entries) if (!e.untracked) e.statsUnknown = true;
+  } else {
+    applyNumstat(entries, stats.text);
+  }
   await statUntracked(ws, entries, cwd);
   return { entries: sortEntries(entries), truncated: false };
 }
@@ -449,8 +466,10 @@ async function listFor(ws: Workspace, mode: GitMode, head: boolean, mb: string |
   const stats = await git(ws, ['diff', '--no-ext-diff', '--no-renames', '--numstat', '-z', mb, ...target, '--'], undefined, cwd);
   const badStats = problemOf(stats, 'diff');
   if (badStats) throw badStats;
-  // Counts only, as above: a cut-off numstat does not make the list incomplete.
-  if (!stats.truncated) applyNumstat(entries, stats.text);
+  // Counts only, as above: a cut-off numstat does not make the list incomplete, it makes the
+  // counts unknown.
+  if (stats.truncated) for (const e of entries) e.statsUnknown = true;
+  else applyNumstat(entries, stats.text);
 
   // A committed comparison is two commits and has no working-tree files. `branch` also shows what
   // is not committed yet, and an untracked file is invisible to `git diff <merge-base>`.
@@ -573,8 +592,10 @@ async function blobAt(
  *
  * A symlink is compared by its TARGET TEXT, as git does, not by what it points at: following it
  * would diff the target file's bytes against a blob that holds a path, and an untracked link could
- * pull a file from outside the repository into the page. `readlink` answers that cheaply; where it
- * is not a program on the machine (Windows), a regular read is the fallback and links are followed.
+ * pull a file from outside the repository into the page. `readlink` answers that cheaply. Its
+ * ordinary non-zero exit means "not a symlink" and falls through to a read; a timeout or a failed
+ * spawn means the question was never answered, and that is an error — silently following the link
+ * would show the target's bytes while claiming to show the link.
  */
 async function worktreeSide(
   ws: Workspace,
@@ -583,7 +604,10 @@ async function worktreeSide(
 ): Promise<{ content: Buffer; tooLarge: boolean }> {
   const abs = joinAbs(root, path);
   const link = await ws.run(['readlink', '-n', '--', abs], { maxBytes: 8 << 10 });
-  if (link.code === 0 && !link.timedOut && !link.spawnError) {
+  if (link.timedOut) throw new GitFailed('readlink timed out.');
+  if (link.spawnError) throw new GitFailed(`readlink could not run: ${link.spawnError}`);
+  // 0 is a symlink; any other exit is the ordinary "this is not one" answer.
+  if (link.code === 0) {
     return link.truncated ? { content: Buffer.alloc(0), tooLarge: true } : { content: link.output, tooLarge: false };
   }
   const st = await ws.stat(abs);
@@ -634,6 +658,7 @@ function statusOf(prepared: Prepared): GitStatusResult {
     additions: e.additions,
     deletions: e.deletions,
     ...(e.binary ? { binary: true as const } : {}),
+    ...(e.statsUnknown ? { statsUnknown: true as const } : {}),
   }));
   return {
     ok: true,
@@ -648,7 +673,11 @@ function statusOf(prepared: Prepared): GitStatusResult {
 }
 
 /** A file with no text to show, and why. The three strings are always empty together. */
-function noText(path: string, entry: Entry, flags: { binary?: true; tooLarge?: true }): GitFileResult {
+function noText(
+  path: string,
+  entry: Entry,
+  flags: { binary?: true; tooLarge?: true; patchTooLarge?: true }
+): GitFileResult {
   return { ok: true, path, status: entry.status, original: '', modified: '', patch: '', ...flags };
 }
 
@@ -683,9 +712,8 @@ function diffArgs(from: string | undefined, to: string | undefined, untracked: b
  */
 async function fileOf(ws: Workspace, prepared: Prepared, path: string): Promise<GitFileResult> {
   if (!prepared.ok) return { ok: false, text: prepared.text };
-  if (prepared.listing.truncated) {
-    return { ok: false, text: 'This repository has too many changes to list, so one file cannot be shown.' };
-  }
+  // A truncated list may be missing rows, but the rows it has are real: a file it named is
+  // readable. A path it did not name is refused below like any other.
   const entry = prepared.listing.entries.find((e) => e.path === path);
   if (!entry) return { ok: false, text: 'That file is not one of the changes shown.' };
   // The numstat already said there is no text to show; reading a binary file just to prove it
@@ -714,9 +742,9 @@ async function fileOf(ws: Workspace, prepared: Prepared, path: string): Promise<
     return { ok: false, text: `git diff failed${why ? `: ${why}` : '.'}` };
   }
   // A patch that may be the tail of a bigger one is not a patch. The two sides are each under the
-  // cap, but a rewrite of a large file can still produce a bigger diff, and showing part of it
-  // would read as a diff that lost lines.
-  if (patch.truncated) return noText(path, entry, { tooLarge: true });
+  // cap, but a rewrite of a large file can still produce a bigger diff; `patchTooLarge` lets the
+  // page name the diff rather than the file, because the file itself is within its limit.
+  if (patch.truncated) return noText(path, entry, { tooLarge: true, patchTooLarge: true });
   return {
     ok: true,
     path,

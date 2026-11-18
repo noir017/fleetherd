@@ -391,9 +391,12 @@ describe('git panel', () => {
     };
     const status = await gitStatus(cut, 'working');
     if (!status.ok) throw new Error(status.text);
-    // Counts are absent when their command was cut off; the list is still the list.
+    // Counts are absent when their command was cut off; the list is still the list, and the row
+    // says the counts were not read.
     expect(status.truncated).toBeUndefined();
-    expect(status.files).toEqual([{ path: 'base.txt', status: 'modified', additions: 0, deletions: 0 }]);
+    expect(status.files).toEqual([
+      { path: 'base.txt', status: 'modified', additions: 0, deletions: 0, statsUnknown: true },
+    ]);
   });
 
   it('calls a cut-off patch tooLarge, because a patch that lost lines is not a diff', async () => {
@@ -409,6 +412,7 @@ describe('git panel', () => {
     expect(await gitFile(cut, 'working', undefined, 'base.txt')).toMatchObject({
       ok: true,
       tooLarge: true,
+      patchTooLarge: true,
       original: '',
       modified: '',
       patch: '',
@@ -428,6 +432,59 @@ describe('git panel', () => {
     expect(await gitStatus(cut, 'branch', 'main')).toMatchObject({ ok: false, reason: 'error' });
     // The working comparison needs no branch list, so it still answers.
     expect((await gitStatus(cut, 'working')).ok).toBe(true);
+  });
+
+  it('says the counts were not read when there are more untracked files than it stats', async () => {
+    repo();
+    for (let i = 0; i < 205; i++) {
+      write(path.join(dir, 'many', `f${String(i).padStart(3, '0')}.txt`), 'x\n');
+    }
+    const status = await gitStatus(ws, 'working');
+    if (!status.ok) throw new Error(status.text);
+    const many = status.files.filter((f) => f.path.startsWith('many/'));
+    expect(many).toHaveLength(205);
+    expect(many.filter((f) => f.statsUnknown)).toHaveLength(205 - 200);
+    expect(many.filter((f) => !f.statsUnknown && f.additions === 1)).toHaveLength(200);
+  });
+
+  it('serves a row from a truncated branch list that it did show', async () => {
+    repo();
+    gitIn(dir, 'checkout', '-qb', 'feature');
+    write(path.join(dir, 'base.txt'), 'a\nb\nfeature\n');
+    gitIn(dir, 'commit', '-qam', 'feature');
+    const cut: Workspace = {
+      ...ws,
+      run: async (argv, o) => {
+        const r = await ws.run(argv, o);
+        return argv.includes('status') ? { ...r, truncated: true } : r;
+      },
+    };
+
+    const status = await gitStatus(cut, 'branch', 'main');
+    if (!status.ok) throw new Error(status.text);
+    expect(status.truncated).toBe(true);
+    expect(status.files.map((f) => f.path)).toContain('base.txt');
+
+    // The list is incomplete, but this row came from it and is real.
+    const file = await gitFile(cut, 'branch', 'main', 'base.txt');
+    if (!file.ok) throw new Error(file.text);
+    expect(file.modified).toContain('feature');
+  });
+
+  it('reports a readlink that could not answer instead of following the link', async () => {
+    repo();
+    write(path.join(dir, 'secret.txt'), 'SECRET\n');
+    fs.symlinkSync('secret.txt', path.join(dir, 'link'));
+    const slow: Workspace = {
+      ...ws,
+      run: async (argv, o) =>
+        argv.includes('readlink')
+          ? { code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true }
+          : ws.run(argv, o),
+    };
+    const file = await gitFile(slow, 'working', undefined, 'link');
+    expect(file).toMatchObject({ ok: false });
+    if (!file.ok) expect(file.text).toContain('readlink timed out');
   });
 
   it('compares against a branch whose name looks like a git option', async () => {

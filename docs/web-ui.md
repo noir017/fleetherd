@@ -298,7 +298,9 @@ included; **Branch** is the working tree against the merge base of `HEAD` and a 
 committed and uncommitted work read together; **Committed** is `HEAD` against that merge base. The
 base starts at the repository's default branch (`origin/HEAD`, else `main` or `master`) and can be
 changed in the picker. A repository with no commits works too. Every path is relative to the
-repository root, also when the topic's directory is a subdirectory of it.
+repository root, also when the topic's directory is a subdirectory of it. A directory the agent just
+created is listed file by file; where there are too many untracked files to count them all, a row
+says the counts were not read rather than showing `+0 −0`.
 
 Clicking a file shows its diff — one column or two, from the button in the bar; a phone opens on one
 column. Selecting lines in the diff offers **Comment**; the file, the line range, which side of the
@@ -309,8 +311,9 @@ added and removed lines coloured instead; there is no line selection in that mod
 not offered.
 
 The list refreshes when a turn in the topic ends, so it follows what the agent just did. Each row
-has an **Edit** button when the page also has a file editor; it opens that file at its path in the
-repository.
+has an **Edit** button when the page also has a file editor; it opens that file by its absolute
+path. The editor applies its own workspace fence, so a file outside the topic's directory may still
+be refused there.
 
 ## History
 

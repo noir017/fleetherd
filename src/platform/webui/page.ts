@@ -750,6 +750,7 @@ select.skill-field{appearance:auto}
 .gf-status.modified{color:#fbbf24}
 .gf-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .gf-stat{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--dim)}
+.gf-nostat{flex:none;font-size:10.5px;font-style:italic;color:var(--dim);white-space:nowrap}
 .gf-add{color:#4ade80}
 .gf-del{color:#f87171}
 .gf-edit{flex:none;background:none;border:1px solid var(--line);border-radius:4px;color:#7dd3fc;font:inherit;font-size:10.5px;padding:1px 6px;cursor:pointer}
@@ -8976,15 +8977,18 @@ const SCRIPT = `
     var letter = f.status === 'added' ? 'A' : f.status === 'deleted' ? 'D' : 'M';
     var stat = f.binary
       ? '<span class="gf-del">bin</span>'
-      : '<span class="gf-add">+'+f.additions+'</span> <span class="gf-del">\\u2212'+f.deletions+'</span>';
-    // The editor is another branch's window (openFileEditor). It takes a path the way the files
+      : f.statsUnknown
+        ? '<span class="gf-nostat" title="Line counts were not read">counts not read</span>'
+        : '<span class="gf-add">+'+f.additions+'</span> <span class="gf-del">\\u2212'+f.deletions+'</span>';
+    // The editor is the file window's (window.openFileEditor), which exists only while that
+    // feature is on — so no Edit is offered that would do nothing. It takes a path the way the files
     // panel writes one — absolute, or relative to the topic's directory — so the repository-root
     // path this list shows is made absolute first. Where the topic works in a repo subdirectory,
     // handing it the root-relative path would point at the wrong file.
     var abs = gitState.root
       ? (gitState.root.charAt(gitState.root.length-1) === '/' ? gitState.root : gitState.root+'/')+f.path
       : f.path;
-    var edit = typeof openFileEditor === 'function'
+    var edit = typeof window.openFileEditor === 'function'
       ? '<button type="button" class="gf-edit" data-gedit="'+text(abs)+'" title="Edit this file">Edit</button>'
       : '';
     return '<div class="git-file'+(f.path === gitState.path ? ' on' : '')+'" data-gpath="'+text(f.path)+'"'
@@ -9018,6 +9022,8 @@ const SCRIPT = `
         gitState.root = '';
         gitState.files = [];
         gitState.path = '';
+        // A file request still in flight would otherwise land in a pane whose path is now empty.
+        gitState.fileSeq += 1;
         gitFilesEl.innerHTML = '';
         gitBranchEl.textContent = '';
         gitClearSelection();
@@ -9047,6 +9053,8 @@ const SCRIPT = `
       // would then be a picture of something that is no longer there.
       if(gitState.path && !gitState.files.some(function(f){ return f.path === gitState.path; })){
         gitState.path = '';
+        // The file it was reading is gone from the comparison; its answer must not land here.
+        gitState.fileSeq += 1;
         gitClearSelection();
         gitHideComment();
         gitDestroyView();
@@ -9130,7 +9138,9 @@ const SCRIPT = `
         return;
       }
       if(d.tooLarge){
-        gitDiffEl.innerHTML = '<div class="git-empty">This file is too large to show: one side is over 1 MB.</div>';
+        gitDiffEl.innerHTML = '<div class="git-empty">'
+          +(d.patchTooLarge ? "This file's diff is too large to show." : 'This file is too large to show.')
+          +'</div>';
         return;
       }
       if(d.binary){
@@ -9279,7 +9289,7 @@ const SCRIPT = `
   gitFilesEl.addEventListener('click', function(e){
     var edit = e.target.closest ? e.target.closest('[data-gedit]') : null;
     if(edit){
-      if(typeof openFileEditor === 'function') openFileEditor(edit.getAttribute('data-gedit'));
+      if(typeof window.openFileEditor === 'function') window.openFileEditor(edit.getAttribute('data-gedit'));
       return;
     }
     var row = e.target.closest ? e.target.closest('[data-gpath]') : null;

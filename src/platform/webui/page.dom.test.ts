@@ -13390,6 +13390,113 @@ describe('webui page: the git window', () => {
     await until('the partial list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
     expect(h.el('git-note').textContent).toContain('too many changes');
     expect(h.el('git-files').textContent).toContain('src/a.ts');
+    // A row that was drawn from an incomplete list is still a real row: it opens.
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the file request', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+  });
+
+  it('drops a file answer when a failed refresh cleared the open file', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({ replies: replies(), held: { [filePath('working', 'src/a.ts')]: gate } });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await within('the file request', 1000, () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+
+    // The refresh fails after the path has been cleared; the file answer must not land in the
+    // empty pane and hand a comment an empty file name.
+    h.status[statusPath('working')] = 500;
+    await h.emit({ t: 'typing', on: false });
+    await until('the failure', () => h.el('git-note').textContent!.includes('Could not read the changes'));
+    release();
+    await tick();
+    await tick();
+
+    expect(diffs).toHaveLength(0);
+    expect(h.el('git-diff').textContent).toBe('');
+  });
+
+  it('drops a file answer when the file has left the change list', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const list = {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [
+        { path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1 },
+        { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+      ],
+    };
+    const h = await open({
+      replies: { ...replies(), [statusPath('working')]: list },
+      held: { [filePath('working', 'src/a.ts')]: gate },
+    });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await within('the file request', 1000, () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+
+    list.files = [list.files[1]!];
+    await h.emit({ t: 'typing', on: false });
+    await until('the notice', () => h.el('git-diff').textContent!.includes('no longer in the changes'));
+    release();
+    await tick();
+    await tick();
+
+    expect(diffs).toHaveLength(0);
+    expect(h.el('git-sel').hidden).toBe(true);
+  });
+
+  it('names a too-large file and a too-large diff differently', async () => {
+    const big = (patchTooLarge: boolean) => ({
+      ok: true,
+      path: 'src/a.ts',
+      status: 'modified',
+      original: '',
+      modified: '',
+      patch: '',
+      tooLarge: true,
+      ...(patchTooLarge ? { patchTooLarge: true } : {}),
+    });
+    const h = await open({
+      replies: replies({
+        [filePath('working', 'src/a.ts')]: big(false),
+        [filePath('working', 'new.txt')]: { ...big(true), path: 'new.txt' },
+        [statusPath('working')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [
+            { path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 },
+            { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+          ],
+        },
+      }),
+    });
+    await openWindow(h);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the file notice', () => h.el('git-diff').textContent === 'This file is too large to show.');
+    await h.click('[data-gpath="new.txt"]');
+    await until('the diff notice', () => h.el('git-diff').textContent === "This file's diff is too large to show.");
+  });
+
+  it('says the counts were not read instead of drawing +0 −0', async () => {
+    const h = await open({
+      replies: {
+        [statusPath('working')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [{ path: 'many/a.txt', status: 'added', additions: 0, deletions: 0, statsUnknown: true }],
+        },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the row', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+
+    expect(h.el('git-files').textContent).toContain('counts not read');
+    expect(h.el('git-files').textContent).not.toContain('+0');
   });
 
   it('writes which side of the diff a comment is on', async () => {
