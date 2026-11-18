@@ -93,6 +93,14 @@ const DIFF_MAX_BYTES = 8 << 20;
 /** How many turns' diffs are cached. The trees never change, so a hit is always right. */
 const DIFF_CACHE = 64;
 /**
+ * What a queued snapshot needs left to be worth starting: one stat (the stale-lock check) and the
+ * start of an `add`. Below it the add would be killed at the deadline, "no answer" would be read
+ * as a slow repository, and a directory that was merely busy would lose its entries for ten
+ * minutes — the very thing the busy/slow split exists to prevent.
+ */
+const MIN_QUEUED_BUDGET_MS = 500;
+
+/**
  * An `index.lock` older than this belongs to nobody: a `git add` we killed at the deadline leaves
  * one behind (SIGKILL runs no cleanup), and without this every later snapshot would fall back to a
  * temporary index — a full scan — for ever.
@@ -211,8 +219,16 @@ export class TurnChanges {
   private readonly numbering = new Map<string, number>();
   /** One snapshot at a time per snapshot repository — see `treeOf`. */
   private readonly treeChains = new Map<string, Promise<void>>();
+  /** How many snapshots are queued or running per repository — see `treeOf`'s budget floor. */
+  private readonly treeBusy = new Map<string, number>();
   /** Conversations whose topic the page dropped; an end snapshot still running must not revive them. */
   private readonly forgotten = new Set<string>();
+  /**
+   * Turns that have a start snapshot and have not settled yet, per conversation. What keeps a
+   * `forgotten` mark alive exactly as long as something can still act on it: the mark is dropped
+   * when the last of them lands, so this set holds only conversations with work in flight.
+   */
+  private readonly openHandles = new Map<string, number>();
   /** Diffs already computed, by `<git dir>\0<start tree>\0<end tree>` — the trees never change. */
   private readonly diffs = new Map<string, Diff>();
   private readonly log: (line: string) => void;
@@ -252,6 +268,7 @@ export class TurnChanges {
     });
     if (handle) {
       this.slow.delete(key);
+      this.openHandles.set(id, (this.openHandles.get(id) ?? 0) + 1);
       return handle;
     }
     if (timedOut) {
@@ -268,9 +285,27 @@ export class TurnChanges {
    */
   finish(handle: TurnChangesHandle): void {
     const turn = this.takeNumber(handle.id);
-    void this.settle(handle, turn).catch((e) => {
-      this.log(`[changes] ${handle.id}: end snapshot failed (${reasonOf(e)})`);
-    });
+    const done = (): void => this.closeHandle(handle.id);
+    void this.settle(handle, turn)
+      .catch((e) => {
+        this.log(`[changes] ${handle.id}: end snapshot failed (${reasonOf(e)})`);
+      })
+      .then(done, done);
+  }
+
+  /**
+   * One turn's work is over. The last one to land takes the conversation's `forgotten` mark with
+   * it: from then on nothing can write a record back, and a set that only ever grew would keep
+   * ids around for the life of the process.
+   */
+  private closeHandle(id: string): void {
+    const left = (this.openHandles.get(id) ?? 1) - 1;
+    if (left > 0) {
+      this.openHandles.set(id, left);
+      return;
+    }
+    this.openHandles.delete(id);
+    this.forgotten.delete(id);
   }
 
   /** One turn's change list, for the git window's status tab. */
@@ -325,9 +360,14 @@ export class TurnChanges {
   forget(id: string, ref: ConversationRef): void {
     // Marked even when there is nothing to drop yet: an end snapshot may be in flight, and it
     // must not put the conversation back.
-    this.forgotten.add(id);
+    // Only while something can still act on it: a turn that already started will settle later
+    // and must not write the record back, while with nothing in flight the mark has no reader.
+    if ((this.openHandles.get(id) ?? 0) > 0) this.forgotten.add(id);
     const turns = this.state.conversations[id]?.turns;
-    if (!turns) return;
+    if (!turns) {
+      this.clearMarkIfIdle(id);
+      return;
+    }
     delete this.state.conversations[id];
     this.numbering.delete(id);
     void this.save();
@@ -340,6 +380,12 @@ export class TurnChanges {
     for (const [gitDir, list] of byGitDir(turns)) {
       void this.releaseRefs(ws, gitDir, id, list, 'dropped topic');
     }
+    this.clearMarkIfIdle(id);
+  }
+
+  /** Drop a `forgotten` mark once no started turn is left that could act on it. */
+  private clearMarkIfIdle(id: string): void {
+    if ((this.openHandles.get(id) ?? 0) === 0) this.forgotten.delete(id);
   }
 
   // ── The turn's two snapshots ───────────────────────────────────────────────
@@ -476,20 +522,33 @@ export class TurnChanges {
    * could `add` in that gap and have its state written into THIS turn's tree — a wrong diff, not
    * merely a mixed one. Serialising here costs nothing in the ordinary case (one turn at a time)
    * and is what makes the shared index safe to share.
+   *
+   * One wait in the chain has no timeout of its own: `clearStaleLock`'s stat is an rpc, and the
+   * workspace carries no deadline for it. A host that stops answering therefore stalls this
+   * repository's queue — every later start answers "busy" (the turn itself is still bounded by
+   * the race in `start`) until the link comes back.
    */
   private treeOf(ws: Workspace, repo: Repo, deadline: number): Promise<TreeResult> {
-    const previous = this.treeChains.get(repo.gitDir) ?? Promise.resolve();
+    const key = repo.gitDir;
+    // Somebody is already queued or running here — counted until the work is over, not just until
+    // it starts, because the wait is what can eat this call's budget.
+    const queued = (this.treeBusy.get(key) ?? 0) > 0;
+    this.treeBusy.set(key, (this.treeBusy.get(key) ?? 0) + 1);
+    const previous = this.treeChains.get(key) ?? Promise.resolve();
     const run = previous.then(() => {
-      // The queue may have eaten the budget while this call waited. A scan started on a
-      // millisecond would be killed on its first command, so do not start one — and that is
-      // being busy, not slow.
+      // A snapshot that waited its turn may have too little budget left to be worth starting: a
+      // scan killed mid-`add` reads as "no answer" and would mark a busy directory as slow. Only
+      // a call that actually queued is held to the floor; a fresh budget is never this small.
+      if (queued && deadline - Date.now() < MIN_QUEUED_BUDGET_MS) return { slow: false };
       if (Date.now() >= deadline) return { slow: false };
       return this.treeOnce(ws, repo, deadline);
     });
-    this.treeChains.set(repo.gitDir, run.then(
+    const settled = run.then(
       () => undefined,
       () => undefined
-    ));
+    );
+    this.treeChains.set(key, settled);
+    void settled.then(() => this.treeBusy.set(key, Math.max(0, (this.treeBusy.get(key) ?? 1) - 1)));
     return run;
   }
 

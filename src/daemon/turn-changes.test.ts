@@ -448,6 +448,40 @@ describe('turn changes: the repository it keeps', () => {
     expect(fs.existsSync(`${snapRoot(timed.repo)}/index`)).toBe(true);
   });
 
+  it('answers busy, not slow, when the queue left too little of the budget', async () => {
+    // A snapshot that waited most of its budget away must not start a scan it cannot finish: the
+    // killed add reads as "no answer" and would mark a busy directory as slow for ten minutes.
+    let adds = 0;
+    let holdFirst = true;
+    const slow = bench({
+      opts: { startTimeoutMs: 700 },
+      ws: (ws) => ({
+        ...ws,
+        run: async (argv, o) => {
+          if (argv[1] === 'add') {
+            adds += 1;
+            if (holdFirst) {
+              holdFirst = false;
+              await new Promise((r) => setTimeout(r, 400));
+            }
+          }
+          return ws.run(argv, o);
+        },
+      }),
+    });
+    const [first, second] = await Promise.all([
+      slow.changes.start(ID, REF, slow.platform, ADDRESS),
+      slow.changes.start(ID, REF, slow.platform, ADDRESS),
+    ]);
+    expect(first).toBeDefined();
+    expect(second).toBeUndefined();
+    // The queued turn never reached git — that is what "busy" means here.
+    expect(adds).toBe(1);
+    // And nothing was remembered as slow: the next turn runs its own snapshot.
+    expect(await slow.changes.start(ID, REF, slow.platform, ADDRESS)).toBeDefined();
+    expect(adds).toBe(2);
+  });
+
   it('takes one snapshot at a time per repository', async () => {
     // add releases index.lock when it returns and write-tree reads the index after it. Two turns
     // of one repository interleaving there would write one turn's state into the other's tree.
@@ -578,6 +612,28 @@ describe('turn changes: the repository it keeps', () => {
     expect((await changes.status(ID, REF, 1)).ok).toBe(false);
     expect((await changes.status(ID, REF, 3)).ok).toBe(true);
     await within(() => refs(b.repo).length === 4);
+  });
+
+  it('drops the forgotten mark once nothing is in flight', async () => {
+    const internals = (c: TurnChanges): { forgotten: Set<string>; openHandles: Map<string, number> } =>
+      c as unknown as { forgotten: Set<string>; openHandles: Map<string, number> };
+
+    // Nothing running: the mark has no reader, and a set that only grew would outlive the process
+    // for every topic ever deleted.
+    b.changes.forget(ID, REF);
+    expect(internals(b.changes).forgotten.size).toBe(0);
+    expect(internals(b.changes).openHandles.size).toBe(0);
+
+    // With a turn in flight it is held until that turn's end snapshot has landed.
+    const handle = await begin(b);
+    expect(internals(b.changes).openHandles.get(ID)).toBe(1);
+    fs.writeFileSync(path.join(b.repo, 'a.txt'), 'changed\n');
+    b.changes.forget(ID, REF);
+    expect(internals(b.changes).forgotten.has(ID)).toBe(true);
+    b.changes.finish(handle);
+    await within(() => internals(b.changes).forgotten.size === 0);
+    expect(internals(b.changes).openHandles.size).toBe(0);
+    expect((await b.changes.status(ID, REF, 1)).ok).toBe(false);
   });
 
   it('does not write a record back after its topic was dropped', async () => {
