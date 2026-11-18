@@ -6793,6 +6793,10 @@ const SCRIPT = `
   // it must not change under a hidden iframe — a resize there is a redraw the reader never asked
   // for, and on some backends a detach.
   function paintTermHeight(){
+    // While a record from History is up, #bar and the divider are display:none and measure 0 —
+    // a ceiling worked out from those would be ~100px too generous, and the panel would come
+    // back from the record too tall. closeLib paints again once they are back on screen.
+    if(libOn()) return;
     var lim = termLimits(), h = termHeight();
     termEl.style.height = h + 'px';
     termGrip.setAttribute('aria-valuenow', String(h));
@@ -6865,11 +6869,15 @@ const SCRIPT = `
     var on = Boolean(topic && termState[topic]==='open' && !libOn());
     for(var id in termFrames){
       if(!Object.prototype.hasOwnProperty.call(termFrames, id)) continue;
-      termFrames[id].classList.toggle('on', on && id===topic);
+      var live = on && id===topic;
+      termFrames[id].classList.toggle('on', live);
+      // Per frame, not only on the panel: with one topic's terminal open, another topic's frame
+      // is still mounted and hidden, and inert is what keeps it out of reach from script.
+      termFrames[id].toggleAttribute('inert', !live);
     }
     // Inert as well as invisible: visibility keeps the keyboard out, but an iframe can still be
     // focused from script — and a terminal that grabs focus while it is parked is typing going
-    // somewhere the person cannot see.
+    // somewhere the person cannot see. This one covers the panel's own two buttons.
     termEl.toggleAttribute('inert', !on);
     var cur = null;
     for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
@@ -8350,9 +8358,11 @@ const SCRIPT = `
       saveTermHeight();
     });
     // A shorter window may leave a stored height taller than the chat; the transcript keeps its
-    // lines. Not while the panel is closed: the parked iframe must not be resized for nothing.
+    // lines. Not while the panel is closed (the parked iframe must not be resized for nothing),
+    // and not while a record is up — its composer is hidden, so there is nothing to measure
+    // against; closeLib does it when the record goes.
     window.addEventListener('resize', function(){
-      if(topic && termState[topic]==='open') paintTermHeight();
+      if(topic && termState[topic]==='open' && !libOn()) paintTermHeight();
     });
   }
 
@@ -9010,6 +9020,9 @@ const SCRIPT = `
     chat.classList.remove('lib');
     // The topic underneath is back on screen, so its terminal is too — same frame, same socket.
     paintFrames();
+    // And its height is worked out again: a window that changed size under the record could not
+    // be measured while the composer and the divider were display:none.
+    if(topic && termState[topic]==='open') paintTermHeight();
     libId = null;
     libSession = null;
     forgetLibLines();

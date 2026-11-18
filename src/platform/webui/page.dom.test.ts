@@ -7140,11 +7140,13 @@ describe('webui page: the terminal window', () => {
     // Parked means out of reach as well as out of sight: a hidden iframe can still take focus
     // from script, and a terminal that grabs it is typing going somewhere nobody can see.
     expect(h.el('term').hasAttribute('inert')).toBe(true);
+    expect(frames(h)[0]?.hasAttribute('inert')).toBe(true);
 
     // Back in, and it is the same element — not a second connection to the same session.
     await h.click('#term-toggle');
     expect(shown(h)).toBe(mounted);
     expect(h.el('term').hasAttribute('inert')).toBe(false);
+    expect(frames(h)[0]?.hasAttribute('inert')).toBe(false);
   });
 
   it('keeps one window per topic, each attached across a switch', async () => {
@@ -13092,6 +13094,44 @@ describe('webui page: the History tab', () => {
     expect(libOn(h)).toBe(false);
     expect(h.doc.querySelector('#term-frames iframe.on') === frame).toBe(true);
     expect(h.el('term').hasAttribute('inert')).toBe(false);
+  });
+
+  it('measures the panel again when a record closes, rather than under it', async () => {
+    // #bar and the divider are display:none while a record is up, so they measure 0. A resize
+    // there used to work out a ceiling ~100px too generous and leave the panel at that height
+    // after the record went — on a phone turned sideways, the log a few pixels tall.
+    const h = await open({
+      terminal: true,
+      replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() },
+    });
+    await h.emit(sync(A, [], [A]));
+    const stub = (id: string, prop: string, value: number): void => {
+      Object.defineProperty(h.el(id), prop, { configurable: true, get: () => value });
+    };
+    stub('chat', 'clientHeight', 800);
+    stub('chat-header', 'clientHeight', 50);
+    stub('bar', 'clientHeight', 100);
+    stub('term-grip', 'offsetHeight', 9);
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('400px');
+
+    await onHistory(h);
+    await openRow(h);
+    // The record takes the composer and the divider off screen, and the window shrinks.
+    stub('bar', 'clientHeight', 0);
+    stub('term-grip', 'offsetHeight', 0);
+    stub('chat', 'clientHeight', 500);
+    h.window.dispatchEvent(new h.window.Event('resize'));
+    await tick();
+    // Nothing to measure against: the panel keeps the height it had, out of sight.
+    expect(h.el('term').style.height).toBe('400px');
+
+    // Back on screen both have their heights again, and the panel is measured once more:
+    // 500 - (50 header + 100 composer + 9 divider + 120 transcript) = 221.
+    stub('bar', 'clientHeight', 100);
+    stub('term-grip', 'offsetHeight', 9);
+    await h.click('#lib-close');
+    expect(h.el('term').style.height).toBe('221px');
   });
 
   it('says a read was cut short where the reader lands, and says nothing when it was not', async () => {

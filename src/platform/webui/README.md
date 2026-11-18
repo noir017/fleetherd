@@ -1602,10 +1602,11 @@ last — anything painted while it is up, including a message typed into the gap
 
 Off by default. Turned on, the chat header grows a `>_` button that opens a terminal **panel** at
 the bottom of the conversation — a shell in this machine, in which any coding-agent CLI can be
-run directly, TUI and all. It opens at half the chat's height, with a divider above it: drag it
-(arrow keys work too, a double-click goes back to half) and the panel keeps that height, in
-`localStorage`, across a reload. The transcript and the composer stay on screen and usable
-throughout, which is the difference between this and the full-height window it used to be.
+run directly, TUI and all. It opens at half the chat's height, clamped so the header, the composer
+and a few lines of transcript keep their room, with a divider above it: drag it (arrow keys work
+too, a double-click goes back to half) and the panel keeps that height, in `localStorage`, across
+a reload. The transcript and the composer stay on screen and usable throughout, which is the
+difference between this and the full-height window it used to be.
 
 **The daemon owns none of it.** It does not spawn a PTY and does not speak the terminal's
 protocol; it proxies, behind the session cookie, to a [`ttyd`](https://github.com/tsl0922/ttyd)
