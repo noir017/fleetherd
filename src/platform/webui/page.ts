@@ -1522,7 +1522,7 @@ button:disabled{opacity:.5;cursor:default}
 #files-conflict{margin:10px 12px 0;padding:10px 12px;border-radius:6px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);font-size:12.5px;line-height:1.5;color:#f87171}
 .fx-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 #files-actions{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line)}
-#files-actions button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}
+#files-actions button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer;white-space:nowrap}
 #files-actions button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
 #files-actions button:disabled{opacity:.45;cursor:default}
 #files-actions #files-delete{color:#f87171}
@@ -9331,6 +9331,8 @@ const SCRIPT = `
       if(mine !== gitState.fileSeq) return;
       if(cv && typeof cv.diff === 'function'){
         gitState.kind = 'code';
+        // Kept for the comment block, which quotes WHOLE lines of the side the selection is on.
+        gitState.sides = {old: String(d.original || ''), 'new': String(d.modified || '')};
         gitState.view = cv.diff(gitDiffEl, {name:d.path, original:d.original, modified:d.modified,
           layout:gitState.layout, onSelect:function(sel){ gitSelect(sel); }});
         gitLayoutBtn.hidden = false;
@@ -9409,10 +9411,17 @@ const SCRIPT = `
     var sel = gitState.sel;
     if(!sel) return '';
     var from = Math.min(sel.from, sel.to), to = Math.max(sel.from, sel.to);
+    // The heading names lines, so the block quotes those lines whole — a drag starts and ends
+    // mid-line, and the characters it happened to cover would cite half a statement as L1-L2.
+    // The selection's own text is the fallback for a side the page does not hold.
+    var doc = gitState.sides ? gitState.sides[sel.side === 'old' ? 'old' : 'new'] : null;
+    var quoted = typeof doc === 'string'
+      ? doc.split('\\n').slice(from-1, to).join('\\n')
+      : String(sel.text);
     var fence = String.fromCharCode(96,96,96);
-    while(sel.text.indexOf(fence) >= 0) fence += String.fromCharCode(96);
+    while(quoted.indexOf(fence) >= 0) fence += String.fromCharCode(96);
     return gitState.path+':L'+from+(to !== from ? '-L'+to : '')+(sel.side === 'old' ? ' (old)' : ' (new)')
-      +'\\n'+fence+'\\n'+String(sel.text).replace(/\\s+$/, '')+'\\n'+fence+'\\n'+gitCommentText.value.trim();
+      +'\\n'+fence+'\\n'+quoted.replace(/\\s+$/, '')+'\\n'+fence+'\\n'+gitCommentText.value.trim();
   }
 
   /** Put text in the composer without sending it: the person still presses Send. */
@@ -10948,7 +10957,10 @@ const SCRIPT = `
     if(!filesWin.hidden && fileTopic !== t && !fileConfirmLeave()) return;
     fileTopic = t;
     filesWin.hidden = false;
-    filesWin.classList.remove('tree-open');
+    // On a phone the tree is a drawer. Opened from the header, with no file to show yet, the
+    // window would be an empty pane with the files behind a button — so the drawer starts open,
+    // and picking a file closes it. Opened on a file (another panel's Edit), the file is the point.
+    filesWin.classList.toggle('tree-open', !path);
     filesTitle.textContent = 'Files';
     filesWhere.textContent = '';
     filesCrumbs.innerHTML = '';

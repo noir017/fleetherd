@@ -431,10 +431,11 @@ function parseKept(value: unknown): Kept | null {
   if (!value || typeof value !== 'object') return null;
   const { msg, text } = value as { msg?: Record<string, unknown>; text?: unknown };
   if (!msg || typeof text !== 'string') return null;
-  const { id, own, html, at, g, reactions, quote, file, nonce, kind } = msg;
+  const { id, own, html, at, g, reactions, quote, file, nonce, kind, turnChanges } = msg;
   if (typeof id !== 'string' || typeof html !== 'string' || typeof at !== 'number' || typeof g !== 'number') return null;
   const k = keptKind(kind);
   const q = keptQuote(quote);
+  const tc = keptTurnChanges(turnChanges);
   const f = file as { name?: unknown; url?: unknown; image?: unknown } | undefined;
   return {
     text,
@@ -456,7 +457,24 @@ function parseKept(value: unknown): Kept | null {
       // The kinds the page draws differently, restored across a restart so the marking — and a
       // report's folding — survives a reload exactly as it was.
       ...(k ? { kind: k } : {}),
+      // A turn's change entry is part of its reply: without it a restart would take the line, and
+      // the way into that turn's diff, off every reply that had one.
+      ...(tc ? { turnChanges: tc } : {}),
     },
+  };
+}
+
+/** A kept reply's turn-change entry: four counts, each a non-negative integer, or nothing. */
+function keptTurnChanges(value: unknown): WebMessage['turnChanges'] {
+  const v = value as { turn?: unknown; files?: unknown; additions?: unknown; deletions?: unknown; truncated?: unknown } | undefined;
+  const count = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+  if (!v || !count(v.turn) || !count(v.files) || !count(v.additions) || !count(v.deletions)) return undefined;
+  return {
+    turn: v.turn,
+    files: v.files,
+    additions: v.additions,
+    deletions: v.deletions,
+    ...(v.truncated === true ? { truncated: true as const } : {}),
   };
 }
 

@@ -409,6 +409,9 @@ describe('webui adapter: where a topic keeps its transcript', () => {
       kept('w2'),
       kept('w3', { kind: 'dispatch' }),
       kept('w4', { kind: 'report' }),
+      kept('w5', { turnChanges: { turn: 2, files: 3, additions: 12, deletions: 4 } }),
+      // A malformed entry is dropped, not carried to the page.
+      kept('w6', { turnChanges: { turn: -1, files: 'x' } }),
     ]);
 
     const file = path.join(at, 'a1b2c3d4.json');
@@ -421,6 +424,9 @@ describe('webui adapter: where a topic keeps its transcript', () => {
       kept('w2'),
       kept('w3', { kind: 'dispatch' }),
       kept('w4', { kind: 'report' }),
+      // A turn's change entry survives a restart with the reply it hangs off.
+      kept('w5', { turnChanges: { turn: 2, files: 3, additions: 12, deletions: 4 } }),
+      kept('w6'),
     ]);
 
     store.drop('a1b2c3d4');

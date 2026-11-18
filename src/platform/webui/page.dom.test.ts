@@ -13335,9 +13335,13 @@ describe('webui page: the file window', () => {
     const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 6, size: 4 } });
     expect(h.el('files-toggle').hidden).toBe(false);
     expect(typeof (h.window as unknown as { openFileEditor?: unknown }).openFileEditor).toBe('function');
+    // From the header there is no file yet: on a phone the tree drawer starts open, so the window
+    // is not an empty pane, and picking a file puts it away.
+    expect(h.el('files').classList.contains('tree-open')).toBe(true);
     expect(h.el('files-title').textContent).toBe('Files');
 
     await openA(h);
+    expect(h.el('files').classList.contains('tree-open')).toBe(false);
     expect(h.el('files-title').textContent).toBe('a.txt');
     expect(editorText(h).value).toBe('abc');
     // The fallback, not the code view: nothing put a CodeMirror node there.
@@ -13743,6 +13747,7 @@ describe('webui page: the file window', () => {
       },
     });
     (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/notes.md');
+    expect(h.el('files').classList.contains('tree-open')).toBe(false);
     await until('the file from another panel', () => h.el('files-title').textContent === 'notes.md');
     expect(h.el('files').hidden).toBe(false);
 
@@ -13907,7 +13912,8 @@ describe('webui page: the git window', () => {
     await h.click('[data-gpath="src/a.ts"]');
     await until('the code view', () => diffs.length === 1);
 
-    diffs[0]!.options.onSelect?.({ side: 'new', from: 2, to: 3, text: 'two\nTHREE\n' });
+    // A drag covers part of each line; the comment still quotes lines 2-3 of the new side whole.
+    diffs[0]!.options.onSelect?.({ side: 'new', from: 2, to: 3, text: 'WO\nthr' });
     await tick();
     expect(h.el('git-sel').hidden).toBe(false);
     expect(h.el('git-sel-what').textContent).toBe('New lines 2\u20133');
@@ -13919,7 +13925,7 @@ describe('webui page: the git window', () => {
     await h.click('#git-comment-add');
 
     expect((h.el('input') as HTMLTextAreaElement).value).toBe(
-      ['src/a.ts:L2-L3 (new)', '```', 'two', 'THREE', '```', 'Looks good'].join('\n')
+      ['src/a.ts:L2-L3 (new)', '```', 'TWO', 'three', '```', 'Looks good'].join('\n')
     );
     expect(h.el('git-comment').hidden).toBe(true);
     expect(h.el('git-note').textContent).toContain('Added to the message');
@@ -14281,14 +14287,14 @@ describe('webui page: the git window', () => {
     await h.click('[data-gpath="src/a.ts"]');
     await until('the code view', () => diffs.length === 1);
 
-    diffs[0]!.options.onSelect?.({ side: 'old', from: 4, to: 4, text: 'two\n' });
+    diffs[0]!.options.onSelect?.({ side: 'old', from: 2, to: 2, text: 'tw' });
     await tick();
     await h.click('#git-comment-open');
     expect(h.el('git-comment-what').textContent).toContain('old side');
     (h.el('git-comment-text') as HTMLTextAreaElement).value = 'Removed on purpose';
     await h.click('#git-comment-add');
     expect((h.el('input') as HTMLTextAreaElement).value).toBe(
-      ['src/a.ts:L4 (old)', '```', 'two', '```', 'Removed on purpose'].join('\n')
+      ['src/a.ts:L2 (old)', '```', 'two', '```', 'Removed on purpose'].join('\n')
     );
   });
 });
