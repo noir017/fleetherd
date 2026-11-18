@@ -259,6 +259,19 @@ function fail(e: unknown): { ok: false; error: string } {
   return { ok: false, error: e instanceof Error ? e.message : String(e) };
 }
 
+/**
+ * The refusal a delete gets, with the one case a person can act on spelled out. Both machines say
+ * "not empty" in their own words (`ENOTEMPTY` locally, `directory not empty` from the host), so the
+ * sentence is made here once rather than matched in the page twice.
+ */
+function failRemove(e: unknown): { ok: false; error: string } {
+  const message = e instanceof Error ? e.message : String(e);
+  if (/not empty|ENOTEMPTY/i.test(message)) {
+    return { ok: false, error: 'That folder is not empty. Delete its contents first.' };
+  }
+  return fail(e);
+}
+
 // ── the operations ───────────────────────────────────────────────────────────────────────────
 
 async function panelList(env: PanelEnv, ref: ConversationRef, input: string): Promise<FilesPanelListResult> {
@@ -459,7 +472,7 @@ async function panelRemove(env: PanelEnv, ref: ConversationRef, input: string): 
     logWrite(env, ws, r.removed ? 'deleted' : 'found already gone', at);
     return { ok: true, removed: r.removed };
   } catch (e) {
-    return fail(e);
+    return failRemove(e);
   }
 }
 

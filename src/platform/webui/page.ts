@@ -1364,6 +1364,17 @@ button:disabled{opacity:.5;cursor:default}
 .fx-row{display:flex;align-items:center;gap:3px;width:100%;padding:3px 8px;background:none;border:0;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
 .fx-row:hover{background:#222}
 .fx-row.on{background:#252525}
+/* A folder row is a box holding its expand button and two actions, so the actions are reachable
+   without turning the row into a second kind of selection. They stay out of the way until the
+   pointer is on the row; a finger gets them always (the 640px block below). */
+.fx-dirrow{padding:0;gap:0}
+.fx-dirrow:hover{background:#222}
+.fx-main{flex:1;min-width:0;display:flex;align-items:center;gap:3px;padding:3px 4px;background:none;border:0;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}
+.fx-act{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;background:none;border:0;border-radius:4px;color:var(--dim);cursor:pointer;opacity:0;transition:opacity .12s}
+.fx-dirrow:hover .fx-act,.fx-act:focus-visible{opacity:1}
+.fx-act:hover{background:#2c2c2c;color:var(--fg)}
+.fx-act .ic{width:12px;height:12px}
+#files-rename-what{flex:none;font-size:11px;color:var(--dim);white-space:nowrap}
 .fx-caret{flex:none;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;color:var(--dim)}
 .fx-caret .ic{width:11px;height:11px}
 .fx-caret.blank{visibility:hidden}
@@ -1627,6 +1638,9 @@ button:disabled{opacity:.5;cursor:default}
   #files-close,#files-refresh{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
   #files-tree-head button{min-height:44px}
   .fx-row{min-height:40px}
+  /* A hover-revealed action does not exist on a finger. Always shown, and a 40px target. */
+  .fx-act{opacity:1;width:40px;height:40px}
+  .fx-act .ic{width:15px;height:15px}
   #files-q{font-size:16px;min-height:44px}
   #files-new-name,#files-rename-name{font-size:16px;min-height:44px}
   #files-actions button{min-height:44px}
@@ -9689,7 +9703,9 @@ const SCRIPT = `
   var fileTopic='', fileRoot='', fileDir='', filePath='', fileRel='', fileName='', fileKind='',
       fileBase=null, fileSaved='', fileDirty=false, fileView=null, fileSeq=0, fileNodes={},
       fileOpenDirs={}, fileNewIsDir=false, filePreviewing=false, fileBusy=false,
-      fileEol='lf', fileSha='', fileSep='/';
+      fileEol='lf', fileSha='', fileSep='/',
+      /* What the rename row is about: the open file, or a folder picked in the tree. */
+      fxRename=null;
 
   function fileMsg(r, d){
     if(d && d.error) return d.error;
@@ -9774,9 +9790,15 @@ const SCRIPT = `
     var pad = 6 + depth * 12;
     if(dir){
       var open = Boolean(fileOpenDirs[abs]);
-      return '<button type="button" class="fx-row" data-fx-dir="' + text(abs) + '" style="padding-left:' + pad + 'px">'
+      // A div, not a button: the row carries two more buttons (rename, delete), and a button
+      // inside a button is one control to a screen reader and invalid markup besides.
+      return '<div class="fx-row fx-dirrow">'
+        + '<button type="button" class="fx-main" data-fx-dir="' + text(abs) + '" style="padding-left:' + pad + 'px">'
         + '<span class="fx-caret">' + (open ? IC.icon.chevronDown : IC.icon.chevronRight) + '</span>'
-        + IC.icon.folder + '<span class="fx-name">' + text(name) + '</span></button>';
+        + IC.icon.folder + '<span class="fx-name">' + text(name) + '</span></button>'
+        + '<button type="button" class="fx-act" data-fx-dir-rename="' + text(abs) + '" title="Rename folder" aria-label="Rename folder ' + text(name) + '">' + IC.icon.pencil + '</button>'
+        + '<button type="button" class="fx-act" data-fx-dir-delete="' + text(abs) + '" title="Delete empty folder" aria-label="Delete folder ' + text(name) + '">' + IC.icon.trash + '</button>'
+        + '</div>';
     }
     return '<button type="button" class="fx-row' + (filePath === abs ? ' on' : '') + '" data-fx-file="' + text(abs) + '" style="padding-left:' + pad + 'px">'
       + '<span class="fx-caret blank"></span>' + IC.icon.note + '<span class="fx-name">' + text(name) + '</span></button>';
@@ -9923,6 +9945,7 @@ const SCRIPT = `
     filesWhere.textContent = fileRel || filePath;
     filesNewRow.hidden = true;
     filesRenameRow.hidden = true;
+    fxRename = null;
     filesSay(d.note || '');
     setFileDirty(false);
     paintCrumbs();
@@ -10041,27 +10064,79 @@ const SCRIPT = `
     }).catch(function(){ filesSay('Could not reach the daemon.'); });
   }
 
-  function filesRenameStart(){
-    if(!filePath) return;
+  function filesRenameShow(what, value){
     filesRenameRow.hidden = false;
-    filesRenameName.value = fileName;
+    $('files-rename-what').textContent = what;
+    filesRenameName.value = value;
     filesRenameName.focus();
     filesRenameName.select();
   }
 
+  function filesRenameStart(){
+    if(!filePath) return;
+    fxRename = {path:filePath, dir:false};
+    filesRenameShow('Rename file', fileName);
+  }
+
+  /** The tree's pencil: rename a folder in place, under its own parent. */
+  function filesRenameDirStart(abs){
+    fxRename = {path:abs, dir:true};
+    filesRenameShow('Rename folder', fxBase(abs));
+  }
+
+  /** Drop every cached listing below abs (or one node), so the next paint asks again. */
+  function forgetTreeBelow(abs){
+    for(var k in fileNodes){
+      if(k === abs || k.indexOf(abs + fileSep) === 0) delete fileNodes[k];
+    }
+    delete fileOpenDirs[abs];
+  }
+
+  /** Re-read the tree from the root, leaving it open where the person was. */
+  function refreshTree(keepDir){
+    fileNodes = {};
+    fileOpenDirs = {'':true};
+    fileDir = keepDir || fileRoot;
+    paintTree();
+    filesGet('list', {topic:fileTopic, path:''}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
+      paintTree();
+      if(keepDir && keepDir !== fileRoot) revealDir(keepDir);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
   function filesRenameGo(){
+    var target = fxRename;
+    if(!target) return;
     var name = String(filesRenameName.value || '').trim();
     if(!name || name === '.' || name === '..' || name.indexOf('/') >= 0){
       filesSay('A name is one path segment, with no slash.');
       return;
     }
-    var to = fxAbs(fileDir, name);
-    if(to === filePath){ filesRenameRow.hidden = true; return; }
-    if(!confirm('Rename "' + (fileRel || fileName) + '" to "' + name + '"?')) return;
-    var oldDir = fileDir;
-    filesPost('rename', {topic:fileTopic, from:filePath, to:to}).then(function(res){
+    var to = fxAbs(fxDirOf(target.path), name);
+    if(to === target.path){ filesRenameRow.hidden = true; fxRename = null; return; }
+    var shown = target.dir ? fxBase(target.path) : (fileRel || fileName);
+    if(!confirm('Rename "' + shown + '" to "' + name + '"?')) return;
+    filesPost('rename', {topic:fileTopic, from:target.path, to:to}).then(function(res){
       if(!res.ok) return filesSay(fileMsg(res, res.body));
       filesRenameRow.hidden = true;
+      fxRename = null;
+      if(target.dir){
+        // The open file keeps its bytes and its unsaved text; only its path moved if it was
+        // inside the folder. No re-read, and no dirty mark cleared.
+        if(filePath && filePath.indexOf(target.path + fileSep) === 0){
+          filePath = to + filePath.slice(target.path.length);
+          fileDir = fxDirOf(filePath);
+          fileRel = filePath.indexOf(fileRoot + fileSep) === 0 ? filePath.slice(fileRoot.length + 1) : '';
+          filesWhere.textContent = fileRel || filePath;
+          paintCrumbs();
+        }
+        forgetTreeBelow(target.path);
+        filesSay('Renamed.');
+        refreshTree(to);
+        return;
+      }
       // Re-point the open file instead of re-reading it: the rename moved the file on disk, and
       // the editor's unsaved text is still the person's. Clearing the mark or reloading here would
       // throw it away without the question a close would ask.
@@ -10072,10 +10147,31 @@ const SCRIPT = `
       filesTitle.textContent = fileName;
       filesWhere.textContent = fileRel || filePath;
       paintCrumbs();
+      var oldDir = fxDirOf(target.path);
       reloadDir(oldDir);
       if(fileDir !== oldDir) reloadDir(fileDir);
       filesSay(fileDirty ? 'Renamed. The unsaved changes are still here.' : 'Renamed.');
     }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  /** Empty the editor and forget the open file — after a delete, or a folder holding it went. */
+  function clearOpenFile(){
+    fileDirty = false;
+    fileSeq++;
+    filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileView = null;
+    fileEol = 'lf'; fileSha = '';
+    setFileDirty(false);
+    filesTitle.textContent = 'Files';
+    filesWhere.textContent = fileRoot;
+    filesCrumbs.innerHTML = '';
+    filesEditor.textContent = '';
+    filesPreview.hidden = true;
+    filesPreview.innerHTML = '';
+    filesConflict.hidden = true;
+    filesPreviewBtn.hidden = true;
+    filesRenameBtn.disabled = true;
+    filesDeleteBtn.disabled = true;
+    paintFileActions();
   }
 
   function filesDeleteGo(){
@@ -10084,24 +10180,29 @@ const SCRIPT = `
     var dir = fileDir;
     filesPost('remove', {topic:fileTopic, path:filePath}).then(function(res){
       if(!res.ok) return filesSay(fileMsg(res, res.body));
-      fileDirty = false;
-      fileSeq++;
-      filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileView = null;
-      fileEol = 'lf'; fileSha = '';
-      setFileDirty(false);
-      filesTitle.textContent = 'Files';
-      filesWhere.textContent = fileRoot;
-      filesCrumbs.innerHTML = '';
-      filesEditor.textContent = '';
-      filesPreview.hidden = true;
-      filesPreview.innerHTML = '';
-      filesConflict.hidden = true;
-      filesPreviewBtn.hidden = true;
-      filesRenameBtn.disabled = true;
-      filesDeleteBtn.disabled = true;
+      clearOpenFile();
       filesSay(res.body.removed === false ? 'It was already gone.' : 'Deleted.');
-      paintFileActions();
       reloadDir(dir);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  /**
+   * The tree's bin: a folder goes only when it is empty — the daemon refuses anything else, and
+   * says so in a sentence the page shows as it is. Deleting the folder the open file lives in
+   * first asks the same question a close would, because the file goes with it.
+   */
+  function filesDeleteDir(abs){
+    var inside = Boolean(filePath) && (filePath === abs || filePath.indexOf(abs + fileSep) === 0);
+    if(inside && !fileConfirmLeave()) return;
+    if(!confirm('Delete the folder "' + fxBase(abs) + '"? Only an empty folder can be deleted, and this cannot be undone.')) return;
+    var parent = fxDirOf(abs);
+    filesPost('remove', {topic:fileTopic, path:abs}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      if(inside) clearOpenFile();
+      forgetTreeBelow(abs);
+      filesSay(res.body.removed === false ? 'It was already gone.' : 'Deleted.');
+      reloadDir(parent);
+      paintTree();
     }).catch(function(){ filesSay('Could not reach the daemon.'); });
   }
 
@@ -10162,6 +10263,7 @@ const SCRIPT = `
     filesSay('');
     filesNewRow.hidden = true;
     filesRenameRow.hidden = true;
+    fxRename = null;
     filesConflict.hidden = true;
     filesPreview.hidden = true;
     filesPreview.innerHTML = '';
@@ -10229,6 +10331,10 @@ const SCRIPT = `
       }).catch(function(){ filesSay('Could not reach the daemon.'); });
     });
     filesTreeList.addEventListener('click', function(e){
+      var renameBtn = e.target.closest ? e.target.closest('[data-fx-dir-rename]') : null;
+      if(renameBtn) return filesRenameDirStart(renameBtn.getAttribute('data-fx-dir-rename'));
+      var deleteBtn = e.target.closest ? e.target.closest('[data-fx-dir-delete]') : null;
+      if(deleteBtn) return filesDeleteDir(deleteBtn.getAttribute('data-fx-dir-delete'));
       var dirBtn = e.target.closest ? e.target.closest('[data-fx-dir]') : null;
       if(dirBtn) return toggleDir(dirBtn.getAttribute('data-fx-dir'));
       var fileBtn = e.target.closest ? e.target.closest('[data-fx-file]') : null;
@@ -10253,7 +10359,7 @@ const SCRIPT = `
     filesPreviewBtn.addEventListener('click', filesTogglePreview);
     filesRenameBtn.addEventListener('click', filesRenameStart);
     $('files-rename-go').addEventListener('click', filesRenameGo);
-    $('files-rename-cancel').addEventListener('click', function(){ filesRenameRow.hidden = true; });
+    $('files-rename-cancel').addEventListener('click', function(){ filesRenameRow.hidden = true; fxRename = null; });
     filesRenameName.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); filesRenameGo(); } });
     filesDeleteBtn.addEventListener('click', filesDeleteGo);
     $('files-reload').addEventListener('click', function(){
@@ -11657,6 +11763,7 @@ __GATE__
             <span id="files-dirty" hidden>Unsaved changes</span>
           </div>
           <div id="files-rename-row" hidden>
+            <span id="files-rename-what"></span>
             <input id="files-rename-name" type="text" autocomplete="off" aria-label="New name">
             <button type="button" id="files-rename-go">Rename</button>
             <button type="button" id="files-rename-cancel">Cancel</button>

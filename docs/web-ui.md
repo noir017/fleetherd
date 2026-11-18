@@ -392,8 +392,10 @@ just before the file is replaced, but it is a check, not a lock: two saves landi
 instant can still overwrite each other. Saves keep the file's permissions, write through symlinks
 rather than replacing them, and leave a BOM and CRLF as they were, so opening and saving a file you
 did not edit returns the same bytes. Each write is logged with who, which machine and which file.
-New file, new folder, rename and delete act on the file the editor has open; a directory in the
-tree is for getting around, not for renaming.
+New file, new folder, rename and delete act on the file the editor has open; a folder row also
+carries its own rename and delete buttons. A folder is deleted only when it is empty — otherwise
+the window says so and leaves it alone — and deleting the folder the open file lives in asks about
+unsaved changes first.
 
 ```yaml
 platforms:

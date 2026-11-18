@@ -13,7 +13,8 @@ All notable changes to this project are documented here. The format is based on
   it, a plain text box otherwise. It works the same whether the agent is here or on a remote host,
   because both machines answer `Workspace` the same way. UTF-8 text up to 1 MiB is editable; images
   up to 5 MiB are shown in place; Markdown gets a rendered preview. New file, new folder, rename and
-  delete are there, each confirmed, and a save is version-checked: the size, mtime and SHA-256 the
+  delete are there, each confirmed — folders are renamed and deleted from their own row in the tree,
+  and a folder is deleted only when it is empty. A save is version-checked: the size, mtime and SHA-256 the
   page read, checked before the temporary is written and again just before the rename. A file that
   changed since it was read comes back as a conflict with reload, overwrite and cancel, rather than
   replacing someone else's work. That check is advisory — it happens before the write, not as an

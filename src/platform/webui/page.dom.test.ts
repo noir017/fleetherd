@@ -13316,6 +13316,73 @@ describe('webui page: the file window', () => {
     expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
   });
 
+  it('renames a folder from its row, and says what it is renaming', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: true, path: '/w/renamed' } });
+    await h.click('[data-fx-dir-rename="/w/sub"]');
+    expect(h.el('files-rename-what').textContent).toBe('Rename folder');
+    expect((h.el('files-rename-name') as HTMLInputElement).value).toBe('sub');
+
+    (h.el('files-rename-name') as HTMLInputElement).value = 'renamed';
+    await h.click('#files-rename-go');
+    await until('the rename', () => h.calls.some((c) => c.path === 'api/files/rename'));
+    expect(h.calls.find((c) => c.path === 'api/files/rename')!.body).toEqual({
+      topic: T,
+      from: '/w/sub',
+      to: '/w/renamed',
+    });
+    expect(h.confirms.at(-1)).toMatch(/Rename "sub" to "renamed"/);
+    await until('the note', () => h.el('files-note').textContent === 'Renamed.');
+  });
+
+  it('deletes an empty folder only after a confirmation that says so', async () => {
+    const h = await openFiles({ 'api/files/remove': { ok: true, removed: true } });
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    expect(h.confirms.at(-1)).toMatch(/Only an empty folder can be deleted/);
+    await until('the delete', () => h.calls.some((c) => c.path === 'api/files/remove'));
+    expect(h.calls.find((c) => c.path === 'api/files/remove')!.body).toEqual({ topic: T, path: '/w/sub' });
+    await until('the note', () => h.el('files-note').textContent === 'Deleted.');
+  });
+
+  it('shows the not-empty refusal when a folder with something in it is deleted', async () => {
+    const h = await openFiles({ 'api/files/remove': { ok: false, error: 'That folder is not empty. Delete its contents first.' } });
+    h.status['api/files/remove'] = 400;
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    await until('the refusal', () => h.el('files-note').textContent!.includes('not empty'));
+    expect(h.el('files-note').textContent).toBe('That folder is not empty. Delete its contents first.');
+  });
+
+  it('asks before deleting the folder the open file lives in, and posts nothing if refused', async () => {
+    const inside = {
+      ...file,
+      path: '/w/sub/a.txt',
+      dir: '/w/sub',
+      rel: 'sub/a.txt',
+      name: 'a.txt',
+    };
+    const h = await open({
+      files: true,
+      confirm: false,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: {
+        [LIST]: listing,
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/sub/a.txt')}`]: inside,
+      },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-dir]').length > 0);
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/sub/a.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    // The unsaved question came first and was answered no: nothing was sent.
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
+    expect(h.calls.some((c) => c.path === 'api/files/remove')).toBe(false);
+    expect(editorText(h).value).toBe('unsaved');
+  });
+
   it('opens a file named by another panel (window.openFileEditor) and shows a Markdown preview', async () => {
     const h = await open({
       files: true,

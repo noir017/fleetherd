@@ -1652,8 +1652,11 @@ decisions shape it:
 - **A save does not change bytes the person did not edit.** The read keeps a UTF-8 BOM in the text,
   and reports the file's line ending; the page normalizes CRLF to LF for the textarea (which would
   do it anyway) and puts CRLF back on save, so a file opened and saved untouched is the same bytes.
-- **What is renameable is what is open.** New file, new folder, rename and delete act on the file
-  the editor holds; a directory in the tree is navigated, not renamed or deleted from here.
+- **Folders are managed from the tree.** New file, new folder, rename and delete act on the file
+  the editor holds, and a folder row carries its own rename and delete buttons. A folder is deleted
+  only when it is empty — the daemon refuses anything else and the page shows its sentence ("That
+  folder is not empty. Delete its contents first.") — and deleting the folder the open file lives
+  in asks the same unsaved-changes question a close would before anything is sent.
 - **What can be edited is decided by content, not by name.** ≤ 1 MiB, valid UTF-8, no NUL — past
   that (or for an image, which is shown as a `data:` URL up to 5 MiB) the file is shown with its
   details and no editor. Markdown gets a rendered preview tab, built by `web-markdown.ts` on the

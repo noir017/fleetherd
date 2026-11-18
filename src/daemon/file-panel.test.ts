@@ -228,8 +228,16 @@ describe('buildFilesPanel on this machine', () => {
 
     expect(await p.remove(REF, 'sub/renamed.txt')).toMatchObject({ ok: true });
     expect(await p.remove(REF, 'sub')).toMatchObject({ ok: true });
-    expect((await p.remove(REF, 'full')).ok).toBe(false);
+    const full = await p.remove(REF, 'full');
+    expect(full.ok).toBe(false);
+    // The one refusal a person can act on, in one sentence on both machines.
+    if (!full.ok) expect(full.error).toBe('That folder is not empty. Delete its contents first.');
     expect(fs.existsSync(path.join(dir, 'full', 'keep'))).toBe(true);
+    // A directory renames like a file, and only onto a free name.
+    fs.mkdirSync(path.join(dir, 'old-dir'));
+    expect(await p.rename(REF, 'old-dir', 'new-dir')).toMatchObject({ ok: true });
+    expect(fs.statSync(path.join(dir, 'new-dir')).isDirectory()).toBe(true);
+    expect((await p.rename(REF, 'new-dir', 'full')).ok).toBe(false);
     // The root itself is never a delete.
     expect((await p.remove(REF, '')).ok).toBe(false);
     expect((await p.remove(REF, '..')).ok).toBe(false);
