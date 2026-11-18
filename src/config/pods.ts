@@ -67,18 +67,29 @@ export function writePods(dir: string, state: PodsState): void {
  * the pod itself said is kept by podAgentModels, for the settings screen to show and to fall back to.
  * A key naming an agent config.yaml defines is ignored and reported: that agent's model is
  * `agents[].model`, and two places to set one would disagree.
+ *
+ * `podPermissions` is folded in the same way, into `permissions`, for the same reasons.
  */
 export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): { raw: Record<string, unknown>; skipped: string[] } {
   const own = Array.isArray(raw.agents) ? (raw.agents as unknown[]) : [];
-  const models = podModelsOf(raw);
+  const models = podStringsOf(raw, 'podModels');
+  const levels = podStringsOf(raw, 'podPermissions');
   const skipped: string[] = [];
   const added = podAgents(raw, pods, skipped).map(({ agent }) => {
     const model = models[agent.id];
-    return model !== undefined ? { ...agent, model } : agent;
+    const level = levels[agent.id];
+    return {
+      ...agent,
+      ...(model !== undefined ? { model } : {}),
+      ...(level !== undefined ? { permissions: level } : {}),
+    };
   });
   const ownIds = new Set(own.map(idOf));
   for (const key of Object.keys(models)) {
     if (ownIds.has(key)) skipped.push(`podModels.${key}: ${key} is defined in config.yaml, so its model is agents[].model there`);
+  }
+  for (const key of Object.keys(levels)) {
+    if (ownIds.has(key)) skipped.push(`podPermissions.${key}: ${key} is defined in config.yaml, so its level is agents[].permissions there`);
   }
   if (added.length === 0) return { raw, skipped };
   return { raw: { ...raw, agents: [...own, ...added] }, skipped };
@@ -119,9 +130,12 @@ function podAgents(raw: Record<string, unknown>, pods: PodsState, skipped: strin
   return out;
 }
 
-/** `podModels` from a raw config, keeping only non-empty strings (the schema reports the rest). */
-function podModelsOf(raw: Record<string, unknown>): Record<string, string> {
-  const m = raw.podModels;
+/**
+ * `podModels` / `podPermissions` from a raw config, keeping only non-empty strings (the schema
+ * reports the rest, a level it does not know included).
+ */
+function podStringsOf(raw: Record<string, unknown>, key: 'podModels' | 'podPermissions'): Record<string, string> {
+  const m = raw[key];
   if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
   return Object.fromEntries(Object.entries(m).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== ''));
 }

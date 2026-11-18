@@ -5,6 +5,33 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A permission level per agent, settable from the web UI's settings page.** `permissions` was
+  `auto` or `ask`, and `ask` only changed what the gateway did with requests the harness chose to
+  make — on Codex, which asked for almost nothing in its standard mode, it changed nothing at all.
+  How much an agent may do without you is decided in two places, the harness's session mode (what
+  it asks about) and the gateway (what becomes of what it asks), so a level now sets both: `plan`,
+  `ask` and `edits` put requests to you as buttons, `auto` and `full` approve, and each puts the
+  harness in the mode that means it — `read-only` / `workspace-write` / `agent-full-access` on
+  Codex, `plan` / `default` / `acceptEdits` / `bypassPermissions` on Claude Code and CodeBuddy,
+  `plan` / `build` on OpenCode — through `session/set_mode`, or the `mode` config option where a
+  harness has only that. Only the levels a harness reports a mode for are offered, read off a
+  running session the way a model list is. The settings page has a Permissions row per agent, and
+  `/setting permissions.<agent> <level>` does the same anywhere; a change moves running sessions to
+  the new mode at once, and a pod's agent is written to `podPermissions`. Unset keeps what every
+  agent had: everything approved, the harness's own mode untouched. agy's modes are not used: they
+  could not be measured, and its `default` wrote files without asking when last measured.
+
+### Changed
+
+- **A scheduled run asks too.** Under `ask` its permission requests were approved, since nobody
+  watches a scheduled run — but an agent can schedule its own prompts, so an agent set to ask could
+  approve itself by asking later. A level that asks now puts a scheduled run's requests to you like
+  any other turn's, declined if nobody answers within the hour.
+- **`permissions: ask` on Codex now asks.** It puts Codex in `read-only`, which asks before every
+  edit and command, where it used to leave it in `agent`, whose own reviewer answered instead.
+
 ## [3.11.0] - 2026-11-18
 
 ### Added

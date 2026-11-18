@@ -240,14 +240,26 @@ code, no unused vars (`_`-prefix to opt out), `complexity ≤ 18`,
 
 Do not weaken these without saying so explicitly in the PR:
 
-1. **Agents run with full tool access by default.** Under `permissions: auto` (the default)
-   the daemon approves every ACP `session/request_permission`, and the only access gate is
-   `access.allowFrom`; an empty allowlist means anyone who can message the bot can run
-   commands on the operator's machine. `loadConfig` and `doctor` warn loudly about this; keep
-   the warning. An agent set to `permissions: ask` puts each request to the user instead, and
-   a request that cannot be put to anyone — or that nobody answers — is declined, never
-   approved (`daemon/agent-acp.ts` answerPermission). Keep that direction: a failure to ask
-   must never turn into a yes.
+1. **Agents run with full tool access by default.** With no `permissions` level (the default),
+   `auto` or `full`, the daemon approves every ACP `session/request_permission`, and the only
+   access gate is `access.allowFrom`; an empty allowlist means anyone who can message the bot can
+   run commands on the operator's machine. `loadConfig` and `doctor` warn loudly about this; keep
+   the warning. An agent at a level that asks — `plan`, `ask`, `edits` (`core/permission-levels.ts`)
+   — puts each request to the user instead, scheduled runs included (an agent can schedule its
+   own prompts), and a request that cannot be put to anyone — or that nobody answers — is
+   declined, never approved (`daemon/agent-acp.ts` answerPermission). Keep that direction: a
+   failure to ask must never turn into a yes.
+
+   Since 2026-11-18 the level is also set from chat (`/setting permissions.<agent>`, the web UI's
+   settings page), and it moves the harness's session mode as well as the gateway's answer. That
+   is safe for the reasons `core/settings.ts` gives: only a person reaches `/setting` — it is read
+   off a person's own inbound message, and nothing an agent sends, schedules or hands a sub-agent
+   is parsed as a command — and anyone who can type there is in `access.allowFrom`, so already
+   able to tap Allow on the agent's requests. Like invariant 6's tiers, that is an interface
+   boundary: an agent on the gateway's own machine as the same user can edit config.yaml. Do not
+   add a reverse command or an agent-reachable path that writes a level, and do not map a level
+   to a harness mode that answers requests inside the harness (claude's `auto`, codex's `agent`):
+   the gateway would be promising an answer it never gets to give.
 2. **The IPC socket is the trust boundary.** Peer JSON is untrusted — it is validated
    with the zod schema in `ipc/protocol.ts` (`.strict()`, never `as IpcRequest`). The
    socket is created under umask `0o077` and chmod'd `0600`. Tokens are compared with

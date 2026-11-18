@@ -148,10 +148,14 @@ describe('a permission request in the chat', () => {
     expect(r.answers).toEqual([{ kind: 'unavailable', why: 'wecom cannot show buttons' }]);
   });
 
-  it('answers a scheduled run as unattended, without posting anything to wait on', async () => {
+  it('asks in a scheduled run too — an agent could otherwise schedule itself past its level', async () => {
+    vi.useFakeTimers();
     const r = rig();
-    await r.daemon.registry.runScheduledPrompt({ key: 'tg#c1#', platform: 'tg', address: { channel: 'c1' }, agentId: 'cc', prompt: 'nightly' });
-    expect(r.answers).toEqual([{ kind: 'unattended' }]);
-    expect(r.buttonSends).toHaveLength(0);
+    void r.daemon.registry.runScheduledPrompt({ key: 'tg#c1#', platform: 'tg', address: { channel: 'c1' }, agentId: 'cc', prompt: 'nightly' });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(r.buttonSends).toHaveLength(1);
+    expect(r.answers).toEqual([]);
+    await vi.advanceTimersByTimeAsync(DEFAULT_ASK_TIMEOUT_MS);
+    expect(r.answers).toEqual([{ kind: 'unanswered', waitedMs: DEFAULT_ASK_TIMEOUT_MS }]);
   });
 });

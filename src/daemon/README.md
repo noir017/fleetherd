@@ -24,7 +24,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `turn-changes.ts` | What a web UI turn changed: a work-tree snapshot before the prompt and one after it, in a repository of the daemon's own on the agent's machine; the last 50 turns per conversation in `<configDir>/turn-changes.json`; the two reads the page's git window makes |
 | `paced-adapter.ts` | Wraps every `PlatformAdapter` in the shared per-chat write budget |
 | `agent.ts` | `AgentFactory` / `AgentSession` / `AgentStreamHandlers` interfaces. Dependency-free. |
-| `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under `permissions: auto`, ask through the turn's (or a background burst's) `onPermission` under `ask` — see answerPermission / permissionResponse for why an unanswered request goes back as an error |
+| `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under a level that does not ask (none, `auto`, `full`), ask through the turn's (or a background burst's) `onPermission` under `plan` / `ask` / `edits` — see answerPermission / permissionResponse for why an unanswered request goes back as an error — and puts each session in its level's mode (applyPermissionLevel: `session/set_mode`, or the `mode` config option) |
 | `session-failure.ts` | Failures read off the ACP wire: claude-agent-acp's typed failure records (the capability that asks for them), and a prompt that ended in `stopReason: "refusal"` with whatever cause the harness attached |
 | `acp-steering.ts` | How an ACP harness takes a message into a running turn (a second prompt, `_session/steering`, or not at all), read off `initialize` |
 | `acp-side-question.ts` | A side question (`/btw`): `session/fork` the live session, ask the copy, delete it; which harnesses may be asked while a turn runs |
@@ -853,8 +853,8 @@ runtimes wherever they know why; anything else is `other`). It pushes that to th
 `/stop` leaves none.
 
 - **`hooks.turnFailed.continue`** schedules the operator's message after a failure whose reason it
-  names, as a solo turn with `CONTINUE_SENDER` — attended, unlike a scheduled run, so a
-  `permissions: ask` agent still asks. The count of continues sent survives the continue's own turn
+  names, as a solo turn with `CONTINUE_SENDER`, so an agent whose level asks still asks (a
+  scheduled run does too). The count of continues sent survives the continue's own turn
   (it may fail too) and is reset by a normal end, a stop, or anything the person does
   (`personActed`, called from `route()` for every accepted message, and from `/stop` `/new` `/kill`).
   A turn that starts for any other reason calls a waiting continue off.
@@ -1367,7 +1367,7 @@ because the levels on offer are the model's.
 
 Since 2026-11-06 `harness: agy` launches `agy acp` (agy 1.5+) and is served by `agent-acp.ts` like
 any ACP harness: sessions, `session/load`, the `model` and `thought_level` selectors, permission
-requests (so `permissions: ask` works), `session/cancel` for `/stop`, pictures as image blocks and
+requests (put to the person under a level that asks), `session/cancel` for `/stop`, pictures as image blocks and
 the native tools over MCP. No launch flag from the previous print-mode runtime carries over —
 `resolveHarness` says why each was dropped. What `agy acp` 1.5.1 does its own way is in `agy-acp.ts`, each measured with
 `project-scripts/talkcode-agy-acp/` and recorded in the file header:

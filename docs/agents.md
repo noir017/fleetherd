@@ -15,7 +15,7 @@ A service that is only an HTTP API needs no harness of its own:
 
 Each agent takes `cwd`, `env`, `args`, a best-effort `model`, pinned
 [session options](#pinned-session-options), a [pre-launch hook](#pre-launch-hook), a
-[permission policy](#permission-requests), and a [quota command](#quota-command). With
+[permission level](#permission-levels), and a [quota command](#quota-command). With
 `host:` it runs on another machine, reached over ssh — see [Remote hosts](remote-hosts.md). Sessions
 persist where the agent supports it; the commands an agent advertises are
 reachable through its own `/<agent>` menu rather than registered globally (see
@@ -160,32 +160,74 @@ fails only when the turn showed nothing, and says `request`; one that already ex
 Claude sends its refusal explanation as an ordinary message first — is a normal end, because that
 explanation is the answer.
 
-## Permission requests
+## Permission levels
 
-Some agents ask before running a tool: Claude Code does for commands and file edits in its
-default mode. By default (`permissions: auto`) the daemon approves every such request, so the
-agent runs with full tool access and `access.allowFrom` is the only gate. Set `permissions: ask`
-to be asked instead:
+`permissions` decides how much an agent may do without you. A level sets two things at once: the
+session mode its harness runs in, which decides what the harness asks about, and what the gateway
+does with what it asks — approve it, or put it to you as buttons in the chat.
+
+| level | the gateway | the harness's mode |
+|---|---|---|
+| `plan` | asks you | its plan mode: it plans before it acts |
+| `ask` | asks you | the mode that asks before edits and commands |
+| `edits` | asks you | the mode that takes edits in its working directory and asks before commands |
+| `auto` | approves | the mode in which it asks rather than decides on its own |
+| `full` | approves | its no-prompt mode: nothing is asked, and no sandbox |
 
 ```yaml
 agents:
-  - id: cc
-    harness: claude
+  - id: cx
+    harness: codex
     permissions: ask
 ```
 
-- Each request appears in the chat as a message with the command and the agent's own options as
-  buttons ("Allow", "Reject", …). Answer by tapping; a typed reply goes to the agent as your next
-  message instead.
+Each harness reports its modes itself, and a level is offered only where the harness has a mode
+for it — measured on 2026-11-18:
+
+| harness | `plan` | `ask` | `edits` | `auto` | `full` |
+|---|---|---|---|---|---|
+| Claude Code (`claude`) | `plan` | `default` | `acceptEdits` | `default` | `bypassPermissions`¹ |
+| Codex (`codex`) | — | `read-only` | `workspace-write` | `workspace-write` | `agent-full-access` |
+| OpenCode (`opencode`) | `plan` | — | — | `build` | — |
+| CodeBuddy (`custom`) | `plan` | `default` | `acceptEdits` | `default` | `bypassPermissions` |
+| agy, gemini, dsh | — | — | — | (unchanged) | — |
+
+¹ Not offered when claude-agent-acp runs as root outside a sandbox: Claude Code refuses it there.
+
+- Leaving `permissions` out is what every agent had before levels existed: every request approved,
+  and the harness left in whatever mode it starts in — its own settings, or a pinned `options.mode`.
+  It reads as `auto`; setting `auto` explicitly puts the harness in the mode in the table.
+- `/setting permissions.<agent> <level>` changes it from chat, or the agent's row on the
+  [settings page](settings.md); a pod's agent is written to `podPermissions`. A change applies at
+  once: running sessions are switched to the new mode, and the next request is answered the new way.
+  The harness can still move its own mode — Claude Code leaves `plan` when you approve its plan —
+  and a session that starts again (`/new`, a restart, an idle reclaim) starts in the level's mode.
+- A request is put to you as a message naming what the agent wants to do, with the agent's own
+  options as buttons ("Allow", "Reject", …). Answer by tapping; a typed reply goes to the agent as
+  your next message instead.
 - Nobody answering within an hour declines the request. The agent is told nobody answered, not
   that you refused, and the turn continues. A reminder is posted after half an hour.
 - `/stop` cancels a pending request together with the turn.
-- Scheduled runs are always approved: nobody is there to answer.
+- Scheduled runs ask too. They used to be approved, but an agent can schedule its own prompts, so
+  one set to ask could have approved itself by asking later.
 - A platform without buttons (DingTalk, WeCom) cannot ask, so requests there are declined, again
   with the agent told why.
-- Only agents that ask are affected. Codex (mode `agent`) and OpenCode ran a file-writing command
-  without asking when measured; `agy` asks before commands, not before writing in its working
-  directory.
+
+What each mode does is the harness's, and what was measured on 2026-11-18 in a turn that wrote a
+file and ran a command:
+
+- **Codex.** `read-only` and `workspace-write` ask before the edit and the command. Its commands
+  run in its own sandbox, and where the sandbox cannot start (a container without user namespaces)
+  a command fails unless Codex asks to run it outside — which it does not always do. There `full` is
+  the level that runs commands. With no level set Codex stays in its `agent` mode, whose own
+  reviewer refused the edit and the command without asking anyone.
+- **OpenCode.** Its modes are agents, not permission modes: `build` asks nothing unless
+  opencode.json sets `permission` to `ask`, and `plan` only reads.
+- **CodeBuddy.** `plan` asks before every action, read-only commands too, and offers to leave plan
+  mode on the card.
+- **agy.** Its modes are not used. They could not be read on the day (its login had expired), and
+  its `default` mode, when last measured, asked before commands but wrote into its working
+  directory without asking. A level that asks still puts whatever agy does ask to you.
 
 ## Quota command
 
@@ -214,7 +256,7 @@ agents:
 ## Antigravity (`agy`)
 
 `agy` runs as `agy acp`, the ACP server agy ships since 1.5, so streaming, tool bubbles,
-[permission requests](#permission-requests), multi-turn context, post-restart resume, `/model`,
+[permission requests](#permission-levels), multi-turn context, post-restart resume, `/model`,
 `/effort`, `/stop`, skills and the two [native tools](agent-actions.md) work as on the other ACP
 harnesses. What differs:
 

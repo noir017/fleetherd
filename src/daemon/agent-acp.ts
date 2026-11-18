@@ -18,6 +18,7 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionConfigOption,
+  SessionModeState,
   SessionUpdate,
 } from '@agentclientprotocol/sdk';
 import type {
@@ -31,6 +32,7 @@ import type {
 } from '../types.js';
 import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
+import { asksPerson, levelMode } from '../core/permission-levels.js';
 import type {
   AgentFactory,
   AgentSession,
@@ -40,6 +42,7 @@ import type {
   ModelSelector,
   ReclaimState,
   RunTurnInput,
+  SessionModeSelector,
 } from './agent.js';
 import { asUndelivered, SideQuestionRefused, TurnFailure } from './agent.js';
 import {
@@ -279,8 +282,8 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
       // agy's own ACP server, since 1.5 (`agy acp --help`). None of the flags the old print-mode
       // launch needed carries over, each re-measured on 1.5.1 (2026-11-06):
       // there is no print-mode timeout to lift; permissions arrive as `session/request_permission`
-      // and are answered like any harness's (approved under `permissions: auto`, put to the user
-      // under `ask` — `--dangerously-skip-permissions` would take that choice away); and a file the
+      // and are answered like any harness's (approved or put to the user, as its permission level
+      // says — `--dangerously-skip-permissions` would take that choice away); and a file the
       // agent writes in an untrusted cwd lands in the cwd, so `--add-dir` has nothing to fix. The
       // same command on a remote host: agy is a single binary on PATH there too.
       return { command: AGY_COMMAND, args: ['acp', ...def.args] };
@@ -929,6 +932,133 @@ export async function applyPinnedOptions(
   return changed ? current : undefined;
 }
 
+/** ACP's spec-reserved category for the session-mode selector (SessionConfigOptionCategory). */
+const MODE_CATEGORY = 'mode';
+
+/**
+ * How a session's mode is read and set, by the route its harness offers. Measured 2026-11-18
+ * (project-reports/acp-permission-modes-20261118.md): claude-agent-acp, codex-acp and CodeBuddy
+ * report the `modes` field on session/new and take `session/set_mode`; opencode reports no `modes`,
+ * only a config option of category `mode`, set with `session/set_config_option`. `modes` is used
+ * where it exists, since it is the protocol's mode surface proper; the config option otherwise —
+ * found by its category, the protocol's, not by its id, the harness's.
+ */
+export type ModeControl = SessionModeSelector &
+  ({ via: 'set_mode' } | { via: 'config_option'; configId: string });
+
+/** The session's mode control, or undefined when it reports neither route (or no modes on it). */
+export function modeControlOf(
+  modes: SessionModeState | null | undefined,
+  options: SessionConfigOption[] | null | undefined
+): ModeControl | undefined {
+  if (modes && modes.availableModes.length > 0) {
+    return {
+      via: 'set_mode',
+      current: modes.currentModeId || undefined,
+      options: modes.availableModes.map((m) => ({ value: m.id, name: m.name || m.id })),
+    };
+  }
+  const opt = options?.find((o) => o.category === MODE_CATEGORY);
+  if (opt?.type !== 'select') return undefined;
+  const choices = opt.options
+    .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
+    .map((o) => ({ value: o.value, name: o.name || o.value }));
+  if (choices.length === 0) return undefined;
+  return { via: 'config_option', configId: opt.id, current: opt.currentValue || undefined, options: choices };
+}
+
+/**
+ * Whether this agent's modes are left out of its permission levels — read for the settings
+ * screen, and never set — so that it is offered `auto` alone.
+ *
+ * agy, for two reasons. Its modes could not be measured on 2026-11-18 (the probing machine's login
+ * had expired, and `session/new` answers `Authentication required` before it reports any), so
+ * nothing says what they do now. And what was measured before says its names do not mean what the
+ * levels' do: on 1.5.1 (2026-11-06) its `default` — "Ask before edits and commands" — asked before
+ * a command but wrote into its working directory without asking, so `ask` there would be a level
+ * that lets edits through unseen. The gateway's half still holds for agy: a level that asks puts
+ * whatever it does ask to the person.
+ */
+function modesLeftOut(def: AgentDef): boolean {
+  return def.harness === 'agy';
+}
+
+/** The `modes` a session/new or session/load answer carried, if any. */
+function reportedModes(res: { modes?: SessionModeState | null } | null | undefined): SessionModeState | undefined {
+  return res?.modes ?? undefined;
+}
+
+/** What a session reports about its mode, as the two places ACP carries it. */
+export interface ModeState {
+  modes: SessionModeState | undefined;
+  options: SessionConfigOption[] | undefined;
+}
+
+/**
+ * Put a session in the mode its agent's permission level means (`agents[].permissions`,
+ * core/permission-levels.ts), returning what the harness reports afterwards (undefined when nothing
+ * was sent).
+ *
+ * Run when a session starts or reloads — after the model and the pinned options, since both can
+ * reshape the option set — and when the level is changed from chat (applyPermissions). Not after
+ * every turn or model switch: the harness moves its own mode when the person approves leaving
+ * `plan` ("Yes, and auto-accept edits"), and putting it back behind them would undo the answer they
+ * just gave. A reload does put the level back, because claude and CodeBuddy reload at their
+ * default mode and opencode at the last one (measured 2026-11-18): the level is where a session
+ * starts.
+ *
+ * Best-effort like its siblings — never fails a turn. A level with no mode on offer leaves the
+ * mode alone with a log line: the gateway's half of the level still holds, since answerPermission
+ * reads the level per request.
+ */
+export async function applyPermissionLevel(
+  ctx: Pick<ClientContext, 'request'>,
+  sessionId: string,
+  def: AgentDef,
+  state: ModeState
+): Promise<Partial<ModeState> | undefined> {
+  if (def.permissions === undefined || modesLeftOut(def)) return undefined;
+  const control = modeControlOf(state.modes, state.options);
+  const offered = (control?.options ?? []).map((m) => m.value);
+  const pinned = def.options['mode'];
+  const want = levelMode(def.permissions, offered, pinned === undefined ? undefined : String(pinned));
+  if (!control || !want) {
+    console.log(
+      `[acp] agent "${def.id}": permissions "${def.permissions}" has no session mode here` +
+        (control ? ` (offered: ${offered.join(', ')}); staying at "${control.current}"` : ' (it reports no modes)')
+    );
+    return undefined;
+  }
+  if (control.current === want) return undefined; // already there — don't spend a round trip
+  try {
+    let after: Partial<ModeState>;
+    if (control.via === 'set_mode') {
+      await ctx.request('session/set_mode', { sessionId, modeId: want });
+      // set_mode answers with nothing to read back; the harness's own current_mode_update (or
+      // config_option_update) follows, and is folded in the same way when it does.
+      after = { modes: { availableModes: state.modes?.availableModes ?? [], currentModeId: want } };
+    } else {
+      const res = await ctx.request('session/set_config_option', { sessionId, configId: control.configId, value: want });
+      after = res?.configOptions ? { options: res.configOptions } : {};
+    }
+    console.log(`[acp] agent "${def.id}": mode set to "${want}" for permissions "${def.permissions}"`);
+    return after;
+  } catch (err) {
+    console.warn(
+      `[acp] agent "${def.id}": could not set mode "${want}" for permissions "${def.permissions}" ` +
+        `(${err instanceof Error ? err.message : err}); staying at "${control.current}"`
+    );
+    return undefined;
+  }
+}
+
+/** The session's modes for the settings screen — undefined where they are left out (modesLeftOut). */
+export function permissionModesOf(def: AgentDef, state: ModeState): SessionModeSelector | undefined {
+  if (modesLeftOut(def)) return undefined;
+  const control = modeControlOf(state.modes, state.options);
+  return control ? { ...(control.current ? { current: control.current } : {}), options: control.options } : undefined;
+}
+
 /**
  * Whether this agent is Cursor's CLI (`cursor-agent acp`) — the one harness known to read
  * `clientCapabilities._meta.parameterizedModelPicker` (cursor-agent 2026.11.05, its ACP agent's
@@ -1125,8 +1255,12 @@ function createAcpSession(
   }
 
   /**
-   * Answer an ACP `session/request_permission`: approve under `permissions: auto` (the default,
-   * see decidePermission), or put it to the user under `permissions: ask`.
+   * Answer an ACP `session/request_permission`: approve under a level that does not ask (`auto`,
+   * `full`, or none set — see decidePermission), or put it to the user under one that does
+   * (`plan`, `ask`, `edits`; core/permission-levels.ts asksPerson).
+   *
+   * The level is read per request off `def`, which `/setting` mutates in place, so a change reaches
+   * a turn already running at its next request.
    *
    * Asked through the running turn's handlers, so it lands in the lane the turn is answering in;
    * with no turn open (background work the agent left running), through a follow-up burst's, which
@@ -1136,7 +1270,7 @@ function createAcpSession(
    * can tell apart from a refusal.
    */
   async function answerPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    if (def.permissions !== 'ask') return decidePermission(params);
+    if (!asksPerson(def.permissions)) return decidePermission(params);
     // A fork answering a side question asks in that answer's lane, never the running turn's.
     const ask = (sideAsks.get(params.sessionId)?.state ?? turnState ?? followUp(false))?.handlers.onPermission;
     let answer: PermissionAnswer;
@@ -1355,6 +1489,12 @@ function createAcpSession(
    */
   let liveConfigOptions: SessionConfigOption[] | undefined;
   /**
+   * The session's `modes` as the harness last reported them (session/new, session/load, a mode it
+   * was set to, current_mode_update) — the first of the two places a mode is carried
+   * (modeControlOf). Kept across a reclaim for the reason liveConfigOptions is.
+   */
+  let liveModes: SessionModeState | undefined;
+  /**
    * Names of the subagents this session has spawned (see TurnState.subagents). Held by the session
    * rather than by a turn because a background subagent outlives the turn that launched it.
    */
@@ -1493,12 +1633,20 @@ function createAcpSession(
     if (after) liveConfigOptions = after;
   }
 
+  /** Put the agent's permission level's mode on a session (applyPermissionLevel), keeping the answer. */
+  async function reapplyPermissionLevel(ctx: Pick<ClientContext, 'request'>, sessionId: string): Promise<void> {
+    const after = await applyPermissionLevel(ctx, sessionId, def, { modes: liveModes, options: liveConfigOptions });
+    if (after?.modes) liveModes = after.modes;
+    if (after?.options) liveConfigOptions = after.options;
+  }
+
   /**
    * A started session's runtime choices, in the only order that works: the model first, then the
-   * pinned options and the effort, because the levels and the option set on offer are the model's
-   * (see applyEffortPreference, applyPinnedOptions) and must be checked against the list the model
-   * switch produced, not the one it replaced. A pinned `reasoning_effort` goes before the
-   * conversation's own choice so the person's `/effort` wins.
+   * pinned options, the permission level's mode and the effort, because the levels and the option
+   * set on offer are the model's (see applyEffortPreference, applyPinnedOptions) and must be checked
+   * against the list the model switch produced, not the one it replaced. A pinned
+   * `reasoning_effort` goes before the conversation's own choice so the person's `/effort` wins,
+   * and the level goes after a pinned `mode` for the same reason — it is the person's setting.
    *
    * `model` is what to enforce: on session/new the person's choice or else the configured model; on
    * session/load only the person's choice. A reloaded session is left on whatever it was on unless
@@ -1523,6 +1671,7 @@ function createAcpSession(
       liveModel = liveModelName(afterModel) ?? liveModel;
     }
     await reapplyPinned(ctx, sessionId);
+    await reapplyPermissionLevel(ctx, sessionId);
     await reapplyEffort(ctx, sessionId, split?.effort);
   }
 
@@ -1760,6 +1909,7 @@ function createAcpSession(
           active = resumed;
           // session/load reports the resumed session's config the same way session/new does.
           liveConfigOptions = loaded?.configOptions ?? undefined;
+          liveModes = reportedModes(loaded);
           liveModel = liveModelName(liveConfigOptions);
           // Every replayed notification is in the queue by now (see armReplayFence): the agent
           // sends them before it answers `session/load`, and one JSON-RPC stream is ordered.
@@ -1808,6 +1958,7 @@ function createAcpSession(
           .start();
         active = session; // active set = "ready": assigned last so a half-ready session isn't reused
         liveConfigOptions = session.newSessionResponse?.configOptions ?? undefined;
+        liveModes = reportedModes(session.newSessionResponse);
         liveModel = liveModelName(liveConfigOptions);
         // _meta.model above is a hint some harnesses ignore; reapplyPreferences enforces it, and
         // puts back a `/effort` choice after it.
@@ -1880,6 +2031,10 @@ function createAcpSession(
         if (!options) return;
         liveConfigOptions = options;
         liveModel = liveModelName(options) ?? liveModel;
+      },
+      // claude moves its own mode when the person approves leaving plan; keep `modes` saying so.
+      onModeChanged: (modeId) => {
+        if (liveModes) liveModes = { ...liveModes, currentModeId: modeId };
       },
       onSessionFailure: (failure) => announceSessionFailure(failure, handlers, announced),
       // Local override for a harness that under-reports the window (e.g. claude-opus-5 → 200k fallback).
@@ -2969,6 +3124,17 @@ function createAcpSession(
       return effortOption(liveConfigOptions)?.currentValue || value;
     },
 
+    permissionModes(): SessionModeSelector | undefined {
+      return permissionModesOf(def, { modes: liveModes, options: liveConfigOptions });
+    },
+
+    async applyPermissions(): Promise<void> {
+      // No live child: nothing to move. The next start applies the level (reapplyPreferences), and
+      // the gateway's half — whether a request is put to the person — is read per request anyway.
+      if (!conn || !active) return;
+      await reapplyPermissionLevel(conn.agent, active.sessionId);
+    },
+
     reclaimState(): ReclaimState {
       // `active` is this runtime's readiness signal everywhere else, so it is the honest test for
       // "there is something here to reclaim" too.
@@ -3149,11 +3315,11 @@ function isAuthRequired(err: unknown): boolean {
 }
 
 /**
- * The `permissions: auto` answer to session/request_permission — the default, and what every
- * agent got before `ask` existed: approve, so agents run with full tool access and the only gate
- * is access.allowFrom (who may trigger the agent at all). Also how a scheduled run is answered
- * under `ask`, since nobody is there to be asked. Picks allow_once when offered, else any allow_*;
- * if the agent somehow offers no allow option, falls back to cancelled (can't fabricate an id).
+ * The answer to session/request_permission under a level that does not ask (`auto`, `full`, or
+ * none set) — what every agent got before `ask` existed: approve, so agents run with full tool
+ * access and the only gate is access.allowFrom (who may trigger the agent at all). Picks
+ * allow_once when offered, else any allow_*; if the agent somehow offers no allow option, falls
+ * back to cancelled (can't fabricate an id).
  */
 export function decidePermission(req: RequestPermissionRequest): RequestPermissionResponse {
   const opts = req.options;
@@ -3207,8 +3373,6 @@ export function permissionResponse(
   switch (answer.kind) {
     case 'selected':
       return { outcome: { outcome: 'selected', optionId: answer.optionId } };
-    case 'unattended':
-      return decidePermission(req);
     case 'cancelled':
       // ACP's own meaning: the turn was cancelled before anyone answered.
       return { outcome: { outcome: 'cancelled' } };
@@ -3343,6 +3507,8 @@ export interface TurnState {
    * Optional so the pure translation tests can omit it.
    */
   onConfigOptions?(options: SessionConfigOption[] | null | undefined): void;
+  /** Hand a `current_mode_update` back to the session, for the same reason as onConfigOptions. */
+  onModeChanged?(modeId: string): void;
   /**
    * Hand a failure record from a `session_info_update` to the session to announce (see
    * session-failure.ts). A callback for the same reason as onConfigOptions: the notice needs the
@@ -3480,6 +3646,12 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
     // interest us: re-read both so a mid-session switch of either is reflected in the footer.
     case 'config_option_update':
       reportConfigOptions(u, st);
+      break;
+
+    // The harness moved its own mode (claude, when the person approves leaving plan). Kept by the
+    // session for the permission level's next re-apply; nothing is rendered.
+    case 'current_mode_update':
+      st.onModeChanged?.(u.currentModeId);
       break;
 
     // A failure record (retry, advisory, or a failure with no turn), when the session asked for them

@@ -1,6 +1,6 @@
 import type { AgentDef } from '../config/schema.js';
-import type { AgentModelList } from '../core/settings.js';
-import type { ModelSelector } from '../types.js';
+import type { AgentModelList, AgentModes } from '../core/settings.js';
+import type { ModelSelector, SessionModeSelector } from '../types.js';
 import type { AgentFactory } from './agent.js';
 
 /**
@@ -27,6 +27,12 @@ import type { AgentFactory } from './agent.js';
  * the row is opened: an agent that did not start may start now.
  *
  * Never on a turn's path: only a settings screen asks, and it shows "asking…" while it does.
+ *
+ * ── Modes too ─────────────────────────────────────────────────────────────────
+ * The same session reports the harness's modes (the config option of category `mode`), which is
+ * what the permission rows offer levels from (core/permission-levels.ts). One ask answers both, and
+ * both are kept against the same definition; a list learned elsewhere (`note`) carries no modes, so
+ * a permission row opened after it asks once more.
  */
 
 /** How long an agent may take to come up before the answer is "it did not". */
@@ -38,6 +44,8 @@ export interface ModelCatalogDeps {
   defOf(agentId: string): AgentDef | undefined;
   /** A selector from a live session of this agent in some conversation, if any has one. */
   liveSelector(agentId: string): ModelSelector | undefined;
+  /** The modes a live session of this agent reports, in some conversation, if any does. */
+  liveModes(agentId: string): SessionModeSelector | undefined;
   /** A token for the session the catalog starts itself (its MCP bridge needs one). */
   tokenFor(sessionId: string): string;
   /** Forget what that session left behind: its store entry, its token. */
@@ -46,6 +54,7 @@ export interface ModelCatalogDeps {
 
 export class ModelCatalog {
   private readonly known = new WeakMap<AgentDef, AgentModelList>();
+  private readonly knownModes = new WeakMap<AgentDef, AgentModes>();
   private readonly asking = new WeakMap<AgentDef, Promise<AgentModelList>>();
 
   constructor(private readonly deps: ModelCatalogDeps) {}
@@ -80,23 +89,44 @@ export class ModelCatalog {
     return known === undefined || known.kind === 'error';
   }
 
+  /** The agent's modes as far as known now, without asking — `get` for the permission rows. */
+  modes(agentId: string): AgentModes | undefined {
+    const def = this.deps.defOf(agentId);
+    if (!def) return undefined;
+    const live = this.deps.liveModes(agentId);
+    if (live && live.options.length > 0) {
+      const modes: AgentModes = { kind: 'list', options: live.options };
+      this.knownModes.set(def, modes);
+      return modes;
+    }
+    if (this.asking.has(def)) return { kind: 'loading' };
+    return this.knownModes.get(def);
+  }
+
+  /** Whether opening this agent's permission row should ask — `shouldAsk` for the modes. */
+  shouldAskModes(agentId: string): boolean {
+    const known = this.modes(agentId);
+    return known === undefined || known.kind === 'error';
+  }
+
   /** Ask for the list, once at a time per agent; resolves to the answer, never rejects. */
   ask(agentId: string): Promise<AgentModelList> {
     const def = this.deps.defOf(agentId);
     if (!def) return Promise.resolve({ kind: 'error', reason: `no agent named ${agentId}` });
     const running = this.asking.get(def);
     if (running) return running;
-    const p = this.probe(def).then((answer) => {
-      this.known.set(def, answer);
+    const p = this.probe(def).then(({ models, modes }) => {
+      this.known.set(def, models);
+      this.knownModes.set(def, modes);
       this.asking.delete(def);
-      return answer;
+      return models;
     });
     this.asking.set(def, p);
     return p;
   }
 
-  /** Start a session of the agent under an id no conversation has, read its selector, dispose it. */
-  private async probe(def: AgentDef): Promise<AgentModelList> {
+  /** Start a session of the agent under an id no conversation has, read its selectors, dispose it. */
+  private async probe(def: AgentDef): Promise<{ models: AgentModelList; modes: AgentModes }> {
     const sid = `models:${def.id}`;
     const started = Date.now();
     let session;
@@ -107,16 +137,20 @@ export class ModelCatalog {
         await withTimeout(session.ensureSession(this.deps.tokenFor(sid)), PROBE_TIMEOUT_MS);
         selector = session.modelSelector?.();
       }
-      const answer: AgentModelList =
+      const models: AgentModelList =
         selector && selector.options.length > 0 ? { kind: 'list', options: selector.options } : { kind: 'none' };
+      const offered = session.permissionModes?.();
+      const modes: AgentModes =
+        offered && offered.options.length > 0 ? { kind: 'list', options: offered.options } : { kind: 'none' };
       console.log(
-        `[models] asked ${def.id} for its models: ${answer.kind === 'list' ? `${answer.options.length}` : 'none offered'} (${Date.now() - started}ms)`
+        `[models] asked ${def.id} for its models: ${models.kind === 'list' ? `${models.options.length}` : 'none offered'}, ` +
+          `modes: ${modes.kind === 'list' ? modes.options.map((m) => m.value).join(' ') : 'none'} (${Date.now() - started}ms)`
       );
-      return answer;
+      return { models, modes };
     } catch (e) {
       const reason = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? 'unknown';
       console.warn(`[models] could not ask ${def.id} for its models: ${reason}`);
-      return { kind: 'error', reason };
+      return { models: { kind: 'error', reason }, modes: { kind: 'error', reason } };
     } finally {
       if (session) this.deps.agents.dispose(sid);
       this.deps.forget(sid);
