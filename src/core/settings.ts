@@ -1815,7 +1815,9 @@ function settingsListScreen(
   let defaultAgent: { screen: SettingsScreenRow; note?: string } | undefined;
   for (const [i, row] of rows.entries()) {
     const screen = drawn[i]!;
-    if ((row.id === 'model' || row.id === 'permissions') && row.target) {
+    // Every row with a target is a per-agent setting (SettingRow.target), so a setting added per
+    // agent later joins its agent's row here without this list having to grow.
+    if (row.target) {
       const field = settingsScreenField(row, screen);
       const merged = byTarget.get(row.target);
       if (merged?.control.kind === 'agent') merged.control.fields.push(field);
