@@ -196,9 +196,11 @@ describe('git panel', () => {
     expect(first.more).toBe(true);
     expect(first.commits).toHaveLength(50);
     expect(first.commits[0]).toMatchObject({ subject: 'change 55', author: 'test', parents: 1 });
-    expect(first.commits[0]?.sha).toMatch(/^[0-9a-f]{40}$/);
     expect(first.commits[0]?.short).toMatch(/^[0-9a-f]{7,}$/);
     expect(first.commits[0]?.at).toBeGreaterThan(0);
+    // Every row, not just the first: the record separator's newline used to land on the front of
+    // the next sha, which the page then sent back and the query schema refused.
+    expect(first.commits.every((c) => /^[0-9a-f]{40}$/.test(c.sha))).toBe(true);
 
     // 55 changes plus the repository's first commit: the second page holds the rest.
     const second = await gitLog(ws, 50);
@@ -206,16 +208,40 @@ describe('git panel', () => {
     expect(second.commits).toHaveLength(6);
     expect(second.more).toBe(false);
     expect(second.commits.at(-1)?.subject).toBe('base');
+    expect(second.commits.every((c) => /^[0-9a-f]{40}$/.test(c.sha))).toBe(true);
     // No overlap between the pages.
     expect(second.commits.some((c) => first.commits.some((p) => p.sha === c.sha))).toBe(false);
+
+    // A sha from the second page — the one that used to carry a newline — opens as a commit.
+    const older = second.commits[1];
+    if (!older) throw new Error('expected a second commit on the second page');
+    const opened = await gitCommit(ws, older.sha);
+    if (!opened.ok) throw new Error(opened.text);
+    expect(opened.commit).toMatchObject({ sha: older.sha, subject: older.subject });
 
     const past = await gitLog(ws, 500);
     expect(past).toMatchObject({ ok: true, commits: [], more: false });
   });
 
+  it('says there is no more when the page ends exactly at the last commit', async () => {
+    repo();
+    for (let i = 1; i <= 49; i++) {
+      write(path.join(dir, `f${String(i).padStart(2, '0')}.txt`), `${i}\n`);
+      gitIn(dir, 'add', '.');
+      gitIn(dir, 'commit', '-qm', `change ${i}`);
+    }
+    const page = await gitLog(ws, 0);
+    if (!page.ok) throw new Error(page.text);
+    expect(page.commits).toHaveLength(50);
+    expect(page.more).toBe(false);
+  });
+
   it('answers an empty history for a repository with no commits', async () => {
     gitIn(dir, 'init', '-q', '-b', 'main');
-    expect(await gitLog(ws, 0)).toEqual({ ok: true, repo: { root: dir, branch: 'main' }, commits: [], more: false });
+    const empty = { ok: true, repo: { root: dir, branch: 'main' }, commits: [], more: false };
+    expect(await gitLog(ws, 0)).toEqual(empty);
+    // A page past the end of an empty history is still a page, not a refusal.
+    expect(await gitLog(ws, 50)).toEqual(empty);
   });
 
   it('reads a root commit against the empty tree', async () => {
@@ -280,6 +306,124 @@ describe('git panel', () => {
     expect(file.original).toBe('');
     expect(file.modified).toBe('f\n');
     expect((await gitCommitFile(ws, merge, 'main.txt')).ok).toBe(false);
+  });
+
+  it('gives the deleted side of a commit that removed a file', async () => {
+    repo();
+    gitIn(dir, 'rm', '-q', 'gone.txt');
+    gitIn(dir, 'commit', '-qm', 'remove gone');
+    const sha = gitIn(dir, 'rev-parse', 'HEAD').trim();
+
+    const commit = await gitCommit(ws, sha);
+    if (!commit.ok) throw new Error(commit.text);
+    expect(commit.files).toEqual([{ path: 'gone.txt', status: 'deleted', additions: 0, deletions: 2 }]);
+
+    const file = await gitCommitFile(ws, sha, 'gone.txt');
+    if (!file.ok) throw new Error(file.text);
+    expect(file.original).toBe('one\ntwo\n');
+    expect(file.modified).toBe('');
+    expect(file.patch).toContain('-one');
+  });
+
+  it('shows a rename as a delete and an add, because renames are off', async () => {
+    repo();
+    gitIn(dir, 'mv', 'base.txt', 'moved.txt');
+    gitIn(dir, 'commit', '-qm', 'rename');
+    const sha = gitIn(dir, 'rev-parse', 'HEAD').trim();
+
+    const commit = await gitCommit(ws, sha);
+    if (!commit.ok) throw new Error(commit.text);
+    expect(commit.files.map((f) => [f.path, f.status])).toEqual([
+      ['base.txt', 'deleted'],
+      ['moved.txt', 'added'],
+    ]);
+
+    const old = await gitCommitFile(ws, sha, 'base.txt');
+    if (!old.ok) throw new Error(old.text);
+    expect(old.original).toBe('a\nb\n');
+    expect(old.modified).toBe('');
+    const moved = await gitCommitFile(ws, sha, 'moved.txt');
+    if (!moved.ok) throw new Error(moved.text);
+    expect(moved.original).toBe('');
+    expect(moved.modified).toBe('a\nb\n');
+  });
+
+  it('marks a committed side over the cap tooLarge instead of returning part of it', async () => {
+    repo();
+    // `blobAt` reads with a cap of MAX_SIDE_BYTES + 1, so only a file past that is cut off.
+    write(path.join(dir, 'big.txt'), 'x'.repeat(2 << 20));
+    gitIn(dir, 'add', '.');
+    gitIn(dir, 'commit', '-qm', 'big');
+    const sha = gitIn(dir, 'rev-parse', 'HEAD').trim();
+    expect(await gitCommitFile(ws, sha, 'big.txt')).toMatchObject({
+      ok: true,
+      tooLarge: true,
+      original: '',
+      modified: '',
+      patch: '',
+    });
+  });
+
+  it('reads history for a topic in a subdirectory, with paths relative to the repository root', async () => {
+    repo();
+    write(path.join(dir, 'sub', 'deep', 'inside.txt'), 'one\n');
+    gitIn(dir, 'add', '.');
+    gitIn(dir, 'commit', '-qm', 'subdir');
+    write(path.join(dir, 'sub', 'deep', 'inside.txt'), 'one\ntwo\n');
+    gitIn(dir, 'commit', '-qam', 'edit inside');
+
+    const sub = localWorkspace(path.join(dir, 'sub'));
+    const log = await gitLog(sub, 0);
+    if (!log.ok) throw new Error(log.text);
+    expect(log.repo.root).toBe(dir);
+    const head = log.commits[0];
+    if (!head) throw new Error('expected a commit');
+    expect(head.subject).toBe('edit inside');
+
+    const commit = await gitCommit(sub, head.sha);
+    if (!commit.ok) throw new Error(commit.text);
+    expect(commit.files.map((f) => f.path)).toEqual(['sub/deep/inside.txt']);
+
+    const file = await gitCommitFile(sub, head.sha, 'sub/deep/inside.txt');
+    if (!file.ok) throw new Error(file.text);
+    expect(file.original).toBe('one\n');
+    expect(file.modified).toBe('one\ntwo\n');
+    expect(file.patch).toContain('+two');
+  });
+
+  it('refuses a cut-off history answer instead of parsing its tail', async () => {
+    repo();
+    const cut: Workspace = {
+      ...ws,
+      run: async (argv, o) => {
+        const r = await ws.run(argv, o);
+        return argv.some((a) => a.startsWith('--skip=')) ? { ...r, truncated: true } : r;
+      },
+    };
+    // The host keeps the END of a cut-off output: it starts mid-record, so it is not a page.
+    expect(await gitLog(cut, 0)).toMatchObject({
+      ok: false,
+      reason: 'error',
+      text: expect.stringContaining('too large'),
+    });
+  });
+
+  it('refuses a commit whose message was cut off', async () => {
+    repo();
+    const sha = gitIn(dir, 'rev-parse', 'HEAD').trim();
+    const cut: Workspace = {
+      ...ws,
+      run: async (argv, o) => {
+        const r = await ws.run(argv, o);
+        return argv.includes('-1') ? { ...r, truncated: true } : r;
+      },
+    };
+    expect(await gitCommit(cut, sha)).toMatchObject({
+      ok: false,
+      reason: 'error',
+      text: expect.stringContaining('too large'),
+    });
+    expect(await gitCommitFile(cut, sha, 'base.txt')).toMatchObject({ ok: false, text: expect.stringContaining('too large') });
   });
 
   it('gives no text for a binary file in a commit', async () => {
@@ -684,6 +828,35 @@ describe('git panel', () => {
     expect(await panel.log({ ...ref, thread: 'ffffffff' }, 0)).toMatchObject({ ok: false, reason: 'error' });
     expect(await panel.commit({ ...ref, thread: 'ffffffff' }, head)).toMatchObject({ ok: false, reason: 'error' });
     expect(await panel.commitFile({ ...ref, thread: 'ffffffff' }, head, 'base.txt')).toMatchObject({ ok: false });
+  });
+
+  it('reads one commit once for the files of it opened in a row', async () => {
+    repo();
+    write(path.join(dir, 'base.txt'), 'a\nb\nc\n');
+    write(path.join(dir, 'gone.txt'), 'one\ntwo\nthree\n');
+    gitIn(dir, 'commit', '-qam', 'edit both');
+    const sha = gitIn(dir, 'rev-parse', 'HEAD').trim();
+    const ran: string[] = [];
+    const counted: Workspace = {
+      ...ws,
+      run: (argv, o) => {
+        ran.push(argv.join(' '));
+        return ws.run(argv, o);
+      },
+    };
+    const ref = { platform: 'web', channel: 'main', thread: 'a1b2c3d4', kind: 'direct' as const, user: 'owner' };
+    const panel = buildGitPanel(() => counted);
+
+    expect((await panel.commit(ref, sha)).ok).toBe(true);
+    const afterCommit = ran.length;
+    expect((await panel.commitFile(ref, sha, 'base.txt')).ok).toBe(true);
+    expect((await panel.commitFile(ref, sha, 'gone.txt')).ok).toBe(true);
+
+    // The commit's own fields and its whole diff are not read again for each file: only that
+    // file's two sides and its patch, as the change listing is reused for a working-tree file.
+    const forFiles = ran.slice(afterCommit);
+    expect(forFiles.some((c) => c.includes('log -1'))).toBe(false);
+    expect(forFiles.some((c) => c.includes('--name-status'))).toBe(false);
   });
 
   it('reuses the listing a status answer just read when a file is opened', async () => {

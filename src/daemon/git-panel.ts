@@ -63,13 +63,20 @@ const LISTING_CACHE_MAX = 16;
 /** One page of the history list; the command asks for one more to know whether there is more. */
 const LOG_PAGE = 50;
 /**
- * The empty tree, the "before" side of a root commit. This is its SHA-1 id, which git resolves in
- * any SHA-1 repository whether or not the object was ever written; `git diff` accepts it as a
- * tree-ish, so a root commit needs no special command of its own.
+ * The empty tree, the "before" side of a root commit. Its id depends on the repository's object
+ * format, so it is read from the repository rather than assumed — a SHA-1 id in a SHA-256
+ * repository is a `bad object`, not an empty tree.
  */
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+const EMPTY_TREE = {
+  sha1: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+  sha256: '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321',
+} as const;
 /** A commit id as the query lets one through: hex only, so it can never be read as an option. */
 const SHA_RE = /^[0-9a-f]{7,40}$/;
+/** A commit opened within this many ms is reused when its next file is opened, as a listing is. */
+const COMMIT_TTL_MS = 15_000;
+/** Commit details kept for that reuse, oldest dropped first. */
+const COMMIT_CACHE_MAX = 16;
 
 /**
  * The sentences git prints when discovery found no repository. The second is what a working
@@ -863,23 +870,30 @@ async function historyRoot(ws: Workspace): Promise<HistoryRoot> {
 }
 
 /**
- * The fields of one commit, NUL-separated and each record ending with a NUL. `%s` is one line by
- * definition and `%b` is the only field that may hold newlines, so both are placed last: a message
- * can never be mistaken for a field or a record boundary.
+ * The fields of one commit, NUL-separated. `%s` is one line by definition and `%b` is the only
+ * field that may hold newlines, so both are placed last: a message can never be mistaken for a
+ * field boundary.
+ *
+ * The format is `tformat`, so git appends a newline after each record. With the record terminator
+ * NUL, that newline lands at the FRONT of the next record's first field, and a sha read from it
+ * would carry a `\n` the query schema then refuses.
  */
 const LOG_FORMAT = '%H%x00%h%x00%an%x00%ct%x00%P%x00%s%x00';
 const COMMIT_FORMAT = '%H%x00%h%x00%an%x00%ct%x00%P%x00%s%x00%b%x00';
 
 /**
- * Split a `--format` answer into records of `fields` strings. The trailing NUL leaves one empty
- * field; an answer cut off at the host's cap leaves a partial record, which is dropped rather
- * than parsed as a row with fields missing.
+ * Split a whole `--format` answer into records of `fields` strings. Only ever called on an answer
+ * that was not cut off: the host keeps the END of a cut-off output, so parsing one would start in
+ * the middle of a record and misalign every row after it.
  */
 function commitRecords(text: string, fields: number): string[][] {
   const parts = text.split('\0');
-  if (parts[parts.length - 1] === '') parts.pop();
   const out: string[][] = [];
-  for (let i = 0; i + fields <= parts.length; i += fields) out.push(parts.slice(i, i + fields));
+  for (let i = 0; i + fields <= parts.length; i += fields) {
+    const record = parts.slice(i, i + fields);
+    record[0] = (record[0] ?? '').replace(/^\n/, '');
+    out.push(record);
+  }
   return out;
 }
 
@@ -912,6 +926,15 @@ async function resolveCommit(ws: Workspace, sha: string, cwd: string): Promise<s
   return full;
 }
 
+/** The empty tree in the repository's own object format; see `EMPTY_TREE`. */
+async function emptyTree(ws: Workspace, cwd: string): Promise<string> {
+  const r = await git(ws, ['rev-parse', '--show-object-format'], 4 << 10, cwd);
+  const hard = hardProblem(r, 'rev-parse');
+  if (hard) throw hard;
+  // Anything but a plain "sha256" — the default, or a git too old to know the question — is SHA-1.
+  return r.code === 0 && r.text.trim() === 'sha256' ? EMPTY_TREE.sha256 : EMPTY_TREE.sha1;
+}
+
 /** What one commit changed against its first parent, or against the empty tree for a root commit. */
 async function commitFiles(ws: Workspace, root: string, from: string, to: string): Promise<Listing> {
   const names = await git(ws, ['diff', '--no-ext-diff', '--no-renames', '--name-status', '-z', from, to, '--'], undefined, root);
@@ -930,21 +953,25 @@ async function commitFiles(ws: Workspace, root: string, from: string, to: string
   return { entries: sortEntries(entries), truncated: false };
 }
 
-interface CommitDetail {
+/** What one commit carries, and what a file of it is compared against. */
+export interface CommitDetail {
   commit: GitCommitSummary & { body: string };
   /** The first parent's id, or the empty tree for a root commit. */
   from: string;
   listing: Listing;
 }
 
-/** One commit's own fields, the commit its old side comes from, and what it changed. */
+/** Read one commit's own fields, the commit its old side comes from, and what it changed. */
 async function commitDetail(ws: Workspace, root: string, full: string): Promise<CommitDetail> {
   const shown = await git(ws, ['log', '-1', '--no-show-signature', `--format=${COMMIT_FORMAT}`, full, '--'], undefined, root);
   const bad = problemOf(shown, 'log');
   if (bad) throw bad;
+  // A body that was cut off cannot be shown as the body; a tail of a message reads as the message.
+  if (shown.truncated) throw new GitFailed('This commit is too large to read.');
   const fields = commitRecords(shown.text, 7)[0];
   if (!fields) throw new GitFailed('git log answered no commit.');
-  const from = (fields[4] ?? '').split(' ').filter(Boolean)[0] ?? EMPTY_TREE;
+  const parent = (fields[4] ?? '').split(' ').filter(Boolean)[0];
+  const from = parent ?? (await emptyTree(ws, root));
   return {
     commit: { ...commitOf(fields), body: fields[6] ?? '' },
     from,
@@ -953,12 +980,39 @@ async function commitDetail(ws: Workspace, root: string, full: string): Promise<
 }
 
 /**
+ * Commits read in the last few seconds, so opening the second file of one commit does not read
+ * the commit again. A commit never changes, so an entry cannot go stale — the ceiling is only
+ * about memory, and the TTL is the change listing's.
+ */
+export type CommitCache = Map<string, { at: number; detail: CommitDetail }>;
+
+function commitKey(ws: Workspace, root: string, full: string): string {
+  return `${ws.host}\u0000${root}\u0000${full}`;
+}
+
+async function detailOf(ws: Workspace, root: string, full: string, cache?: CommitCache): Promise<CommitDetail> {
+  if (!cache) return commitDetail(ws, root, full);
+  const key = commitKey(ws, root, full);
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at <= COMMIT_TTL_MS) return hit.detail;
+  const detail = await commitDetail(ws, root, full);
+  cache.delete(key);
+  cache.set(key, { at: Date.now(), detail });
+  while (cache.size > COMMIT_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  return detail;
+}
+
+/**
  * One page of the history, newest first. A repository with no commits has an empty history, which
  * is an answer; a page past the end is an empty page with `more: false`.
  */
 export async function gitLog(ws: Workspace, skip = 0): Promise<GitLogResult> {
-  // The bound the query already enforces is repeated here: this number is formatted into an argv
-  // element, and nothing that is not a non-negative integer belongs there.
+  // The query bounds skip; this check is about argv: only a non-negative integer belongs in the
+  // element below, whatever a caller that did not come through the route passes.
   if (!Number.isSafeInteger(skip) || skip < 0) {
     return { ok: false, reason: 'error', text: 'That page of the history is out of range.' };
   }
@@ -976,22 +1030,24 @@ export async function gitLog(ws: Workspace, skip = 0): Promise<GitLogResult> {
     );
     const bad = problemOf(r, 'log');
     if (bad) return { ok: false, reason: 'error', text: bad.message };
+    // The host keeps the END of a cut-off output, so it starts mid-record: every row after it
+    // would be misaligned. That is not a page of the history, and it is not answered as one.
+    if (r.truncated) return { ok: false, reason: 'error', text: 'This page of the history is too large to read.' };
     const rows = commitRecords(r.text, 6).map(commitOf);
-    // The page is one short of what was asked for; a cut-off answer is certainly followed by more.
-    return { ok: true, repo, commits: rows.slice(0, LOG_PAGE), more: r.truncated || rows.length > LOG_PAGE };
+    return { ok: true, repo, commits: rows.slice(0, LOG_PAGE), more: rows.length > LOG_PAGE };
   } catch (e) {
     return { ok: false, reason: 'error', text: messageOf(e) };
   }
 }
 
 /** One commit and the files it changed, for the history list's detail view. */
-export async function gitCommit(ws: Workspace, sha: string): Promise<GitCommitResult> {
+export async function gitCommit(ws: Workspace, sha: string, cache?: CommitCache): Promise<GitCommitResult> {
   try {
     const at = await historyRoot(ws);
     if (!at.ok) return { ok: false, reason: at.reason, text: at.text };
     const repo = { root: at.root, ...(at.branch ? { branch: at.branch } : {}) };
     const full = await resolveCommit(ws, sha, at.root);
-    const { commit, listing } = await commitDetail(ws, at.root, full);
+    const { commit, listing } = await detailOf(ws, at.root, full, cache);
     return {
       ok: true,
       repo,
@@ -1009,12 +1065,17 @@ export async function gitCommit(ws: Workspace, sha: string): Promise<GitCommitRe
  * patch between them. The path must be one the commit changed, checked against git's own list,
  * exactly as the working-tree route checks against its change list.
  */
-export async function gitCommitFile(ws: Workspace, sha: string, path: string): Promise<GitFileResult> {
+export async function gitCommitFile(
+  ws: Workspace,
+  sha: string,
+  path: string,
+  cache?: CommitCache
+): Promise<GitFileResult> {
   try {
     const at = await historyRoot(ws);
     if (!at.ok) return { ok: false, text: at.text };
     const full = await resolveCommit(ws, sha, at.root);
-    const detail = await commitDetail(ws, at.root, full);
+    const detail = await detailOf(ws, at.root, full, cache);
     const entry = detail.listing.entries.find((e) => e.path === path);
     if (!entry) return { ok: false, text: 'That file is not one of the changes shown.' };
     return fileResult(ws, at.root, detail.from, full, path, entry);
@@ -1038,6 +1099,8 @@ export async function gitCommitFile(ws: Workspace, sha: string, path: string): P
  */
 export function buildGitPanel(workspaceOf: (ref: ConversationRef) => Workspace | undefined): GitPanel {
   const cache = new Map<string, { at: number; prepared: Prepared }>();
+  // Commits are immutable, so this is only about a second file of the same commit being free.
+  const commits: CommitCache = new Map();
   const keyOf = (ws: Workspace, mode: GitMode, base: string | undefined): string =>
     `${ws.host}\u0000${ws.root}\u0000${mode}\u0000${base ?? ''}`;
 
@@ -1099,12 +1162,12 @@ export function buildGitPanel(workspaceOf: (ref: ConversationRef) => Workspace |
     async commit(ref, sha) {
       const ws = workspaceOf(ref);
       if (!ws) return { ok: false, reason: 'error', text: 'This conversation has no workspace on any machine.' };
-      return gitCommit(ws, sha);
+      return gitCommit(ws, sha, commits);
     },
     async commitFile(ref, sha, path) {
       const ws = workspaceOf(ref);
       if (!ws) return { ok: false, text: 'This conversation has no workspace on any machine.' };
-      return gitCommitFile(ws, sha, path);
+      return gitCommitFile(ws, sha, path, commits);
     },
   };
 }
