@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RequestError, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
-import { createAcpAgentFactory, PERMISSION_DECLINED_CODE, permissionResponse, permissionRequestOf } from './agent-acp.js';
+import { createAcpAgentFactory, decidePermission, PERMISSION_DECLINED_CODE, permissionResponse, permissionRequestOf } from './agent-acp.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import type { AgentPermissionRequest, PermissionAnswer } from '../types.js';
@@ -51,6 +51,187 @@ describe('permissionRequestOf', () => {
     };
     expect(permissionRequestOf(req).title).toBe('MCP list_notes — notes-server');
   });
+
+  it('carries the diff of an edit, so the card asks about the change and not just its name', () => {
+    // As claude-agent-acp 0.81.2 sends an Edit (measured 2026-11-18).
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't3',
+        title: 'Edit src/app.ts',
+        kind: 'edit',
+        content: [
+          { type: 'diff', path: '/w/src/app.ts', oldText: 'const PORT = 3000;\n', newText: 'const PORT = 8080;\n' },
+        ],
+        locations: [{ path: '/w/src/app.ts' }],
+        rawInput: { file_path: '/w/src/app.ts', old_string: 'PORT = 3000', new_string: 'PORT = 8080' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Edit src/app.ts',
+      detail: '--- /w/src/app.ts\n+++ /w/src/app.ts\n-const PORT = 3000;\n+const PORT = 8080;',
+    });
+  });
+
+  it('names a titleless CodeBuddy request and shows what its Write will put in the file', () => {
+    // Exactly the frame codebuddy 2.181.0 sent on 2026-11-18: no title, no kind, no content —
+    // the tool's name in _meta and the change in rawInput. It used to reach the user as a bare
+    // path, with nothing saying it was a write and nothing saying what would be written.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't4',
+        rawInput: { file_path: '/w/hello.txt', content: 'banana\n' },
+        _meta: { 'codebuddy.ai/toolName': 'Write' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Write: /w/hello.txt',
+      detail: 'banana',
+    });
+  });
+
+  it('reads the verb off the arguments when the request names nothing at all', () => {
+    // The same CodeBuddy frame without the _meta hint: a file_path beside content is a write, and
+    // a bare path was the card that said nothing about what was about to happen to it.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: { toolCallId: 't7', rawInput: { file_path: '/w/hello.txt', content: 'banana\n' } },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({ title: 'Write: /w/hello.txt', detail: 'banana' });
+  });
+
+  it('leaves a bare file path alone rather than calling it an edit', () => {
+    // A read (or a delete) asks with nothing but a path. Calling that `Edit:` would tell the user
+    // the agent is about to change a file it only wants to look at.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: { toolCallId: 't8', rawInput: { file_path: '/w/a.txt' } },
+    };
+    expect(permissionRequestOf(req)).toEqual({
+      title: '/w/a.txt',
+      options: [
+        { optionId: 'allow-once', label: 'Allow' },
+        { optionId: 'reject', label: 'Reject' },
+      ],
+    });
+  });
+
+  it('shows a titleless edit’s own change, which is where CodeBuddy puts the diff', () => {
+    // CodeBuddy's Edit: no title, no kind, no `content` — `{file_path, old_string, new_string}`.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't9',
+        rawInput: { file_path: '/w/src/app.ts', old_string: 'const PORT = 3000;', new_string: 'const PORT = 8080;' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Edit: /w/src/app.ts',
+      detail: '--- /w/src/app.ts\n+++ /w/src/app.ts\n-const PORT = 3000;\n+const PORT = 8080;',
+    });
+  });
+
+  it('takes the tool name from `_meta` even when the arguments alone would say nothing', () => {
+    // The name is the only thing that distinguishes a read from an edit here, so this is the test
+    // that pins the `_meta` read itself: without it the card falls back to the bare path.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't10',
+        rawInput: { file_path: '/w/a.txt' },
+        _meta: { 'codebuddy.ai/toolName': 'Read' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({ title: 'Read: /w/a.txt' });
+  });
+
+  it('says what an ExitPlanMode request is about, not its raw JSON', () => {
+    // The frame codebuddy 2.181.0 sent in plan mode on 2026-11-18, verbatim but for the ids: no
+    // title, no kind, the tool named in `_meta`, and the plan the user must read also in `_meta`.
+    const plan = '# Plan: create planwrite.txt\n\n## Steps\n1. Write the file.\n2. Reply done.';
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't11',
+        rawInput: {},
+        _meta: {
+          'codebuddy.ai/toolName': 'ExitPlanMode',
+          'codebuddy.ai/planFilePath': '/h/.codebuddy/plans/plan.md',
+          'codebuddy.ai/plan': plan,
+        },
+      },
+      options: [
+        { optionId: 'allow_always', name: 'Always Allow', kind: 'allow_always' },
+        { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+        { optionId: 'reject_and_exit_plan', name: 'Exit plan mode', kind: 'reject_once' },
+      ],
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Exit plan mode',
+      detail: plan,
+      options: [
+        { optionId: 'allow_always', label: 'Always Allow' },
+        { optionId: 'allow', label: 'Allow' },
+        { optionId: 'reject', label: 'Reject' },
+        { optionId: 'reject_and_exit_plan', label: 'Exit plan mode' },
+      ],
+    });
+  });
+
+  it('names the prompts an ExitPlanMode request wants pre-approved when there is no plan text', () => {
+    // The other frame the same harness sent: `allowedPrompts` and nothing else.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't12',
+        rawInput: { allowedPrompts: [{ tool: 'Bash', prompt: 'run echo redirect to create cmd.txt' }] },
+        _meta: { 'codebuddy.ai/toolName': 'ExitPlanMode' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Exit plan mode',
+      detail: 'Bash: run echo redirect to create cmd.txt',
+    });
+  });
+
+  it('does not repeat a shell call’s description as its change', () => {
+    // claude-agent-acp puts the Bash call's own description in `content`; the command is the title.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't5',
+        title: 'npm test',
+        kind: 'execute',
+        content: [{ type: 'content', content: { type: 'text', text: 'Run the unit tests' } }],
+        rawInput: { command: 'npm test', description: 'Run the unit tests' },
+      },
+    };
+    expect(permissionRequestOf(req)).toEqual({
+      title: 'npm test',
+      options: [
+        { optionId: 'allow-once', label: 'Allow' },
+        { optionId: 'reject', label: 'Reject' },
+      ],
+    });
+  });
+
+  it('bounds the change preview, saying how much it left out', () => {
+    const big = 'x'.repeat(5000);
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't6',
+        title: 'Write big.txt',
+        kind: 'edit',
+        content: [{ type: 'diff', path: '/w/big.txt', oldText: null, newText: big }],
+      },
+    };
+    const detail = permissionRequestOf(req).detail ?? '';
+    expect(detail.length).toBeLessThan(1_400);
+    expect(detail).toContain('more characters)');
+  });
 });
 
 describe('permissionResponse', () => {
@@ -67,6 +248,28 @@ describe('permissionResponse', () => {
     expect(permissionResponse(REQUEST, { kind: 'selected', optionId: 'reject' })).toEqual({
       outcome: { outcome: 'selected', optionId: 'reject' },
     });
+  });
+
+  it('answers a harness whose option ids are its own (codex: accept / acceptForSession / cancel)', () => {
+    // Measured on codex-acp 2.5.0: the ids carry no meaning a client may rely on, so the kind is
+    // what `auto` picks and what a tapped button's own id echoes back.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      options: [
+        { optionId: 'accept', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'acceptForSession', name: 'Allow for this session', kind: 'allow_always' },
+        { optionId: 'cancel', name: 'Reject', kind: 'reject_once' },
+      ],
+    };
+    expect(decidePermission(req)).toEqual({ outcome: { outcome: 'selected', optionId: 'accept' } });
+    expect(permissionResponse(req, { kind: 'selected', optionId: 'acceptForSession' })).toEqual({
+      outcome: { outcome: 'selected', optionId: 'acceptForSession' },
+    });
+    expect(permissionRequestOf(req).options).toEqual([
+      { optionId: 'accept', label: 'Allow' },
+      { optionId: 'acceptForSession', label: 'Allow for this session' },
+      { optionId: 'cancel', label: 'Reject' },
+    ]);
   });
 
   it('cancels with the turn', () => {

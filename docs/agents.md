@@ -202,9 +202,11 @@ for it — measured on 2026-11-18:
   once: running sessions are switched to the new mode, and the next request is answered the new way.
   The harness can still move its own mode — Claude Code leaves `plan` when you approve its plan —
   and a session that starts again (`/new`, a restart, an idle reclaim) starts in the level's mode.
-- A request is put to you as a message naming what the agent wants to do, with the agent's own
-  options as buttons ("Allow", "Reject", …). Answer by tapping; a typed reply goes to the agent as
-  your next message instead.
+- Each request appears in the chat as a message with the command and the agent's own options as
+  buttons ("Allow", "Reject", …). An edit or a write also shows what it will change — the diff, or
+  the text that goes into the file — so the answer is about the change and not only its name. A
+  request to leave plan mode shows the plan itself. Answer by tapping; a typed reply goes to the
+  agent as your next message instead.
 - Nobody answering within an hour declines the request. The agent is told nobody answered, not
   that you refused, and the turn continues. A reminder is posted after half an hour.
 - `/stop` cancels a pending request together with the turn.

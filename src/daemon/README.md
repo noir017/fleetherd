@@ -1413,7 +1413,8 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   field, but the SDK's validation strips it. Its generic `call_mcp_tool` is the exception: kind
   `execute`, title `Bash`, and the server and tool only in the input — `agyMcpCall` reads those and
   labels the row `MCP <tool>` with the server as the preview. The same name heads the permission
-  card (`permissionRequestOf`), with the server in its title because that card has no preview.
+  card (`permissionRequestOf`), with the server in its title because that card's second block is
+  the change the tool will make, not the tool's arguments.
 
 `/usage` and the other CLI-answered names still go to one-shots (`agy-cli.ts`): `agy acp` survives
 them but hands them to the model as a question.

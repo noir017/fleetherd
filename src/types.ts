@@ -221,6 +221,13 @@ export type ElicitAnswer =
 export interface AgentPermissionRequest {
   /** What the agent wants to do, in its own words — the tool call's title (`touch notes.txt`). */
   title: string;
+  /**
+   * What the tool will change, beyond the one-line title: the diff of an edit, the text a write
+   * will put in the file. Absent when the request carries nothing more than its title (a shell
+   * command, whose title already IS the command). Approving a change the user cannot see is not
+   * a decision, so this rides under the title rather than being left in the ACP frame.
+   */
+  detail?: string;
   /** The choices the agent offered, in its order. `label` is the button; `optionId` goes back. */
   options: Array<{ optionId: string; label: string }>;
 }

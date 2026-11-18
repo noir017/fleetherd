@@ -4127,6 +4127,61 @@ describe('webui page: menus', () => {
   });
 });
 
+describe('webui page: a permission request', () => {
+  const A = 'a1b2c3d4';
+  /**
+   * The card `permissions: ask` posts: the title block, the change block and one button per option
+   * the agent offered — the shape `composePermissionPrompt` produces and the daemon sends.
+   */
+  const card = (): Record<string, unknown> => ({
+    ...message(
+      'm2',
+      '<p>\u{1F510} The agent asks to run:</p><pre><code>Edit src/app.ts</code></pre>'
+        + '<pre><code>--- src/app.ts\n-const PORT = 3000;\n+const PORT = 8080;</code></pre>'
+        + '<p>No answer within 60 min declines it.</p>'
+    ),
+    buttons: [
+      { id: 'ask:r:0', label: 'Allow' },
+      { id: 'ask:r:1', label: 'Always allow' },
+      { id: 'ask:r:2', label: 'Reject' },
+      { id: 'ask:r:3', label: 'Always reject' },
+    ],
+  });
+
+  it('draws the change and one button per option, and posts the one that was tapped', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [card()], [A]));
+
+    // The change is what the user is approving; the name alone is not a decision.
+    expect(h.el('log').textContent).toContain('-const PORT = 3000;');
+    expect(h.el('log').textContent).toContain('+const PORT = 8080;');
+    expect(Array.from(h.doc.querySelectorAll('.btns button')).map(face)).toEqual([
+      'Allow',
+      'Always allow',
+      'Reject',
+      'Always reject',
+    ]);
+
+    await h.click('button[data-btn="ask:r:1"]');
+    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
+      topic: A,
+      messageId: 'm2',
+      buttonId: 'ask:r:1',
+    });
+  });
+
+  it('takes the buttons away when the daemon says it was answered', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [card()], [A]));
+    expect(h.doc.querySelectorAll('.btns button')).toHaveLength(4);
+
+    await h.emit({ t: 'msg', msg: { ...card(), html: `${String(card().html)}\n<p>\u2192 Selected: Allow</p>`, buttons: [] } });
+
+    expect(h.doc.querySelector('.btns')).toBeNull();
+    expect(h.el('log').textContent).toContain('Selected: Allow');
+  });
+});
+
 describe('webui page: the settings page', () => {
   /**
    * A `/setting` list as the daemon sends it with `capabilities.settingsScreen`: the buttons it

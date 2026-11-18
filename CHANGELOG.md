@@ -71,6 +71,21 @@ All notable changes to this project are documented here. The format is based on
 - **`permissions: ask` on Codex now asks.** It puts Codex in `read-only`, which asks before every
   edit and command, where it used to leave it in `agent`, whose own reviewer answered instead.
 
+### Fixed
+
+- **A permission request shows what it will change, not only the tool's name.** With
+  `permissions: ask`, an edit arrived as a card reading `Edit src/app.ts` and nothing else: the
+  diff the agent had sent with the request was dropped before the card was drawn, so approving it
+  was a decision about a filename. The card now carries the change under the title — a unified
+  diff for an edit or a write, or the text a write will put in the file, bounded to a preview that
+  says how much it left out. CodeBuddy Code sends no title and no kind, so its Write used to reach
+  the chat as a bare path; the tool's name now comes from `_meta` when the harness names it, and
+  otherwise from the arguments themselves — a `file_path` beside the content it will write is a
+  write — so the card reads `Write: <path>` with the content beneath. A request to leave plan mode
+  now says `Exit plan mode` and carries the plan the user is being asked to approve, where it used
+  to read `ExitPlanMode` or the raw `{"allowedPrompts":…}` JSON. A run of three backticks in that
+  content is shown as two, so a file's own fence cannot end the bubble's code block.
+
 ## [3.11.0] - 2026-11-18
 
 ### Added

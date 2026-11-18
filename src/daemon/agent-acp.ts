@@ -20,6 +20,7 @@ import type {
   SessionConfigOption,
   SessionModeState,
   SessionUpdate,
+  ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
 import type {
   AgentElicitation,
@@ -1273,18 +1274,20 @@ function createAcpSession(
     if (!asksPerson(def.permissions)) return decidePermission(params);
     // A fork answering a side question asks in that answer's lane, never the running turn's.
     const ask = (sideAsks.get(params.sessionId)?.state ?? turnState ?? followUp(false))?.handlers.onPermission;
+    // Built once: a write's preview can be a page of text, and the log below names the same request.
+    const request = permissionRequestOf(params);
     let answer: PermissionAnswer;
     if (!ask) {
       answer = { kind: 'unavailable', why: 'no chat to ask in' };
     } else {
       awaitingUser++;
       try {
-        answer = await ask(permissionRequestOf(params));
+        answer = await ask(request);
       } finally {
         awaitingUser--;
       }
     }
-    console.log(`[acp] ${conversationId}: permission for ${JSON.stringify(permissionRequestOf(params).title)} → ${answer.kind}`);
+    console.log(`[acp] ${conversationId}: permission for ${JSON.stringify(request.title)} → ${answer.kind}`);
     return permissionResponse(params, answer);
   }
   /**
@@ -3336,17 +3339,173 @@ export function decidePermission(req: RequestPermissionRequest): RequestPermissi
  */
 export const PERMISSION_DECLINED_CODE = -32001;
 
-/** A permission request as the user is shown it: the tool call's title, and the agent's options. */
+/** How much of a permission request's change preview reaches the chat. */
+const PERMISSION_DETAIL_MAX = 1200;
+
+/** How much of a vendor-supplied tool name a title falls back to. */
+const PERMISSION_TOOL_NAME_MAX = 40;
+
+/** A string a harness put in `_meta` under a key whose tail is `suffix` (`…/toolName`, `…/plan`). */
+function metaString(meta: unknown, suffix: RegExp): string | undefined {
+  if (!meta || typeof meta !== 'object') return undefined;
+  for (const [key, value] of Object.entries(meta as Record<string, unknown>)) {
+    if (typeof value !== 'string' || !suffix.test(key)) continue;
+    if (value.trim()) return value;
+  }
+  return undefined;
+}
+
+/**
+ * The tool's own name, for a request whose tool call carries no title.
+ *
+ * CodeBuddy Code 2.181.0 sends every `session/request_permission` with nothing but `rawInput` and
+ * `_meta["codebuddy.ai/toolName"]` — measured 2026-11-18 — so a Write arrived as a bare file path
+ * with no word saying it was a write. ACP reserves `_meta` for exactly this kind of extension, and
+ * the key's `…/toolName` tail is read rather than the vendor prefix, so another adapter naming its
+ * tool the same way is covered without a second arm.
+ */
+function metaToolName(meta: unknown): string | undefined {
+  const name = metaString(meta, /(^|\/)toolName$/)?.trim();
+  if (!name) return undefined;
+  return name.length > PERMISSION_TOOL_NAME_MAX ? `${name.slice(0, PERMISSION_TOOL_NAME_MAX - 1)}…` : name;
+}
+
+/**
+ * The verb for a request that names no tool and has no `_meta` to name it, read off the tool's own
+ * arguments: `file_path` beside the text it will put there is a write, beside `old_string`/
+ * `new_string` an edit. A `command` needs no verb — the command IS what the user is deciding on —
+ * and a file call with neither (a read, a delete) is left as the bare preview rather than guessed
+ * at: calling a read an edit is worse than saying nothing about it.
+ */
+function inferToolName(rawInput: unknown): string | undefined {
+  if (!rawInput || typeof rawInput !== 'object') return undefined;
+  const raw = rawInput as Record<string, unknown>;
+  if (typeof raw.file_path !== 'string') return undefined;
+  if (typeof raw.content === 'string') return 'Write';
+  if (typeof raw.old_string === 'string' || typeof raw.new_string === 'string') return 'Edit';
+  return undefined;
+}
+
+/** Text split into lines, dropping only the empty line a trailing newline leaves behind. */
+function linesOf(text: string): string[] {
+  const lines = text.split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  return lines;
+}
+
+/** One `diff` content item as lines a chat bubble can show; empty when it carries no lines. */
+function diffPreview(path: string, oldText: string | null | undefined, newText: string): string {
+  const body: string[] = [];
+  for (const line of linesOf(oldText ?? '')) body.push(`-${line}`);
+  for (const line of linesOf(newText)) body.push(`+${line}`);
+  return body.length ? [`--- ${path}`, `+++ ${path}`, ...body].join('\n') : '';
+}
+
+/** A detail bounded to a preview, saying how much it left out rather than dropping it silently. */
+function boundedDetail(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length <= PERMISSION_DETAIL_MAX) return trimmed;
+  return `${trimmed.slice(0, PERMISSION_DETAIL_MAX)}\n… (${trimmed.length - PERMISSION_DETAIL_MAX} more characters)`;
+}
+
+/**
+ * The kinds whose `content` is the tool's OUTPUT (what a file holds, what a command printed), not
+ * something the user is approving. A read that asks for permission must not offer the file it is
+ * about to read as "the change".
+ */
+const OUTPUT_KINDS = new Set(['read', 'fetch', 'search', 'execute']);
+
+/** The change a harness carries in the tool's own arguments rather than in ACP `content`. */
+function rawInputDetail(rawInput: unknown): string | undefined {
+  if (!rawInput || typeof rawInput !== 'object') return undefined;
+  const raw = rawInput as Record<string, unknown>;
+  const file = typeof raw.file_path === 'string' ? raw.file_path : undefined;
+  if (!file) return undefined;
+  const oldText = typeof raw.old_string === 'string' ? raw.old_string : undefined;
+  const newText = typeof raw.new_string === 'string' ? raw.new_string : undefined;
+  if (oldText !== undefined || newText !== undefined) return diffPreview(file, oldText, newText ?? '');
+  return typeof raw.content === 'string' && raw.content.trim() ? raw.content.replace(/\n+$/, '') : undefined;
+}
+
+/**
+ * What the tool will change, for the card's second block: ACP's `content` (a diff for an edit, the
+ * text a write will put in the file), or — for a harness that carries the change in the tool's own
+ * arguments instead — `rawInput`'s `old_string`/`new_string` or `content` beside a `file_path`
+ * (CodeBuddy Code's Edit and Write, 2026-11-18).
+ *
+ * A shell call's text content is its `description` ("Clean and rebuild"), not a change, and the
+ * command is already the title — so it contributes nothing here. Bounded, because a Write of a
+ * whole file is pages long and this is a preview, not the editor.
+ */
+function permissionDetailOf(toolCall: ToolCallUpdate): string | undefined {
+  const parts: string[] = [];
+  for (const c of toolCall.content ?? []) {
+    if (c.type === 'diff') parts.push(diffPreview(c.path, c.oldText, c.newText));
+    else if (c.type === 'content' && c.content.type === 'text' && !OUTPUT_KINDS.has(toolCall.kind ?? '')) {
+      parts.push(c.content.text);
+    }
+  }
+  if (parts.length === 0) parts.push(rawInputDetail(toolCall.rawInput) ?? '');
+  return boundedDetail(parts.filter(Boolean).join('\n\n'));
+}
+
+/**
+ * An `ExitPlanMode` request in words: the plan the user is being asked to approve, and the actions
+ * the agent wants pre-approved to carry it out.
+ *
+ * Claude's adapter titles this request "Ready to code?" itself. CodeBuddy Code sends no title and
+ * no kind, names the tool in `_meta`, and — measured 2026-11-18 in plan mode — carries the plan
+ * under `…/plan`; without this the card read `ExitPlanMode`, or the raw
+ * `{"allowedPrompts":…}` JSON, for the one request whose whole subject is a document the user has
+ * to read. The shape is what is matched (the tool name, or `allowedPrompts`), not a vendor prefix.
+ */
+function planExitOf(toolCall: ToolCallUpdate, named: string | undefined): { title: string; detail?: string } | undefined {
+  const raw = toolCall.rawInput && typeof toolCall.rawInput === 'object' ? (toolCall.rawInput as Record<string, unknown>) : undefined;
+  const prompts = Array.isArray(raw?.allowedPrompts) ? raw.allowedPrompts : [];
+  if (named?.toLowerCase() !== 'exitplanmode' && prompts.length === 0) return undefined;
+  const asked = prompts
+    .map((p) => {
+      if (!p || typeof p !== 'object') return '';
+      const { tool, prompt } = p as { tool?: unknown; prompt?: unknown };
+      const what = typeof prompt === 'string' ? prompt.trim() : '';
+      const by = typeof tool === 'string' ? tool.trim() : '';
+      return what ? (by ? `${by}: ${what}` : what) : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+  const detail = boundedDetail([metaString(toolCall._meta, /(^|\/)plan$/)?.trim(), asked].filter(Boolean).join('\n\n'));
+  return { title: 'Exit plan mode', ...(detail ? { detail } : {}) };
+}
+
+/**
+ * A permission request as the user is shown it: what the tool is, what it will change, and the
+ * agent's own options.
+ *
+ * The change matters more than the name: "Edit src/app.ts" alone asks the user to approve an edit
+ * they cannot see, which is not a decision. So a diff (or the text a write will put in the file)
+ * rides along in `detail`, and the title falls back to the tool's name plus its argument when the
+ * harness sends no title at all.
+ */
 export function permissionRequestOf(req: RequestPermissionRequest): AgentPermissionRequest {
   // agy's generic MCP call is titled `Bash` too, and this card has no preview line for the server,
   // so it is named the way the tool row names it and the server rides in the title.
   const mcp = agyMcpCall(req.toolCall.rawInput);
+  const preview = buildInputPreview(req.toolCall.rawInput);
+  const named = metaToolName(req.toolCall._meta) ?? inferToolName(req.toolCall.rawInput);
+  const plan = planExitOf(req.toolCall, named);
   const title =
     (mcp && `${agyMcpLabel(mcp)} — ${mcp.server}`) ||
     stripCode(req.toolCall.title ?? '') ||
-    buildInputPreview(req.toolCall.rawInput) ||
+    plan?.title ||
+    (named ? (preview ? `${named}: ${preview}` : named) : preview) ||
     'a tool call';
-  return { title, options: req.options.map((o) => ({ optionId: o.optionId, label: o.name || o.optionId })) };
+  const detail = plan?.detail ?? permissionDetailOf(req.toolCall);
+  return {
+    title,
+    ...(detail ? { detail } : {}),
+    options: req.options.map((o) => ({ optionId: o.optionId, label: o.name || o.optionId })),
+  };
 }
 
 /**
