@@ -537,6 +537,13 @@ async function open(
       webpLies?: boolean;
       viaImg?: [number, number];
     };
+    /**
+     * What to put on `window.__fhCodeView` before the script runs — the seam `codeView()` checks
+     * before it imports the real bundle. Absent means the page has no bundle, which is the
+     * degradation the reader must survive; jsdom cannot evaluate a real dynamic `import`, so this
+     * fake is also the only way the highlighted path can be driven here at all.
+     */
+    codeView?: { editor: (...args: any[]) => any; diff: (...args: any[]) => any };
   } = {}
 ): Promise<Harness> {
   const {
@@ -559,6 +566,7 @@ async function open(
     shortenLong = false,
     push,
     photos,
+    codeView,
   } = opts;
   const pushLog: PushLog = { unsubscribed: false, listeners: [] };
   const photoLog: PhotoLog = {
@@ -628,6 +636,7 @@ async function open(
       if (mic) installMic(w, mic, recorders);
       if (push) installPush(w, push, pushLog);
       if (photos) installPhotos(w, photos, photoLog);
+      if (codeView) (w as any).__fhCodeView = codeView;
       if (shortenLong) {
         const real = w.setTimeout.bind(w) as (fn: () => void, ms: number) => number;
         (w as any).setTimeout = (fn: () => void, ms: number): number => {
@@ -1165,6 +1174,73 @@ describe('webui page: reading a file the agent sent', () => {
     expect(rows[0]?.querySelector('a[data-view]')).toBeNull();
     expect(rows[0]?.querySelector('a.view')).toBeNull();
     expect(rows[1]?.querySelector('a[data-view]')).not.toBeNull();
+  });
+
+  /** A stand-in for the loaded bundle: the reader only ever asks it for an editor. */
+  function fakeCodeView(log: { calls: Array<{ doc: string; name: string; readOnly?: boolean }>; destroyed: number }) {
+    return {
+      editor(parent: HTMLElement, o: { doc: string; name: string; readOnly?: boolean }) {
+        log.calls.push(o);
+        const el = parent.ownerDocument.createElement('div');
+        el.className = 'cm-editor';
+        el.textContent = o.doc;
+        parent.appendChild(el);
+        let doc = o.doc;
+        return {
+          getDoc: () => doc,
+          setDoc: (next: string) => {
+            doc = next;
+            el.textContent = next;
+          },
+          focus: () => {},
+          destroy: () => {
+            log.destroyed++;
+            el.remove();
+          },
+        };
+      },
+      diff() {
+        throw new Error('the reader never asks for a diff');
+      },
+    };
+  }
+
+  it('shows a text file in the code view when the page has one, instead of the server pre', async () => {
+    const log = { calls: [] as Array<{ doc: string; name: string; readOnly?: boolean }>, destroyed: 0 };
+    const h = await open({
+      codeView: fakeCodeView(log),
+      replies: {
+        'view/aa': { ...reading('<pre class="src"><code>package main</code></pre>', 3 * 1048576, 524288), name: 'main.go', text: 'package main\n' },
+      },
+    });
+    await h.emit(sync(T, [readable('m1', 'main.go', 'aa')], [T]));
+    await h.click('#log a[data-view]');
+    await until('the code view', () => h.el('reader-body').querySelector('.cm-editor') !== null);
+
+    expect(log.calls[0]).toEqual({ doc: 'package main\n', name: 'main.go', readOnly: true });
+    // One view of the file, not two: the server's escaped copy is not also on screen.
+    expect(h.el('reader-body').querySelector('.src')).toBeNull();
+    // The cut notice still stands above it, and the body has handed its scrolling to the editor.
+    expect(h.el('reader-body').querySelector('.reader-note')?.textContent).toBe(
+      'Showing the first 512 KB of 3.0 MB. Download it for the rest.'
+    );
+    expect(h.el('reader-body').classList.contains('cv')).toBe(true);
+
+    // Closing drops the view rather than leaving CodeMirror's listeners on a detached node.
+    await h.click('#reader-close');
+    expect(log.destroyed).toBe(1);
+    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
+  });
+
+  it('keeps the server pre for a text file when there is no code view, which is a build with no bundle', async () => {
+    const h = await open({
+      replies: { 'view/aa': { ...reading('<pre class="src"><code>one\ntwo</code></pre>'), text: 'one\ntwo' } },
+    });
+    await h.emit(sync(T, [readable('m1', 'run.log', 'aa')], [T]));
+    await h.click('#log a[data-view]');
+    await until('the plain text', () => h.el('reader-body').querySelector('.src') !== null);
+    expect(h.el('reader-body').textContent).toBe('one\ntwo');
+    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
   });
 });
 

@@ -2,12 +2,16 @@
  * The page, as one HTML document with its CSS and JS inline.
  *
  * ── Why this is a TypeScript string and not an .html file ────────────────────
- * `npm run build` is exactly `tsc -p tsconfig.build.json` — no bundler, no asset pipeline, no
- * copy step anywhere in the repo — and `package.json`'s `files` ships only `dist` and `skill`.
- * A `.html` under `src/` is silently ignored by tsc: it would not reach `dist/`, would not
+ * `npm run build` compiles this with tsc, and `package.json`'s `files` ships only `dist` and the
+ * skills. A `.html` under `src/` is silently ignored by tsc: it would not reach `dist/`, would not
  * reach the npm tarball, and the daemon would 500 in production while working perfectly from
  * `tsx src/cli.ts` in development. Shipping it as a module makes dev and prod the same code
- * path and costs no build change at all.
+ * path.
+ *
+ * The one asset pipeline this repo has is the code view's: `src/platform/webui/codeview/` is
+ * bundled by esbuild into `dist/webui-assets/` and reached through `codeView()` below. That is a
+ * separate ES module, not part of this string — the document itself is still all here, and still
+ * loads nothing external.
  *
  * ── What that costs, and how it is contained ─────────────────────────────────
  * The script below is the one part of this repo the toolchain cannot see: not typechecked,
@@ -44,8 +48,14 @@ import { clientIcons, icon } from './icons.js';
  * they are properties of the daemon, not of a conversation: none can change while the page is
  * open, and a control that appears one sync later is a control that flickers into existence.
  */
-export function renderPage(title: string, terminal: boolean, password = true, terminalEnd = false): string {
-  return servePage(title, terminal, password, terminalEnd).html;
+export function renderPage(
+  title: string,
+  terminal: boolean,
+  password = true,
+  terminalEnd = false,
+  codeview: string | null = null
+): string {
+  return servePage(title, terminal, password, terminalEnd, codeview).html;
 }
 
 /**
@@ -61,12 +71,23 @@ export function servePage(
   title: string,
   terminal: boolean,
   password = true,
-  terminalEnd = false
+  terminalEnd = false,
+  /**
+   * The code view's entry module, relative to the page (`assets/codeview-<hash>.js`), or null when
+   * this daemon has no built assets. It goes into the page rather than being discovered at runtime
+   * because the name carries a content hash: the page and the bundle it will import are one
+   * decision, made by the same build, and a page that guessed a fixed name would cache a stale
+   * bundle under the new page's ETag.
+   */
+  codeview: string | null = null
 ): { html: string; build: string } {
   const html = PAGE.replace(/__TITLE__/g, escapeHtml(title))
     .replace(/__TERM__/g, terminal ? 'true' : 'false')
     .replace(/__TERM_END__/g, terminalEnd ? 'true' : 'false')
     .replace(/__PASSWORD__/g, password ? 'true' : 'false')
+    // A JS literal, not text: the script compares it and hands it to `import()`. The build only
+    // ever writes a single path segment (assets.ts `ASSET_FILE`), so quoting it cannot be broken.
+    .replace('__CODEVIEW__', codeview === null ? 'null' : `'${codeview}'`)
     .replace('__GATE__', password ? PASSWORD_GATE : SSO_GATE);
   const build = createHash('sha256').update(html).digest('base64url').slice(0, 27);
   return { html: html.replace(/__BUILD__/g, build), build };
@@ -1242,6 +1263,12 @@ button:disabled{opacity:.5;cursor:default}
 /* A text file wraps rather than scrolling sideways: a whole document wider than a phone is read a
    line at a time with a thumb, and a log's long lines are the usual reason it is wide. */
 #reader .src{white-space:pre-wrap;overflow-wrap:anywhere}
+/* A code file is the code view instead (codeview/). The body becomes one full-height
+   column and stops scrolling itself: CodeMirror scrolls inside its own pane, and two nested
+   scrollers on a phone is the bug that makes a document impossible to move. */
+#reader-body.cv{display:flex;flex-direction:column;overflow:hidden;padding:0}
+#reader-body.cv .reader-note{margin:8px 16px 0}
+#reader-body.cv .cv-host{flex:1;min-height:0}
 .reader-note{color:var(--dim);font-size:12px;margin-bottom:12px}
 /* The way to the bytes, beside the name that opens the reader. Smaller than a message's own
    buttons because it is about the file. An anchor rather than a button, so it still downloads
@@ -1645,6 +1672,10 @@ const SCRIPT = `
   // Compared with the daemon's after a restart (checkBuild), since the script on screen is the one
   // the old process served.
   var BUILD = '__BUILD__';
+  // The code view's bundle, relative to this page (assets/codeview-<hash>.js), or null when the
+  // daemon was built without the asset build. Read only by codeView(), which every caller goes
+  // through. Relative for the same reason every other URL here is: a sub-path mount.
+  var CODEVIEW = __CODEVIEW__;
   // Whether the shared secret is still a way in. False means the gate above has no field and
   // the only thing that can sign anyone in is the proxy in front (sso.password: false).
   var PASSWORD_LOGIN = __PASSWORD__;
@@ -8716,15 +8747,59 @@ const SCRIPT = `
   });
 
   /**
+   * The code view — CodeMirror, bundled into assets/ and loaded the first time a file needs it.
+   *
+   * window.__fhCodeView is the seam, and it is checked first: page.dom.test.ts puts a fake there,
+   * and another branch of this page puts a placeholder that only reads it. So the shape is fixed
+   * and everything else here is the one loader both of them sit behind.
+   *
+   * Resolves null when there is nothing to load or the import failed. That is not an error the
+   * caller reports: the reader already has the server's pre element, which is a complete answer,
+   * and the page is built to work with no bundle at all (a source checkout that never ran the
+   * asset build). The warning is once per page, not once per file.
+   */
+  var codeViewP = null, codeViewWarned = false;
+  function codeView(){
+    if(window.__fhCodeView) return Promise.resolve(window.__fhCodeView);
+    if(!CODEVIEW) return Promise.resolve(null);
+    if(codeViewP) return codeViewP;
+    // Absolute, because a relative specifier in an INLINE classic script does not resolve:
+    // Chromium answers "Failed to resolve module specifier" — measured 2026-11-18, and the bundle
+    // is next to the page in its own directory. document.baseURI keeps a sub-path mount working
+    // (a proxy prefix is part of the page's own URL), and the URL is same-origin, which is what
+    // the CSP's script-src 'self' admits.
+    codeViewP = import(new URL(CODEVIEW, document.baseURI).href).then(function(m){
+      return (m && m.default) || m || null;
+    }).catch(function(e){
+      if(!codeViewWarned){ codeViewWarned = true; console.warn('code view unavailable, showing plain text:', e); }
+      return null;
+    });
+    return codeViewP;
+  }
+
+  /**
    * Read a file the agent sent without downloading it. The server renders it (reading.ts) and the
    * answer fills a window over the transcript. The name and the download link are on the file's
    * own link, so a slow link shows which file is coming rather than an empty frame.
    *
+   * A text file also arrives as its own bytes (text), and when the code view is available it is
+   * shown in that instead of the server's pre element; markdown keeps the rendered HTML. The pre
+   * is the fallback rather than a second mode, because it is what the server would have shown.
+   *
    * readSeq is which opening an answer belongs to. Close one file and open another before the first
    * has answered, and without it the first file's text would land under the second one's name.
    */
-  var readSeq = 0;
+  var readSeq = 0, readerEditor = null;
+  function readerDoc(note, html){
+    readerBody.innerHTML = note + '<div class="b">' + html + '</div>';
+    readerBody.scrollTop = 0;
+  }
+  function readerDropEditor(){
+    if(readerEditor){ readerEditor.destroy(); readerEditor = null; }
+    readerBody.classList.remove('cv');
+  }
   function openReader(link){
+    readerDropEditor();
     readerName.textContent = link.textContent;
     readerName.title = readerName.textContent;
     readerGet.setAttribute('href', link.getAttribute('href'));
@@ -8739,10 +8814,27 @@ const SCRIPT = `
       if(!res.ok) return readerSay(res.status === 404
         ? 'This file is no longer here: the daemon has let it go since it was sent.'
         : (res.body && res.body.error) || 'This file cannot be shown.');
-      var j = res.body, h = '';
-      if(j.shown < j.size) h += '<div class="reader-note">Showing the first '+text(byteSize(j.shown))+' of '+text(byteSize(j.size))+'. Download it for the rest.</div>';
-      readerBody.innerHTML = h + '<div class="b">' + j.html + '</div>';
-      readerBody.scrollTop = 0;
+      var j = res.body, note = '';
+      if(j.shown < j.size) note = '<div class="reader-note">Showing the first '+text(byteSize(j.shown))+' of '+text(byteSize(j.size))+'. Download it for the rest.</div>';
+      if(typeof j.text !== 'string') return readerDoc(note, j.html);
+      codeView().then(function(cv){
+        if(mine !== readSeq) return;
+        if(!cv) return readerDoc(note, j.html);
+        readerBody.classList.add('cv');
+        readerBody.innerHTML = note;
+        var host = document.createElement('div');
+        host.className = 'cv-host';
+        readerBody.appendChild(host);
+        try {
+          readerEditor = cv.editor(host, {doc:j.text, name:j.name, readOnly:true});
+        } catch(e) {
+          // A bundle that loaded but cannot build an editor is the same answer as no bundle:
+          // the plain text the server sent, rather than an empty window.
+          console.warn('code view failed, showing plain text:', e);
+          readerDropEditor();
+          readerDoc(note, j.html);
+        }
+      });
     }).catch(function(){ if(mine === readSeq) readerSay('Could not reach the server.'); });
   }
   function readerSay(s){ readerBody.innerHTML = '<div class="empty">'+text(s)+'</div>'; }
@@ -8750,6 +8842,7 @@ const SCRIPT = `
     if(reader.hidden) return;
     reader.hidden = true;
     readSeq++;
+    readerDropEditor();
     // Emptied, not kept: half a megabyte of rendered document is a lot of DOM to leave behind an
     // overlay nobody is looking at — the lightbox drops its picture for the same reason.
     readerBody.textContent = '';

@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A code file the agent sends is shown highlighted in the web UI's reader.** It used to open as
+  escaped text in a `<pre>` — readable, but every token the same colour, for a file whose whole
+  point is to be read as code. A text file now opens in a CodeMirror 6 editor: its language's
+  colours, line numbers, and wrapping on a phone, with the same cut-at-512-KB notice above it.
+  Markdown keeps the rendered view, and a daemon built without the bundle still shows the plain
+  text. The bundle is built by esbuild into `dist/webui-assets/` with a content-hashed name and
+  served by `GET /assets/<file>` behind the session; the page loads it the first time a file needs
+  it, and each language is its own chunk — opening a Go file does not download the other
+  sixteen grammars. It is also the editor and diff the git-diff panel and file editor will use.
+  The page's CSP gains `script-src 'self'` for that one route, and nothing the agent sent can be
+  it: downloads are still `attachment` + `nosniff`, so a `.js` the agent wrote is never parsed by
+  this origin. A source checkout needs one `npm run build:assets` before `tsx src/cli.ts start`.
+
 ## [3.10.0] - 2026-11-17
 
 ### Fixed

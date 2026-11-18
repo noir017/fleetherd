@@ -235,8 +235,9 @@ drops the camera's EXIF data, location included.
 **Reading a file without downloading it.** When the agent sends a Markdown file, a log, a
 CSV or a source file, click its name and it opens in a window over the conversation; **Download**
 beside the name saves it as before. Markdown is rendered like a reply, with headings, tables and
-code blocks; anything else is shown as plain text. An `.html` or `.svg` file is shown as its source
-and is never run. A file over 512 KB shows its first 512 KB and says so, and the **Download** link
+code blocks; anything else opens in a code view with syntax highlighting and line numbers, wrapping
+on a phone — a browser that could not load the editor shows the same text plain. An `.html` or
+`.svg` file is shown as its source and is never run. A file over 512 KB shows its first 512 KB and says so, and the **Download** link
 in the window's bar fetches the whole file. PDFs, office documents and other binary files have no
 preview and stay downloads. Like the download link, preview works only until the daemon restarts;
 a message from before a restart keeps the plain download link.
