@@ -5186,18 +5186,20 @@ const SCRIPT = `
    */
   function settingsAgent(r, i, fields){
     var h = '';
-    for(var k=0;k<fields.length;k++) h += settingsField(fields[k], 'r'+i+'f'+k);
+    for(var k=0;k<fields.length;k++) h += settingsField(r.label, fields[k], 'r'+i+'f'+k);
     var own = instrOwn(r.target || r.label);
-    if(own) h += instrField(own, 'r'+i+'i');
+    if(own) h += instrField(r.label, own, 'r'+i+'i');
     return '<div class="set-item ag">' + settingsText(r) + '<div class="set-fields">' + h + '</div></div>';
   }
 
-  function settingsField(f, key){
+  // agent is the row's name, carried into every control's accessible name: several agents' rows
+  // sit on one page, so a reader that hears only "Model" cannot tell whose it is.
+  function settingsField(agent, f, key){
     var c = f.control || { kind: 'list' };
     var h = '<div class="set-field"><span class="set-flabel">' + text(f.label) + '</span>';
-    if(c.kind === 'choice') return h + settingsChoice(f.label, c.options || [], key, f.value) + '</div>';
+    if(c.kind === 'choice') return h + settingsChoice(agent + ' · ' + f.label, c.options || [], key, f.value) + '</div>';
     return h + '<button type="button" class="set-fopen" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
-      + ' aria-label="' + text(f.label + ': ' + (f.value == null ? '' : f.value)) + '">'
+      + ' aria-label="' + text(agent + ' · ' + f.label + ': ' + (f.value == null ? '' : f.value)) + '">'
       + '<span class="set-vv"><span class="set-v' + (f.unset ? ' unset' : '') + '" title="' + text(f.value == null ? '' : f.value) + '">'
       + text(f.value == null ? '' : f.value) + '</span>'
       + (f.valueNote ? '<span class="set-vnote">' + text(f.valueNote) + '</span>' : '')
@@ -11584,13 +11586,18 @@ const SCRIPT = `
 
   /**
    * The list arrived (or failed): an agent's row carries an Instructions field built from it, so
-   * the list is drawn again — renderSettings puts focus and scroll back where the operator left
-   * them. A value screen has no agent rows and is left alone: redrawing it would undo a filter.
+   * the list is drawn again — renderSettings puts focus back on the control that had it.
+   *
+   * Not while a control is busy, though: that one was just tapped, its new state and its disabled
+   * flag live only in the markup, and a redraw would put it back for a second tap while the first
+   * request is still out. The daemon's answer (or its failure) draws the list next, and the field
+   * is on it then.
    */
   function instrArrived(){
     if(!INSTR_OK || !settingsMsg || settingsPage.hidden) return;
     var s = settingsMsg.settings;
     if(!s || s.level !== 'list') return;
+    if(settingsBody.querySelector('.busy')) return;
     renderSettings();
   }
 
@@ -11607,10 +11614,10 @@ const SCRIPT = `
    * files, and the way into the file window on them — what the section's "Each agent's own" row
    * used to be, now on the agent's own row.
    */
-  function instrField(a, key){
+  function instrField(agent, a, key){
     return '<div class="set-field"><span class="set-flabel">Instructions</span>'
       + '<button type="button" class="set-fopen" data-fk="' + key + '" data-instr-agent="' + text(a.id) + '"'
-      + ' title="' + text(a.own) + '">'
+      + ' aria-label="' + text(agent + ' · Instructions') + '" title="' + text(a.own) + '">'
       + '<span class="set-vv"><span class="set-fnote">' + inl(a.own) + '</span>'
       + '<span class="set-vnote">' + text(a.host === 'local' ? 'this machine' : a.host) + '</span></span>'
       + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';

@@ -4379,6 +4379,26 @@ describe('webui page: the settings page', () => {
     },
   });
 
+  /** The instructions panel's answer for agentList: cc has files of its own, oc@box does not. */
+  const INSTR = {
+    dir: '/c/instructions',
+    on: true,
+    global: [{ name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc'] }],
+    agents: [
+      { id: 'cc', harness: 'claude', host: 'box', own: '`@` references in `~/.claude/CLAUDE.md`' },
+      { id: 'oc@box', harness: 'opencode', host: 'local' },
+    ],
+  };
+  const INSTR_REFS = {
+    ok: true,
+    agent: 'cc',
+    host: 'box',
+    root: '~/.claude/CLAUDE.md',
+    rootState: 'managed',
+    summary: '`@` references',
+    refs: [],
+  };
+
   const text = (h: Harness, sel: string): string[] =>
     Array.from(h.doc.querySelectorAll(sel)).map((e) => e.textContent ?? '');
   const clicks = (h: Harness) => h.calls.filter((c) => c.path === 'api/click').map((c) => c.body);
@@ -4531,26 +4551,7 @@ describe('webui page: the settings page', () => {
   it('puts an agent’s own instruction files on its row, and no longer lists them in a section', async () => {
     const h = await opened(agentList(), {
       instructions: true,
-      replies: {
-        'api/instructions': {
-          dir: '/c/instructions',
-          on: true,
-          global: [{ name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc'] }],
-          agents: [
-            { id: 'cc', harness: 'claude', host: 'box', own: '`@` references in `~/.claude/CLAUDE.md`' },
-            { id: 'oc@box', harness: 'opencode', host: 'local' },
-          ],
-        },
-        'api/instructions/refs?agent=cc': {
-          ok: true,
-          agent: 'cc',
-          host: 'box',
-          root: '~/.claude/CLAUDE.md',
-          rootState: 'managed',
-          summary: '`@` references',
-          refs: [],
-        },
-      },
+      replies: { 'api/instructions': INSTR, 'api/instructions/refs?agent=cc': INSTR_REFS },
     });
 
     // The panel answers after the screen is drawn: the field joins the row without a reopen.
@@ -4573,6 +4574,62 @@ describe('webui page: the settings page', () => {
     await until('the editor', () => h.el('files').hidden === false);
     expect(h.el('files-title').textContent).toBe('cc · own instructions');
     expect(h.calls.some((c) => c.path === 'api/instructions/refs?agent=cc')).toBe(true);
+  });
+
+  it('names every field with the agent it belongs to, for a screen reader', async () => {
+    const h = await opened(agentList(), { instructions: true, replies: { 'api/instructions': INSTR } });
+    await until('the instructions field', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
+    // Several agents' rows are on one page, so "Model" alone says nothing about whose it is.
+    expect(h.doc.querySelector('button.set-fopen[data-fk="r1f0"]')?.getAttribute('aria-label')).toBe('cc · Model: harness default');
+    expect(h.doc.querySelector('.set-item.ag .set-seg')?.getAttribute('aria-label')).toBe('cc · Permissions');
+    expect(h.doc.querySelector('#settings-body select.set-select')?.getAttribute('aria-label')).toBe('oc@box · Permissions');
+    expect(h.doc.querySelector('[data-instr-agent="cc"]')?.getAttribute('aria-label')).toBe('cc · Instructions');
+  });
+
+  it('does not redraw under a control still waiting on the daemon', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await opened(agentList(), {
+      instructions: true,
+      replies: { 'api/instructions': INSTR },
+      held: { 'api/instructions': held },
+    });
+    await h.click('#settings-body .set-item.ag .set-seg button[data-btn="sts:p:0:3"]');
+    const tapped = h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:3"]') as HTMLButtonElement;
+    expect(tapped.classList.contains('busy')).toBe(true);
+
+    // The list arrives while that tap is still out: the control keeps its optimistic state, and
+    // the field waits for the answer that redraws the list anyway.
+    release();
+    await tick();
+    await tick();
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:3"]')).toBe(tapped);
+    expect(tapped.classList.contains('busy')).toBe(true);
+    expect(tapped.disabled).toBe(true);
+    expect(tapped.getAttribute('aria-checked')).toBe('true');
+    expect(h.doc.querySelector('#settings-body [data-instr-agent]')).toBeNull();
+
+    await h.emit({ t: 'msg', msg: agentList() });
+    expect(h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent="cc"]')).not.toBeNull();
+  });
+
+  it('keeps focus where it was when the instruction list arrives late', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await opened(agentList(), {
+      instructions: true,
+      replies: { 'api/instructions': INSTR },
+      held: { 'api/instructions': held },
+    });
+    const model = h.doc.querySelector('#settings-body button.set-fopen[data-fk="r1f0"]') as HTMLButtonElement;
+    model.focus();
+    expect(h.doc.activeElement).toBe(model);
+
+    release();
+    await until('the instructions field', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
+    // The row is new markup; focus is back on the same control, by its key.
+    expect(h.doc.activeElement?.getAttribute('data-fk')).toBe('r1f0');
+    expect(h.doc.activeElement).not.toBe(model);
   });
 
   it('flips a switch in one tap, showing the new state before the daemon answers', async () => {
