@@ -1,0 +1,12 @@
+// The code view is browser code, and the repo's tsconfig has no DOM lib. It is bundled by
+// scripts/build-webui-assets.mjs rather than emitted by tsc, so it gets its own project:
+// typechecked here, written nowhere.
+{
+  "extends": "../../../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "noEmit": true
+  },
+  "include": ["./**/*.ts"],
+  "exclude": []
+}

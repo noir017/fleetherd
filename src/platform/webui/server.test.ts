@@ -17,6 +17,7 @@ import type {
   SkillPanelEntry,
 } from '../adapter.js';
 import { WebAuth } from './auth.js';
+import { loadAssets, type WebAssets } from './assets.js';
 import { diskUploadStore } from './index.js';
 import { MAX_READ_BYTES } from './reading.js';
 import { WebRoom, type WebuiInstance } from './room.js';
@@ -75,7 +76,8 @@ async function boot(
     socket: '/nonexistent.sock',
   },
   sso?: WebSso,
-  push?: WebPush
+  push?: WebPush,
+  assets?: WebAssets
 ): Promise<Booted> {
   const port = await freePort();
   const instance: WebuiInstance = {
@@ -96,7 +98,11 @@ async function boot(
     instance,
     { enabled: terminal.enabled, socket: terminal.socket, sessions },
     sso,
-    push
+    push,
+    // A test that does not hand in a build gets an empty one, not whatever the developer's last
+    // `npm run build` left in dist: the page's CODEVIEW and the route's answers are then the same
+    // on every machine, and this file does not read outside its own temp directory.
+    assets ?? loadAssets(path.join(dir, `no-assets-${port}`))
   );
   await server.start();
   running.push(server);
@@ -381,6 +387,114 @@ describe('webui server: installing it as an app', () => {
     const csp = (await fetch(`${base}/`)).headers.get('content-security-policy') ?? '';
     expect(csp).toContain("manifest-src 'self'");
     expect(csp).toContain("img-src 'self' data:");
+  });
+});
+
+/**
+ * A built asset directory as `scripts/build-webui-assets.mjs` leaves one: hashed module names, all
+ * `.js`, with a manifest naming the entry. Written per test under the file's own temp directory.
+ */
+function buildAssets(files: Record<string, string>): WebAssets {
+  const at = fs.mkdtempSync(path.join(dir, 'assets-'));
+  for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(at, name), body);
+  const codeview = Object.keys(files).find((n) => n.startsWith('codeview-')) ?? null;
+  fs.writeFileSync(path.join(at, 'manifest.json'), JSON.stringify({ codeview }));
+  return loadAssets(at);
+}
+
+describe('webui server: the code view’s bundle', () => {
+  const entry = 'codeview-abc123.js';
+  const chunk = 'chunk-def456.js';
+
+  it('serves the built entry and its lazily loaded chunks as immutable JavaScript', async () => {
+    const assets = buildAssets({ [entry]: 'export default {editor(){}}', [chunk]: 'export const a=1;' });
+    const { base, port } = await boot({}, undefined, undefined, undefined, assets);
+    const cookie = await signIn(base);
+    for (const name of [entry, chunk]) {
+      const res = await rawGet(port, `/assets/${name}`, { cookie });
+      expect(res.status, name).toBe(200);
+      expect(res.headers['content-type']).toBe('text/javascript; charset=utf-8');
+      // The name carries a content hash, so the bytes behind it never change.
+      expect(res.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+      // Same pin as every other file this server hands out: declared type, never sniffed.
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.body.toString('utf8')).toContain('export');
+    }
+  });
+
+  it('is guarded like every other route, and answers 404 for anything not built', async () => {
+    const assets = buildAssets({ [entry]: 'export default 1;' });
+    const { base, port } = await boot({}, undefined, undefined, undefined, assets);
+    expect((await fetch(`${base}/assets/${entry}`)).status).toBe(401);
+    const cookie = await signIn(base);
+    expect((await rawGet(port, '/assets/codeview-nope.js', { cookie })).status).toBe(404);
+    // The manifest is a build artefact too, and not a module: the route's one type would be a lie.
+    expect((await rawGet(port, '/assets/manifest.json', { cookie })).status).toBe(404);
+    // A directory that was never built answers 404 rather than throwing.
+    const bare = await boot({}, undefined, undefined, undefined, loadAssets(path.join(dir, 'not-built')));
+    expect((await rawGet(bare.port, `/assets/${entry}`, { cookie: await signIn(bare.base) })).status).toBe(404);
+  });
+
+  it('has no spelling of a path that reaches a file outside the asset directory', async () => {
+    const assets = buildAssets({ [entry]: 'export default 1;' });
+    const { base, port } = await boot({}, undefined, undefined, undefined, assets);
+    // A neighbour of the directory, containing bytes that must never be served.
+    fs.writeFileSync(path.join(dir, 'secret.js'), 'stolen bytes');
+    const cookie = await signIn(base);
+    for (const p of [
+      '/assets/../secret.js',
+      '/assets/%2e%2e/secret.js',
+      '/assets/..%2fsecret.js',
+      '/assets/%2e%2e%2fsecret.js',
+      '/assets/./secret.js',
+      '/assets/secret.js/../../secret.js',
+      `/assets/${encodeURIComponent('../secret.js')}`,
+    ]) {
+      const res = await rawGet(port, p, { cookie });
+      expect(res.status, p).toBe(404);
+      expect(res.body.toString('utf8'), p).not.toContain('stolen');
+    }
+  });
+
+  it('names the entry in the page it serves, relatively, and only when a build exists', async () => {
+    const bare = await boot();
+    expect(await (await fetch(`${bare.base}/`)).text()).toContain('var CODEVIEW = null;');
+
+    const built = await boot({}, undefined, undefined, undefined, buildAssets({ [entry]: 'export default 1;' }));
+    const html = await (await fetch(`${built.base}/`)).text();
+    // Relative, so a gateway behind a reverse proxy under a sub-path loads its own bundle.
+    expect(html).toContain(`var CODEVIEW = 'assets/${entry}';`);
+  });
+
+  it('lets the page import that bundle through the CSP, and still nothing from another origin', async () => {
+    const { base } = await boot();
+    const csp = (await fetch(`${base}/`)).headers.get('content-security-policy') ?? '';
+    expect(csp).toContain("script-src 'unsafe-inline' 'self'");
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).not.toContain('script-src http');
+  });
+
+  it('writes a JavaScript content type in two places only: the assets and the service worker', async () => {
+    // What this pins is what THIS FILE writes, and no more: a route of its own that handed a file
+    // back with its own type would be the failure. It cannot speak for `/term/`, which copies the
+    // upstream's headers verbatim — the test above shows a fake ttyd answering text/javascript
+    // untouched — so the security note says this file, not this origin.
+    const source = fs.readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
+    const at = [...source.matchAll(/'Content-Type': '(text\/javascript[^']*)'/g)];
+    expect(at).toHaveLength(2);
+    /** The name of the handler each occurrence sits in. */
+    const enclosing = (index: number): string | undefined =>
+      [...source.slice(0, index).matchAll(/(?:async )?function (\w+)/g)].at(-1)?.[1];
+    expect(at.map((m) => enclosing(m.index ?? 0))).toEqual(['sendServiceWorker', 'asset']);
+    // And the behavioural half: a file the agent sent is JavaScript by NAME and octet-stream by
+    // type, so the CSP's 'self' never lets one run as the second.
+    const { base, room } = await boot();
+    const cookie = await signIn(base);
+    const url = room.publish(new URL(import.meta.url).pathname, 'evil.js');
+    const res = await fetch(`${base}/${url}`, { headers: { cookie } });
+    expect(res.headers.get('content-type')).toBe('application/octet-stream');
+    expect(res.headers.get('content-disposition')).toContain('attachment');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
   });
 });
 
@@ -2165,11 +2279,14 @@ describe('webui server: lifecycle', () => {
  * Deliberately not a WebSocket library — the proxy under test never parses a frame, so a
  * handshake that looks right on the wire plus a byte echo is exactly the contract it has.
  */
-function fakeTtyd(socketPath: string): Promise<{ seen: string[]; close: () => Promise<void> }> {
+function fakeTtyd(
+  socketPath: string,
+  type = 'text/html'
+): Promise<{ seen: string[]; close: () => Promise<void> }> {
   const seen: string[] = [];
   const server = http.createServer((req, res) => {
     seen.push(req.url ?? '');
-    res.writeHead(200, { 'content-type': 'text/html', 'x-from': 'ttyd' });
+    res.writeHead(200, { 'content-type': type, 'x-from': 'ttyd' });
     res.end('<html>terminal</html>');
   });
   server.on('upgrade', (req, socket) => {
@@ -2263,6 +2380,23 @@ describe('webui server: terminal', () => {
     expect(up.status).toBe(101);
     expect(up.echo).toBe('hello');
     expect(ttyd.seen).toContain('/term/ws');
+    await ttyd.close();
+  });
+
+  it('passes the upstream content type through, so what /term/ serves is ttyd’s to decide', async () => {
+    // The reason the security note says "the only JavaScript THIS FILE writes" rather than "the
+    // only JavaScript under this origin": the proxy copies headers verbatim, so a ttyd that
+    // served a .js (or the next ttyd release adding one) would answer as JavaScript and this
+    // server would neither know nor change it. Pinned rather than assumed, because the wording
+    // of that note depends on it.
+    const socketPath = path.join(dir, 'ttyd.sock');
+    const ttyd = await fakeTtyd(socketPath, 'text/javascript');
+    const { base } = await boot({}, { enabled: true, socket: socketPath });
+    const cookie = await signIn(base);
+    const res = await fetch(`${base}/term/bundle.js`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/javascript');
+    expect(await res.text()).toContain('terminal');
     await ttyd.close();
   });
 
@@ -2472,7 +2606,7 @@ describe('webui server: notifications and what the operator has seen', () => {
     expect(body).not.toContain("'fetch'");
     const page = await fetch(`${base}/`);
     expect(page.headers.get('content-security-policy')).toContain("worker-src 'self'");
-    expect(page.headers.get('content-security-policy')).toContain("script-src 'unsafe-inline';");
+    expect(page.headers.get('content-security-policy')).toContain("script-src 'unsafe-inline' 'self';");
   });
 
   it('hands out the push key only behind the session, and keeps a subscription to a real push service', async () => {

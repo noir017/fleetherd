@@ -74,6 +74,12 @@ export interface Reading {
   html: string;
   /** How many of the file's bytes it shows. Less than the file's size when it was cut. */
   shown: number;
+  /**
+   * The decoded head, for a `text` file only — what the page's code view is given to edit and
+   * highlight. Markdown has no `text` on purpose: it is shown rendered, and a caller that got both
+   * would have to choose, which is the decision this field exists to keep here.
+   */
+  text?: string;
 }
 
 /**
@@ -89,8 +95,11 @@ export function renderReading(kind: ReadableKind, head: Buffer, size: number): R
   // Not fatal: a stray invalid byte becomes U+FFFD rather than costing the whole file. The
   // decoder also drops a leading BOM, which would otherwise sit in front of the first heading.
   const text = new TextDecoder('utf-8').decode(head.subarray(0, end)).replace(/\r\n?/g, '\n');
-  const html = kind === 'markdown' ? renderWebMarkdown(text) : `<pre class="src"><code>${escapeHtml(text)}</code></pre>`;
-  return { html, shown: end };
+  if (kind === 'markdown') return { html: renderWebMarkdown(text), shown: end };
+  // `text` beside the escaped HTML: the page's code view needs the source itself, and the `<pre>`
+  // stays the answer for a browser that could not load the bundle. Both are cut at the same byte,
+  // so what the two show is the same head of the same file.
+  return { html: `<pre class="src"><code>${escapeHtml(text)}</code></pre>`, shown: end, text };
 }
 
 /**

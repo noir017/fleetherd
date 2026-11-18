@@ -52,6 +52,8 @@ naming it, and they are all of them:
 | `terminal-sessions.ts` | The bookkeeping either side of those bytes: who is attached, and the operator's command for ending a session |
 | `protocol.ts` | `.strict()` zod schemas for every inbound body; the outbound event union |
 | `reading.ts` | Which files the page can read in place, and the HTML it is given for one. Pure. |
+| `codeview/` | The CodeMirror bundle the page loads on demand: the editor and the diff — see [The code view](#the-code-view) |
+| `assets.ts` | Where that bundle was built to, and the entry the page is told to import |
 | `page.ts` | The whole page (HTML + CSS + JS) as a module-level string |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is one |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |
@@ -1663,6 +1665,26 @@ is behind it is an agent with full tool access.
    in the `<title>` of the equally-open page, so this widens nothing.
 8. **An upgrade is gated separately, because it has to be** — it never reaches `route()`, so
    nothing above applies to it automatically. See [the terminal pane](#the-terminal-pane).
+9. **`script-src 'self'` is the code view: the only file it reaches is one this build wrote.**
+   The page still has no external script; the policy admits one more *same-origin* URL, which is
+   the entry `GET /assets/<file>` serves (see [The code view](#the-code-view)). The asset route
+   reads only `dist/webui-assets/`: one path segment, no leading dot, a `.js` extension, and the
+   resolved parent must still be that directory.
+
+   What keeps a file the agent sent from being that URL is point 5 — with its exception stated
+   too: a download is `attachment` + `nosniff`, and its type is `application/octet-stream` unless
+   it is one of the raster images `inlineImageType` admits, which are served as themselves so the
+   page can draw them. An agent's `.js` is in the first group: a file to save, never something
+   this origin parses or runs, and `server.test.ts` pins it. The reader serves no file at all — it
+   sends HTML this daemon built from the bytes.
+
+   **The claim stops at this file's own handlers.** `server.test.ts` reads `server.ts` and pins
+   that only the asset route and `sw.js` — the fixed string in `sw.ts` — write a JavaScript
+   content type. `/term/` is outside that promise: `proxyRequest` copies ttyd's headers verbatim,
+   so what type the terminal page arrives as is ttyd's to decide, and a test boots a fake upstream
+   answering `text/javascript` to show it is passed through untouched. Nothing loads `/term/` as a
+   script (it is an iframe `src`), and the terminal needs the session like everything else — but
+   "no JavaScript under this origin" would be a claim this daemon cannot keep, so it is not made.
 
 **Not solved here:** TLS (put a reverse proxy in front), and DNS rebinding — a `Host`
 allowlist would break the reverse-proxy deployment this is expected to run behind, so the
@@ -1756,11 +1778,13 @@ full-screen page it was, so the conversation stays visible around the document b
 
 It does not bend point 5, it goes round it. `GET view/<token>` (`server.ts` `view`) resolves the
 same download token, reads at most `MAX_READ_BYTES` (512 KiB) of the file, and answers JSON:
-`{ name, size, shown, html }`. The `html` is `reading.ts`'s — `renderWebMarkdown` for a `.md`, the
+`{ name, size, shown, html }` — plus `text`, the decoded head, for a `text` file and never for a
+markdown one. The `html` is `reading.ts`'s — `renderWebMarkdown` for a `.md`, the
 file's text through `escapeHtml` inside a `<pre class="src">` for everything else on its list — so
 the page puts into its DOM exactly what it already puts there for every streamed reply, under the
-same CSP. An `.html` or an `.svg` is on that list *as source*: the browser never receives the file,
-so there is nothing that could render it.
+same CSP. The page gives `text` to [the code view](#the-code-view) when it has one and otherwise
+keeps the `<pre>`; both are the same cut of the same file. An `.html` or an `.svg` is on that list
+*as source*: the browser never receives the file, so there is nothing that could render it.
 
 - **`reading.ts` `readableKind` is the closed list, read by both ends** — the arrangement
   `inlineImageType` has. `index.ts` sets `file.view` (the URL, from `WebRoom.viewUrl`, next to where
@@ -1784,6 +1808,66 @@ The real-browser half — files delivered through the real adapter's `sendFile`,
 1280 and 390 px, the window's margins and dimmed backdrop, **Download** saving the file, no CSP
 violation, the close button 44px on a phone — was checked in Chromium on 2026-11-04
 (`project-scripts/talkcode-file-reader/e2e.mts`).
+
+### The code view
+
+A text file is shown in CodeMirror 6 with its grammar's colours, and the same bundle is what the
+git diff panel and the file editor are built on (`codeview/`). It is the page's one built asset:
+`src/platform/webui/codeview/` is bundled by `scripts/build-webui-assets.mjs` into
+`dist/webui-assets/`, given a content-hashed name, and served by `GET /assets/<file>` behind the
+session. Markdown keeps the rendered HTML — the code view is for what is read as source.
+
+**`page.ts` `codeView()` is the only way in.** It resolves to the API below, or to null when
+there is no bundle or the bundle would not load; the reader then keeps the `<pre>` the server
+already sent, which is a complete answer rather than an error state.
+
+```js
+codeView(): Promise<{ editor, diff } | null>
+editor(parent, { doc, name, readOnly?, onChange?, onSave? }) → { getDoc, setDoc, focus, destroy }
+diff(parent, { name, original, modified, layout, onSelect? }) → { setLayout, destroy }
+```
+
+Five things about it are decisions, not detail:
+
+- **The entry is a loader and nothing else** (`codeview/index.ts`). esbuild keeps what an entry
+  chunk imports statically inside that chunk, and a dynamic chunk importing the same module gets a
+  second copy rather than sharing it. Two copies of `@codemirror/state` are two `Compartment`
+  types, so `compartment.reconfigure(...)` from one is an effect the other's editor ignores
+  *silently* — which is how the first build rendered every file in one colour with no error
+  anywhere (measured in Chromium, 2026-11-18). With the entry importing one dynamic chunk, the app
+  and the grammars are siblings and share one copy.
+- **The specifier is made absolute before `import()`.** `import('assets/x.js')` in an inline
+  classic script fails with "Failed to resolve module specifier" in Chromium (same date), so the
+  page resolves `CODEVIEW` against `document.baseURI` first. That is still relative to the page's
+  own URL, so a reverse proxy sub-path mounts the bundle under its prefix like every other URL here.
+- **Each language is its own chunk.** Every extension in `codeview/app.ts` `LANG` is a dynamic
+  import, so opening a `.go` file downloads the editor and the Go grammar, not the other fifteen.
+  An extension with no grammar opens as plain text rather than as the wrong one.
+- **The palette is the page's.** The theme reads `--bg`, `--fg`, `--dim` and `--line`, so the
+  editor cannot drift from the page; the token colours are a dark set tuned against those, since
+  there is no light page either. The reader hands it a full-height column (`#reader-body.cv`) —
+  CodeMirror scrolls itself, and two nested scrollers is what makes a phone unusable.
+- **`onSave` is `Mod-s`** (Control on Windows and Linux, Command on a Mac), and `onSelect` reports
+  1-based line numbers plus the text of the main selection, or null when it is emptied. The diff
+  rebuilds itself on `setLayout` because `MergeView` and a unified view are different objects —
+  the package's own `reconfigure` does not change the layout.
+
+A source checkout started with `node --import tsx src/cli.ts start` needs one
+`npm run build:assets` first (it is part of `npm run build` for a release). Until that has run,
+`CODEVIEW` is null and code files stay in the `<pre>` — the same page, without the editor.
+
+**The build writes `licenses.txt` beside the chunks.** CodeMirror and the lezer grammars keep
+their licence in a LICENSE file rather than in header comments, so minification would otherwise
+erase every notice while the tarball ships only this project's own LICENSE — MIT requires the
+notice to travel with the copy. `scripts/third-party-licenses.mjs` reduces esbuild's metafile
+input list to the packages that actually contributed a module, reads each one's licence verbatim,
+and the build stops if any of them ships no licence file at all — the names are printed — or if the
+file it wrote does not name them. It is not served by
+`/assets/` (that route is `.js` only); it ships in `dist`, which `package.json` `files` carries.
+
+The reader's half was checked in Chromium on 2026-11-18: a `.ts` file highlighted with its gutter,
+at 1280 and at 390 px (where it wraps and nothing overflows), no CSP violation in the console, and
+a `diff()` drag reporting `{ side: 'old', from: 1, to: 2, text }` from a real selection.
 
 ### The other door: `sso.ts`
 
@@ -1980,6 +2064,15 @@ safety), `auth.test.ts` (constant-time compare, throttle, expiry), `protocol.tes
 rejection), `room.test.ts` and `index.test.ts` (the adapter contract), `server.test.ts` (real
 sockets: the auth gate, the CSRF locks, the download headers, and that `stop()` terminates
 with a stream open), `page.test.ts` (the script parses and nothing was eaten).
+
+`server.test.ts` also holds the asset route: the immutable JavaScript headers, the guarded
+session, every spelling of a traversal that must 404, and the pin that only `/assets/` and `sw.js`
+handle a JavaScript content type — with a fake ttyd serving one through `/term/` beside it, which
+is what keeps that pin honest about its own scope. `page.dom.test.ts` drives the reader through a
+fake `window.__fhCodeView` — an editor for a text file, destroyed when another file replaces it
+and when the window closes — through a bundle that will not load (the `<pre>` returns, and the
+console is warned exactly once however many files follow), and through a page with no bundle at
+all.
 
 `page.dom.test.ts` is the one that covers the client script's *behaviour*. It loads what the
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the

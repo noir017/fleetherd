@@ -39,11 +39,13 @@
  * leak a socket; it hangs Ctrl-C forever.
  */
 import { createReadStream } from 'node:fs';
-import { open, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
+import path from 'node:path';
 import { brotliCompress, constants as zlibConstants, createGzip, gzip, gzipSync } from 'node:zlib';
 
+import { ASSET_FILE, loadAssets, type WebAssets } from './assets.js';
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
 import { servePage } from './page.js';
@@ -156,12 +158,13 @@ export function createWebServer(
   instance: WebuiInstance,
   terminal: TerminalSettings,
   sso?: WebSso,
-  push?: WebPush
+  push?: WebPush,
+  assets: WebAssets = loadAssets()
 ): WebServer {
   const sockets = new Set<Socket>();
   const streams = new Set<Stream>();
   const upstreams: UpstreamSet = new Set<Socket>();
-  const ctx: Ctx = { room, auth, instance, streams, terminal, upstreams, sso, push, warned: new Map() };
+  const ctx: Ctx = { room, auth, instance, streams, terminal, upstreams, sso, push, assets, warned: new Map() };
 
   const server = createServer((req, res) => {
     void route(req, res, ctx).catch((e: unknown) => {
@@ -307,6 +310,8 @@ interface Ctx {
   warned: Map<string, number>;
   /** Push notifications (webpush.ts); absent in a test that does not care, which then offers none. */
   push?: WebPush;
+  /** The built code view, if a build ever ran — see `assets.ts`. */
+  assets: WebAssets;
   /** The page as last served — see `servedPage`. */
   page?: ServedPage;
 }
@@ -429,6 +434,9 @@ const GUARDED: Route[] = [
   // The same token, rendered for the reader instead of handed over: JSON holding HTML built by
   // `reading.ts`, never the file's own bytes or type. See `view`.
   { method: 'GET', path: '/view/', prefix: true, run: ({ req, res, rest }, ctx) => view(req, res, ctx.room, rest) },
+  // The code view's bundle, and the language chunks it imports. The one route that serves a
+  // script off disk — see `asset`, and the security note beside the page's CSP.
+  { method: 'GET', path: '/assets/', prefix: true, run: ({ req, res, rest }, ctx) => asset(req, res, ctx.assets, rest) },
   // The terminal pane's backend. Listed unconditionally even though the feature is usually
   // off, so this table stays the complete answer to "what is reachable"; `terminalPage`
   // answers 404 when it is off, which is the truth about the route either way.
@@ -573,6 +581,9 @@ function servedPage(ctx: Ctx): ServedPage {
     ctx.terminal.enabled,
     passwordLogin(ctx.instance),
     ctx.terminal.sessions.canEnd,
+    // Relative, like every other URL on the page: a gateway mounted under a sub-path serves the
+    // bundle from `<prefix>/assets/` and the page's own import resolves the same way.
+    ctx.assets.codeview === null ? null : `assets/${ctx.assets.codeview}`,
   ] as const;
   const key = JSON.stringify(args);
   if (ctx.page?.key === key) return ctx.page;
@@ -629,10 +640,21 @@ const PAGE_HEADERS: Record<string, string> = {
   // ttyd's terminal, with its IME and file transfer, against re-implementing all of it here.
   //
   // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
-  // It names where a WORKER may be loaded from and nothing else: the page's own scripts are still
-  // inline only, so no same-origin file — an agent's upload included — can run as one.
+  // It names where a WORKER may be loaded from and nothing else.
+  //
+  // `script-src 'self'` is the code view (`/assets/`, see `asset`) and nothing else THIS FILE
+  // writes: the page's own script is still inline, and the only other JavaScript response a
+  // handler here produces is sw.js. `/term/` is not this file's to promise — `proxyRequest`
+  // copies the upstream's headers verbatim, so its Content-Type is ttyd's, whatever ttyd decides
+  // to serve (server.test.ts pins a fake upstream answering as JavaScript). What is left is the
+  // hole an agent's file could climb through, and it is not one: a download is `attachment` with
+  // `nosniff`, and its type is `application/octet-stream` unless it is one of the closed set of
+  // raster images `inlineImageType` admits — so no bytes the agent wrote are ever parsed as a
+  // script on this origin, and the reader shows an `.html` as source rather than a document. The
+  // route is behind the session like everything else, and `server.test.ts` pins that no other
+  // handler here carries a JavaScript content type.
   'Content-Security-Policy':
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
 };
@@ -1192,6 +1214,34 @@ async function readHead(file: string, limit: number): Promise<{ bytes: Buffer; s
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * One file from the built asset directory — the code view's entry module and its language chunks.
+ *
+ * This is the only route that serves a script off disk, and it serves only what
+ * `scripts/build-webui-assets.mjs` wrote: `ASSET_FILE` is one path segment with no leading dot,
+ * no separator and no `%`, and the resolved parent must still be the asset directory. Together
+ * that leaves no spelling of `..` or of an encoded separator that reaches `readFile` with
+ * anything but a name inside `dist/webui-assets/`.
+ *
+ * `immutable` because the name carries a content hash: the bytes behind a URL never change, and
+ * a rebuild publishes a new name that the freshly rendered page points at. `text/javascript`
+ * rather than sniffing is the point of the route — no agent-sent file can reach it, since a
+ * download is served as an octet-stream attachment (see `download`) and never from here.
+ */
+async function asset(req: IncomingMessage, res: ServerResponse, assets: WebAssets, name: string): Promise<void> {
+  if (!ASSET_FILE.test(name)) return send(req, res, 404, { error: 'no such asset' });
+  const dir = path.resolve(assets.dir);
+  const file = path.resolve(dir, name);
+  if (path.dirname(file) !== dir) return send(req, res, 404, { error: 'no such asset' });
+  const bytes = await readFile(file).catch(() => undefined);
+  if (!bytes) return send(req, res, 404, { error: 'no such asset' });
+  body(req, res, 200, bytes, {
+    'Content-Type': 'text/javascript; charset=utf-8',
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff',
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
