@@ -431,6 +431,62 @@ describe('buildFilesPanel against a remote host (a fake workspace)', () => {
     });
   });
 
+  it('adds the repository root the host reports, so a subdirectory topic reaches its siblings', async () => {
+    const ran: string[][] = [];
+    const ws = fakeHost({
+      async run(argv) {
+        ran.push([...argv]);
+        if (argv[0] === 'pwd') {
+          return { code: 0, output: Buffer.from('/home/u/repo/apps/web\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        if (argv[0] === 'printenv') {
+          return { code: 0, output: Buffer.from('/home/u\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        if (argv[0] === 'git') {
+          return { code: 0, output: Buffer.from('/home/u/repo\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        return { code: 0, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: false };
+      },
+    });
+    const panel = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => ws });
+    expect((await panel.list(REF, '')).ok).toBe(true);
+    // What the git panel asks for: repo.root + '/' + path, above the topic's own directory.
+    expect((await panel.list(REF, '/home/u/repo/packages')).ok).toBe(true);
+    // The repository is the edge; its parent is not.
+    expect((await panel.list(REF, '/home/u/other')).ok).toBe(false);
+    // Asked on the machine with the files, from the topic's directory.
+    expect(ran.some((c) => c[0] === 'git' && c[1] === '-C' && c[2] === '/home/u/repo/apps/web')).toBe(true);
+  });
+
+  it('does not keep a git lookup that timed out', async () => {
+    let asks = 0;
+    const ws = fakeHost({
+      async run(argv) {
+        if (argv[0] === 'pwd') {
+          return { code: 0, output: Buffer.from('/home/u/work\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        if (argv[0] === 'printenv') {
+          return { code: 0, output: Buffer.from('/home/u\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        if (argv[0] === 'git') {
+          asks++;
+          if (asks === 1) {
+            return { code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true };
+          }
+          return { code: 0, output: Buffer.from('/home/u/repo\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        return { code: 0, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: false };
+      },
+    });
+    const panel = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => ws });
+    const first = await panel.list(REF, '');
+    expect(first.ok).toBe(false);
+    if (!first.ok) expect(first.error).toMatch(/git did not answer/);
+    // The answer was not cached as "no repository here": the next open asks again and reaches it.
+    expect((await panel.list(REF, '')).ok).toBe(true);
+    expect((await panel.list(REF, '/home/u/repo/packages')).ok).toBe(true);
+  });
+
   it('does not remember a failed pwd: the next open asks the host again', async () => {
     let asks = 0;
     const ws = fakeHost({
