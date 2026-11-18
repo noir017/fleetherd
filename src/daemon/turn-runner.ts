@@ -1,7 +1,7 @@
 import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { looksLikeCommand } from './routing.js';
-import { addressOf, sameAddress, type ConversationAddress } from '../core/conversation.js';
+import { addressOf, sameAddress, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import type {
   AgentCommand,
   AgentElicitation,
@@ -31,6 +31,7 @@ import { remoteHosts } from './remote-hosts.js';
 import type { HistoryEvent } from '../history/record.js';
 import { kindForTrigger, toolText } from '../history/record.js';
 import type { HistoryKind, HistoryTurnEnd, HistoryTurnRef, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
+import type { TurnChangesHandle } from './turn-changes.js';
 
 /**
  * The sender a scheduled run's message carries (ConversationRegistry.runScheduledPrompt). Exported
@@ -404,6 +405,26 @@ export interface TurnRunnerDeps {
    * searching is not.
    */
   recordHistory?(id: ConversationId, event: HistoryEvent): void;
+  /**
+   * Snapshot this conversation's work tree, right before the agent is asked — the "before" half of
+   * what the turn changed. Answers undefined when the platform has nowhere to show the result, the
+   * directory is not a git work tree, or the snapshot did not finish in its budget.
+   *
+   * Optional and best-effort by contract: a snapshot that fails or is slow must cost the turn
+   * nothing, which is why the runner awaits it only up to its own cap and treats every failure as
+   * "no entry this turn". The ref is the batch's own conversation — the lane the person wrote in.
+   */
+  turnChangesStart?(
+    id: ConversationId,
+    ref: ConversationRef,
+    platform: PlatformAdapter,
+    address: ConversationAddress
+  ): Promise<TurnChangesHandle | undefined>;
+  /**
+   * The turn is over: take the "after" snapshot, record the turn and hang the summary off its
+   * reply. Called once per successful start, never awaited, and it must not throw.
+   */
+  turnChangesEnd?(handle: TurnChangesHandle, reply?: MessageRef): void;
 }
 
 /**
@@ -517,6 +538,12 @@ interface TurnRef {
   model?: string;
   /** Reasoning effort the harness reports for this turn (see AgentStreamHandlers.onEffort). */
   effort?: string;
+  /**
+   * The last message this render posted — the text stream's newest segment, or the newest tool
+   * bubble when the turn ended on one. What the turn's change entry hangs off: the last message of
+   * the reply, whichever way the render ended. Undefined when the turn posted nothing.
+   */
+  lastRef?: MessageRef;
   /**
    * The text of the segment being written now, and of the last segment that had any. What a turn
    * ends on is the segment after its last tool, but a turn can end ON a tool — so the last one with
@@ -788,12 +815,17 @@ export class TurnRunner {
     // Exactly one end per start, whichever way out the turn takes (see TurnRunnerDeps.recordTurnEnd).
     let end: TurnEnd = { kind: 'stopped' };
     const stopped = (): boolean => signal?.aborted === true;
+    // The "before" half of the turn's change list, when the platform shows one. Taken as late as
+    // possible — right before the prompt — so it cannot include an edit made while the batch was
+    // being merged or its attachments downloaded.
+    let changes: TurnChangesHandle | undefined;
 
     try {
       // Stopped before the agent was even asked — `/stop` landed while the lane was resolved or the
       // prompt built (attachments are downloaded there). The abort found no turn in the runtime to
       // cancel, and starting one now would run what the person just stopped.
       if (!stopped()) {
+        changes = await this.beginTurnChanges(conversationId, last.conversation, platform, address);
         await agent.runTurn(
           { prompt, ...(images.length > 0 ? { images } : {}), sessionToken, model: this.deps.getModelOverride(conversationId) },
           turnHandlers(batch, render.handlers)
@@ -836,6 +868,34 @@ export class TurnRunner {
       // The permanent record, in every way out — including the failure path that rethrows above,
       // which is why this is in the finally rather than after the try.
       this.endHistoryTurn(turnId, historyEndOf(end, this.clock.now()));
+      // And what the turn changed on disk. Last, and not awaited: the reply has already been
+      // flushed and reported, and a slow end snapshot must not hold any of that open.
+      if (changes) this.endTurnChanges(changes, ref.lastRef);
+    }
+  }
+
+  /** The before-snapshot, with the turn's own rule around it: any failure means "no entry". */
+  private async beginTurnChanges(
+    id: ConversationId,
+    ref: ConversationRef,
+    platform: PlatformAdapter,
+    address: ConversationAddress
+  ): Promise<TurnChangesHandle | undefined> {
+    if (!this.deps.turnChangesStart) return undefined;
+    try {
+      return await this.deps.turnChangesStart(id, ref, platform, address);
+    } catch (e) {
+      console.warn(`[turn] ${id} could not snapshot the workspace:`, e instanceof Error ? e.message : e);
+      return undefined;
+    }
+  }
+
+  private endTurnChanges(handle: TurnChangesHandle, reply: MessageRef | undefined): void {
+    try {
+      handle.reply = reply;
+      this.deps.turnChangesEnd?.(handle, reply);
+    } catch (e) {
+      console.warn(`[turn] ${handle.id} could not finish the turn's changes:`, e instanceof Error ? e.message : e);
     }
   }
 
@@ -1244,7 +1304,12 @@ export class TurnRunner {
   ): Render {
     // StreamBuffer factory closure: sink bound to this address, callable repeatedly to rotate a
     // fresh buffer per segment — trailing text below a tool bubble goes to a new message, not editing the prior one.
-    const makeStream = (): StreamBuffer => this.makeStreamBuffer(platform, address);
+    // Every message this render posts is remembered on `ref.lastRef`, so the turn's change entry
+    // can hang off the reply it ended with instead of "whatever is newest in the topic" later.
+    const makeStream = (): StreamBuffer =>
+      this.makeStreamBuffer(platform, address, undefined, (r) => {
+        ref.lastRef = r;
+      });
     // Tool bubbles are billed to the same per-chat budget as everything else, but in the lane that
     // may be dropped under congestion — see OutboundClass.
     const progressLane = outboundLane(platform, 'progress');
@@ -1294,7 +1359,11 @@ export class TurnRunner {
         // ordinary — the pacing lives in the adapter (daemon/paced-adapter.ts). Marked as a tool
         // bubble for the platform that draws one differently (SendOptions); the mark rides on the
         // send alone, since the edits below restate a message whose kind is already known.
-        sendBubble: (text) => progressLane.sendMessage(address, text, { kind: 'tools' }),
+        sendBubble: async (text) => {
+          const bubble = await progressLane.sendMessage(address, text, { kind: 'tools' });
+          ref.lastRef = bubble;
+          return bubble;
+        },
         // accumulate mode flushes whole tool progress/completion into one bubble (address closure).
         // Capability-gated: on platforms with editMessage=false (QQ/LINE/WeCom) editMessage throws, so
         // pass undefined to let ToolRenderer degrade to separate (one new bubble per tool) instead of
@@ -1727,7 +1796,9 @@ export class TurnRunner {
      * How a new message is sent, when it is not a plain send to `address` — a side answer replies
      * to its question (sendAside). Edits still go to the ref this returns.
      */
-    post?: (text: string) => Promise<MessageRef>
+    post?: (text: string) => Promise<MessageRef>,
+    /** Told about every message this buffer posts, in order — the turn's reply-entry bookkeeping. */
+    onSent?: (ref: MessageRef) => void
   ): StreamBuffer {
     return new StreamBuffer(
       {
@@ -1755,6 +1826,7 @@ export class TurnRunner {
         send: async (text) => {
           try {
             const ref = await (post ? post(text) : platform.sendMessage(address, text));
+            onSent?.(ref);
             console.log(`[out] send ok (${text.length} chars) → ${ref.messageId}`);
             return ref;
           } catch (e) {

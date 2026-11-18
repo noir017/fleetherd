@@ -499,6 +499,7 @@ type Outbound = Pick<
   | 'renameThread'
   | 'measureRendered'
   | 'fetchHistory'
+  | 'attachTurnChanges'
 >;
 
 /**
@@ -543,6 +544,17 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
       const kind = opts?.kind;
       const part = { own: false, html: webMessageHtml(kind, text), ...(kind ? { kind } : {}) };
       return ref(topic, room.post(topic, part, text).id);
+    },
+    /**
+     * The turn's changes, hung off the reply it just ended. Not an outbound message: the entry is
+     * a field the page draws under that one message, so this edits the room's own copy and tells
+     * the page to repaint it. `reply` is the message the turn last posted — without it (a turn that
+     * posted nothing) there is nothing to hang an entry on. Unknown or gone topics are ignored: the
+     * transcript may have been dropped between the turn and its end snapshot.
+     */
+    attachTurnChanges(address, entry, reply) {
+      if (address.channel !== CHANNEL || !address.thread) return;
+      room.attachTurnChanges(address.thread, entry, reply?.messageId);
     },
     async editMessage(r, text) {
       room.revise(topicOf(r.address, 'editMessage'), r.messageId, text);
@@ -713,6 +725,7 @@ function lifecycle(
   | 'useTopicKill'
   | 'useAgentCatalog'
   | 'useModelPicker'
+  | 'useTurnChanges'
   | 'registerCommands'
   | 'start'
   | 'stop'
@@ -782,6 +795,12 @@ function lifecycle(
      * in: a chat app has `/model` and its menu, which is a message.
      */
     useModelPicker: (picker) => room.useModelPicker(picker),
+    /**
+     * The only implementor, and the same reason once more: what a turn changed on disk is shown by
+     * opening a diff, and a chat app has neither a window for one nor a reply that could carry the
+     * link. Read-only — the records are written by the turn itself.
+     */
+    useTurnChanges: (panel) => room.useTurnChanges(panel),
     /**
      * Accepted and never called.
      *

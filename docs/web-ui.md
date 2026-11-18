@@ -313,6 +313,29 @@ it. On a phone, picking a conversation closes the drawer; open it again and tap 
 back. Neither the tab nor the conversation is remembered: a reload opens on Topics, on the topic in
 the address.
 
+## A turn's changes
+
+When a topic works in a git work tree, each turn records what it changed: a snapshot of the
+work tree is taken just before the agent is asked and another when the turn ends, and the reply
+ends with a line — `3 files changed +12 -4`. A turn that changed nothing gets no line.
+Tapping it opens that turn's diff, file by file,
+in the git window; the list is also how you get from "something changed" to the file that did.
+
+The snapshots are the daemon's own, under `~/.fleetherd/snapshots/<hash of the repository root>`
+on the machine the agent runs on, and the project's `.git` is never touched. `.gitignore` decides
+what a snapshot takes, with git's own exception: a file a snapshot has already recorded stays in
+it even if it is ignored afterwards. A topic keeps its last 50 turns, across restarts; older ones
+are deleted and their objects pruned.
+
+The first snapshot has three seconds. A snapshot that fails, or a turn slower than that to get
+going, simply has no entry — the turn itself is never delayed past that or failed. Only turns
+on the web UI are recorded: a chat reply has nowhere to put a diff, and a directory that is not
+a git work tree has nothing to compare.
+
+Two topics working in the **same directory** at the same time see each other's edits: each one's
+diff is "the work tree before my prompt" against "the work tree after", so an edit the other made
+in between is in both. Two chats on one project at once is the one case this does not separate.
+
 ## Notifications
 
 **Notifications** in the **⚙ Menu** at the bottom of the topic list turns on push notifications

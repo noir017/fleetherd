@@ -2094,6 +2094,16 @@ export class Daemon {
       list: (ref) => this.registry.modelPickerForRef(ref),
       choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
     });
+    /**
+     * A turn's changed files: the list the change entry opens, one file out of the two trees, and
+     * the forget that follows a deleted topic. The records are the turn's own — see TurnChanges.
+     */
+    adapter.useTurnChanges?.({
+      status: (ref, turn) => this.registry.turnChangesStatusForRef(ref, turn),
+      file: (ref, turn, path) => this.registry.turnChangesFileForRef(ref, turn, path),
+      // A topic the page deleted: its records and the refs keeping their trees go with it.
+      forget: (ref) => this.registry.turnChangesForgetForRef(ref),
+    });
   }
 
   /**

@@ -13167,3 +13167,68 @@ describe('webui page: the History tab', () => {
     expect(h.el('history-more').hidden).toBe(true);
   });
 });
+
+/**
+ * What a turn changed, under its reply (daemon/turn-changes.ts, WebMessage.turnChanges).
+ *
+ * The entry is a control that opens the git panel's window, and that window is another file's
+ * (`window.openGitWindow`). So there are two states worth pinning: a page that has it draws the
+ * entry and calls it with the turn's two URLs, and a page that does not must draw nothing at all —
+ * a button that opens nothing is worse than no button.
+ */
+describe('the page: a turn’s changes', () => {
+  const A = 'a1b2c3d4';
+  const withChanges = (id: string, turn: number) => ({
+    ...message(id, '<p>done</p>'),
+    turnChanges: { turn, files: 3, additions: 12, deletions: 4 },
+  });
+
+  it('shows the counts under the reply and opens the window on the turn', async () => {
+    const h = await open();
+    const opened: Array<Record<string, unknown>> = [];
+    (h.window as unknown as { openGitWindow: (o: Record<string, unknown>) => void }).openGitWindow = (o) => opened.push(o);
+    await h.emit(sync(A, [withChanges('w1', 2)], [A]));
+
+    const row = h.doc.querySelector('.tc button[data-turns]');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain('3 files changed');
+    expect(row?.textContent).toContain('+12');
+    expect(row?.textContent).toContain('-4');
+    expect(h.doc.querySelector('.tc .ic-diff')).not.toBeNull();
+
+    await h.click('button[data-turns]');
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({ title: 'Turn 2 changes' });
+    expect(String(opened[0]!.statusUrl)).toBe(`api/turn-changes/status?t=${A}&turn=2`);
+    expect(String(opened[0]!.fileUrl)).toBe(`api/turn-changes/file?t=${A}&turn=2&path=`);
+  });
+
+  it('draws nothing at all when the page has no window to open', async () => {
+    const h = await open();
+    await h.emit(sync(A, [withChanges('w1', 2)], [A]));
+    expect(h.el('log').textContent).toContain('done');
+    expect(h.doc.querySelector('.tc')).toBeNull();
+    expect(h.doc.querySelector('button[data-turns]')).toBeNull();
+  });
+
+  it('is still there after a reconnect, and the browser’s copy keeps it for a reload', async () => {
+    const h = await open();
+    (h.window as unknown as { openGitWindow: (o: Record<string, unknown>) => void }).openGitWindow = () => {};
+    await h.emit(sync(A, [withChanges('w1', 4)], [A]));
+    expect(h.doc.querySelectorAll('.tc button[data-turns]')).toHaveLength(1);
+
+    // A dropped stream comes back as a full sync with the same room in it — what the daemon kept.
+    await h.emit(sync(A, [withChanges('w1', 4)], [A]));
+    expect(h.doc.querySelectorAll('.tc button[data-turns]')).toHaveLength(1);
+
+    // And the cache the next visit reads holds the entry with the message it belongs to.
+    // SAVE_MS (400) after the change, so this waits on a timer rather than on a microtask.
+    let cached: { turnChanges?: unknown } | undefined;
+    for (let i = 0; i < 60 && !cached?.turnChanges; i++) {
+      const record = await readRecord(h.idb, A);
+      cached = record?.list?.find((m) => m.id === 'w1') as { turnChanges?: unknown } | undefined;
+      if (!cached?.turnChanges) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(cached?.turnChanges).toMatchObject({ turn: 4 });
+  });
+});

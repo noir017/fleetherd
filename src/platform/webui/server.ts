@@ -417,6 +417,11 @@ const GUARDED: Route[] = [
   // takes — the same warm-up /model does), and the switch, which is /model's.
   { method: 'GET', path: '/api/models', run: modelList },
   { method: 'POST', path: '/api/models', run: modelChoose },
+  // What one turn changed in its workspace, and one of those files read out of the turn's two
+  // snapshots. Both are read-only and both take a topic id, a turn number and (for the file) a
+  // path relative to the repository root; the daemon refuses a path that turn did not change.
+  { method: 'GET', path: '/api/turn-changes/status', run: turnChangesStatus },
+  { method: 'GET', path: '/api/turn-changes/file', run: turnChangesFile },
   { method: 'GET', path: '/api/skills', run: skillsList },
   { method: 'POST', path: '/api/skills/op', run: skillsOp },
   { method: 'GET', path: '/api/reviews', run: reviewsList },
@@ -1047,6 +1052,42 @@ async function modelChoose({ req, res }: Req, ctx: Ctx): Promise<void> {
   if (!parsed) return;
   const result = await ctx.room.chooseModel(parsed.topic, parsed.value);
   send(req, res, result.ok ? 200 : 409, result);
+}
+
+/**
+ * The two parameters every turn-changes route needs: which topic, and which turn.
+ *
+ * The topic id is the same hex shape protocol.ts enforces on the way in, and the turn number is
+ * the daemon's own — a positive integer, bounded so a nonsense number never reaches a lookup.
+ * Anything else is a 400: these are GETs, so there is no schema to hold the check.
+ */
+function turnChangeQuery(url: URL): { topic: string; turn: number } | undefined {
+  const topic = url.searchParams.get('t') ?? '';
+  const turn = Number(url.searchParams.get('turn') ?? '');
+  if (!/^[0-9a-f]{8}$/.test(topic)) return undefined;
+  if (!Number.isInteger(turn) || turn < 1 || turn > 1_000_000) return undefined;
+  return { topic, turn };
+}
+
+/** One turn's changed files — the answer the git window's status tab reads. */
+async function turnChangesStatus({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const q = turnChangeQuery(url);
+  if (!q) return send(req, res, 400, { error: 'a topic id and a turn number are required' });
+  // A well-formed question with no record answers with the failure shape, 200: the window shows
+  // the daemon's own sentence rather than a protocol error.
+  send(req, res, 200, await ctx.room.turnChangesStatus(q.topic, q.turn));
+}
+
+/** One changed file of one turn: both sides whole, and its unified diff. */
+async function turnChangesFile({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const q = turnChangeQuery(url);
+  const p = url.searchParams.get('path') ?? '';
+  if (!q || !p) return send(req, res, 400, { error: 'a topic id, a turn number and a path are required' });
+  // A path is only ever a repository-relative name; this bound is about absurd input, and the
+  // daemon's own check — was it changed in this turn — is what actually decides.
+  if (p.length > 4096) return send(req, res, 400, { error: 'that path is too long' });
+  const answer = await ctx.room.turnChangesFile(q.topic, q.turn, p);
+  send(req, res, answer.ok ? 200 : 404, answer);
 }
 
 /**

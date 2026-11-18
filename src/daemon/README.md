@@ -21,6 +21,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `model-catalog.ts` | Any agent's model list for the settings screen: from a live session, from what was learned, or from a session brought up just to ask |
 | `config-reload.ts` | `/reload` and `fleetherd reload`: diff the re-read config against the live one, copy it in place, and say what changed. Which sections apply live and which need a restart is decided in its `RELOAD_KIND`; what happens to running agent processes is `ConversationRegistry.respawnAgents` |
 | `turn-runner.ts` | One turn end to end: prompt, streaming, tools, footer, errors |
+| `turn-changes.ts` | What a web UI turn changed: a work-tree snapshot before the prompt and one after it, in a repository of the daemon's own on the agent's machine; the last 50 turns per conversation in `<configDir>/turn-changes.json`; the two reads the page's git window makes |
 | `paced-adapter.ts` | Wraps every `PlatformAdapter` in the shared per-chat write budget |
 | `agent.ts` | `AgentFactory` / `AgentSession` / `AgentStreamHandlers` interfaces. Dependency-free. |
 | `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under `permissions: auto`, ask through the turn's (or a background burst's) `onPermission` under `ask` — see answerPermission / permissionResponse for why an unanswered request goes back as an error |
@@ -699,8 +700,10 @@ Per turn it: resolves the platform instance from the batch (a shared-scope conve
 may hop instances between turns, so this is per-turn) → resolves the outbound address
 (opening a thread first when `autoThread: perTurn`, so the whole turn lands in it) →
 starts a typing keep-alive loop (Discord's indicator self-expires ~10 s) → builds a
-`StreamBuffer` factory and a `ToolRenderer` → runs the agent turn → final-flushes with
-the footer.
+`StreamBuffer` factory and a `ToolRenderer` → takes the turn's first workspace snapshot when
+the platform shows changes (`turn-changes.ts`, three seconds at most) → runs the agent turn →
+final-flushes with the footer → takes the second snapshot in the background, after the reply
+has gone.
 
 Two mechanisms worth understanding before editing:
 

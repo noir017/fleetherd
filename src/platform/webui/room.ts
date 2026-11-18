@@ -87,6 +87,10 @@ import type {
   SkillPanelResult,
   SkillsPanel,
   SkillPanelSearches,
+  TurnChangeEntry,
+  TurnChangeFileResult,
+  TurnChangesPanel,
+  TurnChangeStatusResult,
 } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -465,6 +469,8 @@ export class WebRoom {
   private schedulePanel: SchedulePanel | null = null;
   /** The model switch for a topic's conversation — see `useModelPicker`. */
   private modelPicker: ModelPicker | null = null;
+  /** A turn's changed files, for the transcript's change entry — see `useTurnChanges`. */
+  private turnChangesPanel: TurnChangesPanel | null = null;
   /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
   private skillsPanel: SkillsPanel | null = null;
   /** The automatic reviews the daemon recorded — see `useReviewPanel`. */
@@ -554,6 +560,7 @@ export class WebRoom {
     }
     this.disposeRoom(victim.id);
     this.forgetKept(victim.id);
+    this.forgetTurnChanges(victim.id);
     this.topics.delete(victim.id);
     // The one record of which topic went, and what it was called. The daemon's binding for it
     // stays in conversations.json (as it does for a ×), so this line is how its session id can
@@ -607,6 +614,7 @@ export class WebRoom {
     this.disposeRoom(id);
     // A star defers to the ×, kept transcript and all.
     this.forgetKept(id);
+    this.forgetTurnChanges(id);
     if (!this.topics.delete(id)) return false;
     this.announceTopics();
     return true;
@@ -633,6 +641,7 @@ export class WebRoom {
       if (kept?.starred) continue;
       this.disposeRoom(id);
       this.forgetKept(id);
+      this.forgetTurnChanges(id);
     }
     this.topics.clear();
     const fresh = this.topics.full() ? this.topics.current() : this.topics.create();
@@ -815,6 +824,68 @@ export class WebRoom {
     if (!this.modelPicker) return { ok: false, text: 'This daemon offers no model switch.' };
     if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
     return this.modelPicker.choose(this.conversation(topic), value);
+  }
+
+  /**
+   * Accept the daemon's turn changes: one turn's changed files, and one of them read whole.
+   * The records themselves are written by the turn (daemon/turn-changes.ts), not here — this is
+   * the read side the page's window calls.
+   */
+  useTurnChanges(panel: TurnChangesPanel): void {
+    this.turnChangesPanel = panel;
+  }
+
+  /** One turn's changed files, for the window the change entry opens. */
+  async turnChangesStatus(topic: string, turn: number): Promise<TurnChangeStatusResult> {
+    if (!this.turnChangesPanel) return { ok: false, reason: 'error', text: 'This daemon records no turn changes.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'error', text: 'No such topic.' };
+    return this.turnChangesPanel.status(this.conversation(topic), turn);
+  }
+
+  /** One changed file of one turn: both sides and its unified diff. */
+  async turnChangesFile(topic: string, turn: number, rel: string): Promise<TurnChangeFileResult> {
+    if (!this.turnChangesPanel) return { ok: false, text: 'This daemon records no turn changes.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.turnChangesPanel.file(this.conversation(topic), turn, rel);
+  }
+
+  /**
+   * Hang a finished turn's change summary off a message — `messageId` is the one that turn last
+   * posted, captured by the daemon at turn end.
+   *
+   * An id rather than "the newest message in the topic": the end snapshot is taken off the turn,
+   * so by the time it lands the topic may already hold the next turn's reply, and an entry under
+   * that one would name a turn it does not belong to. An id the topic no longer has (the ring
+   * rotated, a message removed) means no entry, which is the honest answer.
+   *
+   * The page draws one line under the message and opens the diff window from there, and because
+   * the entry is part of the message the transcript store keeps, it is still there after a reload,
+   * a reconnect and a restart.
+   */
+  attachTurnChanges(topicId: string, entry: TurnChangeEntry, messageId?: string): void {
+    if (!messageId || !this.topics.has(topicId)) return;
+    const room = this.rooms.get(topicId);
+    if (!room) return;
+    const rec = room.stored.get(messageId);
+    if (!rec || rec.msg.own || rec.msg.turnChanges) return;
+    rec.msg = { ...rec.msg, turnChanges: entry };
+    this.emit(topicId, { t: 'msg', msg: rec.msg });
+    this.keep(topicId);
+  }
+
+  /**
+   * A topic is going: tell the daemon to forget its turn-change records, so their snapshots do not
+   * outlive the only page that could ever have shown them. Best-effort — the topic is gone either
+   * way, and a panel that has no such operation is a deployment without the feature.
+   */
+  private forgetTurnChanges(topicId: string): void {
+    const panel = this.turnChangesPanel;
+    if (!panel?.forget) return;
+    try {
+      panel.forget(this.conversation(topicId));
+    } catch {
+      // Nothing here is worth breaking a deletion over.
+    }
   }
 
   /** Every task, for the panel. `enabled: false` when the daemon offered none (a test daemon). */

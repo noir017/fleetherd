@@ -846,6 +846,32 @@ never a permission prompt nobody asked for.
 | `maxEditsPerMessage` | unset | Nothing here ever refuses an edit |
 | `toolPreviewLimit` | 2000 | The only platform that declares one: see [Tool bubbles](#tool-bubbles) |
 
+## A turn's changes
+
+Every turn run here records what it changed in its workspace, and its reply carries a line for it.
+`daemon/turn-changes.ts` snapshots the work tree before the prompt and after the turn (`GIT_DIR` +
+`GIT_WORK_TREE` + a per-snapshot index in `~/.fleetherd/snapshots/<hash of the root>` on the
+agent's machine, `add -A`, `write-tree`), diffs the two trees, and keeps the last 50 turns of each
+conversation in `<configDir>/turn-changes.json`. The design notes are in that file's header; what
+matters here is the page's half:
+
+- **The entry is a field of the message** (`WebMessage.turnChanges`), not a transcript event of its
+  own. The transcript store and the browser's cache keep whole messages, so a reload, a reconnect
+  and a daemon restart all bring the entry back with the reply it belongs to — nothing has to be
+  re-fetched or re-derived. It is hung off the message the turn last posted, which the daemon
+  captures at turn end: the end snapshot runs after the turn, and by the time it lands the topic
+  may already hold the next turn's reply.
+- **It is drawn only when the page can open a window** (`window.openGitWindow`, the git panel's).
+  The check is at draw time, so a page served without that panel shows no entry at all rather than a
+  button that does nothing; the two URLs it hands over are `api/turn-changes/status` and
+  `api/turn-changes/file`, and `fileUrl` is a prefix the window appends a URL-encoded path to.
+- **Only where something can show it.** The daemon snapshots for a platform that implements
+  `attachTurnChanges`, which is this one; every chat platform skips the work for free.
+- **One directory, two topics, is not separated.** A turn's diff is its own "before" against its
+  own "after", so when two topics work in the same directory at the same time each one's diff
+  contains the other's edits. Splitting them would need a barrier across agents; the honest answer
+  is the one in [docs/web-ui.md](../../../docs/web-ui.md).
+
 ## Tool bubbles
 
 A tool bubble (`core/tool-renderer.ts`) reaches every adapter as plain text, one

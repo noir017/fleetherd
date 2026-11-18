@@ -75,6 +75,12 @@ const PACING = {
   // Registers a callback, read while drawing an empty topic; writes nothing to the chat.
   useAgentCatalog: 'unpaced',
   useModelPicker: 'unpaced',
+  // Registers the turn-change reads; the page asks over its own HTTP routes, not chat traffic.
+  useTurnChanges: 'unpaced',
+  // Hangs a finished turn's summary off a message the turn has already written. Not chat traffic
+  // the platform meters: it edits the page's own copy of that message, and `editMessage` for the
+  // body has already been paced.
+  attachTurnChanges: 'unpaced',
   // Not chat traffic at all: the one implementor draws it in its own page, and the status board
   // already throttles it. Queueing a status behind a platform's flood pause would only show a
   // stale one later.
