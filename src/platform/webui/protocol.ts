@@ -299,13 +299,14 @@ export type GitFileQuery = z.infer<typeof GitFileQuerySchema>;
 /**
  * The history routes' query strings (`api/git/log`, `api/git/commit`, `api/git/commit-file`).
  *
- * A commit id is hex only and at least seven characters, so it can never be read as an option and
- * never as a revision expression like `HEAD~3`; the daemon resolves it with `rev-parse --verify`
- * and refuses anything that does not name a commit. `skip` is bounded because the page scrolls a
- * list, not a repository: past this many commits nobody is reading and a query is only a way to
- * make the daemon walk a history twice.
+ * A commit id is hex only, seven to sixty-four characters: forty is a SHA-1 id and sixty-four a
+ * SHA-256 one, so it can never be read as an option and never as a revision expression like
+ * `HEAD~3`; the daemon resolves it with `rev-parse --verify` and refuses anything that does not
+ * name a commit. `skip` is bounded because the page scrolls a list, not a repository: past this
+ * many commits nobody is reading and a query is only a way to make the daemon walk a history
+ * twice.
  */
-const GitSha = z.string().regex(/^[0-9a-f]{7,40}$/);
+const GitSha = z.string().regex(/^[0-9a-f]{7,64}$/);
 
 export const GitLogQuerySchema = z
   .object({

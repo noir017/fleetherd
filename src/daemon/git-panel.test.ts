@@ -262,6 +262,38 @@ describe('git panel', () => {
     expect(file.patch).toContain('+a');
   });
 
+  it('reads a SHA-256 repository, root commit and all', async (ctx) => {
+    try {
+      gitIn(dir, 'init', '-q', '--object-format=sha256', '-b', 'main');
+    } catch {
+      // A git too old to know the option, or built without SHA-256 support.
+      ctx.skip();
+      return;
+    }
+    write(path.join(dir, 'base.txt'), 'a\nb\n');
+    gitIn(dir, 'add', '.');
+    gitIn(dir, 'commit', '-qm', 'root');
+    const root = gitIn(dir, 'rev-parse', 'HEAD').trim();
+    expect(root).toHaveLength(64);
+
+    const log = await gitLog(ws, 0);
+    if (!log.ok) throw new Error(log.text);
+    // A 64-character id is a commit id too: the query regex and the daemon's must let it through.
+    expect(log.commits.map((c) => c.sha)).toEqual([root]);
+
+    const commit = await gitCommit(ws, root);
+    if (!commit.ok) throw new Error(commit.text);
+    expect(commit.commit.sha).toBe(root);
+    expect(commit.files.map((f) => [f.path, f.status])).toEqual([['base.txt', 'added']]);
+
+    // The root commit's old side is this repository's empty tree, not a SHA-1 id it never had.
+    const file = await gitCommitFile(ws, root, 'base.txt');
+    if (!file.ok) throw new Error(file.text);
+    expect(file.original).toBe('');
+    expect(file.modified).toBe('a\nb\n');
+    expect(file.patch).toContain('+a');
+  });
+
   it('gives both sides of a file a commit changed, and refuses one it did not', async () => {
     repo();
     write(path.join(dir, 'base.txt'), 'a\nb\nc\n');

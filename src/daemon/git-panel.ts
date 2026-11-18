@@ -71,8 +71,12 @@ const EMPTY_TREE = {
   sha1: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
   sha256: '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321',
 } as const;
-/** A commit id as the query lets one through: hex only, so it can never be read as an option. */
-const SHA_RE = /^[0-9a-f]{7,40}$/;
+/**
+ * A commit id as the query lets one through: hex only, so it can never be read as an option.
+ * Forty characters is a SHA-1 id and sixty-four a SHA-256 one; `rev-parse --verify` decides which
+ * of those actually names a commit.
+ */
+const SHA_RE = /^[0-9a-f]{7,64}$/;
 /** A commit opened within this many ms is reused when its next file is opened, as a listing is. */
 const COMMIT_TTL_MS = 15_000;
 /** Commit details kept for that reuse, oldest dropped first. */
