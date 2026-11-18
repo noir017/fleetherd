@@ -14895,6 +14895,49 @@ describe('webui page: the git window', () => {
     await until('the first file', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
   });
 
+  it('re-reads the branches when a repository appears while the window sits on Commits', async () => {
+    const status: Record<string, unknown> = {
+      ok: false,
+      reason: 'not-git',
+      text: '/srv/work is not inside a git repository.',
+    };
+    const branches: Record<string, unknown> = { ok: false, reason: 'not-git', text: 'not a git repository' };
+    const log: Record<string, unknown> = {
+      ok: false,
+      reason: 'not-git',
+      text: '/srv/work is not inside a git repository.',
+    };
+    const branchesPath = `api/git/branches?t=${A}`;
+    const logPath = `api/git/log?t=${A}&skip=0`;
+    const h = await open({ replies: { [branchesPath]: branches, [statusPath('working')]: status, [logPath]: log } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the not-git answer', () => h.el('git-diff').textContent!.includes('not inside a git repository'));
+
+    // The window is left on Commits while an agent turns the directory into a repository: the
+    // history read succeeds and clears the shared not-git flag, but the branch refusal stays.
+    await h.click('[data-gm="commits"]');
+    await until('the history refusal', () => h.el('git-diff').textContent!.includes('not inside a git repository'));
+    Object.assign(status, { ok: true, repo: { root: '/srv/work', branch: 'main', base: 'main' }, files: [] });
+    delete status.reason;
+    delete status.text;
+    Object.assign(branches, { ok: true, branch: 'main', base: 'main', branches: ['main'] });
+    delete branches.reason;
+    delete branches.text;
+    Object.assign(log, { ok: true, repo: { root: '/srv/work', branch: 'main' }, commits: [], more: false });
+    delete log.reason;
+    delete log.text;
+    await h.emit({ t: 'typing', on: false });
+    await until('the history', () => h.calls.filter((c) => c.path === logPath).length === 2);
+
+    await h.click('[data-gm="working"]');
+    await until('the branches again', () => h.calls.filter((c) => c.path === branchesPath).length === 2);
+    await tick();
+    // The refusal from the not-git answer is not pasted back over a list that now has a branch.
+    expect(h.el('git-note').hidden).toBe(true);
+    expect(Array.from(h.el('git-base').querySelectorAll('option')).map((o) => o.textContent)).toEqual(['main']);
+  });
+
   it('names the comparison that came back empty, and offers the commits from it', async () => {
     const at = Date.now() - 2 * 3600 * 1000;
     const h = await open({

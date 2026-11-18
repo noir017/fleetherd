@@ -9535,6 +9535,11 @@ const SCRIPT = `
     // A directory outside a repository is an answer, not a failure: the pane says so and the red
     // note stays out of it, and the branch list's own refusal must not put one back.
     notGit:false,
+    // Whether the branch list is missing because there was no repository to read it from. A
+    // status answer that succeeds makes that refusal stale. It is this flag and not notGit, which
+    // a history read in Commits clears first, and not branchError, which a failure for another
+    // reason also sets and which a status answer does not make stale.
+    branchStale:false,
     // A phone opens on one column: a split diff at 390px gives each side five characters of code.
     layout: (window.innerWidth < 900 ? 'unified' : 'split')
   };
@@ -9622,11 +9627,13 @@ const SCRIPT = `
           // a repository is already explained in the pane, and a second red sentence about
           // branches beside it would read as a different failure.
           gitState.branchError = (d && d.text) || 'Could not read the branches.';
+          gitState.branchStale = !!(d && d.reason === 'not-git');
           if(!gitState.notGit) gitNote(gitState.branchError, true);
           return;
         }
         var was = gitState.branchError;
         gitState.branchError = '';
+        gitState.branchStale = false;
         if(was && gitNoteEl.textContent === was) gitNote('', false);
         var list = d.branches || [];
         if(!list.length) return;
@@ -9966,16 +9973,15 @@ const SCRIPT = `
         gitNote((d && (d.text || d.error)) || 'Could not read the changes.', true);
         return;
       }
-      // A not-git answer's branch refusal is about a directory that has just become a repository
-      // (an agent ran git init): the sentence is no longer true, and the picker has no branches.
-      var wasNotGit = gitState.notGit;
+      // The branch list could not be read because there was no repository; this answer says there
+      // is one now, so ask again — the refusal is stale and the picker has no branches.
       gitState.notGit = false;
       gitState.repo = d.repo || null;
       gitState.root = (d.repo && d.repo.root) || '';
       gitState.files = d.files || [];
       gitBranchEl.textContent = (d.repo && d.repo.branch) || '';
       gitPaintBase(d.repo && d.repo.base);
-      if(wasNotGit){
+      if(gitState.branchStale){
         gitState.branchError = '';
         gitLoadBranches();
       }
@@ -10215,6 +10221,7 @@ const SCRIPT = `
     gitState.base = '';
     gitState.root = '';
     gitState.branchError = '';
+    gitState.branchStale = false;
     gitState.repo = null;
     gitState.files = [];
     gitState.path = '';
