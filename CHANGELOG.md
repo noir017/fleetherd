@@ -5,6 +5,42 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The git window reads a repository's history.** Its three comparisons — the working tree, the
+  branch, what was committed on it — are all against `HEAD` or a base branch, so on a checkout that
+  commits straight to `main` and keeps a clean tree, every one of them was empty, and the window
+  opened onto nothing at all. A fourth mode, **Commits**, lists the commits from `HEAD` back, fifty
+  at a time; one opens onto the files it changed against its first parent (a root commit against the
+  empty tree, SHA-1 or SHA-256), and a file onto its diff, with the same line comments, whose heading
+  now carries the commit's short id so the agent does not read them as notes on the file as it is
+  now. It is read-only like the rest of the window: three routes, a commit id checked as hex and
+  resolved by `rev-parse` before git sees it, and a path accepted only if that commit changed it.
+
+### Changed
+
+- **The settings page has one row per agent.** An agent's default model and its permission level
+  were two sections, each listing every agent again, so changing what one agent does meant finding
+  it twice. The Agents section now has a row per agent with its model, its permission level and —
+  with the instruction editor on — its own instruction files side by side; on a phone they stack
+  under its name. The chat menu and its buttons are unchanged.
+- **An agent whose harness reports no modes can be set to `ask`.** Only levels a harness had a
+  mode for were offered, so an agent with none — agy among them — was left with `auto`, though the
+  gateway's half of `ask` still holds there: whatever it does ask goes to you. It is offered now,
+  and says what it is: only what the agent asks about waits for you, and on agy that is commands,
+  not file edits. An API agent (`fleetherd api-agent`) asks about nothing and is offered `auto`
+  alone. An agent with no level set shows the level it is actually at — `full` for one whose running
+  session (or, with none, its pinned mode) is in its no-prompt mode — marked as not set.
+
+### Fixed
+
+- **The git window says why it is empty.** A clean tree was one small "No changes." in a corner of
+  an otherwise blank window, and a directory outside any repository one red line; a topic working
+  on a mounted volume was not even told that much, because git's last line there is "Stopping at
+  filesystem boundary" and only that line was read, so the window showed git's raw error instead.
+  The diff pane now says which comparison is empty and offers the commits, or that the directory is
+  not in a repository; and a list with files opens the first one on a wide screen.
+
 ## [3.12.0] - 2026-11-18
 
 ### Added
