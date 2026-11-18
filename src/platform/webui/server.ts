@@ -642,13 +642,17 @@ const PAGE_HEADERS: Record<string, string> = {
   // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
   // It names where a WORKER may be loaded from and nothing else.
   //
-  // `script-src 'self'` is the code view (`/assets/`, see `asset`) and nothing else: the page's own
-  // script is still inline, and the only other thing under this origin that is JavaScript is
-  // sw.js. It is not a hole an agent's file can climb through — an agent-sent file is always
-  // served as `application/octet-stream` + `attachment` + `nosniff` (`download`), so no bytes it
-  // wrote are ever parsed as a script on this origin; the reader shows an `.html` as source and
-  // never as a document. The route is behind the session like everything else, and `server.test.ts`
-  // pins that no other response carries a JavaScript content type.
+  // `script-src 'self'` is the code view (`/assets/`, see `asset`) and nothing else THIS FILE
+  // writes: the page's own script is still inline, and the only other JavaScript response a
+  // handler here produces is sw.js. `/term/` is not this file's to promise — `proxyRequest`
+  // copies the upstream's headers verbatim, so its Content-Type is ttyd's, whatever ttyd decides
+  // to serve (server.test.ts pins a fake upstream answering as JavaScript). What is left is the
+  // hole an agent's file could climb through, and it is not one: a download is `attachment` with
+  // `nosniff`, and its type is `application/octet-stream` unless it is one of the closed set of
+  // raster images `inlineImageType` admits — so no bytes the agent wrote are ever parsed as a
+  // script on this origin, and the reader shows an `.html` as source rather than a document. The
+  // route is behind the session like everything else, and `server.test.ts` pins that no other
+  // handler here carries a JavaScript content type.
   'Content-Security-Policy':
     "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
   'X-Content-Type-Options': 'nosniff',

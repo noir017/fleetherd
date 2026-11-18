@@ -18,7 +18,9 @@ All notable changes to this project are documented here. The format is based on
   sixteen grammars. It is also the editor and diff the git-diff panel and file editor will use.
   The page's CSP gains `script-src 'self'` for that one route, and nothing the agent sent can be
   it: downloads are still `attachment` + `nosniff`, so a `.js` the agent wrote is never parsed by
-  this origin. A source checkout needs one `npm run build:assets` before `tsx src/cli.ts start`.
+  this origin. The build also writes `licenses.txt` beside the chunks — the licences of every
+  package it bundled, which minification would otherwise erase and which MIT requires the copy to
+  carry. A source checkout needs one `npm run build:assets` before `tsx src/cli.ts start`.
 
 ## [3.10.0] - 2026-11-17
 

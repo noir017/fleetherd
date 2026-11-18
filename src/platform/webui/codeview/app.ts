@@ -92,8 +92,9 @@ export interface CodeViewApi {
  * name the same module share one chunk (`ts` and `js` both come from `lang-javascript`).
  *
  * A file whose extension is not listed opens as plain text rather than as another language:
- * highlighting a language with the wrong grammar is worse than none, and the list is the same
- * one `reading.ts` calls readable, so nothing it calls text is silently unedited here.
+ * highlighting a language with the wrong grammar is worse than none. This list is about
+ * highlighting only, and is narrower than `reading.ts`'s — that one decides whether a file may be
+ * read here at all, so `csv`, `log` or `toml` are readable and simply have no grammar to colour.
  */
 const LANG: Record<string, () => Promise<Extension>> = {
   js: () => import('@codemirror/lang-javascript').then((m) => m.javascript()),

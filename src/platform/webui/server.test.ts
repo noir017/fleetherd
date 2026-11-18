@@ -474,10 +474,11 @@ describe('webui server: the code view’s bundle', () => {
     expect(csp).not.toContain('script-src http');
   });
 
-  it('answers as JavaScript on two routes only: the assets and the service worker', async () => {
-    // A sweep of every route cannot be written here, and the failure this pins is a new route that
-    // hands a file back with its own type. So the server's source is read: the two content types
-    // are the service worker's and the asset route's, and there is no third.
+  it('writes a JavaScript content type in two places only: the assets and the service worker', async () => {
+    // What this pins is what THIS FILE writes, and no more: a route of its own that handed a file
+    // back with its own type would be the failure. It cannot speak for `/term/`, which copies the
+    // upstream's headers verbatim — the test above shows a fake ttyd answering text/javascript
+    // untouched — so the security note says this file, not this origin.
     const source = fs.readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
     const at = [...source.matchAll(/'Content-Type': '(text\/javascript[^']*)'/g)];
     expect(at).toHaveLength(2);
@@ -2278,11 +2279,14 @@ describe('webui server: lifecycle', () => {
  * Deliberately not a WebSocket library — the proxy under test never parses a frame, so a
  * handshake that looks right on the wire plus a byte echo is exactly the contract it has.
  */
-function fakeTtyd(socketPath: string): Promise<{ seen: string[]; close: () => Promise<void> }> {
+function fakeTtyd(
+  socketPath: string,
+  type = 'text/html'
+): Promise<{ seen: string[]; close: () => Promise<void> }> {
   const seen: string[] = [];
   const server = http.createServer((req, res) => {
     seen.push(req.url ?? '');
-    res.writeHead(200, { 'content-type': 'text/html', 'x-from': 'ttyd' });
+    res.writeHead(200, { 'content-type': type, 'x-from': 'ttyd' });
     res.end('<html>terminal</html>');
   });
   server.on('upgrade', (req, socket) => {
@@ -2376,6 +2380,23 @@ describe('webui server: terminal', () => {
     expect(up.status).toBe(101);
     expect(up.echo).toBe('hello');
     expect(ttyd.seen).toContain('/term/ws');
+    await ttyd.close();
+  });
+
+  it('passes the upstream content type through, so what /term/ serves is ttyd’s to decide', async () => {
+    // The reason the security note says "the only JavaScript THIS FILE writes" rather than "the
+    // only JavaScript under this origin": the proxy copies headers verbatim, so a ttyd that
+    // served a .js (or the next ttyd release adding one) would answer as JavaScript and this
+    // server would neither know nor change it. Pinned rather than assumed, because the wording
+    // of that note depends on it.
+    const socketPath = path.join(dir, 'ttyd.sock');
+    const ttyd = await fakeTtyd(socketPath, 'text/javascript');
+    const { base } = await boot({}, { enabled: true, socket: socketPath });
+    const cookie = await signIn(base);
+    const res = await fetch(`${base}/term/bundle.js`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/javascript');
+    expect(await res.text()).toContain('terminal');
     await ttyd.close();
   });
 

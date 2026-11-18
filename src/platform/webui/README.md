@@ -1665,17 +1665,26 @@ is behind it is an agent with full tool access.
    in the `<title>` of the equally-open page, so this widens nothing.
 8. **An upgrade is gated separately, because it has to be** — it never reaches `route()`, so
    nothing above applies to it automatically. See [the terminal pane](#the-terminal-pane).
-9. **`script-src 'self'` is the code view, and the only file it reaches is one this build wrote.**
+9. **`script-src 'self'` is the code view: the only file it reaches is one this build wrote.**
    The page still has no external script; the policy admits one more *same-origin* URL, which is
-   the entry `GET /assets/<file>` serves (see [The code view](#the-code-view)). What keeps a file
-   the agent sent from ever being that URL is point 5: every download is `attachment`,
-   `application/octet-stream` and `nosniff`, whatever its name — so an agent-sent `.js` is a file
-   to save, not something this origin will parse or run, and `server.test.ts` pins that. The reader
-   never serves a file at all (it sends HTML this daemon built), and the asset route reads only
-   `dist/webui-assets/`: one path segment, no leading dot, a `.js` extension, and the resolved
-   parent must still be that directory. `server.test.ts` also pins that no other route answers
-   with a JavaScript content type — the service worker is the only other one, and it is the fixed
-   script in `sw.ts`.
+   the entry `GET /assets/<file>` serves (see [The code view](#the-code-view)). The asset route
+   reads only `dist/webui-assets/`: one path segment, no leading dot, a `.js` extension, and the
+   resolved parent must still be that directory.
+
+   What keeps a file the agent sent from being that URL is point 5 — with its exception stated
+   too: a download is `attachment` + `nosniff`, and its type is `application/octet-stream` unless
+   it is one of the raster images `inlineImageType` admits, which are served as themselves so the
+   page can draw them. An agent's `.js` is in the first group: a file to save, never something
+   this origin parses or runs, and `server.test.ts` pins it. The reader serves no file at all — it
+   sends HTML this daemon built from the bytes.
+
+   **The claim stops at this file's own handlers.** `server.test.ts` reads `server.ts` and pins
+   that only the asset route and `sw.js` — the fixed string in `sw.ts` — write a JavaScript
+   content type. `/term/` is outside that promise: `proxyRequest` copies ttyd's headers verbatim,
+   so what type the terminal page arrives as is ttyd's to decide, and a test boots a fake upstream
+   answering `text/javascript` to show it is passed through untouched. Nothing loads `/term/` as a
+   script (it is an iframe `src`), and the terminal needs the session like everything else — but
+   "no JavaScript under this origin" would be a claim this daemon cannot keep, so it is not made.
 
 **Not solved here:** TLS (put a reverse proxy in front), and DNS rebinding — a `Host`
 allowlist would break the reverse-proxy deployment this is expected to run behind, so the
@@ -1844,8 +1853,16 @@ Five things about it are decisions, not detail:
   the package's own `reconfigure` does not change the layout.
 
 A source checkout started with `node --import tsx src/cli.ts start` needs one
-`npm run build:assets` first (it is part of `npm run build` for a release). Until that has run, `CODEVIEW` is null and code files stay in
-the `<pre>` — the same page, without the editor.
+`npm run build:assets` first (it is part of `npm run build` for a release). Until that has run,
+`CODEVIEW` is null and code files stay in the `<pre>` — the same page, without the editor.
+
+**The build writes `licenses.txt` beside the chunks.** CodeMirror and the lezer grammars keep
+their licence in a LICENSE file rather than in header comments, so minification would otherwise
+erase every notice while the tarball ships only this project's own LICENSE — MIT requires the
+notice to travel with the copy. `scripts/third-party-licenses.mjs` reduces esbuild's metafile
+input list to the packages that actually contributed a module, reads each one's licence verbatim,
+and the build refuses to finish if the file it wrote does not name them. It is not served by
+`/assets/` (that route is `.js` only); it ships in `dist`, which `package.json` `files` carries.
 
 The reader's half was checked in Chromium on 2026-11-18: a `.ts` file highlighted with its gutter,
 at 1280 and at 390 px (where it wraps and nothing overflows), no CSP violation in the console, and
@@ -2049,9 +2066,12 @@ with a stream open), `page.test.ts` (the script parses and nothing was eaten).
 
 `server.test.ts` also holds the asset route: the immutable JavaScript headers, the guarded
 session, every spelling of a traversal that must 404, and the pin that only `/assets/` and `sw.js`
-answer with a JavaScript content type. `page.dom.test.ts` drives the reader through a fake
-`window.__fhCodeView` — an editor for a text file, dropped when the window closes — and through
-the page with no bundle at all, where the server's `<pre>` is what a person sees.
+handle a JavaScript content type — with a fake ttyd serving one through `/term/` beside it, which
+is what keeps that pin honest about its own scope. `page.dom.test.ts` drives the reader through a
+fake `window.__fhCodeView` — an editor for a text file, destroyed when another file replaces it
+and when the window closes — through a bundle that will not load (the `<pre>` returns, and the
+console is warned exactly once however many files follow), and through a page with no bundle at
+all.
 
 `page.dom.test.ts` is the one that covers the client script's *behaviour*. It loads what the
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the

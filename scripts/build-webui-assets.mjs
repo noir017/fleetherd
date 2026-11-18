@@ -25,6 +25,8 @@ import { gzipSync } from 'node:zlib';
 
 import { build } from 'esbuild';
 
+import { collectLicenses, renderLicenses } from './third-party-licenses.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'dist', 'webui-assets');
 const entry = path.join(root, 'src', 'platform', 'webui', 'codeview', 'index.ts');
@@ -70,6 +72,29 @@ fs.writeFileSync(
   'utf8'
 );
 
+// MIT obligations that minification would otherwise erase: CodeMirror keeps its licence in a
+// LICENSE file, not in header comments, so `legalComments` has nothing to keep. Every package
+// whose modules reached the bundle contributes its own text, verbatim, and the file ships beside
+// the chunks (the npm tarball carries `dist`). `test -f dist/webui-assets/licenses.txt` is not a
+// build check anywhere — the assertion is here, where the inputs are known.
+const { licenses, missing } = collectLicenses(Object.keys(result.metafile.inputs));
+if (licenses.length === 0) {
+  console.error('build-webui-assets: no third-party licence found — the bundle would ship without notices');
+  process.exit(1);
+}
+if (missing.length > 0) {
+  console.warn(`build-webui-assets: no licence file in ${missing.join(', ')} (they ship none)`);
+}
+const licensesFile = path.join(out, 'licenses.txt');
+fs.writeFileSync(licensesFile, renderLicenses(licenses), 'utf8');
+// Read back what was written: a file that exists but says nothing is the failure this guards
+// against, and the check has to see the bytes that actually landed in dist.
+const written = fs.readFileSync(licensesFile, 'utf8');
+if (!written.includes('@codemirror/state') || !/MIT/.test(written)) {
+  console.error(`build-webui-assets: ${path.relative(root, licensesFile)} does not name the bundled CodeMirror packages`);
+  process.exit(1);
+}
+
 const kib = (n) => `${(n / 1024).toFixed(1)} KiB`;
 let raw = 0;
 let packed = 0;
@@ -83,3 +108,4 @@ for (const [file] of outputs.sort(([, a], [, b]) => b.bytes - a.bytes)) {
 console.log(
   `build-webui-assets: ${outputs.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${entryName} only when it shows code`
 );
+console.log(`build-webui-assets: ${licenses.length} third-party licences in licenses.txt (${kib(fs.statSync(licensesFile).size)})`);
