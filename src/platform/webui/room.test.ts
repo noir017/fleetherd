@@ -5,7 +5,7 @@ import { RETRY_PREFIX } from '../../core/turn-retry.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
-import type { SchedulePanel, SchedulePanelTask, SchedulePanelTaskDetail, SkillPanelEntry } from '../adapter.js';
+import type { SchedulePanel, SchedulePanelFormContext, SchedulePanelTask, SchedulePanelTaskDetail, SkillPanelEntry } from '../adapter.js';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import {
   CHANNEL,
@@ -2432,9 +2432,20 @@ describe('WebRoom: the scheduled-task panel', () => {
     detail: 'summarise the failures',
     kind: 'agent',
   };
-  const NO_DETAIL: Pick<SchedulePanel, 'detail' | 'edit'> = {
+  const FORM: SchedulePanelFormContext = {
+    agents: ['cc'],
+    agentHosts: {},
+    hosts: [],
+    channels: [],
+    shapes: { bash: ['cwd', 'host', 'timeout', 'at'], fixed: ['agent', 'at'], new: ['agent', 'model', 'cwd', 'at'], daily: ['agent', 'model', 'cwd'] },
+    tz: 'Asia/Shanghai',
+    agent: 'cc',
+  };
+  const NO_DETAIL: Pick<SchedulePanel, 'detail' | 'edit' | 'add' | 'form'> = {
     detail: () => undefined,
     edit: async () => ({ ok: false, error: 'not in this test' }),
+    add: async () => ({ ok: false, error: 'not in this test' }),
+    form: () => FORM,
   };
 
   it('says the daemon offered none rather than pretending there are no tasks', async () => {
@@ -2445,32 +2456,53 @@ describe('WebRoom: the scheduled-task panel', () => {
     expect(room.scheduleOp('a1b2c3', 'pause')).toEqual(off);
     expect(room.scheduleDetail('a1b2c3')).toEqual(off);
     expect(await room.scheduleEdit('a1b2c3', { name: 'x' })).toEqual(off);
+    expect(room.scheduleForm()).toEqual(off);
+    expect(await room.scheduleAdd({ prompt: 'x', target: { channel: 'tg:-100/7' } })).toEqual(off);
   });
 
   it("forwards a task's page and an edit, and names a task that is not there", async () => {
     const { room } = attached();
     const page: SchedulePanelTaskDetail = {
+      ...FORM,
       task,
-      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'p', agent: 'cc', session: 'fixed' },
-      editable: ['name'],
-      agents: ['cc'],
+      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'p', agent: 'cc', session: 'fixed', target: 'web:main/t1' },
       runs: [],
     };
     const edits: unknown[] = [];
+    const adds: unknown[] = [];
     room.useSchedulePanel({
       list: () => [task],
       op: () => ({ ok: true, tasks: [task] }),
       detail: (id) => (id === 'a1b2c3' ? page : undefined),
+      form: () => FORM,
       edit: async (id, edit) => {
         edits.push([id, edit]);
+        return { ok: true, detail: page, tasks: [task] };
+      },
+      add: async (input) => {
+        adds.push(input);
         return { ok: true, detail: page, tasks: [task] };
       },
     });
 
     expect(room.scheduleDetail('a1b2c3')).toEqual({ ok: true, detail: page });
     expect(room.scheduleDetail('ffff00')).toEqual({ ok: false, error: 'no scheduled task #ffff00' });
+    expect(room.scheduleForm()).toEqual({ ok: true, form: FORM });
     expect(await room.scheduleEdit('a1b2c3', { model: null })).toEqual({ ok: true, detail: page, tasks: [task] });
     expect(edits).toEqual([['a1b2c3', { model: null }]]);
+
+    // "Posts to": one of this page's topics becomes its lane, as --channel would name it; any other
+    // place goes as the id it was given, for the daemon to read; a topic the page lost is refused here.
+    const here = room.createTopic('deploys');
+    await room.scheduleEdit('a1b2c3', { target: { topic: here.id } });
+    await room.scheduleAdd({ prompt: 'x', target: { channel: 'tg:-100/7' } });
+    expect(edits.at(-1)).toEqual(['a1b2c3', { target: `webui:main/${here.id}` }]);
+    expect(adds).toEqual([{ prompt: 'x', target: 'tg:-100/7' }]);
+    expect(await room.scheduleAdd({ prompt: 'x', target: { topic: 'ffffffff' } })).toEqual({
+      ok: false,
+      error: 'That topic is not on this page any more; pick another.',
+    });
+    expect(adds).toHaveLength(1);
   });
 
   it('records the task a scheduled run opened its topic for, and nothing on a topic a person opened', () => {

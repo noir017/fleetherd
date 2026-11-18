@@ -280,6 +280,20 @@ describe('schedule <action> [id]', () => {
     expect(() => schedule(['list'], { host: 'box' })).toThrow(/--host only applies to `schedule add` and `schedule edit`/);
   });
 
+  it('edit takes what add takes: a new kind, a session, and --channel to move the task', () => {
+    expect(schedule(['edit', 'a1b2c3'], { prompt: 'check the disk', session: 'new', agent: 'oc' })).toMatchObject({
+      kind: 'schedule-edit',
+      id: 'a1b2c3',
+      prompt: 'check the disk',
+      session: 'new',
+      agent: 'oc',
+    });
+    expect(schedule(['edit', 'a1b2c3'], { bash: 'df -h', host: 'box' })).toMatchObject({ kind: 'schedule-edit', bash: 'df -h', host: 'box' });
+    // --channel alone is something to change: it moves the task.
+    expect(schedule(['edit', 'a1b2c3'], { channel: 'tg:-100/7' })).toMatchObject({ kind: 'schedule-edit', id: 'a1b2c3', channelId: 'tg:-100/7' });
+    expect(schedule(['edit', 'a1b2c3'], { session: 'daily' })).toMatchObject({ session: 'daily' });
+  });
+
   it('refuses a relative or ~ --cwd under --host, since it would be resolved here', () => {
     // reverse.ts resolves it against the caller's directory, so it would arrive absolute and
     // naming a place on the wrong machine; nothing downstream could tell.
@@ -334,13 +348,13 @@ describe('schedule <action> [id]', () => {
     [['list'], { tag: 'ci' }, /--tag only applies to `schedule add` and `schedule edit`/],
     [['frobnicate'], {}, /unknown schedule action "frobnicate"/],
     [['list'], { cron: '0 8 * * *' }, /--cron only applies to `schedule add` and `schedule edit`/],
-    [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add`/],
+    [['rm', 'x'], { channel: 'tg:1' }, /--channel only applies to `schedule add` and `schedule edit`/],
+    [['list'], { session: 'new' }, /--session only applies to `schedule add` and `schedule edit`/],
+    [['edit', 'a1b2c3'], { session: 'forever' }, /--session must be fixed, new or daily/],
     [['add', 'x'], { cron: '0 8 * * *' }, /takes no id/],
     [['add'], { session: 'forever' }, /--session must be fixed, new or daily/],
     [['edit'], {}, /needs a task id/],
     [['edit', 'a1b2c3'], {}, /needs something to change/],
-    [['edit', 'a1b2c3'], { session: 'new' }, /--session cannot be changed by edit.*rm <id>.*add a new one/],
-    [['edit', 'a1b2c3'], { channel: 'tg:1' }, /--channel cannot be changed by edit.*rm <id>.*add a new one/],
     [['edit', 'a1b2c3'], { prompt: 'x', bash: 'y' }, /at most one of --prompt/],
     [['edit', 'a1b2c3'], { cron: '0 8 * * *', at: '+1h' }, /at most one of --cron/],
   ])('refuses %j %j', (positionals, opts, why) => {

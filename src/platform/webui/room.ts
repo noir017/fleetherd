@@ -37,6 +37,7 @@ import {
   addressListed,
   addressOf,
   describeConversation,
+  formatTarget,
   type ConversationRef,
 } from '../../core/conversation.js';
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
@@ -78,6 +79,7 @@ import type {
   FilesPanelSearchResult,
   FilesPanelWriteResult,
   HistoryPanel,
+  InstructionsPanel,
   HistoryPanelHit,
   HistoryPanelPage,
   HistoryPanelRead,
@@ -92,6 +94,8 @@ import type {
   SchedulePanelAction,
   SchedulePanelDetailResult,
   SchedulePanelEdit,
+  SchedulePanelFormContext,
+  SchedulePanelNew,
   SchedulePanelResult,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
@@ -108,7 +112,7 @@ import type {
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import { toolGlyph } from './icons.js';
-import type { ClickRequest, ReviewOpRequest, SendRequest, TopicSnapshot, WebEvent, WebMessage } from './protocol.js';
+import type { ClickRequest, ReviewOpRequest, ScheduleTargetRequest, SendRequest, TopicSnapshot, WebEvent, WebMessage } from './protocol.js';
 import type { TerminalSessions } from './terminal-sessions.js';
 import { MAX_TOPICS, TopicStore, type Topic } from './topics.js';
 
@@ -494,6 +498,8 @@ export class WebRoom {
   private historyPanel: HistoryPanel | null = null;
   /** The files of each topic's machine, for the file window — see `useFilesPanel`. */
   private filesPanel: FilesPanel | null = null;
+  /** The operator's instructions, for the settings page — see `useInstructionsPanel`. */
+  private instructionsPanel: InstructionsPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise, but broader: ends a topic's agent and every agent under it. See `killTopic`. */
@@ -954,10 +960,45 @@ export class WebRoom {
     return detail ? { ok: true, detail } : { ok: false, error: `no scheduled task #${id}` };
   }
 
-  /** Change a task in place, with its page and the list as they are after the change. */
-  async scheduleEdit(id: string, edit: SchedulePanelEdit): Promise<SchedulePanelDetailResult> {
+  /**
+   * Change a task in place, with its page and the list as they are after the change. A `target`
+   * naming one of this page's topics becomes that topic's lane here, where the lanes are known.
+   */
+  async scheduleEdit(
+    id: string,
+    edit: Omit<SchedulePanelEdit, 'target'> & { target?: ScheduleTargetRequest }
+  ): Promise<SchedulePanelDetailResult> {
     if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
-    return this.schedulePanel.edit(id, edit);
+    const { target, ...rest } = edit;
+    if (target === undefined) return this.schedulePanel.edit(id, rest);
+    const to = this.scheduleTarget(target);
+    if (!to.ok) return to;
+    return this.schedulePanel.edit(id, { ...rest, target: to.target });
+  }
+
+  /** What the task form offers: the daemon's agents, machines, places and defaults. */
+  scheduleForm(): { ok: true; form: SchedulePanelFormContext } | { ok: false; error: string } {
+    if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
+    return { ok: true, form: this.schedulePanel.form() };
+  }
+
+  /** Register a task from the form, answering with its page and the list. */
+  async scheduleAdd(task: Omit<SchedulePanelNew, 'target'> & { target: ScheduleTargetRequest }): Promise<SchedulePanelDetailResult> {
+    if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
+    const to = this.scheduleTarget(task.target);
+    if (!to.ok) return to;
+    return this.schedulePanel.add({ ...task, target: to.target });
+  }
+
+  /**
+   * The page's "Posts to" as the `<instance>:<channel>/<thread>` id `--channel` takes. A topic is a
+   * lane of this instance's one channel; one this page no longer has is refused here, by name,
+   * rather than becoming a target nobody can read.
+   */
+  private scheduleTarget(target: ScheduleTargetRequest): { ok: true; target: string } | { ok: false; error: string } {
+    if ('channel' in target) return { ok: true, target: target.channel };
+    if (!this.topics.has(target.topic)) return { ok: false, error: 'That topic is not on this page any more; pick another.' };
+    return { ok: true, target: formatTarget(this.instance.id, { channel: CHANNEL, thread: target.topic }) };
   }
 
   /**
@@ -1108,6 +1149,20 @@ export class WebRoom {
   async filesSearch(topic: string, query: string): Promise<FilesPanelSearchResult | { ok: false; error: string }> {
     if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
     return this.filesPanel.search(this.conversation(topic), query);
+  }
+
+  /**
+   * Accept the daemon's instruction editor (`daemon/instructions-panel.ts`). Not bound to a topic:
+   * the files are the gateway's and each agent's, the same whichever topic the page has open, and
+   * every path is the daemon's to decide.
+   */
+  useInstructionsPanel(panel: InstructionsPanel): void {
+    this.instructionsPanel = panel;
+  }
+
+  /** The instruction editor, or null when the daemon did not hand one over (turned off). */
+  get instructions(): InstructionsPanel | null {
+    return this.instructionsPanel;
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */

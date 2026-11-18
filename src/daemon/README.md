@@ -24,7 +24,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `turn-changes.ts` | What a web UI turn changed: a work-tree snapshot before the prompt and one after it, in a repository of the daemon's own on the agent's machine; the last 50 turns per conversation in `<configDir>/turn-changes.json`; the two reads the page's git window makes |
 | `paced-adapter.ts` | Wraps every `PlatformAdapter` in the shared per-chat write budget |
 | `agent.ts` | `AgentFactory` / `AgentSession` / `AgentStreamHandlers` interfaces. Dependency-free. |
-| `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under `permissions: auto`, ask through the turn's (or a background burst's) `onPermission` under `ask` — see answerPermission / permissionResponse for why an unanswered request goes back as an error |
+| `agent-acp.ts` | ACP runtime (claude, codex, opencode, gemini, agy, custom). Also answers `session/request_permission`: approve under a level that does not ask (none, `auto`, `full`), ask through the turn's (or a background burst's) `onPermission` under `plan` / `ask` / `edits` — see answerPermission / permissionResponse for why an unanswered request goes back as an error — and puts each session in its level's mode (applyPermissionLevel: `session/set_mode`, or the `mode` config option) |
 | `session-failure.ts` | Failures read off the ACP wire: claude-agent-acp's typed failure records (the capability that asks for them), and a prompt that ended in `stopReason: "refusal"` with whatever cause the harness attached |
 | `acp-steering.ts` | How an ACP harness takes a message into a running turn (a second prompt, `_session/steering`, or not at all), read off `initialize` |
 | `acp-side-question.ts` | A side question (`/btw`): `session/fork` the live session, ask the copy, delete it; which harnesses may be asked while a turn runs |
@@ -55,6 +55,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
 | `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
 | `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
+| `instruction-imports.ts` | An agent's OWN instruction files, per harness, in one table (`harnessSources`): what each reads besides the delivered file — rules directories, `@path` / `@[label](path)` references and how deep they go, opencode's `instructions` list, codex's override — with the evidence |
+| `instructions-panel.ts` | The web UI's instruction editor: the gateway's files by name, an agent's own files walked on its machine for every request, a checked write, and a save of a global file placed at once on every machine (invariant 10) |
 | `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`, a git repository): names, paths and size rules, content versions, the usage file, `archive/`, and history and `revert` read from git |
 | `skills-git.ts` | The git under the store: commits with trailers, the log per skill, files at a commit — run with the machine's git config switched off |
 | `skills-repo.ts` | `skills.repo`: moving an old store into a repository, and fetch → rebase → push around every write and every five minutes |
@@ -616,18 +618,26 @@ What each piece is shaped by, one line each:
   `daySession`, because that override is in memory and a restart would otherwise let the next run
   put the task's model back. A fixed-session task runs in a person's topic and keeps its model, so
   `--model` is refused for it.
-- **`schedule edit` changes the fields, never the task.** `ScheduleService.edit` merges the task
-  with what was given and hands it to the same `buildTask`, so every refusal is add's; only after
-  it passes does anything get written, which is why a refused edit leaves the file untouched. The
-  id, `createdAt`, `runs`, `lastRun` and the state stay, and a fixed-session task keeps the 24 h
-  window it was registered with (an edit must not extend how long a schedule may talk into
-  someone's own conversation). A changed time rule starts from the edit (`lastPlannedAt` = now),
-  so a task edited at 10:00 to "0 9 * * *" waits for tomorrow instead of firing a catch-up run
-  that never existed; a change that leaves the time alone keeps it, so a rename cannot swallow a
-  run that is already due. What a task IS — prompt ↔ bash, the session, `--channel` — is refused
-  with `rm` + `add`. A daily task whose agent or directory changed drops today's `daySession`: the
+- **`schedule edit` changes anything add takes, and keeps the id.** `ScheduleService.edit` merges
+  the task with what was given and hands it to the same `buildTask`, so every refusal is add's; only
+  after it passes does anything get written, which is why a refused edit leaves the file untouched.
+  What a task IS changes too — prompt ↔ bash, `--session`, and `--channel`, which `editContext`
+  turns into the new target (a platform that is not running is refused, as add refuses it; the
+  task's own target on a down platform still edits). The id, `createdAt`, the tags, `runs`, the
+  history, `lastRun` and the state stay, whatever changed: they are the record of what this id did,
+  each run naming its own conversation. A fixed-session task keeps the 24 h window it was registered
+  with while it stays fixed in the same conversation (an edit must not extend how long a schedule
+  may talk into someone's own conversation); one that becomes fixed there or elsewhere starts the
+  window add would give. A changed time rule starts from the edit (`lastPlannedAt` = now), so a task
+  edited at 10:00 to "0 9 * * *" waits for tomorrow instead of firing a catch-up run that never
+  existed; a change that leaves the time alone keeps it, so a rename cannot swallow a run that is
+  already due. A moved task's card goes to where it posted before as well as where it posts now.
+  A daily task whose agent, directory or target changed drops today's `daySession`: the
   day's topic keeps its agent and its directory, so the next run opens a new topic for the rest of
-  the day, and the earlier one is left as it is (like yesterday's). Editing a task whose run is in
+  the day, and the earlier one is left as it is (like yesterday's). A bash task's `--host` is the
+  machine it runs on, and `--host gateway` (`GATEWAY_MACHINE`, the word `task-agents` prints) the
+  gateway's own — `null` in the input, which has no `hosts:` id; a host configured under that name
+  keeps it. Editing a task whose run is in
   flight is refused — that run is using the old values and, for a daily task, would write the old
   day's topic back over the edit. A task whose directory belongs to one machine and whose runs
   happen on another is refused by `add` and `edit` alike (`cwdHostProblem`, against `hostOfTask`):
@@ -853,8 +863,8 @@ runtimes wherever they know why; anything else is `other`). It pushes that to th
 `/stop` leaves none.
 
 - **`hooks.turnFailed.continue`** schedules the operator's message after a failure whose reason it
-  names, as a solo turn with `CONTINUE_SENDER` — attended, unlike a scheduled run, so a
-  `permissions: ask` agent still asks. The count of continues sent survives the continue's own turn
+  names, as a solo turn with `CONTINUE_SENDER`, so an agent whose level asks still asks (a
+  scheduled run does too). The count of continues sent survives the continue's own turn
   (it may fail too) and is reset by a normal end, a stop, or anything the person does
   (`personActed`, called from `route()` for every accepted message, and from `/stop` `/new` `/kill`).
   A turn that starts for any other reason calls a waiting continue off.
@@ -1367,7 +1377,7 @@ because the levels on offer are the model's.
 
 Since 2026-11-06 `harness: agy` launches `agy acp` (agy 1.5+) and is served by `agent-acp.ts` like
 any ACP harness: sessions, `session/load`, the `model` and `thought_level` selectors, permission
-requests (so `permissions: ask` works), `session/cancel` for `/stop`, pictures as image blocks and
+requests (put to the person under a level that asks), `session/cancel` for `/stop`, pictures as image blocks and
 the native tools over MCP. No launch flag from the previous print-mode runtime carries over —
 `resolveHarness` says why each was dropped. What `agy acp` 1.5.1 does its own way is in `agy-acp.ts`, each measured with
 `project-scripts/talkcode-agy-acp/` and recorded in the file header:
@@ -1403,7 +1413,8 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   field, but the SDK's validation strips it. Its generic `call_mcp_tool` is the exception: kind
   `execute`, title `Bash`, and the server and tool only in the input — `agyMcpCall` reads those and
   labels the row `MCP <tool>` with the server as the preview. The same name heads the permission
-  card (`permissionRequestOf`), with the server in its title because that card has no preview.
+  card (`permissionRequestOf`), with the server in its title because that card's second block is
+  the change the tool will make, not the tool's arguments.
 
 `/usage` and the other CLI-answered names still go to one-shots (`agy-cli.ts`): `agy acp` survives
 them but hands them to the model as a question.

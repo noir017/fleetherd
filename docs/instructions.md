@@ -56,3 +56,48 @@ running keeps what it read when it started.
 The text is capped at 32 KiB (Codex silently cuts an `AGENTS.md` beyond that); over it, nothing is
 delivered and the log says so. Edit the files on the gateway, not the copies on the hosts: those are
 read-only and are rewritten at the next start.
+
+## Editing them in the web UI
+
+With the instruction editor turned on, the web UI's settings page ends with an **Instructions**
+section, and a row opens the file in the same editor the [file window](web-ui.md) uses — the same
+save, and the same check that the file did not change since you opened it.
+
+```yaml
+platforms:
+  web:
+    type: webui
+    token: ${WEB_TOKEN}
+    instructions:
+      enabled: true
+```
+
+It is off by default for the file window's reason, one step further: with it on, whoever has the
+web UI's login can change what **every** agent reads, on every platform and every host, in
+conversations nobody on the page is watching. Turn it on only where the login is as well guarded as
+you would want that to be.
+
+**Your files on the gateway.** `common.md` and the file for each kind of agent you have configured
+(a file that exists is listed too). Saving one creates the directory if it is not there yet — which
+turns the feature on — and places the new text **at once** on every machine an agent that reads it
+is configured for; the editor then says where it went. A host that does not answer gets it the next
+time an agent starts there. A save that would put any agent over 32 KiB is refused before anything
+is written. Sessions already running keep what they read when they started.
+
+**Each agent's own files.** Below them, every agent whose harness reads instruction files of its own
+on its machine — besides the one the gateway places — has a row listing them. These files belong to
+that machine: they are read and saved where they are, and the gateway keeps no copy.
+
+| agent | what is listed |
+|---|---|
+| Claude Code | files `~/.claude/CLAUDE.md` references with `@path` (four levels deep, as Claude Code reads them), and `~/.claude/rules/**/*.md` with what they reference |
+| CodeBuddy Code | the same for `~/.codebuddy/CODEBUDDY.md` and `~/.codebuddy/rules/` |
+| Antigravity (agy) | `~/.gemini/AGENTS.md`, `~/.gemini/GEMINI.md`, `~/.gemini/config/GEMINI.md`, `~/.gemini/config/rules/**/*.md` (marked when it is not read at start: only a rule whose frontmatter says `trigger: always_on` is), and the files they include with `@[label](path)` — one level |
+| OpenCode | the files the `instructions` list in `~/.config/opencode/opencode.json` names (a relative entry is named but not opened: OpenCode looks it up from each conversation's directory) |
+| Codex | `~/.codex/AGENTS.override.md`, when there is one — Codex reads it **instead of** `AGENTS.md`, so while it exists the instructions above do not reach Codex |
+
+A reference to a file that is not there yet is listed, and saving it creates the file. The
+gateway's own copy, if a reference points at it, is listed but edited above instead. The editor only
+ever opens what the agent's harness reads at that moment: it works the list out again on that
+machine for every read and save, so taking a reference out closes its file. Every save is logged
+with the machine and the file.

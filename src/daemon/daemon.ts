@@ -86,6 +86,8 @@ import type {
   PlatformAdapter,
   ReviewPanel,
   SchedulePanel,
+  SchedulePanelDetailResult,
+  SchedulePanelFormContext,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
 } from '../platform/adapter.js';
@@ -145,6 +147,7 @@ import { ReviewStateStore } from './review-state.js';
 import { buildReviewPanel } from './review-panel.js';
 import { buildHistoryPanel } from './history-panel.js';
 import { buildFilesPanel } from './file-panel.js';
+import { buildInstructionsPanel } from './instructions-panel.js';
 import { standingInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
@@ -171,7 +174,7 @@ import {
 } from '../ipc/protocol.js';
 import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
-import { panelEditInput, panelTaskDetail, panelTasks } from './schedule-panel.js';
+import { panelEditInput, panelForm, panelNewInput, panelTarget, panelTaskDetail, panelTasks } from './schedule-panel.js';
 import { buildSkillsPanel } from './skills-panel.js';
 import { buildGitPanel } from './git-panel.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
@@ -241,6 +244,12 @@ const DEFAULT_ASK_TIMEOUT_MS = PROTOCOL_DEFAULT_ASK_TIMEOUT_MS;
  * handleGatewayQuery). A `satisfies`-checked table, so a kind that is not an IpcAction fails to
  * compile — and the chat switch's `never` guard catches a new action that belongs in neither.
  */
+/**
+ * How many places on other platforms the task form lists for "Posts to". The datalist is a
+ * convenience — any id `fleetherd channels` prints can be typed — so the newest topics are enough.
+ */
+const PANEL_CHANNEL_LIMIT = 50;
+
 const GATEWAY_QUERY_KINDS = {
   'voice-log': true,
   'list-channels': true,
@@ -421,13 +430,22 @@ const PERMISSION_TITLE_MAX = 600;
 
 /**
  * The bubble a `permissions: ask` request is posted as: what the agent wants to run, in a code
- * block because it usually is code (a shell command, a path), and what happens if nobody answers —
- * said up front, since the answer decides whether the turn can go on.
+ * block because it usually is code (a shell command, a path), then — when the request carries one —
+ * the change itself, so approving an edit is a decision about the diff rather than about its name.
+ * What happens if nobody answers is said up front, since the answer decides whether the turn can go
+ * on.
+ *
+ * The detail is a preview, and a preview must not be able to end the block it sits in: a file whose
+ * content contains a fence would otherwise split the bubble in two on the platforms that read a
+ * fence line by line. The same holds for the title, which a harness's `_meta` can put a fence in
+ * just as easily. A run of three or more backticks is shown as two, in both.
  */
-export function composePermissionPrompt(title: string, timeoutMs: number): string {
-  const shown = title.length > PERMISSION_TITLE_MAX ? `${title.slice(0, PERMISSION_TITLE_MAX)}…` : title;
+export function composePermissionPrompt(title: string, timeoutMs: number, detail?: string): string {
+  const shown = (title.length > PERMISSION_TITLE_MAX ? `${title.slice(0, PERMISSION_TITLE_MAX)}…` : title)
+    .replace(/`{3,}/g, '``');
+  const change = detail ? `\n\n\`\`\`\n${detail.replace(/`{3,}/g, '``')}\n\`\`\`` : '';
   const minutes = Math.round(timeoutMs / 60_000);
-  return `🔐 The agent asks to run:\n\`\`\`\n${shown}\n\`\`\`\nNo answer within ${minutes} min declines it.`;
+  return `🔐 The agent asks to run:\n\`\`\`\n${shown}\n\`\`\`${change}\nNo answer within ${minutes} min declines it.`;
 }
 
 /**
@@ -1592,8 +1610,13 @@ export class Daemon {
       }
       case 'schedule-edit': {
         if (!caller) throw new Error('cannot tell which conversation this came from (conversation expired?)');
-        const { kind: _kind, id: taskId, ...input } = action;
-        return { task: await schedules.edit(taskId, input, caller) };
+        const { kind: _kind, id: taskId, channelId, ...input } = action;
+        // `address` is the caller's own lane unless --channel named another, and only a --channel
+        // moves the task: without one the task keeps posting where it did, not where it was edited.
+        if (channelId === undefined) return { task: await schedules.edit(taskId, input, caller) };
+        const platform = this.lastResolvedPlatform ?? this.registry.platformFor(caller);
+        if (!platform) throw new Error('cannot resolve the platform for this conversation');
+        return { task: await schedules.edit(taskId, input, caller, { platform, address }) };
       }
       case 'schedule-list':
         return schedules.list(caller, action.id);
@@ -2028,6 +2051,15 @@ export class Daemon {
     if (!schedules) return undefined;
     const list = (): SchedulePanelTask[] =>
       panelTasks(schedules.tasks(), schedules.now(), (id) => schedules.scheduler.isRunning(id), instance);
+    const form = (): SchedulePanelFormContext =>
+      panelForm({
+        agents: this.config.agents,
+        hosts: Object.keys(this.config.hosts ?? {}),
+        channels: this.registry.listChannels({ limit: PANEL_CHANNEL_LIMIT }).channels,
+        instance,
+        tz: schedules.defaultZone(),
+        agent: this.config.routing.default,
+      });
     const detail = (id: string): SchedulePanelTaskDetail | undefined => {
       const task = schedules.get(id);
       if (!task) return undefined;
@@ -2035,9 +2067,21 @@ export class Daemon {
         now: schedules.now(),
         running: schedules.scheduler.isRunning(id),
         instance,
-        agents: this.config.agents.map((a) => a.id),
+        form: form(),
         laneOf: (key) => this.registry.laneFor(key),
       });
+    };
+    const instances = new Set(Object.keys(this.config.platforms));
+    // Both writes answer with the task's page and the list, or with the service's own refusal.
+    const answer = async (write: () => Promise<{ id: string }>): Promise<SchedulePanelDetailResult> => {
+      try {
+        const { id } = await write();
+        const page = detail(id);
+        if (!page) return { ok: false, error: `#${id} was removed just after this change` };
+        return { ok: true, detail: page, tasks: list() };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
     };
     return {
       list,
@@ -2051,16 +2095,16 @@ export class Daemon {
         }
       },
       detail,
-      edit: async (id, change) => {
-        try {
-          await schedules.editFromPanel(id, panelEditInput(change));
-          const page = detail(id);
-          if (!page) return { ok: false, error: `#${id} was removed just after this edit` };
-          return { ok: true, detail: page, tasks: list() };
-        } catch (e) {
-          return { ok: false, error: e instanceof Error ? e.message : String(e) };
-        }
-      },
+      form,
+      add: (task) => answer(() => schedules.addFromPanel(panelNewInput(task), panelTarget(task.target, instance, instances))),
+      edit: (id, change) =>
+        answer(() =>
+          schedules.editFromPanel(
+            id,
+            panelEditInput(change),
+            change.target !== undefined ? panelTarget(change.target, instance, instances) : undefined
+          )
+        ),
     };
   }
 
@@ -2106,12 +2150,25 @@ export class Daemon {
       // A topic the page deleted: its records and the refs keeping their trees go with it.
       forget: (ref) => this.registry.turnChangesForgetForRef(ref),
     });
-    // The file window: off unless the operator turned it on. Writing a file on an agent's machine
-    // is running commands by another route — the same ceiling as the terminal, and the same
-    // explicit opt-in. Nothing is injected when it is off, so a route that somehow got past the
-    // server's own 404 still finds no panel to act through.
+    // The web UI's git window: read-only, on whichever machine the conversation's agent runs.
+    // The registry answers where its next session would start; nothing is started or recorded.
+    adapter.useGitPanel?.(buildGitPanel((ref) => this.registry.workspaceForRef(ref)));
+    this.wireWritingPanels(adapter, id);
+  }
+
+  /**
+   * The two web UI panels that write, each off unless the operator turned it on, and nothing
+   * injected while it is off — so a route that somehow got past the server's own 404 still finds no
+   * panel to act through.
+   *
+   * The file window: writing a file on an agent's machine is running commands by another route — the
+   * same ceiling as the terminal, and the same explicit opt-in. The instruction editor: with it, the
+   * page's login guards what every agent reads before every conversation (AGENTS.md, invariant 10).
+   */
+  private wireWritingPanels(adapter: PlatformAdapter, id: string): void {
     const platform = this.config.platforms[id];
-    if (platform?.type === 'webui' && platform.files.enabled) {
+    if (platform?.type !== 'webui') return;
+    if (platform.files.enabled) {
       adapter.useFilesPanel?.(
         buildFilesPanel({
           instance: id,
@@ -2120,9 +2177,9 @@ export class Daemon {
         })
       );
     }
-    // The web UI's git window: read-only, on whichever machine the conversation's agent runs.
-    // The registry answers where its next session would start; nothing is started or recorded.
-    adapter.useGitPanel?.(buildGitPanel((ref) => this.registry.workspaceForRef(ref)));
+    if (platform.instructions.enabled) {
+      adapter.useInstructionsPanel?.(buildInstructionsPanel({ instance: id, agents: () => this.config.agents }));
+    }
   }
 
   /**
@@ -2450,7 +2507,7 @@ export class Daemon {
     const answer = await this.askButtons(
       platform,
       address,
-      composePermissionPrompt(request.title, DEFAULT_ASK_TIMEOUT_MS),
+      composePermissionPrompt(request.title, DEFAULT_ASK_TIMEOUT_MS, request.detail),
       request.options.map((o) => o.label),
       DEFAULT_ASK_TIMEOUT_MS,
       conversationId,

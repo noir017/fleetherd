@@ -54,9 +54,10 @@ export function renderPage(
   password = true,
   terminalEnd = false,
   codeview: string | null = null,
-  files = false
+  files = false,
+  instructions = false
 ): string {
-  return servePage(title, terminal, password, terminalEnd, codeview, files).html;
+  return servePage(title, terminal, password, terminalEnd, codeview, files, instructions).html;
 }
 
 /**
@@ -81,12 +82,15 @@ export function servePage(
    * bundle under the new page's ETag.
    */
   codeview: string | null = null,
-  files = false
+  files = false,
+  /** Whether the settings page offers the instruction editor (`platforms.<id>.instructions`). */
+  instructions = false
 ): { html: string; build: string } {
   const html = PAGE.replace(/__TITLE__/g, escapeHtml(title))
     .replace(/__TERM__/g, terminal ? 'true' : 'false')
     .replace(/__TERM_END__/g, terminalEnd ? 'true' : 'false')
     .replace(/__FILES__/g, files ? 'true' : 'false')
+    .replace(/__INSTR__/g, instructions ? 'true' : 'false')
     .replace(/__PASSWORD__/g, password ? 'true' : 'false')
     // A JS literal, not text: the script compares it and hands it to `import()`. The build only
     // ever writes a single path segment (assets.ts `ASSET_FILE`), so quoting it cannot be broken.
@@ -469,8 +473,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* Mark all read sits beside it, in the same quiet, and the Sessions tab has the same icon in the side
    panel's title (#sched-read). An icon rather than a bar of its own above the rows, which would cost
    the list a row's height for a control that is greyed out most of the time. */
-#read-topics,#sched-read{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
-#read-topics:hover:not(:disabled),#sched-read:hover:not(:disabled){color:var(--fg);background:var(--field)}
+#read-topics,#sched-read,#sched-new{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
+#read-topics:hover:not(:disabled),#sched-read:hover:not(:disabled),#sched-new:hover{color:var(--fg);background:var(--field)}
 #read-topics:disabled,#sched-read:disabled{opacity:.35;cursor:default}
 /* The confirmation for it: names every topic whose agent is about to go, because "close 7 agents"
    does not say whether the one you were about to come back to is among them. A dialog of the page's
@@ -502,21 +506,25 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    gives way to a narrow header; the control must not be what gets squeezed out. */
 #kill-agent{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px}
 #kill-agent:hover{color:#f87171;background:rgba(248,113,113,.15)}
-/* The terminal takes the place of the transcript and the composer, not of the whole view: the
-   header stays, so the sidebar button, the topic name and the way back out are all still
-   where they were a moment ago. One class on #chat swaps the two.
+/* The terminal is a panel at the bottom of the conversation rather than a mode over it: the
+   transcript and the composer stay on screen and usable, and the panel keeps the height it was
+   given — half the chat until the divider above it is dragged, and that height afterwards.
 
-   It is a window rather than a mode, which is what the title bar below is for. Minimizing only
-   hides it — the iframe stays mounted and its WebSocket stays up, which is both what makes
-   coming back instant and what keeps the switcher's marker lit. So visibility is a class, never
-   a teardown. */
+   Closed, it is PARKED rather than hidden. display:none takes the iframe's box away, and a frame
+   with no box is one a browser may throttle, freeze or throw away — a discarded frame is a closed
+   WebSocket, which is exactly what a topic switch used to look like. Out of the flex flow, at its
+   own size and invisible, the transcript gets the room back and the connection never notices. */
 #term-toggle{margin-left:0}
 /* The size of its neighbours' icons (the power button, the clock), which are 14px SVGs. */
 #term-toggle .ic{width:14px;height:14px}
 #term-toggle.on{color:#4ade80}
-#term{display:none;flex:1;min-height:0;background:#000;flex-direction:column}
-#chat.term #log,#chat.term #typing,#chat.term #note,#chat.term #bar{display:none}
-#chat.term #term{display:flex}
+#term-grip{display:none;flex:0 0 auto;height:9px;position:relative;cursor:row-resize;touch-action:none;background:transparent}
+#chat.term #term-grip{display:block}
+#term-grip::after{content:'';position:absolute;left:50%;top:4px;width:48px;height:2px;margin-left:-24px;border-radius:1px;background:#333}
+#term-grip:hover::after,#term-grip:focus-visible::after,#term-grip.drag::after{background:#555}
+#term-grip:focus-visible{outline:1px solid #3a6ea5;outline-offset:-2px}
+#term{display:flex;flex:0 0 auto;flex-direction:column;height:50%;min-height:0;background:#000}
+#chat:not(.term) #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}
 #term-bar{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;background:#161616;border-bottom:1px solid var(--line);flex:0 0 auto}
 .term-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 #term-end:hover{color:#f87171;background:rgba(248,113,113,.15)}
@@ -716,8 +724,10 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .tp-when{margin-top:8px}
 .tp-text{display:block;width:100%;box-sizing:border-box;margin-top:8px;min-height:180px;resize:vertical;background:#111;border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;white-space:pre-wrap;overflow-wrap:anywhere}
 select.skill-field{appearance:auto}
-.tp-fixed{margin-top:16px;padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:#181818;font-size:12px;line-height:1.55;color:var(--dim)}
-.tp-fixed b{color:#c9c9c9;font-weight:600}
+/* The form's two segmented choices — what it runs, and the session — and the id field "Another
+   chat…" opens under "Posts to". */
+.tp-seg{margin-top:8px;max-width:100%}
+#tp-target-other{margin-top:6px}
 .tp-acts{margin-bottom:4px}
 .tp-acts.editor{margin-top:16px}
 .tp-acts button .ic{margin-right:4px}
@@ -865,15 +875,19 @@ select.skill-field{appearance:auto}
 .hist-key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px}
 .hist-excerpt{font-size:11.5px;color:#c9c9c9;line-height:1.45;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 /* The conversation in the transcript's place. #lib-log is #log's twin; #chat.lib swaps them, and the
-   composer for the read-only bar, the way #chat.term swaps in the terminal — and wins over it. */
+   composer for the read-only bar. It wins over the terminal too: a record parks the panel rather
+   than sharing the screen with it (paintFrames is where the frame's on class is decided). */
 #lib-log,#lib-bar,#lib-title,#lib-tag{display:none}
 #lib-log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
 #chat.lib #lib-log{display:block}
 #chat.lib #lib-bar{display:block}
 #chat.lib #lib-title{display:block}
 #chat.lib #lib-tag{display:inline-flex;align-items:center;gap:5px;flex:none}
-#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,
+#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term-grip,
 #chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}
+/* The terminal is parked under the record rather than unmounted: display:none would take the
+   iframe's box away, and a record is not a reason to hang up on a shell. */
+#chat.lib #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}
 .lib-head{display:flex;flex-direction:column;gap:3px;margin:0 0 18px;padding:0 0 12px;border-bottom:1px solid var(--line)}
 #lib-bar{border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
 #lib-note{margin-bottom:8px}
@@ -972,13 +986,13 @@ select.skill-field{appearance:auto}
 .skill-hist-main{flex:1 1 260px;min-width:0}
 .skill-hist-action{font-weight:600}
 .skill-hist-meta{font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
-/* One host for every mounted terminal, of which exactly one is visible. Visibility is a class
-   rather than the hidden attribute because the rule that sizes an iframe would have to fight
-   it: display:block on the element beats hidden's user-agent display:none, and the loser of
-   that fight is not obvious from reading either rule. */
-#term-frames{flex:1;min-height:0}
-#term-frames iframe{display:none;width:100%;height:100%;border:0}
-#term-frames iframe.on{display:block}
+/* One host for every mounted terminal, of which exactly one is visible. Every frame is laid out
+   in the same box, so showing another one is not a resize: a hidden frame that is display:none
+   has no box at all, and a browser may then discard it — taking its WebSocket with it. Visibility
+   is a class on a frame that keeps its size. */
+#term-frames{position:relative;flex:1;min-height:0}
+#term-frames iframe{position:absolute;inset:0;width:100%;height:100%;border:0;visibility:hidden}
+#term-frames iframe.on{visibility:visible}
 
 #log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
 .m{margin:0 0 18px;max-width:100%;overflow-wrap:anywhere;animation:fade .18s ease-out}
@@ -1501,6 +1515,13 @@ button:disabled{opacity:.5;cursor:default}
 .fx-caret.blank{visibility:hidden}
 .fx-row .ic{width:13px;height:13px;flex:none;color:var(--dim)}
 .fx-name{overflow:hidden;text-overflow:ellipsis}
+/* The instruction editor's tree (page.ts instrTree): what a file is for, beside its name; a file
+   not written yet; and a referenced file that is listed but edited elsewhere. */
+.fx-sub{margin-left:6px;color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
+.fx-tag{margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:4px;color:var(--dim);font-size:10.5px}
+.fx-row.fx-off{cursor:default;color:var(--dim)}
+.instr-sec .set-card + .set-group{margin-top:22px}
+.fx-head{padding:8px 10px;font-size:11.5px;color:var(--dim);white-space:normal;line-height:1.4;border-bottom:1px solid var(--line)}
 #files-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 #files-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:5px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
 #files-crumbs button{background:none;border:0;color:#9ecbff;font:inherit;font-size:12px;padding:2px 3px;cursor:pointer;border-radius:4px}
@@ -1599,7 +1620,7 @@ button:disabled{opacity:.5;cursor:default}
      a target three times its size and reads as a stray mark rather than a control. */
   #kill-agent{min-width:44px;height:44px}
   #kill-agent svg{width:18px;height:18px}
-  #clear-topics svg,#read-topics svg,#sched-read svg{width:18px;height:18px}
+  #clear-topics svg,#read-topics svg,#sched-read svg,#sched-new svg{width:18px;height:18px}
   /* The panel keeps the drawer's width here rather than taking the whole screen: it is the same
      overlay the 1023px rule makes, sliding in from the right, and a strip of the conversation
      stays visible behind it. Only the header and the targets grow for a finger. */
@@ -1713,6 +1734,13 @@ button:disabled{opacity:.5;cursor:default}
   #term-bar{padding:2px 4px 2px 12px;gap:8px}
   #term-min,#term-end{display:inline-flex;align-items:center;justify-content:center;
     min-width:44px;height:44px;font-size:18px}
+  /* The divider is dragged by a finger here, so it gets a thumb's height and a thicker line.
+     And the panel is the last thing on the page, which makes the home indicator its business
+     rather than the composer's. */
+  #term-grip{height:20px}
+  #term-grip::after{top:9px;width:56px;height:3px;margin-left:-28px;border-radius:2px}
+  #chat.term #bar{padding-bottom:10px}
+  #term{padding-bottom:env(safe-area-inset-bottom,0px)}
   /* The reader's way out, for the same finger: it measured 35x30 at 390px in Chromium before this.
      The bar gives up its vertical padding to it, as the chat header does to the drawer toggle.
      Download grows too — at 12px with 1px of padding it was a 22px-tall target beside the file's
@@ -1782,10 +1810,11 @@ const SCRIPT = `
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
-      chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
+      chat=$('chat'), chatHead=$('chat-header'), composer=$('bar'),
+      termBtn=$('term-toggle'), termHost=$('term-frames'), termEl=$('term'), termGrip=$('term-grip'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
       schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'), schedReadBtn=$('sched-read'),
-      schedFilterHost=$('sched-filter'),
+      schedFilterHost=$('sched-filter'), schedNewBtn=$('sched-new'),
       schedClose=$('schedules-close'), schedNote=$('schedules-note'),
       schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
       schedSubnav=$('sched-subnav'),
@@ -1855,6 +1884,9 @@ const SCRIPT = `
   // Whether this daemon has the file window (platforms.<id>.files.enabled). False hides the
   // header button; the routes behind it answer 404, exactly as the terminal's do.
   var FILES_OK = __FILES__;
+  // Whether the settings page offers the instruction editor (platforms.<id>.instructions.enabled).
+  // False leaves the section out; its routes answer 404 like the file window's.
+  var INSTR_OK = __INSTR__;
   // Which page this is: a hash of everything it was rendered from, and the page's ETag (servePage).
   // Compared with the daemon's after a restart (checkBuild), since the script on screen is the one
   // the old process served.
@@ -1866,7 +1898,7 @@ const SCRIPT = `
   // Whether the shared secret is still a way in. False means the gate above has no field and
   // the only thing that can sign anyone in is the proxy in front (sso.password: false).
   var PASSWORD_LOGIN = __PASSWORD__;
-  // A terminal window belongs to a TOPIC, not to the page: 'open' is shown, 'min' is hidden and
+  // A terminal panel belongs to a TOPIC, not to the page: 'open' is shown, 'min' is hidden and
   // still connected, absent is no window at all. Keyed this way because the alternative — one
   // window that follows whichever topic is on screen — would tear down the connection to the
   // topic being left, which is both a surprise (the pane you minimized is gone) and the end of
@@ -3218,6 +3250,7 @@ const SCRIPT = `
     // different kind of thing, and a search box over either would filter nothing it names.
     schedFilterHost.hidden = isReviews || schedSubtab === 'sessions';
     schedReadBtn.hidden = isReviews || schedSubtab !== 'sessions';
+    schedNewBtn.hidden = isReviews || schedSubtab === 'sessions' || !schedEnabled;
 
     if(!isReviews){
       var isSessions = schedSubtab === 'sessions';
@@ -3308,6 +3341,7 @@ const SCRIPT = `
     }).then(function(d){
       if(seq !== schedSeq) return;
       schedEnabled = d.enabled !== false;
+      if(!schedEnabled) schedNewBtn.hidden = true;
       paintSchedulesList(d.tasks || []);
     }).catch(function(e){
       if(seq !== schedSeq) return;
@@ -3564,7 +3598,7 @@ const SCRIPT = `
     rows = schedSorted(rows, fs);
     if(!total){
       schedList.innerHTML = '<div class="sched-empty">' + (schedEnabled
-        ? 'No scheduled tasks yet. Ask an agent in a topic — for example “every morning at 8, summarise the CI failures” — and it will be registered here.'
+        ? 'No scheduled tasks yet. Add one with + above, or ask an agent in a topic — for example “every morning at 8, summarise the CI failures” — and it will be registered here.'
         : 'Scheduled tasks are not enabled in this daemon.') + '</div>';
     } else if(!rows.length){
       schedList.innerHTML = '<div class="sched-empty sched-none">No matching tasks<button type="button" class="fb-clear" data-sched-clear="1">Clear</button></div>';
@@ -3821,7 +3855,7 @@ const SCRIPT = `
    */
   function closeTaskPage(force){
     if(taskPage.hidden) return true;
-    if(!force && tp.mode === 'edit' && tp.detail && taskDirty() && !confirm('Discard your changes to this task?')) return false;
+    if(!force && (tp.mode === 'edit' || tp.mode === 'new') && tp.detail && taskDirty() && !confirm(taskDiscardText())) return false;
     taskPage.hidden = true;
     tp.id = null;
     tp.detail = null;
@@ -3894,6 +3928,11 @@ const SCRIPT = `
   /** The title line: the name, and where the task stands — the row's second line, in full. */
   function paintTaskHead(){
     var t = tp.detail ? tp.detail.task : schedTask(tp.id);
+    if(tp.mode === 'new'){
+      taskTitle.textContent = 'New task';
+      taskSub.textContent = taskSub.title = '';
+      return;
+    }
     taskTitle.textContent = t ? t.name : 'Task';
     var bits = [];
     if(t){
@@ -3912,7 +3951,7 @@ const SCRIPT = `
     paintTaskHead();
     var d = tp.detail;
     if(!d){ taskView.innerHTML = '<div class="tp-empty">Loading…</div>'; return; }
-    if(tp.mode === 'edit' && !d.locked){
+    if(tp.mode === 'new' || (tp.mode === 'edit' && !d.locked)){
       taskView.innerHTML = taskFormHtml(d);
       fillTaskForm(d);
       return;
@@ -4052,48 +4091,77 @@ const SCRIPT = `
     return Math.round(parseFloat(m[1]) * ({ms:1, s:1000, m:60000, h:3600000})[unit]);
   }
 
-  var TP_SESSION = {fixed:'its topic (fixed session)', 'new':'a new topic each run', daily:'one topic a day'};
+  var TP_CRON_HINT = 'Five fields: minute, hour, day of month, month, weekday — read in the task’s time zone.';
+  var TP_AT_HINT = 'One run, at this time in the task’s time zone.';
 
   /**
-   * The form: the fields an edit of this task can change (d.editable, the daemon's reading of
-   * schedule edit's rules), and below them, said once, what it cannot. Values are put in by
-   * fillTaskForm rather than written into the markup: a textarea drops a leading newline it is
-   * parsed with, and a prompt may begin with one.
+   * The form, for a new task and for an edit alike: every setting schedule add takes — what it is
+   * (a prompt or a bash command), the session, the agent, the model, the machine, the directory, the
+   * timeout, the time, where it posts, the tags. Which of them is on screen follows the shape the
+   * form is set to, from the daemon's table (d.shapes, core/schedule.ts SHAPE_SETTINGS) — so a
+   * field is offered exactly where a task of that shape keeps one, and what any value may be is
+   * left to the daemon to say when it is saved. Values are put in by fillTaskForm rather than
+   * written into the markup: a textarea drops a leading newline it is parsed with, and a prompt may
+   * begin with one.
    */
   function taskFormHtml(d){
-    var f = d.fields, can = function(k){ return d.editable.indexOf(k) >= 0; };
-    var once = f.at !== undefined, h = '<form id="tp-form" novalidate>';
-    h += '<label class="tp-label" for="tp-name">Name</label><input id="tp-name" class="skill-field" type="text" autocomplete="off" spellcheck="false">';
+    var f = d.fields, isNew = tp.mode === 'new', h = '<form id="tp-form" novalidate>', i;
+    h += '<label class="tp-label" for="tp-name">Name</label><input id="tp-name" class="skill-field" type="text" autocomplete="off" spellcheck="false"' + (isNew ? ' placeholder="from the prompt or command"' : '') + '>';
+    h += '<div class="tp-label">Runs</div><div class="skill-seg tp-seg" role="group" aria-label="What it runs">'
+      + '<button type="button" data-tp-kind="agent" aria-pressed="false">Agent prompt</button>'
+      + '<button type="button" data-tp-kind="bash" aria-pressed="false">Bash command</button></div>';
+    if(!isNew) h += '<div class="tp-hint">Changing what a task is, how it runs or where it posts keeps its id, tags and run history.</div>';
+    h += '<label class="tp-label" for="tp-text" id="tp-text-label">Prompt</label><textarea id="tp-text" class="tp-text" spellcheck="false"></textarea>';
+    h += '<div class="tp-hint" data-tp-need="host">Run with bash -lc on the machine below.</div>';
+    h += '<div data-tp-kinded="agent"><div class="tp-label">Session</div><div class="skill-seg tp-seg" role="group" aria-label="Session">'
+      + '<button type="button" data-tp-session="new" aria-pressed="false">New each run</button>'
+      + '<button type="button" data-tp-session="daily" aria-pressed="false">One a day</button>'
+      + '<button type="button" data-tp-session="fixed" aria-pressed="false">In its topic</button></div>'
+      + '<div class="tp-hint" id="tp-session-hint"></div></div>';
+    var agents = d.agents.slice();
+    if(f.agent && agents.indexOf(f.agent) < 0) agents.unshift(f.agent);
+    h += '<div data-tp-need="agent"><label class="tp-label" for="tp-agent">Agent</label><select id="tp-agent" class="skill-field">';
+    for(i=0;i<agents.length;i++) h += '<option value="' + text(agents[i]) + '">' + text(agents[i]) + (d.agentHosts[agents[i]] ? ' · ' + text(d.agentHosts[agents[i]]) : '') + '</option>';
+    h += '</select></div>';
+    h += '<div data-tp-need="model"><label class="tp-label" for="tp-model">Model</label><input id="tp-model" class="skill-field" type="text" placeholder="the agent’s own" autocomplete="off" spellcheck="false"><div class="tp-hint">An id the agent’s /model list offers. Empty: the model the agent starts with.</div></div>';
+    h += '<div data-tp-need="host"><label class="tp-label" for="tp-host">Machine</label><select id="tp-host" class="skill-field"><option value="">The gateway’s machine</option>';
+    for(i=0;i<d.hosts.length;i++) h += '<option value="' + text(d.hosts[i]) + '">' + text(d.hosts[i]) + '</option>';
+    h += '</select></div>';
+    h += '<div data-tp-need="cwd"><label class="tp-label" for="tp-cwd">Directory</label><input id="tp-cwd" class="skill-field tp-mono" type="text" placeholder="the default directory" autocomplete="off" spellcheck="false"><div class="tp-hint" id="tp-cwd-hint"></div></div>';
+    h += '<div data-tp-need="timeout"><label class="tp-label" for="tp-timeout">Timeout</label><input id="tp-timeout" class="skill-field" type="text" placeholder="10m" autocomplete="off" spellcheck="false"><div class="tp-hint">How long a run may take: 90s, 10m, 1h — at most 6h.</div></div>';
+    var once = f.at !== undefined;
     h += '<div class="tp-label">When</div>';
-    if(can('cron') && can('at')){
-      h += '<div class="skill-seg tp-when" role="group" aria-label="Repeats or once">'
-        + '<button type="button" data-tp-when="cron" aria-pressed="' + (once ? 'false' : 'true') + '">Repeats</button>'
-        + '<button type="button" data-tp-when="at" aria-pressed="' + (once ? 'true' : 'false') + '">Once</button></div>';
-    }
+    h += '<div class="skill-seg tp-when" role="group" aria-label="Repeats or once" data-tp-need="at">'
+      + '<button type="button" data-tp-when="cron" aria-pressed="' + (once ? 'false' : 'true') + '">Repeats</button>'
+      + '<button type="button" data-tp-when="at" aria-pressed="' + (once ? 'true' : 'false') + '">Once</button></div>';
     h += '<div class="tp-row2"><div>'
       + '<input id="tp-cron" class="skill-field tp-mono" type="text" placeholder="0 8 * * *" aria-label="Cron expression" autocomplete="off" spellcheck="false"' + (once ? ' hidden' : '') + '>'
       + '<input id="tp-at" class="skill-field" type="datetime-local" step="1" aria-label="Time of the run"' + (once ? '' : ' hidden') + '>'
       + '</div><div><input id="tp-tz" class="skill-field" type="text" list="tp-tzs" aria-label="Time zone" autocomplete="off" spellcheck="false">'
       + taskZonesHtml() + '</div></div>';
-    h += '<div class="tp-hint" id="tp-when-hint">' + (once ? 'One run, at this time in the task\u2019s time zone.' : 'Five fields: minute, hour, day of month, month, weekday — read in the task\u2019s time zone.') + '</div>';
-    if(can('prompt')) h += '<label class="tp-label" for="tp-text">Prompt</label><textarea id="tp-text" class="tp-text" spellcheck="false"></textarea>';
-    if(can('command')) h += '<label class="tp-label" for="tp-text">Command</label><textarea id="tp-text" class="tp-text" spellcheck="false"></textarea><div class="tp-hint">Run with bash -lc, on ' + text(f.host || "the gateway's machine") + '.</div>';
-    if(can('agent')){
-      var agents = d.agents.slice();
-      if(f.agent && agents.indexOf(f.agent) < 0) agents.unshift(f.agent);
-      h += '<label class="tp-label" for="tp-agent">Agent</label><select id="tp-agent" class="skill-field">';
-      for(var i=0;i<agents.length;i++) h += '<option value="' + text(agents[i]) + '">' + text(agents[i]) + '</option>';
-      h += '</select>';
-    }
-    if(can('model')) h += '<label class="tp-label" for="tp-model">Model</label><input id="tp-model" class="skill-field" type="text" placeholder="the agent’s own" autocomplete="off" spellcheck="false"><div class="tp-hint">An id the agent’s /model list offers. Empty: the model the agent starts with.</div>';
-    if(can('cwd')) h += '<label class="tp-label" for="tp-cwd">Directory</label><input id="tp-cwd" class="skill-field tp-mono" type="text" placeholder="the default directory" autocomplete="off" spellcheck="false"><div class="tp-hint">An absolute path on the machine the task runs on; it is checked there before saving. Empty: the default directory.</div>';
-    if(can('timeout')) h += '<label class="tp-label" for="tp-timeout">Timeout</label><input id="tp-timeout" class="skill-field" type="text" placeholder="10m" autocomplete="off" spellcheck="false"><div class="tp-hint">How long a run may take: 90s, 10m, 1h — at most 6h.</div>';
-    var kind = d.task.kind === 'bash' ? 'a bash command' : 'a prompt for an agent';
-    h += '<div class="tp-fixed">This task is <b>' + text(kind) + '</b>' + (f.session ? ' that runs in <b>' + text(TP_SESSION[f.session] || f.session) + '</b>' : '')
-      + ' and posts to <b>' + text(schedTargetShort(d.task)) + '</b>. Those are what it is, so they cannot be edited: delete it and ask an agent for a new one.'
-      + (f.session === 'fixed' ? ' Its directory and model are its topic’s — /cd and /model there change them.' : '') + '</div>';
-    h += '<div class="tp-acts editor"><button type="submit" class="primary" data-tp-act="save">Save</button><button type="button" data-tp-act="cancel">Cancel</button></div>';
+    h += '<div class="tp-hint" id="tp-when-hint">' + (once ? TP_AT_HINT : TP_CRON_HINT) + '</div>';
+    h += '<label class="tp-label" for="tp-target">Posts to</label><select id="tp-target" class="skill-field">' + taskTargetOptions(d) + '</select>';
+    h += '<input id="tp-target-other" class="skill-field tp-mono" type="text" list="tp-chans" placeholder="tg:-1001234567/8" aria-label="Another chat, as fleetherd channels lists it" autocomplete="off" spellcheck="false" hidden>';
+    h += '<datalist id="tp-chans">';
+    for(i=0;i<d.channels.length;i++) h += '<option value="' + text(d.channels[i].id) + '">' + text(d.channels[i].title) + '</option>';
+    h += '</datalist><div class="tp-hint" id="tp-target-hint"></div>';
+    h += '<label class="tp-label" for="tp-tags">Tags</label><input id="tp-tags" class="skill-field" type="text" placeholder="ci, ops" autocomplete="off" spellcheck="false"><div class="tp-hint">Comma-separated: up to 5, letters, digits and - _ . /</div>';
+    h += '<div class="tp-acts editor"><button type="submit" class="primary" data-tp-act="save">' + (isNew ? 'Add' : 'Save') + '</button><button type="button" data-tp-act="cancel">Cancel</button></div>';
     return h + '</form>';
+  }
+
+  /**
+   * "Posts to": this page's topics by title — the ones a person talks in, plus the task's own
+   * target wherever it is — and "Another chat…", which takes any id fleetherd channels prints.
+   */
+  function taskTargetOptions(d){
+    var own = d.task ? d.task.targetTopic : '', h = '';
+    for(var i=0;i<topics.length;i++){
+      var t = topics[i];
+      if((t.scheduled || t.parent) && t.id !== own) continue;
+      h += '<option value="topic:' + text(t.id) + '">' + text(splitTitle(t.title || 'Untitled', t.dir && t.dir.host).rest) + '</option>';
+    }
+    return h + '<option value="other">Another chat…</option>';
   }
 
   /** Every zone the browser knows, offered to the zone field. Built once: the list is ~400 names. */
@@ -4112,19 +4180,86 @@ const SCRIPT = `
   function tpEl(id){ return taskView.querySelector('#' + id); }
   function tpVal(id){ var e = tpEl(id); return e ? String(e.value) : ''; }
 
+  /** The target the form starts from: the task's own, or for a new task the topic on screen. */
+  function taskTargetStart(d){
+    if(d.task) return d.task.targetTopic && topicById(d.task.targetTopic) ? 'topic:' + d.task.targetTopic : 'other';
+    if(topic && topicById(topic)) return 'topic:' + topic;
+    var sel = tpEl('tp-target');
+    return sel && sel.options.length > 1 ? sel.options[0].value : 'other';
+  }
+
   function fillTaskForm(d){
     var f = d.fields, set = function(id, v){ var e = tpEl(id); if(e) e.value = v == null ? '' : v; };
     set('tp-name', f.name);
     set('tp-cron', f.cron || '');
     set('tp-at', f.at ? f.at.replace(' ', 'T') : '');
     set('tp-tz', f.tz);
-    set('tp-text', f.prompt !== undefined ? f.prompt : f.command);
-    set('tp-agent', f.agent || '');
+    set('tp-text', f.command !== undefined ? f.command : f.prompt);
+    set('tp-agent', f.agent || d.agent || '');
     set('tp-model', f.model || '');
+    // A prompt task's machine is its agent's; switching it to a command starts on that machine,
+    // which is where the daemon would run it too.
+    set('tp-host', f.host || (f.agent && d.agentHosts[f.agent]) || '');
     set('tp-cwd', f.cwd || '');
     if(f.timeoutMs) set('tp-timeout', taskDurText(f.timeoutMs));
+    set('tp-tags', ((d.task && d.task.tags) || []).join(', '));
+    var start = taskTargetStart(d);
+    set('tp-target', start);
+    if(start === 'other' && f.target) set('tp-target-other', f.target);
+    taskPress('data-tp-kind', f.command !== undefined ? 'bash' : 'agent');
+    taskPress('data-tp-session', f.session || 'new');
+    taskShapePaint();
     var first = tpEl('tp-name');
     if(first) first.focus();
+  }
+
+  /** Press one button of a segmented control, release the others. */
+  function taskPress(attr, value){
+    var seg = taskView.querySelectorAll('[' + attr + ']');
+    for(var i=0;i<seg.length;i++) seg[i].setAttribute('aria-pressed', seg[i].getAttribute(attr) === value ? 'true' : 'false');
+  }
+  function taskPressed(attr){
+    var on = taskView.querySelector('[' + attr + '][aria-pressed="true"]');
+    return on ? on.getAttribute(attr) : '';
+  }
+  function taskKind(){ return taskPressed('data-tp-kind') || 'agent'; }
+  function taskShape(){ return taskKind() === 'bash' ? 'bash' : (taskPressed('data-tp-session') || 'new'); }
+
+  /** The machine the form's task would run on, as the hints name it. */
+  function taskMachine(){
+    var d = tp.detail, host = taskKind() === 'bash' ? tpVal('tp-host') : (d.agentHosts[tpVal('tp-agent')] || '');
+    return host || 'the gateway’s machine';
+  }
+
+  /**
+   * Show what the shape the form is set to keeps, and nothing else; say what follows from it. A
+   * hidden field keeps what was typed in it, so switching back and forth loses nothing — but only
+   * what is on screen is sent (taskEditDiff).
+   */
+  function taskShapePaint(){
+    var d = tp.detail, shape = taskShape(), keeps = d.shapes[shape] || [], kind = taskKind(), i;
+    var needs = taskView.querySelectorAll('[data-tp-need]');
+    for(i=0;i<needs.length;i++) needs[i].hidden = keeps.indexOf(needs[i].getAttribute('data-tp-need')) < 0;
+    var kinded = taskView.querySelectorAll('[data-tp-kinded]');
+    for(i=0;i<kinded.length;i++) kinded[i].hidden = kinded[i].getAttribute('data-tp-kinded') !== kind;
+    tpEl('tp-text-label').textContent = kind === 'bash' ? 'Command' : 'Prompt';
+    // A shape that runs on a cron only (daily) cannot hold a one-shot time.
+    if(keeps.indexOf('at') < 0 && taskWhenMode() === 'at') taskWhen(false, false);
+    var sh = tpEl('tp-session-hint');
+    if(sh){
+      sh.textContent = shape === 'fixed'
+        ? 'Each run is a turn in the topic it posts to, for 24 hours from when it starts there. Its directory and model are that topic’s — /cd and /model there change them.'
+        : shape === 'daily'
+          ? 'The first run of each day opens a topic; the rest of that day’s runs join it. Needs a repeating time.'
+          : 'Each run is a fresh session in a topic of its own.';
+    }
+    var ch = tpEl('tp-cwd-hint');
+    if(ch) ch.textContent = 'An absolute path on ' + taskMachine() + '; it is checked there before saving. Empty: the default directory.';
+    var other = tpVal('tp-target') === 'other';
+    tpEl('tp-target-other').hidden = !other;
+    tpEl('tp-target-hint').textContent = other
+      ? 'An id as fleetherd channels prints it: <instance>:<chat>[/<thread>].'
+      : (shape === 'bash' ? 'The command’s output is posted there.' : (shape === 'fixed' ? 'The runs are turns there.' : 'Each run’s topic is opened from there, and failures are reported there.'));
   }
 
   function taskWhenMode(){
@@ -4132,83 +4267,179 @@ const SCRIPT = `
     return at && !at.hidden ? 'at' : 'cron';
   }
 
+  /** Switch the time between a cron and one run. */
+  function taskWhen(once, focus){
+    taskPress('data-tp-when', once ? 'at' : 'cron');
+    tpEl('tp-cron').hidden = once;
+    tpEl('tp-at').hidden = !once;
+    tpEl('tp-when-hint').textContent = once ? TP_AT_HINT : TP_CRON_HINT;
+    if(focus) (once ? tpEl('tp-at') : tpEl('tp-cron')).focus();
+  }
+
+  /** "Posts to" as the request carries it: one of this page's topics, or an id typed in. */
+  function taskTargetValue(){
+    var v = tpVal('tp-target');
+    if(v.indexOf('topic:') === 0) return {topic: v.slice(6)};
+    var id = tpVal('tp-target-other').trim();
+    return id ? {channel: id} : null;
+  }
+
+  function taskTagList(raw){
+    return String(raw).split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+  }
+
   /**
-   * What the form changed, as the edit to send: a field left as it was is not sent, so the task
-   * keeps its own value (schedule edit's rule). An emptied directory or model is sent as null,
-   * which empties it. A one-time task whose zone changed sends its time again, so the time typed
-   * is read in the new zone rather than kept as the instant it was.
+   * What the form says, as the request to send. For an edit, only what changed: a field left as it
+   * was is not sent, so the task keeps its own value (schedule edit's rule), and an emptied directory
+   * or model is sent as null, which empties it. A change of what the task is sends what the new
+   * kind runs with, typed or not — its text, its agent and session, or its machine — because those
+   * are what the person is looking at. Only what is on screen is sent: a field the shape does not
+   * keep is hidden, and an edit leaves it to the daemon, which drops it (SHAPE_SETTINGS). A one-time
+   * task whose zone changed sends its time again, so the time typed is read in the new zone rather
+   * than kept as the instant it was. A new task sends everything filled in.
    */
   function taskEditDiff(){
-    var d = tp.detail, f = d.fields, can = function(k){ return d.editable.indexOf(k) >= 0; }, out = {}, v;
+    var d = tp.detail, f = d.fields, out = {}, v, isNew = tp.mode === 'new';
+    var kind = taskKind(), shape = taskShape(), keeps = d.shapes[shape] || [];
+    var shown = function(k){ return keeps.indexOf(k) >= 0; };
+    var turned = !isNew && kind !== (f.command !== undefined ? 'bash' : 'agent');
     v = tpVal('tp-name').trim();
-    if(v !== f.name) out.name = v;
+    if(isNew ? v : v !== f.name) out.name = v;
     var tz = tpVal('tp-tz').trim();
-    if(tz !== f.tz) out.tz = tz;
+    if(isNew || tz !== f.tz) out.tz = tz;
     if(taskWhenMode() === 'at'){
       v = tpVal('tp-at').replace('T', ' ');
       if(!v) return {error:'Pick a date and time for the run.'};
-      if(f.at === undefined || v !== f.at || out.tz !== undefined) out.at = v;
+      if(isNew || f.at === undefined || v !== f.at || out.tz !== undefined) out.at = v;
     } else {
       v = tpVal('tp-cron').trim();
-      if(f.cron === undefined || v !== f.cron) out.cron = v;
+      if(isNew || f.cron === undefined || v !== f.cron) out.cron = v;
     }
-    if(can('prompt')){ v = tpVal('tp-text'); if(v !== f.prompt) out.prompt = v; }
-    if(can('command')){ v = tpVal('tp-text'); if(v !== f.command) out.command = v; }
-    if(can('agent')){ v = tpVal('tp-agent'); if(v && v !== f.agent) out.agent = v; }
-    if(can('model')){ v = tpVal('tp-model').trim(); if(v !== (f.model || '')) out.model = v || null; }
-    if(can('cwd')){ v = tpVal('tp-cwd').trim(); if(v !== (f.cwd || '')) out.cwd = v || null; }
-    if(can('timeout')){
+    v = tpVal('tp-text');
+    if(kind === 'bash'){ if(isNew || turned || v !== f.command) out.command = v; }
+    else if(isNew || turned || v !== f.prompt) out.prompt = v;
+    if(kind === 'agent'){
+      var session = taskShape();
+      if(isNew || turned || session !== f.session) out.session = session;
+    }
+    if(shown('agent')){ v = tpVal('tp-agent'); if(v && (isNew || turned || v !== f.agent)) out.agent = v; }
+    if(shown('model')){ v = tpVal('tp-model').trim(); if(isNew ? v : v !== (f.model || '')) out.model = v || null; }
+    if(shown('host')){ v = tpVal('tp-host'); if(isNew || turned || v !== (f.host || '')) out.host = v || null; }
+    if(shown('cwd')){ v = tpVal('tp-cwd').trim(); if(isNew ? v : v !== (f.cwd || '')) out.cwd = v || null; }
+    if(shown('timeout') && tpVal('tp-timeout').trim()){
       var ms = taskDurParse(tpVal('tp-timeout'));
       if(ms === null || ms <= 0) return {error:'The timeout is a length of time: 90s, 10m or 1h.'};
-      if(ms !== f.timeoutMs) out.timeoutMs = ms;
+      if(isNew || turned || ms !== f.timeoutMs) out.timeoutMs = ms;
     }
+    var target = taskTargetValue();
+    if(!target) return {error:'Say where it posts: pick a topic, or give an id fleetherd channels lists.'};
+    var own = d.task && d.task.targetTopic && topicById(d.task.targetTopic) ? d.task.targetTopic : '';
+    if(isNew || (target.topic ? target.topic !== own : target.channel !== f.target)) out.target = target;
+    var tags = taskTagList(tpVal('tp-tags'));
+    var had = (d.task && d.task.tags) || [];
+    if(isNew ? tags.length : tags.join(',') !== had.join(',')) out.tags = tags;
     return {edit:out};
   }
 
   function taskDirty(){
     if(!tpEl('tp-form')) return false;
+    if(tp.mode === 'new'){
+      // Untouched: only the defaults the form was opened with, nothing a person typed.
+      return Boolean(tpVal('tp-name').trim() || tpVal('tp-text').trim() || tpVal('tp-cron').trim() || tpVal('tp-tags').trim());
+    }
     var diff = taskEditDiff();
     return Boolean(diff.error) || Object.keys(diff.edit).length > 0;
   }
 
+  function taskDiscardText(){
+    return tp.mode === 'new' ? 'Discard this new task?' : 'Discard your changes to this task?';
+  }
+
+  /**
+   * Save the form: api/schedules/add for a new task, api/schedules/edit for a change. A refusal is
+   * the daemon's sentence — schedule add's or edit's — and leaves the form as it is; success draws
+   * the task's page from the answer, and the list behind it from the same answer.
+   */
   function saveTaskEdit(){
     if(tp.busy || !tp.detail) return;
+    var isNew = tp.mode === 'new';
     var diff = taskEditDiff();
     if(diff.error){ taskSay(diff.error, 'error'); return; }
-    if(!Object.keys(diff.edit).length){
+    if(!isNew && !Object.keys(diff.edit).length){
       tp.mode = 'view';
       paintTaskPage();
       taskSay('Nothing was changed.');
       return;
     }
-    var id = tp.id, btn = taskView.querySelector('[data-tp-act="save"]');
+    var id = tp.id, seq = tp.seq, btn = taskView.querySelector('[data-tp-act="save"]'), label = isNew ? 'Add' : 'Save';
     tp.busy = true;
-    if(btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    if(btn){ btn.disabled = true; btn.textContent = isNew ? 'Adding…' : 'Saving…'; }
     taskSay(null);
-    fetch('api/schedules/edit', {
+    fetch(isNew ? 'api/schedules/add' : 'api/schedules/edit', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({id:id, edit:diff.edit}),
+      body:JSON.stringify(isNew ? {task:diff.edit} : {id:id, edit:diff.edit}),
       credentials:'same-origin'
     }).then(function(r){
       return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
     }).then(function(d){
-      if(tp.id !== id || taskPage.hidden) return;
+      if(taskPage.hidden || (isNew ? tp.mode !== 'new' || tp.seq !== seq : tp.id !== id)) return;
       if(d && d.ok && d.detail){
+        tp.id = d.detail.task.id;
         tp.detail = d.detail;
         tp.mode = 'view';
         tp.seq++;
         paintTaskPage();
-        taskSay('Saved. The conversation it posts to was sent the updated task.', 'ok');
+        taskSay(isNew ? 'Added. The conversation it posts to was sent the task.' : 'Saved. The conversation it posts to was sent the updated task.', 'ok');
         if(d.tasks) paintSchedulesList(d.tasks);
       } else taskSay((d && d.error) || 'That did not work.', 'error');
     }).catch(function(e){
-      if(tp.id === id) taskSay('Could not reach the daemon: ' + ((e && e.message) || 'network error'), 'error');
+      if(isNew ? tp.mode === 'new' : tp.id === id) taskSay('Could not reach the daemon: ' + ((e && e.message) || 'network error'), 'error');
     }).then(function(){
       tp.busy = false;
       var again = taskView.querySelector('[data-tp-act="save"]');
-      if(again){ again.disabled = false; again.textContent = 'Save'; }
+      if(again){ again.disabled = false; again.textContent = label; }
     });
+  }
+
+  /**
+   * A new task: the same page and form an edit uses, filled from the daemon's choices
+   * (api/schedules/form) instead of a task. Opening it over an edit with changes asks first.
+   */
+  function openNewTask(){
+    if(!taskPage.hidden && !closeTaskPage(false)) return;
+    tp.id = null;
+    tp.mode = 'new';
+    tp.detail = null;
+    taskSay(null);
+    taskPage.hidden = false;
+    paintTaskPage();
+    var seq = ++tp.seq;
+    fetch('api/schedules/form', {credentials:'same-origin'}).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(seq !== tp.seq || tp.mode !== 'new' || taskPage.hidden) return;
+      if(d && d.ok && d.form){
+        tp.detail = newTaskDetail(d.form);
+        paintTaskPage();
+      } else {
+        taskSay((d && d.error) || 'Could not open the form.', 'error');
+        taskView.innerHTML = '';
+      }
+    }).catch(function(e){
+      if(seq !== tp.seq) return;
+      taskSay('Could not reach the daemon: ' + ((e && e.message) || 'network error'), 'error');
+      taskView.innerHTML = '';
+    });
+    taskClose.focus();
+  }
+
+  /** A blank task for the form: the daemon's choices, a new session by default, nothing typed. */
+  function newTaskDetail(form){
+    var d = {task:null, runs:[]};
+    for(var k in form) if(Object.prototype.hasOwnProperty.call(form, k)) d[k] = form[k];
+    d.fields = {name:'', tz:form.tz, prompt:'', agent:form.agent, session:'new', target:''};
+    return d;
   }
 
   taskClose.addEventListener('click', function(){ closeTaskPage(false); });
@@ -4222,13 +4453,15 @@ const SCRIPT = `
     }
     var when = e.target.closest ? e.target.closest('[data-tp-when]') : null;
     if(when){
-      var once = when.getAttribute('data-tp-when') === 'at';
-      var seg = when.parentNode.querySelectorAll('[data-tp-when]');
-      for(var i=0;i<seg.length;i++) seg[i].setAttribute('aria-pressed', seg[i] === when ? 'true' : 'false');
-      tpEl('tp-cron').hidden = once;
-      tpEl('tp-at').hidden = !once;
-      tpEl('tp-when-hint').textContent = once ? 'One run, at this time in the task\u2019s time zone.' : 'Five fields: minute, hour, day of month, month, weekday — read in the task\u2019s time zone.';
-      (once ? tpEl('tp-at') : tpEl('tp-cron')).focus();
+      taskWhen(when.getAttribute('data-tp-when') === 'at', true);
+      return;
+    }
+    // What the task is, and its session: the form follows the shape at once (taskShapePaint).
+    var seg = e.target.closest ? e.target.closest('[data-tp-kind],[data-tp-session]') : null;
+    if(seg){
+      var attr = seg.hasAttribute('data-tp-kind') ? 'data-tp-kind' : 'data-tp-session';
+      taskPress(attr, seg.getAttribute(attr));
+      taskShapePaint();
       return;
     }
     var del = e.target.closest ? e.target.closest('[data-tag-del]') : null;
@@ -4242,7 +4475,9 @@ const SCRIPT = `
     var what = act.getAttribute('data-tp-act'), t = tp.detail ? tp.detail.task : null;
     if(what === 'edit'){ tp.mode = 'edit'; taskSay(null); paintTaskPage(); return; }
     if(what === 'cancel'){
-      if(taskDirty() && !confirm('Discard your changes to this task?')) return;
+      if(taskDirty() && !confirm(taskDiscardText())) return;
+      // A new task has no page to go back to.
+      if(tp.mode === 'new'){ closeTaskPage(true); return; }
       tp.mode = 'view';
       taskSay(null);
       paintTaskPage();
@@ -4257,6 +4492,13 @@ const SCRIPT = `
     e.preventDefault();
     saveTaskEdit();
   });
+  // The agent, the machine and "Posts to" change what the hints say, and "Another chat…" shows the
+  // field it needs.
+  taskPage.addEventListener('change', function(e){
+    var id = e.target && e.target.id;
+    if(id === 'tp-agent' || id === 'tp-host' || id === 'tp-target') taskShapePaint();
+  });
+  schedNewBtn.addEventListener('click', function(){ openNewTask(); });
   taskPage.addEventListener('keydown', function(e){
     if(e.key === 'Enter' && !e.isComposing){
       var input = e.target.closest ? e.target.closest('[data-tag-input]') : null;
@@ -4440,8 +4682,8 @@ const SCRIPT = `
       if(view) views[id] = view; else delete views[id];
       return;
     }
-    // No box to measure (the terminal window is over the transcript), or at the bottom, which is
-    // what no entry already means.
+    // No box to measure (the page is still laying out), or at the bottom, which is what no entry
+    // already means.
     var el = (log.clientHeight && !atBottom()) ? firstVisible() : null;
     if(!el){ delete views[id]; return; }
     views[id] = { key: el.getAttribute('data-k'),
@@ -5024,6 +5266,7 @@ const SCRIPT = `
     var typed = settingsBody.querySelector('.set-type');
     if(typed) settingsQuery = typed.value;
     settingsBody.innerHTML = settingsScreen(settingsMsg);
+    if(INSTR_OK && level === 'list') instrSection();
     if(level !== settingsLevel){ settingsBody.scrollTop = 0; fk = null; settingsQuery = ''; }
     settingsLevel = level;
     // What was typed survives the redraw — the list arriving after "asking" is one — and so does
@@ -6745,9 +6988,56 @@ const SCRIPT = `
 
 
   // ── Terminal ───────────────────────────────────────────────────────────────
-  // A window over the transcript, one per topic. The iframe holds ttyd's own terminal, which is
-  // why this is a hundred lines instead of a terminal emulator. Nothing here speaks to the agent
-  // — the two share a topic id and nothing else.
+  // A panel at the bottom of the conversation, one per topic. The iframe holds ttyd's own
+  // terminal, which is why this is a hundred lines instead of a terminal emulator. Nothing here
+  // speaks to the agent — the two share a topic id and nothing else.
+
+  // How tall the panel is, in pixels, once the divider has been dragged. 0 means "half the
+  // chat": recomputed rather than frozen, so a phone and a desktop each get half of their own
+  // screen, and a panel that was never resized follows a window that changes size.
+  var TERM_H_KEY = 'aa_term_h', TERM_MIN = 120, TERM_MIN_LOG = 120;
+  var termH = 0;
+  try { var storedTermH = parseInt(localStorage.getItem(TERM_H_KEY) || '', 10); if(storedTermH > 0) termH = storedTermH; } catch(x){}
+
+  /**
+   * What the panel may be: never taller than the chat it sits in, and never so tall that the
+   * transcript has no lines left. What is above it is measured rather than guessed — a phone's
+   * header and two-row composer are most of the chat, and a fixed allowance sized for a desktop
+   * would leave the log 20px tall there. On a window too short for both, the chat wins.
+   */
+  function termLimits(){
+    var room = chat.clientHeight;
+    if(!room) return {min:TERM_MIN, max:TERM_MIN + 40};
+    var fixed = chatHead.clientHeight + composer.clientHeight + (termGrip.offsetHeight || 12) + TERM_MIN_LOG;
+    var max = Math.min(room, Math.max(TERM_MIN, room - fixed));
+    return {min:Math.min(TERM_MIN, max), max:max};
+  }
+  function termHeight(){
+    var lim = termLimits();
+    return Math.max(lim.min, Math.min(lim.max, termH || Math.round(chat.clientHeight * 0.5)));
+  }
+  // Set as a pixel height rather than a percentage: a closed panel is parked at this size, and
+  // it must not change under a hidden iframe — a resize there is a redraw the reader never asked
+  // for, and on some backends a detach.
+  function paintTermHeight(){
+    // While a record from History is up, #bar and the divider are display:none and measure 0 —
+    // a ceiling worked out from those would be ~100px too generous, and the panel would come
+    // back from the record too tall. closeLib paints again once they are back on screen.
+    if(libOn()) return;
+    var lim = termLimits(), h = termHeight();
+    termEl.style.height = h + 'px';
+    termGrip.setAttribute('aria-valuenow', String(h));
+    termGrip.setAttribute('aria-valuemin', String(lim.min));
+    termGrip.setAttribute('aria-valuemax', String(lim.max));
+  }
+  function setTermHeight(h){
+    var lim = termLimits();
+    termH = Math.max(lim.min, Math.min(lim.max, Math.round(h)));
+    paintTermHeight();
+  }
+  function saveTermHeight(){
+    try { if(termH) localStorage.setItem(TERM_H_KEY, String(termH)); else localStorage.removeItem(TERM_H_KEY); } catch(x){}
+  }
 
   // What the address bar should say now. The topic and the pane are both worth surviving a
   // reload, and both are written the same way so neither can silently drop the other.
@@ -6769,6 +7059,11 @@ const SCRIPT = `
     var state = topic ? termState[topic] : undefined;
     var on = state === 'open';
     chat.classList.toggle('term', on);
+    // After the class, so the divider the panel is measured against is on screen and has its
+    // height — and only while it is on screen: painting a closed panel would resize the parked
+    // iframe for nothing, which is the redraw this design exists to avoid. Before mountTerm, so
+    // a window opened for the first time is born at the height it will keep.
+    if(on) paintTermHeight();
     termBtn.classList.toggle('on', Boolean(state));
     termBtn.title = on ? 'Minimize the terminal' : (state ? 'Show the terminal (still running)' : 'Terminal');
     // Only ever rendered where a session can actually be ended; see TERM_END.
@@ -6788,13 +7083,29 @@ const SCRIPT = `
     termHost.appendChild(frame);
   }
 
-  /** Exactly one mounted terminal is visible: the current topic's, and only while it is open. */
+  /**
+   * Exactly one mounted terminal is visible: the current topic's, and only while it is open and
+   * nothing else covers the chat.
+   *
+   * A record from History is why the second half is here rather than in the stylesheet. The
+   * panel's own visibility is inherited, and an iframe's rule saying visible wins over it — so a
+   * parent rule alone leaves the terminal painted over the record, visible and unclickable. The
+   * frame's on class is the one thing that decides, and openLib/closeLib repaint through here.
+   */
   function paintFrames(){
-    var on = topic && termState[topic]==='open';
+    var on = Boolean(topic && termState[topic]==='open' && !libOn());
     for(var id in termFrames){
       if(!Object.prototype.hasOwnProperty.call(termFrames, id)) continue;
-      termFrames[id].classList.toggle('on', Boolean(on) && id===topic);
+      var live = on && id===topic;
+      termFrames[id].classList.toggle('on', live);
+      // Per frame, not only on the panel: with one topic's terminal open, another topic's frame
+      // is still mounted and hidden, and inert is what keeps it out of reach from script.
+      termFrames[id].toggleAttribute('inert', !live);
     }
+    // Inert as well as invisible: visibility keeps the keyboard out, but an iframe can still be
+    // focused from script — and a terminal that grabs focus while it is parked is typing going
+    // somewhere the person cannot see. This one covers the panel's own two buttons.
+    termEl.toggleAttribute('inert', !on);
     var cur = null;
     for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
     termName.textContent = cur && cur.title ? cur.title : 'Untitled';
@@ -6812,9 +7123,13 @@ const SCRIPT = `
 
   function showTerm(){
     if(!TERM_OK || !topic) return;
+    // Opening the panel takes height from the transcript, and a reader who was at the bottom
+    // would otherwise find the newest message pushed under the divider.
+    var stick = atBottom();
     termState[topic] = 'open';
     history.replaceState(null,'',urlNow());
     applyTerm();
+    if(stick) toBottom();
   }
 
   // Hidden, not unmounted: the point of minimizing is that whatever is running in there keeps
@@ -8230,6 +8545,52 @@ const SCRIPT = `
     });
     termMinBtn.addEventListener('click', minTerm);
     termEndBtn.addEventListener('click', endTerm);
+
+    // Dragging the divider. The new height comes from the POINTER's travel rather than from the
+    // panel's box: a drag grabbed anywhere on the strip must not jump on the first move, and the
+    // panel's own bottom edge is the window's, which does not move.
+    var termDrag = null;
+    termGrip.addEventListener('pointerdown', function(e){
+      if(!topic || !termState[topic]) return;
+      e.preventDefault();
+      termDrag = {y:e.clientY, h:termHeight()};
+      termGrip.classList.add('drag');
+      if(termGrip.setPointerCapture) try { termGrip.setPointerCapture(e.pointerId); } catch(x){}
+    });
+    termGrip.addEventListener('pointermove', function(e){
+      if(termDrag) setTermHeight(termDrag.h - (e.clientY - termDrag.y));
+    });
+    var endTermDrag = function(){
+      if(!termDrag) return;
+      termDrag = null;
+      termGrip.classList.remove('drag');
+      saveTermHeight();
+    };
+    // On the window, not the strip: when the capture fails the pointerup can land anywhere, and
+    // a drag that never ends leaves the next pointermove still resizing the panel.
+    window.addEventListener('pointerup', endTermDrag);
+    window.addEventListener('pointercancel', endTermDrag);
+    termGrip.addEventListener('lostpointercapture', endTermDrag);
+    // Back to half the chat, the same gesture the two side panels offer for their width.
+    termGrip.addEventListener('dblclick', function(){
+      termH = 0;
+      paintTermHeight();
+      saveTermHeight();
+    });
+    // A divider is a control, so it answers the keyboard as well as the pointer.
+    termGrip.addEventListener('keydown', function(e){
+      if(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      setTermHeight(termHeight() + (e.key === 'ArrowUp' ? 24 : -24));
+      saveTermHeight();
+    });
+    // A shorter window may leave a stored height taller than the chat; the transcript keeps its
+    // lines. Not while the panel is closed (the parked iframe must not be resized for nothing),
+    // and not while a record is up — its composer is hidden, so there is nothing to measure
+    // against; closeLib does it when the record goes.
+    window.addEventListener('resize', function(){
+      if(topic && termState[topic]==='open' && !libOn()) paintTermHeight();
+    });
   }
 
   readBtn.addEventListener('click', function(){
@@ -8786,6 +9147,8 @@ const SCRIPT = `
       closeModelPop();
       if(!hints.hidden){ hints.hidden = true; hints.innerHTML = ''; }
       chat.classList.add('lib');
+      // The terminal goes behind the record rather than over it — and stays connected there.
+      paintFrames();
     }
     libId = id;
     libSession = null;
@@ -8882,6 +9245,11 @@ const SCRIPT = `
     if(!libOn()) return;
     libSeq++;
     chat.classList.remove('lib');
+    // The topic underneath is back on screen, so its terminal is too — same frame, same socket.
+    paintFrames();
+    // And its height is worked out again: a window that changed size under the record could not
+    // be measured while the composer and the divider were display:none.
+    if(topic && termState[topic]==='open') paintTermHeight();
     libId = null;
     libSession = null;
     forgetLibLines();
@@ -8967,6 +9335,9 @@ const SCRIPT = `
     // A recording is cancelled by Escape too, and the recorder's own listener below does that.
     // The same keystroke must not also put away what is behind the composer.
     if(rec) return;
+    // The instruction editor is opened from the settings page and sits over it: put away the
+    // editor alone, and the page it came from is still there.
+    if(fileSrc && !filesWin.hidden){ closeFiles(); return; }
     // Close the topmost thing first: Escape over a picture, the reader or a menu must not also
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
@@ -10389,6 +10760,8 @@ const SCRIPT = `
       fileBase=null, fileSaved='', fileDirty=false, fileView=null, fileSeq=0, fileNodes={},
       fileOpenDirs={}, fileNewIsDir=false, filePreviewing=false, fileBusy=false,
       fileEol='lf', fileSha='', fileSep='/',
+      /* Set while the window edits instructions instead of a topic's files (instrOpen). */
+      fileSrc=null,
       /* What the rename row is about: the open file, or a folder picked in the tree. */
       fxRename=null;
 
@@ -10397,6 +10770,7 @@ const SCRIPT = `
     return r.status === 404 ? 'The file window is not enabled on this daemon.' : 'That request failed (' + r.status + ').';
   }
   function filesGet(route, params){
+    if(fileSrc) return instrGet(route, params);
     var qs=[];
     for(var k in params){
       if(!Object.prototype.hasOwnProperty.call(params, k)) continue;
@@ -10409,6 +10783,7 @@ const SCRIPT = `
       });
   }
   function filesPost(route, body){
+    if(fileSrc) return instrPost(route, body);
     return post('api/files/' + route, body, 1).then(function(r){
       return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
     });
@@ -10494,6 +10869,7 @@ const SCRIPT = `
 
   /** The tree as it is: every open directory's children, recursively — nothing is fetched twice. */
   function paintTree(){
+    if(fileSrc){ filesTreeList.innerHTML = instrTree(); return; }
     var h = '';
     function walk(key, depth){
       var node = fileNodes[key];
@@ -10713,7 +11089,7 @@ const SCRIPT = `
         if(res.body.sha256) fileSha = res.body.sha256;
         if(fileView && fileView.getDoc() === sent){ fileSaved = sent; setFileDirty(false); }
         filesConflict.hidden = true;
-        filesSay('Saved ' + (fileRel || fileName) + '.');
+        filesSay('Saved ' + (fileRel || fileName) + '.' + instrSaid());
         paintFileActions();
         return true;
       }
@@ -10952,16 +11328,18 @@ const SCRIPT = `
     }).catch(function(){ filesSay('Could not reach the daemon.'); });
   }
 
-  function openFilesWindow(t, path){
-    if(!FILES_OK || !t) return;
-    if(!filesWin.hidden && fileTopic !== t && !fileConfirmLeave()) return;
+  function openFilesWindow(t, path, src){
+    if(!(FILES_OK || src) || !t) return;
+    if(!filesWin.hidden && (fileTopic !== t || fileSrc !== (src || null)) && !fileConfirmLeave()) return;
     fileTopic = t;
+    fileSrc = src || null;
+    paintFilesMode();
     filesWin.hidden = false;
     // On a phone the tree is a drawer. Opened from the header, with no file to show yet, the
     // window would be an empty pane with the files behind a button — so the drawer starts open,
     // and picking a file closes it. Opened on a file (another panel's Edit), the file is the point.
     filesWin.classList.toggle('tree-open', !path);
-    filesTitle.textContent = 'Files';
+    filesTitle.textContent = fileSrc ? fileSrc.title : 'Files';
     filesWhere.textContent = '';
     filesCrumbs.innerHTML = '';
     filesSay('');
@@ -11003,6 +11381,8 @@ const SCRIPT = `
     if(filesWin.hidden) return;
     if(!fileConfirmLeave()) return;
     filesWin.hidden = true;
+    // What the editor saved shows on the settings page it was opened from.
+    if(fileSrc){ fileSrc = null; paintFilesMode(); instrLoad(true); }
     filesWin.classList.remove('tree-open');
     fileSeq++;
     fileView = null;
@@ -11024,6 +11404,10 @@ const SCRIPT = `
     // offer a control that silently does nothing.
     window.openFileEditor = openFileEditor;
     filesToggleBtn.addEventListener('click', function(){ setMenu(null, false); openFilesWindow(topic); });
+  }
+  // The window's own controls, for either of the two things it edits: a topic's files, and the
+  // instructions the settings page opens in it.
+  if(FILES_OK || INSTR_OK){
     filesTreeToggle.addEventListener('click', function(){ filesWin.classList.toggle('tree-open'); });
     $('files-close').addEventListener('click', closeFiles);
     filesWin.addEventListener('click', function(e){ if(e.target === filesWin) closeFiles(); });
@@ -11101,8 +11485,246 @@ const SCRIPT = `
    * only when the feature is on.
    */
   function openFileEditor(path){
-    if(filesWin.hidden || fileTopic !== topic) openFilesWindow(topic, path);
+    if(filesWin.hidden || fileTopic !== topic || fileSrc) openFilesWindow(topic, path);
     else openFile(path);
+  }
+
+  // ── Instructions ────────────────────────────────────────────────────────────
+  // The settings page's Instructions section, and the file window's second mode: the same editor,
+  // dirty mark, conflict dialog and save, pointed at the operator's instruction files instead of a
+  // topic's workspace (daemon/instructions-panel.ts). Off unless instructions.enabled: INSTR_OK
+  // leaves the section out, and its routes answer 404.
+  //
+  // In this mode the tree is a fixed list the daemon gave — the gateway's files, or the files one
+  // agent's harness references on its machine — and the window's file "paths" are ids into it
+  // (g:<name>, a:<path>). The page never sends a path of its own: a read or a save names the
+  // target, and the daemon checks it against what that harness reads now.
+  var instrData = null, instrBusy = false, instrFor = null;
+  var INSTR_LAYER = {common:'Every agent', claude:'Claude Code', codex:'Codex', opencode:'OpenCode',
+    agy:'Antigravity', codebuddy:'CodeBuddy', atomcode:'AtomCode'};
+
+  function instrFetch(url){
+    return fetch(url, {credentials:'same-origin'}).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
+    });
+  }
+
+  /** The list behind the settings section; force asks again (a new settings page, a closed editor). */
+  function instrLoad(force){
+    if(!INSTR_OK || instrBusy || (instrData && !force)) return;
+    instrBusy = true;
+    instrFetch('api/instructions').then(function(res){
+      instrBusy = false;
+      instrData = res.ok ? res.body : {error: (res.body && res.body.error) || 'The instructions could not be listed.'};
+      instrSection();
+    }, function(){
+      instrBusy = false;
+      instrData = {error:'Could not reach the daemon.'};
+      instrSection();
+    });
+  }
+
+  /**
+   * Put the section at the end of the settings list, or replace the one there. Appended rather than
+   * drawn by settingsScreen: the rows above are the daemon's /setting screen, and these are files.
+   */
+  function instrSection(){
+    if(!INSTR_OK || !settingsMsg || !settingsMsg.settings || settingsMsg.settings.level !== 'list') return;
+    if(instrFor !== settingsMsg.id){ instrFor = settingsMsg.id; instrLoad(true); }
+    var box = document.createElement('div');
+    box.innerHTML = instrHtml();
+    var sec = box.firstChild, old = settingsBody.querySelector('.instr-sec');
+    if(old) settingsBody.replaceChild(sec, old); else settingsBody.appendChild(sec);
+  }
+
+  function instrRow(attr, value, label, kind, hint, v, unset){
+    return '<button type="button" class="set-item set-open" ' + attr + '="' + text(value) + '">'
+      + '<div class="set-tx"><div class="set-label"><span>' + text(label) + '</span>'
+      + (kind ? '<span class="set-kind">' + text(kind) + '</span>' : '') + '</div>'
+      + (hint ? '<div class="set-hint">' + inl(hint) + '</div>' : '') + '</div>'
+      + (v ? '<span class="set-vv"><span class="set-v' + (unset ? ' unset' : '') + '">' + text(v) + '</span></span>' : '')
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
+  }
+
+  function instrHtml(){
+    var h = '<section class="set-sec instr-sec"><h3 class="set-group">Instructions</h3>', d = instrData;
+    if(!d) return h + '<p class="set-gnote">Loading…</p></section>';
+    if(d.error) return h + settingsNotice({tone:'error', text:d.error}) + '</section>';
+    h += '<p class="set-gnote">' + inl('What agents read before every conversation. These files are kept on the gateway, and a save places them on every machine at once.'
+      + (d.on ? '' : ' None is delivered yet: the first save creates \\x60' + d.dir + '\\x60.')) + '</p><div class="set-card">';
+    var g = d.global || [];
+    for(var i=0;i<g.length;i++){
+      var f = g[i];
+      h += instrRow('data-instr-global', f.name, INSTR_LAYER[f.layer] || f.layer, '',
+        f.agents && f.agents.length ? f.agents.join(', ') : 'No configured agent reads it', f.exists ? f.name : f.name + ' · not written', !f.exists);
+    }
+    h += '</div>';
+    var own = [], a = d.agents || [];
+    for(var j=0;j<a.length;j++) if(a[j].own) own.push(a[j]);
+    if(own.length){
+      h += '<h3 class="set-group">Each agent’s own</h3><p class="set-gnote">'
+        + inl('What an agent’s harness reads on its own machine besides these: its rules, the files they reference, what its config lists. Read and saved there; the gateway keeps no copy.')
+        + '</p><div class="set-card">';
+      for(var k=0;k<own.length;k++){
+        h += instrRow('data-instr-agent', own[k].id, own[k].id, own[k].host === 'local' ? 'this machine' : own[k].host, own[k].own, '', false);
+      }
+      h += '</div>';
+    }
+    return h + '</section>';
+  }
+
+  /** Open the file window on one list of instruction files, and on one of them when id is given. */
+  function instrOpen(src, id){
+    openFilesWindow(settingsTopic || topic, id, src);
+  }
+
+  /** The window's controls a topic's files have and instructions do not: create, rename, delete, search. */
+  function paintFilesMode(){
+    var on = Boolean(fileSrc);
+    filesWin.classList.toggle('instr', on);
+    $('files-tree-head').hidden = on;
+    $('files-search-row').hidden = on;
+    filesCrumbs.hidden = on;
+    filesRenameBtn.hidden = on;
+    filesDeleteBtn.hidden = on;
+    filesTreeToggle.title = on ? 'Instruction files' : 'Files';
+  }
+
+  /** The list one mode shows, keyed by the ids the window will name files by. */
+  function instrIndex(src, d){
+    src.files = {};
+    src.order = [];
+    var add = function(id, f){ src.files[id] = f; src.order.push(id); };
+    if(src.kind === 'global'){
+      src.root = d.dir || 'instructions';
+      src.head = d.on ? 'Saved on the gateway, and placed on every machine an agent that reads it is configured for.'
+        : 'Nothing is delivered yet. The first save creates ' + d.dir + '.';
+      var g = d.global || [];
+      for(var i=0;i<g.length;i++){
+        add('g:' + g[i].name, {q:'scope=global&name=' + encodeURIComponent(g[i].name), name:g[i].name, shown:g[i].name,
+          sub: INSTR_LAYER[g[i].layer] || g[i].layer, exists:g[i].exists, editable:true, depth:1});
+      }
+      return;
+    }
+    src.root = d.root || src.agent;
+    src.head = 'On ' + (d.host === 'local' ? 'this machine' : d.host) + ': ' + String(d.summary || '').replace(/\\x60/g, '') + '.'
+      + (d.rootState === 'managed' ? ' ' + d.root + ' is the gateway’s copy: a reference in it is added under Instructions.'
+        : d.rootState === 'missing' ? ' ' + d.root + ' does not exist there.' : '');
+    var r = d.refs || [];
+    for(var j=0;j<r.length;j++){
+      var kind = r[j].kind;
+      add('a:' + r[j].path, {q:'scope=agent&agent=' + encodeURIComponent(src.agent) + '&path=' + encodeURIComponent(r[j].path),
+        path:r[j].path, name:fxBase(r[j].shown), shown:r[j].shown, exists:r[j].exists, editable:r[j].editable,
+        note:r[j].note || '', depth:r[j].depth || 1, via:r[j].via || '',
+        sub: r[j].note || (kind === 'rule' ? 'rule' : kind === 'listed' ? 'listed in its config' : '')});
+    }
+  }
+
+  function instrTree(){
+    var src = fileSrc, h = src.head ? '<div class="fx-head">' + text(src.head) + '</div>' : '';
+    if(!src.order.length) h += '<div class="skills-empty">' + (src.kind === 'agent' ? 'No file is referenced.' : 'Nothing to list.') + '</div>';
+    for(var i=0;i<src.order.length;i++){
+      var id = src.order[i], f = src.files[id], pad = 6 + (f.depth - 1) * 12;
+      var tail = (f.sub ? '<span class="fx-sub">' + text(f.sub) + '</span>' : '') + (f.exists ? '' : '<span class="fx-tag">not written</span>');
+      if(!f.editable){
+        h += '<div class="fx-row fx-off" title="' + text(f.note) + '" style="padding-left:' + pad + 'px"><span class="fx-caret blank"></span>'
+          + IC.icon.note + '<span class="fx-name">' + text(f.shown) + '</span><span class="fx-sub">' + text(f.note) + '</span></div>';
+        continue;
+      }
+      h += '<button type="button" class="fx-row' + (filePath === id ? ' on' : '') + '" data-fx-file="' + text(id) + '" title="' + text(f.shown + (f.via ? ' ← ' + f.via : '')) + '" style="padding-left:' + pad + 'px">'
+        + '<span class="fx-caret blank"></span>' + IC.icon.note + '<span class="fx-name">' + text(src.kind === 'agent' ? f.shown : f.name) + '</span>' + tail + '</button>';
+    }
+    return h;
+  }
+
+  /** The window's reads, in this mode. list builds the tree; read answers for one id of it. */
+  function instrGet(route, params){
+    var src = fileSrc;
+    if(route === 'list'){
+      var url = src.kind === 'global' ? 'api/instructions' : 'api/instructions/refs?agent=' + encodeURIComponent(src.agent);
+      return instrFetch(url).then(function(res){
+        if(!res.ok) return res;
+        instrIndex(src, res.body);
+        return {ok:true, status:200, body:{path:src.root, entries:[]}};
+      });
+    }
+    var f = route === 'read' ? src.files[params.path] : null;
+    if(!f) return Promise.resolve({ok:false, status:400, body:{error: route === 'read' ? 'That file is not in the list any more. Refresh it.' : 'Not available for instructions.'}});
+    return instrFetch('api/instructions/read?' + f.q + (params.preview ? '&preview=1' : '')).then(function(res){
+      if(!res.ok) return res;
+      f.missing = Boolean(res.body.missing);
+      // The window keeps naming the file by its id; the path the daemon resolved is what it shows.
+      res.body.path = params.path;
+      res.body.rel = f.shown;
+      res.body.dir = '';
+      if(f.missing && !res.body.note) res.body.note = 'Not written yet. Saving creates it.';
+      else if(f.note && !res.body.note) res.body.note = f.note.charAt(0).toUpperCase() + f.note.slice(1) + '.';
+      return res;
+    });
+  }
+
+  /** The window's save, in this mode: the version it read, or "create" for a file not written yet. */
+  function instrPost(route, body){
+    var src = fileSrc, f = src && route === 'write' ? src.files[body.path] : null;
+    if(!f) return Promise.resolve({ok:false, status:400, body:{error:'Not available for instructions.'}});
+    var req = src.kind === 'global' ? {scope:'global', name:f.name} : {scope:'agent', agent:src.agent, path:f.path};
+    req.text = body.text;
+    if(body.force) req.force = true;
+    else if(f.missing) req.missing = true;
+    else {
+      if(body.mtimeMs !== undefined) req.mtimeMs = body.mtimeMs;
+      if(body.size !== undefined) req.size = body.size;
+      if(body.sha256) req.sha256 = body.sha256;
+    }
+    src.said = '';
+    return post('api/instructions/write', req, 1).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(r.ok){
+          f.missing = false;
+          f.exists = true;
+          src.said = instrDelivery(d.delivery, src);
+          if(fileSrc === src) paintTree();
+        }
+        return {ok:r.ok, status:r.status, body:d};
+      });
+    });
+  }
+
+  /** What the last save in this mode came to, appended to the window's "Saved" line. */
+  function instrSaid(){
+    return fileSrc && fileSrc.said ? ' ' + fileSrc.said : '';
+  }
+
+  /** Where a saved global file landed (InstructionsDelivery), as one or two sentences. */
+  function instrDelivery(list, src){
+    if(src.kind !== 'global') return src.agent + ' reads it when its next session starts.';
+    list = list || [];
+    if(!list.length) return 'No configured agent reads this file.';
+    var placed = [], other = [];
+    for(var i=0;i<list.length;i++){
+      var d = list[i], who = (d.agents || []).join(', ') + (d.host === 'local' ? '' : ' on ' + d.host);
+      if(d.outcome === 'linked' || d.outcome === 'relinked' || d.outcome === 'current') placed.push(who);
+      else if(d.outcome === 'removed' || d.outcome === 'absent') other.push('Nothing is left for ' + who + '.');
+      else if(d.outcome === 'occupied') other.push(who + ': ' + (d.link || 'its file') + ' is ' + (d.detail || 'its own') + ', left alone, so these do not reach it.');
+      else if(d.outcome === 'skipped') other.push(who + ': its harness has not run there yet, so nothing was placed.');
+      else if(d.outcome === 'unreachable') other.push(d.host + ' did not answer; it gets this when an agent next starts there.');
+      else if(d.outcome === 'off') other.push(who + ': this gateway places no instructions, so nothing was placed now.');
+      else other.push(who + ': ' + d.outcome + (d.detail ? ' (' + d.detail + ')' : '') + '.');
+    }
+    return (placed.length ? 'Placed for ' + placed.join('; ') + '; a session already running keeps what it read. ' : '') + other.join(' ');
+  }
+
+  if(INSTR_OK){
+    settingsBody.addEventListener('click', function(e){
+      if(!e.target.closest) return;
+      var g = e.target.closest('[data-instr-global]');
+      if(g) return instrOpen({kind:'global', title:'Instructions', files:{}, order:[]}, 'g:' + g.getAttribute('data-instr-global'));
+      var a = e.target.closest('[data-instr-agent]');
+      if(a){
+        var id = a.getAttribute('data-instr-agent');
+        instrOpen({kind:'agent', agent:id, title:id + ' · own instructions', files:{}, order:[]}, '');
+      }
+    });
   }
 
   // Grow to fit, and let the max-height in the stylesheet decide where to stop — it is stated
@@ -12390,7 +13012,8 @@ __GATE__
   </div>
   <!-- A scheduled task's own page: what its row folds away, the topics its runs opened, its runs,
        and the form that changes it. Filled from api/schedules/task; a save goes to
-       api/schedules/edit, which is fleetherd schedule edit with its rules. See openTaskPage. -->
+       api/schedules/edit, which is fleetherd schedule edit with its rules. See openTaskPage. The same
+       form registers a new task (api/schedules/add, schedule add's rules): see openNewTask. -->
   <div id="task-page" hidden role="dialog" aria-modal="true" aria-labelledby="task-title">
     <div id="task-box">
       <div id="task-bar">
@@ -12597,20 +13220,9 @@ __GATE__
     </div>
     <div id="typing" hidden>...</div>
     <div id="note"></div>
-    <!-- A window, not a mode: the bar is what makes minimize and close two different things.
-         The dash hides it and leaves the session connected; the cross ends the session, and is
-         rendered only where the daemon was given a way to do that. -->
-    <div id="term">
-      <div id="term-bar">
-        <span id="term-name" class="term-name"></span>
-        <button type="button" class="btn-icon" id="term-min" title="Minimize — the terminal keeps running">&#8211;</button>
-        <button type="button" class="btn-icon" id="term-end" title="End this terminal session" hidden>&times;</button>
-      </div>
-      <div id="term-frames"></div>
-    </div>
     <div id="bar">
-      <!-- The agent's live status. Inside #bar rather than above it so it goes away with the
-           composer in terminal mode, and so it reads as part of the place you type. -->
+      <!-- The agent's live status. Inside #bar rather than above it so it reads as part of the
+           place you type. -->
       <!-- The topic's machine cannot be reached (paintMachineNote). Beside the status line, for
            the same reason it is inside #bar: it is about what typing here will do. -->
       <!-- The daemon came back from a restart serving a different page than this one (checkBuild).
@@ -12661,6 +13273,21 @@ __GATE__
         </div>
       </form>
     </div>
+    <!-- The panel's divider, dragged like the side panel's. Only on screen while the panel is,
+         and never when the daemon serves no terminal at all: it is a control, not decoration. -->
+    <div id="term-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the terminal panel" aria-controls="term" title="Drag to resize · double-click for half the screen" tabindex="0"></div>
+    <!-- A panel, not a mode: the bar is what makes minimize and close two different things.
+         The dash hides it and leaves the session connected; the cross ends the session, and is
+         rendered only where the daemon was given a way to do that. Below the composer, so the
+         transcript and the place you type are both above it and neither is covered. -->
+    <div id="term">
+      <div id="term-bar">
+        <span id="term-name" class="term-name"></span>
+        <button type="button" class="btn-icon" id="term-min" title="Minimize — the terminal keeps running">&#8211;</button>
+        <button type="button" class="btn-icon" id="term-end" title="End this terminal session" hidden>&times;</button>
+      </div>
+      <div id="term-frames"></div>
+    </div>
   </section>
   <!-- The side panel: the same .panel as the sidebar, on the right. A column of its own on a wide
        screen and a drawer below 1024px; the stylesheet decides which of the two it is from the
@@ -12678,6 +13305,9 @@ __GATE__
       <!-- The Sessions tab's one bulk action, as the topic list has it beside its title. Shown only
            on that tab: it marks runs read, and over Tasks or Reviews it would name nothing listed. -->
       <button type="button" class="btn-icon" id="sched-read" title="Mark all read" aria-label="Mark all read" disabled hidden>${icon('done')}</button>
+      <!-- The Tasks tab's one action of its own: a new task, on the same form an edit uses
+           (openNewTask). Shown only there, as Mark all read is only on Sessions. -->
+      <button type="button" class="btn-icon" id="sched-new" title="New task" aria-label="New task" hidden>${icon('plus')}</button>
       <button type="button" class="btn-icon panel-close" id="schedules-close" title="Close (Esc)" aria-label="Close">&times;</button>
     </div>
     <div id="sched-subnav" class="sched-subnav" role="tablist" aria-label="Tasks and sessions">

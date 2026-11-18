@@ -91,6 +91,9 @@ describe('the settings screen', () => {
       'model.cc',
       'model.oc',
       'model.own',
+      'permissions.cc',
+      'permissions.oc',
+      'permissions.own',
       'delegation',
       'idle',
       'scope',
@@ -151,6 +154,9 @@ describe('the settings screen', () => {
       ['cc', 'cc', 'harness default', 'Default model'],
       ['oc', 'oc', 'opencode/big-pickle', 'Default model'],
       ['own', 'own', 'harness default', 'Default model'],
+      ['cc', 'cc', 'auto', 'Permissions'],
+      ['oc', 'oc', 'auto', 'Permissions'],
+      ['own', 'own', 'auto', 'Permissions'],
       ['Confirm sub-agent starts', undefined, 'on', 'Sub-agents'],
       ['Idle reclaim', undefined, '1h', 'Conversations'],
       ['Conversation scope', undefined, 'per_thread', 'Conversations'],
@@ -162,6 +168,7 @@ describe('the settings screen', () => {
     expect(screen.groups.map((g) => g.name)).toEqual([
       'Agents',
       'Default model',
+      'Permissions',
       'Sub-agents',
       'Conversations',
       'Replies',
@@ -171,8 +178,8 @@ describe('the settings screen', () => {
     // "Next session" is said once, for the group, rather than on every model row.
     expect(screen.groups[1]!.note).toContain('next session');
     expect(screen.rows[1]!.effectLabel).toBeUndefined();
-    expect(screen.rows[6]!.effectLabel).toBe('after restart');
-    expect(screen.rows[6]!.effectDetail).toContain('daemon restarts');
+    expect(screen.rows[9]!.effectLabel).toBe('after restart');
+    expect(screen.rows[9]!.effectDetail).toContain('daemon restarts');
     // The screen and the buttons are two views of one list: a tap must post the id the button
     // would have posted.
     expect(screen.rows.map((r) => r.buttonId)).toEqual(view.buttons.map((b) => b.id));
@@ -236,7 +243,8 @@ describe('the settings screen', () => {
     expect(agent.options.find((o) => o.current)?.label).toBe('cc · claude');
 
     // A model keeps its own screen; the scheduled tasks are a way somewhere else.
-    expect(byLabel.get('oc')!.control).toEqual({ kind: 'list' });
+    const ocModel = view.screen.rows.find((r) => r.group === 'Default model' && r.label === 'oc')!;
+    expect(ocModel.control).toEqual({ kind: 'list' });
     expect(byLabel.get('⏰ Scheduled tasks')!.control).toEqual({ kind: 'link' });
     // Every set id is distinct and resolves.
     const ids = view.screen.rows.flatMap((r) =>
@@ -409,6 +417,95 @@ describe("a pod agent's model row", () => {
     const c: SettingsContext = { boundAgent: 'cc', models: [], pods };
     const r = resolveSettingKey('model.oc@box', podCfg, c);
     expect(r.kind === 'row' && r.row.pod).toEqual({ model: 'opencode/big-pickle' });
+  });
+});
+
+describe("an agent's permission level", () => {
+  const CODEX: SettingsContext['modes'] = () => ({
+    kind: 'list',
+    options: [
+      { value: 'read-only', name: 'Read-only' },
+      { value: 'workspace-write', name: 'Workspace access' },
+      { value: 'agent', name: 'Auto review' },
+      { value: 'agent-full-access', name: 'Full access' },
+    ],
+  });
+  const withModes = (modes: SettingsContext['modes']): SettingsContext => ({ ...ctx, modes });
+
+  it('resolves every spelling of the key, a bare one to the agent answering here', () => {
+    const key = (k: string) => {
+      const r = resolveSettingKey(k, cfg, ctx);
+      return r.kind === 'row' ? settingKeyOf(r.row) : r.kind;
+    };
+    expect(key('permissions.cc')).toBe('permissions.cc');
+    expect(key('agents.cc.permissions')).toBe('permissions.cc');
+    expect(key('permissions')).toBe('permissions.oc');
+    expect(key('permission')).toBe('permissions.oc');
+    // The rest of a definition is still refused by name.
+    expect(key('agents.cc.env')).toBe('refused');
+    expect(resolveSettingKey('permissions.nope', cfg, ctx)).toMatchObject({ kind: 'refused' });
+  });
+
+  it('reads unset as auto on the screen, but as nothing stored', () => {
+    const r = row('permissions.cc');
+    expect(r).toMatchObject({ value: 'auto', effect: 'live', label: 'Permissions · cc' });
+    expect(readSettingValue(r, cfg)).toBeUndefined();
+    expect(settingLocation(r)).toEqual({ kind: 'agent', agentId: 'cc', key: 'permissions' });
+  });
+
+  it('offers the levels the harness has a mode for, each naming the mode it means', () => {
+    const options = settingOptions(row('permissions.cc'), cfg, withModes(CODEX));
+    expect(options.map((o) => o.raw)).toEqual(['ask', 'edits', 'auto', 'full']);
+    expect(options.find((o) => o.raw === 'ask')?.detail).toContain('(Read-only)');
+    expect(options.find((o) => o.raw === 'full')?.detail).toContain('(Full access)');
+  });
+
+  it('offers nothing while the modes are not known, so the row opens a screen that asks', () => {
+    expect(settingOptions(row('permissions.cc'), cfg, withModes(() => undefined))).toEqual([]);
+    expect(settingOptions(row('permissions.cc'), cfg, withModes(() => ({ kind: 'loading' })))).toEqual([]);
+    expect(settingTypedOnlyHint(row('permissions.cc'), cfg, withModes(() => ({ kind: 'loading' })))).toContain('Asking cc for its modes');
+    expect(settingTypedOnlyHint(row('permissions.cc'), cfg, withModes(() => ({ kind: 'error', reason: 'no login' })))).toContain(
+      'did not start'
+    );
+    expect(settingTypedOnlyHint(row('permissions.cc'), cfg, withModes(CODEX))).toBeUndefined();
+  });
+
+  it('refuses what is not a level, and a level the harness has no mode for', () => {
+    expect(parseSettingValue(row('permissions.cc'), 'yolo', cfg, ctx)).toMatchObject({ kind: 'invalid' });
+    expect(parseSettingValue(row('permissions.cc'), 'plan', cfg, withModes(CODEX))).toMatchObject({
+      kind: 'invalid',
+      reason: expect.stringContaining('Offered: ask, edits, auto, full'),
+    });
+    expect(parseSettingValue(row('permissions.cc'), 'Edits', cfg, withModes(CODEX))).toEqual({
+      kind: 'value',
+      value: 'edits',
+      display: 'edits',
+    });
+  });
+
+  it('takes a level while the modes are not known, saying what happens if the harness has none', () => {
+    expect(parseSettingValue(row('permissions.cc'), 'plan', cfg, withModes(() => undefined))).toMatchObject({
+      kind: 'value',
+      value: 'plan',
+      note: expect.stringContaining('its mode stays as it is'),
+    });
+  });
+
+  it('writes a pod agent to podPermissions, over the pod’s own', () => {
+    const podCfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      hosts: { box: { ssh: 'u@box' } },
+      agents: [
+        { id: 'cc', harness: 'claude' },
+        { id: 'oc@box', harness: 'opencode', host: 'box', permissions: 'ask' },
+      ],
+      routing: { default: 'cc' },
+      podPermissions: { 'oc@box': 'plan' },
+    });
+    const pods = new Map<string, string | undefined>([['oc@box', undefined]]);
+    const r = settingsRows(podCfg, pods).find((x) => x.id === 'permissions' && x.target === 'oc@box')!;
+    expect(settingLocation(r)).toEqual({ kind: 'path', path: ['podPermissions', 'oc@box'] });
+    expect(readSettingValue(r, podCfg)).toBe('plan');
   });
 });
 

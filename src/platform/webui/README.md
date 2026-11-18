@@ -599,16 +599,26 @@ place elsewhere, or "topic gone". The page follows the list: every poll answer g
 `taskPageFollow`, which closes it when the task is gone, redraws the view unless a tag is being typed,
 and reads the detail again when a run started or ended.
 
-**Edit** turns the view into a form of the fields `editable` lists — the daemon's reading of
-`schedule edit`'s rules (`daemon/schedule-panel.ts` panelTaskDetail), so a fixed session offers no
-directory or model and a daily task no one-shot time — with what a task *is* (its kind, session and
-target) said once below rather than shown as greyed fields. Save sends only what changed
-(`taskEditDiff`): an emptied directory or model as `null`, and a one-shot task's time again when its
-zone changed so the time is read in the new zone. Values are set on the elements after the markup is
-in, because a textarea drops a leading newline it is parsed with. A refusal is the service's own
-sentence in `#task-note`, with the form kept; Close, Cancel or Escape on a form with changes asks
-first. Tag edits and refusals of the row actions are said on the page when it is open for that task,
-since it covers the panel's own note.
+**Edit** turns the view into the task form, and **+** in the panel's head (Tasks tab only) opens
+the same form empty (`openNewTask`, filled from `GET api/schedules/form`). The form holds everything
+`schedule add` takes: what it runs (an agent prompt or a bash command), the session, the agent, the
+model, the machine a command runs on, the directory, the timeout, the time and zone, "Posts to" and
+the tags. Which fields are on screen follows the shape the form is set to, from `shapes` — core's
+`SHAPE_SETTINGS`, handed over rather than copied — so switching a task to a fixed session hides its
+directory and model, and a daily one hides the one-shot switch; a hidden field keeps what was typed
+in it but is not sent. "Posts to" lists this page's topics by title (`{topic}`) and "Another chat…",
+an id `fleetherd channels` prints (`{channel}`, with the other instances' places as suggestions);
+the room turns a topic into its lane before the daemon parses either with `parseTarget`, as
+`--channel` is. Save sends only what changed (`taskEditDiff`): an emptied directory or model as
+`null`, a one-shot task's time again when its zone changed so the time is read in the new zone, and,
+when the kind changed, what the new kind runs with (its text, agent and session, or its machine).
+A new task sends everything filled in. Nothing about what a value may be is checked on the page —
+a refusal is the service's own sentence in `#task-note`, with the form kept; the page only says so
+when "Another chat…" is empty or a timeout is not a length of time. Values are set on the elements
+after the markup is in, because a textarea drops a leading newline it is parsed with. Close, Cancel
+or Escape on a form with changes asks first (on a new task, once anything was typed). Tag edits and
+refusals of the row actions are said on the page when it is open for that task, since it covers the
+panel's own note.
 
 A group marked `pinned` is drawn as one always-visible row under the search instead of folding
 into the panel, and both bars use it for their state filter: Status here (Running, Active,
@@ -657,13 +667,15 @@ three-state.
 **Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the five
 operations (pause, resume, run, remove and `tags`); the daemon builds it in
 `daemon/schedule-panel.ts` from `ScheduleService`, the same
-service the agent's `schedule` commands and `/setting schedule` use, plus `detail(id)` and
-`edit(id, change)` for the task's page. Four routes carry it: `GET api/schedules`,
-`POST api/schedules/op` (`ScheduleOpRequestSchema`), `GET api/schedules/task?id=` and
+service the agent's `schedule` commands and `/setting schedule` use, plus `detail(id)`, `form()`,
+`add(task)` and `edit(id, change)` for the task's page. Six routes carry it: `GET api/schedules`,
+`POST api/schedules/op` (`ScheduleOpRequestSchema`), `GET api/schedules/task?id=`,
 `POST api/schedules/edit` (`ScheduleEditRequestSchema`: only the changed fields, each bounded in size,
-strict). An edit is `ScheduleService.editFromPanel` — `schedule edit`'s rules, with a typed directory
-read as an absolute path on the machine the task runs on and checked there, and the updated card
-posted to the conversation the task posts to. The task list pulls when the panel opens, after every action, and on a
+strict), `GET api/schedules/form` and `POST api/schedules/add` (`ScheduleAddRequestSchema`: the same
+fields, with a target). An edit is `ScheduleService.editFromPanel` and a new task
+`ScheduleService.addFromPanel` — `schedule edit`'s and `schedule add`'s rules, with a typed directory
+read as an absolute path on the machine the task runs on and checked there, and the card posted to
+the conversation the task posts to (and, for a move, to the one it left). The task list pulls when the panel opens, after every action, and on a
 timer while visible (5s while a run is in flight, 30s otherwise) — the daemon has no event for a
 run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
 arrives formatted in the task's own zone.
@@ -675,10 +687,14 @@ routes are `GET api/reviews` and `POST api/reviews/op` — the latter takes one 
 verb that starts, changes or undoes a review, because a review has no writer but the sweep. The list is pulled
 when the tab is selected and on the panel's timer while it is the visible one.
 
-**What it cannot do.** It does not create tasks. Creation is a sentence to an agent in a topic, and
-letting the page POST a prompt or a command would put a bash injection surface behind the login
-form. Deleting asks twice, like the chat menu, and a refusal from the daemon is shown as its own
-sentence rather than a generic failure.
+**Creating tasks.** The page used not to create tasks, on the reasoning that a page POSTing a
+prompt or a command would put a bash surface behind the login form. The edit route already took a
+command from the page (since 3.9.0), and the reasoning does not hold for either: whoever holds this page's
+session can ask an agent in any topic to run any command, which is invariant 1 of AGENTS.md — the
+login is the gate on running commands here, not the absence of a form. So creation goes through the
+same service, the same rules and the same card as an agent's `schedule add`, and the routes take
+only bounded, strict bodies. Deleting asks once, like deleting a topic, and a refusal from the daemon
+is shown as its own sentence rather than a generic failure.
 
 ## The skills page
 
@@ -817,7 +833,9 @@ what is on screen, with a `+` while the library goes further.
 
 **An opened conversation covers the topic; it does not replace it.** `openLib` reads it into
 `#lib-log`, a twin of `#log`, and `#chat.lib` swaps the two and the composer for a read-only bar,
-the way `#chat.term` swaps in the terminal. Decisions in it:
+the way `#chat.term` shows the terminal below them. A terminal that is open when a record is
+opened is parked rather than left painted over it — see
+[the terminal pane](#the-terminal-pane). Decisions in it:
 
 - **The same bubbles.** The daemon renders the read as WebMessages (`room.ts` historyMessages): the
   operator's prompt escaped and unrendered, as `record` posts it; a reply as markdown; consecutive
@@ -1598,9 +1616,13 @@ last — anything painted while it is up, including a message typed into the gap
 
 ## The terminal pane
 
-Off by default. Turned on, the chat header grows a `>_` button that opens a terminal **window**
-over the transcript — a shell in this machine, in which any coding-agent CLI can be run
-directly, TUI and all.
+Off by default. Turned on, the chat header grows a `>_` button that opens a terminal **panel** at
+the bottom of the conversation — a shell in this machine, in which any coding-agent CLI can be
+run directly, TUI and all. It opens at half the chat's height, clamped so the header, the composer
+and a few lines of transcript keep their room, with a divider above it: drag it (arrow keys work
+too, a double-click goes back to half) and the panel keeps that height, in `localStorage`, across
+a reload. The transcript and the composer stay on screen and usable throughout, which is the
+difference between this and the full-height window it used to be.
 
 **The daemon owns none of it.** It does not spawn a PTY and does not speak the terminal's
 protocol; it proxies, behind the session cookie, to a [`ttyd`](https://github.com/tsl0922/ttyd)
@@ -1621,9 +1643,9 @@ What the pane shows is whatever that ttyd was told to run. That is exactly why i
 CLI — and also why nothing in it reaches the conversation: no transcript, no reverse CLI, no
 topic history. The two share a topic id and nothing else.
 
-### A window per topic, and what its two buttons mean
+### A panel per topic, and what its two buttons mean
 
-The window belongs to a topic, not to the page. Its title bar carries exactly two controls, and
+The panel belongs to a topic, not to the page. Its title bar carries exactly two controls, and
 the whole design is in the difference between them:
 
 - **Minimize** hides it. The iframe stays mounted and its WebSocket stays up, so coming back is
@@ -1631,10 +1653,19 @@ the whole design is in the difference between them:
 - **Close** ends the session, after a confirmation. It is a server round trip, not a teardown,
   because dropping an iframe only hangs up on a shell that carries on without us.
 
-Switching topics therefore does not move one window around: each topic keeps its own, mounted
-and attached until it is closed. The alternative — a single window following whichever topic is
+Switching topics therefore does not move one panel around: each topic keeps its own, mounted
+and attached until it is closed. The alternative — a single panel following whichever topic is
 on screen — hangs up on the topic being left, which surprises (the terminal you minimized is
 gone) and makes the marker meaningless, since at most one topic could ever be lit.
+
+**Closed, the panel is parked — never `display:none`, and never `visibility` on an ancestor
+alone.** A frame with no layout box is one a browser may throttle, freeze or discard, and a
+discarded frame is a closed WebSocket; a parent's `visibility:hidden` is inherited, but the
+iframe's own rule says `visible` and wins. So `paintFrames` is the one place that decides:
+it toggles `on` on the current topic's frame, and parks the panel (`position:absolute` at its
+last pixel height, `visibility:hidden`, `inert`) when nothing should be showing it. That is why
+`openLib` and `closeLib` call it: a record from History is a second reason for the frame to be
+off, and it is not a CSS class on the panel.
 
 The marker itself is a `>_` glyph on the topic row, fed by `terminal-sessions.ts` counting the
 **live connections** this daemon is proxying. Read it as "a page is attached to this topic's
@@ -1784,6 +1815,34 @@ Every one answers 404 when the feature is off, and the page is told at render ti
 so a page older than the config has no button to press. A successful write is a log line naming
 the operator, the machine and the file.
 
+## The instruction editor
+
+Off by default (`platforms.<id>.instructions.enabled`). Turned on, the settings page ends with an
+**Instructions** section: the gateway's own files (`common.md` and one per harness layer that a
+configured agent reads, `daemon/instructions.ts`), then each agent whose harness reads files of its
+own. A row opens **the file window** in a second mode — the same editor, dirty mark, conflict
+dialog and save — whose tree is a fixed list instead of a directory, and which hides what makes no
+sense for one (new, rename, delete, search, breadcrumbs). `fileSrc` is that mode; `filesGet` and
+`filesPost` hand its requests to `instrGet`/`instrPost`, which is the whole of its reach into the
+window's code. Escape closes the editor alone, over the settings page it came from, and closing it
+asks the list again so a saved file shows as written.
+
+The page never sends a path of its own. It names a target: a global file by name, or an agent and
+a path it got from that agent's list — and the daemon (`daemon/instructions-panel.ts`) walks the
+harness's own rules again on that machine for every read and write and refuses a path not among
+them now. The window's "paths" are ids into the list (`g:<name>`, `a:<path>`).
+
+Saving a global file places the composed text at once on every machine an agent that reads it is
+configured for, and the answer says where it landed — a host that does not answer gets it at the
+next agent start there, as it always did; a save that would put any agent over the 32 KiB cap is
+refused before it is written. An agent's own file is written where it is, through
+`Workspace.writeFile` with the version check; the gateway keeps no copy.
+
+Routes: `GET /api/instructions` (the list), `GET /api/instructions/refs?agent=` (one agent's files,
+which reads its machine), `GET /api/instructions/read`, `POST /api/instructions/write`. All 404
+when the feature is off, whether or not a panel was handed over, and the page is told at render
+time (`INSTR_OK`).
+
 ## Security
 
 New trust boundary, so it is spelled out. The port binds every interface by default and what
@@ -1854,6 +1913,12 @@ is behind it is an agent with full tool access.
    statement `docs/web-ui.md` makes to the operator, and the reason this is not sold as a sandbox.
    Every save is version-checked and every write is logged. Do not add a write route that skips
    that check, or a page-side path rule standing in for the daemon's.
+11. **The instruction editor writes what every agent reads, and is off unless asked for.**
+   `platforms.<id>.instructions.enabled` puts the login secret in front of the standing
+   instructions of every agent on every platform and host — a change that is in force for sessions
+   nobody on this page is watching. It reaches only the gateway's own files by name, and on an
+   agent's machine only the files that agent's harness reads at that moment, re-derived by the
+   daemon for every request (AGENTS.md, invariant 10). Do not add a route that takes a free path.
 
 **Not solved here:** TLS (put a reverse proxy in front), and DNS rebinding — a `Host`
 allowlist would break the reverse-proxy deployment this is expected to run behind, so the
@@ -2265,7 +2330,10 @@ answer a switch made stale (dropped and asked again), an archive suggestion in R
 same with the window shut, a show re-opened after a switch interrupted it, two shows racing, a
 refresh held behind a switch, the refresh button turning a silent request into a manual one, a
 cache of the wrong shape or a malformed row, a daemon with no store keeping no cache, and a reload
-that starts from `aa_skills`. So is the settings page — the menu's quiet request, a
+that starts from `aa_skills`. So is the task form — **+** opening it from the daemon's defaults and Add sending `schedule add`'s
+fields, a refusal kept on the form, the fields following the kind and session it is switched to,
+a change of kind sending what the new kind runs with, and "Posts to" moving a task to another topic
+or an id typed in. So is the settings page — the menu's quiet request, a
 typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
 drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
 it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review
@@ -2291,6 +2359,10 @@ link following the list, every way back (Close, the Topics tab, a link out of th
 link), no seen mark and no paste or drop while covered, the phone drawer, nothing remembered over a
 reload, a failed read, and the daemon with no library at all. Sixteen mutations of page.ts, one per
 decision above, each fail a test there (`project-scripts/talkcode-history-tab/mutate.py`).
+
+The terminal panel is driven there too: it docks under the composer with the transcript still
+painted, a drag on its divider is the height it writes to `aa_term_h` and reads back on the next
+page, the arrow keys and a double-click move it, and a topic switch leaves the frame mounted.
 
 Four things about it that are not obvious:
 

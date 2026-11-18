@@ -47,6 +47,15 @@ type _EveryReasonListed = Exclude<TurnFailureReason, (typeof TURN_FAILURE_REASON
 const _everyReasonListed: _EveryReasonListed = true;
 void _everyReasonListed;
 
+/**
+ * The values of `agents[].permissions`, from most to least asked. What each one means — the session
+ * mode it puts the harness in, and whether the gateway puts the harness's requests to the person —
+ * is core/permission-levels.ts.
+ */
+export const PERMISSION_LEVELS = ['plan', 'ask', 'edits', 'auto', 'full'] as const;
+export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
+export const PermissionLevelSchema = z.enum(PERMISSION_LEVELS);
+
 /** Session scope: which agent session an inbound message belongs to (global default, overridable by route use.scope). */
 export const SessionScope = z.enum(['per_thread', 'per_channel', 'per_user', 'shared']);
 export type SessionScope = z.infer<typeof SessionScope>;
@@ -182,15 +191,22 @@ const AgentDefFields = z
       .strict()
       .optional(),
     /**
-     * How the daemon answers when the agent asks leave to run a tool (ACP
-     * `session/request_permission`). `auto`, the default, approves — what every agent has always
-     * had, with access.allowFrom as the only gate. `ask` puts the request to the user as buttons in
-     * the chat, and one nobody answers is declined with the agent told so (see agent-acp.ts
-     * answerPermission). Only matters for a harness that asks at all — measured 2026-10-28:
-     * claude-agent-acp 0.81.2 does in its default mode; codex-acp 2.3.0 (mode `agent`) and
-     * opencode 2.2.0 ran a file-writing command without asking.
+     * How much this agent may do without the person: a level (core/permission-levels.ts) that sets
+     * two things at once — the session mode the harness runs in (ACP `session/set_mode`, or the
+     * config option of category `mode`: `plan`, `acceptEdits`, `workspace-write`, …), and how the daemon answers when the
+     * agent asks leave to run a tool (ACP `session/request_permission`). `plan`, `ask` and `edits`
+     * put each request to the person as buttons in the chat, and one nobody answers is declined
+     * with the agent told so (see agent-acp.ts answerPermission); `auto` and `full` approve.
+     *
+     * Unset is what every agent had before the levels: the harness's own mode, untouched, and
+     * every request approved — access.allowFrom the only gate. Kept apart from an explicit `auto`,
+     * which puts the harness back in its standard mode, because an operator may have given the
+     * harness a default mode of its own (claude's `permissions.defaultMode`, a pinned
+     * `options.mode`) and nobody chose to override it.
+     *
+     * Settable from chat (`/setting permissions.<agent>`); see core/settings.ts for why that is safe.
      */
-    permissions: z.enum(['auto', 'ask']).default('auto'),
+    permissions: PermissionLevelSchema.optional(),
     /**
      * The `hosts:` entry this agent runs on; absent = this machine. Over there the gateway starts
      * the harness through fleetherd-remote (see remote/README.md), so `command`, `cwd`, `env` and
@@ -568,6 +584,21 @@ export const ConfigSchema = z
      */
     podModels: z
       .record(z.string().regex(/^[^@\s]+@[^@\s]+$/, 'a podModels key is an agent a pod declares, <id>@<host>'), z.string().min(1))
+      .optional(),
+
+    /**
+     * The permission level (`agents[].permissions`) of an agent a host's pod declares, set from the
+     * gateway: `<id>@<host>` → a level. Outranks that agent's `permissions:` in its pod.yaml.
+     * `/setting permissions.<id>@<host>` writes it.
+     *
+     * The gateway's to say for the reason `podModels` gives for the model: the level is how the
+     * gateway answers that agent's permission requests and which mode it asks the session for, both
+     * over ACP — nothing about how the host starts its programs. Folded in by config/pods.ts
+     * mergePodAgents the same way, and ignored (with a line saying so) for an agent config.yaml
+     * defines.
+     */
+    podPermissions: z
+      .record(z.string().regex(/^[^@\s]+@[^@\s]+$/, 'a podPermissions key is an agent a pod declares, <id>@<host>'), PermissionLevelSchema)
       .optional(),
 
     routing: z.object({

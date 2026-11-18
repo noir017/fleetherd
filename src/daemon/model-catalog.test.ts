@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseConfig, type AgentDef } from '../config/schema.js';
 import type { AgentFactory, AgentSession } from './agent.js';
-import type { ModelSelector } from '../types.js';
+import type { ModelSelector, SessionModeSelector } from '../types.js';
 import { ModelCatalog } from './model-catalog.js';
 
 /**
@@ -11,8 +11,10 @@ import { ModelCatalog } from './model-catalog.js';
  */
 
 const SELECTOR: ModelSelector = { current: 'a', options: [{ value: 'a', name: 'A' }, { value: 'b', name: 'B' }] };
+/** opencode 2.2.5's, as session/new reported it (2026-11-18). */
+const MODES: SessionModeSelector = { current: 'build', options: [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }] };
 
-function setup(opts: { selector?: ModelSelector; ensure?: () => Promise<void> } = {}) {
+function setup(opts: { selector?: ModelSelector; modes?: SessionModeSelector; ensure?: () => Promise<void> } = {}) {
   const cfg = parseConfig({
     platforms: { tg: { type: 'telegram', token: 't' } },
     agents: [{ id: 'oc', harness: 'opencode' }],
@@ -22,6 +24,7 @@ function setup(opts: { selector?: ModelSelector; ensure?: () => Promise<void> } 
   const created: string[] = [];
   const forgotten: string[] = [];
   let live: ModelSelector | undefined;
+  let liveModes: SessionModeSelector | undefined;
   let warmed = false;
   const agents: AgentFactory = {
     getOrCreate(id, agentId) {
@@ -32,6 +35,7 @@ function setup(opts: { selector?: ModelSelector; ensure?: () => Promise<void> } 
         abort: () => {},
         dispose: () => {},
         modelSelector: () => (warmed || !opts.ensure ? opts.selector : undefined),
+        permissionModes: () => (warmed || !opts.ensure ? opts.modes : undefined),
         ...(opts.ensure
           ? {
               ensureSession: async () => {
@@ -51,10 +55,19 @@ function setup(opts: { selector?: ModelSelector; ensure?: () => Promise<void> } 
     agents,
     defOf: (id) => cfg.agents.find((a) => a.id === id),
     liveSelector: () => live,
+    liveModes: () => liveModes,
     tokenFor: (sid) => `tok-${sid}`,
     forget: (sid) => forgotten.push(sid),
   });
-  return { cfg, catalog, sessions, created, forgotten, setLive: (s?: ModelSelector) => (live = s) };
+  return {
+    cfg,
+    catalog,
+    sessions,
+    created,
+    forgotten,
+    setLive: (s?: ModelSelector) => (live = s),
+    setLiveModes: (m?: SessionModeSelector) => (liveModes = m),
+  };
 }
 
 describe('ModelCatalog', () => {
@@ -108,6 +121,37 @@ describe('ModelCatalog', () => {
     t.cfg.agents[i] = { ...(t.cfg.agents[i] as AgentDef) };
     expect(t.catalog.get('oc')).toBeUndefined();
     expect(t.catalog.shouldAsk('oc')).toBe(true);
+  });
+
+  it('keeps the modes the same ask found, for the permission rows', async () => {
+    const t = setup({ selector: SELECTOR, modes: MODES, ensure: async () => {} });
+    expect(t.catalog.modes('oc')).toBeUndefined();
+    expect(t.catalog.shouldAskModes('oc')).toBe(true);
+    const asking = t.catalog.ask('oc');
+    expect(t.catalog.modes('oc')).toEqual({ kind: 'loading' });
+    await asking;
+    expect(t.catalog.modes('oc')).toEqual({ kind: 'list', options: MODES.options });
+    expect(t.catalog.shouldAskModes('oc')).toBe(false);
+    expect(t.created).toHaveLength(1);
+  });
+
+  it('answers modes from a live session first, and says "none" for a harness with no modes', async () => {
+    const live = setup();
+    live.setLiveModes(MODES);
+    expect(live.catalog.modes('oc')).toEqual({ kind: 'list', options: MODES.options });
+    expect(live.created).toEqual([]);
+
+    const none = setup({ selector: SELECTOR, ensure: async () => {} });
+    await none.catalog.ask('oc');
+    expect(none.catalog.modes('oc')).toEqual({ kind: 'none' });
+    expect(none.catalog.shouldAskModes('oc')).toBe(false);
+  });
+
+  it('asks again for modes that a list learned elsewhere did not carry', () => {
+    const t = setup();
+    t.catalog.note('oc', { kind: 'list', options: SELECTOR.options });
+    expect(t.catalog.shouldAsk('oc')).toBe(false);
+    expect(t.catalog.shouldAskModes('oc')).toBe(true);
   });
 
   it('knows no agent that is not configured', async () => {

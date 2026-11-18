@@ -10,7 +10,7 @@ import { loadConfig } from '../config/load.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession } from './agent.js';
-import type { ButtonInteraction, InboundMessage, MessageRef, ModelSelector, SettingsScreen } from '../types.js';
+import type { ButtonInteraction, InboundMessage, MessageRef, ModelSelector, SessionModeSelector, SettingsScreen } from '../types.js';
 
 /**
  * `/setting` end to end: both surfaces, the file it writes, and what actually changes in the
@@ -129,7 +129,18 @@ interface RigOptions {
   pod?: { model?: string; gateway?: string; agy?: boolean };
   /** Every session's warm-up fails with this (an agent that will not start). */
   ensureFails?: string;
+  /** The modes every session reports (permission rows); absent: sessions report none. */
+  modes?: SessionModeSelector;
 }
+
+/** opencode 2.2.5's modes, as session/new reported them (2026-11-18). */
+const OPENCODE_MODES: SessionModeSelector = {
+  current: 'build',
+  options: [
+    { value: 'build', name: 'Build' },
+    { value: 'plan', name: 'Plan' },
+  ],
+};
 
 /** A host entry and a pod declaring `oc` (and `ag` when asked for), as config.yaml and pods.json would hold them. */
 function writePod(pod: { model?: string; gateway?: string; agy?: boolean }): void {
@@ -181,6 +192,8 @@ function rig(opts: RigOptions = {}) {
   }> = [];
   const scheduled: number[] = [];
   const sessions = new Map<string, AgentSession>();
+  /** Every `applyPermissions` a session was asked for, by its conversation id. */
+  const applied: string[] = [];
 
   const selector: { value: ModelSelector | undefined } = {
     value: { current: 'opencode/big-pickle', options: [...MODELS] },
@@ -197,6 +210,8 @@ function rig(opts: RigOptions = {}) {
           dispose: () => {},
           modelSelector: () => (opts.slowModels ? undefined : selector.value),
           setModel: async (value: string) => value,
+          permissionModes: () => opts.modes,
+          applyPermissions: async () => void applied.push(conversationId),
           ...(opts.slowModels
             ? { ensureSession: () => new Promise<void>(() => {}) }
             : opts.ensureFails
@@ -313,7 +328,7 @@ function rig(opts: RigOptions = {}) {
   const ids = (prefix: string) => screen().buttons.filter((b) => b.id.startsWith(prefix)).map((b) => b.id);
 
   return {
-    send, click, replies, menu, screen, ids, scheduled, selector, sessions,
+    send, click, replies, menu, screen, ids, scheduled, selector, sessions, applied,
     sent, buttonSends, buttonEdits, cfg, daemon: d,
   };
 }
@@ -398,6 +413,7 @@ describe('writing a setting', () => {
     const store = new SettingsStore(cfg, {
       onIdleTimeout: () => undefined,
       onDelegationChanged: () => cleared++,
+      onPermissionsChanged: () => undefined,
     });
     const delegation = resolveSettingKey('delegation', cfg, ctx);
     if (delegation.kind !== 'row') throw new Error('expected a row');
@@ -638,7 +654,7 @@ describe('the button menu', () => {
     expect(r.buttonSends).toHaveLength(1);
     expect(r.replies()).toEqual([]); // the text surface must not also fire
     expect(r.menu().text).toContain('saved to config.yaml');
-    expect(r.ids('stg:')).toHaveLength(9); // agent + 2 models + 4 rows + auto review's 2
+    expect(r.ids('stg:')).toHaveLength(11); // agent + 2 models + 2 permissions + 4 rows + auto review's 2
   });
 
   it('labels each row with its current value', async () => {
@@ -683,7 +699,7 @@ describe('the button menu', () => {
   it('opens a setting on the same message, with a way back', async () => {
     const r = rig();
     await r.send('/setting');
-    await r.click(r.ids('stg:')[5]!); // scope
+    await r.click(r.ids('stg:')[7]!); // scope
     expect(r.buttonSends).toHaveLength(1); // edited, not reposted
     expect(r.buttonEdits).toHaveLength(1);
     expect(r.buttonEdits[0]!.messageId).toBe(MENU_MSG);
@@ -723,10 +739,10 @@ describe('the button menu', () => {
     const r = rig();
     const before = text();
     await r.send('/setting');
-    await r.click(r.ids('stg:')[5]!);
+    await r.click(r.ids('stg:')[7]!);
     await r.click(r.ids('stb:')[0]!);
     expect(r.screen().text).toContain('saved to config.yaml');
-    expect(r.ids('stg:')).toHaveLength(9);
+    expect(r.ids('stg:')).toHaveLength(11);
     expect(text()).toBe(before);
   });
 
@@ -745,7 +761,7 @@ describe('the button menu', () => {
     // Tapping the ● value writes nothing, and a level change would suggest otherwise.
     const r = rig();
     await r.send('/setting');
-    await r.click(r.ids('stg:')[5]!); // scope
+    await r.click(r.ids('stg:')[7]!); // scope
     await r.click(r.ids('stv:')[0]!); // per_thread — already the value
     expect(r.screen().text).toContain('already');
     expect(r.ids('stv:').length).toBeGreaterThan(0);
@@ -953,6 +969,97 @@ describe("a pod agent's default model", () => {
     if (again?.level !== 'values') throw new Error('no value screen');
     expect(again.head?.source).toContain('Set here, over box');
     expect(again.options.at(-1)?.label).toBe('opencode/big-pickle (pod.yaml)');
+  });
+});
+
+describe("an agent's permission level", () => {
+  const diskLevels = (): Array<{ id: string; permissions?: string }> =>
+    (onDisk()['agents'] ?? []) as Array<{ id: string; permissions?: string }>;
+
+  it('is written to agents[], applies to the running definition at once, and moves running sessions', async () => {
+    const r = textRig({ modes: OPENCODE_MODES });
+    await r.send('hello'); // oc answers here, so a session of it is running
+    expect(r.cfg.agents[0]!.permissions).toBeUndefined();
+    await r.send('/setting permissions.oc plan');
+    expect(r.replies().at(-1)).toContain('Permissions · oc → plan');
+    expect(r.replies().at(-1)).toContain('in effect now');
+    expect(diskLevels()).toEqual([
+      { id: 'oc', harness: 'opencode', permissions: 'plan' },
+      { id: 'cc', harness: 'claude', model: 'claude-opus-4-5' },
+    ]);
+    // The definition every session of oc holds — answerPermission reads it per request.
+    expect(r.cfg.agents[0]!.permissions).toBe('plan');
+    expect(r.applied).toEqual(['tg#c1#']);
+    // The comments and the template are where they were.
+    expect(text()).toContain('# hand-tuned: this box has 8GB');
+    expect(text()).toContain('token: ${TG_TOKEN}');
+  });
+
+  it('refuses a level the harness has no mode for, and writes nothing', async () => {
+    const r = textRig({ modes: OPENCODE_MODES });
+    await r.send('hello');
+    const before = text();
+    await r.send('/setting permissions.oc full');
+    expect(r.replies().at(-1)).toContain('has no mode for `full`');
+    expect(r.replies().at(-1)).toContain('Offered: plan, auto');
+    expect(text()).toBe(before);
+    expect(r.applied).toEqual([]);
+  });
+
+  it('lists the levels a cold agent offers, asking it for its modes first', async () => {
+    const r = textRig({ modes: OPENCODE_MODES });
+    await r.send('/setting permissions.cc');
+    const answer = r.replies().at(-1)!;
+    expect(answer).toContain('`/setting permissions.cc plan`');
+    expect(answer).toContain('`/setting permissions.cc auto`');
+    expect(answer).not.toContain('permissions.cc ask`');
+    expect(answer).toContain('(Plan)');
+  });
+
+  it('offers auto alone to a harness that reports no modes', async () => {
+    const r = textRig();
+    await r.send('/setting permissions.cc');
+    const answer = r.replies().at(-1)!;
+    expect(answer).toContain('`/setting permissions.cc auto`');
+    expect(answer).not.toContain('permissions.cc plan`');
+    expect(answer).toContain('reports no session modes');
+  });
+
+  it('writes a pod agent to podPermissions, over the pod’s own', async () => {
+    const r = textRig({ pod: {}, modes: OPENCODE_MODES });
+    await r.send('/setting permissions.oc@box plan');
+    expect(onDisk()['podPermissions']).toEqual({ 'oc@box': 'plan' });
+    expect(diskAgents().map((a) => a.id)).toEqual(['oc', 'cc']);
+    expect(r.cfg.agents.find((a) => a.id === 'oc@box')?.permissions).toBe('plan');
+    expect(loadConfig().agents.find((a) => a.id === 'oc@box')?.permissions).toBe('plan');
+  });
+
+  it('draws as its own screen until the modes are known, then as a choice on the list', async () => {
+    const r = rig({ caps: { settingsScreen: true }, modes: OPENCODE_MODES });
+    await r.send('/setting');
+    const list = r.menu().screen;
+    if (list?.level !== 'list') throw new Error('no list');
+    const row = list.rows.find((x) => x.group === 'Permissions' && x.target === 'cc')!;
+    expect(row.control).toEqual({ kind: 'list' });
+    await r.click(row.buttonId);
+    await drain();
+    const level = r.screen().screen;
+    if (level?.level !== 'values') throw new Error('no value screen');
+    expect(level.head?.label).toBe('Permissions');
+    expect(level.options.map((o) => [o.label, o.current])).toEqual([
+      ['plan', false],
+      ['auto', true],
+    ]);
+    await r.click(level.options[0]!.buttonId);
+    expect(r.cfg.agents[1]!.permissions).toBe('plan');
+    const after = r.screen().screen;
+    if (after?.level !== 'list') throw new Error('not back on the list');
+    const choice = after.rows.find((x) => x.group === 'Permissions' && x.target === 'cc')!.control;
+    expect(choice).toMatchObject({ kind: 'choice' });
+    if (choice.kind === 'choice') expect(choice.options.map((o) => [o.label, o.current])).toEqual([
+      ['plan', true],
+      ['auto', false],
+    ]);
   });
 });
 

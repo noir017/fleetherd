@@ -136,7 +136,7 @@ describe('ScheduleService.editFromPanel', () => {
     if (!built.ok) throw new Error(built.error);
     store.put(built.task);
     const config = parseConfig({
-      platforms: { web: { type: 'webui', token: 'w' } },
+      platforms: { web: { type: 'webui', token: 'w' }, tg: { type: 'telegram', token: 't' }, dc: { type: 'discord', token: 'd' } },
       hosts: { box: { ssh: 'u@box.example' } },
       agents: [
         { id: 'cc', harness: 'claude' },
@@ -144,18 +144,21 @@ describe('ScheduleService.editFromPanel', () => {
       ],
       routing: { default: 'cc' },
     });
-    const posted: Array<{ address: unknown; text: string }> = [];
+    const posted: Array<{ platform: string; address: unknown; text: string }> = [];
     const probes: Array<[string, string, string | undefined]> = [];
-    const web = {
-      capabilities: { maxMessageLength: 0, thread: true, standaloneThread: true },
+    const platform = (id: string, thread: boolean) => ({
+      capabilities: { maxMessageLength: 0, thread, standaloneThread: thread },
       measureRendered: (t: string) => t.length,
       sendMessage: async (address: unknown, text: string) => {
-        posted.push({ address, text });
+        posted.push({ platform: id, address, text });
         return { address, messageId: 'm' };
       },
-    };
+    });
+    const web = platform('web', true);
     const registry = {
       boundAgentOf: () => undefined,
+      // Every lane is a conversation of its own, keyed as the registry keys one.
+      conversationAt: (p: string, a: { channel: string; thread?: string }) => ({ key: `${p}#${a.channel}#${a.thread ?? ''}` }),
       laneFor: (key: string) => (key === 'web#main#t0' ? { platformId: 'web', address: { channel: 'main', thread: 't0' } } : undefined),
       scheduledModelProblem: async (agent: string, model: string, from: string | undefined) => {
         probes.push([agent, model, from]);
@@ -164,7 +167,10 @@ describe('ScheduleService.editFromPanel', () => {
     };
     const service = new ScheduleService(
       config,
-      new Map([['web', web]]) as unknown as ConstructorParameters<typeof ScheduleService>[1],
+      new Map([
+        ['web', web],
+        ['tg', platform('tg', false)],
+      ]) as unknown as ConstructorParameters<typeof ScheduleService>[1],
       registry as unknown as ConstructorParameters<typeof ScheduleService>[2],
       { now: () => NOW, schedule: () => () => {} },
       store,
@@ -182,6 +188,7 @@ describe('ScheduleService.editFromPanel', () => {
     expect(store.get('b2c3d4')!.run).toMatchObject({ kind: 'agent', prompt: 'brief me on CI' });
     expect(posted).toHaveLength(1);
     expect(posted[0]!.address).toEqual({ channel: 'main' });
+    expect(posted[0]!.platform).toBe('web');
     expect(posted[0]!.text).toContain('brief me on CI');
   });
 
@@ -238,9 +245,154 @@ describe('ScheduleService.editFromPanel', () => {
     const before = store.get('b2c3d4');
 
     await expect(service.editFromPanel('b2c3d4', { cron: 'not a cron' })).rejects.toThrow(/^--cron: /);
-    await expect(service.editFromPanel('b2c3d4', { bash: 'ls' })).rejects.toThrow(/edit does not change a task's kind/);
+    await expect(service.editFromPanel('b2c3d4', { prompt: 'x', bash: 'ls' })).rejects.toThrow(/at most one of --prompt/);
+    await expect(service.editFromPanel('b2c3d4', { model: 'm1' }, { platform: 'dc', address: { channel: 'c' } })).rejects.toThrow(
+      'platform instance "dc" is not running'
+    );
     await expect(service.editFromPanel('zzzz', { name: 'x' })).rejects.toThrow('no scheduled task #zzzz');
     expect(store.get('b2c3d4')).toBe(before);
     expect(posted).toEqual([]);
+  });
+
+  it('moves a task, and tells both the place it leaves and the one it now posts to', async () => {
+    const { service, store, posted } = panelFixture();
+
+    await service.editFromPanel('b2c3d4', { session: 'fixed' }, { platform: 'web', address: { channel: 'main', thread: 't9' } });
+    await new Promise((r) => setImmediate(r));
+
+    const task = store.get('b2c3d4')!;
+    expect(task.target).toEqual({ platform: 'web', channel: 'main', thread: 't9' });
+    expect(task.conversation).toBe('web#main#t9');
+    expect(task.expiresAt).toBe(NOW + 24 * 3_600_000);
+    expect(posted.map((p) => p.address)).toEqual([{ channel: 'main', thread: 't9' }, { channel: 'main' }]);
+  });
+
+  it('turns a prompt task into a command on another machine, checking the directory there', async () => {
+    const { service, store, dir } = panelFixture();
+    await service.editFromPanel('b2c3d4', { cwd: dir });
+
+    // The directory it keeps is the gateway's: it cannot go to box with it.
+    await expect(service.editFromPanel('b2c3d4', { bash: 'df -h', host: 'box' })).rejects.toThrow(
+      `this task runs on box after this edit, but keeps its directory ${dir}, a path on the gateway's machine`
+    );
+    await expect(service.editFromPanel('b2c3d4', { bash: 'df -h', host: 'nowhere' })).rejects.toThrow('unknown host "nowhere"; configured: box, gateway');
+    await service.editFromPanel('b2c3d4', { bash: 'df -h', host: 'box', cwd: null });
+    expect(store.get('b2c3d4')!.run).toEqual({ kind: 'bash', command: 'df -h', timeoutMs: 600_000, host: 'box' });
+    // And back: null is the gateway's machine.
+    await service.editFromPanel('b2c3d4', { host: null });
+    expect(store.get('b2c3d4')!.run).toEqual({ kind: 'bash', command: 'df -h', timeoutMs: 600_000 });
+  });
+});
+
+/**
+ * `addFromPanel` is `add` for a person on the task panel: buildTask's rules, the model check and
+ * the card, with no registering conversation to supply an agent, a directory or a machine.
+ */
+describe('ScheduleService.addFromPanel', () => {
+  function addFixture() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-panel-add-'));
+    dirs.push(dir);
+    const store = new ScheduleStore(path.join(dir, 'schedules.json'));
+    const config = parseConfig({
+      platforms: { web: { type: 'webui', token: 'w' }, tg: { type: 'telegram', token: 't' }, dc: { type: 'discord', token: 'd' } },
+      hosts: { box: { ssh: 'u@box.example' } },
+      agents: [
+        { id: 'cc', harness: 'claude' },
+        { id: 'remote', harness: 'claude', host: 'box' },
+      ],
+      routing: { default: 'cc' },
+    });
+    const posted: Array<{ platform: string; address: unknown; text: string }> = [];
+    const probes: Array<[string, string, string | undefined]> = [];
+    const platform = (id: string, thread: boolean) => ({
+      capabilities: { maxMessageLength: 0, thread, standaloneThread: thread },
+      measureRendered: (t: string) => t.length,
+      sendMessage: async (address: unknown, text: string) => {
+        posted.push({ platform: id, address, text });
+        return { address, messageId: 'm' };
+      },
+    });
+    const registry = {
+      boundAgentOf: () => undefined,
+      conversationAt: (p: string, a: { channel: string; thread?: string }) =>
+        a.thread === 'busy' ? { key: `${p}#${a.channel}#busy`, agent: 'remote' } : { key: `${p}#${a.channel}#${a.thread ?? ''}` },
+      laneFor: () => undefined,
+      scheduledModelProblem: async (agent: string, model: string, from: string | undefined) => {
+        probes.push([agent, model, from]);
+        return model === 'nope' ? 'unknown model "nope"; choose one of: m1' : undefined;
+      },
+    };
+    const service = new ScheduleService(
+      config,
+      new Map([
+        ['web', platform('web', true)],
+        ['tg', platform('tg', false)],
+      ]) as unknown as ConstructorParameters<typeof ScheduleService>[1],
+      registry as unknown as ConstructorParameters<typeof ScheduleService>[2],
+      { now: () => NOW, schedule: () => () => {} },
+      store,
+      path.join(dir, 'runs')
+    );
+    return { service, store, posted, probes, dir };
+  }
+  const WEB_T1 = { platform: 'web', address: { channel: 'main', thread: 't1' } };
+
+  it('registers a task for the conversation it posts to, and posts the card there only', async () => {
+    const { service, store, posted } = addFixture();
+
+    const task = await service.addFromPanel({ cron: '0 8 * * *', prompt: 'brief me', session: 'new', tags: ['CI'] }, WEB_T1);
+    await new Promise((r) => setImmediate(r));
+
+    expect(store.get(task.id)).toEqual(task);
+    // No caller: the routing agent, no directory inferred, and the target's conversation as its maker.
+    expect(task.run).toEqual({ kind: 'agent', agent: 'cc', prompt: 'brief me', session: 'new' });
+    expect(task.createdBy).toEqual({ conversation: 'web#main#t1', platform: 'web' });
+    expect(task.tags).toEqual(['ci']);
+    expect(task.when.tz).toBe(service.defaultZone());
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ platform: 'web', address: { channel: 'main', thread: 't1' } });
+    expect(posted[0]!.text).toContain('registered');
+  });
+
+  it("refuses what add refuses, in add's words, and stores nothing", async () => {
+    const { service, store, posted, probes } = addFixture();
+
+    await expect(service.addFromPanel({ cron: '0 8 * * *', prompt: 'x', session: 'daily' }, { platform: 'tg', address: { channel: '-100' } })).rejects.toThrow(
+      /needs a target that can open a topic/
+    );
+    await expect(service.addFromPanel({ cron: '0 8 * * *', prompt: 'x', session: 'fixed', agent: 'cc' }, { ...WEB_T1, address: { channel: 'main', thread: 'busy' } })).rejects.toThrow(
+      /answered by remote/
+    );
+    await expect(service.addFromPanel({ cron: '0 8 * * *', prompt: 'x' }, { platform: 'dc', address: { channel: 'c' } })).rejects.toThrow(
+      'platform instance "dc" is not running'
+    );
+    await expect(service.addFromPanel({ cron: '0 8 * * *', prompt: 'x', session: 'new', model: 'nope' }, WEB_T1)).rejects.toThrow('choose one of: m1');
+    expect(probes).toEqual([['cc', 'nope', undefined]]);
+    await expect(service.addFromPanel({ cron: '0 8 * * *', bash: 'ls', host: 'nowhere' }, WEB_T1)).rejects.toThrow('unknown host "nowhere"');
+    expect(store.list()).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+
+  it('reads a directory as a path on the machine the task runs on, and runs a command where it is told', async () => {
+    const { service, dir } = addFixture();
+
+    await expect(service.addFromPanel({ cron: '0 8 * * *', prompt: 'x', session: 'new', cwd: 'rel' }, WEB_T1)).rejects.toThrow(
+      `the directory has to be an absolute path on the gateway's machine; "rel" is not`
+    );
+    expect((await service.addFromPanel({ cron: '0 8 * * *', prompt: 'x', session: 'new', cwd: dir }, WEB_T1)).run.cwd).toBe(dir);
+    // On another machine it is checked there; with no link up, nothing is stored.
+    await expect(service.addFromPanel({ cron: '0 8 * * *', prompt: 'x', session: 'new', agent: 'remote', cwd: '/srv' }, WEB_T1)).rejects.toThrow(
+      'host "box" is not connected right now, so the directory /srv could not be checked'
+    );
+    await expect(service.addFromPanel({ cron: '0 3 * * *', bash: 'ls', host: 'box', cwd: '/srv' }, WEB_T1)).rejects.toThrow(
+      'host "box" is not connected right now'
+    );
+    expect((await service.addFromPanel({ cron: '0 3 * * *', bash: 'ls', host: 'box' }, WEB_T1)).run).toEqual({
+      kind: 'bash',
+      command: 'ls',
+      timeoutMs: 600_000,
+      host: 'box',
+    });
+    expect((await service.addFromPanel({ cron: '0 3 * * *', bash: 'ls', host: null }, WEB_T1)).run).toEqual({ kind: 'bash', command: 'ls', timeoutMs: 600_000 });
   });
 });

@@ -5,6 +5,103 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled tasks can be created in the web UI.** The task panel managed and edited tasks but
+  could not make one: every new task was a sentence to an agent in a topic, which costs a turn of
+  that agent and a round of "did it register what I meant" for something the person could have
+  filled in directly. The **+** in the panel's head opens the same form **Edit** uses, now holding
+  everything `schedule add` takes — what it runs (an agent prompt or a bash command), the session,
+  the agent, the model, the machine a command runs on, the directory, the timeout, the time and
+  zone, where it posts (a topic of the page by name, or any id `fleetherd channels` prints) and the
+  tags. It goes through the same service and rules as `schedule add`, so a refusal is the CLI's
+  sentence, and the conversation the task posts to gets the same card. The page used not to create
+  tasks so as not to put a command form behind the login, but the edit form already took commands,
+  and whoever holds the page can ask an agent to run any command anyway: the login is the gate.
+- **A permission level per agent, settable from the web UI's settings page.** `permissions` was
+  `auto` or `ask`, and `ask` only changed what the gateway did with requests the harness chose to
+  make — on Codex, which asked for almost nothing in its standard mode, it changed nothing at all.
+  How much an agent may do without you is decided in two places, the harness's session mode (what
+  it asks about) and the gateway (what becomes of what it asks), so a level now sets both: `plan`,
+  `ask` and `edits` put requests to you as buttons, `auto` and `full` approve, and each puts the
+  harness in the mode that means it — `read-only` / `workspace-write` / `agent-full-access` on
+  Codex, `plan` / `default` / `acceptEdits` / `bypassPermissions` on Claude Code and CodeBuddy,
+  `plan` / `build` on OpenCode — through `session/set_mode`, or the `mode` config option where a
+  harness has only that. Only the levels a harness reports a mode for are offered, read off a
+  running session the way a model list is. The settings page has a Permissions row per agent, and
+  `/setting permissions.<agent> <level>` does the same anywhere; a change moves running sessions to
+  the new mode at once, and a pod's agent is written to `podPermissions`. Unset keeps what every
+  agent had: everything approved, the harness's own mode untouched. agy's modes are not used: they
+  could not be measured, and its `default` wrote files without asking when last measured.
+- **The web UI's settings page edits the instructions agents read.** The files in
+  `<configDir>/instructions/` had to be edited on the gateway's disk, and each agent's own rules on
+  the machine it runs on — over ssh, by hand, with nothing to say whether the edit had reached the
+  hosts. With `platforms.<id>.instructions.enabled`, the settings page ends with an Instructions
+  section: `common.md` and each harness's file open in the file window's editor, and a save places
+  the text on every machine at once and says where it went (a host that does not answer gets it at
+  its next agent start, as before), refusing a save that would put an agent over the 32 KiB cap.
+  Below them, each agent's own files on its machine — Claude Code's and CodeBuddy's `@path`
+  references and rules directories, Antigravity's standalone files, rules and `@[label](path)`
+  includes, the files OpenCode's `instructions` lists, Codex's `AGENTS.override.md` — found by each
+  harness's own rules, measured rather than read from docs, and written where they are. Off by
+  default: with it on, the web UI's login can change what every agent reads on every platform. The
+  page never names a path; the daemon works out what each harness reads again for every read and
+  write, every save is version-checked like the file window's, and every write is logged.
+
+### Changed
+
+- **An edit can change what a task is, how it runs and where it posts.** `schedule edit` refused
+  prompt ↔ bash, `--session` and `--channel` with "`rm` it and add a new one", which threw away the
+  task's id, its tags and its run history — the record of how it had been going — for a change of
+  mode or of room. Now `--prompt` turns a bash task into a prompt task, `--bash` the reverse,
+  `--session` changes the mode and `--channel` moves it, from the CLI, the native tool and the web
+  UI's form alike, through the one rule `schedule add` uses. The id, tags, run count, history and
+  last result stay; a setting the new shape has no place for is left behind (a task turned into a
+  fixed session runs in its topic's directory and model); a task that becomes a fixed session gets
+  24 hours from the edit, as a new one would, while one that stays in its conversation keeps its
+  window. A moved task's card goes to the conversation it left as well as the one it now posts to.
+- **A bash task's machine can be chosen.** It ran where the agent that registered it did, and
+  `--host` was refused for it, so a command could not be moved off a host or registered for one
+  from elsewhere. `--host <id>` on a bash task is now the machine that runs it, on `add` and `edit`,
+  with its directory checked there; `--host gateway` names the gateway's own machine.
+- **A scheduled run asks too.** Under `ask` its permission requests were approved, since nobody
+  watches a scheduled run — but an agent can schedule its own prompts, so an agent set to ask could
+  approve itself by asking later. A level that asks now puts a scheduled run's requests to you like
+  any other turn's, declined if nobody answers within the hour.
+- **`permissions: ask` on Codex now asks.** It puts Codex in `read-only`, which asks before every
+  edit and command, where it used to leave it in `agent`, whose own reviewer answered instead.
+- **The web UI's terminal is a panel under the conversation, not a window over it.** Opening it
+  used to swap out the transcript and the composer, so reading what the agent had said while a
+  command ran meant minimizing, and going back to the chat meant losing sight of the terminal.
+  It now docks at the bottom of the chat at half its height, with a divider above it: drag the
+  divider (or use the arrow keys; a double-click goes back to half) and the panel keeps that
+  height, in the browser, across a reload. The transcript and the composer stay on screen and
+  usable the whole time, and on a phone the divider's strip is 20px tall instead of 9px, so a
+  finger can grab it.
+
+### Fixed
+
+- **A permission request shows what it will change, not only the tool's name.** With
+  `permissions: ask`, an edit arrived as a card reading `Edit src/app.ts` and nothing else: the
+  diff the agent had sent with the request was dropped before the card was drawn, so approving it
+  was a decision about a filename. The card now carries the change under the title — a unified
+  diff for an edit or a write, or the text a write will put in the file, bounded to a preview that
+  says how much it left out. CodeBuddy Code sends no title and no kind, so its Write used to reach
+  the chat as a bare path; the tool's name now comes from `_meta` when the harness names it, and
+  otherwise from the arguments themselves — a `file_path` beside the content it will write is a
+  write — so the card reads `Write: <path>` with the content beneath. A request to leave plan mode
+  now says `Exit plan mode` and carries the plan the user is being asked to approve, where it used
+  to read `ExitPlanMode` or the raw `{"allowedPrompts":…}` JSON. A run of three backticks in that
+  content is shown as two, so a file's own fence cannot end the bubble's code block.
+- **A panel that was not on screen no longer looks like a dropped terminal connection.** It was
+  hidden with `display:none`, which takes the iframe's box away — and a frame with no box is one
+  a browser may throttle, freeze or throw away, which closes its WebSocket: the terminal then
+  comes back as ttyd's reconnect and a redraw, or stays dead, instead of being the shell that
+  was running. Closed — and while a record from History covers the chat — the panel is now
+  parked: out of the flex flow at the size it had, invisible and `inert`. The frame keeps its
+  box and its socket, so switching away and back is the same terminal, with no reconnect and no
+  redraw.
+
 ## [3.11.0] - 2026-11-18
 
 ### Added

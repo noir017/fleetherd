@@ -55,6 +55,7 @@ conversation, not part of its name — see [`daemon/README.md`](../daemon/README
 | `command-translate.ts` | The generic slash vocabulary and its per-harness translation |
 | `skills-catalog.ts` | `/skills`: the bound agent's own commands as text |
 | `settings.ts` | `/setting` as data: which config.yaml fields are editable, what they accept, when a change lands |
+| `permission-levels.ts` | `agents[].permissions` as data: what each level asks of the gateway and which harness mode means it |
 | `model-menu.ts` | `/model` as data: paging, labels, button ids, matching, and every string it says |
 | `effort-menu.ts` | `/effort` as data: the one-page level menu, prefix matching, and the per-harness "no levels" answers |
 | `workdir-menu.ts` | `/cd` as data: the same shape, for the directory a conversation works in |
@@ -155,11 +156,19 @@ running half. `buildTask` turns `schedule add` into a task or into a sentence na
 the fix (the reader is an agent that retries with whatever it is told). `editTask` changes an
 existing one by merging it with what was given and running the result through the same `buildTask`
 — so the rules are add's, word for word — then putting back what an edit must not touch: the id,
-`createdAt`, the run count, the last result, the state and a fixed-session task's original 24 h
-window. A changed time rule resets `lastPlannedAt` to now, so an edit never catches up a run that
-never existed; an unchanged one keeps it, so a rename cannot swallow a due run. A daily task whose
-agent or directory changes drops today's `daySession`, because the topic keeps its agent: the next
-run opens a new topic for the rest of the day. `decide` is the whole
+`createdAt`, the tags, the run count, the history, the last result and the state. An edit may change
+what a task IS: `--prompt` on a bash task, `--bash` on a prompt task, `--session`, and the target
+(the context's, as for add). What the task had carries over only where its new shape keeps a place
+for it — `SHAPE_SETTINGS`, the table of which settings each of bash/fixed/new/daily keeps, checked
+against `buildTask` setting by setting in the tests and handed to the web UI's form so it shows the
+same fields. A fixed-session task keeps its original 24 h window only while it stays a fixed session
+in the same conversation; one that becomes fixed (from another mode, or moved to another
+conversation) gets add's window from the edit, and one that stops being fixed has none. A changed
+time rule resets `lastPlannedAt` to now, so an edit never catches up a run that never existed; an
+unchanged one keeps it — a change of kind or target included — so an edit cannot swallow a due run.
+A daily task whose agent, directory or target changes, or that stops being daily, drops today's
+`daySession`, because the topic keeps its agent and was opened under the old target: the next run
+opens a new topic for the rest of the day. `decide` is the whole
 timing policy: the next planned time strictly after the last one handled, catch-up to the
 LATEST missed time within an hour, a fixed-session window of 24 h. Times are computed with
 [croner](https://github.com/hexagon/croner) (MIT, no dependencies, time-zone and DST aware) given
@@ -174,7 +183,9 @@ after midnight still joins the day it was meant for.
 
 `--model` is accepted only for a new- or daily-session task: the model belongs to the
 conversations the task opens, not to the person's topic a fixed-session task runs in, so
-`buildTask` refuses it there (and on a bash task, which has no model). `describeRun` and
+`buildTask` refuses it there (and on a bash task, which has no model). A bash task's `--host` is the
+machine it runs on (by default the registering agent's); `null` — `--host gateway` — is the gateway's
+own machine. `describeRun` and
 `taskView` carry it, so the card, the list, the panel and `schedule show` say what the run will
 use.
 
@@ -705,6 +716,7 @@ The editable set is deliberately narrow (`model` expands to one row per configur
 |---|---|---|---|
 | `agent` | `routing.default` | a configured agent id | **now** — `resolveAgent` re-reads it per message |
 | `model` / `model.<agent>` | `agents[<id>].model` | the agent's reported list, any name, or `-` to clear | **next agent session** — the value is read at spawn |
+| `permissions` / `permissions.<agent>` | `agents[<id>].permissions` (`podPermissions` for a pod's) | the levels its harness has a mode for | **now** — the runtime reads the level per request, and `onPermissionsChanged` moves running sessions to its mode |
 | `delegation` | `delegation.confirm` | `on` / `first` / `off` | **now** — read per `task-new`; `first` asks once per agent per conversation and keeps that in memory, `off` starts each sub-task at once and posts a card without buttons; both only in a conversation with no parent |
 | `idle` | `session.idleTimeoutMs` | `off`, `<n>m`, `<n>h` | **now** — the sweeper is re-armed |
 | `scope` | `session.scope` | the four `SessionScope` values | **on restart** — file only |
@@ -720,8 +732,10 @@ re-identify every existing conversation: the next message in a topic would land 
 new one with no context, while the old agent child sat resident until reclaim. Writing the
 durable answer and saying "on restart" is the honest version.
 
-`model` is the only per-target setting, and its option list has a condition worth
-remembering: a model list exists only on a **live ACP session**, and a conversation has at
+`model` and `permissions` are the per-target settings. A permission row's levels come from the
+agent's session modes, asked for by the same `ModelCatalog` probe as a model list; until they are
+known the row has no options, so it is drawn as a screen of its own that asks. The model's option
+list has a condition worth remembering: a model list exists only on a **live ACP session**, and a conversation has at
 most one — so buttons are offered for the agent answering *here*, and any other agent's
 model is set by typing the name. The empty case gets a sentence naming which condition is
 missing (`settingTypedOnlyHint`), never a blank menu. An unrecognized name is **accepted**

@@ -215,11 +215,19 @@ export type ElicitAnswer =
 
 /**
  * An agent asking leave to run a tool (ACP `session/request_permission`), as the user is shown it.
- * Only put to the user for an agent configured `permissions: ask`.
+ * Only put to the user for an agent whose permission level asks (`plan`, `ask`, `edits`;
+ * core/permission-levels.ts).
  */
 export interface AgentPermissionRequest {
   /** What the agent wants to do, in its own words — the tool call's title (`touch notes.txt`). */
   title: string;
+  /**
+   * What the tool will change, beyond the one-line title: the diff of an edit, the text a write
+   * will put in the file. Absent when the request carries nothing more than its title (a shell
+   * command, whose title already IS the command). Approving a change the user cannot see is not
+   * a decision, so this rides under the title rather than being left in the ACP frame.
+   */
+  detail?: string;
   /** The choices the agent offered, in its order. `label` is the button; `optionId` goes back. */
   options: Array<{ optionId: string; label: string }>;
 }
@@ -236,8 +244,6 @@ export type PermissionAnswer =
   | { kind: 'unanswered'; waitedMs: number }
   /** It could not be put to anyone (`why` says why: a platform without buttons, no lane, …). */
   | { kind: 'unavailable'; why: string }
-  /** Nobody is there to ask by design — a scheduled run: answer as `permissions: auto` would. */
-  | { kind: 'unattended' }
   /** Called off with its turn (`/stop`, `/new`). */
   | { kind: 'cancelled' };
 
@@ -377,6 +383,18 @@ export interface EffortSelector {
   /** The level this session is on right now. */
   current?: string;
   /** Selectable levels with the display names the harness gave them. */
+  options: Array<{ value: string; name: string }>;
+}
+
+/**
+ * A session's modes (the ACP config option in the `mode` category): what the harness offers to
+ * run in, by its own ids — `plan`, `acceptEdits`, `workspace-write`. Read for the permission
+ * levels a settings screen can offer an agent (core/permission-levels.ts).
+ */
+export interface SessionModeSelector {
+  /** The mode the session is in right now. */
+  current?: string;
+  /** Selectable modes with the display names the harness gave them. */
   options: Array<{ value: string; name: string }>;
 }
 

@@ -10,9 +10,11 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import type {
   FilesPanel,
+  InstructionsPanel,
   ReviewPanelEntry,
   SchedulePanel,
   SchedulePanelEdit,
+  SchedulePanelFormContext,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
   SkillPanelEntry,
@@ -1702,15 +1704,25 @@ describe('webui server: traffic', () => {
       detail: 'summarise the failures',
       kind: 'agent',
     };
-    const NO_DETAIL: Pick<SchedulePanel, 'detail' | 'edit'> = {
+    const FORM: SchedulePanelFormContext = {
+      agents: ['cc'],
+      agentHosts: {},
+      hosts: ['box'],
+      channels: [{ id: 'tg:-100/7', title: 'ops chat' }],
+      shapes: { bash: ['cwd', 'host', 'timeout', 'at'], fixed: ['agent', 'at'], new: ['agent', 'model', 'cwd', 'at'], daily: ['agent', 'model', 'cwd'] },
+      tz: 'Asia/Shanghai',
+      agent: 'cc',
+    };
+    const NO_DETAIL: Pick<SchedulePanel, 'detail' | 'edit' | 'add' | 'form'> = {
       detail: () => undefined,
       edit: async () => ({ ok: false, error: 'not in this test' }),
+      add: async () => ({ ok: false, error: 'not in this test' }),
+      form: () => FORM,
     };
     const page: SchedulePanelTaskDetail = {
+      ...FORM,
       task,
-      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'summarise the failures', agent: 'cc', session: 'fixed' },
-      editable: ['name', 'cron', 'at', 'tz', 'prompt', 'agent'],
-      agents: ['cc'],
+      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'summarise the failures', agent: 'cc', session: 'fixed', target: 'webui:main/a1b2c3d4' },
       runs: [{ at: 1, atText: '2026-11-04 08:00', status: 'ok', topic: 'a1b2c3d4' }],
     };
 
@@ -1854,12 +1866,66 @@ describe('webui server: traffic', () => {
       expect(refused.status).toBe(400);
       expect(await refused.json()).toEqual({ ok: false, error: '--cron: invalid' });
 
+      // What a task is, its session, its machine and where it posts travel too; a target naming a
+      // place elsewhere goes as its id, for the daemon to read the way --channel is read.
+      refuse = false;
+      const moved = await post({ id: 'a1b2c3', edit: { command: 'df -h', host: null, session: 'new', target: { channel: 'tg:-100/7' }, tags: ['ci'] } });
+      expect(moved.status).toBe(200);
+      expect(calls.at(-1)).toEqual({ id: 'a1b2c3', edit: { command: 'df -h', host: null, session: 'new', target: 'tg:-100/7', tags: ['ci'] } });
+
       // Nothing the form cannot send reaches the daemon: an empty edit, a field it has no input
-      // for (the session and the target are what a task IS), a wrong type.
-      for (const bad of [{ id: 'a1b2c3', edit: {} }, { id: 'a1b2c3', edit: { session: 'new' } }, { id: 'a1b2c3', edit: { timeoutMs: '10m' } }, { id: 'a1b2c3', edit: { name: 'x' }, extra: 1 }]) {
+      // for, a session that is not one, a target of neither shape, a wrong type.
+      for (const bad of [
+        { id: 'a1b2c3', edit: {} },
+        { id: 'a1b2c3', edit: { kind: 'bash' } },
+        { id: 'a1b2c3', edit: { session: 'forever' } },
+        { id: 'a1b2c3', edit: { target: 'tg:-100/7' } },
+        { id: 'a1b2c3', edit: { target: { topic: '../x' } } },
+        { id: 'a1b2c3', edit: { timeoutMs: '10m' } },
+        { id: 'a1b2c3', edit: { name: 'x' }, extra: 1 },
+      ]) {
         expect((await post(bad)).status).toBe(400);
       }
-      expect(calls).toHaveLength(2);
+      expect(calls).toHaveLength(3);
+    });
+
+    it('offers the new-task form, and carries a new task through with its target, or the refusal in add\'s words', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      expect((await fetch(`${base}/api/schedules/form`, { headers: { cookie } })).status).toBe(404);
+      const adds: unknown[] = [];
+      let refuse = false;
+      room.useSchedulePanel({
+        ...NO_DETAIL,
+        list: () => [task],
+        op: () => ({ ok: true, tasks: [task] }),
+        add: async (input) => {
+          adds.push(input);
+          return refuse ? { ok: false, error: 'give exactly one of --cron <expr> or --at <time>' } : { ok: true, detail: page, tasks: [task] };
+        },
+      });
+      const form = await fetch(`${base}/api/schedules/form`, { headers: { cookie } });
+      expect(form.status).toBe(200);
+      expect(await form.json()).toEqual({ ok: true, form: FORM });
+
+      const post = (body: unknown): Promise<Response> =>
+        fetch(`${base}/api/schedules/add`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
+      const ok = await post({ task: { cron: '0 8 * * *', prompt: 'brief me', session: 'new', target: { channel: 'tg:-100/7' } } });
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toEqual({ ok: true, detail: page, tasks: [task] });
+      expect(adds).toEqual([{ cron: '0 8 * * *', prompt: 'brief me', session: 'new', target: 'tg:-100/7' }]);
+
+      refuse = true;
+      const refused = await post({ task: { prompt: 'x', target: { channel: 'tg:-100/7' } } });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ ok: false, error: 'give exactly one of --cron <expr> or --at <time>' });
+      // A topic the page does not have is refused by the room, before the daemon is asked; a body
+      // with no target, or with a field the form has no input for, never reaches either.
+      const lost = await post({ task: { prompt: 'x', cron: '0 8 * * *', target: { topic: 'ffffffff' } } });
+      expect(lost.status).toBe(400);
+      expect((await post({ task: { prompt: 'x', cron: '0 8 * * *' } })).status).toBe(400);
+      expect((await post({ task: { prompt: 'x', target: { channel: 'tg:1' }, id: 'zz' } })).status).toBe(400);
+      expect(adds).toHaveLength(2);
     });
 
     it('is behind the session like every other route', async () => {
@@ -1872,6 +1938,13 @@ describe('webui server: traffic', () => {
         body: JSON.stringify({ id: 'a1b2c3', edit: { name: 'x' } }),
       });
       expect(edit.status).toBe(401);
+      expect((await fetch(`${base}/api/schedules/form`)).status).toBe(401);
+      const add = await fetch(`${base}/api/schedules/add`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ task: { prompt: 'x', cron: '0 8 * * *', target: { channel: 'tg:1' } } }),
+      });
+      expect(add.status).toBe(401);
       const res = await fetch(`${base}/api/schedules/op`, {
         method: 'POST',
         headers: JSON_HEADERS,
@@ -2820,6 +2893,105 @@ describe('webui server: the file window', () => {
     const on = await boot({ files: { enabled: true, roots: [] } });
     const onPage = await fetch(`${on.base}/`).then((r) => r.text());
     expect(onPage).toContain('var FILES_OK = true;');
+  });
+});
+
+describe('webui server: the instruction editor', () => {
+  const post = (base: string, cookie: string, route: string, body: unknown) =>
+    fetch(`${base}${route}`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
+
+  /** The routes' side only: the daemon's own panel is tested in daemon/instructions-panel.test.ts. */
+  function fakePanel(): { panel: InstructionsPanel; seen: string[] } {
+    const seen: string[] = [];
+    const panel: InstructionsPanel = {
+      async list() {
+        seen.push('list');
+        return { dir: '/c/instructions', on: true, global: [{ name: 'common.md', layer: 'common', exists: true, size: 3, agents: ['cc'] }], agents: [] };
+      },
+      async refs(agent) {
+        seen.push(`refs ${agent}`);
+        if (agent !== 'cc') return { ok: false as const, error: `there is no agent "${agent}" in the config` };
+        return { ok: true as const, agent, host: 'local', root: '~/.claude/CLAUDE.md', rootState: 'managed' as const, summary: 'refs', refs: [] };
+      },
+      async read(target, o) {
+        seen.push(`read ${JSON.stringify(target)} ${o?.preview === true}`);
+        return { ok: true as const, path: '/c/instructions/common.md', dir: '/c/instructions', name: 'common.md', size: 3, mtimeMs: 5, kind: 'text' as const, text: 'abc' };
+      },
+      async write(target, text, expect) {
+        seen.push(`write ${JSON.stringify(target)} ${text} ${JSON.stringify(expect)}`);
+        if (target.scope === 'agent' && target.path.endsWith('stale.md')) {
+          return { ok: false as const, conflict: true as const, exists: true, size: 9, mtimeMs: 10, error: 'changed' };
+        }
+        return { ok: true as const, mtimeMs: 6, size: text.length, sha256: 'b'.repeat(64), delivery: [{ host: 'local', agents: ['cc'], outcome: 'linked' }] };
+      },
+    };
+    return { panel, seen };
+  }
+
+  it('answers 404 on every route when the feature is off, panel or not', async () => {
+    const { base, room } = await boot();
+    // Handed a panel anyway: the switch is the server's to read too, not only the daemon's.
+    room.useInstructionsPanel(fakePanel().panel);
+    const cookie = await signIn(base);
+    for (const route of ['/api/instructions', '/api/instructions/refs?agent=cc', '/api/instructions/read?scope=global&name=common.md']) {
+      expect((await fetch(`${base}${route}`, { headers: { cookie } })).status, route).toBe(404);
+    }
+    expect((await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'common.md', text: 'x' })).status).toBe(404);
+    const page = await fetch(`${base}/`).then((r) => r.text());
+    expect(page).toContain('var INSTR_OK = false;');
+  });
+
+  it('answers 404 when it is on but the daemon handed over no panel', async () => {
+    const { base } = await boot({ instructions: { enabled: true } });
+    const cookie = await signIn(base);
+    expect((await fetch(`${base}/api/instructions`, { headers: { cookie } })).status).toBe(404);
+  });
+
+  it('lists, reads and writes through the panel, behind the session', async () => {
+    const { base, room } = await boot({ instructions: { enabled: true } });
+    const p = fakePanel();
+    room.useInstructionsPanel(p.panel);
+    expect((await fetch(`${base}/api/instructions`)).status).toBe(401);
+    const cookie = await signIn(base);
+    expect(await fetch(`${base}/`, { headers: { cookie } }).then((r) => r.text())).toContain('var INSTR_OK = true;');
+
+    expect(await (await fetch(`${base}/api/instructions`, { headers: { cookie } })).json()).toMatchObject({ on: true, global: [{ name: 'common.md' }] });
+    const refs = await fetch(`${base}/api/instructions/refs?agent=nope`, { headers: { cookie } });
+    expect(refs.status).toBe(400);
+    expect(await refs.json()).toMatchObject({ error: expect.stringContaining('no agent') });
+
+    const read = await fetch(`${base}/api/instructions/read?scope=agent&agent=cc&path=${encodeURIComponent('/h/r.md')}&preview=1`, { headers: { cookie } });
+    expect(read.status).toBe(200);
+    expect(p.seen.at(-1)).toBe('read {"scope":"agent","agent":"cc","path":"/h/r.md"} true');
+
+    const save = await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'common.md', text: 'hi', mtimeMs: 5, size: 3, sha256: 'a'.repeat(64) });
+    expect(save.status).toBe(200);
+    expect(await save.json()).toMatchObject({ ok: true, delivery: [{ host: 'local', outcome: 'linked' }] });
+    expect(p.seen.at(-1)).toBe(`write {"scope":"global","name":"common.md"} hi {"mtimeMs":5,"size":3,"sha256":"${'a'.repeat(64)}"}`);
+
+    // A file not written yet is created only where nothing is: `missing` reaches the panel alone.
+    await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'claude.md', text: 'x', missing: true, mtimeMs: 0 });
+    expect(p.seen.at(-1)).toBe('write {"scope":"global","name":"claude.md"} x {"missing":true}');
+
+    const stale = await post(base, cookie, '/api/instructions/write', { scope: 'agent', agent: 'cc', path: '/h/stale.md', text: 'x', mtimeMs: 1, size: 1 });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ conflict: true, exists: true });
+  });
+
+  it('refuses a malformed target before the panel sees it', async () => {
+    const { base, room } = await boot({ instructions: { enabled: true } });
+    const p = fakePanel();
+    room.useInstructionsPanel(p.panel);
+    const cookie = await signIn(base);
+    const get = (q: string) => fetch(`${base}/api/instructions/read?${q}`, { headers: { cookie } });
+    expect((await get('scope=disk&path=/etc/passwd')).status).toBe(400);
+    expect((await get('scope=agent&agent=cc')).status).toBe(400);
+    expect((await get('scope=global')).status).toBe(400);
+    // .strict() and the closed union: a global save cannot carry a path, an agent save must.
+    expect((await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'common.md', path: '/etc/x', text: 'x' })).status).toBe(400);
+    expect((await post(base, cookie, '/api/instructions/write', { scope: 'agent', agent: 'cc', text: 'x' })).status).toBe(400);
+    expect((await post(base, cookie, '/api/instructions/write', { scope: 'file', path: '/etc/x', text: 'x' })).status).toBe(400);
+    expect(p.seen.filter((s) => s.startsWith('read') || s.startsWith('write'))).toEqual([]);
   });
 });
 

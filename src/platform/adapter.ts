@@ -308,6 +308,10 @@ export interface SchedulePanel {
   op(id: string, action: SchedulePanelAction, tags?: string[]): SchedulePanelResult;
   /** One task's page, or undefined when there is no such task. */
   detail(id: string): SchedulePanelTaskDetail | undefined;
+  /** What the form for a new task offers: `ScheduleService`'s agents, machines, places and defaults. */
+  form(): SchedulePanelFormContext;
+  /** Register a task: `ScheduleService.addFromPanel`, so every rule is `schedule add`'s. */
+  add(task: SchedulePanelNew): Promise<SchedulePanelDetailResult>;
   /** Change a task in place: `ScheduleService.editFromPanel`, so every rule is `schedule edit`'s. */
   edit(id: string, edit: SchedulePanelEdit): Promise<SchedulePanelDetailResult>;
 }
@@ -332,23 +336,46 @@ export interface SchedulePanelRun {
   where?: string;
 }
 
+/** What a task is: a bash command, or a prompt in one of the three session modes. */
+export type SchedulePanelShape = 'bash' | 'fixed' | 'new' | 'daily';
+
+/** A setting only some shapes keep; `at` means the task may be a one-shot rather than a cron. */
+export type SchedulePanelSetting = 'agent' | 'model' | 'cwd' | 'host' | 'timeout' | 'at';
+
 /**
- * The fields a task's form can hold; which of them a given task offers is `editable`. `cron` and
- * `at` are separate because a daily-session task takes only a cron: a one-shot has no rest of the
- * day to join.
+ * What the task form offers, whichever task it is filled from — or none, for a new one.
+ *
+ * `shapes` is core/schedule.ts's SHAPE_SETTINGS, handed over rather than copied: the form shows a
+ * field only where the shape it is set to keeps one, and an edit that changes a task's shape carries
+ * over exactly those settings, so the page and the daemon read one table. The rest are the choices
+ * `schedule add` would accept — every configured agent and machine, and the places on other
+ * platforms the gateway has answered in (`fleetherd channels`); this page's own topics come from the
+ * page, which already lists them.
  */
-export type SchedulePanelEditField = 'name' | 'cron' | 'at' | 'tz' | 'prompt' | 'command' | 'agent' | 'model' | 'cwd' | 'timeout';
+export interface SchedulePanelFormContext {
+  agents: string[];
+  /** Agent id → the `hosts:` entry it runs on. An agent on the gateway's own machine is absent. */
+  agentHosts: Record<string, string>;
+  /** The configured `hosts:` ids: where a bash task can run besides the gateway's machine. */
+  hosts: string[];
+  /** Places on other platform instances a task can post to: `<instance>:<channel>[/<thread>]` ids. */
+  channels: Array<{ id: string; title: string }>;
+  shapes: Record<SchedulePanelShape, SchedulePanelSetting[]>;
+  /** The gateway's own time zone, a new task's default. */
+  tz: string;
+  /** The agent a new prompt task starts with (`routing.default`). */
+  agent: string;
+}
 
 /**
  * What a task's page shows, and what its form starts from.
  *
  * `fields` are the task's own values, raw — the cron as written, the whole prompt, the directory and
  * model only when the task has them — because a form filled from the panel's sentences would save
- * the sentences back. `editable` is decided by the daemon from the same rules `schedule edit`
- * applies (a fixed-session task has no directory or model of its own, a bash task no agent), so the
- * page offers no field whose every value would be refused.
+ * the sentences back. Which of them the form offers follows `shapes` and the shape the form is set
+ * to; what any value may be is `schedule edit`'s to say, when it is saved.
  */
-export interface SchedulePanelTaskDetail {
+export interface SchedulePanelTaskDetail extends SchedulePanelFormContext {
   task: SchedulePanelTask;
   fields: {
     name: string;
@@ -363,21 +390,22 @@ export interface SchedulePanelTaskDetail {
     model?: string;
     cwd?: string;
     timeoutMs?: number;
-    /** The machine a bash task runs on; it is the registering agent's, and no edit moves it. */
+    /** The machine a bash task runs on; absent for the gateway's own. */
     host?: string;
+    /** Where it posts, as `fleetherd channels` writes it: what the form's "Posts to" starts from. */
+    target: string;
   };
-  editable: SchedulePanelEditField[];
   /** Why no edit of this task can succeed (it expired, or a one-time task has had its run). */
   locked?: string;
-  /** The configured agents, for the agent picker. */
-  agents: string[];
   /** The task's recorded runs, newest first. */
   runs: SchedulePanelRun[];
 }
 
 /**
  * One edit from a task's page: only what the person changed. `null` empties a directory or a model
- * (see EditTaskInput); a time and a zone travel as the strings `schedule edit --at/--tz` takes.
+ * (see EditTaskInput), and is a bash task's `host` for the gateway's own machine; a time and a zone
+ * travel as the strings `schedule edit --at/--tz` take. `prompt` on a bash task, or `command` on a
+ * prompt task, changes what it is; `target` moves it, as `schedule edit --channel` does.
  */
 export interface SchedulePanelEdit {
   name?: string;
@@ -387,10 +415,19 @@ export interface SchedulePanelEdit {
   prompt?: string;
   command?: string;
   agent?: string;
+  session?: 'fixed' | 'new' | 'daily';
   model?: string | null;
   cwd?: string | null;
+  host?: string | null;
   timeoutMs?: number;
+  /** The whole set; `[]` clears it. */
+  tags?: string[];
+  /** A `<instance>:<channel>[/<thread>]` id; one with no instance is a place on this page's. */
+  target?: string;
 }
+
+/** A new task from the page: what `schedule add` takes, and where it posts — which add always knows. */
+export type SchedulePanelNew = Omit<SchedulePanelEdit, 'target'> & { target: string };
 
 /**
  * The outcome of an edit: the task's page as it now is, and the list, which the panel behind the
@@ -833,6 +870,115 @@ export interface FilesPanel {
 }
 
 /**
+ * Which instruction file a read or a write means. Never a free path: `global` names one of the
+ * gateway's own files by its name (`common.md`, `claude.md`, …), and `agent` names an agent and a
+ * path the daemon checks against the files that agent's harness reads at that moment.
+ */
+export type InstructionsTarget = { scope: 'global'; name: string } | { scope: 'agent'; agent: string; path: string };
+
+/** One of the gateway's instruction files, as the settings page lists it. */
+export interface InstructionsGlobalFile {
+  /** The file's name in `<configDir>/instructions/`. */
+  name: string;
+  /** `common` for every agent, or the harness layer it is for. */
+  layer: string;
+  exists: boolean;
+  size?: number;
+  /** The configured agents that read this file. */
+  agents: string[];
+}
+
+/** One configured agent, as the settings page lists it under "each agent's own". */
+export interface InstructionsAgent {
+  id: string;
+  harness: string;
+  /** `local`, or the remote host it runs on. */
+  host: string;
+  /** The harness's user-level file, `~`-relative, when it has one. */
+  file?: string;
+  /**
+   * What its harness reads of its own besides the delivered file — rules, references, a config's
+   * list — in one line; absent for a harness with nothing known (daemon/instruction-imports.ts).
+   */
+  own?: string;
+}
+
+export interface InstructionsPanelList {
+  /** `<configDir>/instructions` on the gateway. */
+  dir: string;
+  /** Whether that directory exists — the feature's own switch (instructions.ts). */
+  on: boolean;
+  global: InstructionsGlobalFile[];
+  agents: InstructionsAgent[];
+}
+
+/** One of an agent's own instruction files on its machine. */
+export interface InstructionsRef {
+  /** Absolute on the agent's machine — what a read or a write names. */
+  path: string;
+  /** The same path with the agent's home as `~`. */
+  shown: string;
+  exists: boolean;
+  /** How far it is indented under what led to it: 1 at the top, one more per reference followed. */
+  depth: number;
+  /**
+   * How the harness gets to it: a file it reads by itself (`file`), one in its rules directory
+   * (`rule`), a reference in another file (`reference`), or an entry of its config (`listed`).
+   */
+  kind: 'file' | 'rule' | 'reference' | 'listed';
+  /** For a reference, the file that holds it, `~`-relative. */
+  via?: string;
+  /** Why it is listed and not editable here (the gateway's own copy, a directory). */
+  note?: string;
+  editable: boolean;
+}
+
+export type InstructionsRefsResult =
+  | {
+      ok: true;
+      agent: string;
+      host: string;
+      /** The delivered user-level file on that machine, with the agent's home as `~`. */
+      root: string;
+      /** The gateway's delivered copy (`managed`), the operator's own file, or nothing there. */
+      rootState: 'managed' | 'own' | 'missing';
+      /** What this harness's own instructions are, in one line. */
+      summary: string;
+      refs: InstructionsRef[];
+    }
+  | FilesPanelError;
+
+/** A read: the file window's answer, plus `missing` for a file a save would create. */
+export type InstructionsReadResult = ({ ok: true; missing?: boolean } & FilesPanelFile) | FilesPanelError;
+
+/** Where a saved global file was placed, one line per machine and file (instructions-panel.ts). */
+export interface InstructionsDelivery {
+  host: string;
+  agents: string[];
+  link?: string;
+  outcome: string;
+  detail?: string;
+}
+
+export type InstructionsWriteResult =
+  | { ok: true; mtimeMs: number; size: number; sha256: string; delivery?: InstructionsDelivery[] }
+  | FilesPanelConflict
+  | FilesPanelError;
+
+/**
+ * What `useInstructionsPanel` hands a platform: the operator's instructions — the gateway's files
+ * every agent reads, and the files each agent's harness references on its own machine — to list,
+ * read and write. Paths are the daemon's to decide (`daemon/instructions-panel.ts`); the page names
+ * a target, never a path of its choosing.
+ */
+export interface InstructionsPanel {
+  list(): Promise<InstructionsPanelList>;
+  refs(agent: string): Promise<InstructionsRefsResult>;
+  read(target: InstructionsTarget, opts?: { preview?: boolean }): Promise<InstructionsReadResult>;
+  write(target: InstructionsTarget, text: string, expect: FilesPanelExpect): Promise<InstructionsWriteResult>;
+}
+
+/**
  * Platform capability interface. One layer above Satori so the core classes depend only on
  * capabilities, not concrete platforms; missing capabilities degrade gracefully in the
  * implementation (see capabilities).
@@ -1082,6 +1228,16 @@ export interface PlatformAdapter {
    * the page's login secret is the only thing in front of it, exactly as for the terminal.
    */
   useFilesPanel?(panel: FilesPanel): void;
+
+  /**
+   * Hand the platform the operator's instructions, for the web UI's settings page: the gateway's
+   * `instructions/` files and the files each agent's harness references on its machine.
+   *
+   * Web-UI-only for the reason the panels above are, and off unless the operator turned
+   * `platforms.<id>.instructions.enabled` on: with it, the page's login secret guards the standing
+   * instructions of every agent on every platform, not one conversation (AGENTS.md, invariant 10).
+   */
+  useInstructionsPanel?(panel: InstructionsPanel): void;
 
   /**
    * Hand the platform a way to end the agent process behind a conversation that is idle — what the

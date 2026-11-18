@@ -1013,6 +1013,122 @@ describe('schedule edit over IPC', () => {
 });
 
 /**
+ * `schedule edit` changing what a task is, how it runs and where it posts — the CLI's half of the
+ * same rule the web UI's form goes through (core/schedule.ts editTask). What is pinned is what the
+ * daemon adds to it: where `--channel` resolves, who is told, and what a run does afterwards.
+ */
+describe('schedule edit over IPC: kind, session, target, machine', () => {
+  it('--session turns a new-session task into a fixed one in the conversation it posts to, with a fresh window', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '*/30 * * * *', prompt: 'check CI', session: 'new', model: 'fast-model' });
+
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, session: 'fixed' });
+    expect(resp.ok).toBe(true);
+    const [stored] = saved(r);
+    expect(stored).toMatchObject({ run: { kind: 'agent', agent: 'cc', prompt: 'check CI', session: 'fixed' }, conversation: WEB_KEY });
+    expect(stored!['run']).not.toHaveProperty('model');
+    expect(stored!['expiresAt']).toBeGreaterThan(Date.now() + 23 * 3_600_000);
+
+    // The next run is a turn in that conversation, as a fixed task registered there would be.
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle();
+    expect(r.turns.at(-1)).toMatchObject({ conversation: WEB_KEY, agent: 'cc', prompt: 'check CI' });
+  });
+
+  it('--channel moves a task, and the card reaches the place it leaves and the one it now posts to', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 3 * * *', bash: 'echo hi', name: 'nightly' });
+    r.sent.length = 0;
+
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, channelId: 'tg:586' });
+    expect(resp.ok).toBe(true);
+    expect(saved(r)[0]).toMatchObject({ target: { platform: 'tg', channel: '586' } });
+    await settle();
+    const cards = r.sent.filter((s) => s.text.includes('Scheduled task updated'));
+    // Where the edit was asked, which is also where it posted; then where it posts now.
+    expect(cards.map((c) => [c.platform, c.address])).toEqual([
+      ['web', { channel: 'main', thread: 't1' }],
+      ['tg', { channel: '586' }],
+    ]);
+    expect(cards[0]!.text).toContain('tg:586');
+
+    // Its output goes there from now on.
+    r.sent.length = 0;
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle(300);
+    expect(r.sent.some((s) => s.platform === 'tg' && s.text.includes('nightly'))).toBe(true);
+    expect(r.sent.some((s) => s.platform === 'web')).toBe(false);
+  });
+
+  it('refuses a move add would refuse — a daily task to a platform that cannot open a topic — and leaves it as it was', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily' });
+    const before = JSON.stringify(saved(r));
+    const resp = await r.call({ kind: 'schedule-edit', id: task.id, channelId: 'tg:586' });
+    expect((resp as { error: string }).error).toMatch(/needs a target that can open a topic/);
+    const down = await r.call({ kind: 'schedule-edit', id: task.id, channelId: 'dc:1' });
+    expect((down as { error: string }).error).toBe('platform instance "dc" is not running');
+    expect(JSON.stringify(saved(r))).toBe(before);
+  });
+
+  it('--prompt turns a bash task into a prompt task, and --bash turns it back, keeping the id and its runs', async () => {
+    const r = await rig();
+    await r.inbound(WEB, 'hello');
+    const task = await added(r, { kind: 'schedule-add', cron: '0 3 * * *', bash: 'echo hi', tags: ['ops'] });
+    await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
+    await settle(300);
+
+    const toPrompt = await r.call({ kind: 'schedule-edit', id: task.id, prompt: 'summarise the disk', session: 'new', agent: 'oc' });
+    expect(toPrompt.ok).toBe(true);
+    expect(saved(r)[0]).toMatchObject({ id: task.id, runs: 1, tags: ['ops'], run: { kind: 'agent', agent: 'oc', prompt: 'summarise the disk', session: 'new' } });
+
+    const toBash = await r.call({ kind: 'schedule-edit', id: task.id, bash: 'df -h', timeoutMs: 30_000 });
+    expect(toBash.ok).toBe(true);
+    const [stored] = saved(r);
+    expect(stored).toMatchObject({ id: task.id, runs: 1, run: { kind: 'bash', command: 'df -h', timeoutMs: 30_000 } });
+    expect((stored!['history'] as unknown[]).length).toBe(1);
+    // A setting the new kind has no place for is refused in add's words.
+    const stray = await r.call({ kind: 'schedule-edit', id: task.id, bash: 'ls', model: 'fast-model' });
+    expect((stray as { error: string }).error).toMatch(/--model is for --prompt tasks/);
+  });
+
+  it('--host moves a bash task to another machine, checking its directory there, and --host gateway brings it back', async () => {
+    const r = await rig(undefined, undefined, { config: cfgHosts });
+    await r.inbound(WEB, 'hello');
+    const seen: string[] = [];
+    vi.spyOn(remoteHosts, 'get').mockReturnValue({
+      run: async (o: { argv?: string[] }) => {
+        seen.push((o.argv ?? []).join(' '));
+        return { code: o.argv?.[2] === '/nope' ? 1 : 0 };
+      },
+    } as never);
+    try {
+      const task = await added(r, { kind: 'schedule-add', cron: '0 3 * * *', bash: 'df -h' });
+      expect(saved(r)[0]!['run']).toEqual({ kind: 'bash', command: 'df -h', timeoutMs: 600_000, cwd: '/srv/gw' });
+
+      // Its directory is the gateway's, so it cannot go to box without one there.
+      const kept = await r.call({ kind: 'schedule-edit', id: task.id, host: 'box' });
+      expect((kept as { error: string }).error).toMatch(/runs on box after this edit, but keeps its directory \/srv\/gw/);
+      const missing = await r.call({ kind: 'schedule-edit', id: task.id, host: 'box', cwd: '/nope' });
+      expect((missing as { error: string }).error).toBe('--cwd /nope is not a directory on box; nothing was stored');
+      const ok = await r.call({ kind: 'schedule-edit', id: task.id, host: 'box', cwd: '/srv/box' });
+      expect(ok.ok).toBe(true);
+      expect(saved(r)[0]!['run']).toEqual({ kind: 'bash', command: 'df -h', timeoutMs: 600_000, cwd: '/srv/box', host: 'box' });
+      expect(seen).toEqual(['test -d /nope', 'test -d /srv/box']);
+
+      const home = await r.call({ kind: 'schedule-edit', id: task.id, host: 'gateway', cwd: os.tmpdir() });
+      expect(home.ok).toBe(true);
+      expect(saved(r)[0]!['run']).toEqual({ kind: 'bash', command: 'df -h', timeoutMs: 600_000, cwd: os.tmpdir() });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+/**
  * What the chat hears about a run: the card reaching the conversation that will run the task, a
  * run that failed saying so, and `run --wait` answering instead of leaving the agent to poll.
  */
@@ -1165,7 +1281,7 @@ describe('schedule --host over IPC', () => {
       expect((missing as { error: string }).error).toBe('--cwd /nope is not a directory on box; nothing was stored');
 
       const unknown = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'remote', host: 'zz' });
-      expect((unknown as { error: string }).error).toBe('unknown host "zz"; configured: box');
+      expect((unknown as { error: string }).error).toBe('unknown host "zz"; configured: box, gateway (the gateway\'s own machine)');
 
       // `cc` runs here; --host names a machine, and this task's is the gateway.
       const wrong = await r.callFrom(WEB_KEY, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc', host: 'box' });

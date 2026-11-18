@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { findAgent, type Config } from '../config/schema.js';
-import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
+import { formatTarget, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import { splitByMeasure } from '../core/stream-buffer.js';
 import {
   bashResultText,
@@ -25,6 +25,7 @@ import {
   type NewTaskInput,
   type ScheduleDaySession,
   type ScheduleRunRecord,
+  type ScheduleTarget,
   type ScheduleTask,
 } from '../core/schedule.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
@@ -95,12 +96,9 @@ export class ScheduleService {
   // ─────────────────────────────── the agent's commands ───────────────────────────────
 
   /** `schedule add`. Throws a sentence the agent can act on when the task is refused. */
-  async add(input: NewTaskInput, caller: ConversationId, target: { platform: string; address: ConversationAddress }): Promise<ScheduleTaskView> {
-    // A configured platform that failed to start is a different failure from one that cannot
-    // open a topic, and saying "cannot open a topic" would send the agent looking for a
-    // `--session` workaround for what is really an outage.
-    const platform = this.platforms.get(target.platform);
-    if (!platform) throw new Error(`platform instance "${target.platform}" is not running`);
+  async add(given: NewTaskInput, caller: ConversationId, target: Destination): Promise<ScheduleTaskView> {
+    const input = this.withMachine(given);
+    const platform = this.runningPlatform(target.platform);
     const from = {
       key: caller,
       platform: this.registry.platformFor(caller) ?? target.platform,
@@ -109,17 +107,7 @@ export class ScheduleService {
     };
     const host = this.hostOfCaller(caller);
     if (host) Object.assign(from, { host });
-    const targetConversation = this.registry.conversationAt(target.platform, target.address);
-    const built = buildTask(input, {
-      now: this.clock.now(),
-      id: this.newId(),
-      defaultTz: this.defaultTz,
-      agents: this.config.agents.map((a) => a.id),
-      from,
-      target,
-      canOpenTopic: platform.capabilities.thread === true && platform.capabilities.standaloneThread === true,
-      ...(targetConversation ? { targetConversation } : {}),
-    });
+    const built = buildTask(input, this.newContext(from, target, platform));
     if (!built.ok) throw new Error(built.error);
     const hostProblem = this.hostProblem(input.host, built.task);
     if (hostProblem) throw new Error(hostProblem);
@@ -127,33 +115,100 @@ export class ScheduleService {
     if (cwdProblem) throw new Error(cwdProblem);
     const dirProblem = await this.dirOnHostProblem(input.host, input.cwd);
     if (dirProblem) throw new Error(dirProblem);
-    if (built.task.run.kind === 'agent' && built.task.run.model !== undefined) {
+    await this.commitAdd(built.task, caller);
+    return taskView(built.task, this.clock.now(), { detail: true, here: caller });
+  }
+
+  /**
+   * The web UI's add: a person on the task panel rather than an agent in a conversation. Every rule
+   * is `add`'s — the same `buildTask`, the same model check, the same card in the conversation the
+   * task posts to — except the two things a conversation would have supplied:
+   *
+   * - Defaults. There is no registering conversation, so there is no "this agent" or "this
+   *   directory" to fall back on: the agent is the routing default unless one is chosen (the form
+   *   always chooses), and nothing else is inferred. A bash task runs on the gateway's machine
+   *   unless the form names another.
+   * - Directories, read as `editFromPanel` reads them (panelDirProblem): an absolute path on the
+   *   machine the task runs on, checked there.
+   *
+   * `createdBy` names the conversation the task posts to, or the target itself when that is not one:
+   * a task made on the page was made FOR that conversation, and it is the one `schedule list` there
+   * should mark as its own.
+   */
+  async addFromPanel(input: NewTaskInput, target: Destination): Promise<ScheduleTask> {
+    const platform = this.runningPlatform(target.platform);
+    const conv = this.registry.conversationAt(target.platform, target.address);
+    const from = {
+      key: conv?.key ?? formatTarget(target.platform, target.address),
+      platform: target.platform,
+      agent: this.config.routing.default,
+    };
+    const built = buildTask(input, this.newContext(from, target, platform));
+    if (!built.ok) throw new Error(built.error);
+    const hostProblem = this.hostProblem(input.host, built.task);
+    if (hostProblem) throw new Error(hostProblem);
+    const dirProblem = await this.panelDirProblem(undefined, built.task, input.cwd);
+    if (dirProblem) throw new Error(dirProblem);
+    await this.commitAdd(built.task, undefined);
+    return built.task;
+  }
+
+  /** What `buildTask` needs for a new task: the registering side, the target, and what it can do. */
+  private newContext(from: NewTaskContext['from'], target: Destination, platform: PlatformAdapter): NewTaskContext {
+    const targetConversation = this.registry.conversationAt(target.platform, target.address);
+    return {
+      now: this.clock.now(),
+      id: this.newId(),
+      defaultTz: this.defaultTz,
+      agents: this.config.agents.map((a) => a.id),
+      from,
+      target,
+      canOpenTopic: canOpenTopic(platform),
+      ...(targetConversation ? { targetConversation } : {}),
+    };
+  }
+
+  /**
+   * A platform a task is about to be pointed at. A configured platform that failed to start is a
+   * different failure from one that cannot open a topic, and saying "cannot open a topic" would send
+   * the agent looking for a `--session` workaround for what is really an outage.
+   */
+  private runningPlatform(id: string): PlatformAdapter {
+    const platform = this.platforms.get(id);
+    if (!platform) throw new Error(`platform instance "${id}" is not running`);
+    return platform;
+  }
+
+  /** The model check, then the write and the card — the end of both adds. */
+  private async commitAdd(task: ScheduleTask, caller: ConversationId | undefined): Promise<void> {
+    if (task.run.kind === 'agent' && task.run.model !== undefined) {
       // The list is the agent's own (`/model` shows the same one), so a typo is refused HERE,
       // while the registering agent can still retry in this turn with a name that exists.
-      const why = await this.registry.scheduledModelProblem(built.task.run.agent, built.task.run.model, caller);
+      const why = await this.registry.scheduledModelProblem(task.run.agent, task.run.model, caller);
       if (why) throw new Error(why);
     }
-    this.scheduler.add(built.task);
-    this.card(caller, built.task, 'registered');
-    return taskView(built.task, this.clock.now(), { detail: true, here: caller });
+    this.scheduler.add(task);
+    this.card(caller, task, 'registered');
   }
 
   /**
    * `schedule edit`. Every rule is `buildTask`'s (core/schedule.ts editTask merges the task with
    * what was given and runs it through the same builder), so a change `schedule add` would refuse
    * is refused here in the same words, and nothing is written until it passes — including the
-   * model list, which is read only after the shape is valid.
+   * model list, which is read only after the shape is valid. `target` is the `--channel` the edit
+   * gave, when it moves the task; without one the task keeps posting where it did.
    */
-  async edit(id: string, input: EditTaskInput, caller: ConversationId): Promise<ScheduleTaskView> {
+  async edit(id: string, given: EditTaskInput, caller: ConversationId, target?: Destination): Promise<ScheduleTaskView> {
+    const input = this.withMachine(given);
     const task = this.editableTask(id);
-    const built = editTask(task, input, this.editContext(task));
+    const built = editTask(task, input, this.editContext(task, target));
     if (!built.ok) throw new Error(built.error);
     const hostProblem = this.hostProblem(input.host, built.task);
     if (hostProblem) throw new Error(hostProblem);
-    const given = input.cwd ?? undefined;
-    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'edit', before: task }, given, input.host);
+    const cwd = input.cwd ?? undefined;
+    const cwdProblem = this.cwdHostProblem(built.task, caller, { verb: 'edit', before: task }, cwd, input.host);
     if (cwdProblem) throw new Error(cwdProblem);
-    const dirProblem = await this.dirOnHostProblem(input.host, given);
+    const dirProblem = await this.dirOnHostProblem(input.host, cwd);
     if (dirProblem) throw new Error(dirProblem);
     await this.commitEdit(task, built.task, input, caller);
     return taskView(built.task, this.clock.now(), { detail: true, here: caller });
@@ -165,19 +220,32 @@ export class ScheduleService {
    * card in the conversation the task posts to — except where a directory belongs.
    *
    * A browser is on none of the gateway's machines, so there is no "this machine" for a path to be
-   * read on, and `--host` would be a question the page could only answer one way. A directory typed
-   * there is a path on the machine the task runs on after the edit — the one reading under which
-   * it can work — and `panelDirProblem` checks it is there before anything is stored. No card goes
-   * to a conversation of the editor's: the page is the acknowledgement, as it is for `op`.
+   * read on, and `--host` as a declaration would be a question the page could only answer one way.
+   * A directory typed there is a path on the machine the task runs on after the edit — the one
+   * reading under which it can work — and `panelDirProblem` checks it is there before anything is
+   * stored. `host` is still taken, as what it is for a bash task: the machine it runs on. No card
+   * goes to a conversation of the editor's: the page is the acknowledgement, as it is for `op`.
    */
-  async editFromPanel(id: string, input: Omit<EditTaskInput, 'host'>): Promise<ScheduleTask> {
+  async editFromPanel(id: string, input: EditTaskInput, target?: Destination): Promise<ScheduleTask> {
     const task = this.editableTask(id);
-    const built = editTask(task, input, this.editContext(task));
+    const built = editTask(task, input, this.editContext(task, target));
     if (!built.ok) throw new Error(built.error);
+    const hostProblem = this.hostProblem(input.host, built.task);
+    if (hostProblem) throw new Error(hostProblem);
     const dirProblem = await this.panelDirProblem(task, built.task, input.cwd);
     if (dirProblem) throw new Error(dirProblem);
     await this.commitEdit(task, built.task, input, undefined);
     return built.task;
+  }
+
+  /**
+   * `--host gateway` as the input's `null`: the gateway's own machine has no `hosts:` id, and an
+   * agent reads it as "gateway" in `task-agents`. A host actually configured under that name keeps
+   * it, so this never changes what a working config means.
+   */
+  private withMachine<T extends { host?: string | null }>(input: T): T {
+    if (input.host !== GATEWAY_MACHINE || this.config.hosts?.[GATEWAY_MACHINE] !== undefined) return input;
+    return { ...input, host: null };
   }
 
   /** The task an edit starts from, or the reason it cannot start. */
@@ -220,40 +288,54 @@ export class ScheduleService {
     if (!this.scheduler.update(next)) {
       throw new Error(`#${task.id} was removed while this edit was being checked; nothing was changed`);
     }
-    this.card(caller, next, 'updated');
+    this.card(caller, next, 'updated', task.target);
   }
 
   /**
-   * What `editTask` needs to validate the change: the task's own values as every default, and the
-   * conversation a fixed-session run happens in with the agent it is bound to.
+   * What `editTask` needs to validate the change: the task's own values as every default, the
+   * target it will post to, and the conversation a fixed-session run would happen in there.
+   *
+   * `from` is the task's, not the caller's — no cwd, and the agent and machine the task runs with
+   * now — so an edit keeps what it does not name: a bash task stays on its machine, and a prompt
+   * task turned into a bash one runs where its agent did.
    */
-  private editContext(task: ScheduleTask): NewTaskContext {
-    const platform = this.platforms.get(task.target.platform);
-    const fixed = task.run.kind === 'agent' && task.run.session === 'fixed' ? task.conversation : undefined;
-    const bound = fixed !== undefined ? this.registry.boundAgentOf(fixed) : undefined;
+  private editContext(task: ScheduleTask, moveTo: Destination | undefined): NewTaskContext {
+    const own = { platform: task.target.platform, address: targetAddress(task) };
+    const target = moveTo ?? own;
+    const moved = moveTo !== undefined && !(moveTo.platform === own.platform && sameAddress(moveTo.address, own.address));
+    // A target the edit names has to be up, as add's does. The task's own may be down: a platform
+    // that is not running must not make its tasks uneditable, and the check add makes was passed.
+    const platform = moved ? this.runningPlatform(target.platform) : this.platforms.get(target.platform);
+    const host = this.hostOfTask(task);
     return {
       now: this.clock.now(),
       id: task.id,
       // The task's own zone is the default an edit means by "8 o'clock", not the gateway's.
       defaultTz: task.when.tz,
       agents: this.config.agents.map((a) => a.id),
-      // Deliberately without a cwd or agent of the caller's: an edit keeps what it does not name.
       from: {
         key: task.createdBy.conversation,
         platform: task.createdBy.platform,
         agent: task.run.kind === 'agent' ? task.run.agent : this.config.routing.default,
-        ...(task.run.kind === 'bash' && task.run.host !== undefined ? { host: task.run.host } : {}),
+        ...(host !== undefined ? { host } : {}),
       },
-      target: { platform: task.target.platform, address: targetAddress(task) },
-      // The target cannot change, so the check `add` makes was already passed for this task: a
-      // platform that is not running must not make its tasks uneditable. When it is up, ask it the
-      // same question add would.
-      canOpenTopic:
-        platform !== undefined
-          ? platform.capabilities.thread === true && platform.capabilities.standaloneThread === true
-          : true,
-      ...(fixed !== undefined ? { targetConversation: { key: fixed, ...(bound !== undefined ? { agent: bound } : {}) } } : {}),
+      target,
+      canOpenTopic: platform !== undefined ? canOpenTopic(platform) : true,
+      ...optional('targetConversation', this.fixedConversation(task, moved, target)),
     };
+  }
+
+  /**
+   * The conversation a fixed-session run would happen in after the edit. A fixed task that stays
+   * where it is keeps the conversation it was registered with — the one its window is counted in —
+   * with the agent bound there now; anything else is asked of the target, as add asks.
+   */
+  private fixedConversation(task: ScheduleTask, moved: boolean, target: Destination): NewTaskContext['targetConversation'] {
+    if (!moved && task.run.kind === 'agent' && task.run.session === 'fixed' && task.conversation !== undefined) {
+      const bound = this.registry.boundAgentOf(task.conversation);
+      return { key: task.conversation, ...(bound !== undefined ? { agent: bound } : {}) };
+    }
+    return this.registry.conversationAt(target.platform, target.address);
   }
 
   /**
@@ -295,7 +377,7 @@ export class ScheduleService {
     caller: ConversationId,
     how: { verb: 'add' } | { verb: 'edit'; before: ScheduleTask },
     given: string | undefined,
-    givenHost: string | undefined
+    givenHost: string | null | undefined
   ): string | undefined {
     const dir = task.run.cwd;
     if (dir === undefined) return undefined;
@@ -303,10 +385,10 @@ export class ScheduleService {
     const taskHost = this.hostOfTask(task);
     // A --host vouches for a --cwd given in this same command, and nothing else: a directory the
     // task already had came from the machine it ran on, whatever the caller says about a path it
-    // did not give.
+    // did not give. (`null` is --host gateway: the gateway's machine, which has no id.)
     const dirHost =
       givenHost !== undefined && given !== undefined
-        ? givenHost
+        ? (givenHost ?? undefined)
         : given !== undefined || how.verb === 'add'
           ? callerHost
           : this.hostOfTask(how.before);
@@ -315,54 +397,55 @@ export class ScheduleService {
     // machine" for the gateway's would point at the wrong one.
     const name = (host: string | undefined): string => (host === callerHost ? 'this machine' : (host ?? "the gateway's machine"));
     const runs = `this task runs on ${name(taskHost)}`;
+    const flag = `--host ${taskHost ?? GATEWAY_MACHINE}`;
     if (given !== undefined) {
       return (
         `--cwd ${given} is read as a path on ${name(dirHost)}, the machine this command ran on, but ${runs}; ` +
-        (taskHost !== undefined
-          ? `if it is a path on ${name(taskHost)}, pass --host ${taskHost}, or run the ${how.verb} from a conversation there`
-          : `run the ${how.verb} from a conversation on the gateway's machine`)
+        `if it is a path on ${name(taskHost)}, pass ${flag}, or run the ${how.verb} from a conversation there`
       );
     }
     if (how.verb === 'add') {
       return (
         `${runs}, but would start in ${dir}, this conversation's directory on ${name(dirHost)}; ` +
-        (taskHost !== undefined
-          ? `pass --host ${taskHost} with no --cwd to start in ${name(taskHost)}'s own default directory, or run the add from a conversation there`
-          : `run the add from a conversation on the gateway's machine, whose directory that is`)
+        `pass ${flag} with no --cwd to start in ${name(taskHost)}'s own default directory, or run the add from a conversation there`
       );
     }
     return (
       `${runs} after this edit, but keeps its directory ${dir}, a path on ${name(dirHost)}; ` +
       (callerHost === taskHost
         ? 'give the edit a --cwd on this machine as well'
-        : taskHost !== undefined
-          ? `give it a --cwd on ${name(taskHost)} with --host ${taskHost}, or run the edit from a conversation there`
-          : `run the edit from a conversation on the gateway's machine`)
+        : `give it a --cwd on ${name(taskHost)} with ${flag}, or run the edit from a conversation there`)
     );
   }
 
   /**
-   * `--host` says which machine a task's `--cwd` is on. It has to be a configured host, and the
-   * machine the task actually runs on — an agent's host, or the gateway for a local agent — or the
-   * declaration would move the directory's meaning without moving the task.
+   * `--host` says which machine a task's `--cwd` is on — and, for a bash task, which machine runs
+   * it. It has to be a configured host (or `gateway`), and the machine the task actually runs on —
+   * an agent's host, or the gateway for a local agent — or the declaration would move the
+   * directory's meaning without moving the task. A bash task always passes the second check: its
+   * machine is the one named.
    */
-  private hostProblem(host: string | undefined, task: ScheduleTask): string | undefined {
+  private hostProblem(host: string | null | undefined, task: ScheduleTask): string | undefined {
     if (host === undefined) return undefined;
     const known = Object.keys(this.config.hosts ?? {});
-    if (!known.includes(host)) return `unknown host "${host}"; configured: ${known.join(', ') || 'none'}`;
+    if (host !== null && !known.includes(host)) {
+      return `unknown host "${host}"; configured: ${[...known, `${GATEWAY_MACHINE} (the gateway's own machine)`].join(', ')}`;
+    }
     const runs = this.hostOfTask(task);
-    if (runs === host) return undefined;
-    return `--host ${host} names the machine a --cwd is on, but this task runs on ${runs ?? "the gateway's machine"}; --host has to be the machine the task runs on`;
+    if (runs === (host ?? undefined)) return undefined;
+    return `--host ${host ?? GATEWAY_MACHINE} names the machine a --cwd is on, but this task runs on ${runs ?? "the gateway's machine"}; --host has to be the machine the task runs on`;
   }
 
   /**
    * The `--host` a caller gives is a claim about a path it cannot see from here, so the one thing
    * worth doing with it is checking: `test -d` on that machine, through the same link the run will
    * use. A path that is not there is refused while the agent can still retype it, rather than
-   * discovered at the next run ("working directory … does not exist").
+   * discovered at the next run ("working directory … does not exist"). `null` is the gateway's own
+   * machine, checked here.
    */
-  private async dirOnHostProblem(host: string | undefined, dir: string | undefined, label = `--cwd ${dir}`): Promise<string | undefined> {
+  private async dirOnHostProblem(host: string | null | undefined, dir: string | undefined, label = `--cwd ${dir}`): Promise<string | undefined> {
     if (host === undefined || dir === undefined) return undefined;
+    if (host === null) return localDirProblem(dir, label);
     const remote = remoteHosts.get(host);
     if (!remote) return `host "${host}" is not connected right now, so ${label} could not be checked; nothing was stored — try again once it is back`;
     try {
@@ -379,30 +462,28 @@ export class ScheduleService {
    * typed there must be absolute — there is no shell directory to resolve it against, and `~` would
    * be expanded nowhere — and is checked on the machine the task runs on. A directory the edit keeps
    * belongs to the machine the task ran on before, and an edit that moves the task to another (an
-   * agent on another host) is refused rather than stored with a path that means nothing there.
+   * agent on another host, or a bash task sent to another machine) is refused rather than stored
+   * with a path that means nothing there. `before` is absent for an add, which keeps nothing.
    */
-  private async panelDirProblem(before: ScheduleTask, after: ScheduleTask, given: string | null | undefined): Promise<string | undefined> {
+  private async panelDirProblem(
+    before: ScheduleTask | undefined,
+    after: ScheduleTask,
+    given: string | null | undefined
+  ): Promise<string | undefined> {
     const dir = after.run.cwd;
     if (dir === undefined) return undefined;
     const host = this.hostOfTask(after);
     const where = host ?? "the gateway's machine";
-    if (given === undefined || given === null) {
+    if ((given === undefined || given === null) && before !== undefined) {
       const was = this.hostOfTask(before);
       if (was === host) return undefined;
       return (
         `this task runs on ${where} after this edit, but keeps its directory ${dir}, a path on ${was ?? "the gateway's machine"}; ` +
-        `give it a directory on ${where} as well, or empty the directory to start in the agent's own`
+        `give it a directory on ${where} as well, or empty the directory to start in the default one`
       );
     }
     if (!path.isAbsolute(dir)) return `the directory has to be an absolute path on ${where}; "${dir}" is not`;
-    const label = `the directory ${dir}`;
-    if (host !== undefined) return this.dirOnHostProblem(host, dir, label);
-    try {
-      if ((await fs.promises.stat(dir)).isDirectory()) return undefined;
-    } catch {
-      // Missing or unreadable: either way the run could not start there.
-    }
-    return `${label} is not a directory on the gateway's machine; nothing was stored`;
+    return this.dirOnHostProblem(host ?? null, dir, `the directory ${dir}`);
   }
 
   /** The host the caller's agent runs on, which is where its `fleetherd` command ran. Undefined = here. */
@@ -511,6 +592,11 @@ export class ScheduleService {
 
   now(): number {
     return this.clock.now();
+  }
+
+  /** The zone a task given no `--tz` is read in: the gateway's own. */
+  defaultZone(): string {
+    return this.defaultTz;
   }
 
   /** Every task, for `/setting schedule`. */
@@ -856,14 +942,22 @@ export class ScheduleService {
    * (2026-11-13). Whoever will read the output is told what changed — pause, resume and delete
    * included, since a target that stops, starts or stops for good receiving the task is the one
    * that notices. A manual run posts no card: its output is the run's own.
+   *
+   * `was` is where the task posted before an edit that moved it: that conversation stops receiving
+   * the task, and is told so by the same card, which names where it posts now.
    */
-  card(conversation: ConversationId | undefined, task: ScheduleTask, verb: string): void {
+  card(conversation: ConversationId | undefined, task: ScheduleTask, verb: string, was?: ScheduleTarget): void {
     const text = taskCardText(task, verb, this.clock.now());
     const lane = conversation !== undefined ? this.registry.laneFor(conversation) : undefined;
-    if (lane) this.post(lane.platformId, lane.address, text, `${verb} card`);
-    const target = { platform: task.target.platform, address: targetAddress(task) };
-    if (lane && lane.platformId === target.platform && sameAddress(lane.address, target.address)) return;
-    this.post(target.platform, target.address, text, `${verb} card`);
+    const posted: Destination[] = [];
+    const postOnce = (to: Destination): void => {
+      if (posted.some((p) => p.platform === to.platform && sameAddress(p.address, to.address))) return;
+      posted.push(to);
+      this.post(to.platform, to.address, text, `${verb} card`);
+    };
+    if (lane) postOnce({ platform: lane.platformId, address: lane.address });
+    postOnce({ platform: task.target.platform, address: targetAddress(task) });
+    if (was) postOnce({ platform: was.platform, address: was.thread ? { channel: was.channel, thread: was.thread } : { channel: was.channel } });
   }
 
   /**
@@ -894,6 +988,30 @@ export class ScheduleService {
 
 function targetAddress(task: ScheduleTask): ConversationAddress {
   return task.target.thread ? { channel: task.target.channel, thread: task.target.thread } : { channel: task.target.channel };
+}
+
+/** Where a task posts, as add and edit are handed it: a platform instance and an address on it. */
+export type Destination = { platform: string; address: ConversationAddress };
+
+/**
+ * `--host gateway`: the gateway's own machine, which has no `hosts:` id. The same word `task-agents`
+ * prints for an agent that runs there.
+ */
+export const GATEWAY_MACHINE = 'gateway';
+
+/** A daily session needs a topic opened with no message to hang it on. */
+function canOpenTopic(platform: PlatformAdapter): boolean {
+  return platform.capabilities.thread === true && platform.capabilities.standaloneThread === true;
+}
+
+/** A directory on the gateway's own machine, checked here; the sentence when it is not one. */
+async function localDirProblem(dir: string, label: string): Promise<string | undefined> {
+  try {
+    if ((await fs.promises.stat(dir)).isDirectory()) return undefined;
+  } catch {
+    // Missing or unreadable: either way the run could not start there.
+  }
+  return `${label} is not a directory on the gateway's machine; nothing was stored`;
 }
 
 function sameAddress(a: ConversationAddress, b: ConversationAddress): boolean {

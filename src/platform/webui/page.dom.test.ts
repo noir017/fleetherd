@@ -472,8 +472,15 @@ function installMic(w: any, mic: { types: string[]; deny?: boolean }, recorders:
  * The page a test loads. `codeview` is the built bundle's name, or absent for a daemon with no
  * assets at all — the two states `codeView()` distinguishes before it ever imports anything.
  */
-function pageOf(terminal: boolean, password: boolean, terminalEnd: boolean, codeview?: string, files = false): string {
-  return renderPage('Chat', terminal, password, terminalEnd, codeview ?? null, files);
+function pageOf(
+  terminal: boolean,
+  password: boolean,
+  terminalEnd: boolean,
+  codeview?: string,
+  files = false,
+  instructions = false
+): string {
+  return renderPage('Chat', terminal, password, terminalEnd, codeview ?? null, files, instructions);
 }
 
 /**
@@ -529,6 +536,8 @@ async function open(
     terminalEnd?: boolean;
     /** Whether the daemon has the file window (platforms.<id>.files.enabled). */
     files?: boolean;
+    /** Whether the settings page offers the instruction editor (platforms.<id>.instructions.enabled). */
+    instructions?: boolean;
     /** Whether the shared secret is still a way in, i.e. which of the two gates is served. */
     password?: boolean;
     /**
@@ -600,6 +609,7 @@ async function open(
     terminal = false,
     terminalEnd = false,
     files = false,
+    instructions = false,
     password = true,
     mic,
     hang = [],
@@ -629,7 +639,7 @@ async function open(
   const confirms: string[] = [];
   const longTimers: number[] = [];
 
-  const dom = new JSDOM(pageOf(terminal, password, terminalEnd, codeviewUrl, files), {
+  const dom = new JSDOM(pageOf(terminal, password, terminalEnd, codeviewUrl, files, instructions), {
     url,
     runScripts: 'dangerously',
     pretendToBeVisual: true,
@@ -4117,6 +4127,61 @@ describe('webui page: menus', () => {
   });
 });
 
+describe('webui page: a permission request', () => {
+  const A = 'a1b2c3d4';
+  /**
+   * The card `permissions: ask` posts: the title block, the change block and one button per option
+   * the agent offered — the shape `composePermissionPrompt` produces and the daemon sends.
+   */
+  const card = (): Record<string, unknown> => ({
+    ...message(
+      'm2',
+      '<p>\u{1F510} The agent asks to run:</p><pre><code>Edit src/app.ts</code></pre>'
+        + '<pre><code>--- src/app.ts\n-const PORT = 3000;\n+const PORT = 8080;</code></pre>'
+        + '<p>No answer within 60 min declines it.</p>'
+    ),
+    buttons: [
+      { id: 'ask:r:0', label: 'Allow' },
+      { id: 'ask:r:1', label: 'Always allow' },
+      { id: 'ask:r:2', label: 'Reject' },
+      { id: 'ask:r:3', label: 'Always reject' },
+    ],
+  });
+
+  it('draws the change and one button per option, and posts the one that was tapped', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [card()], [A]));
+
+    // The change is what the user is approving; the name alone is not a decision.
+    expect(h.el('log').textContent).toContain('-const PORT = 3000;');
+    expect(h.el('log').textContent).toContain('+const PORT = 8080;');
+    expect(Array.from(h.doc.querySelectorAll('.btns button')).map(face)).toEqual([
+      'Allow',
+      'Always allow',
+      'Reject',
+      'Always reject',
+    ]);
+
+    await h.click('button[data-btn="ask:r:1"]');
+    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
+      topic: A,
+      messageId: 'm2',
+      buttonId: 'ask:r:1',
+    });
+  });
+
+  it('takes the buttons away when the daemon says it was answered', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [card()], [A]));
+    expect(h.doc.querySelectorAll('.btns button')).toHaveLength(4);
+
+    await h.emit({ t: 'msg', msg: { ...card(), html: `${String(card().html)}\n<p>\u2192 Selected: Allow</p>`, buttons: [] } });
+
+    expect(h.doc.querySelector('.btns')).toBeNull();
+    expect(h.el('log').textContent).toContain('Selected: Allow');
+  });
+});
+
 describe('webui page: the settings page', () => {
   /**
    * A `/setting` list as the daemon sends it with `capabilities.settingsScreen`: the buttons it
@@ -6673,7 +6738,7 @@ describe('webui page: the narrow-screen stylesheet', () => {
 
   it('enlarges the panel header icons on phones to match header glyphs', () => {
     const css = narrowBlock();
-    expect(css).toContain('#clear-topics svg,#read-topics svg,#sched-read svg{width:18px;height:18px}');
+    expect(css).toContain('#clear-topics svg,#read-topics svg,#sched-read svg,#sched-new svg{width:18px;height:18px}');
   });
 
   it('gives the drawer toggle a finger-sized target', () => {
@@ -7053,6 +7118,22 @@ describe('webui page: the terminal window', () => {
     h.doc.querySelector<HTMLIFrameElement>('#term-frames iframe.on');
   const srcOf = (h: { doc: Document }): string | null => shown(h)?.getAttribute('src') ?? null;
 
+  /**
+   * jsdom has no layout, so the boxes the panel is measured against are given here: the chat, the
+   * header and the composer above it, and the divider. Desktop proportions, so the heights below
+   * are the ones a person would see: 800 tall, 50 header, 100 composer, 9 divider, 120 transcript
+   * left over — a panel may be 521 at most.
+   */
+  const laidOut = (h: Harness): void => {
+    const stub = (id: string, prop: string, value: number): void => {
+      Object.defineProperty(h.el(id), prop, { configurable: true, get: () => value });
+    };
+    stub('chat', 'clientHeight', 800);
+    stub('chat-header', 'clientHeight', 50);
+    stub('bar', 'clientHeight', 100);
+    stub('term-grip', 'offsetHeight', 9);
+  };
+
   it('offers nothing at all when the daemon serves no terminal', async () => {
     const h = await open();
     await h.emit(sync('a1b2c3d4', [message('m1', '<p>hi</p>')], ['a1b2c3d4']));
@@ -7114,16 +7195,23 @@ describe('webui page: the terminal window', () => {
     await h.click('#term-toggle');
     const mounted = shown(h);
     expect(mounted).not.toBeNull();
+    expect(h.el('term').hasAttribute('inert')).toBe(false);
 
     await h.click('#term-min');
     expect(h.el('chat').className).not.toContain('term');
     expect(h.window.location.search).toBe('?t=a1b2c3d4');
     expect(frames(h)).toHaveLength(1);
     expect(shown(h)).toBeNull();
+    // Parked means out of reach as well as out of sight: a hidden iframe can still take focus
+    // from script, and a terminal that grabs it is typing going somewhere nobody can see.
+    expect(h.el('term').hasAttribute('inert')).toBe(true);
+    expect(frames(h)[0]?.hasAttribute('inert')).toBe(true);
 
     // Back in, and it is the same element — not a second connection to the same session.
     await h.click('#term-toggle');
     expect(shown(h)).toBe(mounted);
+    expect(h.el('term').hasAttribute('inert')).toBe(false);
+    expect(frames(h)[0]?.hasAttribute('inert')).toBe(false);
   });
 
   it('keeps one window per topic, each attached across a switch', async () => {
@@ -7149,6 +7237,90 @@ describe('webui page: the terminal window', () => {
     await h.click('[data-topic="a1b2c3d4"]');
     expect(srcOf(h)).toBe('term/?arg=a1b2c3d4');
     expect(frames(h)).toHaveLength(2);
+  });
+
+  it('docks the panel under the conversation instead of covering it', async () => {
+    // What changed: the terminal used to swap itself in for the transcript and the composer.
+    // The panel now sits at the bottom of #chat, under both, so reading and typing carry on
+    // while it is open — and the divider above it is the only thing that moves.
+    const h = await open({ terminal: true });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hi</p>')], ['a1b2c3d4']));
+    await h.click('#term-toggle');
+
+    expect(h.el('chat').className).toContain('term');
+    const ids = [...h.el('chat').children].map((el) => el.id);
+    expect(ids.indexOf('term')).toBeGreaterThan(ids.indexOf('bar'));
+    expect(ids.indexOf('term-grip')).toBe(ids.indexOf('term') - 1);
+    // The transcript is not hidden by the terminal's class any more, and it is still painted.
+    expect(renderPage('Chat', true)).not.toContain('#chat.term #log');
+    expect(h.painted()).toBe(1);
+  });
+
+  it('parks a closed panel rather than taking the frame out of the layout', async () => {
+    // The bug this fixes: display:none leaves an iframe with no box, and a browser may discard a
+    // frame it is not laying out — which closes its WebSocket, so a topic switch looked like a
+    // dropped connection. Asserted as text, since jsdom does not evaluate the stylesheet.
+    const css = renderPage('Chat', true);
+    expect(css).toContain(
+      '#chat:not(.term) #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}'
+    );
+    expect(css).toContain('#term-frames iframe{position:absolute;inset:0;width:100%;height:100%;border:0;visibility:hidden}');
+    expect(css).not.toContain('#term-frames iframe{display:none');
+    // And the other half of that pair: the shown frame really is visible, and the divider is
+    // only on screen while the panel is. Deleting either rule used to leave every test green.
+    expect(css).toContain('#term-frames iframe.on{visibility:visible}');
+    expect(css).toContain('#chat.term #term-grip{display:block}');
+  });
+
+  it('opens at half the chat, and a drag on the divider is the height it keeps', async () => {
+    const h = await open({ terminal: true });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    laidOut(h);
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('400px');
+
+    const grip = h.el('term-grip');
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 500 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 400 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 400 }));
+    expect(h.el('term').style.height).toBe('500px');
+    expect(h.window.localStorage.getItem('aa_term_h')).toBe('500');
+
+    // Clamped both ways: the transcript keeps a few lines above, and the panel stays usable.
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 500 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 0 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 0 }));
+    expect(h.el('term').style.height).toBe('521px');
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 0 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 800 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 800 }));
+    expect(h.el('term').style.height).toBe('120px');
+  });
+
+  it('comes back at the height it was left, across a reload', async () => {
+    const h = await open({ terminal: true, storage: { aa_term_h: '512' } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    laidOut(h);
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('512px');
+  });
+
+  it('answers a double-click and the arrow keys, so the divider is not only a drag target', async () => {
+    const h = await open({ terminal: true, storage: { aa_term_h: '400' } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    laidOut(h);
+    await h.click('#term-toggle');
+
+    const grip = h.el('term-grip');
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(h.el('term').style.height).toBe('424px');
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(h.el('term').style.height).toBe('376px');
+
+    grip.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
+    expect(h.el('term').style.height).toBe('400px');
+    expect(h.window.localStorage.getItem('aa_term_h')).toBeNull();
   });
 
   it('has no close button unless the daemon can end a session', async () => {
@@ -9178,8 +9350,26 @@ describe('webui page: the scheduled-task panel', () => {
   });
   const listReply = (tasks: Array<Record<string, unknown>>): Record<string, unknown> => ({ enabled: true, tasks });
   const TASK_URL = 'api/schedules/task?id=a1b2c3';
+  /** core/schedule.ts SHAPE_SETTINGS, as the daemon hands it over. */
+  const SHAPES = {
+    bash: ['cwd', 'host', 'timeout', 'at'],
+    fixed: ['agent', 'at'],
+    new: ['agent', 'model', 'cwd', 'at'],
+    daily: ['agent', 'model', 'cwd'],
+  };
+  /** What the form offers whatever task it is filled from: agents, machines, places, defaults. */
+  const formContext = (): Record<string, unknown> => ({
+    agents: ['cc', 'oc'],
+    agentHosts: { oc: 'box' },
+    hosts: ['box'],
+    channels: [{ id: 'tg:-100/7', title: 'ops chat' }],
+    shapes: SHAPES,
+    tz: 'Asia/Shanghai',
+    agent: 'cc',
+  });
   /** A task's page as the daemon answers it: a new-session task with a directory and a model. */
   const detail = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    ...formContext(),
     task: task(),
     fields: {
       name: 'Morning CI',
@@ -9190,12 +9380,16 @@ describe('webui page: the scheduled-task panel', () => {
       session: 'new',
       model: 'm1',
       cwd: '/srv/app',
+      target: 'web:main/' + A,
     },
-    editable: ['name', 'cron', 'tz', 'at', 'prompt', 'agent', 'model', 'cwd'],
-    agents: ['cc', 'oc'],
     runs: [],
     ...over,
   });
+  /** Whether a form field is on screen: its group follows the shape the form is set to. */
+  const shownField = (h: Harness, id: string): boolean => {
+    const group = h.el(id).closest('[data-tp-need],[data-tp-kinded]') as HTMLElement | null;
+    return !h.el(id).hidden && !(group?.hidden ?? false);
+  };
   const pageReply = (d: Record<string, unknown>): Record<string, unknown> => ({ ok: true, detail: d });
   /** Open a task row's ⋯ menu, as a person would: one box, so the selector is inside #row-menu. */
   const taskMenu = async (h: Harness, id: string): Promise<HTMLElement> => {
@@ -9861,9 +10055,12 @@ describe('webui page: the scheduled-task panel', () => {
     expect(Array.from((h.el('tp-agent') as HTMLSelectElement).options).map((o) => o.value)).toEqual(['cc', 'oc']);
     expect((h.el('tp-model') as HTMLInputElement).value).toBe('m1');
     expect((h.el('tp-cwd') as HTMLInputElement).value).toBe('/srv/app');
-    // What a task is cannot be edited, and the form says so once rather than greying fields.
-    expect(h.el('task-view').textContent).toContain('a new topic each run');
-    expect(h.el('task-view').textContent).toContain('cannot be edited');
+    // What the task is, how it runs and where it posts are on the form too, set to the task's own.
+    expect(h.doc.querySelector('[data-tp-kind="agent"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect(h.doc.querySelector('[data-tp-session="new"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect((h.el('tp-target') as HTMLSelectElement).value).toBe('topic:' + A);
+    expect(shownField(h, 'tp-host')).toBe(false);
+    expect(shownField(h, 'tp-timeout')).toBe(false);
 
     setField(h, 'tp-text', 'summarise the failures and the flakes');
     setField(h, 'tp-cwd', '');
@@ -9905,19 +10102,20 @@ describe('webui page: the scheduled-task panel', () => {
   it('sends nothing when nothing changed, and refuses a timeout that is not a length of time', async () => {
     const bash = detail({
       task: task({ kind: 'bash', run: 'bash · 10m', detail: 'pg_dump app' }),
-      fields: { name: 'Backup', cron: '0 2 * * *', tz: 'Asia/Shanghai', command: 'pg_dump app', timeoutMs: 600_000 },
-      editable: ['name', 'cron', 'tz', 'at', 'command', 'timeout', 'cwd'],
+      fields: { name: 'Backup', cron: '0 2 * * *', tz: 'Asia/Shanghai', command: 'pg_dump app', timeoutMs: 600_000, target: 'web:main/' + A },
     });
     const h = await open({ replies: { 'api/schedules': listReply([task({ kind: 'bash' })]), [TASK_URL]: pageReply(bash) } });
     await openTaskPage(h);
     await h.click('#task-view [data-tp-act="edit"]');
 
-    // A bash task: a command and a timeout, no agent or model to choose.
+    // A bash task: a command, a machine and a timeout, no agent or model to choose.
     expect((h.el('tp-text') as HTMLTextAreaElement).value).toBe('pg_dump app');
     expect((h.el('tp-timeout') as HTMLInputElement).value).toBe('10m');
-    expect(h.doc.getElementById('tp-agent')).toBeNull();
-    expect(h.doc.getElementById('tp-model')).toBeNull();
-    expect(h.el('task-view').textContent).toContain('Command');
+    expect((h.el('tp-host') as HTMLSelectElement).value).toBe('');
+    expect(shownField(h, 'tp-host')).toBe(true);
+    expect(shownField(h, 'tp-agent')).toBe(false);
+    expect(shownField(h, 'tp-model')).toBe(false);
+    expect(h.el('tp-text-label').textContent).toBe('Command');
 
     await h.click('#task-view [data-tp-act="save"]');
     expect(h.calls.some((c) => c.path === 'api/schedules/edit')).toBe(false);
@@ -9963,23 +10161,24 @@ describe('webui page: the scheduled-task panel', () => {
     });
   });
 
-  it('offers only what an edit of that kind can change: a fixed session has no directory, model or one-shot switch for daily', async () => {
+  it('shows only what the shape keeps: a fixed session has no directory or model, a daily one no one-shot switch', async () => {
     const fixed = detail({
-      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'p', agent: 'cc', session: 'fixed' },
-      editable: ['name', 'cron', 'tz', 'at', 'prompt', 'agent'],
+      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'p', agent: 'cc', session: 'fixed', target: 'web:main/' + A },
     });
     const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(fixed) } });
     await openTaskPage(h);
     await h.click('#task-view [data-tp-act="edit"]');
-    expect(h.doc.getElementById('tp-model')).toBeNull();
-    expect(h.doc.getElementById('tp-cwd')).toBeNull();
-    expect(h.el('task-view').textContent).toContain('/cd and /model there');
+    expect(shownField(h, 'tp-model')).toBe(false);
+    expect(shownField(h, 'tp-cwd')).toBe(false);
+    expect(shownField(h, 'tp-agent')).toBe(true);
+    expect(h.el('tp-session-hint').textContent).toContain('/cd and /model there');
 
-    const daily = detail({ fields: { ...(detail().fields as object), session: 'daily' }, editable: ['name', 'cron', 'tz', 'prompt', 'agent', 'model', 'cwd'] });
+    const daily = detail({ fields: { ...(detail().fields as object), session: 'daily' } });
     const r = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(daily) } });
     await openTaskPage(r);
     await r.click('#task-view [data-tp-act="edit"]');
-    expect(r.doc.querySelector('[data-tp-when]')).toBeNull();
+    expect((r.doc.querySelector('.tp-when') as HTMLElement).hidden).toBe(true);
+    expect(shownField(r, 'tp-model')).toBe(true);
   });
 
   it('has no Edit on a task that is over, and says why', async () => {
@@ -10015,6 +10214,239 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.el('task-page').hidden).toBe(false);
     expect((h.el('tp-name') as HTMLInputElement).value).toBe('Renamed');
     expect(h.el('app').classList.contains('sched-open')).toBe(true);
+  });
+
+  /** Pick an option of a select, as a person does: the value, then the change event the form follows. */
+  const choose = (h: Harness, id: string, value: string): void => {
+    const el = h.el(id) as HTMLSelectElement;
+    el.value = value;
+    el.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  };
+  const lastBody = (h: Harness, path: string): unknown => h.calls.filter((c) => c.path === path).at(-1)?.body;
+  /** Open the new-task form from the Tasks tab's +, and wait for the daemon's choices to fill it. */
+  const openNewTask = async (h: Harness): Promise<void> => {
+    await h.emit(sync(A, [], [A, B]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-new');
+    await until('the new-task form', () => h.doc.getElementById('tp-form') !== null);
+  };
+
+  it('adds a task from the Tasks tab: the form starts from the daemon\'s defaults, and Add sends schedule add\'s fields', async () => {
+    const made = task({ id: 'b2c3d4', name: 'Nightly', detail: 'check the nightly build' });
+    const added = detail({ task: made, fields: { ...(detail().fields as object), name: 'Nightly', prompt: 'check the nightly build' } });
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/schedules/form': { ok: true, form: formContext() },
+      'api/schedules/add': { ok: true, detail: added, tasks: [task(), made] },
+    };
+    const h = await open({ replies });
+    await openNewTask(h);
+
+    expect(h.el('task-title').textContent).toBe('New task');
+    // The daemon's defaults: its zone, its routing agent, a new session — and the topic on screen.
+    expect((h.el('tp-tz') as HTMLInputElement).value).toBe('Asia/Shanghai');
+    expect((h.el('tp-agent') as HTMLSelectElement).value).toBe('cc');
+    expect(h.doc.querySelector('[data-tp-kind="agent"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect(h.doc.querySelector('[data-tp-session="new"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect((h.el('tp-target') as HTMLSelectElement).value).toBe('topic:' + A);
+    // This page's topics by title, and any other place by the id fleetherd channels prints.
+    expect(Array.from((h.el('tp-target') as HTMLSelectElement).options).map((o) => o.value)).toEqual(['topic:' + A, 'topic:' + B, 'other']);
+    expect(Array.from(h.doc.querySelectorAll('#tp-chans option')).map((o) => o.getAttribute('value'))).toEqual(['tg:-100/7']);
+    expect(h.el('task-view').querySelector('[data-tp-act="save"]')!.textContent).toBe('Add');
+
+    setField(h, 'tp-name', 'Nightly');
+    setField(h, 'tp-text', 'check the nightly build');
+    setField(h, 'tp-cron', '0 3 * * *');
+    setField(h, 'tp-tags', 'ci, Nightly');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the add request', () => h.calls.some((c) => c.path === 'api/schedules/add'));
+
+    expect(lastBody(h, 'api/schedules/add')).toEqual({
+      task: {
+        name: 'Nightly',
+        tz: 'Asia/Shanghai',
+        cron: '0 3 * * *',
+        prompt: 'check the nightly build',
+        session: 'new',
+        agent: 'cc',
+        target: { topic: A },
+        tags: ['ci', 'Nightly'],
+      },
+    });
+    // The answer is the new task's page, and the list behind it took the same answer.
+    await until('the task page', () => h.el('task-view').querySelector('#tp-form') === null);
+    expect(h.el('task-title').textContent).toBe('Nightly');
+    expect(h.el('task-note').className).toBe('ok');
+    expect(h.el('schedules-list').textContent).toContain('Nightly');
+  });
+
+  it('offers + on the Tasks tab only', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    expect(h.el('sched-new').hidden).toBe(false);
+    await h.click('#sched-tab-sessions');
+    expect(h.el('sched-new').hidden).toBe(true);
+    await h.click('#sched-tab-tasks');
+    await h.click('#sched-tab-reviews');
+    expect(h.el('sched-new').hidden).toBe(true);
+  });
+
+  it('a new bash task: the form turns to a command, its machine and its timeout, and keeps the refusal on screen', async () => {
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/schedules/form': { ok: true, form: formContext() },
+      'api/schedules/add': { ok: false, error: '--cron: "0 3 * *" is not a 5-field cron expression (minute hour day month weekday)' },
+    };
+    const h = await open({ replies, status: { 'api/schedules/add': 400 } });
+    await openNewTask(h);
+
+    await h.click('#task-view [data-tp-kind="bash"]');
+    expect(h.el('tp-text-label').textContent).toBe('Command');
+    expect(shownField(h, 'tp-agent')).toBe(false);
+    expect(shownField(h, 'tp-model')).toBe(false);
+    expect(shownField(h, 'tp-host')).toBe(true);
+    expect(shownField(h, 'tp-timeout')).toBe(true);
+    expect((h.doc.querySelector('[data-tp-kinded="agent"]') as HTMLElement).hidden).toBe(true);
+    expect(h.el('tp-cwd-hint').textContent).toContain("the gateway’s machine");
+    choose(h, 'tp-host', 'box');
+    expect(h.el('tp-cwd-hint').textContent).toContain('on box');
+
+    setField(h, 'tp-text', 'df -h');
+    setField(h, 'tp-cron', '0 3 * *');
+    setField(h, 'tp-timeout', '90s');
+    setField(h, 'tp-cwd', '/srv');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the refusal', () => !h.el('task-note').hidden);
+
+    expect(lastBody(h, 'api/schedules/add')).toEqual({
+      task: { tz: 'Asia/Shanghai', cron: '0 3 * *', command: 'df -h', host: 'box', cwd: '/srv', timeoutMs: 90_000, target: { topic: A } },
+    });
+    // The daemon's sentence, and the form as it was typed.
+    expect(h.el('task-note').textContent).toContain('is not a 5-field cron expression');
+    expect(h.el('task-note').className).toBe('error');
+    expect((h.el('tp-cron') as HTMLInputElement).value).toBe('0 3 * *');
+    expect(h.el('task-title').textContent).toBe('New task');
+  });
+
+  it('a new task: Cancel closes it, and asks first only once something was typed', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), 'api/schedules/form': { ok: true, form: formContext() } }, confirm: false });
+    await openNewTask(h);
+    await h.click('#task-view [data-tp-act="cancel"]');
+    expect(h.el('task-page').hidden).toBe(true);
+    expect(h.confirms).toEqual([]);
+
+    await h.click('#sched-new');
+    await until('the new-task form', () => h.doc.getElementById('tp-form') !== null);
+    setField(h, 'tp-text', 'half a prompt');
+    await h.click('#task-view [data-tp-act="cancel"]');
+    expect(h.confirms).toEqual(['Discard this new task?']);
+    expect(h.el('task-page').hidden).toBe(false);
+  });
+
+  it('turns a prompt task into a command, on the machine its agent ran on', async () => {
+    const onBox = detail({ fields: { ...(detail().fields as object), agent: 'oc' } });
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(onBox) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect(h.el('task-view').textContent).toContain('keeps its id, tags and run history');
+
+    await h.click('#task-view [data-tp-kind="bash"]');
+    expect((h.el('tp-host') as HTMLSelectElement).value).toBe('box');
+    expect(shownField(h, 'tp-agent')).toBe(false);
+    expect(shownField(h, 'tp-cwd')).toBe(true);
+    setField(h, 'tp-text', 'make check');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    // What the new kind runs with is sent; the directory it keeps is left to the daemon.
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { command: 'make check', host: 'box' } });
+  });
+
+  it('turns a command into a prompt task, sending the agent and session it will run with', async () => {
+    const bash = detail({
+      task: task({ kind: 'bash', run: 'bash · 10m', detail: 'pg_dump app' }),
+      fields: { name: 'Backup', cron: '0 2 * * *', tz: 'Asia/Shanghai', command: 'pg_dump app', timeoutMs: 600_000, host: 'box', target: 'web:main/' + A },
+    });
+    const h = await open({ replies: { 'api/schedules': listReply([task({ kind: 'bash' })]), [TASK_URL]: pageReply(bash) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect((h.el('tp-host') as HTMLSelectElement).value).toBe('box');
+
+    await h.click('#task-view [data-tp-kind="agent"]');
+    await h.click('#task-view [data-tp-session="daily"]');
+    expect(shownField(h, 'tp-host')).toBe(false);
+    expect(shownField(h, 'tp-timeout')).toBe(false);
+    setField(h, 'tp-text', 'summarise the backup log');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({
+      id: 'a1b2c3',
+      edit: { prompt: 'summarise the backup log', session: 'daily', agent: 'cc' },
+    });
+  });
+
+  it('changes the session, and leaves what the new one does not keep to the daemon', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    await h.click('#task-view [data-tp-when="at"]');
+    setField(h, 'tp-at', '2026-11-20T09:30');
+
+    // Daily takes no one-shot: the switch goes, and the time goes back to the cron.
+    await h.click('#task-view [data-tp-session="daily"]');
+    expect((h.doc.querySelector('.tp-when') as HTMLElement).hidden).toBe(true);
+    expect(h.el('tp-at').hidden).toBe(true);
+    expect(h.el('tp-cron').hidden).toBe(false);
+
+    await h.click('#task-view [data-tp-session="fixed"]');
+    expect(shownField(h, 'tp-model')).toBe(false);
+    expect(shownField(h, 'tp-cwd')).toBe(false);
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    // The model and the directory are not sent: a fixed session keeps neither, and the daemon drops them.
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { session: 'fixed' } });
+  });
+
+  it('moves a task to another topic of the page, or to a place fleetherd channels lists, and edits its tags', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task({ tags: ['ci'] })]), [TASK_URL]: pageReply(detail({ task: task({ tags: ['ci'] }) })) } });
+    await h.emit(sync(A, [], [A, B]));
+    await h.click('#schedules-toggle');
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await until("the task's page", () => h.el('task-view').querySelector('.tp-acts') !== null);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect((h.el('tp-tags') as HTMLInputElement).value).toBe('ci');
+
+    choose(h, 'tp-target', 'topic:' + B);
+    setField(h, 'tp-tags', 'ci, ops');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { target: { topic: B }, tags: ['ci', 'ops'] } });
+
+    // Another chat: the id field appears, and an empty one is said rather than sent.
+    const before = h.calls.length;
+    choose(h, 'tp-target', 'other');
+    expect(h.el('tp-target-other').hidden).toBe(false);
+    await h.click('#task-view [data-tp-act="save"]');
+    expect(h.el('task-note').textContent).toContain('Say where it posts');
+    expect(h.calls.length).toBe(before);
+    setField(h, 'tp-target-other', 'tg:-100/7');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the second edit', () => h.calls.filter((c) => c.path === 'api/schedules/edit').length === 2);
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { target: { channel: 'tg:-100/7' }, tags: ['ci', 'ops'] } });
+  });
+
+  it('a task posting elsewhere starts on Another chat with its id, and is not moved by saving something else', async () => {
+    const elsewhere = task({ target: 'tg:-100/7', targetTopic: undefined });
+    const away = detail({ task: elsewhere, fields: { ...(detail().fields as object), target: 'tg:-100/7' } });
+    const h = await open({ replies: { 'api/schedules': listReply([elsewhere]), [TASK_URL]: pageReply(away) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect((h.el('tp-target') as HTMLSelectElement).value).toBe('other');
+    expect((h.el('tp-target-other') as HTMLInputElement).value).toBe('tg:-100/7');
+    setField(h, 'tp-name', 'Renamed');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { name: 'Renamed' } });
   });
 
   it('goes when its task goes, and reads the detail again when a run ends', async () => {
@@ -10930,7 +11362,7 @@ describe('webui page: the task list filter', () => {
   });
 
   /** A task's page, for the tag editor on it: the tags shown are the list row's (taskPageFollow). */
-  const tagPage = { ok: true, detail: { task: task(), fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'x', agent: 'cc', session: 'fixed' }, editable: ['name'], agents: ['cc'], runs: [] } };
+  const tagPage = { ok: true, detail: { task: task(), fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'x', agent: 'cc', session: 'fixed' }, agents: ['cc'], runs: [] } };
   const openTask = async (h: Harness): Promise<HTMLInputElement> => {
     (h.doc.querySelector('.sched-item') as HTMLElement).click();
     await until('the tag field', () => h.doc.querySelector('#task-view [data-tag-input]') !== null);
@@ -12948,12 +13380,83 @@ describe('webui page: the History tab', () => {
 
     // The topic underneath is still there, untouched, for the way back.
     expect(h.painted()).toBe(1);
-    // And the stylesheet takes the composer, the header's topic controls and the terminal away while
-    // it is up — as text, because jsdom's CSSOM is not to be trusted with this (see Testing).
+    // And the stylesheet takes the composer, the header's topic controls and the terminal's
+    // divider away while it is up — as text, because jsdom's CSSOM is not to be trusted with
+    // this (see Testing). The terminal itself is only parked: a record is no reason to hang up
+    // on a shell, so its frame keeps its box under the record.
     expect(renderPage('Chat', false)).toContain(
-      '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,\n' +
+      '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term-grip,\n' +
         '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}'
     );
+    expect(renderPage('Chat', false)).toContain(
+      '#chat.lib #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}'
+    );
+  });
+
+  it('parks the terminal while a record covers the chat, and shows it again on the way out', async () => {
+    // The frame's own rule says `visibility:visible`, and that beats anything the panel inherits
+    // — so a CSS rule on #term leaves the terminal painted over the record, visible and
+    // unclickable. The record has to take the frame out of `on`, which is paintFrames' job.
+    const h = await open({
+      terminal: true,
+      replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#term-toggle');
+    const frame = h.doc.querySelector('#term-frames iframe.on');
+    expect(frame).not.toBeNull();
+    expect(h.el('term').hasAttribute('inert')).toBe(false);
+
+    await onHistory(h);
+    await openRow(h);
+    expect(libOn(h)).toBe(true);
+    // Boolean, not the element: a failure should say what happened, not try to print a jsdom frame.
+    expect(Boolean(h.doc.querySelector('#term-frames iframe.on'))).toBe(false);
+    // Invisible is not enough on its own: an iframe can still be focused from script.
+    expect(h.el('term').hasAttribute('inert')).toBe(true);
+
+    await h.click('#lib-close');
+    expect(libOn(h)).toBe(false);
+    expect(h.doc.querySelector('#term-frames iframe.on') === frame).toBe(true);
+    expect(h.el('term').hasAttribute('inert')).toBe(false);
+  });
+
+  it('measures the panel again when a record closes, rather than under it', async () => {
+    // #bar and the divider are display:none while a record is up, so they measure 0. A resize
+    // there used to work out a ceiling ~100px too generous and leave the panel at that height
+    // after the record went — on a phone turned sideways, the log a few pixels tall.
+    const h = await open({
+      terminal: true,
+      replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() },
+    });
+    await h.emit(sync(A, [], [A]));
+    const stub = (id: string, prop: string, value: number): void => {
+      Object.defineProperty(h.el(id), prop, { configurable: true, get: () => value });
+    };
+    stub('chat', 'clientHeight', 800);
+    stub('chat-header', 'clientHeight', 50);
+    stub('bar', 'clientHeight', 100);
+    stub('term-grip', 'offsetHeight', 9);
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('400px');
+
+    await onHistory(h);
+    await openRow(h);
+    // The record takes the composer and the divider off screen, and the window shrinks.
+    stub('bar', 'clientHeight', 0);
+    stub('term-grip', 'offsetHeight', 0);
+    stub('chat', 'clientHeight', 500);
+    h.window.dispatchEvent(new h.window.Event('resize'));
+    await tick();
+    // Nothing to measure against: the panel keeps the height it had, out of sight.
+    expect(h.el('term').style.height).toBe('400px');
+
+    // Back on screen both have their heights again, and the panel is measured once more:
+    // 500 - (50 header + 100 composer + 9 divider + 120 transcript) = 221.
+    stub('bar', 'clientHeight', 100);
+    stub('term-grip', 'offsetHeight', 9);
+    await h.click('#lib-close');
+    expect(h.el('term').style.height).toBe('221px');
   });
 
   it('says a read was cut short where the reader lands, and says nothing when it was not', async () => {
@@ -14320,5 +14823,216 @@ describe('webui page: the git window', () => {
     expect((h.el('input') as HTMLTextAreaElement).value).toBe(
       ['src/a.ts:L2 (old)', '```', 'two', '```', 'Removed on purpose'].join('\n')
     );
+  });
+});
+
+/**
+ * The instruction editor: the settings page's Instructions section, and the file window opened on
+ * it (page.ts "Instructions"). The daemon's side is tested in daemon/instructions-panel.test.ts;
+ * here, what a person sees and does — the section only when the feature is on, the window without
+ * the controls that make no sense for a fixed list, a save carrying its version (or "create" for a
+ * file not written yet), and where the text went said in the window.
+ */
+describe('webui page: the instruction editor', () => {
+  const A = 'a1b2c3d4';
+  const SHA = 'c'.repeat(64);
+  const settingsList = {
+    ...message('m1', '<p>Settings</p>'),
+    buttons: [{ id: 'stg:r:0', label: 'Idle reclaim · 15m' }],
+    settings: {
+      level: 'list',
+      groups: [{ name: 'Conversations' }],
+      rows: [{ buttonId: 'stg:r:0', label: 'Idle reclaim', value: '15m', group: 'Conversations', control: { kind: 'list' } }],
+    },
+  };
+  const LIST = {
+    dir: '/c/instructions',
+    on: true,
+    global: [
+      { name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc', 'cx'] },
+      { name: 'claude.md', layer: 'claude', exists: false, agents: ['cc'] },
+    ],
+    agents: [
+      { id: 'cc', harness: 'claude', host: 'box', file: '~/.claude/CLAUDE.md', own: '`@` references in `~/.claude/CLAUDE.md`, and `~/.claude/rules`' },
+      { id: 'oc', harness: 'gemini', host: 'local' },
+    ],
+  };
+  const COMMON = 'api/instructions/read?scope=global&name=common.md';
+  const CLAUDE = 'api/instructions/read?scope=global&name=claude.md';
+  const REFS = 'api/instructions/refs?agent=cc';
+  const RULE = `api/instructions/read?scope=agent&agent=cc&path=${encodeURIComponent('/h/.claude/rules/a.md')}`;
+  const commonFile = { ok: true, path: '/c/instructions/common.md', dir: '/c/instructions', name: 'common.md', size: 5, mtimeMs: 7, kind: 'text', text: 'hello', eol: 'lf', sha256: SHA };
+  const claudeFile = { ok: true, missing: true, path: '/c/instructions/claude.md', dir: '/c/instructions', name: 'claude.md', size: 0, mtimeMs: 0, kind: 'text', text: '', eol: 'lf' };
+  const ruleFile = { ok: true, path: '/h/.claude/rules/a.md', dir: '/h/.claude/rules', name: 'a.md', size: 4, mtimeMs: 9, kind: 'text', text: 'rule', eol: 'lf', sha256: SHA };
+  const refs = {
+    ok: true,
+    agent: 'cc',
+    host: 'box',
+    root: '~/.claude/CLAUDE.md',
+    rootState: 'managed',
+    summary: '`@` references in `~/.claude/CLAUDE.md`, and `~/.claude/rules`',
+    refs: [
+      { path: '/h/.claude/rules/a.md', shown: '~/.claude/rules/a.md', exists: true, depth: 1, kind: 'rule', editable: true },
+      { path: '/h/new.md', shown: '~/new.md', exists: false, depth: 2, kind: 'reference', editable: true, via: '~/.claude/rules/a.md' },
+      {
+        path: '/h/.fleetherd/instructions/codex.md',
+        shown: '~/.fleetherd/instructions/codex.md',
+        exists: true,
+        depth: 1,
+        kind: 'reference',
+        editable: false,
+        note: "the gateway's delivered copy: edit it under Every agent",
+      },
+    ],
+  };
+
+  async function opened(over: Record<string, unknown> = {}): Promise<Harness> {
+    const h = await open({
+      instructions: true,
+      replies: { 'api/instructions': LIST, [COMMON]: commonFile, [CLAUDE]: claudeFile, [REFS]: refs, [RULE]: ruleFile, ...over },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'msg', msg: settingsList });
+    await until('the section', () => Boolean(h.doc.querySelector('.instr-sec [data-instr-global]')));
+    return h;
+  }
+
+  const editor = (h: Harness): HTMLTextAreaElement => h.el('files-editor').querySelector('textarea') as HTMLTextAreaElement;
+  const type = (h: Harness, v: string): void => {
+    const ta = editor(h);
+    ta.value = v;
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  };
+  const writes = (h: Harness) => h.calls.filter((c) => c.path === 'api/instructions/write');
+
+  it('leaves the section out, and asks for nothing, when the daemon has it off', async () => {
+    const h = await open({ replies: { 'api/instructions': LIST } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'msg', msg: settingsList });
+    await tick();
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(h.doc.querySelector('.instr-sec')).toBeNull();
+    expect(h.calls.some((c) => c.path.startsWith('api/instructions'))).toBe(false);
+  });
+
+  it('lists the gateway’s files and the agents that have files of their own, under the daemon’s rows', async () => {
+    const h = await opened();
+    const sec = h.doc.querySelector('.instr-sec') as HTMLElement;
+    // After the /setting rows, not in place of them.
+    expect(h.el('settings-body').lastElementChild).toBe(sec);
+    expect(h.doc.querySelector('#settings-body .set-item .set-label')?.textContent).toBe('Idle reclaim');
+    const globals = Array.from(sec.querySelectorAll('[data-instr-global]')).map((b) => [
+      b.getAttribute('data-instr-global'),
+      b.querySelector('.set-label')?.textContent,
+      b.querySelector('.set-hint')?.textContent,
+      b.querySelector('.set-v')?.textContent,
+    ]);
+    expect(globals).toEqual([
+      ['common.md', 'Every agent', 'cc, cx', 'common.md'],
+      ['claude.md', 'Claude Code', 'cc', 'claude.md · not written'],
+    ]);
+    // An agent whose harness has nothing of its own (here: none named) is not offered.
+    const agents = Array.from(sec.querySelectorAll('[data-instr-agent]'));
+    expect(agents.map((b) => b.getAttribute('data-instr-agent'))).toEqual(['cc']);
+    expect(agents[0]?.querySelector('.set-kind')?.textContent).toBe('box');
+    expect(agents[0]?.querySelector('.set-hint')?.innerHTML).toContain('<code>~/.claude/rules</code>');
+  });
+
+  it('opens a global file in the file window, without the controls a fixed list has no use for', async () => {
+    const h = await opened();
+    await h.click('[data-instr-global="common.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(h.el('files').hidden).toBe(false);
+    expect(h.el('files-title').textContent).toBe('common.md');
+    expect(h.el('files-where').textContent).toBe('common.md');
+    expect(editor(h).value).toBe('hello');
+    for (const id of ['files-tree-head', 'files-search-row', 'files-rename-open', 'files-delete', 'files-crumbs']) {
+      expect(h.el(id).hidden, id).toBe(true);
+    }
+    const rows = Array.from(h.el('files-tree-list').querySelectorAll('[data-fx-file]')).map((b) => b.getAttribute('data-fx-file'));
+    expect(rows).toEqual(['g:common.md', 'g:claude.md']);
+    // The page never asked the file window's routes for anything.
+    expect(h.calls.some((c) => c.path.startsWith('api/files/'))).toBe(false);
+  });
+
+  it('saves a global file with the version it read, and says where the text was placed', async () => {
+    const h = await opened({
+      'api/instructions/write': {
+        ok: true,
+        mtimeMs: 8,
+        size: 6,
+        sha256: 'd'.repeat(64),
+        delivery: [
+          { host: 'local', agents: ['cx'], outcome: 'linked', link: '/x/.codex/AGENTS.md' },
+          { host: 'box', agents: ['cc'], outcome: 'unreachable', detail: 'no answer within 10 s' },
+        ],
+      },
+    });
+    await h.click('[data-instr-global="common.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    type(h, 'hello!');
+    await h.click('#files-save');
+    await until('the save', () => writes(h).length === 1);
+    expect(writes(h)[0]!.body).toEqual({ scope: 'global', name: 'common.md', text: 'hello!', mtimeMs: 7, size: 5, sha256: SHA });
+    await until('the answer', () => /Saved/.test(h.el('files-note').textContent ?? ''));
+    expect(h.el('files-note').textContent).toBe(
+      'Saved common.md. Placed for cx; a session already running keeps what it read. box did not answer; it gets this when an agent next starts there.'
+    );
+    expect(h.el('files-dirty').hidden).toBe(true);
+  });
+
+  it('creates a file not written yet instead of sending a version it never had', async () => {
+    const h = await opened({ 'api/instructions/write': { ok: true, mtimeMs: 3, size: 2, sha256: 'e'.repeat(64), delivery: [] } });
+    await h.click('[data-instr-global="claude.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(h.el('files-note').textContent).toBe('Not written yet. Saving creates it.');
+    expect(h.el('files-tree-list').querySelector('[data-fx-file="g:claude.md"] .fx-tag')?.textContent).toBe('not written');
+    type(h, 'x\n');
+    await h.click('#files-save');
+    await until('the save', () => writes(h).length === 1);
+    expect(writes(h)[0]!.body).toEqual({ scope: 'global', name: 'claude.md', text: 'x\n', missing: true });
+    await until('the tree', () => !h.el('files-tree-list').querySelector('[data-fx-file="g:claude.md"] .fx-tag'));
+  });
+
+  it('lists an agent’s own files from its machine and saves one where it is', async () => {
+    const h = await opened({ 'api/instructions/write': { ok: true, mtimeMs: 10, size: 5, sha256: 'f'.repeat(64) } });
+    await h.click('[data-instr-agent="cc"]');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length === 2);
+    expect(h.calls.some((c) => c.path === REFS)).toBe(true);
+    expect(h.el('files-title').textContent).toBe('cc · own instructions');
+    const tree = h.el('files-tree-list');
+    expect(tree.querySelector('.fx-head')?.textContent).toBe(
+      "On box: @ references in ~/.claude/CLAUDE.md, and ~/.claude/rules. ~/.claude/CLAUDE.md is the gateway’s copy: a reference in it is added under Instructions."
+    );
+    // The gateway's own copy is listed and cannot be opened here.
+    const off = tree.querySelector('.fx-off') as HTMLElement;
+    expect(off.textContent).toContain('~/.fleetherd/instructions/codex.md');
+    expect(off.querySelector('button')).toBeNull();
+    expect(tree.querySelector('[data-fx-file="a:/h/new.md"]')?.getAttribute('title')).toBe('~/new.md ← ~/.claude/rules/a.md');
+
+    await h.click('[data-fx-file="a:/h/.claude/rules/a.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(h.el('files-where').textContent).toBe('~/.claude/rules/a.md');
+    type(h, 'rule!');
+    await h.click('#files-save');
+    await until('the save', () => writes(h).length === 1);
+    expect(writes(h)[0]!.body).toEqual({ scope: 'agent', agent: 'cc', path: '/h/.claude/rules/a.md', text: 'rule!', mtimeMs: 9, size: 4, sha256: SHA });
+    await until('the answer', () => /Saved/.test(h.el('files-note').textContent ?? ''));
+    expect(h.el('files-note').textContent).toBe('Saved ~/.claude/rules/a.md. cc reads it when its next session starts.');
+  });
+
+  it('puts the editor away alone on Escape, and asks for the list again for the page it came from', async () => {
+    const h = await opened();
+    const before = h.calls.filter((c) => c.path === 'api/instructions').length;
+    await h.click('[data-instr-global="common.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(h.el('files').hidden).toBe(true);
+    expect(h.el('settings-page').hidden).toBe(false);
+    // The tree's own "list" plus the refresh the close asks for.
+    await until('the refresh', () => h.calls.filter((c) => c.path === 'api/instructions').length >= before + 2);
+    // The window is the file window again for whoever opens it next: nothing of this mode is left.
+    expect(h.el('files-tree-head').hidden).toBe(false);
+    expect(h.el('files-search-row').hidden).toBe(false);
   });
 });

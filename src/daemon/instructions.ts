@@ -72,10 +72,19 @@ export const INSTRUCTIONS_DIR = 'instructions';
  */
 export const INSTRUCTIONS_MAX_BYTES = 32 * 1024;
 
+/**
+ * Every per-harness layer, by the name `instructionsHome` gives it — the `<name>.md` files beside
+ * `common.md`. One list, because the web UI's editor (instructions-panel.ts) offers exactly these
+ * files and no other name: a typed `name` below keeps `instructionsHome` from returning one the
+ * editor would not know.
+ */
+export const HARNESS_LAYERS = ['claude', 'codex', 'opencode', 'agy', 'codebuddy', 'atomcode'] as const;
+export type HarnessLayer = (typeof HARNESS_LAYERS)[number];
+
 /** Where one harness reads its user-level instructions. */
 export interface InstructionsHome {
   /** The per-agent file's name on the gateway, and the copy's on the host: `<name>.md`. */
-  name: string;
+  name: HarnessLayer;
   /** The harness's own user-level instruction file — where the link goes. */
   file: string;
   /** The harness's config directory: nothing is placed unless it exists. */
@@ -140,17 +149,26 @@ export type Composed = { kind: 'text'; text: string } | { kind: 'none' } | { kin
  * to deliver", which would take the link back.
  */
 export function composeInstructions(dir: string, name: string): Composed {
-  const parts: string[] = [];
-  for (const file of ['common.md', `${name}.md`]) {
-    let text: string;
-    try {
-      text = fs.readFileSync(path.join(dir, file), 'utf8');
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      throw e;
-    }
-    if (text.trim()) parts.push(text.trim());
+  return joinLayers(['common.md', `${name}.md`].map((file) => readLayer(dir, file)));
+}
+
+/** One layer's text, or undefined when the file is not there. Any other read error is thrown. */
+export function readLayer(dir: string, file: string): string | undefined {
+  try {
+    return fs.readFileSync(path.join(dir, file), 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw e;
   }
+}
+
+/**
+ * The layers as one text — each trimmed, empty ones dropped, joined by a blank line — and whether it
+ * is over the cap. Its own function so the web UI's editor measures a save with the same arithmetic
+ * the delivery uses, before the file is written.
+ */
+export function joinLayers(texts: ReadonlyArray<string | undefined>): Composed {
+  const parts = texts.map((t) => (t ?? '').trim()).filter(Boolean);
   if (parts.length === 0) return { kind: 'none' };
   const text = `${parts.join('\n\n')}\n`;
   const bytes = Buffer.byteLength(text);

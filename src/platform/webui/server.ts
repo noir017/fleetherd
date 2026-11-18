@@ -45,6 +45,7 @@ import type { Socket } from 'node:net';
 import path from 'node:path';
 import { brotliCompress, constants as zlibConstants, createGzip, gzip, gzipSync } from 'node:zlib';
 
+import type { InstructionsPanel, InstructionsTarget } from '../adapter.js';
 import { ASSET_FILE, loadAssets, type WebAssets } from './assets.js';
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
@@ -65,6 +66,7 @@ import {
   SendRequestSchema,
   PushSubscribeSchema,
   PushUnsubscribeSchema,
+  ScheduleAddRequestSchema,
   ScheduleEditRequestSchema,
   ScheduleOpRequestSchema,
   ScheduleTaskId,
@@ -76,6 +78,7 @@ import {
   FilesCreateRequestSchema,
   FilesRenameRequestSchema,
   FilesRemoveRequestSchema,
+  InstructionsWriteRequestSchema,
   StarTopicRequestSchema,
   TOPIC_ID,
   parseBody,
@@ -416,6 +419,8 @@ const GUARDED: Route[] = [
   // A task's page: its detail and runs, and an edit — `schedule edit`, with its rules, from a form.
   { method: 'GET', path: '/api/schedules/task', run: scheduleDetail },
   { method: 'POST', path: '/api/schedules/edit', run: scheduleEdit },
+  { method: 'GET', path: '/api/schedules/form', run: scheduleForm },
+  { method: 'POST', path: '/api/schedules/add', run: scheduleAdd },
   // The skills page: the gateway's managed skills, and one operation on one of them. Behind the
   // same session as everything else, and the operation is a closed union in protocol.ts — there
   // is no hard delete among the verbs, because the store has none.
@@ -474,6 +479,14 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/files/create', run: filesCreate },
   { method: 'POST', path: '/api/files/rename', run: filesRename },
   { method: 'POST', path: '/api/files/remove', run: filesRemove },
+  // ── The instruction editor (platforms.<id>.instructions) ─────────────────
+  // The settings page's list of instruction files, one agent's referenced files, and a read and a
+  // write of one of them. 404 while the feature is off, like the file window. No route takes a free
+  // path: a global file is a name, an agent's file is checked against what its harness references.
+  { method: 'GET', path: '/api/instructions', run: instructionsList },
+  { method: 'GET', path: '/api/instructions/refs', run: instructionsRefs },
+  { method: 'GET', path: '/api/instructions/read', run: instructionsRead },
+  { method: 'POST', path: '/api/instructions/write', run: instructionsWrite },
 ];
 
 /**
@@ -615,6 +628,7 @@ function servedPage(ctx: Ctx): ServedPage {
     // bundle from `<prefix>/assets/` and the page's own import resolves the same way.
     ctx.assets.codeview === null ? null : `assets/${ctx.assets.codeview}`,
     filesOn(ctx),
+    instructionsOn(ctx),
   ] as const;
   const key = JSON.stringify(args);
   if (ctx.page?.key === key) return ctx.page;
@@ -1061,6 +1075,23 @@ async function scheduleEdit({ req, res }: Req, ctx: Ctx): Promise<void> {
   send(req, res, result.ok ? 200 : 400, result);
 }
 
+/** What the new-task form offers. 404 when the daemon has no scheduled tasks, as a detail would be. */
+function scheduleForm({ req, res }: Req, ctx: Ctx): void {
+  const result = ctx.room.scheduleForm();
+  send(req, res, result.ok ? 200 : 404, result);
+}
+
+/**
+ * Register a task from the panel's form. A refusal is the service's own sentence — `schedule add`'s
+ * words — and the answer carries the new task's page and the list, as an edit's does.
+ */
+async function scheduleAdd({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, ScheduleAddRequestSchema);
+  if (!parsed) return;
+  const result = await ctx.room.scheduleAdd(parsed.task);
+  send(req, res, result.ok ? 200 : 400, result);
+}
+
 /**
  * What the topic named by `?t=` can switch its model to. Slow the first time (a cold agent is
  * started, as `/model` would start it), so the page shows that it is asking. 200 either way: "no
@@ -1503,6 +1534,94 @@ async function filesRemove({ req, res }: Req, ctx: Ctx): Promise<void> {
   if (!parsed) return;
   const r = await ctx.room.filesRemove(parsed.topic, parsed.path);
   send(req, res, r.ok ? 200 : 400, r);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The instruction editor
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether this deployment has the instruction editor. 404 when off, for the file window's reason
+ * (`filesOn`). The room's panel is checked too: the daemon hands it over only when the same switch
+ * is on, so a route that got past this still finds nothing to act through.
+ */
+function instructionsOn(ctx: Ctx): boolean {
+  return ctx.instance.instructions?.enabled === true;
+}
+
+function instructionsPanel(req: IncomingMessage, res: ServerResponse, ctx: Ctx): InstructionsPanel | undefined {
+  const panel = instructionsOn(ctx) ? ctx.room.instructions : null;
+  if (!panel) {
+    send(req, res, 404, { error: 'no such route' });
+    return undefined;
+  }
+  return panel;
+}
+
+/** The target a query string names, checked by shape. The daemon decides whether it exists. */
+function instructionsTarget(url: URL): InstructionsTarget | { error: string } {
+  const scope = url.searchParams.get('scope');
+  if (scope === 'global') {
+    const name = url.searchParams.get('name') ?? '';
+    return name && name.length <= 64 ? { scope, name } : { error: 'not a file name' };
+  }
+  if (scope === 'agent') {
+    const agent = url.searchParams.get('agent') ?? '';
+    const path = url.searchParams.get('path') ?? '';
+    if (!agent || agent.length > 128) return { error: 'not an agent id' };
+    if (!path || path.length > 4096) return { error: 'not a path' };
+    return { scope, agent, path };
+  }
+  return { error: 'scope must be global or agent' };
+}
+
+async function instructionsList({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const panel = instructionsPanel(req, res, ctx);
+  if (!panel) return;
+  send(req, res, 200, await panel.list());
+}
+
+/** One agent's referenced files: reads that agent's machine, so it is asked per agent, not listed. */
+async function instructionsRefs({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const panel = instructionsPanel(req, res, ctx);
+  if (!panel) return;
+  const agent = url.searchParams.get('agent') ?? '';
+  if (!agent || agent.length > 128) return send(req, res, 400, { error: 'not an agent id' });
+  const r = await panel.refs(agent);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+async function instructionsRead({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const panel = instructionsPanel(req, res, ctx);
+  if (!panel) return;
+  const target = instructionsTarget(url);
+  if ('error' in target) return send(req, res, 400, target);
+  const r = await panel.read(target, { preview: url.searchParams.get('preview') === '1' });
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** One save; a conflict answers 409, as the file window's does. */
+async function instructionsWrite({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const panel = instructionsPanel(req, res, ctx);
+  if (!panel) return;
+  const parsed = await readBody(req, res, InstructionsWriteRequestSchema);
+  if (!parsed) return;
+  const target: InstructionsTarget =
+    parsed.scope === 'global' ? { scope: 'global', name: parsed.name } : { scope: 'agent', agent: parsed.agent, path: parsed.path };
+  const r = await panel.write(
+    target,
+    parsed.text,
+    parsed.force
+      ? { force: true }
+      : parsed.missing === true
+        ? { missing: true }
+        : {
+            ...(parsed.mtimeMs !== undefined ? { mtimeMs: parsed.mtimeMs } : {}),
+            ...(parsed.size !== undefined ? { size: parsed.size } : {}),
+            ...(parsed.sha256 !== undefined ? { sha256: parsed.sha256 } : {}),
+          }
+  );
+  send(req, res, r.ok ? 200 : 'conflict' in r ? 409 : 400, r);
 }
 
 /**
