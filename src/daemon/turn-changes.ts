@@ -170,7 +170,11 @@ export class TurnChanges {
       const repo = await this.repoOf(ws, deadline);
       if (!repo) return undefined;
       const startTree = await this.treeOf(ws, repo, deadline);
-      if (!startTree) return undefined;
+      if (!startTree) {
+        // A timeout or a failing git: skipped, said once, and the turn goes on without an entry.
+        this.log(`[changes] ${id}: the start snapshot did not finish; no entry for this turn`);
+        return undefined;
+      }
       const branch = await this.branchOf(ws, repo, deadline);
       return {
         id,
@@ -248,7 +252,10 @@ export class TurnChanges {
   private async settle(handle: TurnChangesHandle): Promise<void> {
     const repo: Repo = { root: handle.root, gitDir: handle.gitDir };
     const endTree = await this.treeOf(handle.ws, repo, Date.now() + END_TIMEOUT_MS);
-    if (!endTree) return;
+    if (!endTree) {
+      this.log(`[changes] ${handle.id}: the end snapshot did not finish; this turn is not recorded`);
+      return;
+    }
     const diff = await this.diffOf(handle.ws, {
       startTree: handle.startTree,
       endTree,
