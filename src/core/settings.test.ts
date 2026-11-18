@@ -487,7 +487,7 @@ describe("an agent's permission level", () => {
     expect(settingsRows(noPin, undefined, liveModes('bypassPermissions')).find((x) => x.id === 'permissions')).toMatchObject({
       value: 'full',
       unset: true,
-      valueNote: 'not set · from its session’s mode',
+      valueNote: 'not set · from a running session’s mode',
     });
     // A pin the harness did not take does not make it full either.
     const pinned = parseConfig({
@@ -497,7 +497,7 @@ describe("an agent's permission level", () => {
     });
     expect(settingsRows(pinned, undefined, liveModes('read-only')).find((x) => x.id === 'permissions')).toMatchObject({
       value: 'auto',
-      valueNote: 'not set · from its session’s mode',
+      valueNote: 'not set · from a running session’s mode',
     });
   });
 
@@ -527,6 +527,11 @@ describe("an agent's permission level", () => {
     });
     if (values.screen?.level !== 'values') throw new Error('no value screen');
     expect(values.screen.head).toMatchObject({ value: 'full', unset: true, source: 'not set · from its pinned mode' });
+
+    // A platform without a screen gets the same note in its value menu's text.
+    const plain = buildSettingValueMenu({ reqId: 'r3', row: perm, options: settingOptions(perm, pinned, ctx), page: 0 });
+    expect(plain.screen).toBeUndefined();
+    expect(plain.text).toContain('`full` (not set · from its pinned mode)');
 
     expect(settingDetailText(perm, pinned, ctx)).toContain('`full` (not set · from its pinned mode)');
   });
