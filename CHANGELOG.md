@@ -13,8 +13,9 @@ All notable changes to this project are documented here. The format is based on
   window. A turn that changed nothing leaves its reply as it was. The project's own `.git` is never
   written to: the snapshots are a repository of their own under
   `~/.fleetherd/snapshots/<hash of the repository root>` on the machine the agent runs on, built
-  with a separate `GIT_DIR`, `GIT_WORK_TREE` and an index of its own, so every `.gitignore` in the
-  work tree applies as usual. The first snapshot has three seconds and a failure costs only
+  with a separate `GIT_DIR`, `GIT_WORK_TREE` and an index of its own. `.gitignore` still decides
+  what a snapshot takes, with git's own exception: a file a snapshot has already recorded stays in
+  it even if it is ignored later. The first snapshot has three seconds and a failure costs only
   that turn's entry; the second is taken after the reply has gone and nothing waits on it. Each
   topic keeps its last 50 turns, in a file that survives a restart, and the objects behind them are
   pruned periodically. The entry is part of the message, so a reload, a reconnect and a restart all

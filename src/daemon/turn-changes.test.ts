@@ -364,6 +364,115 @@ describe('turn changes: the repository it keeps', () => {
     expect(fs.readdirSync(snapRoot(b.repo)).filter((n) => n.startsWith('index-'))).toEqual([]);
   });
 
+  it('does not call a repository slow when its index was merely busy', async () => {
+    // The bug this pins: a held index fell back to a full scan, the fallback ran out of budget,
+    // and the directory was then left alone for ten minutes — two topics sharing one directory is
+    // the documented case, not a bad repository.
+    let adds = 0;
+    const contended = bench({
+      opts: { startTimeoutMs: 100 },
+      ws: (ws) => ({
+        ...ws,
+        run: (argv, o) => {
+          if (argv[1] === 'add') {
+            adds += 1;
+            return Promise.resolve(
+              o?.env?.GIT_INDEX_FILE?.endsWith('/index')
+                ? { code: 128, output: Buffer.alloc(0), stderr: "fatal: Unable to create 'index.lock': File exists.", truncated: false, timedOut: false }
+                : { code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true }
+            );
+          }
+          return ws.run(argv, o);
+        },
+      }),
+    });
+    expect(await contended.changes.start(ID, REF, contended.platform, ADDRESS)).toBeUndefined();
+    const before = adds;
+    expect(await contended.changes.start(ID, REF, contended.platform, ADDRESS)).toBeUndefined();
+    // Still trying: the second start reached git again rather than being skipped as "slow".
+    expect(adds).toBeGreaterThan(before);
+  });
+
+  it('treats a timed-out add as no answer, and keeps the shared index', async () => {
+    const first = await begin(b);
+    fs.writeFileSync(path.join(b.repo, 'a.txt'), 'first\n');
+    b.changes.finish(first);
+    await b.next();
+    const indexPath = `${snapRoot(b.repo)}/index`;
+    expect(fs.existsSync(indexPath)).toBe(true);
+
+    let timeoutsLeft = 0;
+    const slow = bench({
+      ws: (ws) => ({
+        ...ws,
+        run: (argv, o) => {
+          if (argv[1] === 'add' && timeoutsLeft > 0) {
+            timeoutsLeft -= 1;
+            return Promise.resolve({ code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true });
+          }
+          return ws.run(argv, o);
+        },
+      }),
+      opts: { startTimeoutMs: 200 },
+    });
+    // The bench above has its own repository: build a warm index there first.
+    const warm = await slow.changes.start(ID, REF, slow.platform, ADDRESS);
+    expect(warm).toBeDefined();
+    warm!.reply = { address: ADDRESS, messageId: 'w1' };
+    fs.writeFileSync(path.join(slow.repo, 'a.txt'), 'warm\n');
+    slow.changes.finish(warm!);
+    await slow.next();
+    const slowIndex = `${snapRoot(slow.repo)}/index`;
+    expect(fs.existsSync(slowIndex)).toBe(true);
+
+    timeoutsLeft = 1;
+    expect(await slow.changes.start(ID, REF, slow.platform, ADDRESS)).toBeUndefined();
+    expect(fs.existsSync(slowIndex)).toBe(true);
+  });
+
+  it('keeps the shared index when write-tree is the one that timed out', async () => {
+    const timed = bench({
+      opts: { startTimeoutMs: 300 },
+      ws: (ws) => ({
+        ...ws,
+        run: (argv, o) => {
+          if (argv[1] === 'write-tree') {
+            return Promise.resolve({ code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true });
+          }
+          return ws.run(argv, o);
+        },
+      }),
+    });
+    expect(await timed.changes.start(ID, REF, timed.platform, ADDRESS)).toBeUndefined();
+    // The add had already written it, warm and correct: deleting it would throw away the scan.
+    expect(fs.existsSync(`${snapRoot(timed.repo)}/index`)).toBe(true);
+  });
+
+  it('takes one snapshot at a time per repository', async () => {
+    // add releases index.lock when it returns and write-tree reads the index after it. Two turns
+    // of one repository interleaving there would write one turn's state into the other's tree.
+    const order: string[] = [];
+    const queued = bench({
+      ws: (ws) => ({
+        ...ws,
+        run: async (argv, o) => {
+          if (argv[1] === 'add' || argv[1] === 'write-tree') {
+            order.push(argv[1]);
+            await new Promise((r) => setTimeout(r, 20));
+          }
+          return ws.run(argv, o);
+        },
+      }),
+    });
+    const [one, two] = await Promise.all([
+      queued.changes.start(ID, REF, queued.platform, ADDRESS),
+      queued.changes.start(ID, REF, queued.platform, ADDRESS),
+    ]);
+    expect(one).toBeDefined();
+    expect(two).toBeDefined();
+    expect(order).toEqual(['add', 'write-tree', 'add', 'write-tree']);
+  });
+
   it('falls back to a temporary index when the shared one is busy', async () => {
     // What a second turn in the same directory meets: `git add` cannot take the index.lock.
     let busy = 0;
@@ -469,6 +578,32 @@ describe('turn changes: the repository it keeps', () => {
     expect((await changes.status(ID, REF, 1)).ok).toBe(false);
     expect((await changes.status(ID, REF, 3)).ok).toBe(true);
     await within(() => refs(b.repo).length === 4);
+  });
+
+  it('does not write a record back after its topic was dropped', async () => {
+    // The end snapshot runs long after the turn; the topic can be gone before it lands.
+    let delay = 0;
+    const slow = bench({
+      ws: (ws) => ({
+        ...ws,
+        run: async (argv, o) => {
+          if (delay > 0 && argv[1] === 'add') {
+            delay -= 1;
+            await new Promise((r) => setTimeout(r, 300));
+          }
+          return ws.run(argv, o);
+        },
+      }),
+    });
+    const handle = await begin(slow);
+    fs.writeFileSync(path.join(slow.repo, 'a.txt'), 'changed\n');
+    delay = 1;
+    slow.changes.finish(handle);
+    slow.changes.forget(ID, REF);
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect((await slow.changes.status(ID, REF, 1)).ok).toBe(false);
+    expect(refs(slow.repo)).toEqual([]);
   });
 
   it('forgets a conversation’s records and refs when its topic goes', async () => {

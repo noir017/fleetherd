@@ -22,8 +22,9 @@ import { DEFAULT_RUN_TIMEOUT_MS, type Workspace, type WorkspaceRunResult, type W
  * written to: an index of ours inside it would race every `git status` the agent runs, and a
  * failed snapshot must be unable to leave the real repository in a state nobody asked for.
  * `GIT_DIR` + `GIT_WORK_TREE` + a `GIT_INDEX_FILE` of our own are the whole coupling: `add -A`
- * reads the work tree (so every `.gitignore` in it applies as usual) and writes objects into our
- * store, and `write-tree` answers a tree id without creating a commit. When the work tree is an
+ * reads the work tree (with `.gitignore` deciding what it takes, minus git's own exception: a
+ * file the index has already recorded stays in it even if it is ignored later) and writes objects
+ * into our store, and `write-tree` answers a tree id without creating a commit. When the work tree is an
  * ancestor of that store (`$HOME` itself, say), the store's own path is written into its
  * `info/exclude` first: otherwise `git add` refuses the nested repository.
  *
@@ -164,11 +165,30 @@ interface Repo {
   gitDir: string;
 }
 
-/** What one `add -A` + `write-tree` said. `said` is absent when git never answered. */
+/**
+ * What one `add -A` + `write-tree` said.
+ *
+ * `answered` is false when git never got to speak — a timeout, a dead link, a child killed at the
+ * deadline. That is not the same as a failure it reported: there is nothing to repair and nothing
+ * a second run can do, so it must not be read as "the index is broken".
+ */
 interface TreeAttempt {
   tree?: string;
   locked: boolean;
-  said: boolean;
+  answered: boolean;
+}
+
+/**
+ * One snapshot attempt: the tree, or why there is none.
+ *
+ * `slow` is the caller's cue to leave the directory alone for a while. A held index is NOT slow —
+ * another turn of the same repository is simply using it, which is the documented normal case of
+ * two topics sharing a directory; treating it as slow would cost that directory every entry for
+ * ten minutes.
+ */
+interface TreeResult {
+  tree?: string;
+  slow: boolean;
 }
 
 interface Diff {
@@ -189,6 +209,10 @@ export class TurnChanges {
   private readonly slow = new Map<string, number>();
   /** The next turn number per conversation, so it is taken at turn end rather than after a diff. */
   private readonly numbering = new Map<string, number>();
+  /** One snapshot at a time per snapshot repository — see `treeOf`. */
+  private readonly treeChains = new Map<string, Promise<void>>();
+  /** Conversations whose topic the page dropped; an end snapshot still running must not revive them. */
+  private readonly forgotten = new Set<string>();
   /** Diffs already computed, by `<git dir>\0<start tree>\0<end tree>` — the trees never change. */
   private readonly diffs = new Map<string, Diff>();
   private readonly log: (line: string) => void;
@@ -299,6 +323,9 @@ export class TurnChanges {
    * is what the page reads, and it is already forgotten by the time this returns.
    */
   forget(id: string, ref: ConversationRef): void {
+    // Marked even when there is nothing to drop yet: an end snapshot may be in flight, and it
+    // must not put the conversation back.
+    this.forgotten.add(id);
     const turns = this.state.conversations[id]?.turns;
     if (!turns) return;
     delete this.state.conversations[id];
@@ -329,20 +356,21 @@ export class TurnChanges {
     const deadline = Date.now() + (this.opts.startTimeoutMs ?? SNAPSHOT_START_TIMEOUT_MS);
     const repo = await this.repoOf(ws, deadline);
     if (!repo) return undefined;
-    const startTree = await this.treeOf(ws, repo, deadline);
-    if (!startTree) {
-      // A git that failed, or an index that could not be used twice: leave this directory alone
-      // for a while rather than paying for the same failure on every turn.
-      this.markSlow(key);
-      this.log(`[changes] ${id}: the start snapshot failed; no entry this turn`);
+    const start = await this.treeOf(ws, repo, deadline);
+    if (!start.tree) {
+      // "Slow" (no answer, or git reporting a failure) is remembered; a directory that was merely
+      // busy taking its turn elsewhere is not — see TreeResult.
+      if (start.slow) this.markSlow(key);
+      this.log(`[changes] ${id}: no start snapshot (${start.slow ? 'the directory is not answering' : 'busy'}); no entry this turn`);
       return undefined;
     }
-    return { id, ref, ws, platform, address, startTree, root: repo.root, gitDir: repo.gitDir };
+    return { id, ref, ws, platform, address, startTree: start.tree, root: repo.root, gitDir: repo.gitDir };
   }
 
   private async settle(handle: TurnChangesHandle, turn: number): Promise<void> {
     const repo: Repo = { root: handle.root, gitDir: handle.gitDir };
-    const endTree = await this.treeOf(handle.ws, repo, Date.now() + END_TIMEOUT_MS);
+    const end = await this.treeOf(handle.ws, repo, Date.now() + END_TIMEOUT_MS);
+    const endTree = end.tree;
     if (!endTree) {
       this.log(`[changes] ${handle.id}: the end snapshot failed; turn ${turn} is not recorded`);
       return;
@@ -353,6 +381,12 @@ export class TurnChanges {
     const diff = await this.diffOf(handle.ws, { startTree: handle.startTree, endTree, gitDir: handle.gitDir });
     if (!diff) {
       this.log(`[changes] ${handle.id}: could not diff the two trees of turn ${turn}`);
+      return;
+    }
+    // The topic went while this snapshot was running: its records were forgotten on purpose, and
+    // writing this one back would recreate them (and their refs) for a page that no longer has it.
+    if (this.forgotten.has(handle.id)) {
+      this.log(`[changes] ${handle.id}: turn ${turn} finished after its topic was dropped; not recorded`);
       return;
     }
     const additions = diff.files.reduce((n, f) => n + f.additions, 0);
@@ -435,28 +469,66 @@ export class TurnChanges {
   }
 
   /**
-   * `add -A` + `write-tree`, on a shared index when it is free and a temporary one when it is not.
+   * `add -A` + `write-tree` for one repository, one at a time.
+   *
+   * The queue is not an optimisation. `add` releases git's `index.lock` when it returns, and
+   * `write-tree` reads the index after that: without a queue, another turn of the same repository
+   * could `add` in that gap and have its state written into THIS turn's tree — a wrong diff, not
+   * merely a mixed one. Serialising here costs nothing in the ordinary case (one turn at a time)
+   * and is what makes the shared index safe to share.
+   */
+  private treeOf(ws: Workspace, repo: Repo, deadline: number): Promise<TreeResult> {
+    const previous = this.treeChains.get(repo.gitDir) ?? Promise.resolve();
+    const run = previous.then(() => {
+      // The queue may have eaten the budget while this call waited. A scan started on a
+      // millisecond would be killed on its first command, so do not start one — and that is
+      // being busy, not slow.
+      if (Date.now() >= deadline) return { slow: false };
+      return this.treeOnce(ws, repo, deadline);
+    });
+    this.treeChains.set(repo.gitDir, run.then(
+      () => undefined,
+      () => undefined
+    ));
+    return run;
+  }
+
+  /**
+   * One repository's snapshot, on a shared index when it is free and a temporary one when it is
+   * not.
    *
    * The shared index is the difference between 0.04 s and 0.4 s on a 20k-file tree, and the whole
    * point is fitting inside the start budget. Only one process can hold it (git's `index.lock`),
    * so a second turn in the same directory falls back to a temporary index rather than losing its
    * entry — the fallback is slow, not wrong, and the hard deadline still bounds what the turn
-   * pays. A shared index that failed for any other reason is thrown away, so the next turn
+   * pays. A shared index that answered with a failure of its own is thrown away, so the next turn
    * rebuilds it instead of failing the same way twice a turn.
    */
-  private async treeOf(ws: Workspace, repo: Repo, deadline: number): Promise<string | undefined> {
+  private async treeOnce(ws: Workspace, repo: Repo, deadline: number): Promise<TreeResult> {
     const dir = path.dirname(repo.gitDir);
     const shared = `${dir}/index`;
     await this.clearStaleLock(ws, dir);
     const first = await this.addTree(ws, repo, shared, deadline);
-    if (first.tree) return first.tree;
-    // No answer at all — a timeout, a dead link — is not something a second run can fix.
-    if (!first.said) return undefined;
-    if (!first.locked) void shell(ws, RM_SCRIPT, [shared], 5_000);
-    const temp = `${dir}/index-${randomUUID()}`;
+    if (first.tree) return { tree: first.tree, slow: false };
+    // No answer at all — a timeout, a dead link, a child killed at the deadline. A second run
+    // cannot fix that, and the shared index is not at fault: it was never written.
+    if (!first.answered) return { slow: true };
+    if (first.locked) {
+      // Another turn of this repository holds the index. A full scan on a temporary one, and no
+      // "slow" mark: this is the documented case of two topics in one directory, not a bad repo.
+      const busy = await this.tempTree(ws, repo, deadline);
+      return { tree: busy.tree, slow: false };
+    }
+    void shell(ws, RM_SCRIPT, [shared], 5_000);
+    const second = await this.tempTree(ws, repo, deadline);
+    return { tree: second.tree, slow: !second.tree };
+  }
+
+  /** A snapshot on an index of its own, removed whatever happens. */
+  private async tempTree(ws: Workspace, repo: Repo, deadline: number): Promise<TreeAttempt> {
+    const temp = `${path.dirname(repo.gitDir)}/index-${randomUUID()}`;
     try {
-      const second = await this.addTree(ws, repo, temp, deadline);
-      return second.tree;
+      return await this.addTree(ws, repo, temp, deadline);
     } finally {
       // Off the turn's clock: `start` has already stopped waiting for this whole operation (the
       // race in `start`), so the cleanup gets its own small budget instead of the deadline's
@@ -476,16 +548,19 @@ export class TurnChanges {
   private async addTree(ws: Workspace, repo: Repo, index: string, deadline: number): Promise<TreeAttempt> {
     const env = { GIT_DIR: repo.gitDir, GIT_WORK_TREE: repo.root, GIT_INDEX_FILE: index };
     const add = await git(ws, ['add', '-A'], { cwd: repo.root, env, timeoutMs: left(deadline) });
-    if (!add) return { locked: false, said: false };
+    if (!add || add.timedOut) return { locked: false, answered: false };
     if (add.code !== 0) {
       const said = `${add.stderr}\n${add.output.toString('utf8')}`;
-      if (/index\.lock/.test(said)) return { locked: true, said: true };
-      this.log(`[changes] add failed in ${repo.root}: ${said.trim().split('\n').pop() ?? `exit ${add.code}`}`);
-      return { locked: false, said: true };
+      if (/index\.lock/.test(said)) return { locked: true, answered: true };
+      this.log(`[changes] add failed in ${repo.root}: ${lastLine(said) ?? `exit ${add.code}`}`);
+      return { locked: false, answered: true };
     }
     const tree = await git(ws, ['write-tree'], { cwd: repo.root, env, timeoutMs: left(deadline) });
-    const id = tree?.code === 0 ? tree.output.toString('utf8').trim() : '';
-    return { tree: /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(id) ? id : undefined, locked: false, said: tree !== undefined };
+    // A write-tree that timed out leaves a warm, correct index behind: report "no answer", never a
+    // failure, so the caller keeps it rather than throwing away a full scan.
+    if (!tree || tree.timedOut) return { locked: false, answered: false };
+    const id = tree.code === 0 ? tree.output.toString('utf8').trim() : '';
+    return { tree: /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(id) ? id : undefined, locked: false, answered: true };
   }
 
   /**
@@ -702,6 +777,11 @@ export class TurnChanges {
  * The reason this exists beside the per-command timeouts: a remote host that has gone away makes
  * `ws.run` wait for a reconnect, and no timeout is carried across that link. The abandoned work
  * is left to finish or be killed on its own; nothing of it can reach the turn.
+ *
+ * What it does NOT do is cancel that abandoned work: its rpc stays open on the link until the host
+ * answers or the connection drops, which on a host that has died keeps the gateway trying to
+ * reconnect. `workspace.ts` has no signal to hand it yet; a bounded snapshot is worth more than a
+ * clean cancellation here, and the leak is one request per turn at worst.
  */
 function withinDeadline<T>(work: Promise<T | undefined>, ms: number, onTimeout: () => void): Promise<T | undefined> {
   return new Promise((resolve) => {
@@ -805,6 +885,15 @@ function parseRaw(out: string, truncated: boolean): Map<string, TurnChangeFile['
 /** How much of a deadline is left, at least a moment — a negative timeout would mean "none". */
 function left(deadline: number): number {
   return Math.max(1, deadline - Date.now());
+}
+
+/** The last line of a command's output that says anything, for a one-line log. */
+function lastLine(text: string): string | undefined {
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return lines[lines.length - 1];
 }
 
 function reasonOf(e: unknown): string {

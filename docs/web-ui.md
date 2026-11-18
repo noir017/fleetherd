@@ -321,9 +321,10 @@ Tapping it opens that turn's diff, file by file,
 in the git window; the list is also how you get from "something changed" to the file that did.
 
 The snapshots are the daemon's own, under `~/.fleetherd/snapshots/<hash of the repository root>`
-on the machine the agent runs on. The project's `.git` is never touched, and every `.gitignore`
-in the work tree applies. A topic keeps its last 50 turns, across restarts; older ones are
-deleted and their objects pruned.
+on the machine the agent runs on, and the project's `.git` is never touched. `.gitignore` decides
+what a snapshot takes, with git's own exception: a file a snapshot has already recorded stays in
+it even if it is ignored afterwards. A topic keeps its last 50 turns, across restarts; older ones
+are deleted and their objects pruned.
 
 The first snapshot has three seconds. A snapshot that fails, or a turn slower than that to get
 going, simply has no entry — the turn itself is never delayed past that or failed. Only turns

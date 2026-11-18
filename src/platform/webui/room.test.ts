@@ -2673,6 +2673,46 @@ describe('room: a turn’s changes', () => {
     expect(seen).toHaveLength(0);
   });
 
+  it('forgets the records of every topic a sweep clears, but not a starred survivor’s', () => {
+    const { room, topic } = attached();
+    const plain = room.createTopic('plain');
+    room.starTopic(topic, true);
+    const forgot: string[] = [];
+    room.useTurnChanges({
+      status: async () => ({ ok: false, reason: 'error', text: 'none' }),
+      file: async () => ({ ok: false, text: 'none' }),
+      forget: (ref) => forgot.push(String(ref.thread)),
+    });
+
+    room.clearTopics();
+
+    expect(forgot).toEqual([plain.id]);
+  });
+
+  it('forgets the records of a topic eviction gives up', () => {
+    // Two topics in one directory is supported; a topic that has to make room is not coming back.
+    const store = new TopicStore(path.join(dir, `${Math.random()}.json`));
+    const ids: string[] = [];
+    for (let i = 0; i < MAX_TOPICS; i += 1) {
+      const t = store.create(`t${i}`);
+      store.touch(t.id, i + 1);
+      ids.push(t.id);
+    }
+    const room = new WebRoom(instance(), store);
+    const forgot: string[] = [];
+    room.useTurnChanges({
+      status: async () => ({ ok: false, reason: 'error', text: 'none' }),
+      file: async () => ({ ok: false, text: 'none' }),
+      forget: (ref) => forgot.push(String(ref.thread)),
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    room.createTopic('new');
+
+    expect(forgot).toEqual([ids[0]]);
+    vi.restoreAllMocks();
+  });
+
   it('tells the daemon to forget a topic’s records when the topic is deleted', () => {
     const { room, topic } = attached();
     const forgot: string[] = [];
