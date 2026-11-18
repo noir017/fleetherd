@@ -2325,6 +2325,20 @@ describe('webui server: the git window', () => {
     modified: 'a\nb\n',
     patch: '@@ -1 +1,2 @@\n a\n+b\n',
   };
+  const summary = {
+    sha: 'a'.repeat(40),
+    short: 'aaaaaaa',
+    subject: 'one change',
+    author: 'owner',
+    at: 1_700_000_000_000,
+    parents: 0,
+  };
+  /** The history half of a panel, for the tests that are not about it. */
+  const idleHistory = () => ({
+    log: async () => ({ ok: true as const, repo: { root: '/srv/project' }, commits: [], more: false }),
+    commit: async () => ({ ok: false as const, reason: 'error' as const, text: 'no' }),
+    commitFile: async () => ({ ok: false as const, text: 'no' }),
+  });
 
   it('answers the change list for the mode and base it was asked for', async () => {
     const { base, room, topic } = await boot();
@@ -2337,6 +2351,7 @@ describe('webui server: the git window', () => {
       },
       file: async () => file,
       branches: async () => ({ ok: true, branch: 'main', base: 'main', branches: ['main'] }),
+      ...idleHistory(),
     });
 
     const res = await fetch(`${base}/api/git/status?t=${topic}&mode=branch&base=origin%2Fmain`, { headers: { cookie } });
@@ -2360,6 +2375,7 @@ describe('webui server: the git window', () => {
         return path === 'src/a.ts' ? file : { ok: false, text: 'That file is not one of the changes shown.' };
       },
       branches: async () => ({ ok: true, branches: [] }),
+      ...idleHistory(),
     });
 
     const ok = await fetch(`${base}/api/git/file?t=${topic}&mode=working&path=${encodeURIComponent('src/a.ts')}`, {
@@ -2385,6 +2401,7 @@ describe('webui server: the git window', () => {
       },
       file: async () => file,
       branches: async () => ({ ok: true, branches: [] }),
+      ...idleHistory(),
     });
 
     for (const path of [
@@ -2400,12 +2417,104 @@ describe('webui server: the git window', () => {
     expect(called).toBe(false);
   });
 
+  it('answers a page of commits, one commit and one of its files', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const calls: unknown[] = [];
+    room.useGitPanel({
+      status: async () => status,
+      file: async () => file,
+      branches: async () => ({ ok: true, branches: [] }),
+      log: async (_ref, skip) => {
+        calls.push({ log: skip });
+        return { ok: true, repo: { root: '/srv/project', branch: 'main' }, commits: [summary], more: true };
+      },
+      commit: async (_ref, sha) => {
+        calls.push({ commit: sha });
+        return { ok: true, repo: { root: '/srv/project' }, commit: { ...summary, body: 'why it changed' }, files: status.files };
+      },
+      commitFile: async (_ref, sha, path) => {
+        calls.push({ commitFile: sha, path });
+        return file;
+      },
+    });
+
+    const log = await fetch(`${base}/api/git/log?t=${topic}&skip=50`, { headers: { cookie } });
+    expect(log.status).toBe(200);
+    expect(await log.json()).toEqual({ ok: true, repo: { root: '/srv/project', branch: 'main' }, commits: [summary], more: true });
+
+    // No skip is the first page, not a malformed query.
+    const first = await fetch(`${base}/api/git/log?t=${topic}`, { headers: { cookie } });
+    expect(first.status).toBe(200);
+
+    const commit = await fetch(`${base}/api/git/commit?t=${topic}&sha=${summary.sha}`, { headers: { cookie } });
+    expect(commit.status).toBe(200);
+    expect(await commit.json()).toMatchObject({ ok: true, commit: { sha: summary.sha, body: 'why it changed' } });
+
+    const one = await fetch(`${base}/api/git/commit-file?t=${topic}&sha=${summary.sha}&path=${encodeURIComponent('src/a.ts')}`, {
+      headers: { cookie },
+    });
+    expect(one.status).toBe(200);
+    expect(await one.json()).toEqual(file);
+
+    expect(calls).toEqual([
+      { log: 50 },
+      { log: 0 },
+      { commit: summary.sha },
+      { commitFile: summary.sha, path: 'src/a.ts' },
+    ]);
+  });
+
+  it('refuses a malformed history query before it reaches the daemon', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    let called = false;
+    const trip = async () => {
+      called = true;
+      return { ok: false as const, reason: 'error' as const, text: 'no' };
+    };
+    room.useGitPanel({
+      status: async () => status,
+      file: async () => file,
+      branches: async () => ({ ok: true, branches: [] }),
+      log: trip,
+      commit: trip,
+      commitFile: async () => {
+        called = true;
+        return { ok: false as const, text: 'no' };
+      },
+    });
+
+    const sha = summary.sha;
+    for (const path of [
+      `/api/git/log?t=${topic}&skip=-1`,
+      `/api/git/log?t=${topic}&skip=abc`,
+      `/api/git/log?t=${topic}&skip=1.5`,
+      `/api/git/log?t=${topic}&skip=100001`,
+      `/api/git/log?t=not-a-topic`,
+      `/api/git/commit?t=${topic}`,
+      `/api/git/commit?t=${topic}&sha=HEAD`,
+      `/api/git/commit?t=${topic}&sha=--all`,
+      `/api/git/commit?t=${topic}&sha=abc`,
+      `/api/git/commit?t=${topic}&sha=${'A'.repeat(40)}`,
+      `/api/git/commit-file?t=${topic}&sha=${sha}`,
+      `/api/git/commit-file?t=${topic}&sha=${sha}&path=`,
+      `/api/git/commit-file?t=${topic}&sha=HEAD&path=a.txt`,
+    ]) {
+      expect((await fetch(`${base}${path}`, { headers: { cookie } })).status, path).toBe(400);
+    }
+    expect(called).toBe(false);
+  });
+
   it('is behind the session like every other route', async () => {
     const { base, topic } = await boot();
     for (const path of [
       `/api/git/status?t=${topic}&mode=working`,
       `/api/git/file?t=${topic}&mode=working&path=a.txt`,
       `/api/git/branches?t=${topic}`,
+      `/api/git/log?t=${topic}`,
+      `/api/git/commit?t=${topic}&sha=${'a'.repeat(40)}`,
+      `/api/git/commit-file?t=${topic}&sha=${'a'.repeat(40)}&path=a.txt`,
     ]) {
       expect((await fetch(`${base}${path}`)).status, path).toBe(401);
     }

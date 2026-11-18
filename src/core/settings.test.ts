@@ -147,48 +147,55 @@ describe('the settings screen', () => {
     expect(screen?.level).toBe('list');
     if (screen?.level !== 'list') throw new Error('no list screen');
 
-    // The model rows are named by their agent under one heading, not ten rows all titled
-    // "Default model"; sub-agent confirmation is not filed among them.
-    expect(screen.rows.map((r) => [r.label, r.target, r.value, r.group])).toEqual([
-      ['Default agent', undefined, 'cc · claude', 'Agents'],
-      ['cc', 'cc', 'harness default', 'Default model'],
-      ['oc', 'oc', 'opencode/big-pickle', 'Default model'],
-      ['own', 'own', 'harness default', 'Default model'],
-      ['cc', 'cc', 'auto', 'Permissions'],
-      ['oc', 'oc', 'auto', 'Permissions'],
-      ['own', 'own', 'auto', 'Permissions'],
-      ['Confirm sub-agent starts', undefined, 'on', 'Sub-agents'],
-      ['Idle reclaim', undefined, '1h', 'Conversations'],
-      ['Conversation scope', undefined, 'per_thread', 'Conversations'],
-      ['Live streaming', undefined, 'off', 'Replies'],
-      ['Auto review', undefined, 'off', 'Reviews'],
-      ['Review model', undefined, 'off', 'Reviews'],
-      ['⏰ Scheduled tasks · 2 active', undefined, undefined, 'More'],
+    // Each agent is one row under Agents, its model and permission level as fields inside it;
+    // the default agent heads the group and the others keep their model rows' order. Sub-agent
+    // confirmation is not filed among them.
+    expect(screen.rows.map((r) => [r.label, r.target, r.group])).toEqual([
+      ['Default agent', undefined, 'Agents'],
+      ['cc', 'cc', 'Agents'],
+      ['oc', 'oc', 'Agents'],
+      ['own', 'own', 'Agents'],
+      ['Confirm sub-agent starts', undefined, 'Sub-agents'],
+      ['Idle reclaim', undefined, 'Conversations'],
+      ['Conversation scope', undefined, 'Conversations'],
+      ['Live streaming', undefined, 'Replies'],
+      ['Auto review', undefined, 'Reviews'],
+      ['Review model', undefined, 'Reviews'],
+      ['⏰ Scheduled tasks · 2 active', undefined, 'More'],
     ]);
     expect(screen.groups.map((g) => g.name)).toEqual([
       'Agents',
-      'Default model',
-      'Permissions',
       'Sub-agents',
       'Conversations',
       'Replies',
       'Reviews',
       'More',
     ]);
-    // "Next session" is said once, for the group, rather than on every model row.
-    expect(screen.groups[1]!.note).toContain('next session');
+    // "Next session" and the permission level are said once, for the group, rather than on every
+    // row; the restart note stays on the one row it belongs to.
+    expect(screen.groups[0]!.note).toContain('next session');
+    expect(screen.groups[0]!.note).toContain('permission level');
     expect(screen.rows[1]!.effectLabel).toBeUndefined();
-    expect(screen.rows[9]!.effectLabel).toBe('after restart');
-    expect(screen.rows[9]!.effectDetail).toContain('daemon restarts');
-    // The screen and the buttons are two views of one list: a tap must post the id the button
-    // would have posted.
-    expect(screen.rows.map((r) => r.buttonId)).toEqual(view.buttons.map((b) => b.id));
+    expect(screen.rows[6]!.effectLabel).toBe('after restart');
+    expect(screen.rows[6]!.effectDetail).toContain('daemon restarts');
+    // The screen and the buttons are two views of one list: a tap on a row or a field must post
+    // the id the button for that setting carries.
+    const posted = screen.rows
+      .filter((r) => r.group !== 'More')
+      .flatMap((r) => (r.control.kind === 'agent' ? r.control.fields.map((f) => f.buttonId) : [r.buttonId]));
+    expect(posted).toHaveLength(rows.length);
+    for (const id of posted) expect(view.buttons.map((b) => b.id)).toContain(id);
     // The whole value, which the chat label truncates at 40 characters.
-    expect(screen.rows[2]!.value).toBe('opencode/big-pickle');
+    const cc = screen.rows[1]!;
+    if (cc.control.kind !== 'agent') throw new Error('cc is not an agent row');
+    const oc = screen.rows[2]!;
+    if (oc.control.kind !== 'agent') throw new Error('oc is not an agent row');
+    expect(oc.control.fields[0]!.value).toBe('opencode/big-pickle');
     // Unset is a placeholder, and says which agent answers here.
-    expect(screen.rows[1]).toMatchObject({ unset: true, targetKind: 'Claude Code' });
-    expect(screen.rows[1]!.here).toBeUndefined();
-    expect(screen.rows[2]).toMatchObject({ here: true, targetKind: 'OpenCode' });
+    expect(cc.control.fields[0]).toMatchObject({ unset: true, value: 'harness default' });
+    expect(cc).toMatchObject({ targetKind: 'Claude Code' });
+    expect(cc.here).toBeUndefined();
+    expect(oc).toMatchObject({ here: true, targetKind: 'OpenCode' });
     expect(screen.rows[3]!.targetKind).toBe('agent'); // a custom harness: its command's name
   });
 
@@ -243,12 +250,21 @@ describe('the settings screen', () => {
     expect(agent.options.find((o) => o.current)?.label).toBe('cc · claude');
 
     // A model keeps its own screen; the scheduled tasks are a way somewhere else.
-    const ocModel = view.screen.rows.find((r) => r.group === 'Default model' && r.label === 'oc')!;
-    expect(ocModel.control).toEqual({ kind: 'list' });
+    const oc = view.screen.rows.find((r) => r.label === 'oc')!;
+    if (oc.control.kind !== 'agent') throw new Error('oc is not an agent row');
+    expect(oc.control.fields[0]!.control).toEqual({ kind: 'list' });
     expect(byLabel.get('⏰ Scheduled tasks')!.control).toEqual({ kind: 'link' });
     // Every set id is distinct and resolves.
     const ids = view.screen.rows.flatMap((r) =>
-      r.control.kind === 'switch' ? [r.control.set] : r.control.kind === 'choice' ? r.control.options.map((o) => o.buttonId) : []
+      r.control.kind === 'switch'
+        ? [r.control.set]
+        : r.control.kind === 'choice'
+          ? r.control.options.map((o) => o.buttonId)
+          : r.control.kind === 'agent'
+            ? r.control.fields.flatMap((f) =>
+                f.control.kind === 'choice' ? f.control.options.map((o) => o.buttonId) : []
+              )
+            : []
     );
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(parseSettingButtonId(id)).toMatchObject({ kind: 'set', reqId: 'r1' });
@@ -267,7 +283,9 @@ describe('the settings screen', () => {
     });
     if (view.screen?.level !== 'list') throw new Error('no list screen');
     expect(view.buttons.filter((b) => b.id.startsWith('stg:'))).toHaveLength(20);
-    expect(view.screen.rows).toHaveLength(settingsRows(many).length);
+    // Each of the 24 agents is one row now (model and permission merged), plus the default agent
+    // and the six global rows — every row, past the chat menu's 20-button cap.
+    expect(view.screen.rows).toHaveLength(1 + 24 + 6);
     expect(view.screen.rows.at(-1)?.buttonId).toBe(`stg:r9:${settingsRows(many).length - 1}`);
   });
 
@@ -421,15 +439,15 @@ describe("a pod agent's model row", () => {
 });
 
 describe("an agent's permission level", () => {
-  const CODEX: SettingsContext['modes'] = () => ({
-    kind: 'list',
-    options: [
-      { value: 'read-only', name: 'Read-only' },
-      { value: 'workspace-write', name: 'Workspace access' },
-      { value: 'agent', name: 'Auto review' },
-      { value: 'agent-full-access', name: 'Full access' },
-    ],
-  });
+  const CODEX_OPTIONS = [
+    { value: 'read-only', name: 'Read-only' },
+    { value: 'workspace-write', name: 'Workspace access' },
+    { value: 'agent', name: 'Auto review' },
+    { value: 'agent-full-access', name: 'Full access' },
+  ];
+  const CODEX: SettingsContext['modes'] = () => ({ kind: 'list', options: CODEX_OPTIONS });
+  /** A live session's modes, in a mode the harness did not necessarily pin. */
+  const liveModes = (current: string): SettingsContext['modes'] => () => ({ kind: 'list', options: CODEX_OPTIONS, current });
   const withModes = (modes: SettingsContext['modes']): SettingsContext => ({ ...ctx, modes });
 
   it('resolves every spelling of the key, a bare one to the agent answering here', () => {
@@ -451,6 +469,165 @@ describe("an agent's permission level", () => {
     expect(r).toMatchObject({ value: 'auto', effect: 'live', label: 'Permissions · cc' });
     expect(readSettingValue(r, cfg)).toBeUndefined();
     expect(settingLocation(r)).toEqual({ kind: 'agent', agentId: 'cc', key: 'permissions' });
+  });
+
+  it('shows the level an unset agent’s mode adds up to, marked as not stored', () => {
+    const pinned = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex', options: { mode: 'agent-full-access' } }],
+      routing: { default: 'cx' },
+    });
+    const full = settingsRows(pinned).find((x) => x.id === 'permissions')!;
+    expect(full).toMatchObject({ value: 'full', unset: true, valueNote: 'not set · from its pinned mode' });
+    // The text surface says it too, so an inferred level cannot be mistaken for a chosen one.
+    expect(settingsListText(pinned)).toContain('`full` (not set · from its pinned mode)');
+    // Nothing is stored: picking `auto` is still a write.
+    expect(readSettingValue(full, pinned)).toBeUndefined();
+    // With no mode to go by, `auto` is what the gateway does, and the note claims nothing more.
+    expect(row('permissions.cc')).toMatchObject({ value: 'auto', unset: true, valueNote: 'not set' });
+    // A level that is written is the level, not an inference.
+    const stored = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex', permissions: 'ask', options: { mode: 'agent-full-access' } }],
+      routing: { default: 'cx' },
+    });
+    expect(settingsRows(stored).find((x) => x.id === 'permissions')).toMatchObject({ value: 'ask' });
+    expect(settingsRows(stored).find((x) => x.id === 'permissions')?.unset).toBeUndefined();
+  });
+
+  it('reads an unset level off a live session’s mode before the pin', () => {
+    // No pin, but the session is in full access: that is what is in force.
+    const noPin = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex' }],
+      routing: { default: 'cx' },
+    });
+    expect(settingsRows(noPin, undefined, liveModes('bypassPermissions')).find((x) => x.id === 'permissions')).toMatchObject({
+      value: 'full',
+      unset: true,
+      valueNote: 'not set · from a running session’s mode',
+    });
+    // A pin the harness did not take does not make it full either.
+    const pinned = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex', options: { mode: 'bypassPermissions' } }],
+      routing: { default: 'cx' },
+    });
+    expect(settingsRows(pinned, undefined, liveModes('read-only')).find((x) => x.id === 'permissions')).toMatchObject({
+      value: 'auto',
+      valueNote: 'not set · from a running session’s mode',
+    });
+  });
+
+  it('marks an unset permission row as unset on the settings screen and in its detail', () => {
+    const pinned = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex', options: { mode: 'agent-full-access' } }],
+      routing: { default: 'cx' },
+    });
+    const rows = settingsRows(pinned);
+    const view = buildSettingsMenu({
+      reqId: 'r1',
+      rows,
+      screen: { cfg: pinned, options: (r) => settingOptions(r, pinned, ctx) },
+    });
+    if (view.screen?.level !== 'list') throw new Error('no list screen');
+    // The permission row is a field of cx's row in the Agents group (settingsListScreen).
+    const agentRow = view.screen.rows.find((r) => r.target === 'cx')!;
+    const field = agentRow.control.kind === 'agent' ? agentRow.control.fields.find((f) => f.label === 'Permissions') : undefined;
+    expect(field).toMatchObject({ value: 'full', unset: true, valueNote: 'not set · from its pinned mode' });
+
+    const perm = rows.find((r) => r.id === 'permissions')!;
+    const values = buildSettingValueMenu({
+      reqId: 'r2',
+      row: perm,
+      options: settingOptions(perm, pinned, ctx),
+      page: 0,
+      screen: { cfg: pinned },
+    });
+    if (values.screen?.level !== 'values') throw new Error('no value screen');
+    expect(values.screen.head).toMatchObject({ value: 'full', unset: true, source: 'not set · from its pinned mode' });
+
+    // A platform without a screen gets the same note in its value menu's text.
+    const plain = buildSettingValueMenu({ reqId: 'r3', row: perm, options: settingOptions(perm, pinned, ctx), page: 0 });
+    expect(plain.screen).toBeUndefined();
+    expect(plain.text).toContain('`full` (not set · from its pinned mode)');
+
+    expect(settingDetailText(perm, pinned, ctx)).toContain('`full` (not set · from its pinned mode)');
+  });
+
+  it('offers ask on a harness with no modes, saying it stops only what that harness asks', () => {
+    const none: SettingsContext['modes'] = () => ({ kind: 'none' });
+    const c = withModes(none);
+    const options = settingOptions(row('permissions.cc'), cfg, c);
+    expect(options.map((o) => o.raw)).toEqual(['ask', 'auto']);
+    expect(options.find((o) => o.raw === 'ask')?.detail).toContain('what it does without asking is not stopped');
+    // Typed, it is accepted — and the levels that need a mode are not.
+    expect(parseSettingValue(row('permissions.cc'), 'ask', cfg, c)).toEqual({ kind: 'value', value: 'ask', display: 'ask' });
+    for (const level of ['plan', 'edits', 'full'] as const) {
+      expect(parseSettingValue(row('permissions.cc'), level, cfg, c)).toMatchObject({ kind: 'invalid' });
+    }
+  });
+
+  it('names what agy does not ask about when ask is offered for it', () => {
+    const agyCfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'ag', harness: 'agy' }],
+      routing: { default: 'ag' },
+    });
+    const agyCtx: SettingsContext = { boundAgent: 'ag', models: [], modes: () => ({ kind: 'none' }) };
+    const r = settingsRows(agyCfg).find((x) => x.id === 'permissions')!;
+    const ask = settingOptions(r, agyCfg, agyCtx).find((o) => o.raw === 'ask');
+    // Measured on agy 1.5.1 (2026-11-06): it asks before a command and writes without asking.
+    expect(ask?.detail).toContain('writes files without asking');
+    expect(parseSettingValue(r, 'ask', agyCfg, agyCtx)).toMatchObject({ kind: 'value', value: 'ask' });
+  });
+
+  it('keeps ask on agy’s row when its modes could not be read at all', () => {
+    // Its modes are left out in code, not because the probe failed: an expired login must not take
+    // the one level that still holds (the gateway's half) off the screen.
+    const agyCfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'ag', harness: 'agy' }],
+      routing: { default: 'ag' },
+    });
+    const failed: SettingsContext = { boundAgent: 'ag', models: [], modes: () => ({ kind: 'error', reason: 'login expired' }) };
+    const r = settingsRows(agyCfg).find((x) => x.id === 'permissions')!;
+    expect(settingOptions(r, agyCfg, failed).map((o) => o.raw)).toEqual(['ask', 'auto']);
+    expect(parseSettingValue(r, 'plan', agyCfg, failed)).toMatchObject({ kind: 'invalid' });
+  });
+
+  it('gives the API agent auto alone, and refuses anything else with the reason', () => {
+    const apiCfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'agapi', harness: 'custom', command: 'fleetherd', args: ['api-agent', 'antigravity'] }],
+      routing: { default: 'agapi' },
+    });
+    const apiCtx: SettingsContext = { boundAgent: 'agapi', models: [], modes: () => ({ kind: 'none' }) };
+    const r = settingsRows(apiCfg).find((x) => x.id === 'permissions')!;
+    expect(r).toMatchObject({ value: 'auto', unset: true, valueNote: 'not set' });
+    expect(settingOptions(r, apiCfg, apiCtx).map((o) => o.raw)).toEqual(['auto']);
+    expect(parseSettingValue(r, 'ask', apiCfg, apiCtx)).toMatchObject({
+      kind: 'invalid',
+      reason: expect.stringContaining('api-agent'),
+    });
+    expect(parseSettingValue(r, 'auto', apiCfg, apiCtx)).toEqual({ kind: 'value', value: 'auto', display: 'auto' });
+    // The reason is given even before any modes are known: this agent's answer does not use them.
+    expect(settingTypedOnlyHint(r, apiCfg, { boundAgent: 'agapi', models: [] })).toContain('api-agent');
+  });
+
+  it('does not offer back a level merely inferred from an unset full-access mode', () => {
+    const pinned = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'custom', command: '/bin/agent', options: { mode: 'bypassPermissions' } }],
+      routing: { default: 'cx' },
+    });
+    const none: SettingsContext['modes'] = () => ({ kind: 'none' });
+    const c = withModes(none);
+    const r = settingsRows(pinned).find((x) => x.id === 'permissions')!;
+    expect(r.value).toBe('full');
+    expect(settingOptions(r, pinned, c).map((o) => o.raw)).toEqual(['ask', 'auto']);
+    expect(parseSettingValue(r, 'full', pinned, c)).toMatchObject({ kind: 'invalid' });
   });
 
   it('offers the levels the harness has a mode for, each naming the mode it means', () => {

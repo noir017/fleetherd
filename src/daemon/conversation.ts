@@ -2234,7 +2234,7 @@ export class ConversationRegistry {
     if (!rawKey) {
       console.log(`[setting] listing settings for ${key}`);
       if (canMenu) this.hooks!.onSettingMenuRequest!(key, msg, { rows: this.settingRows() });
-      else reply([settingsListText(this.config), this.hooks?.scheduleSummary?.()].filter(Boolean).join('\n'));
+      else reply([settingsListText(this.config, (id) => this.modelCatalog.modes(id)), this.hooks?.scheduleSummary?.()].filter(Boolean).join('\n'));
       return;
     }
 
@@ -2388,7 +2388,7 @@ export class ConversationRegistry {
 
   /** Every row of the settings screen, read fresh from the live Config (the daemon rebuilds menus with this). */
   settingRows(): SettingRow[] {
-    return settingsRows(this.config, this.podModels());
+    return settingsRows(this.config, this.podModels(), (id) => this.modelCatalog.modes(id));
   }
 
   /** The agent answering a conversation, as the settings screen names it ("this topic"). */

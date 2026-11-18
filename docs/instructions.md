@@ -60,8 +60,9 @@ read-only and are rewritten at the next start.
 ## Editing them in the web UI
 
 With the instruction editor turned on, the web UI's settings page ends with an **Instructions**
-section, and a row opens the file in the same editor the [file window](web-ui.md) uses — the same
-save, and the same check that the file did not change since you opened it.
+section for the gateway's files, and a row opens one in the same editor the
+[file window](web-ui.md) uses — the same save, and the same check that the file did not change
+since you opened it. Each agent's own files are a field on that agent's row under **Agents**.
 
 ```yaml
 platforms:
@@ -84,9 +85,10 @@ is configured for; the editor then says where it went. A host that does not answ
 time an agent starts there. A save that would put any agent over 32 KiB is refused before anything
 is written. Sessions already running keep what they read when they started.
 
-**Each agent's own files.** Below them, every agent whose harness reads instruction files of its own
-on its machine — besides the one the gateway places — has a row listing them. These files belong to
-that machine: they are read and saved where they are, and the gateway keeps no copy.
+**Each agent's own files.** On its own row under **Agents**, an agent whose harness reads instruction
+files of its own on its machine — besides the one the gateway places — has an **Instructions** field
+that opens the list. These files belong to that machine: they are read and saved where they are, and
+the gateway keeps no copy.
 
 | agent | what is listed |
 |---|---|

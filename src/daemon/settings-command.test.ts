@@ -674,13 +674,19 @@ describe('the button menu', () => {
     const list = web.menu().screen;
     expect(list?.level).toBe('list');
     if (list?.level !== 'list') throw new Error('no list screen');
-    // The same rows the buttons carry, with the label and value split apart.
-    expect(list.rows.map((r) => [r.label, r.target, r.value])).toContainEqual([
-      'cc',
-      'cc',
-      'claude-opus-4-5',
+    // One row per agent, its model and permission level as fields inside it — the same values
+    // the buttons carry, split apart.
+    const cc = list.rows.find((r) => r.label === 'cc')!;
+    if (cc.control.kind !== 'agent') throw new Error('cc is not an agent row');
+    expect(cc.control.fields.map((f) => [f.label, f.value])).toEqual([
+      ['Model', 'claude-opus-4-5'],
+      ['Permissions', 'auto'],
     ]);
-    expect(list.rows.map((r) => r.buttonId)).toEqual(web.menu().buttons.map((b) => b.id));
+    // Every id a row or a field posts is an id one of the chat buttons carries.
+    const posted = list.rows.flatMap((r) =>
+      r.control.kind === 'agent' ? r.control.fields.map((f) => f.buttonId) : [r.buttonId]
+    );
+    for (const id of posted) expect(web.menu().buttons.map((b) => b.id)).toContain(id);
     // The agent answering here is named, and so is what it is.
     expect(list.rows.find((r) => r.target === 'oc')).toMatchObject({ here: true, targetKind: 'OpenCode' });
 
@@ -947,11 +953,15 @@ describe("a pod agent's default model", () => {
     await r.send('/setting');
     const list = r.menu().screen;
     if (list?.level !== 'list') throw new Error('no list');
-    const row = list.rows.find((x) => x.target === 'oc@box')!;
-    expect(row).toMatchObject({ value: 'opencode/big-pickle', valueNote: 'pod.yaml' });
-    expect(list.rows.find((x) => x.target === 'cc')?.valueNote).toBeUndefined();
+    const agentRow = list.rows.find((x) => x.target === 'oc@box')!;
+    if (agentRow.control.kind !== 'agent') throw new Error('oc@box is not an agent row');
+    const model = agentRow.control.fields.find((f) => f.label === 'Model')!;
+    expect(model).toMatchObject({ value: 'opencode/big-pickle', valueNote: 'pod.yaml' });
+    const cc = list.rows.find((x) => x.target === 'cc')!;
+    if (cc.control.kind !== 'agent') throw new Error('cc is not an agent row');
+    expect(cc.control.fields.find((f) => f.label === 'Model')?.valueNote).toBeUndefined();
 
-    await r.click(row.buttonId);
+    await r.click(model.buttonId);
     await drain();
     const level = r.screen().screen;
     if (level?.level !== 'values') throw new Error('no value screen');
@@ -961,9 +971,12 @@ describe("a pod agent's default model", () => {
     await r.click(level.options.find((o) => o.label === 'opencode/glm-5')!.buttonId);
     const after = r.screen().screen;
     if (after?.level !== 'list') throw new Error('not back on the list');
-    expect(after.rows.find((x) => x.target === 'oc@box')).toMatchObject({ value: 'opencode/glm-5', valueNote: 'set here' });
+    const afterRow = after.rows.find((x) => x.target === 'oc@box')!;
+    if (afterRow.control.kind !== 'agent') throw new Error('oc@box is not an agent row');
+    const afterModel = afterRow.control.fields.find((f) => f.label === 'Model')!;
+    expect(afterModel).toMatchObject({ value: 'opencode/glm-5', valueNote: 'set here' });
 
-    await r.click(after.rows.find((x) => x.target === 'oc@box')!.buttonId);
+    await r.click(afterModel.buttonId);
     await drain();
     const again = r.screen().screen;
     if (again?.level !== 'values') throw new Error('no value screen');
@@ -1016,13 +1029,14 @@ describe("an agent's permission level", () => {
     expect(answer).toContain('(Plan)');
   });
 
-  it('offers auto alone to a harness that reports no modes', async () => {
+  it('offers ask and auto to a harness that reports no modes, saying what ask can stop', async () => {
     const r = textRig();
     await r.send('/setting permissions.cc');
     const answer = r.replies().at(-1)!;
+    expect(answer).toContain('`/setting permissions.cc ask`');
     expect(answer).toContain('`/setting permissions.cc auto`');
     expect(answer).not.toContain('permissions.cc plan`');
-    expect(answer).toContain('reports no session modes');
+    expect(answer).toContain('what it does without asking is not stopped');
   });
 
   it('writes a pod agent to podPermissions, over the pod’s own', async () => {
@@ -1039,7 +1053,9 @@ describe("an agent's permission level", () => {
     await r.send('/setting');
     const list = r.menu().screen;
     if (list?.level !== 'list') throw new Error('no list');
-    const row = list.rows.find((x) => x.group === 'Permissions' && x.target === 'cc')!;
+    const agentRow = list.rows.find((x) => x.target === 'cc')!;
+    if (agentRow.control.kind !== 'agent') throw new Error('cc is not an agent row');
+    const row = agentRow.control.fields.find((f) => f.label === 'Permissions')!;
     expect(row.control).toEqual({ kind: 'list' });
     await r.click(row.buttonId);
     await drain();
@@ -1054,7 +1070,9 @@ describe("an agent's permission level", () => {
     expect(r.cfg.agents[1]!.permissions).toBe('plan');
     const after = r.screen().screen;
     if (after?.level !== 'list') throw new Error('not back on the list');
-    const choice = after.rows.find((x) => x.group === 'Permissions' && x.target === 'cc')!.control;
+    const afterRow = after.rows.find((x) => x.target === 'cc')!;
+    if (afterRow.control.kind !== 'agent') throw new Error('cc is not an agent row');
+    const choice = afterRow.control.fields.find((f) => f.label === 'Permissions')!.control;
     expect(choice).toMatchObject({ kind: 'choice' });
     if (choice.kind === 'choice') expect(choice.options.map((o) => [o.label, o.current])).toEqual([
       ['plan', true],

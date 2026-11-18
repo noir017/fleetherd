@@ -789,6 +789,35 @@ select.skill-field{appearance:auto}
 .gf-del{color:#f87171}
 .gf-edit{flex:none;background:none;border:1px solid var(--line);border-radius:4px;color:#7dd3fc;font:inherit;font-size:10.5px;padding:1px 6px;cursor:pointer}
 .gf-edit:hover{border-color:#38bdf8;background:rgba(56,189,248,.08)}
+/* Commits: the same left column, listing history instead of changed files, and one commit opened
+   in place — the way back, its header, then its files. */
+.git-commit{display:flex;flex-direction:column;gap:2px;padding:5px 7px;border-radius:5px;cursor:pointer}
+.git-commit:hover{background:#1e1e1e}
+.git-commit.on{background:#252525}
+.gc-subject{font-size:12px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gc-meta{display:flex;gap:8px;font-size:10.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+.gc-sha{flex:none;color:#7dd3fc}
+.gc-author{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.gc-when{flex:none;margin-left:auto}
+.git-more{display:block;width:100%;margin:4px 0 2px;background:none;border:1px dashed var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:11.5px;padding:5px;cursor:pointer}
+.git-more:hover{color:var(--fg);border-color:#3a3a3a}
+.git-more:disabled{opacity:.45;cursor:default}
+.git-back{display:flex;align-items:center;gap:3px;padding:4px 7px;border-radius:5px;color:#7dd3fc;font-size:11.5px;cursor:pointer}
+.git-back:hover{background:#1e1e1e}
+.git-back .ic{width:13px;height:13px}
+.git-commit-head{padding:6px 7px 8px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.gch-subject{font-size:12.5px;line-height:1.45;overflow-wrap:anywhere}
+.gch-meta{display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:3px;font-size:10.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.gch-sha{color:#7dd3fc}
+.gch-toggle{margin-top:6px;background:none;border:0;padding:0;color:#7dd3fc;font:inherit;font-size:11px;cursor:pointer}
+.gch-body{margin:6px 0 0;padding:6px 8px;max-height:180px;overflow:auto;background:#161616;border-radius:5px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px;line-height:1.5;color:#c9c9c9}
+/* The pane's own empty state, in the middle of the space the diff would use: one small line in
+   the list beside a blank half-window said neither which comparison was empty nor why. */
+.git-blank{height:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center}
+.gb-title{font-size:13px;color:var(--fg)}
+.gb-sub{max-width:48ch;font-size:12px;line-height:1.6;color:var(--dim);overflow-wrap:anywhere}
+.git-blank button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}
+.git-blank button:hover{border-color:#3a3a3a;background:#2a2a2a}
 #git-pane{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 #git-note{margin:8px 10px 0;padding:7px 10px;border-radius:6px;border:1px solid var(--line);font-size:12px;line-height:1.5;overflow-wrap:anywhere;color:var(--dim)}
 #git-note[hidden]{display:none}
@@ -830,6 +859,8 @@ select.skill-field{appearance:auto}
   .git-mode{min-height:36px;padding:4px 8px}
   #git-layout{min-height:36px}
   .git-file{padding:8px 7px}
+  .git-commit{padding:8px 7px}
+  .git-more{min-height:36px}
   .gf-edit{min-height:32px}
   #git-comment-text{font-size:16px}
 }
@@ -1263,6 +1294,23 @@ select.skill-field{appearance:auto}
 .set-seg button[aria-checked="true"]{background:#2b3a4c;color:#fff;font-weight:600}
 .set-select{max-width:260px;min-height:32px;padding:4px 28px 4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9a9a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--fg);font:inherit;font-size:13px;text-overflow:ellipsis;-webkit-appearance:none;appearance:none;cursor:pointer}
 .set-select:focus-visible,.set-seg button:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
+/* A per-agent row: the agent in a fixed first column, and its settings in fixed columns after it,
+   so the same field starts at the same x on every row. Left to their own widths, a segmented
+   Permissions and a select pushed their row's Model to different places. The last column takes
+   what is left; at phone width the row is one column and the fields stack (the narrow block). */
+.set-item.ag{grid-template-columns:96px minmax(0,1fr);gap:4px 16px;align-items:start}
+.set-fields{display:grid;grid-template-columns:150px 252px minmax(0,1fr);gap:6px 14px;min-width:0}
+.set-field{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0;max-width:100%}
+.set-flabel{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8a8a8a}
+.set-fopen{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;min-height:32px;padding:3px 6px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.set-fopen:hover{background:#1f1f1f}
+.set-fopen:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+/* Under a choice control: a level that is not set says so. The selected level alone cannot tell
+   "auto, never set" from "auto, saved", and a list field's value already carries its note. */
+.set-fsub{display:flex;flex-wrap:wrap;gap:2px 6px}
+/* An instruction summary is prose, not a value: one line here, the whole of it in the title. */
+.set-fnote{min-width:0;max-width:260px;font-size:12.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-fnote code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
 /* A row with a screen of its own (a model) or a way to another menu: the whole row is the target. */
 .set-open{width:100%;border:0;border-radius:0;background:none;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:background .12s}
 .set-open:hover{background:#1f1f1f}
@@ -1693,6 +1741,12 @@ button:disabled{opacity:.5;cursor:default}
   .set-item.sw{grid-template-columns:minmax(0,1fr) auto}
   .set-item>.set-ctl{justify-self:stretch}
   .set-item.sw>.set-ctl{justify-self:end}
+  /* An agent's fields go under its name, one per line, at the height a thumb needs. */
+  .set-item.ag{grid-template-columns:minmax(0,1fr)}
+  .set-item.ag>.set-fields{display:flex;flex-direction:column;align-items:stretch;gap:10px}
+  .set-item.ag .set-fopen{width:100%;min-height:44px}
+  .set-item.ag .set-seg button{min-height:44px}
+  .set-item.ag .set-fnote{max-width:none}
   .set-seg{display:flex;width:100%}
   .set-seg button{flex:1;min-height:40px;padding:0 4px}
   .set-select{max-width:none;width:100%;min-height:44px;font-size:16px}
@@ -5075,7 +5129,8 @@ const SCRIPT = `
    * each row is changed with, and the button id every control posts. Nothing here parses a label
    * or decides a value — the grid did, because a label was all it had. What IS decided here is
    * presentation: a choice of up to five short values is drawn as a segmented control (one tap,
-   * every option visible), a longer one as a select.
+   * every option visible), a longer one as a select, and a per-agent row puts one labelled
+   * control per setting beside the agent's name.
    *
    * Every interactive element carries data-fk, a key that survives a redraw (the row's index and
    * the part of it), so focus can be put back after the daemon's answer replaces the markup.
@@ -5139,7 +5194,8 @@ const SCRIPT = `
         + '<div class="set-ctl"><button type="button" class="set-switch" role="switch" aria-checked="'+(c.on ? 'true' : 'false')+'"'
         + ' aria-label="'+text(r.label)+'" data-fk="r'+i+'" data-btn="'+text(c.set)+'"></button></div></div>';
     }
-    if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r, c.options || [], i)+'</div></div>';
+    if(c.kind === 'agent') return settingsAgent(r, i, c.fields || []);
+    if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r.label, c.options || [], 'r'+i, r.value)+'</div></div>';
     // A row with a screen of its own, or a way to another menu: the whole row is the button.
     var value = '';
     if(c.kind !== 'link' && r.value != null){
@@ -5150,17 +5206,60 @@ const SCRIPT = `
       + settingsText(r) + value + '<span class="set-chev" aria-hidden="true">'+IC.icon.chevronRight+'</span></button>';
   }
 
-  function settingsChoice(r, opts, i){
+  /**
+   * One agent's row: its name, kind and badges on the left, one labelled control per setting
+   * beside it.
+   *
+   * The daemon sends the fields and every button id, so this only lays them out: Model is a value
+   * that opens the agent's own screen (the same one a model row used to open), Permissions is the
+   * closed list settingsChoice already draws. Instructions is the page's own field — it comes from
+   * the instructions panel, not /setting — so it is added once that list has arrived, and only for
+   * an agent whose harness reads files of its own. It replaces the section's old "Each agent's own"
+   * subsection: one row per agent, everything about that agent on it.
+   */
+  function settingsAgent(r, i, fields){
+    var h = '';
+    for(var k=0;k<fields.length;k++) h += settingsField(r.label, fields[k], 'r'+i+'f'+k);
+    var own = instrOwn(r.target || r.label);
+    if(own) h += instrField(r.label, own, 'r'+i+'i');
+    return '<div class="set-item ag">' + settingsText(r) + '<div class="set-fields">' + h + '</div></div>';
+  }
+
+  // agent is the row's name, carried into every control's accessible name: several agents' rows
+  // sit on one page, so a reader that hears only "Model" cannot tell whose it is.
+  function settingsField(agent, f, key){
+    var c = f.control || { kind: 'list' };
+    var h = '<div class="set-field"><span class="set-flabel">' + text(f.label) + '</span>';
+    if(c.kind === 'choice'){
+      // The selected option cannot say whether the level was ever set: the daemon's note does,
+      // and where it sends none the page says it in the same pill a list field's value carries.
+      var note = f.valueNote ? text(f.valueNote) : (f.unset ? 'not set' : '');
+      return h + settingsChoice(agent + ' · ' + f.label, c.options || [], key, f.value)
+        + (note ? '<span class="set-fsub"><span class="set-vnote">' + note + '</span></span>' : '') + '</div>';
+    }
+    return h + '<button type="button" class="set-fopen" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
+      + ' aria-label="' + text(agent + ' · ' + f.label + ': ' + (f.value == null ? '' : f.value)) + '">'
+      + '<span class="set-vv"><span class="set-v' + (f.unset ? ' unset' : '') + '" title="' + text(f.value == null ? '' : f.value) + '">'
+      + text(f.value == null ? '' : f.value) + '</span>'
+      + (f.valueNote ? '<span class="set-vnote">' + text(f.valueNote) + '</span>' : '')
+      + (f.effectLabel ? '<span class="set-badge restart"' + (f.effectDetail ? ' title="' + text(f.effectDetail) + '"' : '') + '>'
+        + text(f.effectLabel) + '</span>' : '')
+      + '</span><span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
+  }
+
+  // key is what its controls' data-fk is built from: a row's ("r3"), or one field of an agent's
+  // row ("r3f1"), so a redraw can put focus back on the exact control that was used.
+  function settingsChoice(label, opts, key, value){
     var short = opts.length > 0 && opts.length <= 5;
     for(var k=0;k<opts.length;k++) if(String(opts[k].label).length > 6) short = false;
     var h = '', any = false;
     if(short){
       for(var j=0;j<opts.length;j++){
         var o = opts[j];
-        h += '<button type="button" role="radio" aria-checked="'+(o.current ? 'true' : 'false')+'" data-fk="r'+i+'o'+j+'" data-btn="'+text(o.buttonId)+'"'
+        h += '<button type="button" role="radio" aria-checked="'+(o.current ? 'true' : 'false')+'" data-fk="'+key+'o'+j+'" data-btn="'+text(o.buttonId)+'"'
           + (o.detail ? ' title="'+text(o.detail)+'"' : '')+'>'+text(o.label)+'</button>';
       }
-      return '<div class="set-seg" role="radiogroup" aria-label="'+text(r.label)+'">'+h+'</div>';
+      return '<div class="set-seg" role="radiogroup" aria-label="'+text(label)+'">'+h+'</div>';
     }
     for(var n=0;n<opts.length;n++){
       var p = opts[n];
@@ -5170,8 +5269,8 @@ const SCRIPT = `
       h += '<option value="'+text(p.buttonId)+'"'+(p.current ? ' selected' : '')+(p.detail ? ' title="'+text(p.detail)+'"' : '')+'>'+text(p.label)+'</option>';
     }
     // A value none of the options names (a window typed by hand, 90m) is still shown as what it is.
-    if(!any) h = '<option value="" selected disabled>'+text(r.value == null ? '' : r.value)+'</option>' + h;
-    return '<select class="set-select" data-fk="r'+i+'" aria-label="'+text(r.label)+'">'+h+'</select>';
+    if(!any) h = '<option value="" selected disabled>'+text(value == null ? '' : value)+'</option>' + h;
+    return '<select class="set-select" data-fk="'+key+'" aria-label="'+text(label)+'">'+h+'</select>';
   }
 
   function settingsValues(s){
@@ -7946,8 +8045,12 @@ const SCRIPT = `
       }
       paintTopics();
       // A turn just ended — the moment its changes are all on disk. The git window, if it is
-      // open on this topic, re-reads the list; an open diff is left where the reader put it.
-      if(!ev.on && !gitWin.hidden) gitLoadStatus();
+      // open on this topic, re-reads the list; an open diff is left where the reader put it. In
+      // Commits it re-reads the history, which a turn that committed something has changed.
+      if(!ev.on && !gitWin.hidden){
+        if(gitState.mode === 'commits') gitLoadLog(false);
+        else gitLoadStatus();
+      }
     }
     else if(ev.t==='commands'){ commands = ev.commands || []; }
     else if(ev.t==='status'){ setStatus(ev.status); }
@@ -9472,9 +9575,10 @@ const SCRIPT = `
   reader.addEventListener('click', function(e){ if(e.target === reader) closeReader(); });
 
   // ── The git window ─────────────────────────────────────────────────────────
-  // What changed in the repository the topic's directory sits in, one file's diff, and line
-  // comments that go into the composer (never sent from here). Everything is read through the
-  // daemon — daemon/git-panel.ts runs on the machine the agent runs on — so this half only draws.
+  // What changed in the repository the topic's directory sits in, its commit history, one file's
+  // diff, and line comments that go into the composer (never sent from here). Everything is read
+  // through the daemon — daemon/git-panel.ts runs on the machine the agent runs on — so this half
+  // only draws.
   //
   // openGitWindow(source) has two callers: the chat header, with no argument, and the turn-change
   // view, with { title, statusUrl, fileUrl }. The second fixes the two URLs, hides the mode
@@ -9488,6 +9592,22 @@ const SCRIPT = `
   var gitState = {
     source:null, mode:'working', base:'', root:'', repo:null, files:[], path:'', sel:null, branchError:'',
     statusSeq:0, fileSeq:0, view:null, kind:'',
+    // Commits: the history read so far, whether the daemon has more, and the commit opened in it.
+    // Its own sequences drop answers the way statusSeq and fileSeq do — a log page arriving after
+    // a mode switch would otherwise list commits under a comparison that is no longer on screen.
+    commits:[], commitMore:false, commit:null, commitFiles:[], bodyOpen:false,
+    logSeq:0, commitSeq:0,
+    // Whether a list that has just arrived may open its first file by itself (a wide window does,
+    // a phone does not), and whether a file request is in flight.
+    pick:false, loading:false,
+    // A directory outside a repository is an answer, not a failure: the pane says so and the red
+    // note stays out of it, and the branch list's own refusal must not put one back.
+    notGit:false,
+    // Whether the branch list is missing because there was no repository to read it from. A
+    // status answer that succeeds makes that refusal stale. It is this flag and not notGit, which
+    // a history read in Commits clears first, and not branchError, which a failure for another
+    // reason also sets and which a status answer does not make stale.
+    branchStale:false,
     // A phone opens on one column: a split diff at 390px gives each side five characters of code.
     layout: (window.innerWidth < 900 ? 'unified' : 'split')
   };
@@ -9505,8 +9625,27 @@ const SCRIPT = `
   }
   function gitFileUrl(path){
     if(gitCustom()) return gitCustom().fileUrl+'&path='+encodeURIComponent(path);
+    // A file opened inside a commit is read from that commit, never from the working tree: the
+    // same path there is today's file, and the diff would be of something else entirely.
+    if(gitState.commit) return gitCommitFileUrl(gitState.commit.sha, path);
     return 'api/git/file?t='+encodeURIComponent(topic)+'&mode='+encodeURIComponent(gitState.mode)+gitBaseParam()
       +'&path='+encodeURIComponent(path);
+  }
+  function gitLogUrl(skip){
+    return 'api/git/log?t='+encodeURIComponent(topic)+'&skip='+skip;
+  }
+  function gitCommitUrl(sha){
+    return 'api/git/commit?t='+encodeURIComponent(topic)+'&sha='+encodeURIComponent(sha);
+  }
+  function gitCommitFileUrl(sha, path){
+    return 'api/git/commit-file?t='+encodeURIComponent(topic)+'&sha='+encodeURIComponent(sha)
+      +'&path='+encodeURIComponent(path);
+  }
+  /** The short sha a comment made on a commit carries, or '' outside one. */
+  function gitCommitTag(){
+    var c = gitState.commit;
+    if(!c) return '';
+    return c.short || String(c.sha || '').slice(0, 7);
   }
 
   function gitNote(message, bad){
@@ -9534,7 +9673,8 @@ const SCRIPT = `
   }
 
   function gitPaintBase(base){
-    if(gitCustom() || gitState.mode === 'working'){ gitBaseEl.hidden = true; return; }
+    // The working comparison and the commit history never use a base.
+    if(gitCustom() || gitState.mode === 'working' || gitState.mode === 'commits'){ gitBaseEl.hidden = true; return; }
     if(base && !gitState.base) gitState.base = base;
     // No origin/HEAD, main or master: the first branch the list offered is the base. A picker that
     // shows a selected row while the state holds nothing would send no base at all.
@@ -9551,13 +9691,17 @@ const SCRIPT = `
       .then(function(r){ return r.json(); }).then(function(d){
         if(!d || !d.ok){
           // A list that could not be read is a sentence, not a silently empty picker: Branch and
-          // Committed both need a base, and this is why they cannot offer one.
+          // Committed both need a base, and this is why they cannot offer one. A directory outside
+          // a repository is already explained in the pane, and a second red sentence about
+          // branches beside it would read as a different failure.
           gitState.branchError = (d && d.text) || 'Could not read the branches.';
-          gitNote(gitState.branchError, true);
+          gitState.branchStale = !!(d && d.reason === 'not-git');
+          if(!gitState.notGit) gitNote(gitState.branchError, true);
           return;
         }
         var was = gitState.branchError;
         gitState.branchError = '';
+        gitState.branchStale = false;
         if(was && gitNoteEl.textContent === was) gitNote('', false);
         var list = d.branches || [];
         if(!list.length) return;
@@ -9572,14 +9716,14 @@ const SCRIPT = `
         gitPaintBase(d.base);
         // A mode that needs a base may have asked before this answer arrived, and been refused;
         // the base the list just supplied makes that request answerable.
-        if(!had && gitState.base && gitState.mode !== 'working') gitLoadStatus();
+        if(!had && gitState.base && (gitState.mode === 'branch' || gitState.mode === 'committed')) gitLoadStatus();
       }).catch(function(){
         gitState.branchError = 'Could not read the branches.';
-        gitNote(gitState.branchError, true);
+        if(!gitState.notGit) gitNote(gitState.branchError, true);
       });
   }
 
-  function gitFileRow(f){
+  function gitFileRow(f, withEdit){
     var letter = f.status === 'added' ? 'A' : f.status === 'deleted' ? 'D' : 'M';
     var stat = f.binary
       ? '<span class="gf-del">bin</span>'
@@ -9590,11 +9734,12 @@ const SCRIPT = `
     // feature is on — so no Edit is offered that would do nothing. It takes a path the way the files
     // panel writes one — absolute, or relative to the topic's directory — so the repository-root
     // path this list shows is made absolute first. Where the topic works in a repo subdirectory,
-    // handing it the root-relative path would point at the wrong file.
+    // handing it the root-relative path would point at the wrong file. A file inside a commit gets
+    // no Edit at all: the editor writes the working tree, and that is not the file being read.
     var abs = gitState.root
       ? (gitState.root.charAt(gitState.root.length-1) === '/' ? gitState.root : gitState.root+'/')+f.path
       : f.path;
-    var edit = typeof window.openFileEditor === 'function'
+    var edit = withEdit && typeof window.openFileEditor === 'function'
       ? '<button type="button" class="gf-edit" data-gedit="'+text(abs)+'" title="Edit this file">Edit</button>'
       : '';
     return '<div class="git-file'+(f.path === gitState.path ? ' on' : '')+'" data-gpath="'+text(f.path)+'"'
@@ -9605,13 +9750,257 @@ const SCRIPT = `
   }
 
   function gitPaintFiles(){
-    if(!gitState.files.length){
-      gitFilesEl.innerHTML = '<div class="git-empty">No changes.</div>';
+    var html='';
+    for(var i=0;i<gitState.files.length;i++) html += gitFileRow(gitState.files[i], true);
+    gitFilesEl.innerHTML = html;
+  }
+
+  /** Whatever the left column is showing, redrawn with the open row marked. */
+  function gitPaintList(){
+    if(gitState.commit) gitPaintCommit();
+    else if(gitState.mode === 'commits') gitPaintCommits();
+    else gitPaintFiles();
+  }
+
+  /**
+   * The pane's own empty state, in the middle of the space a diff would use.
+   *
+   * The list used to carry one small "No changes." and leave the right half of the window blank,
+   * which said neither which comparison was empty nor why — and a directory outside a repository
+   * read as a failed request. The reason belongs where the diff would be, with the one action that
+   * gets somewhere from there.
+   */
+  function gitBlank(title, sub, act, actLabel){
+    // Nothing to lay out: the button would switch a diff that is not on screen.
+    gitLayoutBtn.hidden = true;
+    gitDiffEl.innerHTML = '<div class="git-blank"><div class="gb-title">'+text(title)+'</div>'
+      +(sub ? '<div class="gb-sub">'+text(sub)+'</div>' : '')
+      +(act ? '<button type="button" data-gact="'+text(act)+'">'+text(actLabel || act)+'</button>' : '')
+      +'</div>';
+  }
+
+  /** Which comparison came back empty, said in its own terms — the base is the answer's, not a guess. */
+  function gitPaintNoChanges(){
+    if(gitCustom()){
+      // One turn, one comparison, fixed by the URLs the window was opened with: there is no other
+      // comparison to name and none to switch to, so the sentence stands alone.
+      gitBlank('No changes in this turn.', '');
       return;
     }
+    var base = gitState.base || 'the base branch';
+    if(gitState.mode === 'working'){
+      gitBlank('No changes.', 'The working tree has nothing that differs from HEAD, untracked files included.',
+        'commits', 'See commits');
+    } else if(gitState.mode === 'branch'){
+      gitBlank('No changes against '+base+'.',
+        'Neither the committed nor the uncommitted work differs from '+base+'.', 'commits', 'See commits');
+    } else {
+      gitBlank('Nothing committed on top of '+base+'.',
+        'HEAD is where '+base+' is, so there is nothing to show for this comparison.', 'commits', 'See commits');
+    }
+  }
+
+  /**
+   * A list that has just arrived opens its first file on a wide window — the whole right half used
+   * to stay blank until the reader guessed that the rows were clickable. A phone keeps the list:
+   * the two columns are stacked there, so opening a file would push the list out of sight, and one
+   * tap is cheap.
+   *
+   * Every list that arrives with nothing selected repaints the pane, whether or not it opens a
+   * file: a directory an agent just turned into a repository, or a comparison that emptied and
+   * filled again, must not keep the sentence of the answer before it.
+   */
+  function gitAutoOpen(list){
+    if(gitState.path || !list.length) return;
+    // Only the first list of a view opens a file by itself; a later refresh keeps the reader's
+    // choice — and once a file has been picked, the pane holds its diff and is left alone.
+    var open = gitState.pick && !narrow();
+    gitState.pick = false;
+    if(open) gitOpenFile(list[0].path);
+    else gitBlank('Select a file to see its diff.');
+  }
+
+  // ── Commits ────────────────────────────────────────────────────────────────
+  function gitCommitRow(c){
+    var sha = c.sha || '';
+    var on = gitState.commit && gitState.commit.sha === sha;
+    return '<div class="git-commit'+(on ? ' on' : '')+'" data-gsha="'+text(sha)+'"'
+      +' role="button" tabindex="0" title="'+text(c.subject || '')+'">'
+      +'<span class="gc-subject">'+text(c.subject || '')+'</span>'
+      +'<span class="gc-meta"><span class="gc-sha">'+text(c.short || sha.slice(0, 7))+'</span>'
+      +'<span class="gc-author">'+text(c.author || '')+'</span>'
+      +'<span class="gc-when">'+text(schedAgo(c.at))+'</span></span></div>';
+  }
+
+  function gitPaintCommits(){
+    if(!gitState.commits.length){ gitFilesEl.innerHTML = ''; return; }
     var html='';
-    for(var i=0;i<gitState.files.length;i++) html += gitFileRow(gitState.files[i]);
+    for(var i=0;i<gitState.commits.length;i++) html += gitCommitRow(gitState.commits[i]);
+    // The next page is asked for by skip, which the contract defines as the commits already shown.
+    // A commit landing at the top between two pages therefore shifts the window by one and the
+    // next page repeats a row; a cursor would not, but the contract has none, a refresh clears the
+    // repetition, and the list never pages itself.
+    if(gitState.commitMore) html += '<button type="button" class="git-more" data-gmore>Load more</button>';
     gitFilesEl.innerHTML = html;
+  }
+
+  /** One commit in the left column: the way back, its message, then its files. */
+  function gitPaintCommit(){
+    var c = gitState.commit;
+    if(!c){ gitPaintCommits(); return; }
+    var html = '<div class="git-back" data-gback role="button" tabindex="0">'+IC.icon.chevronLeft
+      +'<span>Commits</span></div>'
+      +'<div class="git-commit-head">'
+      +'<div class="gch-subject">'+text(c.subject || '')+'</div>'
+      +'<div class="gch-meta"><span class="gch-sha">'+text(gitCommitTag())+'</span>'
+      +'<span>'+text(c.author || '')+'</span><span>'+text(schedAgo(c.at))+'</span></div>';
+    if(c.body){
+      html += '<button type="button" class="gch-toggle" data-gbody>'
+        +(gitState.bodyOpen ? 'Hide details' : 'Show details')+'</button>'
+        +'<pre class="gch-body"'+(gitState.bodyOpen ? '' : ' hidden')+'>'+text(c.body)+'</pre>';
+    }
+    html += '</div>';
+    for(var i=0;i<gitState.commitFiles.length;i++) html += gitFileRow(gitState.commitFiles[i], false);
+    gitFilesEl.innerHTML = html;
+  }
+
+  function gitToggleBody(btn){
+    gitState.bodyOpen = !gitState.bodyOpen;
+    var pre = btn.parentNode ? btn.parentNode.querySelector('.gch-body') : null;
+    if(pre) pre.hidden = !gitState.bodyOpen;
+    btn.textContent = gitState.bodyOpen ? 'Hide details' : 'Show details';
+  }
+
+  function gitLoadLog(more){
+    if(gitCustom() || gitState.mode !== 'commits') return;
+    var skip = more ? gitState.commits.length : 0;
+    var mine = ++gitState.logSeq;
+    gitRefreshBtn.disabled = true;
+    var moreBtn = gitFilesEl.querySelector('[data-gmore]');
+    if(moreBtn) moreBtn.disabled = true;
+    return fetch(gitLogUrl(skip), {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
+    }).then(function(res){
+      if(mine !== gitState.logSeq) return;
+      gitRefreshBtn.disabled = false;
+      if(moreBtn) moreBtn.disabled = false;
+      var d = res.d;
+      if(!res.ok || !d || !d.ok){
+        // Anything but "this is not a repository" keeps what is on screen: the rows it has are
+        // still true, and a reader who asked for more — or one looking at a commit — has not lost
+        // it. A turn's own refresh failing must not throw the commit away under them.
+        if(!(d && d.reason === 'not-git')){
+          gitNote((d && (d.text || d.error))
+            || (more ? 'Could not read more commits.' : 'Could not read the commits.'), true);
+          // The first page failing leaves "Loading…" in the column; there is no list to keep.
+          if(!gitState.commit) gitPaintCommits();
+          return;
+        }
+        gitState.notGit = true;
+        gitState.commits = [];
+        gitState.commitMore = false;
+        gitState.repo = null;
+        gitState.root = '';
+        gitBranchEl.textContent = '';
+        gitState.commit = null;
+        gitState.commitFiles = [];
+        gitState.fileSeq += 1;
+        gitState.loading = false;
+        gitClearSelection();
+        gitHideComment();
+        gitDestroyView();
+        gitPaintCommits();
+        gitNote('', false);
+        gitBlank('Not a git repository.', d.text || 'This directory is not inside a git repository.');
+        return;
+      }
+      gitState.notGit = false;
+      if(!more) gitState.commits = [];
+      var list = d.commits || [];
+      for(var i=0;i<list.length;i++) gitState.commits.push(list[i]);
+      gitState.commitMore = !!d.more;
+      if(d.repo){
+        gitState.repo = d.repo;
+        gitState.root = d.repo.root || '';
+        gitBranchEl.textContent = d.repo.branch || '';
+      }
+      // A refresh behind an open commit updates the list it will go back to, and leaves the
+      // commit alone: what a commit contains cannot change.
+      if(!gitState.commit){
+        gitNote('', false);
+        gitPaintCommits();
+        if(!gitState.commits.length) gitBlank('No commits yet.', 'This repository has nothing committed.');
+      }
+    }).catch(function(){
+      if(mine !== gitState.logSeq) return;
+      gitRefreshBtn.disabled = false;
+      if(moreBtn) moreBtn.disabled = false;
+      gitNote('Could not reach the server.', true);
+    });
+  }
+
+  function gitOpenCommit(sha){
+    var known = null;
+    for(var i=0;i<gitState.commits.length;i++) if(gitState.commits[i].sha === sha) known = gitState.commits[i];
+    gitState.commit = known || {sha:sha, short:String(sha).slice(0, 7), subject:'', author:'', at:0};
+    gitState.commitFiles = [];
+    gitState.path = '';
+    gitState.bodyOpen = false;
+    gitState.loading = false;
+    gitState.pick = true;
+    gitState.fileSeq += 1;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitPaintCommit();
+    gitNote('', false);
+    gitDiffEl.innerHTML = '<div class="git-empty">Loading\\u2026</div>';
+    gitLayoutBtn.hidden = true;
+    var mine = ++gitState.commitSeq;
+    fetch(gitCommitUrl(sha), {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
+    }).then(function(res){
+      if(mine !== gitState.commitSeq) return;
+      var d = res.d;
+      if(!res.ok || !d || !d.ok){
+        gitState.commitFiles = [];
+        gitPaintCommit();
+        // The header from the list row stays: it is what the person tapped, and it is true even
+        // when the daemon could not open the commit itself.
+        gitNote((d && (d.text || d.error)) || 'Could not read this commit.', true);
+        gitDiffEl.textContent = '';
+        return;
+      }
+      gitState.commit = d.commit || gitState.commit;
+      gitState.commitFiles = d.files || [];
+      gitState.root = (d.repo && d.repo.root) || gitState.root;
+      gitPaintCommit();
+      gitNote(d.truncated ? 'There are too many files in this commit to list.' : '', !!d.truncated);
+      if(!gitState.commitFiles.length){
+        gitBlank('This commit changed no files.', '');
+        return;
+      }
+      gitAutoOpen(gitState.commitFiles);
+    }).catch(function(){
+      if(mine !== gitState.commitSeq) return;
+      gitNote('Could not reach the server.', true);
+    });
+  }
+
+  function gitBackToCommits(){
+    gitState.commit = null;
+    gitState.commitFiles = [];
+    gitState.path = '';
+    gitState.loading = false;
+    gitState.commitSeq += 1;
+    gitState.fileSeq += 1;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitPaintCommits();
+    gitNote('', false);
+    // The blank below is what takes the layout button off the bar: there is no diff to lay out.
+    gitBlank('Pick a commit.', "A commit's files and their diff are shown here.");
   }
 
   function gitLoadStatus(){
@@ -9630,30 +10019,48 @@ const SCRIPT = `
         gitState.path = '';
         // A file request still in flight would otherwise land in a pane whose path is now empty.
         gitState.fileSeq += 1;
+        gitState.loading = false;
         gitFilesEl.innerHTML = '';
         gitBranchEl.textContent = '';
         gitClearSelection();
         gitHideComment();
         gitDestroyView();
         gitDiffEl.textContent = '';
+        gitLayoutBtn.hidden = true;
+        if(d && d.reason === 'not-git'){
+          // The window exists for a repository; outside one there is nothing to compare, and a
+          // red note beside an empty list read as a request that failed rather than an answer.
+          gitState.notGit = true;
+          gitNote('', false);
+          gitBlank('Not a git repository.', d.text || 'This directory is not inside a git repository.');
+          return;
+        }
+        gitState.notGit = false;
         // The daemon's own sentence, including a 500's error field: a timeout or a broken
         // repository must not read as "nothing changed".
         gitNote((d && (d.text || d.error)) || 'Could not read the changes.', true);
         return;
       }
+      // The branch list could not be read because there was no repository; this answer says there
+      // is one now, so ask again — the refusal is stale and the picker has no branches.
+      gitState.notGit = false;
       gitState.repo = d.repo || null;
       gitState.root = (d.repo && d.repo.root) || '';
       gitState.files = d.files || [];
       gitBranchEl.textContent = (d.repo && d.repo.branch) || '';
       gitPaintBase(d.repo && d.repo.base);
+      if(gitState.branchStale){
+        gitState.branchError = '';
+        gitLoadBranches();
+      }
+      gitPaintFiles();
       if(d.truncated){
         // The list itself is incomplete; any rows it did return are whole.
-        if(!gitState.files.length) gitFilesEl.innerHTML = '<div class="git-empty">The change list is incomplete.</div>';
-        else gitPaintFiles();
         gitNote('There are too many changes to list. Narrow the comparison, or refresh once some are committed.', true);
+        if(!gitState.files.length) gitBlank('The change list is incomplete.', 'There are too many changes to list.');
       } else {
-        gitPaintFiles();
         gitNote(gitState.branchError, !!gitState.branchError);
+        if(!gitState.files.length) gitPaintNoChanges();
       }
       // The file that was open may have been committed away since the last list. Its old diff
       // would then be a picture of something that is no longer there.
@@ -9661,10 +10068,14 @@ const SCRIPT = `
         gitState.path = '';
         // The file it was reading is gone from the comparison; its answer must not land here.
         gitState.fileSeq += 1;
+        gitState.loading = false;
         gitClearSelection();
         gitHideComment();
         gitDestroyView();
         gitDiffEl.innerHTML = '<div class="git-empty">That file is no longer in the changes.</div>';
+        gitLayoutBtn.hidden = true;
+      } else {
+        gitAutoOpen(gitState.files);
       }
     }).catch(function(){
       if(mine !== gitState.statusSeq) return;
@@ -9704,7 +10115,7 @@ const SCRIPT = `
         gitState.kind = 'code';
         // Kept for the comment block, which quotes WHOLE lines of the side the selection is on.
         gitState.sides = {old: String(d.original || ''), 'new': String(d.modified || '')};
-        gitState.view = cv.diff(gitDiffEl, {name:d.path, original:d.original, modified:d.modified,
+        gitState.view = cv.diff(gitDiffEl, {name:d.path || gitState.path, original:d.original, modified:d.modified,
           layout:gitState.layout, onSelect:function(sel){ gitSelect(sel); }});
         gitLayoutBtn.hidden = false;
         gitLayoutBtn.textContent = gitState.layout === 'split' ? 'Unified' : 'Split';
@@ -9727,18 +10138,25 @@ const SCRIPT = `
   }
 
   function gitOpenFile(path){
+    // Clicking a row whose read is still in flight asks for nothing — that answer is on its way.
+    // Clicking the row that is already open re-reads it, which is how a diff is brought up to date
+    // after the file was edited: Refresh re-reads the list and deliberately leaves the diff alone.
+    if(path === gitState.path && gitState.loading) return;
+    gitState.pick = false;
     gitState.path = path;
     gitClearSelection();
     gitHideComment();
     gitDestroyView();
-    gitPaintFiles();
+    gitPaintList();
     gitDiffEl.innerHTML = '<div class="git-empty">Loading\\u2026</div>';
     gitLayoutBtn.hidden = true;
     var mine = ++gitState.fileSeq;
+    gitState.loading = true;
     fetch(gitFileUrl(path), {credentials:'same-origin', cache:'no-store'}).then(function(r){
       return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
     }).then(function(res){
       if(mine !== gitState.fileSeq) return;
+      gitState.loading = false;
       var d = res.d;
       if(!res.ok || !d || !d.ok){
         gitDiffEl.innerHTML = '<div class="git-empty">'
@@ -9757,15 +10175,18 @@ const SCRIPT = `
       }
       gitRenderDiff(d, mine);
     }).catch(function(){
-      if(mine === gitState.fileSeq) gitDiffEl.innerHTML = '<div class="git-empty">Could not reach the server.</div>';
+      if(mine !== gitState.fileSeq) return;
+      gitState.loading = false;
+      gitDiffEl.innerHTML = '<div class="git-empty">Could not reach the server.</div>';
     });
   }
 
   function gitShowComment(){
     if(!gitState.sel) return;
     var from = Math.min(gitState.sel.from, gitState.sel.to), to = Math.max(gitState.sel.from, gitState.sel.to);
+    var tag = gitCommitTag();
     gitCommentWhat.textContent = gitState.path+':L'+from+(to !== from ? '-L'+to : '')
-      +(gitState.sel.side === 'old' ? ' \\u00b7 old side' : ' \\u00b7 new side');
+      +(gitState.sel.side === 'old' ? ' \\u00b7 old side' : ' \\u00b7 new side')+(tag ? ' \\u00b7 '+tag : '');
     gitCommentEl.hidden = false;
     gitCommentText.value = '';
     gitCommentText.focus();
@@ -9774,9 +10195,11 @@ const SCRIPT = `
   /**
    * One line comment in the shape the agent reads: the file and line range, which side of the
    * diff the lines came from, the selected lines in a fence, then the person's words. Without the
-   * side, a deleted line's old number would read as a line of the new file. A fence longer than
-   * any run of backticks inside the code keeps the block closed. Multiple comments accumulate,
-   * separated by a blank line.
+   * side, a deleted line's old number would read as a line of the new file. A comment made on a
+   * commit's diff carries its short sha too, because the same path and line in the working tree
+   * are a different file — without it the agent reads the comment against today's code. A fence
+   * longer than any run of backticks inside the code keeps the block closed. Multiple comments
+   * accumulate, separated by a blank line.
    */
   function gitCommentBlock(){
     var sel = gitState.sel;
@@ -9791,7 +10214,9 @@ const SCRIPT = `
       : String(sel.text);
     var fence = String.fromCharCode(96,96,96);
     while(quoted.indexOf(fence) >= 0) fence += String.fromCharCode(96);
-    return gitState.path+':L'+from+(to !== from ? '-L'+to : '')+(sel.side === 'old' ? ' (old)' : ' (new)')
+    var tag = gitCommitTag();
+    return gitState.path+':L'+from+(to !== from ? '-L'+to : '')+(sel.side === 'old' ? ' (old' : ' (new')
+      +(tag ? ', '+tag : '')+')'
       +'\\n'+fence+'\\n'+quoted.replace(/\\s+$/, '')+'\\n'+fence+'\\n'+gitCommentText.value.trim();
   }
 
@@ -9820,17 +10245,68 @@ const SCRIPT = `
     if(gitState.view && typeof gitState.view.setLayout === 'function') gitState.view.setLayout(gitState.layout);
   }
 
+  /**
+   * Switch the comparison. Every answer still in flight belongs to the view being left, so all
+   * four sequences move at once: a status, a file, a page of commits or a commit arriving after
+   * this would otherwise paint under a mode the reader is no longer in.
+   */
+  function gitSetMode(mode){
+    if(gitCustom() || mode === gitState.mode) return;
+    gitState.mode = mode;
+    gitState.path = '';
+    gitState.commit = null;
+    gitState.commitFiles = [];
+    gitState.commits = [];
+    gitState.commitMore = false;
+    gitState.bodyOpen = false;
+    gitState.loading = false;
+    gitState.statusSeq += 1;
+    gitState.fileSeq += 1;
+    gitState.logSeq += 1;
+    gitState.commitSeq += 1;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitDiffEl.innerHTML = '';
+    gitLayoutBtn.hidden = true;
+    gitNote('', false);
+    gitBaseEl.hidden = mode === 'working' || mode === 'commits';
+    var all = gitModesEl.querySelectorAll('[data-gm]');
+    for(var i=0;i<all.length;i++) all[i].classList.toggle('on', all[i].getAttribute('data-gm') === mode);
+    gitState.pick = true;
+    if(mode === 'commits'){
+      gitFilesEl.innerHTML = '<div class="git-empty">Loading\\u2026</div>';
+      gitBlank('Pick a commit.', "A commit's files and their diff are shown here.");
+      gitLoadLog(false);
+    } else {
+      gitLoadStatus();
+    }
+  }
+
   function openGitWindow(source){
     gitState.source = source || null;
     gitState.mode = 'working';
     gitState.base = '';
     gitState.root = '';
     gitState.branchError = '';
+    gitState.branchStale = false;
     gitState.repo = null;
     gitState.files = [];
     gitState.path = '';
+    gitState.commits = [];
+    gitState.commit = null;
+    gitState.commitFiles = [];
+    gitState.commitMore = false;
+    gitState.bodyOpen = false;
+    gitState.loading = false;
+    gitState.notGit = false;
+    // The header's own list opens its first file on a wide window; the turn-changes view leaves
+    // the picking to the person, who came for a particular change.
+    gitState.pick = !source;
     gitState.statusSeq += 1;
     gitState.fileSeq += 1;
+    gitState.logSeq += 1;
+    gitState.commitSeq += 1;
     gitDestroyView();
     gitHideComment();
     gitClearSelection();
@@ -9858,6 +10334,13 @@ const SCRIPT = `
     gitWin.hidden = true;
     gitState.statusSeq += 1;
     gitState.fileSeq += 1;
+    gitState.logSeq += 1;
+    gitState.commitSeq += 1;
+    gitState.loading = false;
+    gitState.pick = false;
+    gitState.commit = null;
+    gitState.commitFiles = [];
+    gitState.commits = [];
     gitDestroyView();
     gitHideComment();
     gitClearSelection();
@@ -9870,7 +10353,12 @@ const SCRIPT = `
   gitToggleBtn.addEventListener('click', function(){ setMenu(null, false); openGitWindow(); });
   gitCloseBtn.addEventListener('click', closeGit);
   gitWin.addEventListener('click', function(e){ if(e.target === gitWin) closeGit(); });
-  gitRefreshBtn.addEventListener('click', function(){ gitLoadStatus(); });
+  gitRefreshBtn.addEventListener('click', function(){
+    // In Commits, Refresh re-reads the history list; a commit already opened is left alone,
+    // because what a commit contains cannot change.
+    if(gitState.mode === 'commits' && !gitCustom()) gitLoadLog(false);
+    else gitLoadStatus();
+  });
   gitLayoutBtn.addEventListener('click', gitSetLayout);
   gitBaseEl.addEventListener('change', function(){
     gitState.base = gitBaseEl.value || '';
@@ -9878,6 +10366,8 @@ const SCRIPT = `
     // A file request still in flight belongs to the comparison being left; without this bump its
     // answer would paint that diff into the new pane, under a path that is now empty.
     gitState.fileSeq += 1;
+    gitState.loading = false;
+    gitState.pick = false;
     gitClearSelection();
     gitHideComment();
     gitDestroyView();
@@ -9887,19 +10377,12 @@ const SCRIPT = `
   gitModesEl.addEventListener('click', function(e){
     var btn = e.target.closest ? e.target.closest('[data-gm]') : null;
     if(!btn) return;
-    var mode = btn.getAttribute('data-gm');
-    if(mode === gitState.mode) return;
-    gitState.mode = mode;
-    gitState.path = '';
-    gitState.fileSeq += 1;
-    gitClearSelection();
-    gitHideComment();
-    gitDestroyView();
-    gitDiffEl.innerHTML = '';
-    gitBaseEl.hidden = mode === 'working' || !!gitCustom();
-    var all = gitModesEl.querySelectorAll('[data-gm]');
-    for(var i=0;i<all.length;i++) all[i].classList.toggle('on', all[i].getAttribute('data-gm') === mode);
-    gitLoadStatus();
+    gitSetMode(btn.getAttribute('data-gm'));
+  });
+  gitDiffEl.addEventListener('click', function(e){
+    var act = e.target.closest ? e.target.closest('[data-gact]') : null;
+    if(!act) return;
+    if(act.getAttribute('data-gact') === 'commits') gitSetMode('commits');
   });
   gitFilesEl.addEventListener('click', function(e){
     var edit = e.target.closest ? e.target.closest('[data-gedit]') : null;
@@ -9907,14 +10390,27 @@ const SCRIPT = `
       if(typeof window.openFileEditor === 'function') window.openFileEditor(edit.getAttribute('data-gedit'));
       return;
     }
+    var back = e.target.closest ? e.target.closest('[data-gback]') : null;
+    if(back){ gitBackToCommits(); return; }
+    var more = e.target.closest ? e.target.closest('[data-gmore]') : null;
+    if(more){ gitLoadLog(true); return; }
+    var body = e.target.closest ? e.target.closest('[data-gbody]') : null;
+    if(body){ gitToggleBody(body); return; }
+    var sha = e.target.closest ? e.target.closest('[data-gsha]') : null;
+    if(sha){ gitOpenCommit(sha.getAttribute('data-gsha')); return; }
     var row = e.target.closest ? e.target.closest('[data-gpath]') : null;
     if(row) gitOpenFile(row.getAttribute('data-gpath'));
   });
   gitFilesEl.addEventListener('keydown', function(e){
     if(e.key !== 'Enter' && e.key !== ' ') return;
-    // A key pressed on the row's Edit button belongs to that button, not to the row that opens
-    // the diff; without this, a keyboard user could never reach Edit.
-    if(e.target.closest && e.target.closest('[data-gedit]')) return;
+    // A key pressed on a row's own button belongs to that button, not to the row that opens the
+    // diff; without this, a keyboard user could never reach Edit, Load more or the details.
+    if(e.target.closest && (e.target.closest('[data-gedit]') || e.target.closest('[data-gmore]')
+      || e.target.closest('[data-gbody]'))) return;
+    var sha = e.target.closest ? e.target.closest('[data-gsha]') : null;
+    if(sha){ e.preventDefault(); gitOpenCommit(sha.getAttribute('data-gsha')); return; }
+    var back = e.target.closest ? e.target.closest('[data-gback]') : null;
+    if(back){ e.preventDefault(); gitBackToCommits(); return; }
     var row = e.target.closest ? e.target.closest('[data-gpath]') : null;
     if(row){ e.preventDefault(); gitOpenFile(row.getAttribute('data-gpath')); }
   });
@@ -11516,12 +12012,52 @@ const SCRIPT = `
     instrFetch('api/instructions').then(function(res){
       instrBusy = false;
       instrData = res.ok ? res.body : {error: (res.body && res.body.error) || 'The instructions could not be listed.'};
-      instrSection();
+      instrArrived();
     }, function(){
       instrBusy = false;
       instrData = {error:'Could not reach the daemon.'};
-      instrSection();
+      instrArrived();
     });
+  }
+
+  /**
+   * The list arrived (or failed): an agent's row carries an Instructions field built from it, so
+   * the list is drawn again — renderSettings puts focus back on the control that had it.
+   *
+   * Not while a control is busy, though: that one was just tapped, its new state and its disabled
+   * flag live only in the markup, and a redraw would put it back for a second tap while the first
+   * request is still out. The daemon's answer (or its failure) draws the list next, and the field
+   * is on it then.
+   */
+  function instrArrived(){
+    if(!INSTR_OK || !settingsMsg || settingsPage.hidden) return;
+    var s = settingsMsg.settings;
+    if(!s || s.level !== 'list') return;
+    if(settingsBody.querySelector('.busy')) return;
+    renderSettings();
+  }
+
+  /** The instructions one agent reads on its own machine, from the panel's list, or null. */
+  function instrOwn(id){
+    if(!INSTR_OK || !instrData || instrData.error) return null;
+    var a = instrData.agents || [];
+    for(var i=0;i<a.length;i++) if(a[i].id === id && a[i].own) return a[i];
+    return null;
+  }
+
+  /**
+   * An agent row's third field: what its harness reads on its own machine besides the gateway's
+   * files, and the way into the file window on them — what the section's "Each agent's own" row
+   * used to be, now on the agent's own row. The host is in the title rather than a pill beside
+   * the summary: in the row's last column the summary is what has to stay readable.
+   */
+  function instrField(agent, a, key){
+    var host = a.host === 'local' ? 'this machine' : a.host;
+    return '<div class="set-field"><span class="set-flabel">Instructions</span>'
+      + '<button type="button" class="set-fopen" data-fk="' + key + '" data-instr-agent="' + text(a.id) + '"'
+      + ' aria-label="' + text(agent + ' · Instructions') + '" title="' + text(host + ' · ' + a.own) + '">'
+      + '<span class="set-vv"><span class="set-fnote">' + inl(a.own) + '</span></span>'
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
   }
 
   /**
@@ -11559,17 +12095,8 @@ const SCRIPT = `
         f.agents && f.agents.length ? f.agents.join(', ') : 'No configured agent reads it', f.exists ? f.name : f.name + ' · not written', !f.exists);
     }
     h += '</div>';
-    var own = [], a = d.agents || [];
-    for(var j=0;j<a.length;j++) if(a[j].own) own.push(a[j]);
-    if(own.length){
-      h += '<h3 class="set-group">Each agent’s own</h3><p class="set-gnote">'
-        + inl('What an agent’s harness reads on its own machine besides these: its rules, the files they reference, what its config lists. Read and saved there; the gateway keeps no copy.')
-        + '</p><div class="set-card">';
-      for(var k=0;k<own.length;k++){
-        h += instrRow('data-instr-agent', own[k].id, own[k].id, own[k].host === 'local' ? 'this machine' : own[k].host, own[k].own, '', false);
-      }
-      h += '</div>';
-    }
+    // Each agent's own files are not a list of their own: they are the Instructions field on that
+    // agent's row in Agents, drawn from this same answer (settingsAgent).
     return h + '</section>';
   }
 
@@ -13111,10 +13638,10 @@ __GATE__
     </div>
   </div>
   <!-- The repository the topic's directory sits in, as a window over the transcript. Three
-       comparisons (working tree, branch, committed), a file list, one file's diff, and line
-       comments that go into the composer — never sent from here. The same window is used by the
-       turn-changes view through openGitWindow(source), which fixes its two URLs and hides the
-       comparison controls. -->
+       comparisons (working tree, branch, committed) and the commit history, a file list, one
+       file's diff, and line comments that go into the composer — never sent from here. The same
+       window is used by the turn-changes view through openGitWindow(source), which fixes its two
+       URLs and hides the comparison controls. -->
   <div id="git" hidden role="dialog" aria-modal="true" aria-labelledby="git-title">
     <div id="git-box">
       <div id="git-bar">
@@ -13124,6 +13651,7 @@ __GATE__
           <button type="button" class="git-mode on" data-gm="working">Working</button>
           <button type="button" class="git-mode" data-gm="branch">Branch</button>
           <button type="button" class="git-mode" data-gm="committed">Committed</button>
+          <button type="button" class="git-mode" data-gm="commits">Commits</button>
         </div>
         <select id="git-base" title="Compare against this branch" aria-label="Compare against this branch" hidden></select>
         <span id="git-spacer"></span>

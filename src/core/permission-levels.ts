@@ -1,4 +1,4 @@
-import { PERMISSION_LEVELS, type PermissionLevel } from '../config/schema.js';
+import { PERMISSION_LEVELS, type AgentDef, type PermissionLevel } from '../config/schema.js';
 
 /**
  * `agents[].permissions` as data: what each level asks of the harness, and what of the gateway.
@@ -32,7 +32,9 @@ import { PERMISSION_LEVELS, type PermissionLevel } from '../config/schema.js';
  *                             before every action (read-only commands too); the rest ask nothing
  *
  * agy is not here: its modes could not be read that day, and its `default` did not ask before
- * writing when last measured (agent-acp.ts modesLeftOut).
+ * writing when last measured (agent-acp.ts modesLeftOut). Its requests still reach the person under
+ * a level that asks — the gateway's half does not need a mode — so `ask` is offered to it and to
+ * any harness that reports no mode, saying only what that half can promise (levelDetail).
  *
  * The harnesses' own reviewer modes (claude's and CodeBuddy's `auto`, codex's `agent`, CodeBuddy's
  * `dontAsk`) are no level and no level's mode: they answer requests inside the harness — codex's
@@ -58,6 +60,14 @@ interface LevelSpec {
  * in `plan` would otherwise come back in it.
  */
 const AUTO_MODES = ['default', 'workspace-write', 'build'] as const;
+
+/**
+ * The modes that mean `full`, for an agent with no level set: they ask nothing at all, so the
+ * gateway's approving half never gets to matter. `fullAccess` is CodeBuddy's own spelling of the
+ * same thing, kept out of LEVELS.full.modes so `full` means `bypassPermissions` wherever both exist
+ * (the comment there), but a pinned `options.mode: fullAccess` is still a session in full access.
+ */
+const FULL_LEVEL_MODES: readonly string[] = ['bypassPermissions', 'agent-full-access', 'fullAccess'];
 
 const LEVELS: Record<PermissionLevel, LevelSpec> = {
   plan: {
@@ -117,14 +127,88 @@ export function levelMode(
 
 /**
  * The levels a harness offering these modes can honour, most asked first. `auto` is always among
- * them: approving is the gateway's alone, whatever modes the harness has.
+ * them: approving is the gateway's alone, whatever modes the harness has. So is `ask` when the
+ * harness reports no mode at all: the gateway can still put every request it does make to the
+ * person, and the level says as much about what it cannot stop (levelDetail). A harness that does
+ * report modes gets `ask` only where one of them means it — its own report is the whole list.
  */
 export function offeredLevels(offered: readonly string[]): PermissionLevel[] {
-  return PERMISSION_LEVELS.filter((l) => l === 'auto' || LEVELS[l].modes.some((m) => offered.includes(m)));
+  return PERMISSION_LEVELS.filter(
+    (l) => l === 'auto' || (l === 'ask' && offered.length === 0) || LEVELS[l].modes.some((m) => offered.includes(m))
+  );
 }
 
-/** What a level does, in one clause. */
-export function levelDetail(level: PermissionLevel): string {
+/**
+ * The levels one agent can honour: `auto` alone for `fleetherd api-agent`, which never sends a
+ * permission request (isApiAgent), else what its harness's modes offer.
+ */
+export function offeredLevelsFor(def: AgentDef, offered: readonly string[]): PermissionLevel[] {
+  return isApiAgent(def) ? ['auto'] : offeredLevels(offered);
+}
+
+/**
+ * Whether this definition is `fleetherd api-agent <backend>` — the ACP agent over an HTTP API
+ * (src/api-agent/). It only calls a cloud API: nothing runs on this machine, and it never sends
+ * `session/request_permission`, so no level has anything to gate and `auto` is the only one that
+ * means anything (settings.ts refuses the others by name).
+ *
+ * Read off the shape of the definition rather than a config flag: a preset harness never matches,
+ * and `talkcode` is the same binary under its old name.
+ */
+export function isApiAgent(def: Pick<AgentDef, 'harness' | 'command' | 'args'>): boolean {
+  if (def.harness !== 'custom' || !def.command) return false;
+  const name = def.command.split(/[\\/]/).at(-1)?.toLowerCase();
+  if (name !== 'fleetherd' && name !== 'talkcode') return false;
+  return def.args[0] === 'api-agent';
+}
+
+/** Why `auto` is the API agent's only level, in the clause its option and refusal both use. */
+export const API_AGENT_DETAIL =
+  'the only one that applies: it calls a cloud API, runs nothing on this machine and never asks for permission';
+
+/** Where an unset level's mode came from: a session, the agent's pinned `options.mode`, or neither. */
+export type UnsetLevelSource = 'session' | 'pin' | 'none';
+
+export interface UnsetLevel {
+  level: PermissionLevel;
+  from: UnsetLevelSource;
+}
+
+/**
+ * The level an agent with no `permissions` is effectively at, and where the mode it was read from
+ * came from. Unset leaves the harness in the mode it is in and the gateway approves everything, so
+ * the only thing that changes what it may do unasked is that mode: a full-access one asks nothing,
+ * which is `full`; any other mode asks at most for things the gateway then approves, which is
+ * `auto`.
+ *
+ * `current` is what a session reports; without one the agent's pinned `options.mode` stands in,
+ * because that is where the session starts. A pin is not proof — a harness that does not offer the
+ * mode skips it with a log line (daemon/agent-acp.ts applyPinnedOptions) — but it is the only
+ * answer left when no session is up. A mode the gateway cannot see at all reads `auto`: approving is
+ * what the gateway does with whatever is asked, and nothing here says the harness asks nothing.
+ */
+export function unsetLevel(def: Pick<AgentDef, 'options'>, current?: string): UnsetLevel {
+  const pinned = def.options['mode'];
+  const mode = current ?? (pinned === undefined ? undefined : String(pinned));
+  const from: UnsetLevelSource = current !== undefined ? 'session' : pinned !== undefined ? 'pin' : 'none';
+  return { level: mode !== undefined && FULL_LEVEL_MODES.includes(mode) ? 'full' : 'auto', from };
+}
+
+/**
+ * What a level does, in one clause.
+ *
+ * `withoutMode` is for a harness with no session mode the gateway can set for the level (`none`),
+ * or agy whose modes are left out (`agy`): only the gateway's half holds, so `ask` must promise
+ * exactly that and no more — whatever the harness does without asking is not stopped. agy is its
+ * own case because what was measured (1.5.1, 2026-11-06) is specific: it asks before a command and
+ * writes into its working directory without asking.
+ */
+export function levelDetail(level: PermissionLevel, withoutMode?: 'none' | 'agy'): string {
+  if (level === 'ask' && withoutMode !== undefined) {
+    return withoutMode === 'agy'
+      ? 'commands wait for your OK; it writes files without asking'
+      : 'only what it asks about waits for your OK; what it does without asking is not stopped';
+  }
   return LEVELS[level].detail;
 }
 

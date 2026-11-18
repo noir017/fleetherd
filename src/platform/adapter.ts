@@ -287,18 +287,63 @@ export type GitBranchesResult =
   | { ok: true; branch?: string; base?: string; branches: string[] }
   | { ok: false; text: string };
 
+/** One commit as the window's history list draws it. `at` is the committer date, in epoch ms. */
+export interface GitCommitSummary {
+  sha: string;
+  short: string;
+  subject: string;
+  author: string;
+  at: number;
+  parents: number;
+}
+
+/**
+ * One page of the repository's history, newest first.
+ *
+ * `more` says another page exists; the daemon asks git for one commit beyond the page so it can
+ * answer without counting the whole history. `not-git` is told apart from `error` for the same
+ * reason it is on a change list: a directory that is not a repository is an answer, not a fault.
+ */
+export type GitLogResult =
+  | { ok: true; repo: { root: string; branch?: string }; commits: GitCommitSummary[]; more: boolean }
+  | { ok: false; reason: 'not-git' | 'error'; text: string };
+
+/**
+ * One commit and what it changed, for the history list's detail view.
+ *
+ * The files are the commit against its FIRST parent — what the commit brought to the branch it
+ * landed on — and a root commit is compared against the empty tree. `truncated` means only that
+ * the file list was too large to read whole, never that the commit is missing.
+ */
+export type GitCommitResult =
+  | {
+      ok: true;
+      repo: { root: string; branch?: string };
+      commit: GitCommitSummary & { body: string };
+      files: GitStatusFile[];
+      truncated?: true;
+    }
+  | { ok: false; reason: 'not-git' | 'error'; text: string };
+
 /**
  * What `useGitPanel` hands a platform: read-only git for a conversation's directory, on whichever
  * machine its agent runs.
  *
- * There is deliberately no stage, commit, discard or checkout here. The window is for reading what
- * changed while an agent works; a write would race that agent and belongs in the conversation,
- * where the agent can be asked what it meant.
+ * There is deliberately no stage, commit, discard or checkout here — the verbs. The window is for
+ * reading what changed while an agent works; a write would race that agent and belongs in the
+ * conversation, where the agent can be asked what it meant. `commit` and `commitFile` read commit
+ * objects, and the history they belong to is never made or rewritten here.
  */
 export interface GitPanel {
   status(ref: ConversationRef, mode: GitMode, base?: string): Promise<GitStatusResult>;
   file(ref: ConversationRef, mode: GitMode, base: string | undefined, path: string): Promise<GitFileResult>;
   branches(ref: ConversationRef): Promise<GitBranchesResult>;
+  /** One page of commits from HEAD backwards; `skip` counts commits already read. */
+  log(ref: ConversationRef, skip: number): Promise<GitLogResult>;
+  /** One commit and the files it changed, against its first parent. */
+  commit(ref: ConversationRef, sha: string): Promise<GitCommitResult>;
+  /** One file of one commit, with its parent's version and its patch. */
+  commitFile(ref: ConversationRef, sha: string, path: string): Promise<GitFileResult>;
 }
 
 /** What `useSchedulePanel` hands a platform: the list, and the operations on one task. */

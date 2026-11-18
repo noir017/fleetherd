@@ -199,21 +199,73 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
 });
 `;
 
+/**
+ * A harness that reports no session mode at all — agy among them, whose modes are left out
+ * (modesLeftOut), and any custom agent whose ACP server offers none. It still asks before a tool
+ * call, which is the only half a level can answer here.
+ */
+const FAKE_AGENT_NO_MODES = /* js */ `
+const readline = require('node:readline');
+const fs = require('node:fs');
+const LOG = process.argv[2];
+const log = (o) => fs.appendFileSync(LOG, JSON.stringify(o) + '\\n');
+const send = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+const pending = new Map();
+let n = 0;
+const askPermission = () => new Promise((resolve) => {
+  const id = 'perm-' + (++n);
+  pending.set(id, resolve);
+  send({ jsonrpc: '2.0', id, method: 'session/request_permission', params: {
+    sessionId: 's1',
+    toolCall: { toolCallId: 'tc' + n, title: 'Edit files', kind: 'edit' },
+    options: [
+      { optionId: 'cancel', name: 'No', kind: 'reject_once' },
+      { optionId: 'accept', name: 'Yes', kind: 'allow_once' },
+    ],
+  } });
+}).then((answer) => log({ answer }));
+readline.createInterface({ input: process.stdin }).on('line', async (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (!msg.method && pending.has(msg.id)) {
+    const done = pending.get(msg.id);
+    pending.delete(msg.id);
+    return done(msg.error ? { error: msg.error.message } : msg.result);
+  }
+  if (msg.method === 'initialize') {
+    return send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] } });
+  }
+  if (msg.method === 'session/new') return send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's1' } });
+  if (msg.method === 'session/load') return send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  if (msg.method === 'session/set_mode') {
+    // Logged, not just answered: the level must not move a mode here, and a silent generic reply
+    // would let that regression through the test that says so.
+    log({ set_mode: msg.params.modeId });
+    return send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  }
+  if (msg.method === 'session/prompt') {
+    if (msg.params.prompt[0].text === 'ask') await askPermission();
+    return send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+  }
+  if (msg.id !== undefined) send({ jsonrpc: '2.0', id: msg.id, result: {} });
+});
+`;
+
 let live: AgentSession | undefined;
 afterEach(() => {
   live?.dispose();
   live = undefined;
 });
 
-function rig(permissions?: PermissionLevel, resume?: string) {
+function rig(permissions?: PermissionLevel, resume?: string, script = FAKE_AGENT) {
   const dir = mkdtempSync(join(tmpdir(), 'fh-acp-level-'));
-  const script = join(dir, 'fake.cjs');
+  const file = join(dir, 'fake.cjs');
   const log = join(dir, 'log');
-  writeFileSync(script, FAKE_AGENT);
+  writeFileSync(file, script);
   const cfg: Config = parseConfig({
     platforms: { discord: { type: 'discord', token: 't' } },
     agents: [
-      { id: 'fake', harness: 'custom', command: process.execPath, args: [script, log], cwd: dir, ...(permissions ? { permissions } : {}) },
+      { id: 'fake', harness: 'custom', command: process.execPath, args: [file, log], cwd: dir, ...(permissions ? { permissions } : {}) },
     ],
     routing: { default: 'fake', pipeline: [] },
   });
@@ -245,6 +297,26 @@ describe('the ACP runtime under a permission level', () => {
       expect(entries().filter((e) => 'answer' in e)).toEqual([{ answer: { outcome: { outcome: 'selected', optionId: 'cancel' } } }]);
     });
   }
+
+  it('puts a request to the person on a harness with no mode, and sets none', async () => {
+    // `ask` is offered to these harnesses for the gateway's half alone (permission-levels.ts):
+    // whatever the agent does ask must reach the person, and there is no mode to move it to.
+    const { session, entries } = rig('ask', undefined, FAKE_AGENT_NO_MODES);
+    const seen: string[] = [];
+    await session.runTurn({ prompt: 'ask', sessionToken: 't' }, handlers(async (r) => (seen.push(r.title), { kind: 'selected', optionId: 'cancel' })));
+    expect(seen).toEqual(['Edit files']);
+    // Nothing was sent to move the mode: there is none to move, and the gateway's half is the level.
+    expect(entries().filter((e) => 'set_mode' in e)).toEqual([]);
+    expect(entries()).toEqual([{ answer: { outcome: { outcome: 'selected', optionId: 'cancel' } } }]);
+  });
+
+  it('declines rather than approves when nobody can be asked, on a harness with no mode too', async () => {
+    // The invariant does not depend on a mode existing: no handler, no answer, and never a yes.
+    const { session, entries } = rig('ask', undefined, FAKE_AGENT_NO_MODES);
+    await session.runTurn({ prompt: 'ask', sessionToken: 't' }, handlers());
+    const [answer] = entries().filter((e) => 'answer' in e) as Array<{ answer: { error?: string } }>;
+    expect(answer!.answer.error).toContain('could not be shown to the user');
+  });
 
   for (const level of [undefined, 'auto', 'full'] as const) {
     it(`approves by the option's kind, without asking, under ${level ?? 'no level'}`, async () => {

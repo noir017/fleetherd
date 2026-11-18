@@ -160,7 +160,8 @@ agents:
     permissions: ask
 ```
 
-各 harness 自己报告有哪些模式，某个等级只在它有对应模式时才提供——2026-11-18 实测：
+各 harness 自己报告有哪些模式，某个等级只在它有对应模式时才提供——只有 `ask` 例外，完全报不出模式的
+harness 也有（见脚注 2）。2026-11-18 实测：
 
 | harness | `plan` | `ask` | `edits` | `auto` | `full` |
 |---|---|---|---|---|---|
@@ -168,16 +169,22 @@ agents:
 | Codex（`codex`） | — | `read-only` | `workspace-write` | `workspace-write` | `agent-full-access` |
 | OpenCode（`opencode`） | `plan` | — | — | `build` | — |
 | CodeBuddy（`custom`） | `plan` | `default` | `acceptEdits` | `default` | `bypassPermissions` |
-| agy、gemini、dsh | — | — | — | （不改） | — |
+| agy、gemini、dsh | — | —² | — | （不改） | — |
 
 ¹ claude-agent-acp 以 root 身份、不在沙箱里运行时不提供：Claude Code 在那种环境下拒绝这个模式。
+² 这些 harness 也提供 `ask`，即使它们报不出对应模式。此时只有网关这一半成立：它实际发出的请求都会交给你，
+不请示就做的事拦不住。agy（1.5.1，2026-11-06 实测）就是跑命令前会问、改文件不问。
 
-- 不写 `permissions` 就是有等级之前的行为：所有请求一律批准，harness 保持它启动时的模式（它自己的设置，或
-  `options.mode` 钉的值）。显示为 `auto`；明确设成 `auto` 时，会把 harness 放进上表里的模式。
+- 不写 `permissions` 就是有等级之前的行为：所有请求一律批准，harness 保持它当前所处的模式——有正在运行的会话就用它
+  报的模式，没有就用 `options.mode` 钉的值。这一行会显示这个状态相当于哪个等级，并标为未设置（什么都没存）：
+  模式是 `bypassPermissions`、`agent-full-access` 或 CodeBuddy 的 `fullAccess` 时显示 `full`（什么都不问），
+  其余显示 `auto`（问什么批什么）。明确设成 `auto` 时，会把 harness 放进上表里的模式。
 - 在聊天里用 `/setting permissions.<智能体> <等级>` 修改，或在[设置页](settings.md)该智能体那一行改；pod 声明的
   智能体写进 `podPermissions`。改动立即生效：正在运行的会话马上切到新模式，下一个请求按新等级处理。harness
   仍可能自己切模式——比如你批准了 Claude Code 的计划，它就会离开 `plan`——而会话重新开始时（`/new`、重启、
   空闲回收）会回到等级对应的模式。
+- `fleetherd api-agent`（`harness: custom`、`args: [api-agent, …]`）是只有一个等级的智能体。它只调云端 API，
+  本机不执行任何东西，也从不发权限请求，所以只提供 `auto`；设成别的等级会被拒绝，并说明原因。
 - 每个请求会在聊天里发一条消息，写着要执行的命令，按钮是智能体自己给的选项（「Allow」「Reject」等）。
   改文件或写文件的请求还会带上要改的内容（diff，或将要写入文件的文本），这样你批准的是具体改动，
   而不只是一个文件名。请求退出计划模式时，卡片会带上计划本身。点按钮作答；直接打字的话，那句话会
@@ -196,7 +203,8 @@ agents:
   设成 `ask`；`plan` 只读。
 - **CodeBuddy。** `plan` 下每个动作都问，只读命令也问，卡片上还会给出「退出计划模式」的选项。
 - **agy。** 不使用它的模式。当天读不到（登录已失效），而且上次实测时它的 `default` 模式跑命令前会问、在工作
-  目录里写文件却不问。设成要问的等级时，agy 实际发出的请求仍然会交给你。
+  目录里写文件却不问。这也是给它提供 `ask` 的原因，说明里写明了这一点：agy 实际发出的请求仍然会交给你，
+  它改文件则不会等你。
 
 ## 额度命令
 

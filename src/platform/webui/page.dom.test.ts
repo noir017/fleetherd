@@ -4325,6 +4325,84 @@ describe('webui page: the settings page', () => {
     return m;
   };
 
+  /**
+   * The shape the daemon now sends for agents: one row per agent under `Agents`, each carrying its
+   * own fields — Model opening a value screen, Permissions a closed list — beside the agent's name.
+   * The default agent stays a plain row above them, and there is no `Default model` or
+   * `Permissions` section any more.
+   */
+  const permissions = (prefix: string, current: number, labels = ['plan', 'ask', 'edits', 'auto', 'full'], extra: Record<string, unknown> = {}) => ({
+    label: 'Permissions',
+    buttonId: 'stg:p:' + prefix,
+    value: labels[current],
+    control: {
+      kind: 'choice',
+      options: labels.map((label, i) => ({ buttonId: 'sts:p:' + prefix + ':' + i, label, current: i === current })),
+    },
+    ...extra,
+  });
+  const agentRow = (id: string, kind: string, model: Record<string, unknown>, perm: Record<string, unknown>, here = false) => ({
+    buttonId: String(model.buttonId),
+    label: id,
+    target: id,
+    targetKind: kind,
+    ...(here ? { here: true } : {}),
+    group: 'Agents',
+    control: { kind: 'agent', fields: [{ label: 'Model', control: { kind: 'list' }, ...model }, perm] },
+  });
+  const agentList = (id = 'm1'): Record<string, unknown> => ({
+    ...message(id, '<p>Settings</p>'),
+    buttons: [
+      { id: 'stg:r:0', label: 'Default agent · cc' },
+      { id: 'stg:m:0', label: 'cc · Claude Code' },
+    ],
+    settings: {
+      level: 'list',
+      groups: [{ name: 'Agents' }],
+      rows: [
+        {
+          buttonId: 'stg:r:0',
+          label: 'Default agent',
+          value: 'cc',
+          group: 'Agents',
+          control: { kind: 'choice', options: [{ buttonId: 'sts:r:0', label: 'cc', current: true }] },
+        },
+        agentRow('cc', 'Claude Code', { buttonId: 'stg:m:0', value: 'harness default', unset: true }, permissions('0', 1, undefined, {
+          unset: true,
+          valueNote: 'not set',
+        }), true),
+        agentRow('oc@box', 'OpenCode', { buttonId: 'stg:m:1', value: LONG_MODEL, valueNote: 'pod.yaml' }, permissions('1', 0, [
+          'plan',
+          'ask',
+          'edits',
+          'auto',
+          'full',
+          'bypass permissions',
+        ])),
+      ],
+    },
+  });
+
+  /** The instructions panel's answer for agentList: cc has files of its own, oc@box does not. */
+  const INSTR = {
+    dir: '/c/instructions',
+    on: true,
+    global: [{ name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc'] }],
+    agents: [
+      { id: 'cc', harness: 'claude', host: 'box', own: '`@` references in `~/.claude/CLAUDE.md`' },
+      { id: 'oc@box', harness: 'opencode', host: 'local' },
+    ],
+  };
+  const INSTR_REFS = {
+    ok: true,
+    agent: 'cc',
+    host: 'box',
+    root: '~/.claude/CLAUDE.md',
+    rootState: 'managed',
+    summary: '`@` references',
+    refs: [],
+  };
+
   const text = (h: Harness, sel: string): string[] =>
     Array.from(h.doc.querySelectorAll(sel)).map((e) => e.textContent ?? '');
   const clicks = (h: Harness) => h.calls.filter((c) => c.path === 'api/click').map((c) => c.body);
@@ -4410,6 +4488,165 @@ describe('webui page: the settings page', () => {
     expect(face(link?.querySelector('.set-chev'))).toBe('[chevronRight]');
     // One column of sections: no grid of rows left over from the two-column layout.
     expect(body.querySelector('.set-rows')).toBeNull();
+  });
+
+  it('draws one row per agent, with a labelled control for each of its settings', async () => {
+    const h = await opened(agentList());
+    const rows = Array.from(h.doc.querySelectorAll('#settings-body .set-item.ag'));
+    expect(rows).toHaveLength(2);
+
+    // The agent on the left: its id, what it is, and whether it answers this topic.
+    const cc = rows[0]!;
+    expect(cc.querySelector('.set-label span')?.textContent).toBe('cc');
+    expect(cc.querySelector('.set-kind')?.textContent).toBe('Claude Code');
+    expect(cc.querySelector('.set-badge.here')?.textContent).toBe('this topic');
+    expect(Array.from(cc.querySelectorAll('.set-flabel')).map((l) => l.textContent)).toEqual(['Model', 'Permissions']);
+
+    // Model is a value that opens its own screen, with a placeholder when nothing is set.
+    const model = cc.querySelector('button.set-fopen');
+    expect(model?.getAttribute('data-btn')).toBe('stg:m:0');
+    expect(model?.querySelector('.set-v')?.textContent).toBe('harness default');
+    expect(model?.querySelector('.set-v')?.classList.contains('unset')).toBe(true);
+    expect(face(model?.querySelector('.set-chev'))).toBe('[chevronRight]');
+
+    // Permissions is the same closed list a global row draws: short values as a segmented control.
+    expect(Array.from(cc.querySelectorAll('.set-seg button')).map((b) => [b.textContent, b.getAttribute('aria-checked')])).toEqual([
+      ['plan', 'false'],
+      ['ask', 'true'],
+      ['edits', 'false'],
+      ['auto', 'false'],
+      ['full', 'false'],
+    ]);
+
+    // A pod's value says where it comes from, and a list too long for segments is a select.
+    const oc = rows[1]!;
+    expect(oc.querySelector('button.set-fopen .set-v')?.textContent).toBe(LONG_MODEL);
+    expect(oc.querySelector('button.set-fopen .set-vnote')?.textContent).toBe('pod.yaml');
+    expect((oc.querySelector('select.set-select') as HTMLSelectElement).value).toBe('sts:p:1:0');
+
+    // Every control on the row is a redraw-surviving focus target.
+    for (const el of Array.from(cc.querySelectorAll('button, select'))) expect(el.getAttribute('data-fk'), el.outerHTML).toBeTruthy();
+    // The per-setting sections are gone: Agents is the whole screen.
+    expect(text(h, '#settings-body .set-group')).toEqual(['Agents']);
+  });
+
+  it('says a permission level is not set, as a list field says it', async () => {
+    const h = await opened(agentList());
+    const rows = Array.from(h.doc.querySelectorAll('#settings-body .set-item.ag'));
+    // A choice field keeps the note: the selected level alone cannot say it was never set.
+    const cc = rows[0]!.querySelectorAll('.set-field')[1]!;
+    expect(cc.querySelector('.set-seg')).not.toBeNull();
+    expect(cc.querySelector('.set-fsub .set-vnote')?.textContent).toBe('not set');
+    // A level that was set has no such line.
+    const oc = rows[1]!.querySelectorAll('.set-field')[1]!;
+    expect(oc.querySelector('.set-fsub')).toBeNull();
+  });
+
+  it('opens an agent’s model from its row, by the field’s own button id', async () => {
+    const h = await opened(agentList());
+    await h.click('#settings-body .set-item.ag button.set-fopen[data-btn="stg:m:0"]');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'stg:m:0' }]);
+    expect(h.doc.querySelector('#settings-body button.set-fopen[data-btn="stg:m:0"]')?.classList.contains('busy')).toBe(true);
+  });
+
+  it('writes a permission level from the agent’s row, by the option’s button id', async () => {
+    const h = await opened(agentList());
+    await h.click('#settings-body .set-item.ag .set-seg button[data-btn="sts:p:0:3"]');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'sts:p:0:3' }]);
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:3"]')?.getAttribute('aria-checked')).toBe('true');
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:1"]')?.getAttribute('aria-checked')).toBe('false');
+
+    // The daemon's answer redraws the row with the level it wrote.
+    const answered = agentList();
+    const row = (answered.settings as { rows: Array<Record<string, any>> }).rows[1]!;
+    row.control.fields[1].control.options.forEach((o: { current: boolean }, i: number) => (o.current = i === 3));
+    await h.emit({ t: 'msg', msg: answered });
+    expect(h.doc.querySelector('#settings-body .set-item.ag .set-seg button[aria-checked="true"]')?.textContent).toBe('auto');
+  });
+
+  it('puts an agent’s own instruction files on its row, and no longer lists them in a section', async () => {
+    const h = await opened(agentList(), {
+      instructions: true,
+      replies: { 'api/instructions': INSTR, 'api/instructions/refs?agent=cc': INSTR_REFS },
+    });
+
+    // The panel answers after the screen is drawn: the field joins the row without a reopen.
+    await until('the instructions field', () => Boolean(h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent]')));
+    const field = h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent]')!;
+    expect(field.getAttribute('data-instr-agent')).toBe('cc');
+    expect(field.closest('.set-field')?.querySelector('.set-flabel')?.textContent).toBe('Instructions');
+    expect(field.querySelector('.set-fnote')?.textContent).toBe('@ references in ~/.claude/CLAUDE.md');
+    expect(Array.from(field.querySelectorAll('.set-fnote code')).map((c) => c.textContent)).toEqual(['@', '~/.claude/CLAUDE.md']);
+    // The machine it is read on is in the title, where it does not eat the summary's width.
+    expect(field.getAttribute('title')).toBe('box · `@` references in `~/.claude/CLAUDE.md`');
+    expect(field.getAttribute('data-fk')).toBeTruthy();
+    // An agent whose harness reads nothing of its own has no such field.
+    expect(h.doc.querySelectorAll('#settings-body [data-instr-agent]')).toHaveLength(1);
+    // The section keeps the gateway's files; the agents are no longer repeated under it.
+    expect(text(h, '.instr-sec .set-group')).toEqual(['Instructions']);
+    expect(h.doc.querySelector('.instr-sec [data-instr-agent]')).toBeNull();
+
+    // And the field opens what the old row opened: the file window on that agent's files.
+    await h.click('#settings-body .set-item.ag [data-instr-agent="cc"]');
+    await until('the editor', () => h.el('files').hidden === false);
+    expect(h.el('files-title').textContent).toBe('cc · own instructions');
+    expect(h.calls.some((c) => c.path === 'api/instructions/refs?agent=cc')).toBe(true);
+  });
+
+  it('names every field with the agent it belongs to, for a screen reader', async () => {
+    const h = await opened(agentList(), { instructions: true, replies: { 'api/instructions': INSTR } });
+    await until('the instructions field', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
+    // Several agents' rows are on one page, so "Model" alone says nothing about whose it is.
+    expect(h.doc.querySelector('button.set-fopen[data-fk="r1f0"]')?.getAttribute('aria-label')).toBe('cc · Model: harness default');
+    expect(h.doc.querySelector('.set-item.ag .set-seg')?.getAttribute('aria-label')).toBe('cc · Permissions');
+    expect(h.doc.querySelector('#settings-body select.set-select')?.getAttribute('aria-label')).toBe('oc@box · Permissions');
+    expect(h.doc.querySelector('[data-instr-agent="cc"]')?.getAttribute('aria-label')).toBe('cc · Instructions');
+  });
+
+  it('does not redraw under a control still waiting on the daemon', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await opened(agentList(), {
+      instructions: true,
+      replies: { 'api/instructions': INSTR },
+      held: { 'api/instructions': held },
+    });
+    await h.click('#settings-body .set-item.ag .set-seg button[data-btn="sts:p:0:3"]');
+    const tapped = h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:3"]') as HTMLButtonElement;
+    expect(tapped.classList.contains('busy')).toBe(true);
+
+    // The list arrives while that tap is still out: the control keeps its optimistic state, and
+    // the field waits for the answer that redraws the list anyway.
+    release();
+    await tick();
+    await tick();
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:3"]')).toBe(tapped);
+    expect(tapped.classList.contains('busy')).toBe(true);
+    expect(tapped.disabled).toBe(true);
+    expect(tapped.getAttribute('aria-checked')).toBe('true');
+    expect(h.doc.querySelector('#settings-body [data-instr-agent]')).toBeNull();
+
+    await h.emit({ t: 'msg', msg: agentList() });
+    expect(h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent="cc"]')).not.toBeNull();
+  });
+
+  it('keeps focus where it was when the instruction list arrives late', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await opened(agentList(), {
+      instructions: true,
+      replies: { 'api/instructions': INSTR },
+      held: { 'api/instructions': held },
+    });
+    const model = h.doc.querySelector('#settings-body button.set-fopen[data-fk="r1f0"]') as HTMLButtonElement;
+    model.focus();
+    expect(h.doc.activeElement).toBe(model);
+
+    release();
+    await until('the instructions field', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
+    // The row is new markup; focus is back on the same control, by its key.
+    expect(h.doc.activeElement?.getAttribute('data-fk')).toBe('r1f0');
+    expect(h.doc.activeElement).not.toBe(model);
   });
 
   it('flips a switch in one tap, showing the new state before the daemon answers', async () => {
@@ -4913,6 +5150,24 @@ describe('webui page: the settings page', () => {
       const html = renderPage('Chat', false);
       expect(html).toMatch(/\.set-opt\{[^}]*min-height:44px/);
       expect(html).toMatch(/\.set-nav button\{[^}]*min-height:44px/);
+    });
+
+    it('moves an agent’s fields under its name, at the height a thumb needs', () => {
+      const css = narrow();
+      // One column, so the fields cannot fight the agent's name for the width.
+      expect(css).toContain('.set-item.ag{grid-template-columns:minmax(0,1fr)}');
+      expect(css).toContain('.set-item.ag>.set-fields{display:flex;flex-direction:column;');
+      // A value row is the whole line, and tall enough to tap; the segments grow with it.
+      expect(css).toMatch(/\.set-item\.ag \.set-fopen\{[^}]*min-height:44px/);
+      expect(css).toMatch(/\.set-item\.ag \.set-seg button\{[^}]*min-height:44px/);
+      // None of that leaks onto the desktop, which keeps the fields in their columns.
+      const desktop = renderPage('Chat', false).replace(css, '');
+      expect(desktop).not.toContain('.set-item.ag{grid-template-columns:minmax(0,1fr)}');
+      expect(desktop).toContain('.set-item.ag{grid-template-columns:96px minmax(0,1fr)');
+      // Fixed columns, so Model and Permissions start at the same x on every agent's row.
+      expect(desktop).toContain('.set-fields{display:grid;grid-template-columns:150px 252px minmax(0,1fr)');
+      // A long model id or an instruction summary is cut inside its column, not let into the next.
+      expect(desktop).toMatch(/\.set-fopen\{[^}]*max-width:100%/);
     });
 
     it('works the same controls at phone width', async () => {
@@ -14405,7 +14660,7 @@ describe('webui page: the git window', () => {
     const diffs = installCodeView(h);
     await openWindow(h);
 
-    await h.click('[data-gpath="src/a.ts"]');
+    // The first row opens by itself on a wide window; the second row is the click below.
     await until('the code view', () => diffs.length === 1);
     const first = diffs[0]!;
     expect(first.options.name).toBe('src/a.ts');
@@ -14436,7 +14691,6 @@ describe('webui page: the git window', () => {
     const h = await open({ replies: replies() });
     const diffs = installCodeView(h);
     await openWindow(h);
-    await h.click('[data-gpath="src/a.ts"]');
     await until('the code view', () => diffs.length === 1);
 
     // A drag covers part of each line; the comment still quotes lines 2-3 of the new side whole.
@@ -14464,7 +14718,6 @@ describe('webui page: the git window', () => {
     const h = await open({ replies: replies() });
     const diffs = installCodeView(h);
     await openWindow(h);
-    await h.click('[data-gpath="src/a.ts"]');
     await until('the code view', () => diffs.length === 1);
     const before = h.calls.filter((c) => c.path === statusPath('working')).length;
 
@@ -14502,6 +14755,10 @@ describe('webui page: the git window', () => {
     expect(h.el('git-title').textContent).toBe('Changes this turn');
     expect(h.el('git-modes').hidden).toBe(true);
     expect(h.el('git-base').hidden).toBe(true);
+    // Nothing opens by itself here, and the history is not offered: the view is one turn's files.
+    expect(h.el('git-diff').textContent).toContain('Select a file');
+    expect(h.calls.some((c) => c.path.startsWith('api/git/log'))).toBe(false);
+    expect(h.calls.some((c) => c.path.startsWith('api/git/commit'))).toBe(false);
 
     await h.click('[data-gpath="src/a.ts"]');
     await until('the fixed diff', () => h.calls.some((c) => c.path === 'api/git/file?t=turn1&mode=working&path=src%2Fa.ts'));
@@ -14536,15 +14793,18 @@ describe('webui page: the git window', () => {
 
     const edit = h.el('git-files').querySelector('.gf-edit') as HTMLElement;
     expect(edit.getAttribute('data-gedit')).toBe('/srv/project/src/a.ts');
+    // A wide window opens the first row by itself, so the count is taken as it stands: what the
+    // click must not do is add another read of that file.
+    const reads = h.calls.filter((c) => c.path === filePath('working', 'src/a.ts')).length;
     await h.click('.gf-edit');
     expect(edited).toEqual(['/srv/project/src/a.ts']);
     // The click on Edit must not also open the row's diff.
-    expect(h.calls.some((c) => c.path === filePath('working', 'src/a.ts'))).toBe(false);
+    expect(h.calls.filter((c) => c.path === filePath('working', 'src/a.ts')).length).toBe(reads);
 
     // Enter on the button is the button's press, not the row's "open the diff".
     edit.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await tick();
-    expect(h.calls.some((c) => c.path === filePath('working', 'src/a.ts'))).toBe(false);
+    expect(h.calls.filter((c) => c.path === filePath('working', 'src/a.ts')).length).toBe(reads);
   });
 
   it('opens the file window on the file when the daemon has files on, and offers no Edit when off', async () => {
@@ -14691,6 +14951,14 @@ describe('webui page: the git window', () => {
           files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
           truncated: true,
         },
+        [filePath('working', 'src/a.ts')]: {
+          ok: true,
+          path: 'src/a.ts',
+          status: 'modified',
+          original: 'one\n',
+          modified: 'two\n',
+          patch: '@@ -1 +1 @@\n-one\n+two\n',
+        },
       },
     });
     await h.emit(sync(A, [], [A]));
@@ -14698,9 +14966,15 @@ describe('webui page: the git window', () => {
     await until('the partial list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
     expect(h.el('git-note').textContent).toContain('too many changes');
     expect(h.el('git-files').textContent).toContain('src/a.ts');
-    // A row that was drawn from an incomplete list is still a real row: it opens.
+    // A row that was drawn from an incomplete list is still a real row: the first one opened by
+    // itself, and a click on it re-reads the file — how a diff is refreshed after an Edit.
+    await until('the first read', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+    await until('the plain patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    const reads = h.calls.filter((c) => c.path === filePath('working', 'src/a.ts')).length;
     await h.click('[data-gpath="src/a.ts"]');
-    await until('the file request', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+    await until('the second read', () =>
+      h.calls.filter((c) => c.path === filePath('working', 'src/a.ts')).length === reads + 1
+    );
   });
 
   it('drops a file answer when a failed refresh cleared the open file', async () => {
@@ -14783,7 +15057,7 @@ describe('webui page: the git window', () => {
     });
     await openWindow(h);
 
-    await h.click('[data-gpath="src/a.ts"]');
+    // src/a.ts is the first row, so the window opened it by itself.
     await until('the file notice', () => h.el('git-diff').textContent === 'This file is too large to show.');
     await h.click('[data-gpath="new.txt"]');
     await until('the diff notice', () => h.el('git-diff').textContent === "This file's diff is too large to show.");
@@ -14811,7 +15085,6 @@ describe('webui page: the git window', () => {
     const h = await open({ replies: replies() });
     const diffs = installCodeView(h);
     await openWindow(h);
-    await h.click('[data-gpath="src/a.ts"]');
     await until('the code view', () => diffs.length === 1);
 
     diffs[0]!.options.onSelect?.({ side: 'old', from: 2, to: 2, text: 'tw' });
@@ -14823,6 +15096,422 @@ describe('webui page: the git window', () => {
     expect((h.el('input') as HTMLTextAreaElement).value).toBe(
       ['src/a.ts:L2 (old)', '```', 'two', '```', 'Removed on purpose'].join('\n')
     );
+  });
+
+  it('says in the middle of the pane that the directory is not a repository', async () => {
+    const h = await open({
+      replies: {
+        [`api/git/branches?t=${A}`]: { ok: false, reason: 'not-git', text: 'not a git repository' },
+        [statusPath('working')]: { ok: false, reason: 'not-git', text: '/srv/work is not inside a git repository.' },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the sentence', () => Boolean(h.el('git-diff').querySelector('.git-blank')));
+
+    expect(h.el('git-diff').textContent).toContain('/srv/work is not inside a git repository.');
+    // An answer, not a failed request: no red note, and no list of rows that do not exist.
+    expect(h.el('git-note').hidden).toBe(true);
+    expect(h.el('git-files').querySelectorAll('.git-file').length).toBe(0);
+  });
+
+  it('repaints the pane when a directory that was not a repository becomes one', async () => {
+    const status: Record<string, unknown> = {
+      ok: false,
+      reason: 'not-git',
+      text: '/srv/work is not inside a git repository.',
+    };
+    const branches: Record<string, unknown> = { ok: false, reason: 'not-git', text: 'not a git repository' };
+    const h = await open({
+      replies: { [`api/git/branches?t=${A}`]: branches, [statusPath('working')]: status },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the sentence', () => h.el('git-diff').textContent!.includes('not inside a git repository'));
+
+    // An agent runs `git init` in the directory; the turn ends and the window reads it again.
+    Object.assign(status, {
+      ok: true,
+      repo: { root: '/srv/work', branch: 'main', base: 'main' },
+      files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+    });
+    delete status.reason;
+    delete status.text;
+    Object.assign(branches, { ok: true, branch: 'main', base: 'main', branches: ['main'] });
+    delete branches.reason;
+    delete branches.text;
+    await h.emit({ t: 'typing', on: false });
+
+    await until('the files', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+    // The answer before it is gone from the pane, the stale branch refusal with it, and the first
+    // file opened by itself as it would on any first list.
+    expect(h.el('git-diff').textContent).not.toContain('not inside a git repository');
+    expect(h.el('git-note').hidden).toBe(true);
+    await until('the first file', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+  });
+
+  it('re-reads the branches when a repository appears while the window sits on Commits', async () => {
+    const status: Record<string, unknown> = {
+      ok: false,
+      reason: 'not-git',
+      text: '/srv/work is not inside a git repository.',
+    };
+    const branches: Record<string, unknown> = { ok: false, reason: 'not-git', text: 'not a git repository' };
+    const log: Record<string, unknown> = {
+      ok: false,
+      reason: 'not-git',
+      text: '/srv/work is not inside a git repository.',
+    };
+    const branchesPath = `api/git/branches?t=${A}`;
+    const logPath = `api/git/log?t=${A}&skip=0`;
+    const h = await open({ replies: { [branchesPath]: branches, [statusPath('working')]: status, [logPath]: log } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the not-git answer', () => h.el('git-diff').textContent!.includes('not inside a git repository'));
+
+    // The window is left on Commits while an agent turns the directory into a repository: the
+    // history read succeeds and clears the shared not-git flag, but the branch refusal stays.
+    await h.click('[data-gm="commits"]');
+    await until('the history refusal', () => h.el('git-diff').textContent!.includes('not inside a git repository'));
+    Object.assign(status, { ok: true, repo: { root: '/srv/work', branch: 'main', base: 'main' }, files: [] });
+    delete status.reason;
+    delete status.text;
+    Object.assign(branches, { ok: true, branch: 'main', base: 'main', branches: ['main'] });
+    delete branches.reason;
+    delete branches.text;
+    Object.assign(log, { ok: true, repo: { root: '/srv/work', branch: 'main' }, commits: [], more: false });
+    delete log.reason;
+    delete log.text;
+    await h.emit({ t: 'typing', on: false });
+    await until('the history', () => h.calls.filter((c) => c.path === logPath).length === 2);
+
+    await h.click('[data-gm="working"]');
+    await until('the branches again', () => h.calls.filter((c) => c.path === branchesPath).length === 2);
+    await tick();
+    // The refusal from the not-git answer is not pasted back over a list that now has a branch.
+    expect(h.el('git-note').hidden).toBe(true);
+    expect(Array.from(h.el('git-base').querySelectorAll('option')).map((o) => o.textContent)).toEqual(['main']);
+  });
+
+  it('names the comparison that came back empty, and offers the commits from it', async () => {
+    const at = Date.now() - 2 * 3600 * 1000;
+    const h = await open({
+      replies: {
+        ...replies(),
+        [statusPath('working')]: { ok: true, repo: { root: '/srv/project', branch: 'main', base: 'main' }, files: [] },
+        [`api/git/log?t=${A}&skip=0`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commits: [{ sha: 'abc1234def', short: 'abc1234', subject: 'The first commit', author: 'Ada', at, parents: [] }],
+          more: false,
+        },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the empty comparison', () => Boolean(h.el('git-diff').querySelector('.git-blank')));
+
+    // Which comparison is empty, said where the diff would have been.
+    expect(h.el('git-diff').textContent).toContain('HEAD');
+    expect(h.el('git-files').querySelector('.git-file')).toBeNull();
+
+    await h.click('[data-gact="commits"]');
+    await until('the history', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+    expect(h.calls.some((c) => c.path === `api/git/log?t=${A}&skip=0`)).toBe(true);
+    expect(
+      Array.from(h.el('git-modes').querySelectorAll('.git-mode.on')).map((b) => b.getAttribute('data-gm'))
+    ).toEqual(['commits']);
+    expect(h.el('git-base').hidden).toBe(true);
+  });
+
+  it('names the base branch in an empty branch comparison', async () => {
+    const h = await open({
+      replies: replies({
+        [statusPath('branch', 'main')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [],
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="branch"]');
+    await until('the empty branch', () => h.el('git-diff').textContent!.includes('main'));
+    expect(h.el('git-diff').textContent).toContain('No changes against main');
+  });
+
+  it('says a turn changed nothing, without a comparison it cannot switch to', async () => {
+    const statusUrl = `api/turn-changes/status?t=${A}&turn=2`;
+    const h = await open({ replies: { [statusUrl]: { ok: true, repo: { root: '/srv/project' }, files: [] } } });
+    await h.emit(sync(A, [], [A]));
+    (h.window as any).openGitWindow({
+      title: 'Turn 2 changes',
+      statusUrl,
+      fileUrl: `api/turn-changes/file?t=${A}&turn=2`,
+    });
+    await until('the empty turn', () => Boolean(h.el('git-diff').querySelector('.git-blank')));
+
+    expect(h.el('git-diff').textContent).toContain('No changes in this turn.');
+    // The view is fixed to one turn: there is no other comparison to name or offer.
+    expect(h.el('git-diff').textContent).not.toContain('HEAD');
+    expect(h.el('git-diff').querySelector('[data-gact]')).toBeNull();
+  });
+
+  it('opens the first file on a wide window, and asks for one on a phone', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await until('the first file by itself', () => diffs.length === 1);
+    expect(diffs[0]!.options.name).toBe('src/a.ts');
+    expect(h.el('git-files').querySelector('.git-file.on')?.getAttribute('data-gpath')).toBe('src/a.ts');
+
+    const phone = await open({ width: 500, replies: replies() });
+    const phoneDiffs = installCodeView(phone);
+    await phone.emit(sync(A, [], [A]));
+    await phone.click('#git-toggle');
+    await until('the list', () => phone.el('git-files').querySelectorAll('.git-file').length > 0);
+    await tick();
+    // The two columns are stacked there: opening a file would push the list out of sight.
+    expect(phoneDiffs).toHaveLength(0);
+    expect(phone.el('git-diff').textContent).toContain('Select a file');
+    expect(phone.calls.some((c) => c.path === filePath('working', 'src/a.ts'))).toBe(false);
+  });
+
+  it('lists commits, pages further back, and opens one into its files and diff', async () => {
+    const at = Date.now() - 2 * 3600 * 1000;
+    const first = { sha: '1111111aaaa', short: '1111111', subject: 'Add the parser', author: 'Ada', at, parents: [] };
+    const second = { sha: '2222222bbbb', short: '2222222', subject: 'Fix the parser', author: 'Grace', at: at - 3600000, parents: ['1111111aaaa'] };
+    const log = (skip: number, commits: unknown[], more: boolean) => ({
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main' },
+      commits,
+      more,
+    });
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: log(0, [first], true),
+        [`api/git/log?t=${A}&skip=1`]: log(1, [second], false),
+        [`api/git/commit?t=${A}&sha=${encodeURIComponent(first.sha)}`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commit: { ...first, body: 'The parser is new.\nIt reads things.' },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1 }],
+        },
+        [`api/git/commit-file?t=${A}&sha=${encodeURIComponent(first.sha)}&path=src%2Fa.ts`]: {
+          ok: true,
+          path: 'src/a.ts',
+          status: 'modified',
+          original: 'one\ntwo\n',
+          modified: 'one\nTWO\nthree\n',
+          patch: '@@ -1,2 +1,3 @@\n one\n-two\n+TWO\n+three\n',
+        },
+      }),
+    });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the first page', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+
+    const row = h.el('git-files').querySelector('.git-commit')!;
+    expect(row.querySelector('.gc-subject')?.textContent).toBe('Add the parser');
+    expect(row.querySelector('.gc-sha')?.textContent).toBe('1111111');
+    expect(row.querySelector('.gc-author')?.textContent).toBe('Ada');
+    expect(row.querySelector('.gc-when')?.textContent).toBe('2h ago');
+
+    await h.click('[data-gmore]');
+    await until('the second page', () => h.el('git-files').querySelectorAll('.git-commit').length === 2);
+    expect(h.calls.some((c) => c.path === `api/git/log?t=${A}&skip=1`)).toBe(true);
+    expect(h.el('git-files').querySelector('[data-gmore]')).toBeNull();
+
+    // The working comparison had already opened its first file; the commit's diff is the next one.
+    const before = diffs.length;
+    await h.click('[data-gsha="1111111aaaa"]');
+    await until('the commit’s files', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+    expect(h.el('git-files').querySelector('.git-back')).not.toBeNull();
+    expect(h.el('git-files').textContent).toContain('Add the parser');
+    // A file inside a commit has no Edit: the editor writes the working tree, not this commit.
+    expect(h.el('git-files').querySelector('.gf-edit')).toBeNull();
+
+    const body = h.el('git-files').querySelector('.gch-body') as HTMLElement;
+    expect(body.hidden).toBe(true);
+    await h.click('[data-gbody]');
+    expect(body.hidden).toBe(false);
+    expect(body.textContent).toContain('The parser is new.');
+
+    // The first file opens on a wide window, and its diff comes from the commit, not the tree.
+    await until('the commit diff', () => diffs.length === before + 1);
+    expect(
+      h.calls.some((c) => c.path === `api/git/commit-file?t=${A}&sha=${encodeURIComponent(first.sha)}&path=src%2Fa.ts`)
+    ).toBe(true);
+    const commitDiff = diffs[diffs.length - 1]!;
+    expect(commitDiff.options.original).toBe('one\ntwo\n');
+
+    // A comment made here carries the short sha, or the agent reads it against today's file.
+    commitDiff.options.onSelect?.({ side: 'new', from: 2, to: 3, text: 'WO\nthr' });
+    await tick();
+    await h.click('#git-comment-open');
+    expect(h.el('git-comment-what').textContent).toBe('src/a.ts:L2-L3 \u00b7 new side \u00b7 1111111');
+    (h.el('git-comment-text') as HTMLTextAreaElement).value = 'Looks good';
+    await h.click('#git-comment-add');
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe(
+      ['src/a.ts:L2-L3 (new, 1111111)', '```', 'TWO', 'three', '```', 'Looks good'].join('\n')
+    );
+
+    await h.click('[data-gback]');
+    await tick();
+    expect(h.el('git-files').querySelectorAll('.git-commit').length).toBe(2);
+    expect(h.el('git-files').querySelector('.git-file')).toBeNull();
+    // The pane asks for a commit rather than leaving the last diff under the list, and the
+    // layout button went with the diff it belonged to.
+    expect(h.el('git-diff').textContent).toContain('Pick a commit');
+    expect(h.el('git-layout').hidden).toBe(true);
+  });
+
+  it('drops a commit answer when the mode changed under it', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const sha = '1111111aaaa';
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commits: [{ sha, short: '1111111', subject: 'Add the parser', author: 'Ada', at: Date.now(), parents: [] }],
+          more: false,
+        },
+        [`api/git/commit?t=${A}&sha=${encodeURIComponent(sha)}`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commit: { sha, short: '1111111', subject: 'Add the parser', author: 'Ada', at: Date.now(), parents: [] },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+        },
+      }),
+      held: { [`api/git/commit?t=${A}&sha=${encodeURIComponent(sha)}`]: gate },
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the history', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+    await h.click(`[data-gsha="${sha}"]`);
+    await within('the commit request', 1000, () =>
+      h.calls.some((c) => c.path === `api/git/commit?t=${A}&sha=${encodeURIComponent(sha)}`)
+    );
+
+    await h.click('[data-gm="working"]');
+    await until('the working list', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+    release();
+    await tick();
+    await tick();
+
+    // The commit belonged to the view that was left: no header, no files, nothing of it on screen.
+    expect(h.el('git-files').querySelector('.git-back')).toBeNull();
+    expect(h.el('git-files').textContent).not.toContain('Add the parser');
+  });
+
+  it('re-reads the history when a turn ends, and leaves the working comparison alone', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commits: [
+            { sha: '1111111aaaa', short: '1111111', subject: 'Add the parser', author: 'Ada', at: Date.now(), parents: [] },
+          ],
+          more: false,
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the history', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+    const logs = h.calls.filter((c) => c.path === `api/git/log?t=${A}&skip=0`).length;
+    const statuses = h.calls.filter((c) => c.path === statusPath('working')).length;
+
+    await h.emit({ t: 'typing', on: false });
+    await until('the history again', () =>
+      h.calls.filter((c) => c.path === `api/git/log?t=${A}&skip=0`).length === logs + 1
+    );
+    // The comparison behind the window is not what the reader is looking at.
+    expect(h.calls.filter((c) => c.path === statusPath('working')).length).toBe(statuses);
+  });
+
+  it('says the directory is not a repository when the history cannot be read', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: {
+          ok: false,
+          reason: 'not-git',
+          text: '/srv/work is not inside a git repository.',
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the sentence', () => Boolean(h.el('git-diff').querySelector('.git-blank')));
+
+    expect(h.el('git-diff').textContent).toContain('/srv/work is not inside a git repository.');
+    expect(h.el('git-note').hidden).toBe(true);
+    expect(h.el('git-files').querySelectorAll('.git-commit').length).toBe(0);
+  });
+
+  it('keeps the commits it has when Load more fails', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commits: [
+            { sha: '1111111aaaa', short: '1111111', subject: 'Add the parser', author: 'Ada', at: Date.now(), parents: [] },
+          ],
+          more: true,
+        },
+        [`api/git/log?t=${A}&skip=1`]: { ok: false, reason: 'error', text: 'git log failed: bad object' },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the first page', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+
+    await h.click('[data-gmore]');
+    await until('the failure', () => h.el('git-note').textContent!.includes('bad object'));
+    // The rows it already had are still true, and the button is back for another try.
+    expect(h.el('git-files').querySelectorAll('.git-commit').length).toBe(1);
+    expect((h.el('git-files').querySelector('[data-gmore]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('keeps the open commit when the history refresh fails', async () => {
+    const sha = '1111111aaaa';
+    const at = Date.now();
+    const log: Record<string, unknown> = {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main' },
+      commits: [{ sha, short: '1111111', subject: 'Add the parser', author: 'Ada', at, parents: [] }],
+      more: false,
+    };
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: log,
+        [`api/git/commit?t=${A}&sha=${encodeURIComponent(sha)}`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commit: { sha, short: '1111111', subject: 'Add the parser', author: 'Ada', at, parents: [] },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the history', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+    await h.click(`[data-gsha="${sha}"]`);
+    await until('the commit’s files', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+
+    // A turn ends while the commit is open and the history read fails: the commit stays put.
+    Object.assign(log, { ok: false, reason: 'error', text: 'git log failed: bad object' });
+    delete log.commits;
+    await h.emit({ t: 'typing', on: false });
+    await until('the failure', () => h.el('git-note').textContent!.includes('bad object'));
+    expect(h.el('git-files').querySelector('.git-back')).not.toBeNull();
+    expect(h.el('git-files').querySelectorAll('.git-file').length).toBe(1);
+    expect(h.el('git-files').textContent).toContain('Add the parser');
   });
 });
 
@@ -14841,8 +15530,21 @@ describe('webui page: the instruction editor', () => {
     buttons: [{ id: 'stg:r:0', label: 'Idle reclaim · 15m' }],
     settings: {
       level: 'list',
-      groups: [{ name: 'Conversations' }],
-      rows: [{ buttonId: 'stg:r:0', label: 'Idle reclaim', value: '15m', group: 'Conversations', control: { kind: 'list' } }],
+      groups: [{ name: 'Agents' }, { name: 'Conversations' }],
+      rows: [
+        {
+          buttonId: 'stg:a:0',
+          label: 'cc',
+          target: 'cc',
+          targetKind: 'Claude Code',
+          group: 'Agents',
+          control: {
+            kind: 'agent',
+            fields: [{ label: 'Model', buttonId: 'stg:a:0', value: 'harness default', unset: true, control: { kind: 'list' } }],
+          },
+        },
+        { buttonId: 'stg:r:0', label: 'Idle reclaim', value: '15m', group: 'Conversations', control: { kind: 'list' } },
+      ],
     },
   };
   const LIST = {
@@ -14915,12 +15617,12 @@ describe('webui page: the instruction editor', () => {
     expect(h.calls.some((c) => c.path.startsWith('api/instructions'))).toBe(false);
   });
 
-  it('lists the gateway’s files and the agents that have files of their own, under the daemon’s rows', async () => {
+  it('lists the gateway’s files under the daemon’s rows, and each agent’s own files on its agent row', async () => {
     const h = await opened();
     const sec = h.doc.querySelector('.instr-sec') as HTMLElement;
     // After the /setting rows, not in place of them.
     expect(h.el('settings-body').lastElementChild).toBe(sec);
-    expect(h.doc.querySelector('#settings-body .set-item .set-label')?.textContent).toBe('Idle reclaim');
+    expect(h.doc.querySelector('#settings-body .set-item.set-open .set-label')?.textContent).toBe('Idle reclaim');
     const globals = Array.from(sec.querySelectorAll('[data-instr-global]')).map((b) => [
       b.getAttribute('data-instr-global'),
       b.querySelector('.set-label')?.textContent,
@@ -14931,11 +15633,15 @@ describe('webui page: the instruction editor', () => {
       ['common.md', 'Every agent', 'cc, cx', 'common.md'],
       ['claude.md', 'Claude Code', 'cc', 'claude.md · not written'],
     ]);
-    // An agent whose harness has nothing of its own (here: none named) is not offered.
-    const agents = Array.from(sec.querySelectorAll('[data-instr-agent]'));
-    expect(agents.map((b) => b.getAttribute('data-instr-agent'))).toEqual(['cc']);
-    expect(agents[0]?.querySelector('.set-kind')?.textContent).toBe('box');
-    expect(agents[0]?.querySelector('.set-hint')?.innerHTML).toContain('<code>~/.claude/rules</code>');
+    // The section is the gateway's files only: an agent's own files are a field on its own row.
+    expect(Array.from(sec.querySelectorAll('.set-group')).map((e) => e.textContent)).toEqual(['Instructions']);
+    expect(sec.querySelectorAll('[data-instr-agent]')).toHaveLength(0);
+    const own = h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent="cc"]');
+    expect(own?.closest('.set-field')?.querySelector('.set-flabel')?.textContent).toBe('Instructions');
+    expect(own?.getAttribute('title')).toContain('box · ');
+    expect(own?.querySelector('.set-fnote')?.innerHTML).toContain('<code>~/.claude/rules</code>');
+    // An agent whose harness has nothing of its own is not offered.
+    expect(h.doc.querySelectorAll('#settings-body [data-instr-agent]')).toHaveLength(1);
   });
 
   it('opens a global file in the file window, without the controls a fixed list has no use for', async () => {

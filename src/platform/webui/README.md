@@ -737,14 +737,24 @@ like the skills page, and full-screen on a phone. **Read-only** — there is no 
 or checkout in it, here or in the daemon behind it; changing a repository while an agent works in it
 belongs in the conversation, where the agent can be asked what it meant.
 
-**Three comparisons.** `working` is the working tree against HEAD, untracked files included;
-`branch` is the working tree against the merge base of HEAD and a base branch, so committed and
-uncommitted changes read together; `committed` is HEAD against that merge base. The base starts as
-`origin/HEAD`, else `main`, else `master`, and can be picked from the branch list. A repository
-with no commits works too: `working` and `branch` list its files as additions, `committed` is empty.
-Every path in the window is relative to the **repository root**, not to the topic's directory, which
-may be a subdirectory of it. A directory that is not in a repository is answered as `not-git` with a
-sentence, not as an empty list.
+**Three comparisons, and the history.** `working` is the working tree against HEAD, untracked files
+included; `branch` is the working tree against the merge base of HEAD and a base branch, so
+committed and uncommitted changes read together; `committed` is HEAD against that merge base. The
+base starts as `origin/HEAD`, else `main`, else `master`, and can be picked from the branch list. A
+repository with no commits works too: `working` and `branch` list its files as additions,
+`committed` is empty. `commits` lists the history instead: short sha, subject, author and age per
+commit, **Load more** paging by `skip`, and one commit opened in the same column — the way back, its
+header with a foldable body, then its files. Every path in the window is relative to the
+**repository root**, not to the topic's directory, which may be a subdirectory of it. A directory
+that is not in a repository is answered as `not-git` with a sentence, not as an empty list.
+
+**What an empty pane says.** A comparison with nothing in it writes which comparison and what it
+was compared against in the middle of the diff pane, with a button that switches to `commits`; a
+`not-git` answer does the same with the daemon's sentence instead of the red note (an `error`
+still gets the note), and a turn's own changes say only that the turn changed nothing. A
+comparison list with files but nothing selected opens its first file on a wide window; the
+turn-changes view and a phone's list ask the reader to pick one (under 640px the two columns are
+stacked, and an opened diff would push the list out of sight).
 
 **Data.** [`useGitPanel`](../adapter.ts) hands the room `status`, `file` and `branches`;
 [`daemon/git-panel.ts`](../../daemon/git-panel.ts) implements them over
@@ -1082,12 +1092,16 @@ blue text and ›. Now:
 
 - **One column of sections**, each a card of rows: the group names come from `core/settings.ts`
   `settingGroup`, and a group may carry one note (`SettingsScreenGroup.note`) — the model group's
-  says "next session" once instead of on every row. A model row is named by its agent, with what the
-  agent is (`targetKind`) and a *this topic* badge on the one answering the topic the page opened in.
+  says "next session" once instead of on every row. An agent is one row: its id, what the agent is
+  (`targetKind`) and a *this topic* badge on the one answering the topic the page opened in.
 - **A control per kind** (`SettingsScreenRow.control`, decided by `settingControl` in core, so a new
   setting cannot compile without one): `switch` for on/off, `choice` for a short closed list — the
   page draws up to five short values as a segmented control and anything longer as a `<select>` —
-  and `list` for a row that opens its own value screen (a model). `link` is the scheduled tasks.
+  `list` for a row that opens its own value screen (a model), and `agent` for the per-agent row,
+  whose `fields` (`SettingsScreenField`) are each a `choice` or a `list` drawn as one labelled
+  control beside the agent's name. Every such control's accessible name carries the agent id. The
+  page adds an `Instructions` field of its own to that row when the instruction editor is on and
+  the agent has files of its own. `link` is the scheduled tasks.
 - **A switch and a choice write from the row.** Their ids are `sts:<reqId>:<n>`, an index into the
   `choices` the daemon froze when it drew the list (`PendingSettingsMenu.choices`), the same rule
   `stv:` follows. A switch carries one id, the one that writes the *other* side, so a retried request
@@ -1105,8 +1119,8 @@ blue text and ›. Now:
 
 Focus is put back on the control that was used when the answer redraws the page (`data-fk`), and a
 move between the list and a value screen starts at the top. On a phone each row's control goes
-under its text at full width — except a switch, which stays on the right — and a model's value goes
-under its agent; touch targets are 44px, and a select is 16px so Safari does not zoom.
+under its text at full width — except a switch, which stays on the right — and an agent's fields go
+under its name; touch targets are 44px, and a select is 16px so Safari does not zoom.
 
 The page opens from **All settings** in the ⚙ menu, or when the daemon answers a typed
 `/setting`. The menu's request is sent with `quiet: true` (`SendRequestSchema`, `WebRoom.record`),
@@ -1818,14 +1832,15 @@ the operator, the machine and the file.
 ## The instruction editor
 
 Off by default (`platforms.<id>.instructions.enabled`). Turned on, the settings page ends with an
-**Instructions** section: the gateway's own files (`common.md` and one per harness layer that a
-configured agent reads, `daemon/instructions.ts`), then each agent whose harness reads files of its
-own. A row opens **the file window** in a second mode — the same editor, dirty mark, conflict
-dialog and save — whose tree is a fixed list instead of a directory, and which hides what makes no
-sense for one (new, rename, delete, search, breadcrumbs). `fileSrc` is that mode; `filesGet` and
-`filesPost` hand its requests to `instrGet`/`instrPost`, which is the whole of its reach into the
-window's code. Escape closes the editor alone, over the settings page it came from, and closing it
-asks the list again so a saved file shows as written.
+**Instructions** section for the gateway's own files (`common.md` and one per harness layer that a
+configured agent reads, `daemon/instructions.ts`), and an agent whose harness reads files of its own
+gets an **Instructions** field on its row under Agents, from the same answer. Either opens **the
+file window** in a second mode — the same editor, dirty mark, conflict dialog and save — whose tree
+is a fixed list instead of a directory, and which hides what makes no sense for one (new, rename,
+delete, search, breadcrumbs). `fileSrc` is that mode; `filesGet` and `filesPost` hand its requests
+to `instrGet`/`instrPost`, which is the whole of its reach into the window's code. Escape closes the
+editor alone, over the settings page it came from, and closing it asks the list again so a saved
+file shows as written.
 
 The page never sends a path of its own. It names a target: a global file by name, or an agent and
 a path it got from that agent's list — and the daemon (`daemon/instructions-panel.ts`) walks the

@@ -37,26 +37,29 @@ never advertised (`opusplan`) is taken as typed.
 
 In the web UI `/setting` is a settings page: **All settings** in the ⚙ menu at the
 foot of the topic list opens it, and typing `/setting` does the same. It is one
-column of sections — Agents, Default model, Permissions, Sub-agents, Conversations, Replies,
-Voice, Reviews — and each row is changed in place with the control that fits it:
+column of sections — Agents, Sub-agents, Conversations, Replies, Voice, Reviews — and
+each row is changed in place with the control that fits it:
 
 - **on/off** (sub-agent confirmation, live streaming, the two voice switches) is a
   switch: one tap writes it;
 - **a short list** is a segmented control (idle reclaim: off, 15m, 1h, 4h, 12h) or a
   dropdown (default agent, conversation scope), written as soon as you pick;
-- **a model** is a row per agent, named by the agent, with its whole model id — or
-  *harness default* in grey when none is set. The agent answering the topic you
-  opened the page from is marked *this topic*. Tapping a row opens that agent's
-  models, with the current one ticked, and a field that filters them as you type
-  and takes a name the list does not have (**Use**).
+- **an agent** is one row: its id and harness, then a field per setting beside it —
+  **Model** (the whole model id, or *harness default* in grey when none is set, with
+  a pod's value marked as such) and **Permissions** (the levels its harness has a
+  mode for, a segmented control or a dropdown as with any short list). Tapping the
+  model opens that agent's models, with the current one ticked, and a field that
+  filters them as you type and takes a name the list does not have (**Use**). The
+  agent answering the topic you opened the page from is marked *this topic*. With
+  the instruction editor on, an agent whose harness reads files of its own has a
+  third field, **Instructions**, which opens them.
 
 What each change did is said in a banner at the top — saved, already set, or why
 it was refused — and a request that never reached the gateway puts the control
 back and says so. The page says where these live — config.yaml, every topic —
 because none of them is the topic's own: `/model` and `/agent` are how one topic
-differs. A change applies at once unless its row says otherwise: the model rows
-apply from each agent's next session, and conversation scope is marked *after
-restart*. The page is not a message in the transcript: a typed `/setting` stays as
+differs. A change applies at once unless its row says otherwise: a model applies
+from that agent's next session, and conversation scope is marked *after restart*. The page is not a message in the transcript: a typed `/setting` stays as
 your message, the page does not.
 
 **Any agent's model list, not only the one answering here.** A list comes from a
@@ -65,13 +68,14 @@ to ask, then stops it — a second or two, once per agent until it is redefined 
 the screen says *Asking … for its models* meanwhile. An agent whose harness offers
 no model choice, or that does not start, says which, and a name can still be typed.
 
-**Permissions** is a row per agent too. Its levels are the ones that agent's harness has a mode
-for, so they come from a running session the same way a model list does: until the gateway knows
-them the row opens a screen of its own, which asks (*Asking … for its modes*), and from then on the
-levels are a control on the row. Each level names the harness's mode it means — *ask (Read-only)*
-on Codex, *ask (Manual)* on Claude Code. Changing it from chat is safe enough to offer because only
-a person reaches `/setting` — nothing an agent sends, schedules or hands a sub-agent is read as a
-command — and anyone who can type here could already answer the agent's permission buttons.
+**Permissions** is a field on each agent's row. Its levels are the ones that agent's harness has a
+mode for, so they come from a running session the same way a model list does: until the gateway
+knows them the field opens a screen of its own, which asks (*Asking … for its modes*), and from
+then on the levels are a control on the row. Each level names the harness's mode it means — *ask
+(Read-only)* on Codex, *ask (Manual)* on Claude Code. Changing it from chat is safe enough to offer
+because only a person reaches `/setting` — nothing an agent sends, schedules or hands a sub-agent is
+read as a command — and anyone who can type here could already answer the agent's permission
+buttons.
 
 **An agent a host's pod declares** (`<id>@<host>`, see [remote hosts](remote-hosts.md))
 is set the same way. Its value is written to `podModels` in the gateway's config.yaml,
