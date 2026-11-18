@@ -901,7 +901,7 @@ export type InstructionsRefsResult =
       ok: true;
       agent: string;
       host: string;
-      /** The user-level file, absolute on that machine. */
+      /** The delivered user-level file on that machine, with the agent's home as `~`. */
       root: string;
       /** The gateway's delivered copy (`managed`), the operator's own file, or nothing there. */
       rootState: 'managed' | 'own' | 'missing';

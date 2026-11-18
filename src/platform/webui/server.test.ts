@@ -2839,7 +2839,7 @@ describe('webui server: the instruction editor', () => {
       async refs(agent) {
         seen.push(`refs ${agent}`);
         if (agent !== 'cc') return { ok: false as const, error: `there is no agent "${agent}" in the config` };
-        return { ok: true as const, agent, host: 'local', root: '/h/.claude/CLAUDE.md', rootState: 'managed' as const, summary: 'refs', refs: [] };
+        return { ok: true as const, agent, host: 'local', root: '~/.claude/CLAUDE.md', rootState: 'managed' as const, summary: 'refs', refs: [] };
       },
       async read(target, o) {
         seen.push(`read ${JSON.stringify(target)} ${o?.preview === true}`);

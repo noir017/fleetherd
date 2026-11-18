@@ -1510,6 +1510,7 @@ button:disabled{opacity:.5;cursor:default}
 .fx-sub{margin-left:6px;color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
 .fx-tag{margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:4px;color:var(--dim);font-size:10.5px}
 .fx-row.fx-off{cursor:default;color:var(--dim)}
+.instr-sec .set-card + .set-group{margin-top:22px}
 .fx-head{padding:8px 10px;font-size:11.5px;color:var(--dim);white-space:normal;line-height:1.4;border-bottom:1px solid var(--line)}
 #files-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 #files-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:5px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}

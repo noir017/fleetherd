@@ -14375,7 +14375,7 @@ describe('webui page: the instruction editor', () => {
     ok: true,
     agent: 'cc',
     host: 'box',
-    root: '/h/.claude/CLAUDE.md',
+    root: '~/.claude/CLAUDE.md',
     rootState: 'managed',
     summary: '`@` references in `~/.claude/CLAUDE.md`, and `~/.claude/rules`',
     refs: [
@@ -14509,7 +14509,7 @@ describe('webui page: the instruction editor', () => {
     expect(h.el('files-title').textContent).toBe('cc · own instructions');
     const tree = h.el('files-tree-list');
     expect(tree.querySelector('.fx-head')?.textContent).toBe(
-      "On box: @ references in ~/.claude/CLAUDE.md, and ~/.claude/rules. /h/.claude/CLAUDE.md is the gateway’s copy: a reference in it is added under Instructions."
+      "On box: @ references in ~/.claude/CLAUDE.md, and ~/.claude/rules. ~/.claude/CLAUDE.md is the gateway’s copy: a reference in it is added under Instructions."
     );
     // The gateway's own copy is listed and cannot be opened here.
     const off = tree.querySelector('.fx-off') as HTMLElement;

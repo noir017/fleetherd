@@ -164,7 +164,7 @@ describe("an agent's references", () => {
   it('walks them as Claude Code does: through the link, relative to the real file, each once', async () => {
     layout();
     const r = (await panel().refs('cc')) as Extract<InstructionsRefsResult, { ok: true }>;
-    expect(r).toMatchObject({ ok: true, host: 'local', rootState: 'managed', root: `${home}/.claude/CLAUDE.md` });
+    expect(r).toMatchObject({ ok: true, host: 'local', rootState: 'managed', root: '~/.claude/CLAUDE.md' });
     // Depth first, as Claude Code reads them: rules.md's own reference comes right under it.
     expect(r.refs.map((x) => [x.shown, x.exists, x.depth, x.editable, x.kind])).toEqual([
       ['~/.claude/rules.md', true, 1, true, 'reference'],
@@ -180,7 +180,7 @@ describe("an agent's references", () => {
 
   it('says when the harness file is missing, and when it is the operator’s own', async () => {
     const src = harnessSources({ harness: 'claude' }, home)!;
-    expect(await walkSources(localWorkspace(home), src, home)).toEqual({ root: src.delivered, rootState: 'missing', summary: src.summary, refs: [] });
+    expect(await walkSources(localWorkspace(home), src, home)).toEqual({ root: '~/.claude/CLAUDE.md', rootState: 'missing', summary: src.summary, refs: [] });
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude', 'CLAUDE.md'), '@a.md\n');
     const w = await walkSources(localWorkspace(home), src, home);

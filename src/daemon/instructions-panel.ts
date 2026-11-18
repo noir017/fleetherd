@@ -241,7 +241,7 @@ export async function walkSources(ws: Workspace, src: HarnessSources, home: stri
   }
   if (src.lists) await listConfigured(st, src.lists);
   const rootState = !realRoot ? 'missing' : st.copies.has(realRoot) ? 'managed' : 'own';
-  return { root: src.delivered, rootState, summary: src.summary, refs: st.refs };
+  return { root: tilde(src.delivered, home), rootState, summary: src.summary, refs: st.refs };
 }
 
 /** One file the harness reads by itself: listed when it exists, then scanned for references. */
