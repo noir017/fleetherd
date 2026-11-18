@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildGitPanel, gitBranches, gitFile, gitStatus } from './git-panel.js';
+import { buildGitPanel, gitBranches, gitCommit, gitCommitFile, gitFile, gitLog, gitStatus } from './git-panel.js';
 import { localWorkspace, type Workspace } from './workspace.js';
 
 /**
@@ -161,6 +161,174 @@ describe('git panel', () => {
     expect(status).toMatchObject({ ok: false, reason: 'not-git' });
     expect((await gitBranches(ws)).ok).toBe(false);
     expect((await gitFile(ws, 'working', undefined, 'x')).ok).toBe(false);
+  });
+
+  it('answers not-git when git stops at a filesystem boundary, not with its last line', async () => {
+    // A working directory on a mounted volume: discovery stops at the mount point and git says so
+    // on a SECOND line. Only the last line was matched before, so this read as a raw git error.
+    const stderr =
+      'fatal: not a git repository (or any parent up to mount point /mnt)\n' +
+      'Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\n';
+    const mounted: Workspace = {
+      ...ws,
+      run: async (argv, o) =>
+        argv.includes('--show-toplevel')
+          ? { code: 128, output: Buffer.alloc(0), stderr, truncated: false, timedOut: false }
+          : ws.run(argv, o),
+    };
+    expect(await gitStatus(mounted, 'working')).toMatchObject({ ok: false, reason: 'not-git' });
+    expect(await gitLog(mounted, 0)).toMatchObject({ ok: false, reason: 'not-git' });
+    expect(await gitCommit(mounted, 'abc1234')).toMatchObject({ ok: false, reason: 'not-git' });
+    expect(await gitCommitFile(mounted, 'abc1234', 'a.txt')).toMatchObject({ ok: false });
+  });
+
+  it('pages the history newest first and says whether another page follows', async () => {
+    repo();
+    for (let i = 1; i <= 55; i++) {
+      write(path.join(dir, `f${String(i).padStart(2, '0')}.txt`), `${i}\n`);
+      gitIn(dir, 'add', '.');
+      gitIn(dir, 'commit', '-qm', `change ${i}`);
+    }
+
+    const first = await gitLog(ws, 0);
+    if (!first.ok) throw new Error(first.text);
+    expect(first.repo).toEqual({ root: dir, branch: 'main' });
+    expect(first.more).toBe(true);
+    expect(first.commits).toHaveLength(50);
+    expect(first.commits[0]).toMatchObject({ subject: 'change 55', author: 'test', parents: 1 });
+    expect(first.commits[0]?.sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(first.commits[0]?.short).toMatch(/^[0-9a-f]{7,}$/);
+    expect(first.commits[0]?.at).toBeGreaterThan(0);
+
+    // 55 changes plus the repository's first commit: the second page holds the rest.
+    const second = await gitLog(ws, 50);
+    if (!second.ok) throw new Error(second.text);
+    expect(second.commits).toHaveLength(6);
+    expect(second.more).toBe(false);
+    expect(second.commits.at(-1)?.subject).toBe('base');
+    // No overlap between the pages.
+    expect(second.commits.some((c) => first.commits.some((p) => p.sha === c.sha))).toBe(false);
+
+    const past = await gitLog(ws, 500);
+    expect(past).toMatchObject({ ok: true, commits: [], more: false });
+  });
+
+  it('answers an empty history for a repository with no commits', async () => {
+    gitIn(dir, 'init', '-q', '-b', 'main');
+    expect(await gitLog(ws, 0)).toEqual({ ok: true, repo: { root: dir, branch: 'main' }, commits: [], more: false });
+  });
+
+  it('reads a root commit against the empty tree', async () => {
+    repo();
+    const root = gitIn(dir, 'rev-parse', 'HEAD').trim();
+
+    const commit = await gitCommit(ws, root.slice(0, 7));
+    if (!commit.ok) throw new Error(commit.text);
+    expect(commit.commit).toMatchObject({ sha: root, short: root.slice(0, 7), subject: 'base', body: '', parents: 0 });
+    expect(commit.files.map((f) => [f.path, f.status])).toEqual([
+      ['base.txt', 'added'],
+      ['gone.txt', 'added'],
+    ]);
+
+    const file = await gitCommitFile(ws, root.slice(0, 7), 'base.txt');
+    if (!file.ok) throw new Error(file.text);
+    expect(file).toMatchObject({ path: 'base.txt', status: 'added', original: '', modified: 'a\nb\n' });
+    expect(file.patch).toContain('+a');
+  });
+
+  it('gives both sides of a file a commit changed, and refuses one it did not', async () => {
+    repo();
+    write(path.join(dir, 'base.txt'), 'a\nb\nc\n');
+    gitIn(dir, 'commit', '-qam', 'edit base');
+    const sha = gitIn(dir, 'rev-parse', 'HEAD').trim();
+
+    const file = await gitCommitFile(ws, sha, 'base.txt');
+    if (!file.ok) throw new Error(file.text);
+    expect(file).toMatchObject({ path: 'base.txt', status: 'modified', original: 'a\nb\n', modified: 'a\nb\nc\n' });
+    expect(file.patch).toContain('+c');
+
+    expect(await gitCommitFile(ws, sha, 'gone.txt')).toMatchObject({
+      ok: false,
+      text: 'That file is not one of the changes shown.',
+    });
+    // A path that looks like an option never reaches git: it is refused by the list check.
+    expect(await gitCommitFile(ws, sha, '--upload-pack=touch /tmp/pwned')).toMatchObject({ ok: false });
+    expect(fs.existsSync('/tmp/pwned')).toBe(false);
+  });
+
+  it('reads a merge commit against its first parent', async () => {
+    repo();
+    gitIn(dir, 'checkout', '-qb', 'feature');
+    write(path.join(dir, 'feature.txt'), 'f\n');
+    gitIn(dir, 'add', '.');
+    gitIn(dir, 'commit', '-qm', 'feature work');
+    gitIn(dir, 'checkout', '-q', 'main');
+    write(path.join(dir, 'main.txt'), 'm\n');
+    gitIn(dir, 'add', '.');
+    gitIn(dir, 'commit', '-qm', 'main work');
+    gitIn(dir, 'merge', '-q', '--no-ff', '-m', 'merge feature', 'feature');
+    const merge = gitIn(dir, 'rev-parse', 'HEAD').trim();
+
+    const detail = await gitCommit(ws, merge);
+    if (!detail.ok) throw new Error(detail.text);
+    expect(detail.commit).toMatchObject({ sha: merge, subject: 'merge feature', parents: 2 });
+    // The first parent is main, so the merge brought the feature file and nothing else.
+    expect(detail.files.map((f) => f.path)).toEqual(['feature.txt']);
+
+    const file = await gitCommitFile(ws, merge, 'feature.txt');
+    if (!file.ok) throw new Error(file.text);
+    expect(file.original).toBe('');
+    expect(file.modified).toBe('f\n');
+    expect((await gitCommitFile(ws, merge, 'main.txt')).ok).toBe(false);
+  });
+
+  it('gives no text for a binary file in a commit', async () => {
+    repo();
+    write(path.join(dir, 'bin.dat'), Buffer.from([1, 0, 2, 3]));
+    gitIn(dir, 'add', '.');
+    gitIn(dir, 'commit', '-qm', 'binary');
+    const sha = gitIn(dir, 'rev-parse', 'HEAD').trim();
+
+    const commit = await gitCommit(ws, sha);
+    if (!commit.ok) throw new Error(commit.text);
+    expect(commit.files.find((f) => f.path === 'bin.dat')).toMatchObject({ status: 'added', binary: true });
+    expect(await gitCommitFile(ws, sha, 'bin.dat')).toEqual({
+      ok: true,
+      path: 'bin.dat',
+      status: 'added',
+      original: '',
+      modified: '',
+      patch: '',
+      binary: true,
+    });
+  });
+
+  it('refuses a commit id that is not one, before git could read it as an option', async () => {
+    repo();
+    for (const sha of ['', 'abc', 'HEAD', '--all', 'Z'.repeat(40), 'main']) {
+      expect(await gitCommit(ws, sha), sha).toMatchObject({ ok: false, reason: 'error' });
+      expect(await gitCommitFile(ws, sha, 'base.txt'), sha).toMatchObject({ ok: false });
+    }
+    // Well-formed hex that names nothing is still a refusal, with the id in the sentence.
+    const missing = await gitCommit(ws, 'deadbeef');
+    expect(missing).toMatchObject({ ok: false, reason: 'error' });
+    if (!missing.ok) expect(missing.text).toContain('deadbeef');
+  });
+
+  it('reports a history command that failed as an error, never as an empty page', async () => {
+    repo();
+    const broken: Workspace = {
+      ...ws,
+      run: async (argv, o) => {
+        if (!argv.includes('log')) return ws.run(argv, o);
+        return { code: 128, output: Buffer.alloc(0), stderr: 'fatal: bad object HEAD\n', truncated: false, timedOut: false };
+      },
+    };
+    expect(await gitLog(broken, 0)).toMatchObject({
+      ok: false,
+      reason: 'error',
+      text: expect.stringContaining('bad object HEAD'),
+    });
   });
 
   it('works in a repository with no commits, and reports committed as empty', async () => {
@@ -497,6 +665,7 @@ describe('git panel', () => {
   it('hands the daemon a panel bound to a conversation workspace', async () => {
     repo();
     write(path.join(dir, 'new.txt'), 'new\n');
+    const head = gitIn(dir, 'rev-parse', 'HEAD').trim();
     const panel = buildGitPanel((ref) => (ref.thread === 'a1b2c3d4' ? ws : undefined));
     const ref = { platform: 'web', channel: 'main', thread: 'a1b2c3d4', kind: 'direct' as const, user: 'owner' };
 
@@ -507,6 +676,14 @@ describe('git panel', () => {
       reason: 'error',
     });
     expect((await panel.branches(ref)).ok).toBe(true);
+
+    const log = await panel.log(ref, 0);
+    expect(log).toMatchObject({ ok: true, commits: [{ sha: head }], more: false });
+    expect(await panel.commit(ref, head)).toMatchObject({ ok: true, commit: { sha: head } });
+    expect(await panel.commitFile(ref, head, 'base.txt')).toMatchObject({ ok: true, modified: 'a\nb\n' });
+    expect(await panel.log({ ...ref, thread: 'ffffffff' }, 0)).toMatchObject({ ok: false, reason: 'error' });
+    expect(await panel.commit({ ...ref, thread: 'ffffffff' }, head)).toMatchObject({ ok: false, reason: 'error' });
+    expect(await panel.commitFile({ ...ref, thread: 'ffffffff' }, head, 'base.txt')).toMatchObject({ ok: false });
   });
 
   it('reuses the listing a status answer just read when a file is opened', async () => {

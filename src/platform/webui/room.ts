@@ -66,7 +66,9 @@ import type {
   ButtonSpec,
   ConversationWorkdir,
   GitBranchesResult,
+  GitCommitResult,
   GitFileResult,
+  GitLogResult,
   GitMode,
   GitPanel,
   GitStatusResult,
@@ -939,6 +941,27 @@ export class WebRoom {
     if (!this.gitPanel) return { ok: false, text: 'This daemon offers no git window.' };
     if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
     return this.gitPanel.branches(this.conversation(topic));
+  }
+
+  /** One page of the repository's history, newest first. */
+  async gitLog(topic: string, skip: number): Promise<GitLogResult> {
+    if (!this.gitPanel) return { ok: false, reason: 'error', text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'error', text: 'No such topic.' };
+    return this.gitPanel.log(this.conversation(topic), skip);
+  }
+
+  /** One commit and the files it changed. */
+  async gitCommit(topic: string, sha: string): Promise<GitCommitResult> {
+    if (!this.gitPanel) return { ok: false, reason: 'error', text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'error', text: 'No such topic.' };
+    return this.gitPanel.commit(this.conversation(topic), sha);
+  }
+
+  /** One file of one commit, from its parent's version to the commit's. */
+  async gitCommitFile(topic: string, sha: string, path: string): Promise<GitFileResult> {
+    if (!this.gitPanel) return { ok: false, text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.gitPanel.commitFile(this.conversation(topic), sha, path);
   }
 
   /** Every task, for the panel. `enabled: false` when the daemon offered none (a test daemon). */
