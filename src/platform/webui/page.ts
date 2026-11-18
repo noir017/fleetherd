@@ -1263,19 +1263,21 @@ select.skill-field{appearance:auto}
 .set-seg button[aria-checked="true"]{background:#2b3a4c;color:#fff;font-weight:600}
 .set-select{max-width:260px;min-height:32px;padding:4px 28px 4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9a9a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--fg);font:inherit;font-size:13px;text-overflow:ellipsis;-webkit-appearance:none;appearance:none;cursor:pointer}
 .set-select:focus-visible,.set-seg button:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
-/* A per-agent row: the agent on the left, and its settings side by side beside it — each field
-   under the name of what it sets, so a model, a permission level and a set of instruction files
-   read as three columns of one row rather than three rows. At phone width the fields move under
-   the agent's name, one per line (the narrow block below). */
-.set-item.ag{grid-template-columns:minmax(0,auto) minmax(0,1fr);align-items:start}
-.set-fields{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px 16px;min-width:0}
+/* A per-agent row: the agent in a fixed first column, and its settings in fixed columns after it,
+   so the same field starts at the same x on every row. Left to their own widths, a segmented
+   Permissions and a select pushed their row's Model to different places. The last column takes
+   what is left; at phone width the row is one column and the fields stack (the narrow block). */
+.set-item.ag{grid-template-columns:96px minmax(0,1fr);gap:4px 16px;align-items:start}
+.set-fields{display:grid;grid-template-columns:150px 252px minmax(0,1fr);gap:6px 14px;min-width:0}
 .set-field{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0;max-width:100%}
 .set-flabel{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8a8a8a}
-.set-fopen{display:flex;align-items:center;gap:8px;min-width:0;min-height:32px;padding:3px 8px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.set-fopen{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;min-height:32px;padding:3px 6px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
 .set-fopen:hover{background:#1f1f1f}
 .set-fopen:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
-/* An instruction summary is prose, not a value: one line here, the whole of it in the title, and
-   the machine it is read on as the note beside it. */
+/* Under a choice control: a level that is not set says so. The selected level alone cannot tell
+   "auto, never set" from "auto, saved", and a list field's value already carries its note. */
+.set-fsub{display:flex;flex-wrap:wrap;gap:2px 6px}
+/* An instruction summary is prose, not a value: one line here, the whole of it in the title. */
 .set-fnote{min-width:0;max-width:260px;font-size:12.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .set-fnote code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
 /* A row with a screen of its own (a model) or a way to another menu: the whole row is the target. */
@@ -1710,7 +1712,7 @@ button:disabled{opacity:.5;cursor:default}
   .set-item.sw>.set-ctl{justify-self:end}
   /* An agent's fields go under its name, one per line, at the height a thumb needs. */
   .set-item.ag{grid-template-columns:minmax(0,1fr)}
-  .set-item.ag>.set-fields{flex-direction:column;align-items:stretch;gap:10px}
+  .set-item.ag>.set-fields{display:flex;flex-direction:column;align-items:stretch;gap:10px}
   .set-item.ag .set-fopen{width:100%;min-height:44px}
   .set-item.ag .set-seg button{min-height:44px}
   .set-item.ag .set-fnote{max-width:none}
@@ -5197,7 +5199,13 @@ const SCRIPT = `
   function settingsField(agent, f, key){
     var c = f.control || { kind: 'list' };
     var h = '<div class="set-field"><span class="set-flabel">' + text(f.label) + '</span>';
-    if(c.kind === 'choice') return h + settingsChoice(agent + ' · ' + f.label, c.options || [], key, f.value) + '</div>';
+    if(c.kind === 'choice'){
+      // The selected option cannot say whether the level was ever set: the daemon's note does,
+      // and where it sends none the page says it in the same pill a list field's value carries.
+      var note = f.valueNote ? text(f.valueNote) : (f.unset ? 'not set' : '');
+      return h + settingsChoice(agent + ' · ' + f.label, c.options || [], key, f.value)
+        + (note ? '<span class="set-fsub"><span class="set-vnote">' + note + '</span></span>' : '') + '</div>';
+    }
     return h + '<button type="button" class="set-fopen" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
       + ' aria-label="' + text(agent + ' · ' + f.label + ': ' + (f.value == null ? '' : f.value)) + '">'
       + '<span class="set-vv"><span class="set-v' + (f.unset ? ' unset' : '') + '" title="' + text(f.value == null ? '' : f.value) + '">'
@@ -11612,14 +11620,15 @@ const SCRIPT = `
   /**
    * An agent row's third field: what its harness reads on its own machine besides the gateway's
    * files, and the way into the file window on them — what the section's "Each agent's own" row
-   * used to be, now on the agent's own row.
+   * used to be, now on the agent's own row. The host is in the title rather than a pill beside
+   * the summary: in the row's last column the summary is what has to stay readable.
    */
   function instrField(agent, a, key){
+    var host = a.host === 'local' ? 'this machine' : a.host;
     return '<div class="set-field"><span class="set-flabel">Instructions</span>'
       + '<button type="button" class="set-fopen" data-fk="' + key + '" data-instr-agent="' + text(a.id) + '"'
-      + ' aria-label="' + text(agent + ' · Instructions') + '" title="' + text(a.own) + '">'
-      + '<span class="set-vv"><span class="set-fnote">' + inl(a.own) + '</span>'
-      + '<span class="set-vnote">' + text(a.host === 'local' ? 'this machine' : a.host) + '</span></span>'
+      + ' aria-label="' + text(agent + ' · Instructions') + '" title="' + text(host + ' · ' + a.own) + '">'
+      + '<span class="set-vv"><span class="set-fnote">' + inl(a.own) + '</span></span>'
       + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
   }
 
