@@ -32,16 +32,16 @@ import type { Workspace } from './workspace.js';
  * lock to refresh it; `LC_ALL=C` so error messages parsed here do not change with the machine's
  * language. `-c core.quotepath=off -c color.ui=never` keep paths readable and patches plain.
  *
- * ── Why the output caps are treated as failures ─────────────────────────────
- * `Workspace.run` answers with the END of output past its cap (the remote host's ring buffer keeps
- * the tail). A tail of a `-z` record list is not a list — the first record may be cut in half — so
- * a truncated listing is reported as `truncated`, and truncated file content or patch is reported
- * as `tooLarge`. Neither is ever parsed as if it were whole.
+ * ── Failure is not an empty change list ─────────────────────────────────────
+ * A command that could not run (a timeout, a spawn failure) or exited non-zero is reported as
+ * `error` with its own sentence, never as a list of no files. `truncated` means the change LIST
+ * itself was cut off — never that one stats command was: the counts are then simply absent, and the
+ * files are still the whole list.
  */
 
 /** One side of a file, as a UTF-8 text. The same cap applies to each side; a bigger one is tooLarge. */
 const MAX_SIDE_BYTES = 1 << 20;
-/** A change list or a patch may be larger than one file; past this, the window says so. */
+/** A change list or a branch list may be larger than one file; past this, the window says so. */
 const MAX_LIST_BYTES = 4 << 20;
 /** The patch is only a fallback for a browser without the code view; keep it from crowding the link. */
 const MAX_PATCH_BYTES = 4 << 20;
@@ -49,6 +49,12 @@ const MAX_PATCH_BYTES = 4 << 20;
 const MAX_BRANCHES = 500;
 /** Untracked files get one numstat call each; past this many the rest simply show 0/0. */
 const MAX_UNTRACKED_STATS = 200;
+/** How many of those numstat calls may be in flight at once: one per file would be a storm on a link. */
+const UNTRACKED_CONCURRENCY = 4;
+/** A file open within this many ms of a listing reuses it; see `buildGitPanel`. */
+const LISTING_TTL_MS = 15_000;
+/** Listings kept for that reuse, oldest dropped first. */
+const LISTING_CACHE_MAX = 16;
 
 const GIT_ENV = { GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' } as const;
 
@@ -58,13 +64,21 @@ interface GitRun {
   text: string;
   stderr: string;
   truncated: boolean;
+  timedOut: boolean;
+  spawnError?: string;
 }
+
+/** A command that could not answer; the message is already written for the person. */
+class GitFailed extends Error {}
 
 /**
  * Run one git command. `cwd` is the repository ROOT once it is known: a pathspec after `--` is
  * resolved against the working directory, and every path this module passes is repo-relative. The
  * conversation's directory may be a subdirectory of the repository, so a command that accepts a
  * path must not be run from it.
+ *
+ * A remote workspace rejects a request that passes its deadline rather than answering; that is an
+ * answer too, so it comes back as a command that could not run instead of a throw from here.
  */
 async function git(
   ws: Workspace,
@@ -72,17 +86,62 @@ async function git(
   maxBytes = MAX_LIST_BYTES,
   cwd?: string
 ): Promise<GitRun> {
-  const r = await ws.run(
-    ['git', '--literal-pathspecs', '-c', 'core.quotepath=off', '-c', 'color.ui=never', ...args],
-    { env: GIT_ENV, maxBytes, ...(cwd ? { cwd } : {}) }
-  );
+  let r;
+  try {
+    r = await ws.run(['git', '--literal-pathspecs', '-c', 'core.quotepath=off', '-c', 'color.ui=never', ...args], {
+      env: GIT_ENV,
+      maxBytes,
+      ...(cwd ? { cwd } : {}),
+    });
+  } catch (e) {
+    return {
+      code: null,
+      output: Buffer.alloc(0),
+      text: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false,
+      spawnError: e instanceof Error ? e.message : String(e),
+    };
+  }
   return {
     code: r.code,
     output: r.output,
     text: r.output.toString('utf8'),
     stderr: r.stderr,
     truncated: r.truncated,
+    timedOut: r.timedOut,
+    ...(r.spawnError ? { spawnError: r.spawnError } : {}),
   };
+}
+
+function lastLine(text: string): string {
+  return text
+    .trim()
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .pop() ?? '';
+}
+
+/** Why a command never answered — a timeout or a spawn failure, which no exit code explains. */
+function hardProblem(r: GitRun, what: string): GitFailed | undefined {
+  if (r.timedOut) return new GitFailed(`git ${what} timed out.`);
+  if (r.spawnError) return new GitFailed(`git ${what} could not run: ${r.spawnError}`);
+  return undefined;
+}
+
+/** Why a command failed, including a non-zero exit — for the ones where that is not an answer. */
+function problemOf(r: GitRun, what: string): GitFailed | undefined {
+  const hard = hardProblem(r, what);
+  if (hard) return hard;
+  if (r.code === 0) return undefined;
+  const why = lastLine(r.stderr);
+  return new GitFailed(`git ${what} failed${why ? `: ${why}` : '.'}`);
+}
+
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 /** One change, with the bookkeeping the public shapes do not carry. */
@@ -117,11 +176,23 @@ type Prepared =
     }
   | { ok: false; reason: 'not-git' | 'error'; text: string };
 
-/** Where the repository is. Not a repository is an answer, not an exception. */
-async function repoRoot(ws: Workspace): Promise<string | null> {
+type Rooted = { ok: true; root: string } | { ok: false; reason: 'not-git' | 'error'; text: string };
+
+/**
+ * Where the repository is. A directory that is not in one is an answer; a timeout or a spawn
+ * failure is not, and must not be worded as one.
+ */
+async function repoRoot(ws: Workspace): Promise<Rooted> {
   const r = await git(ws, ['rev-parse', '--show-toplevel']);
+  const hard = hardProblem(r, 'rev-parse');
+  if (hard) return { ok: false, reason: 'error', text: hard.message };
   const root = r.text.trim();
-  return r.code === 0 && root ? root : null;
+  if (r.code === 0 && root) return { ok: true, root };
+  const why = lastLine(r.stderr);
+  if (!why || /not a git repository/i.test(why)) {
+    return { ok: false, reason: 'not-git', text: 'This directory is not in a git repository.' };
+  }
+  return { ok: false, reason: 'error', text: `git rev-parse failed: ${why}` };
 }
 
 function joinAbs(root: string, rel: string): string {
@@ -215,9 +286,13 @@ function applyNumstat(entries: readonly Entry[], text: string): void {
  * the two paths are NUL-separated as well (`add\tdel\t\0/dev/null\0path\0`), so the file is the
  * last non-empty field, not the field after the second tab.
  */
-async function untrackedNumstat(ws: Workspace, path: string, cwd: string): Promise<{ additions: number; deletions: number; binary: boolean } | null> {
+async function untrackedNumstat(
+  ws: Workspace,
+  path: string,
+  cwd: string
+): Promise<{ additions: number; deletions: number; binary: boolean } | null> {
   const r = await git(ws, ['diff', '--no-index', '--numstat', '-z', '--', '/dev/null', path], 64 << 10, cwd);
-  if (r.truncated || (r.code !== 0 && r.code !== 1)) return null;
+  if (hardProblem(r, 'diff') || r.truncated || (r.code !== 0 && r.code !== 1)) return null;
   const parts = r.text.split('\0').filter((p) => p.length > 0);
   const first = parts[0];
   if (!first) return null;
@@ -233,22 +308,35 @@ async function untrackedNumstat(ws: Workspace, path: string, cwd: string): Promi
   };
 }
 
-/** Give the untracked entries their counts, a bounded number at a time. */
-async function statUntracked(ws: Workspace, entries: readonly Entry[], cwd: string): Promise<void> {
-  const list = entries.filter((e) => e.untracked && !e.path.endsWith('/')).slice(0, MAX_UNTRACKED_STATS);
-  await Promise.all(
-    list.map(async (e) => {
-      const stat = await untrackedNumstat(ws, e.path, cwd);
-      if (!stat) return;
-      e.additions = stat.additions;
-      e.deletions = stat.deletions;
-      e.binary = stat.binary;
-    })
-  );
+/** Run `fn` over `items` with at most `limit` in flight — a link, not a process pool. */
+async function eachLimit<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const at = next++;
+      if (at >= items.length) return;
+      await fn(items[at] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
+/** Give the untracked entries their counts, a few at a time. */
+async function statUntracked(ws: Workspace, entries: readonly Entry[], cwd: string): Promise<void> {
+  const list = entries.filter((e) => e.untracked && !e.path.endsWith('/')).slice(0, MAX_UNTRACKED_STATS);
+  await eachLimit(list, UNTRACKED_CONCURRENCY, async (e) => {
+    const stat = await untrackedNumstat(ws, e.path, cwd);
+    if (!stat) return;
+    e.additions = stat.additions;
+    e.deletions = stat.deletions;
+    e.binary = stat.binary;
+  });
+}
+
+type Branches = { ok: true; branches: string[] } | { ok: false; text: string };
+
 /** Branches a base may name: local and remote, newest first, a remote HEAD left out. */
-async function listBranches(ws: Workspace, cwd: string): Promise<string[]> {
+async function listBranches(ws: Workspace, cwd: string): Promise<Branches> {
   const r = await git(ws, [
     'for-each-ref',
     '--sort=-committerdate',
@@ -256,7 +344,10 @@ async function listBranches(ws: Workspace, cwd: string): Promise<string[]> {
     'refs/heads',
     'refs/remotes',
   ], undefined, cwd);
-  if (r.code !== 0) return [];
+  const bad = problemOf(r, 'for-each-ref');
+  if (bad) return { ok: false, text: bad.message };
+  // The END of a cut-off list is not the list: a missing default branch would read as "no base".
+  if (r.truncated) return { ok: false, text: 'This repository has too many branches to list.' };
   const seen = new Set<string>();
   for (const raw of r.text.split('\n')) {
     const name = raw.trim();
@@ -264,7 +355,7 @@ async function listBranches(ws: Workspace, cwd: string): Promise<string[]> {
     seen.add(name);
     if (seen.size >= MAX_BRANCHES) break;
   }
-  return [...seen];
+  return { ok: true, branches: [...seen] };
 }
 
 /**
@@ -274,6 +365,8 @@ async function listBranches(ws: Workspace, cwd: string): Promise<string[]> {
  */
 async function defaultBase(ws: Workspace, branches: readonly string[], cwd: string): Promise<string | undefined> {
   const head = await git(ws, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], undefined, cwd);
+  const hard = hardProblem(head, 'symbolic-ref');
+  if (hard) throw hard;
   const origin = head.text.trim();
   if (head.code === 0 && origin && branches.includes(origin)) return origin;
   for (const name of ['main', 'master']) {
@@ -284,35 +377,55 @@ async function defaultBase(ws: Workspace, branches: readonly string[], cwd: stri
 }
 
 async function hasHead(ws: Workspace, cwd: string): Promise<boolean> {
-  return (await git(ws, ['rev-parse', '--verify', '--quiet', 'HEAD'], undefined, cwd)).code === 0;
+  const r = await git(ws, ['rev-parse', '--verify', '--quiet', 'HEAD'], undefined, cwd);
+  const hard = hardProblem(r, 'rev-parse');
+  if (hard) throw hard;
+  return r.code === 0;
 }
 
 async function currentBranch(ws: Workspace, cwd: string): Promise<string | undefined> {
   const r = await git(ws, ['symbolic-ref', '--quiet', '--short', 'HEAD'], undefined, cwd);
+  const hard = hardProblem(r, 'symbolic-ref');
+  if (hard) throw hard;
   return r.code === 0 ? r.text.trim() || undefined : undefined;
 }
 
 async function mergeBase(ws: Workspace, base: string, cwd: string): Promise<string | null> {
-  const r = await git(ws, ['merge-base', base, 'HEAD'], undefined, cwd);
+  // `--` before the ref: a branch may be named like an option (`--all` is a legal ref), and
+  // without the separator git reads it as one and refuses to compare.
+  const r = await git(ws, ['merge-base', '--', base, 'HEAD'], undefined, cwd);
+  const hard = hardProblem(r, 'merge-base');
+  if (hard) throw hard;
   return r.code === 0 ? r.text.trim() || null : null;
 }
 
-/** The working tree against HEAD, untracked files included. `head` false means an empty repository. */
+/**
+ * The working tree against HEAD, untracked files included. `head` false means a repository with
+ * no commits: the index still has staged files, and `git diff --cached` counts them against the
+ * empty tree, which is what a plain `git diff HEAD` would have done.
+ */
 async function workingChanges(ws: Workspace, head: boolean, cwd: string): Promise<Listing> {
-  const st = await git(ws, ['status', '--porcelain=v1', '--untracked-files=normal', '--no-renames', '-z'], undefined, cwd);
+  const st = await git(ws, ['status', '--porcelain=v1', '--untracked-files=all', '--no-renames', '-z'], undefined, cwd);
+  const bad = problemOf(st, 'status');
+  if (bad) throw bad;
   if (st.truncated) return { entries: [], truncated: true };
   const entries = parseStatus(st.text);
 
-  let truncated = false;
-  if (head) {
-    const stats = await git(ws, ['diff', '--no-ext-diff', '--no-renames', '--numstat', '-z', 'HEAD', '--'], undefined, cwd);
-    // The list is whole; a cut-off numstat only costs the counts, so say the answer is partial
-    // rather than pretending every file changed by nothing.
-    if (stats.truncated) truncated = true;
-    else applyNumstat(entries, stats.text);
-  }
+  const stats = await git(
+    ws,
+    head
+      ? ['diff', '--no-ext-diff', '--no-renames', '--numstat', '-z', 'HEAD', '--']
+      : ['diff', '--cached', '--no-ext-diff', '--no-renames', '--numstat', '-z'],
+    undefined,
+    cwd
+  );
+  const badStats = problemOf(stats, 'diff');
+  if (badStats) throw badStats;
+  // A cut-off stats answer only costs the counts; the list itself is whole, so `truncated` stays
+  // false and the files are still shown.
+  if (!stats.truncated) applyNumstat(entries, stats.text);
   await statUntracked(ws, entries, cwd);
-  return { entries: sortEntries(entries), truncated };
+  return { entries: sortEntries(entries), truncated: false };
 }
 
 function sortEntries(entries: Entry[]): Entry[] {
@@ -328,17 +441,24 @@ async function listFor(ws: Workspace, mode: GitMode, head: boolean, mb: string |
 
   const target = mode === 'committed' ? ['HEAD'] : [];
   const names = await git(ws, ['diff', '--no-ext-diff', '--no-renames', '--name-status', '-z', mb, ...target, '--'], undefined, cwd);
+  const badNames = problemOf(names, 'diff');
+  if (badNames) throw badNames;
   if (names.truncated) return { entries: [], truncated: true };
   const entries = parseNameStatus(names.text);
 
   const stats = await git(ws, ['diff', '--no-ext-diff', '--no-renames', '--numstat', '-z', mb, ...target, '--'], undefined, cwd);
-  let truncated = stats.truncated;
-  if (!truncated) applyNumstat(entries, stats.text);
+  const badStats = problemOf(stats, 'diff');
+  if (badStats) throw badStats;
+  // Counts only, as above: a cut-off numstat does not make the list incomplete.
+  if (!stats.truncated) applyNumstat(entries, stats.text);
 
   // A committed comparison is two commits and has no working-tree files. `branch` also shows what
   // is not committed yet, and an untracked file is invisible to `git diff <merge-base>`.
+  let truncated = false;
   if (mode === 'branch') {
-    const st = await git(ws, ['status', '--porcelain=v1', '--untracked-files=normal', '--no-renames', '-z'], undefined, cwd);
+    const st = await git(ws, ['status', '--porcelain=v1', '--untracked-files=all', '--no-renames', '-z'], undefined, cwd);
+    const bad = problemOf(st, 'status');
+    if (bad) throw bad;
     if (st.truncated) truncated = true;
     else {
       const known = new Set(entries.map((e) => e.path));
@@ -394,11 +514,14 @@ async function comparisonFor(
 
 /** Resolve the repository, the base and the listing for one request. */
 async function prepare(ws: Workspace, mode: GitMode, requestedBase: string | undefined): Promise<Prepared> {
-  const root = await repoRoot(ws);
-  if (!root) {
-    return { ok: false, reason: 'not-git', text: 'This directory is not in a git repository.' };
-  }
-  const branches = await listBranches(ws, root);
+  const rooted = await repoRoot(ws);
+  if (!rooted.ok) return rooted;
+  const root = rooted.root;
+  const listed = await listBranches(ws, root);
+  // The working comparison needs no branch list; a branch list too long to read must not take it
+  // down. A comparison that needs a base cannot proceed without one, and says so.
+  if (!listed.ok && mode !== 'working') return { ok: false, reason: 'error', text: listed.text };
+  const branches = listed.ok ? listed.branches : [];
   const comparison = await comparisonFor(ws, mode, branches, requestedBase, root);
   if (!comparison.ok) return { ok: false, reason: 'error', text: comparison.text };
   const { head, base, mb } = comparison;
@@ -429,7 +552,9 @@ async function blobAt(
   cwd: string
 ): Promise<{ content: Buffer; tooLarge: boolean } | null> {
   const tree = await git(ws, ['ls-tree', '-z', '--full-tree', rev, '--', path], 64 << 10, cwd);
-  if (tree.truncated || tree.code !== 0) return null;
+  const badTree = problemOf(tree, 'ls-tree');
+  if (badTree) throw badTree;
+  if (tree.truncated) return { content: Buffer.alloc(0), tooLarge: true };
   const rec = tree.text.split('\0')[0] ?? '';
   const tab = rec.indexOf('\t');
   if (tab < 0) return null;
@@ -437,8 +562,35 @@ async function blobAt(
   const oid = meta[2];
   if (!oid || meta[1] !== 'blob') return null;
   const blob = await git(ws, ['cat-file', 'blob', oid], MAX_SIDE_BYTES + 1, cwd);
+  const badBlob = problemOf(blob, 'cat-file');
+  if (badBlob) throw badBlob;
   if (blob.truncated) return { content: Buffer.alloc(0), tooLarge: true };
-  return blob.code === 0 ? { content: blob.output, tooLarge: false } : null;
+  return { content: blob.output, tooLarge: false };
+}
+
+/**
+ * The working-tree side of one file.
+ *
+ * A symlink is compared by its TARGET TEXT, as git does, not by what it points at: following it
+ * would diff the target file's bytes against a blob that holds a path, and an untracked link could
+ * pull a file from outside the repository into the page. `readlink` answers that cheaply; where it
+ * is not a program on the machine (Windows), a regular read is the fallback and links are followed.
+ */
+async function worktreeSide(
+  ws: Workspace,
+  root: string,
+  path: string
+): Promise<{ content: Buffer; tooLarge: boolean }> {
+  const abs = joinAbs(root, path);
+  const link = await ws.run(['readlink', '-n', '--', abs], { maxBytes: 8 << 10 });
+  if (link.code === 0 && !link.timedOut && !link.spawnError) {
+    return link.truncated ? { content: Buffer.alloc(0), tooLarge: true } : { content: link.output, tooLarge: false };
+  }
+  const st = await ws.stat(abs);
+  if (st.exists && st.dir) throw new GitFailed('That is a directory, not a file.');
+  if (!st.exists) return { content: Buffer.alloc(0), tooLarge: false };
+  if ((st.size ?? 0) > MAX_SIDE_BYTES) return { content: Buffer.alloc(0), tooLarge: true };
+  return { content: await ws.readFile(abs, MAX_SIDE_BYTES), tooLarge: false };
 }
 
 /** One changed file's two sides, or the reason there is no text. */
@@ -467,24 +619,14 @@ async function sides(
       tooLarge = tooLarge || side.tooLarge;
     }
   } else {
-    const abs = joinAbs(root, path);
-    const st = await ws.stat(abs);
-    if (st.exists && st.dir) throw new Error('directory');
-    if (st.exists && (st.size ?? 0) > MAX_SIDE_BYTES) tooLarge = true;
-    else if (st.exists) modified = await ws.readFile(abs, MAX_SIDE_BYTES);
+    const side = await worktreeSide(ws, root, path);
+    modified = side.content;
+    tooLarge = tooLarge || side.tooLarge;
   }
   return { original, modified, tooLarge };
 }
 
-/**
- * The whole change list for one comparison.
- *
- * `not-git` is answered for a directory that is not inside a repository; everything else that stops
- * a read is `error` with a sentence that names what failed, because "no changes" and "git could not
- * tell" must not look alike in a window a person is using to decide whether work is done.
- */
-export async function gitStatus(ws: Workspace, mode: GitMode, base?: string): Promise<GitStatusResult> {
-  const prepared = await prepare(ws, mode, base);
+function statusOf(prepared: Prepared): GitStatusResult {
   if (!prepared.ok) return { ok: false, reason: prepared.reason, text: prepared.text };
   const files: GitStatusFile[] = prepared.listing.entries.map((e) => ({
     path: e.path,
@@ -512,7 +654,7 @@ function noText(path: string, entry: Entry, flags: { binary?: true; tooLarge?: t
 
 /**
  * The argv for one file's patch. A path is always after `--`; an untracked file (or one in a
- * repository with no commits) has nothing on the old side, so `--no-index` against /dev/null is
+ * repository with no commits) has nothing to diff against, so `--no-index` against /dev/null is
  * the only form that shows its real lines.
  */
 function diffArgs(from: string | undefined, to: string | undefined, untracked: boolean, path: string): string[] {
@@ -533,26 +675,19 @@ function diffArgs(from: string | undefined, to: string | undefined, untracked: b
 }
 
 /**
- * One file's two whole sides and its unified diff.
+ * One file's two whole sides and its unified diff, from a listing already resolved.
  *
- * `path` is checked against the change list for this exact comparison before anything reads it, and
- * it is then placed only after `--` in every command. A path the list did not name cannot be read
- * through this function even if a request invents one.
+ * `path` is checked against that listing before anything reads it, and is then placed only after
+ * `--` in every command. A path the list did not name cannot be read through this function even if
+ * a request invents one.
  */
-export async function gitFile(
-  ws: Workspace,
-  mode: GitMode,
-  base: string | undefined,
-  path: string
-): Promise<GitFileResult> {
-  const prepared = await prepare(ws, mode, base);
+async function fileOf(ws: Workspace, prepared: Prepared, path: string): Promise<GitFileResult> {
   if (!prepared.ok) return { ok: false, text: prepared.text };
   if (prepared.listing.truncated) {
     return { ok: false, text: 'This repository has too many changes to list, so one file cannot be shown.' };
   }
   const entry = prepared.listing.entries.find((e) => e.path === path);
   if (!entry) return { ok: false, text: 'That file is not one of the changes shown.' };
-  if (path.endsWith('/')) return { ok: false, text: 'That is a directory, not a file.' };
   // The numstat already said there is no text to show; reading a binary file just to prove it
   // again is the one thing this route would spend a megabyte on.
   if (entry.binary) return noText(path, entry, { binary: true });
@@ -563,20 +698,25 @@ export async function gitFile(
   try {
     ({ original, modified, tooLarge } = await sides(ws, prepared.root, prepared.from, prepared.to, path));
   } catch (e) {
-    return { ok: false, text: e instanceof Error && e.message === 'directory' ? 'That is a directory, not a file.' : 'Could not read this file.' };
+    if (e instanceof GitFailed) return { ok: false, text: e.message };
+    return { ok: false, text: `Could not read this file: ${messageOf(e)}` };
   }
 
   const binary = hasNul(original) || hasNul(modified);
   if (binary || tooLarge) return noText(path, entry, { ...(binary ? { binary: true as const } : {}), ...(tooLarge ? { tooLarge: true as const } : {}) });
 
-  // Untracked files (and every file in a repository with no commits) have nothing to diff against:
-  // `--no-index` is the only form that reports them as additions, with their real lines.
-  const patch = await git(ws, diffArgs(prepared.from, prepared.to, entry.untracked, path), MAX_PATCH_BYTES, prepared.root);
-  // 1 is `--no-index`'s "the files differ", which is the normal answer here. Anything else is a
-  // failed command, and a patch that may be the tail of a bigger one is no patch at all.
-  if ((patch.code !== 0 && patch.code !== 1) || patch.truncated) {
-    return { ok: true, path, status: entry.status, original: original.toString('utf8'), modified: modified.toString('utf8'), patch: '' };
+  const patch = await git(ws, diffArgs(prepared.from, prepared.to, entry.untracked || !prepared.from, path), MAX_PATCH_BYTES, prepared.root);
+  const hard = hardProblem(patch, 'diff');
+  if (hard) return { ok: false, text: hard.message };
+  // 1 is `--no-index`'s "the files differ", which is the normal answer here.
+  if (patch.code !== 0 && patch.code !== 1) {
+    const why = lastLine(patch.stderr);
+    return { ok: false, text: `git diff failed${why ? `: ${why}` : '.'}` };
   }
+  // A patch that may be the tail of a bigger one is not a patch. The two sides are each under the
+  // cap, but a rewrite of a large file can still produce a bigger diff, and showing part of it
+  // would read as a diff that lost lines.
+  if (patch.truncated) return noText(path, entry, { tooLarge: true });
   return {
     ok: true,
     path,
@@ -587,19 +727,53 @@ export async function gitFile(
   };
 }
 
+/**
+ * The whole change list for one comparison.
+ *
+ * `not-git` is answered for a directory that is not inside a repository; everything else that stops
+ * a read is `error` with a sentence that names what failed, because "no changes" and "git could not
+ * tell" must not look alike in a window a person is using to decide whether work is done.
+ */
+export async function gitStatus(ws: Workspace, mode: GitMode, base?: string): Promise<GitStatusResult> {
+  try {
+    return statusOf(await prepare(ws, mode, base));
+  } catch (e) {
+    return { ok: false, reason: 'error', text: messageOf(e) };
+  }
+}
+
+/** One file's two whole sides and its unified diff. */
+export async function gitFile(
+  ws: Workspace,
+  mode: GitMode,
+  base: string | undefined,
+  path: string
+): Promise<GitFileResult> {
+  try {
+    return await fileOf(ws, await prepare(ws, mode, base), path);
+  } catch (e) {
+    return { ok: false, text: messageOf(e) };
+  }
+}
+
 /** The branches a base may name, plus the current branch and the default base. */
 export async function gitBranches(ws: Workspace): Promise<GitBranchesResult> {
-  const root = await repoRoot(ws);
-  if (!root) return { ok: false, text: 'This directory is not in a git repository.' };
-  const branches = await listBranches(ws, root);
-  const base = await defaultBase(ws, branches, root);
-  const branch = await currentBranch(ws, root);
-  return {
-    ok: true,
-    ...(branch ? { branch } : {}),
-    ...(base ? { base } : {}),
-    branches,
-  };
+  try {
+    const rooted = await repoRoot(ws);
+    if (!rooted.ok) return { ok: false, text: rooted.text };
+    const listed = await listBranches(ws, rooted.root);
+    if (!listed.ok) return { ok: false, text: listed.text };
+    const base = await defaultBase(ws, listed.branches, rooted.root);
+    const branch = await currentBranch(ws, rooted.root);
+    return {
+      ok: true,
+      ...(branch ? { branch } : {}),
+      ...(base ? { base } : {}),
+      branches: listed.branches,
+    };
+  } catch (e) {
+    return { ok: false, text: messageOf(e) };
+  }
 }
 
 /**
@@ -608,22 +782,65 @@ export async function gitBranches(ws: Workspace): Promise<GitBranchesResult> {
  * `workspaceOf` is `ConversationRegistry.workspaceForRef`: it answers which machine the agent runs
  * on and which directory its next session would start in, and it starts nothing. A conversation
  * whose agent is no longer configured has no workspace and gets a sentence, not a throw.
+ *
+ * A LISTING IS KEPT FOR A MOMENT. Opening a file used to resolve the whole comparison again — the
+ * repository root, the branch list, the merge base, the diff names, the stats and one numstat per
+ * untracked file — for every file clicked, which on a remote host is a round trip per command. A
+ * status answer stores its listing here, and the files clicked in the next few seconds reuse it.
+ * Its key includes the comparison, so changing mode or base never reads another comparison's list.
  */
 export function buildGitPanel(workspaceOf: (ref: ConversationRef) => Workspace | undefined): GitPanel {
-  const workspace = (ref: ConversationRef): Workspace | undefined => workspaceOf(ref);
+  const cache = new Map<string, { at: number; prepared: Prepared }>();
+  const keyOf = (ws: Workspace, mode: GitMode, base: string | undefined): string =>
+    `${ws.host}\u0000${ws.root}\u0000${mode}\u0000${base ?? ''}`;
+
+  const remember = (key: string, prepared: Prepared): void => {
+    if (!prepared.ok) return;
+    cache.delete(key);
+    cache.set(key, { at: Date.now(), prepared });
+    while (cache.size > LISTING_CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  };
+
+  const cached = (key: string): Prepared | undefined => {
+    const hit = cache.get(key);
+    if (!hit) return undefined;
+    if (Date.now() - hit.at > LISTING_TTL_MS) {
+      cache.delete(key);
+      return undefined;
+    }
+    return hit.prepared;
+  };
+
   return {
     async status(ref, mode, base) {
-      const ws = workspace(ref);
+      const ws = workspaceOf(ref);
       if (!ws) return { ok: false, reason: 'error', text: 'This conversation has no workspace on any machine.' };
-      return gitStatus(ws, mode, base);
+      try {
+        const prepared = await prepare(ws, mode, base);
+        remember(keyOf(ws, mode, base), prepared);
+        return statusOf(prepared);
+      } catch (e) {
+        return { ok: false, reason: 'error', text: messageOf(e) };
+      }
     },
     async file(ref, mode, base, path) {
-      const ws = workspace(ref);
+      const ws = workspaceOf(ref);
       if (!ws) return { ok: false, text: 'This conversation has no workspace on any machine.' };
-      return gitFile(ws, mode, base, path);
+      const key = keyOf(ws, mode, base);
+      try {
+        const prepared = cached(key) ?? (await prepare(ws, mode, base));
+        remember(key, prepared);
+        return await fileOf(ws, prepared, path);
+      } catch (e) {
+        return { ok: false, text: messageOf(e) };
+      }
     },
     async branches(ref) {
-      const ws = workspace(ref);
+      const ws = workspaceOf(ref);
       if (!ws) return { ok: false, text: 'This conversation has no workspace on any machine.' };
       return gitBranches(ws);
     },

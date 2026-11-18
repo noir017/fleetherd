@@ -8879,7 +8879,7 @@ const SCRIPT = `
       gitLayoutBtn=$('git-layout'), gitRefreshBtn=$('git-refresh'), gitToggleBtn=$('git-toggle'),
       gitCloseBtn=$('git-close');
   var gitState = {
-    source:null, mode:'working', base:'', repo:null, files:[], path:'', sel:null,
+    source:null, mode:'working', base:'', root:'', repo:null, files:[], path:'', sel:null, branchError:'',
     statusSeq:0, fileSeq:0, view:null, kind:'',
     // A phone opens on one column: a split diff at 390px gives each side five characters of code.
     layout: (window.innerWidth < 900 ? 'unified' : 'split')
@@ -8929,24 +8929,47 @@ const SCRIPT = `
   function gitPaintBase(base){
     if(gitCustom() || gitState.mode === 'working'){ gitBaseEl.hidden = true; return; }
     if(base && !gitState.base) gitState.base = base;
+    // No origin/HEAD, main or master: the first branch the list offered is the base. A picker that
+    // shows a selected row while the state holds nothing would send no base at all.
+    if(!gitState.base && gitBaseEl.options.length)
+      gitState.base = gitBaseEl.value || gitBaseEl.options[0].value;
     if(gitState.base) gitBaseEl.value = gitState.base;
     gitBaseEl.hidden = gitBaseEl.options.length === 0;
   }
 
-  /** Put the branch list into the picker; the selection stays whatever the status answer says. */
+  /** Put the branch list into the picker; the selection follows the status answer, else its first row. */
   function gitLoadBranches(){
     if(gitCustom()) return;
     fetch('api/git/branches?t='+encodeURIComponent(topic), {credentials:'same-origin', cache:'no-store'})
       .then(function(r){ return r.json(); }).then(function(d){
-        if(!d || !d.ok || !d.branches || !d.branches.length) return;
+        if(!d || !d.ok){
+          // A list that could not be read is a sentence, not a silently empty picker: Branch and
+          // Committed both need a base, and this is why they cannot offer one.
+          gitState.branchError = (d && d.text) || 'Could not read the branches.';
+          gitNote(gitState.branchError, true);
+          return;
+        }
+        var was = gitState.branchError;
+        gitState.branchError = '';
+        if(was && gitNoteEl.textContent === was) gitNote('', false);
+        var list = d.branches || [];
+        if(!list.length) return;
         gitBaseEl.innerHTML = '';
-        for(var i=0;i<d.branches.length;i++){
+        for(var i=0;i<list.length;i++){
           var o=document.createElement('option');
-          o.value=d.branches[i]; o.textContent=d.branches[i];
+          o.value=list[i]; o.textContent=list[i];
           gitBaseEl.appendChild(o);
         }
+        var had = gitState.base;
+        if(!gitState.base) gitState.base = d.base || list[0];
         gitPaintBase(d.base);
-      }).catch(function(){});
+        // A mode that needs a base may have asked before this answer arrived, and been refused;
+        // the base the list just supplied makes that request answerable.
+        if(!had && gitState.base && gitState.mode !== 'working') gitLoadStatus();
+      }).catch(function(){
+        gitState.branchError = 'Could not read the branches.';
+        gitNote(gitState.branchError, true);
+      });
   }
 
   function gitFileRow(f){
@@ -8954,10 +8977,15 @@ const SCRIPT = `
     var stat = f.binary
       ? '<span class="gf-del">bin</span>'
       : '<span class="gf-add">+'+f.additions+'</span> <span class="gf-del">\\u2212'+f.deletions+'</span>';
-    // The editor is another branch's window (openFileEditor). Its absence is normal: it is only
-    // offered when the page actually has one, rather than drawn as a button that does nothing.
+    // The editor is another branch's window (openFileEditor). It takes a path the way the files
+    // panel writes one — absolute, or relative to the topic's directory — so the repository-root
+    // path this list shows is made absolute first. Where the topic works in a repo subdirectory,
+    // handing it the root-relative path would point at the wrong file.
+    var abs = gitState.root
+      ? (gitState.root.charAt(gitState.root.length-1) === '/' ? gitState.root : gitState.root+'/')+f.path
+      : f.path;
     var edit = typeof openFileEditor === 'function'
-      ? '<button type="button" class="gf-edit" data-gedit="'+text(f.path)+'" title="Edit this file">Edit</button>'
+      ? '<button type="button" class="gf-edit" data-gedit="'+text(abs)+'" title="Edit this file">Edit</button>'
       : '';
     return '<div class="git-file'+(f.path === gitState.path ? ' on' : '')+'" data-gpath="'+text(f.path)+'"'
       +' role="button" tabindex="0">'
@@ -8980,30 +9008,40 @@ const SCRIPT = `
     var mine = ++gitState.statusSeq;
     gitRefreshBtn.disabled = true;
     return fetch(gitStatusUrl(), {credentials:'same-origin', cache:'no-store'}).then(function(r){
-      return r.json();
-    }).then(function(d){
+      return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
+    }).then(function(res){
       if(mine !== gitState.statusSeq) return;
       gitRefreshBtn.disabled = false;
-      if(!d || !d.ok){
+      var d = res.d;
+      if(!res.ok || !d || !d.ok){
         gitState.repo = null;
+        gitState.root = '';
         gitState.files = [];
+        gitState.path = '';
         gitFilesEl.innerHTML = '';
         gitBranchEl.textContent = '';
-        gitNote((d && d.text) || 'Could not read the changes.', true);
+        gitClearSelection();
+        gitHideComment();
+        gitDestroyView();
+        gitDiffEl.textContent = '';
+        // The daemon's own sentence, including a 500's error field: a timeout or a broken
+        // repository must not read as "nothing changed".
+        gitNote((d && (d.text || d.error)) || 'Could not read the changes.', true);
         return;
       }
       gitState.repo = d.repo || null;
+      gitState.root = (d.repo && d.repo.root) || '';
       gitState.files = d.files || [];
       gitBranchEl.textContent = (d.repo && d.repo.branch) || '';
       gitPaintBase(d.repo && d.repo.base);
       if(d.truncated){
-        // Not a list with holes in it: the daemon refused to use the tail of a cut-off answer, so
-        // there is no list at all to draw.
-        gitFilesEl.innerHTML = '<div class="git-empty">Too many changes to list.</div>';
+        // The list itself is incomplete; any rows it did return are whole.
+        if(!gitState.files.length) gitFilesEl.innerHTML = '<div class="git-empty">The change list is incomplete.</div>';
+        else gitPaintFiles();
         gitNote('There are too many changes to list. Narrow the comparison, or refresh once some are committed.', true);
       } else {
         gitPaintFiles();
-        gitNote('', false);
+        gitNote(gitState.branchError, !!gitState.branchError);
       }
       // The file that was open may have been committed away since the last list. Its old diff
       // would then be a picture of something that is no longer there.
@@ -9082,11 +9120,13 @@ const SCRIPT = `
     gitLayoutBtn.hidden = true;
     var mine = ++gitState.fileSeq;
     fetch(gitFileUrl(path), {credentials:'same-origin', cache:'no-store'}).then(function(r){
-      return r.json();
-    }).then(function(d){
+      return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
+    }).then(function(res){
       if(mine !== gitState.fileSeq) return;
-      if(!d || !d.ok){
-        gitDiffEl.innerHTML = '<div class="git-empty">'+text((d && d.text) || 'Could not read this file.')+'</div>';
+      var d = res.d;
+      if(!res.ok || !d || !d.ok){
+        gitDiffEl.innerHTML = '<div class="git-empty">'
+          +text((d && (d.text || d.error)) || 'Could not read this file.')+'</div>';
         return;
       }
       if(d.tooLarge){
@@ -9106,16 +9146,19 @@ const SCRIPT = `
   function gitShowComment(){
     if(!gitState.sel) return;
     var from = Math.min(gitState.sel.from, gitState.sel.to), to = Math.max(gitState.sel.from, gitState.sel.to);
-    gitCommentWhat.textContent = gitState.path+':L'+from+(to !== from ? '-L'+to : '');
+    gitCommentWhat.textContent = gitState.path+':L'+from+(to !== from ? '-L'+to : '')
+      +(gitState.sel.side === 'old' ? ' \\u00b7 old side' : ' \\u00b7 new side');
     gitCommentEl.hidden = false;
     gitCommentText.value = '';
     gitCommentText.focus();
   }
 
   /**
-   * One line comment in the shape the agent reads: the file and line range, the selected lines in
-   * a fence, then the person's words. A fence longer than any run of backticks inside the code
-   * keeps the block closed. Multiple comments accumulate, separated by a blank line.
+   * One line comment in the shape the agent reads: the file and line range, which side of the
+   * diff the lines came from, the selected lines in a fence, then the person's words. Without the
+   * side, a deleted line's old number would read as a line of the new file. A fence longer than
+   * any run of backticks inside the code keeps the block closed. Multiple comments accumulate,
+   * separated by a blank line.
    */
   function gitCommentBlock(){
     var sel = gitState.sel;
@@ -9123,7 +9166,7 @@ const SCRIPT = `
     var from = Math.min(sel.from, sel.to), to = Math.max(sel.from, sel.to);
     var fence = String.fromCharCode(96,96,96);
     while(sel.text.indexOf(fence) >= 0) fence += String.fromCharCode(96);
-    return gitState.path+':L'+from+(to !== from ? '-L'+to : '')
+    return gitState.path+':L'+from+(to !== from ? '-L'+to : '')+(sel.side === 'old' ? ' (old)' : ' (new)')
       +'\\n'+fence+'\\n'+String(sel.text).replace(/\\s+$/, '')+'\\n'+fence+'\\n'+gitCommentText.value.trim();
   }
 
@@ -9156,6 +9199,8 @@ const SCRIPT = `
     gitState.source = source || null;
     gitState.mode = 'working';
     gitState.base = '';
+    gitState.root = '';
+    gitState.branchError = '';
     gitState.repo = null;
     gitState.files = [];
     gitState.path = '';
@@ -9205,6 +9250,9 @@ const SCRIPT = `
   gitBaseEl.addEventListener('change', function(){
     gitState.base = gitBaseEl.value || '';
     gitState.path = '';
+    // A file request still in flight belongs to the comparison being left; without this bump its
+    // answer would paint that diff into the new pane, under a path that is now empty.
+    gitState.fileSeq += 1;
     gitClearSelection();
     gitHideComment();
     gitDestroyView();
@@ -9218,6 +9266,7 @@ const SCRIPT = `
     if(mode === gitState.mode) return;
     gitState.mode = mode;
     gitState.path = '';
+    gitState.fileSeq += 1;
     gitClearSelection();
     gitHideComment();
     gitDestroyView();
@@ -9238,6 +9287,9 @@ const SCRIPT = `
   });
   gitFilesEl.addEventListener('keydown', function(e){
     if(e.key !== 'Enter' && e.key !== ' ') return;
+    // A key pressed on the row's Edit button belongs to that button, not to the row that opens
+    // the diff; without this, a keyboard user could never reach Edit.
+    if(e.target.closest && e.target.closest('[data-gedit]')) return;
     var row = e.target.closest ? e.target.closest('[data-gpath]') : null;
     if(row){ e.preventDefault(); gitOpenFile(row.getAttribute('data-gpath')); }
   });

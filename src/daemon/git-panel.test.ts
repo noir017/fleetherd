@@ -250,8 +250,10 @@ describe('git panel', () => {
     if (!file.ok) throw new Error(file.text);
     expect(file.modified).toBe('dash\n');
 
-    // Not in the list: refused before any command runs. `--upload-pack` is a git option that would
-    // run a program if a naive implementation put the path on the command line.
+    // Not in the list: refused by the listing check. The request's path itself never reaches a
+    // command — the commands that DID run were the ones that produced the list being checked.
+    // `--upload-pack` is a git option that would run a program if a naive implementation put the
+    // path on the command line.
     const refused = await gitFile(ws, 'working', undefined, '--upload-pack=touch /tmp/pwned');
     expect(refused).toMatchObject({ ok: false });
     expect(fs.existsSync('/tmp/pwned')).toBe(false);
@@ -274,6 +276,167 @@ describe('git panel', () => {
     expect(star.patch).not.toContain('abc.txt');
   });
 
+  it('lists every file in a new directory, not the directory as one row', async () => {
+    repo();
+    write(path.join(dir, 'fresh', 'one.txt'), 'a\nb\n');
+    write(path.join(dir, 'fresh', 'two.txt'), 'c\n');
+
+    const status = await gitStatus(ws, 'working');
+    if (!status.ok) throw new Error(status.text);
+    expect(status.files.map((f) => [f.path, f.additions])).toEqual([
+      ['fresh/one.txt', 2],
+      ['fresh/two.txt', 1],
+    ]);
+
+    // And each is readable, which a collapsed `fresh/` row could not be.
+    const file = await gitFile(ws, 'working', undefined, 'fresh/one.txt');
+    if (!file.ok) throw new Error(file.text);
+    expect(file.modified).toBe('a\nb\n');
+    expect(file.patch).toContain('+b');
+  });
+
+  it('counts a staged file in a repository with no commits', async () => {
+    gitIn(dir, 'init', '-q', '-b', 'main');
+    write(path.join(dir, 'staged.txt'), 'one\ntwo\n');
+    gitIn(dir, 'add', 'staged.txt');
+
+    const status = await gitStatus(ws, 'working');
+    if (!status.ok) throw new Error(status.text);
+    expect(status.files).toEqual([{ path: 'staged.txt', status: 'added', additions: 2, deletions: 0 }]);
+  });
+
+  it.skipIf(process.platform === 'win32')('compares a symlink by its target text, never by what it points at', async () => {
+    repo();
+    write(path.join(dir, 'secret.txt'), 'SECRET\n');
+    fs.symlinkSync('secret.txt', path.join(dir, 'link'));
+
+    const untracked = await gitStatus(ws, 'working');
+    if (!untracked.ok) throw new Error(untracked.text);
+    expect(untracked.files.find((f) => f.path === 'link')).toMatchObject({ status: 'added', additions: 1 });
+
+    const link = await gitFile(ws, 'working', undefined, 'link');
+    if (!link.ok) throw new Error(link.text);
+    // The target path, not the target's bytes: following it would show a file the repository does
+    // not contain (and, for a link pointing outside, one the page was never meant to read).
+    expect(link.modified).toBe('secret.txt');
+    expect(link.patch).not.toContain('SECRET');
+
+    gitIn(dir, 'add', 'link');
+    gitIn(dir, 'commit', '-qm', 'link');
+    fs.unlinkSync(path.join(dir, 'link'));
+    fs.symlinkSync('other.txt', path.join(dir, 'link'));
+
+    const changed = await gitFile(ws, 'working', undefined, 'link');
+    if (!changed.ok) throw new Error(changed.text);
+    expect(changed.original).toBe('secret.txt');
+    expect(changed.modified).toBe('other.txt');
+    expect(changed.patch).toContain('+other.txt');
+  });
+
+  it('reports a git failure as an error, never as an empty change list', async () => {
+    repo();
+    const broken: Workspace = {
+      ...ws,
+      run: async (argv, o) => {
+        if (!argv.includes('status')) return ws.run(argv, o);
+        return { code: 128, output: Buffer.alloc(0), stderr: 'fatal: index file corrupt\n', truncated: false, timedOut: false };
+      },
+    };
+    expect(await gitStatus(broken, 'working')).toMatchObject({
+      ok: false,
+      reason: 'error',
+      text: expect.stringContaining('index file corrupt'),
+    });
+  });
+
+  it('reports a timeout as a timeout, not as a directory that is not a git repository', async () => {
+    const slow: Workspace = {
+      ...ws,
+      run: async (argv, o) =>
+        argv.includes('rev-parse')
+          ? { code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true }
+          : ws.run(argv, o),
+    };
+    const status = await gitStatus(slow, 'working');
+    expect(status).toMatchObject({ ok: false, reason: 'error' });
+    if (!status.ok) expect(status.text).toContain('timed out');
+  });
+
+  it('reports a command that never started, with the reason it gave', async () => {
+    const gone: Workspace = {
+      ...ws,
+      run: async () => ({
+        code: null,
+        output: Buffer.alloc(0),
+        stderr: '',
+        truncated: false,
+        timedOut: false,
+        spawnError: 'spawn git ENOENT',
+      }),
+    };
+    const status = await gitStatus(gone, 'working');
+    expect(status).toMatchObject({ ok: false, reason: 'error' });
+    if (!status.ok) expect(status.text).toContain('spawn git ENOENT');
+  });
+
+  it('keeps the whole list when only a numstat answer was cut off', async () => {
+    repo();
+    write(path.join(dir, 'base.txt'), 'a\nb\nc\n');
+    const cut: Workspace = {
+      ...ws,
+      run: async (argv, o) => {
+        const r = await ws.run(argv, o);
+        return argv.includes('--numstat') ? { ...r, truncated: true } : r;
+      },
+    };
+    const status = await gitStatus(cut, 'working');
+    if (!status.ok) throw new Error(status.text);
+    // Counts are absent when their command was cut off; the list is still the list.
+    expect(status.truncated).toBeUndefined();
+    expect(status.files).toEqual([{ path: 'base.txt', status: 'modified', additions: 0, deletions: 0 }]);
+  });
+
+  it('calls a cut-off patch tooLarge, because a patch that lost lines is not a diff', async () => {
+    repo();
+    write(path.join(dir, 'base.txt'), 'a\nb\nc\n');
+    const cut: Workspace = {
+      ...ws,
+      run: async (argv, o) => {
+        const r = await ws.run(argv, o);
+        return argv.includes('--patch') ? { ...r, truncated: true } : r;
+      },
+    };
+    expect(await gitFile(cut, 'working', undefined, 'base.txt')).toMatchObject({
+      ok: true,
+      tooLarge: true,
+      original: '',
+      modified: '',
+      patch: '',
+    });
+  });
+
+  it('refuses a branch list it could only read in part', async () => {
+    repo();
+    const cut: Workspace = {
+      ...ws,
+      run: async (argv, o) => {
+        const r = await ws.run(argv, o);
+        return argv.includes('for-each-ref') ? { ...r, truncated: true } : r;
+      },
+    };
+    expect(await gitBranches(cut)).toMatchObject({ ok: false, text: expect.stringContaining('too many branches') });
+    expect(await gitStatus(cut, 'branch', 'main')).toMatchObject({ ok: false, reason: 'error' });
+    // The working comparison needs no branch list, so it still answers.
+    expect((await gitStatus(cut, 'working')).ok).toBe(true);
+  });
+
+  it('compares against a branch whose name looks like a git option', async () => {
+    repo();
+    gitIn(dir, 'update-ref', 'refs/heads/--all', 'HEAD');
+    const status = await gitStatus(ws, 'branch', '--all');
+    expect(status).toMatchObject({ ok: true });
+  });
+
   it('hands the daemon a panel bound to a conversation workspace', async () => {
     repo();
     write(path.join(dir, 'new.txt'), 'new\n');
@@ -287,5 +450,30 @@ describe('git panel', () => {
       reason: 'error',
     });
     expect((await panel.branches(ref)).ok).toBe(true);
+  });
+
+  it('reuses the listing a status answer just read when a file is opened', async () => {
+    repo();
+    write(path.join(dir, 'base.txt'), 'a\nb\nc\n');
+    const ran: string[] = [];
+    const counted: Workspace = {
+      ...ws,
+      run: (argv, o) => {
+        ran.push(argv.join(' '));
+        return ws.run(argv, o);
+      },
+    };
+    const ref = { platform: 'web', channel: 'main', thread: 'a1b2c3d4', kind: 'direct' as const, user: 'owner' };
+    const panel = buildGitPanel(() => counted);
+
+    expect((await panel.status(ref, 'working')).ok).toBe(true);
+    const afterStatus = ran.length;
+    expect((await panel.file(ref, 'working', undefined, 'base.txt')).ok).toBe(true);
+    const forFile = ran.slice(afterStatus);
+    // The whole comparison — root, branches, merge base, status, stats — is not repeated: only
+    // the sides and the patch this one file needs.
+    expect(forFile.some((c) => c.includes('for-each-ref'))).toBe(false);
+    expect(forFile.some((c) => c.includes('--show-toplevel'))).toBe(false);
+    expect(forFile.some((c) => c.includes('status --porcelain'))).toBe(false);
   });
 });

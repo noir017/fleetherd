@@ -301,11 +301,12 @@ changed in the picker. A repository with no commits works too. Every path is rel
 repository root, also when the topic's directory is a subdirectory of it.
 
 Clicking a file shows its diff — one column or two, from the button in the bar; a phone opens on one
-column. Selecting lines in the diff offers **Comment**; the file, the line range, the selected lines
-in a code block and your comment are inserted into the composer, where you can edit them and send
-when you are ready. Several comments accumulate. Nothing is sent from the window. A browser where
-the code view is unavailable gets the plain patch with added and removed lines coloured instead;
-there is no line selection in that mode, so **Comment** is not offered.
+column. Selecting lines in the diff offers **Comment**; the file, the line range, which side of the
+diff they came from, the selected lines in a code block and your comment are inserted into the
+composer, where you can edit them and send when you are ready. Several comments accumulate. Nothing
+is sent from the window. A browser where the code view is unavailable gets the plain patch with
+added and removed lines coloured instead; there is no line selection in that mode, so **Comment** is
+not offered.
 
 The list refreshes when a turn in the topic ends, so it follows what the agent just did. Each row
 has an **Edit** button when the page also has a file editor; it opens that file at its path in the

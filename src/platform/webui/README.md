@@ -754,10 +754,12 @@ would produce — rather than a temporary index, because a remote host has no wa
 leaving it behind in the repository would be worse than one extra command per untracked file.
 
 **Line comments.** Selecting lines in a diff (the code view's `onSelect`) offers **Comment**; the
-text is inserted into the composer — never sent — as the file and line range, a fenced block of the
-selected lines, then the comment, with several comments separated by a blank line. Without
-`codeView()` there is no selection, so the comment affordance is **not offered**: the fallback is the
-unified patch with `+` and `−` coloured, which is readable but cannot say which lines were chosen.
+text is inserted into the composer — never sent — as the file, line range and side (`(old)` or
+`(new)`), a fenced block of the selected lines, then the comment, with several comments separated
+by a blank line. The side matters: an old-side line number read as a new-file line number points at
+the wrong line. Without `codeView()` there is no selection, so the comment affordance is **not
+offered**: the fallback is the unified patch with `+` and `−` coloured, which is readable but cannot
+say which lines were chosen.
 
 **Two callers.** `openGitWindow()` with no argument is the header's view. `openGitWindow({ title,
 statusUrl, fileUrl })` fixes the two addresses, hides the mode controls, and appends `&path=` to
