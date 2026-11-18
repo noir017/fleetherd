@@ -599,16 +599,26 @@ place elsewhere, or "topic gone". The page follows the list: every poll answer g
 `taskPageFollow`, which closes it when the task is gone, redraws the view unless a tag is being typed,
 and reads the detail again when a run started or ended.
 
-**Edit** turns the view into a form of the fields `editable` lists — the daemon's reading of
-`schedule edit`'s rules (`daemon/schedule-panel.ts` panelTaskDetail), so a fixed session offers no
-directory or model and a daily task no one-shot time — with what a task *is* (its kind, session and
-target) said once below rather than shown as greyed fields. Save sends only what changed
-(`taskEditDiff`): an emptied directory or model as `null`, and a one-shot task's time again when its
-zone changed so the time is read in the new zone. Values are set on the elements after the markup is
-in, because a textarea drops a leading newline it is parsed with. A refusal is the service's own
-sentence in `#task-note`, with the form kept; Close, Cancel or Escape on a form with changes asks
-first. Tag edits and refusals of the row actions are said on the page when it is open for that task,
-since it covers the panel's own note.
+**Edit** turns the view into the task form, and **+** in the panel's head (Tasks tab only) opens
+the same form empty (`openNewTask`, filled from `GET api/schedules/form`). The form holds everything
+`schedule add` takes: what it runs (an agent prompt or a bash command), the session, the agent, the
+model, the machine a command runs on, the directory, the timeout, the time and zone, "Posts to" and
+the tags. Which fields are on screen follows the shape the form is set to, from `shapes` — core's
+`SHAPE_SETTINGS`, handed over rather than copied — so switching a task to a fixed session hides its
+directory and model, and a daily one hides the one-shot switch; a hidden field keeps what was typed
+in it but is not sent. "Posts to" lists this page's topics by title (`{topic}`) and "Another chat…",
+an id `fleetherd channels` prints (`{channel}`, with the other instances' places as suggestions);
+the room turns a topic into its lane before the daemon parses either with `parseTarget`, as
+`--channel` is. Save sends only what changed (`taskEditDiff`): an emptied directory or model as
+`null`, a one-shot task's time again when its zone changed so the time is read in the new zone, and,
+when the kind changed, what the new kind runs with (its text, agent and session, or its machine).
+A new task sends everything filled in. Nothing about what a value may be is checked on the page —
+a refusal is the service's own sentence in `#task-note`, with the form kept; the page only says so
+when "Another chat…" is empty or a timeout is not a length of time. Values are set on the elements
+after the markup is in, because a textarea drops a leading newline it is parsed with. Close, Cancel
+or Escape on a form with changes asks first (on a new task, once anything was typed). Tag edits and
+refusals of the row actions are said on the page when it is open for that task, since it covers the
+panel's own note.
 
 A group marked `pinned` is drawn as one always-visible row under the search instead of folding
 into the panel, and both bars use it for their state filter: Status here (Running, Active,
@@ -657,13 +667,15 @@ three-state.
 **Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the five
 operations (pause, resume, run, remove and `tags`); the daemon builds it in
 `daemon/schedule-panel.ts` from `ScheduleService`, the same
-service the agent's `schedule` commands and `/setting schedule` use, plus `detail(id)` and
-`edit(id, change)` for the task's page. Four routes carry it: `GET api/schedules`,
-`POST api/schedules/op` (`ScheduleOpRequestSchema`), `GET api/schedules/task?id=` and
+service the agent's `schedule` commands and `/setting schedule` use, plus `detail(id)`, `form()`,
+`add(task)` and `edit(id, change)` for the task's page. Six routes carry it: `GET api/schedules`,
+`POST api/schedules/op` (`ScheduleOpRequestSchema`), `GET api/schedules/task?id=`,
 `POST api/schedules/edit` (`ScheduleEditRequestSchema`: only the changed fields, each bounded in size,
-strict). An edit is `ScheduleService.editFromPanel` — `schedule edit`'s rules, with a typed directory
-read as an absolute path on the machine the task runs on and checked there, and the updated card
-posted to the conversation the task posts to. The task list pulls when the panel opens, after every action, and on a
+strict), `GET api/schedules/form` and `POST api/schedules/add` (`ScheduleAddRequestSchema`: the same
+fields, with a target). An edit is `ScheduleService.editFromPanel` and a new task
+`ScheduleService.addFromPanel` — `schedule edit`'s and `schedule add`'s rules, with a typed directory
+read as an absolute path on the machine the task runs on and checked there, and the card posted to
+the conversation the task posts to (and, for a move, to the one it left). The task list pulls when the panel opens, after every action, and on a
 timer while visible (5s while a run is in flight, 30s otherwise) — the daemon has no event for a
 run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
 arrives formatted in the task's own zone.
@@ -675,10 +687,14 @@ routes are `GET api/reviews` and `POST api/reviews/op` — the latter takes one 
 verb that starts, changes or undoes a review, because a review has no writer but the sweep. The list is pulled
 when the tab is selected and on the panel's timer while it is the visible one.
 
-**What it cannot do.** It does not create tasks. Creation is a sentence to an agent in a topic, and
-letting the page POST a prompt or a command would put a bash injection surface behind the login
-form. Deleting asks twice, like the chat menu, and a refusal from the daemon is shown as its own
-sentence rather than a generic failure.
+**Creating tasks.** The page used not to create tasks, on the reasoning that a page POSTing a
+prompt or a command would put a bash surface behind the login form. The edit route already took a
+command from the page (since 3.9.0), and the reasoning does not hold for either: whoever holds this page's
+session can ask an agent in any topic to run any command, which is invariant 1 of AGENTS.md — the
+login is the gate on running commands here, not the absence of a form. So creation goes through the
+same service, the same rules and the same card as an agent's `schedule add`, and the routes take
+only bounded, strict bodies. Deleting asks once, like deleting a topic, and a refusal from the daemon
+is shown as its own sentence rather than a generic failure.
 
 ## The skills page
 
@@ -2256,7 +2272,10 @@ answer a switch made stale (dropped and asked again), an archive suggestion in R
 same with the window shut, a show re-opened after a switch interrupted it, two shows racing, a
 refresh held behind a switch, the refresh button turning a silent request into a manual one, a
 cache of the wrong shape or a malformed row, a daemon with no store keeping no cache, and a reload
-that starts from `aa_skills`. So is the settings page — the menu's quiet request, a
+that starts from `aa_skills`. So is the task form — **+** opening it from the daemon's defaults and Add sending `schedule add`'s
+fields, a refusal kept on the form, the fields following the kind and session it is switched to,
+a change of kind sending what the new kind runs with, and "Posts to" moving a task to another topic
+or an id typed in. So is the settings page — the menu's quiet request, a
 typed `/setting`, a row tap, a retired screen, and every way out — and the scheduled panel's
 drawer is asserted by slicing the `@media(max-width:1023px)` block, since jsdom cannot evaluate
 it. The Reviews tab is driven there too: the list (and the absence of a quota line), a review

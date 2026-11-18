@@ -6673,7 +6673,7 @@ describe('webui page: the narrow-screen stylesheet', () => {
 
   it('enlarges the panel header icons on phones to match header glyphs', () => {
     const css = narrowBlock();
-    expect(css).toContain('#clear-topics svg,#read-topics svg,#sched-read svg{width:18px;height:18px}');
+    expect(css).toContain('#clear-topics svg,#read-topics svg,#sched-read svg,#sched-new svg{width:18px;height:18px}');
   });
 
   it('gives the drawer toggle a finger-sized target', () => {

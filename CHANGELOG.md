@@ -5,6 +5,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled tasks can be created in the web UI.** The task panel managed and edited tasks but
+  could not make one: every new task was a sentence to an agent in a topic, which costs a turn of
+  that agent and a round of "did it register what I meant" for something the person could have
+  filled in directly. The **+** in the panel's head opens the same form **Edit** uses, now holding
+  everything `schedule add` takes — what it runs (an agent prompt or a bash command), the session,
+  the agent, the model, the machine a command runs on, the directory, the timeout, the time and
+  zone, where it posts (a topic of the page by name, or any id `fleetherd channels` prints) and the
+  tags. It goes through the same service and rules as `schedule add`, so a refusal is the CLI's
+  sentence, and the conversation the task posts to gets the same card. The page used not to create
+  tasks so as not to put a command form behind the login, but the edit form already took commands,
+  and whoever holds the page can ask an agent to run any command anyway: the login is the gate.
+
+### Changed
+
+- **An edit can change what a task is, how it runs and where it posts.** `schedule edit` refused
+  prompt ↔ bash, `--session` and `--channel` with "`rm` it and add a new one", which threw away the
+  task's id, its tags and its run history — the record of how it had been going — for a change of
+  mode or of room. Now `--prompt` turns a bash task into a prompt task, `--bash` the reverse,
+  `--session` changes the mode and `--channel` moves it, from the CLI, the native tool and the web
+  UI's form alike, through the one rule `schedule add` uses. The id, tags, run count, history and
+  last result stay; a setting the new shape has no place for is left behind (a task turned into a
+  fixed session runs in its topic's directory and model); a task that becomes a fixed session gets
+  24 hours from the edit, as a new one would, while one that stays in its conversation keeps its
+  window. A moved task's card goes to the conversation it left as well as the one it now posts to.
+- **A bash task's machine can be chosen.** It ran where the agent that registered it did, and
+  `--host` was refused for it, so a command could not be moved off a host or registered for one
+  from elsewhere. `--host <id>` on a bash task is now the machine that runs it, on `add` and `edit`,
+  with its directory checked there; `--host gateway` names the gateway's own machine.
+
 ## [3.11.0] - 2026-11-18
 
 ### Added

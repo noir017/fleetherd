@@ -155,11 +155,19 @@ running half. `buildTask` turns `schedule add` into a task or into a sentence na
 the fix (the reader is an agent that retries with whatever it is told). `editTask` changes an
 existing one by merging it with what was given and running the result through the same `buildTask`
 — so the rules are add's, word for word — then putting back what an edit must not touch: the id,
-`createdAt`, the run count, the last result, the state and a fixed-session task's original 24 h
-window. A changed time rule resets `lastPlannedAt` to now, so an edit never catches up a run that
-never existed; an unchanged one keeps it, so a rename cannot swallow a due run. A daily task whose
-agent or directory changes drops today's `daySession`, because the topic keeps its agent: the next
-run opens a new topic for the rest of the day. `decide` is the whole
+`createdAt`, the tags, the run count, the history, the last result and the state. An edit may change
+what a task IS: `--prompt` on a bash task, `--bash` on a prompt task, `--session`, and the target
+(the context's, as for add). What the task had carries over only where its new shape keeps a place
+for it — `SHAPE_SETTINGS`, the table of which settings each of bash/fixed/new/daily keeps, checked
+against `buildTask` setting by setting in the tests and handed to the web UI's form so it shows the
+same fields. A fixed-session task keeps its original 24 h window only while it stays a fixed session
+in the same conversation; one that becomes fixed (from another mode, or moved to another
+conversation) gets add's window from the edit, and one that stops being fixed has none. A changed
+time rule resets `lastPlannedAt` to now, so an edit never catches up a run that never existed; an
+unchanged one keeps it — a change of kind or target included — so an edit cannot swallow a due run.
+A daily task whose agent, directory or target changes, or that stops being daily, drops today's
+`daySession`, because the topic keeps its agent and was opened under the old target: the next run
+opens a new topic for the rest of the day. `decide` is the whole
 timing policy: the next planned time strictly after the last one handled, catch-up to the
 LATEST missed time within an hour, a fixed-session window of 24 h. Times are computed with
 [croner](https://github.com/hexagon/croner) (MIT, no dependencies, time-zone and DST aware) given
@@ -174,7 +182,9 @@ after midnight still joins the day it was meant for.
 
 `--model` is accepted only for a new- or daily-session task: the model belongs to the
 conversations the task opens, not to the person's topic a fixed-session task runs in, so
-`buildTask` refuses it there (and on a bash task, which has no model). `describeRun` and
+`buildTask` refuses it there (and on a bash task, which has no model). A bash task's `--host` is the
+machine it runs on (by default the registering agent's); `null` — `--host gateway` — is the gateway's
+own machine. `describeRun` and
 `taskView` carry it, so the card, the list, the panel and `schedule show` say what the run will
 use.
 

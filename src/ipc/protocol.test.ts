@@ -36,6 +36,8 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'schedule-edit', id: 'a1b2c3', agent: 'oc', cwd: '/srv/app', cron: '0 9 * * *' },
     { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'p', tags: ['ci', 'release'] },
     { kind: 'schedule-edit', id: 'a1b2c3', tags: [] },
+    // An edit may change what a task is and where it posts: the session and --channel ride with it.
+    { kind: 'schedule-edit', id: 'a1b2c3', session: 'daily', channelId: 'tg:-100/7', prompt: 'brief' },
     { kind: 'schedule-list' },
     { kind: 'schedule-list', id: 'a1b2c3' },
     { kind: 'schedule-op', id: 'a1b2c3', op: 'remove' },
@@ -109,8 +111,8 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['schedule-op zero wait', { token: TOKEN, action: { kind: 'schedule-op', id: 'a', op: 'run', waitMs: 0 } }],
     ['schedule-list with a channel', { token: TOKEN, action: { kind: 'schedule-list', channelId: 'c' } }],
     ['schedule-edit missing id', { token: TOKEN, action: { kind: 'schedule-edit', name: 'x' } }],
-    ['schedule-edit with a session', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', session: 'new' } }],
-    ['schedule-edit with a channel', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', channelId: 'c' } }],
+    ['schedule-edit with a session that is not one', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', session: 'forever' } }],
+    ['schedule-edit with an empty channel', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', channelId: '' } }],
     ['schedule-edit empty prompt', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', prompt: '' } }],
     // Task commands are strict too, and their bounds are real.
     ['task-new empty agent', { token: TOKEN, action: { kind: 'task-new', agent: '', text: 'x' } }],
