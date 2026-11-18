@@ -476,6 +476,29 @@ function pageOf(terminal: boolean, password: boolean, terminalEnd: boolean, code
   return renderPage('Chat', terminal, password, terminalEnd, codeview ?? null, files);
 }
 
+/**
+ * Every window a test opened, closed when that test ends. A jsdom window running the page keeps its
+ * timers, its fake EventSource and the whole page script alive until it is closed, and this file
+ * opens hundreds of them: left open, one vitest worker's heap passed 2 GB and the worker died in
+ * the full suite (2026-11-18, once the git and file windows had grown the page).
+ */
+const liveWindows: Array<{ close(): void }> = [];
+afterEach(async () => {
+  const windows = liveWindows.splice(0);
+  if (windows.length === 0) return;
+  // A test can end with the page still finishing something it started — a transcript read from the
+  // fake IndexedDB, a paint after it. Closed under it, that continuation finds no document and
+  // throws after the test has passed; a few turns of the loop let it land in a live window first.
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  for (const w of windows) {
+    try {
+      w.close();
+    } catch {
+      // Already closed by the test itself.
+    }
+  }
+});
+
 async function open(
   opts: {
     url?: string;
@@ -701,6 +724,7 @@ async function open(
       };
     },
   });
+  liveWindows.push(dom.window);
 
   await tick();
   const doc = dom.window.document;
