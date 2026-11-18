@@ -2,6 +2,7 @@ import { ConfigSchema, findAgent, REVIEW_ARGS_HARNESSES, type Config, type Sessi
 import { configDir, configPath, readRawConfigIfExists, saveConfigPatch } from '../config/load.js';
 import { readPods, mergePodAgents } from '../config/pods.js';
 import { POD_FILE } from './pods.js';
+import { parseLevel } from '../core/permission-levels.js';
 import {
   parseSettingValue,
   readSettingValue,
@@ -52,6 +53,13 @@ export interface SettingsLiveHooks {
    * at the next `task-new` — the value it would compare against is the same again.
    */
   onDelegationChanged(): void;
+
+  /**
+   * An agent's permission level changed: put its running sessions in the new level's mode now.
+   * The other half — whether a request waits for the person — needs no hook: the runtime reads the
+   * level off the definition this store mutates, per request.
+   */
+  onPermissionsChanged(agentId: string): void;
 }
 
 export class SettingsStore {
@@ -115,8 +123,7 @@ export class SettingsStore {
     // agent children sit resident until reclaim. The file is the durable answer; the ack says so.
     if (row.effect !== 'restart') {
       applyToConfig(this.config, row, parsed.value);
-      if (row.id === 'idle') this.live.onIdleTimeout(Number(parsed.value));
-      if (row.id === 'delegation') this.live.onDelegationChanged();
+      this.notifyLive(row, parsed.value);
     }
 
     console.log(
@@ -129,6 +136,13 @@ export class SettingsStore {
       ...(parsed.note ? { note: parsed.note } : {}),
       ...(overridden ? { overridden } : {}),
     };
+  }
+
+  /** Tell the running daemon about a change whose effect is more than the field (SettingsLiveHooks). */
+  private notifyLive(row: SettingRow, value: string | number | boolean | undefined): void {
+    if (row.id === 'idle') this.live.onIdleTimeout(Number(value));
+    if (row.id === 'delegation') this.live.onDelegationChanged();
+    if (row.id === 'permissions' && row.target) this.live.onPermissionsChanged(row.target);
   }
 
   /**
@@ -215,6 +229,11 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
     case 'model':
       applyModel(cfg, row, value);
       return;
+    case 'permissions':
+      // Live: the runtime reads the level off this definition per permission request, and the
+      // onPermissionsChanged hook moves running sessions to its mode.
+      applyPermissions(cfg, row, value);
+      return;
     case 'delegation':
       // Live: Delegation.propose reads this per `task-new`, so the very next proposal follows it —
       // including one an agent is about to make in the turn that asked for the change. `first` is
@@ -244,23 +263,9 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
       // Live, for the same reason: read when each voice note's transcription request is built.
       if (cfg.voice) cfg.voice.cleanup = Boolean(value);
       return;
-    case 'review.agent': {
-      // Live: ReviewService.reviewer() re-reads `review` at the start of every sweep (every
-      // minute), and the sweep in flight re-reads it before each candidate — so this lands on the
-      // next pass, not on a restart. Off deletes the whole block because the schema requires a
-      // reviewer whenever `review:` exists (the patch's `emptied` does the same to the file). An
-      // agent replaces an endpoint, and sheds the args only another kind of harness reads — the
-      // same two keys reviewCompanions deletes from the file.
-      if (value === undefined) {
-        delete cfg.review;
-        return;
-      }
-      const next = { ...cfg.review, agent: String(value) };
-      delete next.api;
-      if (!reviewTakesArgs(cfg, String(value))) delete next.args;
-      cfg.review = next;
+    case 'review.agent':
+      applyReviewAgent(cfg, value);
       return;
-    }
     case 'review.model':
       // Live for the same reason: runOne reads `review.model` per review, so a review that starts
       // after this write uses it. parseSettingValue refuses this when no reviewer is set, so the
@@ -277,6 +282,25 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
 }
 
 /**
+ * A `review.agent` write. Live: ReviewService.reviewer() re-reads `review` at the start of every
+ * sweep (every minute), and the sweep in flight re-reads it before each candidate — so this lands
+ * on the next pass, not on a restart. Off deletes the whole block because the schema requires a
+ * reviewer whenever `review:` exists (the patch's `emptied` does the same to the file). An agent
+ * replaces an endpoint, and sheds the args only another kind of harness reads — the same two keys
+ * reviewCompanions deletes from the file.
+ */
+function applyReviewAgent(cfg: Config, value: string | number | boolean | undefined): void {
+  if (value === undefined) {
+    delete cfg.review;
+    return;
+  }
+  const next = { ...cfg.review, agent: String(value) };
+  delete next.api;
+  if (!reviewTakesArgs(cfg, String(value))) delete next.args;
+  cfg.review = next;
+}
+
+/**
  * A copy of the config to validate a change against. Shallow, but covering every branch
  * applyToConfig can touch, so the live config is untouched if validation fails — and `platforms`
  * is shared by reference deliberately: nothing here writes to it.
@@ -290,6 +314,7 @@ function candidateOf(config: Config): Config {
     agents: config.agents.map((a) => ({ ...a })),
     ...(config.review ? { review: { ...config.review } } : {}),
     ...(config.podModels ? { podModels: { ...config.podModels } } : {}),
+    ...(config.podPermissions ? { podPermissions: { ...config.podPermissions } } : {}),
   };
 }
 
@@ -313,6 +338,19 @@ function applyModel(cfg: Config, row: SettingRow, value: string | number | boole
     return;
   }
   if (def) def.model = value === undefined ? undefined : String(value);
+}
+
+/**
+ * A permission row's write, in place on the definition for the reason applyModel gives. A pod's
+ * agent is written to `podPermissions` and its merged level follows it; the row offers no clearing,
+ * so there is no pod value to fall back to here.
+ */
+function applyPermissions(cfg: Config, row: SettingRow, value: string | number | boolean | undefined): void {
+  const level = parseLevel(String(value));
+  const def = findAgent(cfg, row.target ?? '');
+  if (!level || !row.target) return;
+  if (row.pod) cfg.podPermissions = { ...(cfg.podPermissions ?? {}), [row.target]: level };
+  if (def) def.permissions = level;
 }
 
 /**

@@ -43,6 +43,9 @@ const RELOAD_KIND = {
   // conversations are respawned like any other model edit. The copy keeps cfg.podModels true to the
   // file, which is what `/setting` reads to say where a model comes from.
   podModels: 'live',
+  // Live, the same way: folded into each pod agent's `permissions` before the copy, so a change
+  // is that agent changed.
+  podPermissions: 'live',
   // Live: the review service reads config.review on every sweep, and one already queued is
   // abandoned rather than run against a definition the operator just removed.
   review: 'live',

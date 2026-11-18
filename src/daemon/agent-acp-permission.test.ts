@@ -69,12 +69,6 @@ describe('permissionResponse', () => {
     });
   });
 
-  it('answers an unattended run as permissions: auto would', () => {
-    expect(permissionResponse(REQUEST, { kind: 'unattended' })).toEqual({
-      outcome: { outcome: 'selected', optionId: 'allow-once' },
-    });
-  });
-
   it('cancels with the turn', () => {
     expect(permissionResponse(REQUEST, { kind: 'cancelled' })).toEqual({ outcome: { outcome: 'cancelled' } });
   });

@@ -11,6 +11,7 @@ and restarting, which stops every resident agent.
 |---|---|---|---|
 | default agent | `routing.default` | any configured agent id | immediately |
 | an agent's default model | `agents[].model`, or `podModels` for an agent a host's pod declares | that agent's reported models, any name, or `-` to clear | its next agent session (`/new` starts one) |
+| an agent's [permission level](agents.md#permission-levels) | `agents[].permissions`, or `podPermissions` for an agent a host's pod declares | the levels that agent's harness has a mode for: `plan`, `ask`, `edits`, `auto`, `full` | immediately — running sessions switch mode, and the next request is answered the new way |
 | confirm sub-agent starts | `delegation.confirm` | `on`, `first`, `off` (default `on`) | immediately — the next `task-new` in a topic you talk to directly. `first` asks once per agent per conversation and remembers in memory only, so a restart, another conversation, or a change of tier asks again; a sub-agent's topic still confirms every time |
 | idle reclaim window | `session.idleTimeoutMs` | `off`, `15m`, `4h`, … | immediately |
 | conversation scope | `session.scope` | `per_thread`, `per_channel`, `per_user`, `shared` | after a restart |
@@ -25,6 +26,7 @@ and restarting, which stops every resident agent.
 /setting idle                  →  what that one accepts, and its current value
 /setting idle 4h               →  set it, on any platform
 /setting model.cc opus         →  the model an agent starts its sessions with
+/setting permissions.cx ask    →  how much an agent may do without you
 ```
 
 Where buttons can be posted *and* replaced (Discord, Telegram, Slack, Lark) the
@@ -35,7 +37,7 @@ never advertised (`opusplan`) is taken as typed.
 
 In the web UI `/setting` is a settings page: **All settings** in the ⚙ menu at the
 foot of the topic list opens it, and typing `/setting` does the same. It is one
-column of sections — Agents, Default model, Sub-agents, Conversations, Replies,
+column of sections — Agents, Default model, Permissions, Sub-agents, Conversations, Replies,
 Voice, Reviews — and each row is changed in place with the control that fits it:
 
 - **on/off** (sub-agent confirmation, live streaming, the two voice switches) is a
@@ -62,6 +64,14 @@ running session of that agent, so where none is running the gateway starts one j
 to ask, then stops it — a second or two, once per agent until it is redefined — and
 the screen says *Asking … for its models* meanwhile. An agent whose harness offers
 no model choice, or that does not start, says which, and a name can still be typed.
+
+**Permissions** is a row per agent too. Its levels are the ones that agent's harness has a mode
+for, so they come from a running session the same way a model list does: until the gateway knows
+them the row opens a screen of its own, which asks (*Asking … for its modes*), and from then on the
+levels are a control on the row. Each level names the harness's mode it means — *ask (Read-only)*
+on Codex, *ask (Manual)* on Claude Code. Changing it from chat is safe enough to offer because only
+a person reaches `/setting` — nothing an agent sends, schedules or hands a sub-agent is read as a
+command — and anyone who can type here could already answer the agent's permission buttons.
 
 **An agent a host's pod declares** (`<id>@<host>`, see [remote hosts](remote-hosts.md))
 is set the same way. Its value is written to `podModels` in the gateway's config.yaml,

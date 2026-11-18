@@ -7,6 +7,7 @@ import type {
   ModelSelector,
   PermissionAnswer,
   QuotaPool,
+  SessionModeSelector,
   SteerOutcome,
   ToolEvent,
   ToolFinishEvent,
@@ -15,8 +16,9 @@ import type {
 import type { PromptImageType } from '../core/attachment-ingest.js';
 // ModelSelector lives in types.ts rather than here: core/model-menu.ts renders it into a paginated
 // button menu, and core may not import daemon/. Re-exported so the runtimes keep one import site.
-// EffortSelector likewise, for core/effort-menu.ts; SteerOutcome for core/inbound-merger.ts.
-export type { EffortSelector, ModelSelector, SteerOutcome };
+// EffortSelector likewise, for core/effort-menu.ts; SteerOutcome for core/inbound-merger.ts;
+// SessionModeSelector for core/settings.ts.
+export type { EffortSelector, ModelSelector, SessionModeSelector, SteerOutcome };
 
 /**
  * Thin wrapper over the agent runtime (ACP implementation in agent-acp.ts). One AgentSession per session
@@ -82,12 +84,12 @@ export interface AgentStreamHandlers {
    */
   onElicit?(request: AgentElicitation): Promise<ElicitAnswer>;
   /**
-   * The agent asks leave to run a tool, and its agent is configured `permissions: ask`: put it to
-   * the user and resolve with what became of it (see PermissionAnswer). Same lane and same
+   * The agent asks leave to run a tool, and its permission level asks (`plan`, `ask`, `edits`): put
+   * it to the user and resolve with what became of it (see PermissionAnswer). Same lane and same
    * blocking contract as onElicit.
    *
    * Absent means nobody can be asked, and the runtime declines with the agent told why — never
-   * approves, since `ask` is a promise that nothing runs unseen.
+   * approves, since a level that asks is a promise that nothing it asks about runs unseen.
    */
   onPermission?(request: AgentPermissionRequest): Promise<PermissionAnswer>;
   /**
@@ -325,6 +327,18 @@ export interface AgentSession {
    * Rejects when the live session offers no levels or the harness refuses the value.
    */
   setEffort?(value: string): Promise<string>;
+  /**
+   * The live session's modes, or undefined when there is no session or its harness reports none.
+   * Non-spawning, like modelSelector; the settings screen reads it to offer the permission levels
+   * this agent's harness can honour (core/permission-levels.ts offeredLevels).
+   */
+  permissionModes?(): SessionModeSelector | undefined;
+  /**
+   * Put the live session in the mode its agent's permission level means, after `/setting` changed
+   * the level (agent-acp.ts applyPermissionLevel). A no-op without a live child — the next start
+   * applies it — and best-effort: it never rejects.
+   */
+  applyPermissions?(): Promise<void>;
   /**
    * Whether this session's resident child could be shut down right now without losing anything.
    *

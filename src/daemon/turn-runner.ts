@@ -35,23 +35,21 @@ import type { TurnChangesHandle } from './turn-changes.js';
 
 /**
  * The sender a scheduled run's message carries (ConversationRegistry.runScheduledPrompt). Exported
- * so the one place that writes it and the one that reads it — a scheduled turn is unattended, see
- * runTurn — cannot drift apart.
+ * so the one place that writes it and the ones that read it (historyTriggerOf) cannot drift apart.
  */
 export const SCHEDULED_SENDER = 'schedule';
 
 /**
  * The sender an automatic continue carries (hooks.turnFailed, see turn-outcomes.ts). Distinct from
  * SCHEDULED_SENDER on purpose: a continue is the operator's own word sent on their behalf, and the
- * person may well be watching — so a `permissions: ask` agent still asks them, where a scheduled run
- * is answered as unattended.
+ * library files it as one.
  */
 export const CONTINUE_SENDER = 'continue';
 
 /**
  * The sender of what another conversation's agent hands a sub-agent (task-new once the person
  * confirmed it, task-send — daemon/delegation.ts). Attended like CONTINUE_SENDER: the person is
- * there, in the topic that opened this one, and a `permissions: ask` agent still asks them.
+ * there, in the topic that opened this one, and an agent whose permission level asks still asks them.
  */
 export const DELEGATE_SENDER = 'delegated';
 
@@ -150,15 +148,11 @@ function attachmentNames(batch: InboundMessage[]): string[] {
   return names;
 }
 
-/**
- * The handlers a turn hands the agent. A scheduled run has nobody watching for a permission
- * request, so it is answered as `permissions: auto` would — asking would only hold the run for the
- * ask timeout and then decline it.
- */
-function turnHandlers(batch: InboundMessage[], handlers: AgentStreamHandlers): AgentStreamHandlers {
-  const unattended = batch.every((m) => m.conversation.user === SCHEDULED_SENDER);
-  return unattended ? { ...handlers, onPermission: async () => ({ kind: 'unattended' }) } : handlers;
-}
+// A scheduled run's permission requests are put to the person like any other turn's. They used to
+// be approved, on the reasoning that nobody watches a scheduled run; but an agent can schedule its
+// own prompts (`fleetherd schedule`), so an agent set to ask could approve itself by asking later,
+// and a level that asks has to mean no request is approved without the person (AGENTS.md security
+// invariant 1). An agent whose level does not ask approves them anyway, scheduled or not.
 
 /**
  * Introduces a message that was NOT asked for in the moment — the agent reporting back on work
@@ -688,7 +682,7 @@ export class TurnRunner {
         request: AgentElicitation
       ): Promise<ElicitAnswer>;
       /**
-       * An agent configured `permissions: ask` asks leave to run a tool. Same lane rule as
+       * An agent whose permission level asks (plan, ask, edits) asks leave to run a tool. Same lane rule as
        * onElicitRequest; the answer says what became of it (see PermissionAnswer).
        */
       onPermissionRequest?(
@@ -828,7 +822,7 @@ export class TurnRunner {
         changes = await this.beginTurnChanges(conversationId, last.conversation, platform, address);
         await agent.runTurn(
           { prompt, ...(images.length > 0 ? { images } : {}), sessionToken, model: this.deps.getModelOverride(conversationId) },
-          turnHandlers(batch, render.handlers)
+          render.handlers
         );
       }
       if (stopped()) {

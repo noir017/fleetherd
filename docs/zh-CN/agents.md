@@ -14,7 +14,7 @@
 ACP 智能体，按 `custom` 启动。
 
 每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[固定会话选项](#固定会话选项)、
-[启动前钩子](#启动前钩子)、[权限策略](#权限请求)，以及[额度命令](#额度命令)。
+[启动前钩子](#启动前钩子)、[权限等级](#权限等级)，以及[额度命令](#额度命令)。
 设了 `host:` 就跑在另一台机器上、经 ssh 连接，见[远程主机](remote-hosts.md)。支持会话恢复
 的智能体，上下文可跨重启保留；智能体自己声明的斜杠命令不会全局注册，而是通过
 它的 `/<agent>` 菜单调出（见[聊天命令](chat-commands.md#智能体命令)）。
@@ -140,26 +140,61 @@ ACP 智能体也可能以 `stopReason: refusal` 结束一轮，而不是给出�
 是模型自己拒答：只有这一轮没有任何可见输出才算失败，归为 `request`；已经先发过解释的（Claude
 会把拒答解释当普通消息发出来）正常结束，那段解释就是回答。
 
-## 权限请求
+## 权限等级
 
-有的智能体在用工具前会先请求权限：Claude Code 在默认模式下，执行命令、改文件都会问。默认
-（`permissions: auto`）守护进程会全部批准，智能体拥有完整工具权限，唯一的门禁是 `access.allowFrom`。
-设成 `permissions: ask` 就改成问你：
+`permissions` 决定智能体不经你同意能做多少事。一个等级同时定两件事：harness 跑在哪个会话模式下（这决定它会问什么），
+以及网关怎么处理它问的——直接批准，还是在聊天里用按钮问你。
+
+| 等级 | 网关 | harness 的模式 |
+|---|---|---|
+| `plan` | 问你 | 它的计划模式：先出方案再动手 |
+| `ask` | 问你 | 改文件、跑命令前都会问的模式 |
+| `edits` | 问你 | 工作目录里改文件直接放行、跑命令前问的模式 |
+| `auto` | 批准 | 由它发请求、而不是自己内部决定的模式 |
+| `full` | 批准 | 它的免确认模式：什么都不问，也没有沙箱 |
 
 ```yaml
 agents:
-  - id: cc
-    harness: claude
+  - id: cx
+    harness: codex
     permissions: ask
 ```
 
-- 每个请求会在聊天里发一条消息，写着要执行的命令，按钮是智能体自己给的选项（「Allow」「Reject」等）。
+各 harness 自己报告有哪些模式，某个等级只在它有对应模式时才提供——2026-11-18 实测：
+
+| harness | `plan` | `ask` | `edits` | `auto` | `full` |
+|---|---|---|---|---|---|
+| Claude Code（`claude`） | `plan` | `default` | `acceptEdits` | `default` | `bypassPermissions`¹ |
+| Codex（`codex`） | — | `read-only` | `workspace-write` | `workspace-write` | `agent-full-access` |
+| OpenCode（`opencode`） | `plan` | — | — | `build` | — |
+| CodeBuddy（`custom`） | `plan` | `default` | `acceptEdits` | `default` | `bypassPermissions` |
+| agy、gemini、dsh | — | — | — | （不改） | — |
+
+¹ claude-agent-acp 以 root 身份、不在沙箱里运行时不提供：Claude Code 在那种环境下拒绝这个模式。
+
+- 不写 `permissions` 就是有等级之前的行为：所有请求一律批准，harness 保持它启动时的模式（它自己的设置，或
+  `options.mode` 钉的值）。显示为 `auto`；明确设成 `auto` 时，会把 harness 放进上表里的模式。
+- 在聊天里用 `/setting permissions.<智能体> <等级>` 修改，或在[设置页](settings.md)该智能体那一行改；pod 声明的
+  智能体写进 `podPermissions`。改动立即生效：正在运行的会话马上切到新模式，下一个请求按新等级处理。harness
+  仍可能自己切模式——比如你批准了 Claude Code 的计划，它就会离开 `plan`——而会话重新开始时（`/new`、重启、
+  空闲回收）会回到等级对应的模式。
+- 每个请求会在聊天里发一条消息，写着智能体要做什么，按钮是智能体自己给的选项（「Allow」「Reject」等）。
   点按钮作答；直接打字的话，那句话会作为你的下一条消息交给智能体。
 - 1 小时没人点就自动拒绝。智能体会被明确告知是没人回应，不是你拒绝的，这一轮继续进行。半小时时会提醒一次。
 - `/stop` 会连同这一轮一起取消待处理的请求。
-- 定时任务始终自动批准，因为没人在场作答。
+- 定时任务也会问。以前是自动批准，但智能体可以给自己排定时任务，设成要问的智能体就能借「稍后再问」绕过你。
 - 没有按钮的平台（钉钉、企业微信）没法问，请求会被拒绝，同样会告诉智能体原因。
-- 只影响会请求权限的智能体。实测 Codex（`agent` 模式）和 OpenCode 执行写文件的命令时都没有问；`agy` 执行命令前会问，在工作目录里写文件不问。
+
+每个模式具体做什么由 harness 决定。下面是 2026-11-18 在一轮「写一个文件、跑一条命令」里实测到的：
+
+- **Codex。** `read-only` 和 `workspace-write` 改文件和跑命令前都会问。它的命令在自己的沙箱里跑，沙箱起不来时
+  （没有 user namespace 的容器）命令会失败，除非 Codex 申请在沙箱外运行——它不一定会申请。这种环境下能跑命令的
+  是 `full`。不设等级时 Codex 停在 `agent` 模式，它内部的审核会直接拒掉改文件和跑命令，不问任何人。
+- **OpenCode。** 它的模式是 agent，不是权限模式：`build` 什么都不问，除非 opencode.json 里把 `permission`
+  设成 `ask`；`plan` 只读。
+- **CodeBuddy。** `plan` 下每个动作都问，只读命令也问，卡片上还会给出「退出计划模式」的选项。
+- **agy。** 不使用它的模式。当天读不到（登录已失效），而且上次实测时它的 `default` 模式跑命令前会问、在工作
+  目录里写文件却不问。设成要问的等级时，agy 实际发出的请求仍然会交给你。
 
 ## 额度命令
 
@@ -186,7 +221,7 @@ agents:
 ## Antigravity（`agy`）
 
 `agy` 以 `agy acp` 运行——agy 从 1.5 起自带的 ACP 服务端——所以流式输出、工具气泡、
-[权限请求](#权限请求)、多轮上下文、重启续接、`/model`、`/effort`、`/stop`、skills 和两个
+[权限请求](#权限等级)、多轮上下文、重启续接、`/model`、`/effort`、`/stop`、skills 和两个
 [原生工具](agent-actions.md)都与其他 ACP harness 一致。不同之处：
 
 - **它自带的斜杠命令改由独立进程应答。** `/usage`、`/credits` 以及 `agy -p /help` 列出的其余

@@ -896,6 +896,7 @@ export class ConversationRegistry {
     this.settings = new SettingsStore(this.config, {
       onIdleTimeout: () => this.rearmIdleSweeper(),
       onDelegationChanged: () => this.hooks?.onDelegationSettingChanged?.(),
+      onPermissionsChanged: (agentId) => this.applyPermissionsLive(agentId),
     });
 
     this.startIdleSweeper();
@@ -2284,8 +2285,12 @@ export class ConversationRegistry {
       return;
     }
     const detail = (): void => reply(settingDetailText(row, this.config, this.settingsContext(key, fallbackAgent)));
-    // The text answer waits for the list, since it cannot be redrawn once sent.
-    if (row.id === 'model' && row.target && this.modelCatalog.shouldAsk(row.target)) {
+    // The text answer waits for the list (or the modes), since it cannot be redrawn once sent.
+    const waits =
+      row.target !== undefined &&
+      ((row.id === 'model' && this.modelCatalog.shouldAsk(row.target)) ||
+        (row.id === 'permissions' && this.modelCatalog.shouldAskModes(row.target)));
+    if (waits && row.target) {
       void this.modelCatalog.ask(row.target).then(detail);
       return;
     }
@@ -2307,8 +2312,21 @@ export class ConversationRegistry {
       boundAgent,
       models: this.agents.peek(key)?.modelSelector?.()?.options ?? [],
       lists: (agentId) => this.modelCatalog.get(agentId),
+      modes: (agentId) => this.modelCatalog.modes(agentId),
       pods: this.podModels(),
     };
+  }
+
+  /**
+   * `/setting permissions.<agent>` changed a level: move every running session of that agent to the
+   * level's mode now (agent-acp.ts applyPermissionLevel) rather than at its next start. A session
+   * with no child is left alone — its next start applies the level — and nothing is spawned.
+   */
+  private applyPermissionsLive(agentId: string): void {
+    for (const [id, state] of this.conversations) {
+      if (state.agentId !== agentId) continue;
+      void this.agents.peek(id)?.applyPermissions?.();
+    }
   }
 
   /**
@@ -2335,6 +2353,14 @@ export class ConversationRegistry {
           if (state.agentId !== agentId) continue;
           const selector = this.agents.peek(id)?.modelSelector?.();
           if (selector && selector.options.length > 0) return selector;
+        }
+        return undefined;
+      },
+      liveModes: (agentId) => {
+        for (const [id, state] of this.conversations) {
+          if (state.agentId !== agentId) continue;
+          const modes = this.agents.peek(id)?.permissionModes?.();
+          if (modes && modes.options.length > 0) return modes;
         }
         return undefined;
       },
@@ -2389,11 +2415,16 @@ export class ConversationRegistry {
     // The review model's list belongs to the reviewer (modelListAgent), not to the row's target:
     // asking the same agent the list screen will name keeps the two from disagreeing.
     const listAgent = modelListAgent(row, this.config);
-    if (ask && listAgent && !(listAgent === ctx.boundAgent && ctx.models.length > 0)) {
-      if (this.modelCatalog.shouldAsk(listAgent)) {
-        asking = this.modelCatalog.ask(listAgent);
-        ctx = this.settingsContext(id, this.config.routing.default);
-      }
+    // A permission row needs the agent's modes, which a live session here may already report.
+    const needs =
+      listAgent === undefined
+        ? false
+        : row.id === 'permissions'
+          ? this.modelCatalog.shouldAskModes(listAgent)
+          : !(listAgent === ctx.boundAgent && ctx.models.length > 0) && this.modelCatalog.shouldAsk(listAgent);
+    if (ask && listAgent && needs) {
+      asking = this.modelCatalog.ask(listAgent);
+      ctx = this.settingsContext(id, this.config.routing.default);
     }
     const hint = settingTypedOnlyHint(row, this.config, ctx);
     return { options: settingOptions(row, this.config, ctx), ...(hint ? { hint } : {}), ...(asking ? { asking } : {}) };
@@ -4322,9 +4353,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
 
   /**
    * Send `hooks.turnFailed.continue.message` to the agent as a turn of its own (TurnOutcomes): queued
-   * behind anything running and interrupting nothing, like a scheduled prompt, but ATTENDED — it
-   * carries CONTINUE_SENDER rather than SCHEDULED_SENDER, so a `permissions: ask` agent still asks
-   * the person. False when it cannot run here: no lane to answer in, or the conversation is now
+   * behind anything running and interrupting nothing, like a scheduled prompt, but carrying
+   * CONTINUE_SENDER rather than SCHEDULED_SENDER, so the library files it as what it is. False when
+   * it cannot run here: no lane to answer in, or the conversation is now
    * answered by an agent that no longer exists.
    */
   private runContinue(id: ConversationId, text: string): boolean {

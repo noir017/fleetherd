@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseConfig, accessUnrestricted, type Config } from './schema.js';
+import { parseConfig, accessUnrestricted, PERMISSION_LEVELS, type Config } from './schema.js';
 
 /**
  * accessUnrestricted is the access-control signal (loadConfig + doctor warn on it): agents always
@@ -26,9 +26,16 @@ describe('accessUnrestricted', () => {
 });
 
 describe('AgentDefSchema permissions', () => {
-  it('defaults to auto: tool calls are approved unless the operator asks otherwise', () => {
+  it('is unset by default — approve, and leave the harness its own mode (core/permission-levels.ts)', () => {
     const c = cfg({ agents: [{ id: 'default', harness: 'claude' }] });
-    expect(c.agents[0]!.permissions).toBe('auto');
+    expect(c.agents[0]!.permissions).toBeUndefined();
+  });
+
+  it('takes every level, and refuses a word that is not one', () => {
+    for (const level of PERMISSION_LEVELS) {
+      expect(cfg({ agents: [{ id: 'default', harness: 'codex', permissions: level }] }).agents[0]!.permissions).toBe(level);
+    }
+    expect(() => cfg({ agents: [{ id: 'default', harness: 'codex', permissions: 'yolo' }] })).toThrow();
   });
 
   it('takes ask for an ACP agent', () => {

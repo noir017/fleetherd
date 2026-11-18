@@ -10,6 +10,7 @@
 |---|---|---|---|
 | 默认智能体 | `routing.default` | 任一已配置的 agent id | 立即 |
 | 某个智能体的默认模型 | `agents[].model`；主机 pod 声明的智能体写 `podModels` | 该智能体上报的模型、任意名字，或 `-` 清空 | 它的下一个会话（`/new` 可立刻开一个） |
+| 某个智能体的[权限等级](agents.md#权限等级) | `agents[].permissions`；主机 pod 声明的智能体写 `podPermissions` | 它的 harness 有对应模式的等级：`plan`、`ask`、`edits`、`auto`、`full` | 立即生效——运行中的会话马上切模式，下一个请求按新等级处理 |
 | 确认子代理开跑 | `delegation.confirm` | `on`、`first`、`off`（默认 `on`） | 立即 —— 你自己直接对话的话题里，下一个 `task-new` 生效。`first` 在每个对话里对每个智能体只问一次，且只记在内存里，重启、换一个对话或改动档位都会重新确认；子代理的话题每次都仍要确认 |
 | 空闲回收窗口 | `session.idleTimeoutMs` | `off`、`15m`、`4h` …… | 立即 |
 | 会话粒度 | `session.scope` | `per_thread`、`per_channel`、`per_user`、`shared` | 重启后 |
@@ -24,6 +25,7 @@
 /setting idle                  →  这一项当前是什么、接受什么
 /setting idle 4h               →  直接设，所有平台都能用
 /setting model.cc opus         →  某个智能体开新会话时用的模型
+/setting permissions.cx ask    →  智能体不经你同意能做多少事
 ```
 
 在既能发按钮、又能改按钮的平台（Discord、Telegram、Slack、飞书），单独发
@@ -32,7 +34,7 @@
 的名字（比如 `opusplan`）会按你输入的原样保存。
 
 Web UI 里 `/setting` 是一个设置页：话题列表底部 ⚙ 菜单里的 **All settings** 打开
-它，直接输入 `/setting` 也一样。页面是一列分组 —— Agents、Default model、
+它，直接输入 `/setting` 也一样。页面是一列分组 —— Agents、Default model、Permissions、
 Sub-agents、Conversations、Replies、Voice、Reviews —— 每一行用适合它的控件就地修改：
 
 - **开关类**（确认子代理开跑、流式输出、两个语音开关）是开关，点一下就写入；
@@ -54,6 +56,12 @@ Sub-agents、Conversations、Replies、Voice、Reviews —— 每一行用适合
 所以没有在跑的时候，网关会临时起一个会话问一下再关掉 —— 一两秒，每个智能体只问一次（定义改了才重问），
 期间页面显示 *Asking … for its models*。harness 不提供模型选择、或者智能体起不来时，会分别说明，
 仍然可以手输名字。
+
+**Permissions** 也是每个智能体一行。能选哪些等级取决于它的 harness 有哪些模式，所以和模型列表一样要从运行中
+的会话里拿：网关还不知道时，这一行点开是单独一页，会去问（*Asking … for its modes*），之后等级就直接显示在
+行上供选择。每个等级都标出它对应的 harness 模式——Codex 上是 *ask (Read-only)*，Claude Code 上是
+*ask (Manual)*。允许在聊天里改，是因为只有人能用 `/setting`——智能体发的消息、排的定时任务、交给子代理的
+内容都不会被当成命令——而能在这里打字的人，本来就能点智能体的授权按钮。
 
 **主机 pod 声明的智能体**（`<id>@<主机>`，见[远程主机](remote-hosts.md)）也一样设置。值写进网关
 config.yaml 的 `podModels`，优先于主机 pod.yaml 里的 `model:`；那一行会标明当前值来自 pod 还是在这里

@@ -128,6 +128,42 @@ describe('podModels: the gateway naming a pod agent’s model', () => {
   });
 });
 
+describe('podPermissions: the gateway setting a pod agent’s permission level', () => {
+  const pods: PodsState = {
+    box: record([
+      { id: 'oc', harness: 'opencode', permissions: 'ask' },
+      { id: 'ag', harness: 'agy' },
+    ]),
+  };
+  const levels = (out: Record<string, unknown>) =>
+    Object.fromEntries((out.agents as Array<{ id: string; permissions?: string }>).map((a) => [a.id, a.permissions]));
+
+  it('wins over the pod’s own level, and leaves the rest as the pod said', () => {
+    const raw = { hosts: { box: { ssh: 'u@box' } }, agents: [{ id: 'cc', harness: 'claude' }], podPermissions: { 'oc@box': 'plan' } };
+    const { raw: out, skipped } = mergePodAgents(raw, pods);
+    expect(levels(out)).toEqual({ cc: undefined, 'oc@box': 'plan', 'ag@box': undefined });
+    expect(skipped).toEqual([]);
+  });
+
+  it('is ignored, and said to be, for an agent config.yaml defines', () => {
+    const raw = { hosts: { box: { ssh: 'u@box' } }, agents: [{ id: 'cc@here', harness: 'claude' }], podPermissions: { 'cc@here': 'full' } };
+    const { raw: out, skipped } = mergePodAgents(raw, pods);
+    expect(levels(out)['cc@here']).toBeUndefined();
+    expect(skipped).toEqual(['podPermissions.cc@here: cc@here is defined in config.yaml, so its level is agents[].permissions there']);
+  });
+
+  it('is a map of <id>@<host> to a level, and nothing else', () => {
+    const base = {
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc' },
+    };
+    expect(ConfigSchema.safeParse({ ...base, podPermissions: { 'oc@box': 'edits' } }).success).toBe(true);
+    expect(ConfigSchema.safeParse({ ...base, podPermissions: { 'oc@box': 'yolo' } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ ...base, podPermissions: { oc: 'ask' } }).success).toBe(false);
+  });
+});
+
 describe('readConfig with pods.json', () => {
   let dir: string;
   const saved = process.env.FLEETHERD_CONFIG_FILE;

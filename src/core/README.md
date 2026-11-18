@@ -55,6 +55,7 @@ conversation, not part of its name — see [`daemon/README.md`](../daemon/README
 | `command-translate.ts` | The generic slash vocabulary and its per-harness translation |
 | `skills-catalog.ts` | `/skills`: the bound agent's own commands as text |
 | `settings.ts` | `/setting` as data: which config.yaml fields are editable, what they accept, when a change lands |
+| `permission-levels.ts` | `agents[].permissions` as data: what each level asks of the gateway and which harness mode means it |
 | `model-menu.ts` | `/model` as data: paging, labels, button ids, matching, and every string it says |
 | `effort-menu.ts` | `/effort` as data: the one-page level menu, prefix matching, and the per-harness "no levels" answers |
 | `workdir-menu.ts` | `/cd` as data: the same shape, for the directory a conversation works in |
@@ -715,6 +716,7 @@ The editable set is deliberately narrow (`model` expands to one row per configur
 |---|---|---|---|
 | `agent` | `routing.default` | a configured agent id | **now** — `resolveAgent` re-reads it per message |
 | `model` / `model.<agent>` | `agents[<id>].model` | the agent's reported list, any name, or `-` to clear | **next agent session** — the value is read at spawn |
+| `permissions` / `permissions.<agent>` | `agents[<id>].permissions` (`podPermissions` for a pod's) | the levels its harness has a mode for | **now** — the runtime reads the level per request, and `onPermissionsChanged` moves running sessions to its mode |
 | `delegation` | `delegation.confirm` | `on` / `first` / `off` | **now** — read per `task-new`; `first` asks once per agent per conversation and keeps that in memory, `off` starts each sub-task at once and posts a card without buttons; both only in a conversation with no parent |
 | `idle` | `session.idleTimeoutMs` | `off`, `<n>m`, `<n>h` | **now** — the sweeper is re-armed |
 | `scope` | `session.scope` | the four `SessionScope` values | **on restart** — file only |
@@ -730,8 +732,10 @@ re-identify every existing conversation: the next message in a topic would land 
 new one with no context, while the old agent child sat resident until reclaim. Writing the
 durable answer and saying "on restart" is the honest version.
 
-`model` is the only per-target setting, and its option list has a condition worth
-remembering: a model list exists only on a **live ACP session**, and a conversation has at
+`model` and `permissions` are the per-target settings. A permission row's levels come from the
+agent's session modes, asked for by the same `ModelCatalog` probe as a model list; until they are
+known the row has no options, so it is drawn as a screen of its own that asks. The model's option
+list has a condition worth remembering: a model list exists only on a **live ACP session**, and a conversation has at
 most one — so buttons are offered for the agent answering *here*, and any other agent's
 model is set by typing the name. The empty case gets a sentence naming which condition is
 missing (`settingTypedOnlyHint`), never a blank menu. An unrecognized name is **accepted**

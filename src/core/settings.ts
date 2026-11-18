@@ -1,6 +1,7 @@
-import type { Config, SessionScope } from '../config/schema.js';
-import { agentDisplayName, findAgent, REVIEW_ARGS_HARNESSES } from '../config/schema.js';
+import type { Config, PermissionLevel, SessionScope } from '../config/schema.js';
+import { agentDisplayName, findAgent, PERMISSION_LEVELS, REVIEW_ARGS_HARNESSES } from '../config/schema.js';
 import type {
+  SessionModeSelector,
   SettingsScreen,
   SettingsScreenControl,
   SettingsScreenGroup,
@@ -12,6 +13,7 @@ import { agentKindOf } from './agent-menu.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { matchModels, type ModelOption } from './model-menu.js';
 import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
+import { levelDetail, levelMode, offeredLevels, parseLevel } from './permission-levels.js';
 /**
  * `/setting` as data: which config.yaml fields are editable from chat, what each accepts, when a
  * change takes effect, and every string either surface says.
@@ -56,12 +58,28 @@ import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.
  * next sweep, within a minute, without restarting anything. The other kind of reviewer,
  * `review.api`, carries a URL and a key and stays in config.yaml: picking an agent here replaces
  * it, but nothing here writes one.
+ *
+ * ── Why an agent's permission level is in this table ──────────────────────────
+ * `agents[].permissions` is the one field of an agent definition besides its model that is here,
+ * though the rest of the definition is refused by name. How an agent is launched is a definition;
+ * how much it may do without asking is a decision the person makes per task — plan this, then let
+ * it edit — and making it a file edit and a `/reload` meant nobody made it. Three things make it
+ * safe from chat (AGENTS.md security invariant 1). Only a person reaches this table: `/setting` is
+ * read off a person's own message (ConversationRegistry, before the merger), and no reverse command
+ * writes a setting — what an agent sends, schedules or hands a sub-agent reaches the merger as a
+ * prompt, never as a command. Lowering the level from chat grants nothing new: whoever can type
+ * here is in access.allowFrom, which is already everyone who could answer the agent's permission
+ * buttons with Allow. And a level that asks keeps invariant 1's direction — a request that cannot
+ * be put to anyone, or that nobody answers, is declined, never approved. Like `delegation.confirm`,
+ * this is an interface boundary, not code enforcement: an agent on the gateway's own machine as the
+ * same user can edit config.yaml.
  */
 
 /** The settings this gateway can write. Everything else is refused by name. */
 export type SettingId =
   | 'agent'
   | 'model'
+  | 'permissions'
   | 'delegation'
   | 'idle'
   | 'scope'
@@ -112,9 +130,9 @@ export interface SettingRow {
   /** The agent a per-agent setting applies to; absent for global ones. */
   target?: string;
   /**
-   * On a model row: the agent is one a host's pod declares (config/pods.ts), so its default is
-   * written to config.yaml's `podModels` over the pod's own, and `model` is what the pod says
-   * (absent: nothing). Absent for an agent config.yaml defines.
+   * On a per-agent row: the agent is one a host's pod declares (config/pods.ts), so the value is
+   * written to config.yaml's `podModels` / `podPermissions` over the pod's own. On a model row
+   * `model` is what the pod says (absent: nothing). Absent for an agent config.yaml defines.
    */
   pod?: { model?: string };
   /** Menu label, e.g. `Default model · cc`. */
@@ -144,6 +162,11 @@ export interface SettingsContext {
    * nothing can ask (a test, a caller without a catalog), and the hint says to type a name.
    */
   lists?: (agentId: string) => AgentModelList | undefined;
+  /**
+   * What the gateway knows of an agent's session modes (the same catalog), which decide the
+   * permission levels its row offers. Absent: nothing can ask, and only `auto` is offered.
+   */
+  modes?: (agentId: string) => AgentModes | undefined;
   /** The pods' agents and the model each pod gives, so a key resolves to a row that knows it. */
   pods?: PodModels;
 }
@@ -157,6 +180,14 @@ export type AgentModelList =
   /** Asked, and the harness offers no model choice (no `model` select option). */
   | { kind: 'none' }
   /** Could not ask: the agent did not start. */
+  | { kind: 'error'; reason: string };
+
+/** What is known of one agent's session modes — AgentModelList's twin, asked by the same session. */
+export type AgentModes =
+  | { kind: 'list'; options: SessionModeSelector['options'] }
+  | { kind: 'loading' }
+  /** Asked, and the harness reports no mode selector. */
+  | { kind: 'none' }
   | { kind: 'error'; reason: string };
 
 /**
@@ -174,7 +205,7 @@ export type SettingLocation =
    * A field of one `agents[]` entry, named by AGENT ID rather than by index. The index has to be
    * resolved against the file at write time — see daemon/settings-store.ts.
    */
-  | { kind: 'agent'; agentId: string; key: 'model' };
+  | { kind: 'agent'; agentId: string; key: 'model' | 'permissions' };
 
 /** Outcome of reading a user-supplied value for a setting. */
 export type ParsedSettingValue =
@@ -239,12 +270,12 @@ const NOT_EDITABLE: Record<string, string> = {
   allowfrom: 'the authorization allowlist',
   platforms: 'platform credentials and instances',
   token: 'platform credentials and instances',
-  agents: 'an agent definition beyond its model',
-  harness: 'an agent definition beyond its model',
-  command: 'an agent definition beyond its model',
-  args: 'an agent definition beyond its model',
-  env: 'an agent definition beyond its model',
-  cwd: 'an agent definition beyond its model',
+  agents: 'an agent definition beyond its model and permissions',
+  harness: 'an agent definition beyond its model and permissions',
+  command: 'an agent definition beyond its model and permissions',
+  args: 'an agent definition beyond its model and permissions',
+  env: 'an agent definition beyond its model and permissions',
+  cwd: 'an agent definition beyond its model and permissions',
   hooks: "an agent's pre-launch hook",
   prelaunch: "an agent's pre-launch hook",
   routing: 'the routing pipeline',
@@ -279,7 +310,7 @@ const REFUSAL_REASON: Record<string, string> = {
     'one wrong value there locks you out of your own bot, and chat is the surface you would be locked out of',
   'platform credentials and instances':
     'they need a restart, and a credential has no business in a chat log',
-  'an agent definition beyond its model':
+  'an agent definition beyond its model and permissions':
     'how an agent is launched is an edit to its definition, not a value to pick from a list',
   "an agent's pre-launch hook":
     'it is a shell command this machine runs, and setting one from chat would be running commands on it remotely',
@@ -298,6 +329,8 @@ const KEY_ALIASES: Record<string, SettingId> = {
   'routing.default': 'agent',
   default: 'agent',
   model: 'model',
+  permissions: 'permissions',
+  permission: 'permissions',
   delegation: 'delegation',
   'delegation.confirm': 'delegation',
   scope: 'scope',
@@ -352,6 +385,13 @@ export function delegationValue(confirm: Config['delegation']['confirm']): 'on' 
 const MODEL_UNSET = '(harness default)';
 
 /**
+ * How an unset `agents[].permissions` reads: it approves like `auto`, and differs only in leaving
+ * the harness's mode as the harness chose it (config/schema.ts says why) — not a difference worth a
+ * fourth word on a screen. Picking `auto` writes it, and from then on the mode is the gateway's.
+ */
+const PERMISSIONS_UNSET: PermissionLevel = 'auto';
+
+/**
  * What an unset `review.model` means: the reviewer's own `model`, or the harness default when the
  * agent has none either. Deliberately not MODEL_UNSET — a review does not fall back to the harness
  * before it falls back to the agent.
@@ -397,6 +437,17 @@ export function settingsRows(cfg: Config, pods?: PodModels): SettingRow[] {
       value: agent.model ?? MODEL_UNSET,
       effect: 'next-session',
       ...(pods?.has(agent.id) ? { pod: podModel !== undefined ? { model: podModel } : {} } : {}),
+    });
+  }
+  // One permission row per agent, after the model rows, for the reason those are one per agent.
+  for (const agent of cfg.agents) {
+    rows.push({
+      id: 'permissions',
+      target: agent.id,
+      label: `Permissions · ${agent.id}`,
+      value: agent.permissions ?? PERMISSIONS_UNSET,
+      effect: 'live',
+      ...(pods?.has(agent.id) ? { pod: {} } : {}),
     });
   }
   rows.push(
@@ -470,6 +521,14 @@ export function settingDescription(row: SettingRow): string {
       return 'Which agent answers when no routing rule matches.';
     case 'model':
       return `The model \`${row.target}\` starts its sessions with. \`/model\` still overrides it for one conversation.`;
+    case 'permissions':
+      return (
+        `How much \`${row.target}\` may do without you. Each level sets the mode its harness runs in ` +
+        'and whether what it asks to do waits for your OK: `plan`, `ask` and `edits` put each request ' +
+        'to you as buttons — one nobody answers is declined, never approved; `auto` and `full` approve. ' +
+        'Only the levels its harness has a mode for are offered. A change applies at once: a running ' +
+        'session is switched to the new mode, and its next request is answered the new way.'
+      );
     case 'delegation':
       return (
         'When `task-new` waits for you to tap Start on a card listing every sub-task: always ' +
@@ -586,6 +645,8 @@ function settingGroup(row: SettingRow): string {
       return 'Agents';
     case 'model':
       return 'Default model';
+    case 'permissions':
+      return 'Permissions';
     case 'delegation':
       return 'Sub-agents';
     case 'idle':
@@ -611,6 +672,9 @@ function settingGroupNote(row: SettingRow): string | undefined {
   if (row.id === 'model') {
     return 'What each agent starts a new session with. A change applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only.';
   }
+  if (row.id === 'permissions') {
+    return 'How much each agent may do without you. `plan`, `ask` and `edits` put what it asks to do to you as buttons; `auto` approves it; `full` runs the harness with nothing asked. Only the levels an agent’s harness has a mode for are offered. Applies at once, to running sessions too.';
+  }
   if (row.id === 'review.agent') {
     return 'An agent reads a conversation that has gone quiet and writes what it learned into the skill library. The review runs with its tools switched off and every permission refused.';
   }
@@ -619,13 +683,15 @@ function settingGroupNote(row: SettingRow): string | undefined {
 
 /**
  * One line on what a row decides, for a screen that lists every setting at once — settingDescription
- * is the paragraph a single setting's own screen has room for. A model row has none: its group says it.
+ * is the paragraph a single setting's own screen has room for. A model or permission row has none:
+ * its group says it.
  */
 function settingHint(row: SettingRow): string | undefined {
   switch (row.id) {
     case 'agent':
       return 'Answers a new conversation that no routing rule claims.';
     case 'model':
+    case 'permissions':
       return undefined;
     case 'delegation':
       return 'Wait for your Start before an agent’s sub-tasks run. `first` asks once per agent in each conversation; `off` starts them at once. A sub-agent’s own topic still asks.';
@@ -657,7 +723,9 @@ function settingHint(row: SettingRow): string | undefined {
  * On/off settings are switches and the short closed lists are choices, both written from the row
  * itself — one tap, where the button menu needs two and a Back. The model is the one that keeps its
  * own screen: its list can run to a hundred names, has to be asked of the agent, and takes a name
- * the list does not have.
+ * the list does not have. A permission level is a choice whose options depend on the agent's modes:
+ * until they are known it has none, so rowControl draws it as a row with its own screen, and
+ * opening that screen asks for them (ConversationRegistry.settingOptionsFor).
  */
 export function settingControl(row: SettingRow): 'switch' | 'choice' | 'list' {
   switch (row.id) {
@@ -666,6 +734,7 @@ export function settingControl(row: SettingRow): 'switch' | 'choice' | 'list' {
     case 'cleanup':
       return 'switch';
     case 'agent':
+    case 'permissions':
     case 'delegation':
     case 'idle':
     case 'scope':
@@ -706,22 +775,22 @@ export function resolveSettingKey(key: string, cfg: Config, ctx: SettingsContext
   if (!norm) return { kind: 'unknown', key };
 
   const rows = settingsRows(cfg, ctx.pods);
-  const target = perAgentTarget(norm, cfg);
-  if (target !== undefined) {
-    if (target === null) {
+  const perAgent = perAgentTarget(norm, cfg);
+  if (perAgent !== undefined) {
+    if (perAgent.target === null) {
       return {
         kind: 'refused',
         text: `No agent named there. Configured agents: ${cfg.agents.map((a) => a.id).join(', ')}.`,
       };
     }
-    const row = rows.find((r) => r.id === 'model' && r.target === target);
+    const row = rows.find((r) => r.id === perAgent.id && r.target === perAgent.target);
     if (row) return { kind: 'row', row };
   }
 
   const id = KEY_ALIASES[norm];
-  if (id === 'model') {
-    // A bare `model`: the agent answering this conversation.
-    const row = rows.find((r) => r.id === 'model' && r.target === ctx.boundAgent);
+  if (id === 'model' || id === 'permissions') {
+    // A bare `model` / `permissions`: the agent answering this conversation.
+    const row = rows.find((r) => r.id === id && r.target === ctx.boundAgent);
     if (row) return { kind: 'row', row };
   } else if (id) {
     const row = rows.find((r) => r.id === id);
@@ -745,15 +814,21 @@ export function resolveSettingKey(key: string, cfg: Config, ctx: SettingsContext
 }
 
 /**
- * The agent id a per-agent key names: the id for `model.cc` / `agents.cc.model`, `null` when the
- * key is shaped that way but names no configured agent, `undefined` when it is not that shape.
+ * The setting and agent a per-agent key names: `model.cc` / `agents.cc.model`, and the same two
+ * shapes for `permissions`. `target` is null when the key is shaped that way but names no
+ * configured agent; the whole answer is undefined when it is not that shape.
  */
-function perAgentTarget(norm: string, cfg: Pick<Config, 'agents'>): string | null | undefined {
-  const dotted = /^model\.(.+)$/.exec(norm) ?? /^agents\.(.+)\.model$/.exec(norm);
-  if (!dotted) return undefined;
-  const wanted = dotted[1]!;
+function perAgentTarget(
+  norm: string,
+  cfg: Pick<Config, 'agents'>
+): { id: 'model' | 'permissions'; target: string | null } | undefined {
+  const short = /^(model|permissions)\.(.+)$/.exec(norm);
+  const full = /^agents\.(.+)\.(model|permissions)$/.exec(norm);
+  const id = (short?.[1] ?? full?.[2]) as 'model' | 'permissions' | undefined;
+  const wanted = short?.[2] ?? full?.[1];
+  if (!id || wanted === undefined) return undefined;
   // Agent ids are case-sensitive in config; match case-insensitively since the key was lowercased.
-  return cfg.agents.find((a) => a.id.toLowerCase() === wanted)?.id ?? null;
+  return { id, target: cfg.agents.find((a) => a.id.toLowerCase() === wanted)?.id ?? null };
 }
 
 // ─────────────────────────────── values ───────────────────────────────
@@ -775,6 +850,8 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
         }),
         ...(readSettingValue(row, cfg) !== undefined ? [{ raw: '-', label: clearedModelLabel(row) }] : []),
       ];
+    case 'permissions':
+      return permissionOptions(row, cfg, ctx);
     case 'review.agent': {
       // Every agent: the review's switches and refusals are the gateway's (daemon/review-run.ts).
       const off = {
@@ -883,6 +960,38 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
   }
 }
 
+/**
+ * What the agent's modes are known to be, for its permission row: the mode ids and names, or
+ * undefined while they are not known (being asked, never asked, or the agent did not start). No
+ * catalog to ask (`ctx.modes` absent) reads as a harness with no modes.
+ */
+function knownModes(row: SettingRow, ctx: SettingsContext): SessionModeSelector['options'] | undefined {
+  if (!ctx.modes) return [];
+  const known = row.target ? ctx.modes(row.target) : undefined;
+  if (known?.kind === 'list') return known.options;
+  return known?.kind === 'none' ? [] : undefined;
+}
+
+/**
+ * The levels a permission row offers: those its agent's harness has a mode for (offeredLevels),
+ * each saying which of the harness's modes it means. Empty while the modes are not known — the row
+ * then opens a screen of its own, which asks for them (settingControl). The value set now is kept
+ * even where it is not offered, so a screen never hides what is in force.
+ */
+function permissionOptions(row: SettingRow, cfg: Config, ctx: SettingsContext): SettingOption[] {
+  const modes = knownModes(row, ctx);
+  if (!modes) return [];
+  const ids = modes.map((m) => m.value);
+  const offered = offeredLevels(ids);
+  const pinned = row.target ? findAgent(cfg, row.target)?.options['mode'] : undefined;
+  return PERMISSION_LEVELS.filter((l) => offered.includes(l) || l === row.value).map((level) => {
+    const mode = levelMode(level, ids, pinned === undefined ? undefined : String(pinned));
+    const name = mode ? (modes.find((m) => m.value === mode)?.name ?? mode) : undefined;
+    const detail = `${levelDetail(level)}${name ? ` (${name})` : ''}`;
+    return { raw: level, label: `${level} — ${detail}`, title: level, detail };
+  });
+}
+
 /** The configured model of an agent (undefined = unset). */
 function cfgModel(cfg: Config, agentId: string | undefined): string | undefined {
   return agentId ? findAgent(cfg, agentId)?.model : undefined;
@@ -897,7 +1006,8 @@ function cfgModel(cfg: Config, agentId: string | undefined): string | undefined 
  * settingOptionsFor, which warms the catalog before the screen is drawn.
  */
 export function modelListAgent(row: SettingRow, cfg: Config): string | undefined {
-  if (row.id === 'model') return row.target;
+  // A permission row's levels come from the same session as the model list — its modes.
+  if (row.id === 'model' || row.id === 'permissions') return row.target;
   if (row.id === 'review.model') return cfg.review?.agent;
   return undefined;
 }
@@ -962,6 +1072,8 @@ export function parseSettingValue(
     }
     case 'model':
       return parseModelValue(input, row, cfg, ctx);
+    case 'permissions':
+      return parsePermissionsValue(input, row, ctx);
     case 'review.agent':
       return parseReviewAgentValue(input, cfg);
     case 'review.model':
@@ -1128,6 +1240,35 @@ function parseReviewModelValue(
 }
 
 /** A duration for `session.idleTimeoutMs`: `off`, or a number with a unit. */
+/**
+ * A permission level. Refused when the agent's modes are known and its harness has none for it —
+ * the same rule that keeps it off the screen, so typing cannot set what a tap could not — unless
+ * it is the level already set. Taken with a note while the modes are not known.
+ */
+function parsePermissionsValue(input: string, row: SettingRow, ctx: SettingsContext): ParsedSettingValue {
+  const level = parseLevel(input);
+  if (!level) {
+    return { kind: 'invalid', reason: `\`${input}\` is not a permission level. One of: ${PERMISSION_LEVELS.join(', ')}.` };
+  }
+  const modes = knownModes(row, ctx);
+  if (!modes) {
+    return {
+      kind: 'value',
+      value: level,
+      display: level,
+      note: `${row.target}'s modes are not known yet. If its harness has none for \`${level}\`, its mode stays as it is and only the answer to its requests changes.`,
+    };
+  }
+  const offered = offeredLevels(modes.map((m) => m.value));
+  if (!offered.includes(level) && level !== row.value) {
+    return {
+      kind: 'invalid',
+      reason: `${row.target}'s harness has no mode for \`${level}\`, so it is not offered there. Offered: ${offered.join(', ')}.`,
+    };
+  }
+  return { kind: 'value', value: level, display: level };
+}
+
 function parseIdleValue(input: string): ParsedSettingValue {
   const lower = input.toLowerCase();
   if (lower === 'off' || lower === 'never' || lower === '0') {
@@ -1159,6 +1300,10 @@ export function settingLocation(row: SettingRow): SettingLocation {
       // A pod's agent is not in config.yaml's `agents:`; the gateway's say over its model is.
       if (row.pod) return { kind: 'path', path: ['podModels', row.target!] };
       return { kind: 'agent', agentId: row.target!, key: 'model' };
+    case 'permissions':
+      // A pod's agent, like its model: the gateway's say is `podPermissions`.
+      if (row.pod) return { kind: 'path', path: ['podPermissions', row.target!] };
+      return { kind: 'agent', agentId: row.target!, key: 'permissions' };
     case 'delegation':
       return { kind: 'path', path: ['delegation', 'confirm'] };
     case 'idle':
@@ -1236,6 +1381,8 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
       // which may be the pod's: clearing one that is not set must be "already", not a write.
       if (row.pod) return row.target ? cfg.podModels?.[row.target] : undefined;
       return cfgModel(cfg, row.target);
+    case 'permissions':
+      return storedPermissions(row, cfg);
     case 'delegation':
       return cfg.delegation.confirm;
     case 'idle':
@@ -1257,6 +1404,16 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
       return _exhaustive;
     }
   }
+}
+
+/**
+ * The level a permission row writes, not the merged one: unset reads `auto` on the screen, and
+ * picking `auto` there is a write (from then on the gateway sets the harness's mode), not "already".
+ */
+function storedPermissions(row: SettingRow, cfg: Config): PermissionLevel | undefined {
+  if (!row.target) return undefined;
+  if (row.pod) return cfg.podPermissions?.[row.target];
+  return findAgent(cfg, row.target)?.permissions;
 }
 
 // ─────────────────────────────── the outcome ───────────────────────────────
@@ -1369,6 +1526,7 @@ export function settingTypedOnlyHint(
   ctx: SettingsContext
 ): string | undefined {
   if (row.id === 'model') return modelListHint(row, cfg, ctx);
+  if (row.id === 'permissions') return permissionsHint(row, ctx);
   if (row.id === 'review.model') {
     if (cfg.review?.api) return REVIEW_API_MODEL;
     return cfg.review
@@ -1401,6 +1559,30 @@ function modelListHint(row: SettingRow, cfg: Config, ctx: SettingsContext): stri
       return agentId === ctx.boundAgent
         ? `No model list from ${agentId} yet — it arrives with the agent's first reply. Any name still works: ${typed}.`
         : `${agentId} is not answering this conversation, so its model list is not available here. Type a name: ${typed}.`;
+    default: {
+      const _exhaustive: never = known;
+      return String(_exhaustive);
+    }
+  }
+}
+
+/** The permission row's sentence: nothing when its levels are known, else why not and what to type. */
+function permissionsHint(row: SettingRow, ctx: SettingsContext): string | undefined {
+  const agentId = row.target;
+  if (!agentId || !ctx.modes) return undefined;
+  const typed = `\`/setting ${settingKeyOf(row)} <level>\``;
+  const known = ctx.modes(agentId);
+  switch (known?.kind) {
+    case 'list':
+      return undefined;
+    case 'none':
+      return `${agentId}'s harness reports no session modes, so \`auto\` is the only level it can honour here.`;
+    case 'loading':
+      return `Asking ${agentId} for its modes… A level can be typed meanwhile: ${typed}.`;
+    case 'error':
+      return `${agentId} did not start, so it could not be asked for its modes (${known.reason}). Type a level: ${typed}.`;
+    case undefined:
+      return `${agentId}'s modes are not known yet. Type a level: ${typed}.`;
     default: {
       const _exhaustive: never = known;
       return String(_exhaustive);
@@ -1800,6 +1982,9 @@ export function buildSettingValueMenu(menu: {
   };
 }
 
+/** A per-agent row's screen is titled by its group; the agent is named beside it (`target`). */
+const VALUE_SCREEN_LABEL: Partial<Record<SettingId, string>> = { model: 'Default model', permissions: 'Permissions' };
+
 /**
  * The value level as rows for a screen. `start` is the absolute index of the first item, so a
  * pick's button id means the same value it meant when the page was drawn — the same rule the
@@ -1836,7 +2021,7 @@ function settingsValueScreen(
       ? { typed: { buttonId: settingTypeButtonId(reqId), placeholder: 'Or type a model name' } }
       : {}),
     head: {
-      label: row.id === 'model' ? 'Default model' : row.label,
+      label: VALUE_SCREEN_LABEL[row.id] ?? row.label,
       ...(listAgent ? { target: listAgent } : {}),
       ...(listDef ? { targetKind: agentKindOf(listDef) } : {}),
       value: unset ? 'harness default' : row.value,
