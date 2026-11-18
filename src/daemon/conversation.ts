@@ -139,6 +139,7 @@ import {
   type CacheReading,
 } from './claude-transcript.js';
 import { remoteHosts } from './remote-hosts.js';
+import { workspaceFor, type Workspace } from './workspace.js';
 import type { ConversationStore } from './conversation-store.js';
 import { buildChannelList } from '../core/channel-list.js';
 import type { ListChannelsResult } from '../ipc/protocol.js';
@@ -3407,6 +3408,21 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.status.model(id, result.model);
     console.log(`[model] ${id}: switched to ${result.model} from the model switch`);
     return { ok: true, model: result.model, text };
+  }
+
+  /**
+   * Where the conversation at an ADDRESS keeps its files: its agent's machine, and the directory its
+   * next session would start in (its `/cd`, else the agent's own). The web UI's workspace windows —
+   * git, files — read and run through this (workspace.ts).
+   *
+   * Unlike the model switch, nothing is started or recorded: looking at files needs no live session.
+   * A conversation that has never run is answered for the agent its first message would reach, as
+   * that message would bind it. Undefined only when that agent is not in the config any more.
+   */
+  workspaceForRef(ref: ConversationRef): Workspace | undefined {
+    const id = this.idForRef(ref);
+    const def = findAgent(this.config, this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId));
+    return def ? workspaceFor(def, resolveConversationCwd(def, id, this.store)) : undefined;
   }
 
   /**

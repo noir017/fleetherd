@@ -8716,6 +8716,20 @@ const SCRIPT = `
   });
 
   /**
+   * The code view (CodeMirror): an editor and a diff, for the reader and the workspace windows.
+   * Resolves to null when it cannot be had, and every caller then shows plain text instead.
+   *   editor(parent, {doc, name, readOnly?, onChange?(doc), onSave?()})
+   *     → {getDoc(), setDoc(doc), focus(), destroy()}
+   *   diff(parent, {name, original, modified, layout: 'unified'|'split', onSelect?(sel|null)})
+   *     → {setLayout(layout), destroy()}     sel = {side: 'old'|'new', from, to, text}, lines from 1
+   * window.__fhCodeView is the test seam: page.dom.test puts a fake there.
+   * PLACEHOLDER until the asset that loads CodeMirror lands — it answers only the seam.
+   */
+  function codeView(){
+    return Promise.resolve(window.__fhCodeView || null);
+  }
+
+  /**
    * Read a file the agent sent without downloading it. The server renders it (reading.ts) and the
    * answer fills a window over the transcript. The name and the download link are on the file's
    * own link, so a slow link shows which file is coming rather than an empty frame.
