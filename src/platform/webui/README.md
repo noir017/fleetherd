@@ -1642,10 +1642,18 @@ decisions shape it:
   this is opt-in like the terminal.
 - **A save is checked, and the file stays the file it was.** The write follows a symlink to its
   target, keeps the existing file's permission bits (a new file gets the umask default), writes a
-  temporary beside it, fsyncs and renames. It carries the size and mtime the page read; a mismatch
-  comes back as a conflict, which the page puts to the person as reload / overwrite / cancel.
-  Overwrite is an explicit `force`, not an unchecked default. Both machines implement the same
-  rules (`remote/ops.go` `opEditWrite` is the host's half).
+  temporary beside it, fsyncs and renames. It carries the size, mtime and SHA-256 the page read.
+  The hash is what catches a same-length edit inside one timestamp tick, and it is checked once
+  before the temporary is written and once immediately before the rename. That is **a check before
+  the write, not an atomic compare-and-swap**: a writer landing between the last check and the
+  rename is overwritten. A mismatch comes back as a conflict, which the page puts to the person as
+  reload / overwrite / cancel. Overwrite is an explicit `force`, not an unchecked default. Both
+  machines implement the same rules (`remote/ops.go` `opEditWrite` is the host's half).
+- **A save does not change bytes the person did not edit.** The read keeps a UTF-8 BOM in the text,
+  and reports the file's line ending; the page normalizes CRLF to LF for the textarea (which would
+  do it anyway) and puts CRLF back on save, so a file opened and saved untouched is the same bytes.
+- **What is renameable is what is open.** New file, new folder, rename and delete act on the file
+  the editor holds; a directory in the tree is navigated, not renamed or deleted from here.
 - **What can be edited is decided by content, not by name.** ≤ 1 MiB, valid UTF-8, no NUL — past
   that (or for an image, which is shown as a `data:` URL up to 5 MiB) the file is shown with its
   details and no editor. Markdown gets a rendered preview tab, built by `web-markdown.ts` on the

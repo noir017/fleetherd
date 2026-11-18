@@ -81,7 +81,7 @@ func (d *daemon) op(ctx context.Context, h *Header, body []byte) (any, []byte, e
 		}
 		return opWriteFile(path, body, h.Mode, h.Append)
 	case "editWrite":
-		return opEditWrite(path, body, h.MtimeMs, h.Size, h.ExpectMissing, h.Force)
+		return opEditWrite(path, body, h.MtimeMs, h.Size, h.Sha256, h.ExpectMissing, h.Force)
 	case "rename":
 		return opRename(path, expandHome(h.Target), expandHome(h.Owned))
 	case "removeEntry":
@@ -380,7 +380,15 @@ func opWriteFileAtomic(path string, body []byte, mode uint32, appendMode bool) (
 // `force` is the person's answer to that choice: overwrite whatever is there. It skips the version
 // check and nothing else — the link, the mode and the atomic replace still apply, because those are
 // about not damaging the file, not about who wins the race.
-func opEditWrite(path string, body []byte, mtimeMs, size int64, expectMissing, force bool) (any, []byte, error) {
+//
+// The check is advisory, not a CAS: a stat, a hash, the write and the fsync all happen before the
+// rename, so a writer that lands in that window is overwritten. The hash is what makes the window
+// as small as it can be without a lock — the file is hashed once before the temporary is written
+// and once again immediately before the rename, which catches a same-size, same-mtime edit that
+// the stat alone cannot see. What is left between that second hash and the rename is the window.
+// The gateway offers reload / overwrite / cancel from this; it does not promise nobody can write
+// between the check and the replace.
+func opEditWrite(path string, body []byte, mtimeMs, size int64, wantSha string, expectMissing, force bool) (any, []byte, error) {
 	// Resolve the link, not the path: writing through it is the whole point, and a rename onto
 	// the link itself would replace the link with a regular file. A path that does not exist yet
 	// has no link to resolve, and its own (possibly linked) directory is enough.
@@ -416,6 +424,15 @@ func opEditWrite(path string, body []byte, mtimeMs, size int64, expectMissing, f
 		if st.Size() != size || st.ModTime().UnixMilli() != mtimeMs {
 			return conflict(true, st.Size(), st.ModTime().UnixMilli())
 		}
+		if wantSha != "" {
+			got, err := fileSHA256(target)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !strings.EqualFold(got, wantSha) {
+				return conflict(true, st.Size(), st.ModTime().UnixMilli())
+			}
+		}
 	}
 
 	dir := filepath.Dir(target)
@@ -448,6 +465,34 @@ func opEditWrite(path string, body []byte, mtimeMs, size int64, expectMissing, f
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
 		return nil, nil, err
+	}
+	// Last look before the rename: the same size, mtime and hash the check above accepted. This
+	// is what keeps the advisory window to the gap between here and the rename rather than the
+	// whole write plus fsync.
+	if !force {
+		raced := false
+		now, statErr := os.Stat(target)
+		if exists {
+			if statErr != nil || now.Size() != st.Size() || now.ModTime().UnixMilli() != st.ModTime().UnixMilli() {
+				raced = true
+			}
+		} else if statErr == nil {
+			raced = true
+		}
+		if !raced && exists && wantSha != "" {
+			got, herr := fileSHA256(target)
+			if herr != nil || !strings.EqualFold(got, wantSha) {
+				raced = true
+			}
+		}
+		if raced {
+			os.Remove(tmp)
+			again, statErr := os.Stat(target)
+			if statErr != nil {
+				return conflict(false, 0, 0)
+			}
+			return conflict(true, again.Size(), again.ModTime().UnixMilli())
+		}
 	}
 	if err := os.Rename(tmp, target); err != nil {
 		os.Remove(tmp)

@@ -173,7 +173,9 @@ describe('webui protocol: inbound validation', () => {
 
 describe('webui protocol: the file window', () => {
   it.each([
-    ['a checked save', { topic: TOPIC, path: '/w/a.txt', text: 'x', mtimeMs: 5, size: 3 }, true],
+    ['a checked save', { topic: TOPIC, path: '/w/a.txt', text: 'x', mtimeMs: 5, size: 3, sha256: 'a'.repeat(64) }, true],
+    ['a short sha', { topic: TOPIC, path: '/w/a.txt', text: 'x', size: 3, sha256: 'abc' }, false],
+    ['a sha that is not hex', { topic: TOPIC, path: '/w/a.txt', text: 'x', size: 3, sha256: 'z'.repeat(64) }, false],
     ['a create', { topic: TOPIC, path: '/w/a.txt', text: '', missing: true }, true],
     ['an explicit overwrite', { topic: TOPIC, path: '/w/a.txt', text: 'x', force: true }, true],
     ['a malformed topic', { topic: 'nope', path: '/w/a.txt', text: 'x' }, false],

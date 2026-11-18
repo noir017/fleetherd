@@ -12779,7 +12779,7 @@ describe('webui page: the History tab', () => {
     // it is up — as text, because jsdom's CSSOM is not to be trusted with this (see Testing).
     expect(renderPage('Chat', false)).toContain(
       '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,\n' +
-        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle{display:none}'
+        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}'
     );
   });
 
@@ -13039,16 +13039,19 @@ describe('webui page: the file window', () => {
   const READ = `api/files/read?topic=${T}&path=${encodeURIComponent('/w/a.txt')}`;
   const rootEntry = { name: 'a.txt', dir: false };
   const listing = { ok: true, path: '/w', rel: '', entries: [rootEntry, { name: 'sub', dir: true }] };
+  const SHA = 'a'.repeat(64);
   const file = {
     ok: true,
     path: '/w/a.txt',
+    dir: '/w',
     rel: 'a.txt',
     name: 'a.txt',
     size: 3,
     mtimeMs: 5,
-    mode: 420,
     kind: 'text',
     text: 'abc',
+    eol: 'lf',
+    sha256: SHA,
   };
 
   async function openFiles(over: Record<string, unknown> = {}) {
@@ -13100,7 +13103,7 @@ describe('webui page: the file window', () => {
     await h.click('#files-save');
     await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
     const save = h.calls.find((c) => c.path === 'api/files/write')!;
-    expect(save.body).toEqual({ topic: T, path: '/w/a.txt', text: 'abcd', mtimeMs: 5, size: 3 });
+    expect(save.body).toEqual({ topic: T, path: '/w/a.txt', text: 'abcd', mtimeMs: 5, size: 3, sha256: SHA });
     expect(h.el('files-dirty').hidden).toBe(true);
     expect(h.el('files-save').hasAttribute('disabled')).toBe(true);
   });
@@ -13214,6 +13217,103 @@ describe('webui page: the file window', () => {
     await h.click('#files-close');
     expect(h.el('files').hidden).toBe(false);
     expect(editorText(h).value).toBe('unsaved');
+  });
+
+  it('puts a BOM and CRLF back on save, and keeps a file that ends without a newline', async () => {
+    const win = {
+      ...file,
+      path: '/w/win.txt',
+      rel: 'win.txt',
+      name: 'win.txt',
+      size: 7,
+      mtimeMs: 6,
+      text: '\uFEFFa\r\nb',
+      eol: 'crlf',
+      bom: true,
+      sha256: 'c'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/win.txt')}`]: win,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 7, sha256: 'd'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/win.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    // What the textarea shows: LF, with the BOM still the first character.
+    expect(editorText(h).value).toBe('\uFEFFa\nb');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    const body = h.calls.find((c) => c.path === 'api/files/write')!.body;
+    expect(body.text).toBe('\uFEFFa\r\nb');
+    expect(body.sha256).toBe('c'.repeat(64));
+    expect(body.size).toBe(7);
+    // The new version replaces the baseline, so the next save carries the hash just written.
+    expect(h.el('files-dirty').hidden).toBe(true);
+  });
+
+  it('keeps unsaved text across a successful rename instead of re-reading the file', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: true, path: '/w/b.txt' } });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'draft';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-rename-open');
+    (h.el('files-rename-name') as HTMLInputElement).value = 'b.txt';
+    await h.click('#files-rename-go');
+    await until('the rename', () => h.el('files-title').textContent === 'b.txt');
+
+    expect(editorText(h).value).toBe('draft');
+    expect(h.el('files-dirty').hidden).toBe(false);
+    // No read of the new path: the editor's text is the person's, and the disk copy is older.
+    expect(h.calls.some((c) => c.path === `api/files/read?topic=${T}&path=${encodeURIComponent('/w/b.txt')}`)).toBe(false);
+
+    await h.click('#files-save');
+    await until('the save after rename', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body).toMatchObject({ path: '/w/b.txt', text: 'draft' });
+  });
+
+  it('keeps the dirty mark when a rename fails', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: false, error: 'something is already there' } });
+    h.status['api/files/rename'] = 400;
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'draft';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-rename-open');
+    (h.el('files-rename-name') as HTMLInputElement).value = 'b.txt';
+    await h.click('#files-rename-go');
+    await until('the refusal', () => h.el('files-note').textContent!.includes('already there'));
+
+    expect(h.el('files-title').textContent).toBe('a.txt');
+    expect(editorText(h).value).toBe('draft');
+    expect(h.el('files-dirty').hidden).toBe(false);
+  });
+
+  it('keeps the dirty mark when a conflict Reload fails, so a close still asks', async () => {
+    const writeReply: Record<string, unknown> = { ok: true, mtimeMs: 6, size: 4 };
+    const h = await openFiles({ 'api/files/write': writeReply });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'mine';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    h.status['api/files/write'] = 409;
+    writeReply.ok = false;
+    writeReply.conflict = true;
+    writeReply.exists = true;
+    await h.click('#files-save');
+    await until('the conflict dialog', () => !h.el('files-conflict').hidden);
+
+    h.status[READ] = 404;
+    await h.click('#files-reload');
+    await until('the failed reload', () => !h.el('files-note').hidden);
+    expect(editorText(h).value).toBe('mine');
+    expect(h.el('files-dirty').hidden).toBe(false);
+
+    await h.click('#files-close');
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
   });
 
   it('opens a file named by another panel (window.openFileEditor) and shows a Markdown preview', async () => {

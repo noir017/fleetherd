@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -94,6 +95,30 @@ describe('localWorkspace', () => {
     ).rejects.toBeInstanceOf(WorkspaceConflictError);
     expect(fs.readFileSync(real, 'utf8')).toBe('not ours\n');
 
+    // The content hash catches what size and mtime cannot: a same-length body with the timestamp
+    // put back.
+    const bytesNow = fs.readFileSync(real);
+    const sha = createHash('sha256').update(bytesNow).digest('hex');
+    const now = fs.statSync(real);
+    fs.writeFileSync(real, 'seconD\n');
+    fs.utimesSync(real, now.atime, now.mtime);
+    await expect(
+      ws.writeFile(real, Buffer.from('mine\n'), {
+        size: now.size,
+        mtimeMs: Math.trunc(now.mtimeMs),
+        sha256: sha,
+      })
+    ).rejects.toBeInstanceOf(WorkspaceConflictError);
+    // The right hash writes.
+    await ws.writeFile(real, Buffer.from('mine\n'), {
+      size: fs.statSync(real).size,
+      mtimeMs: Math.trunc(fs.statSync(real).mtimeMs),
+      sha256: createHash('sha256').update(fs.readFileSync(real)).digest('hex'),
+    });
+    expect(fs.readFileSync(real, 'utf8')).toBe('mine\n');
+    // Put the umask-default case back on a fresh file.
+    fs.rmSync(real);
+
     // A new file gets the umask's answer, never 0600.
     const created = await ws.writeFile(path.join(dir, 'new.txt'), Buffer.from('x\n'), { missing: true });
     expect(created.size).toBe(2);
@@ -123,8 +148,10 @@ describe('localWorkspace', () => {
     await expect(ws.rename(path.join(dir, 'b.txt'), path.join(dir, 'b.txt'))).rejects.toThrow(/already there/);
     await expect(ws.rename(path.join(dir, 'b.txt'), path.join(dir, '..', 'out.txt'))).rejects.toThrow(/not both under/);
 
-    await ws.remove(path.join(dir, 'b.txt'));
-    await ws.remove(path.join(dir, 'sub'));
+    expect(await ws.remove(path.join(dir, 'b.txt'))).toEqual({ removed: true });
+    expect(await ws.remove(path.join(dir, 'sub'))).toEqual({ removed: true });
+    // Deleting what is already gone is the same answer the host gives, not an error.
+    expect(await ws.remove(path.join(dir, 'b.txt'))).toEqual({ removed: false });
     await expect(ws.remove(path.join(dir, 'full'))).rejects.toThrow();
     expect(fs.existsSync(path.join(dir, 'full', 'keep'))).toBe(true);
     await expect(ws.remove(path.join(dir, '..'))).rejects.toThrow(/not under/);
@@ -147,7 +174,7 @@ describe('remoteWorkspace', () => {
         editWrite: async () => ({ ok: true as const, mtimeMs: 1, size: 2 }),
         mkdirp: async () => {},
         renameEntry: async () => {},
-        removeEntry: async () => {},
+        removeEntry: async () => ({ removed: true }),
       },
       '~/work'
     );
@@ -183,15 +210,20 @@ describe('remoteWorkspace', () => {
         },
         removeEntry: async (p, owned) => {
           calls.push({ remove: [p, owned] });
+          return { removed: true };
         },
       },
       '~/work'
     );
-    expect(await ws.writeFile('~/work/a.txt', Buffer.from('abc'), { size: 3, mtimeMs: 7 })).toEqual({
+    expect(await ws.writeFile('~/work/a.txt', Buffer.from('abc'), { size: 3, mtimeMs: 7, sha256: 'f'.repeat(64) })).toEqual({
       mtimeMs: 7,
       size: 3,
     });
-    expect(calls[0]).toEqual({ p: '~/work/a.txt', data: 'abc', expect: { size: 3, mtimeMs: 7 } });
+    expect(calls[0]).toEqual({
+      p: '~/work/a.txt',
+      data: 'abc',
+      expect: { size: 3, mtimeMs: 7, sha256: 'f'.repeat(64) },
+    });
 
     answer = { ok: false, conflict: true, exists: true, size: 9, mtimeMs: 8 };
     const err = await ws.writeFile('~/work/a.txt', Buffer.from('x'), { size: 3, mtimeMs: 7 }).catch((e) => e);
@@ -206,7 +238,7 @@ describe('remoteWorkspace', () => {
       { remove: ['~/work/b.txt', '~/work'] },
     ]);
     // An extra root is passed through as the fence.
-    await ws.remove('/mnt/other/x', '/mnt/other');
+    expect(await ws.remove('/mnt/other/x', '/mnt/other')).toEqual({ removed: true });
     expect(calls.at(-1)).toEqual({ remove: ['/mnt/other/x', '/mnt/other'] });
   });
 });

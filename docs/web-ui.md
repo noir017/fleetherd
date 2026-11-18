@@ -373,8 +373,9 @@ Turned on, the chat header grows a folder button that opens a file browser and e
 machine the topic's agent runs on — this one, or a remote host, whichever the topic uses. The left
 side is a directory tree that expands as you open it (a drawer on a phone); the right side holds
 the breadcrumbs, a filename search over the project, and the file itself. Files up to 1 MiB of
-UTF-8 text are editable; images (PNG, JPEG, GIF, WebP, up to 5 MiB) are shown, and anything else is
-listed with its size and type. Markdown has a Preview tab.
+UTF-8 text are editable; images (PNG, JPEG, GIF, WebP, up to 5 MiB) are shown, and anything else
+(binary, not UTF-8, or over the limit) is named with a sentence saying why it cannot be edited
+here. Markdown has a Preview tab.
 
 Off unless you ask for it, and the reason is the same as the terminal's: a save is a write on that
 machine, which is running commands by another route. What it can reach is each topic's working
@@ -384,10 +385,15 @@ whatever a link points at can be edited through it; that is deliberate, because 
 out as links into mounted volumes is normal, but it also means `roots` is as far as this is a
 boundary. The ceiling is the agent's own tool access, which is why it is opt-in like the terminal.
 
-Every save is checked: if the file changed on the machine since you opened it, the editor offers
-reload, overwrite or cancel instead of quietly replacing someone else's work. Saves keep the
-file's permissions and write through symlinks rather than replacing them. Each write is logged
-with who, which machine and which file.
+Every save is checked: if the file changed on the machine since you opened it — its size, its
+timestamp, or the SHA-256 of its bytes — the editor offers reload, overwrite or cancel instead of
+quietly replacing someone else's work. The check happens immediately before the write and again
+just before the file is replaced, but it is a check, not a lock: two saves landing in the same
+instant can still overwrite each other. Saves keep the file's permissions, write through symlinks
+rather than replacing them, and leave a BOM and CRLF as they were, so opening and saving a file you
+did not edit returns the same bytes. Each write is logged with who, which machine and which file.
+New file, new folder, rename and delete act on the file the editor has open; a directory in the
+tree is for getting around, not for renaming.
 
 ```yaml
 platforms:

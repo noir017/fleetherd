@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -729,6 +731,47 @@ func TestEditWriteRefusesAFileThatChanged(t *testing.T) {
 	}
 }
 
+// A replacement the stat cannot see — same size, same mtime — is caught by the content hash. That
+// is the whole reason the version carries one: a second-granularity filesystem and a same-length
+// edit would otherwise pass the size/mtime check.
+func TestEditWriteRefusesASameSizeSameMtimeChangeByHash(t *testing.T) {
+	d := testDaemon(t, "editsha")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	file := filepath.Join(homeDir(), "ws", "a.txt")
+	_ = os.MkdirAll(filepath.Dir(file), 0o755)
+	_ = os.WriteFile(file, []byte("aaaa\n"), 0o644)
+	st, _ := os.Stat(file)
+	sum := sha256.Sum256([]byte("aaaa\n"))
+	oldSha := hex.EncodeToString(sum[:])
+
+	// Someone else writes a same-length body and puts the timestamp back.
+	_ = os.WriteFile(file, []byte("bbbb\n"), 0o644)
+	_ = os.Chtimes(file, st.ModTime(), st.ModTime())
+
+	write := func(sha string) (*Header, map[string]any) {
+		r, res, _ := rpc(t, g, &Header{
+			Op: "editWrite", Path: "~/ws/a.txt", Size: st.Size(), MtimeMs: st.ModTime().UnixMilli(), Sha256: sha,
+		}, []byte("mine\n"))
+		return r, res
+	}
+	r, res := write(oldSha)
+	if r.T != "rpc-ok" || res["conflict"] != true {
+		t.Fatalf("a same-size, same-mtime change must conflict on the hash: %+v %v", r, res)
+	}
+	if got, _ := os.ReadFile(file); string(got) != "bbbb\n" {
+		t.Fatalf("a conflicted write must change nothing: %q", got)
+	}
+
+	newSum := sha256.Sum256([]byte("bbbb\n"))
+	r, res = write(hex.EncodeToString(newSum[:]))
+	if r.T != "rpc-ok" || res["ok"] != true {
+		t.Fatalf("the right hash must write: %+v %v", r, res)
+	}
+	if got, _ := os.ReadFile(file); string(got) != "mine\n" {
+		t.Fatalf("after the accepted write: %q", got)
+	}
+}
+
 func TestRenameAndRemoveEntryStayInRoot(t *testing.T) {
 	d := testDaemon(t, "rename")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)
@@ -766,6 +809,9 @@ func TestRenameAndRemoveEntryStayInRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "full", "keep")); err != nil {
 		t.Fatalf("a refused delete must leave the tree alone: %v", err)
+	}
+	if r, res, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/missing.txt", Owned: "~/ws"}, nil); r.T != "rpc-ok" || res["removed"] != false {
+		t.Fatalf("deleting what is already gone must be an answer, not an error: %+v %v", r, res)
 	}
 	if r, _, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/../../x", Owned: "~/ws"}, nil); r.T != "rpc-err" {
 		t.Fatalf("a path escaping the root must be refused: %+v", r)

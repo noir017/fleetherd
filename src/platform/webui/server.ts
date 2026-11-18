@@ -1331,7 +1331,11 @@ async function filesWrite({ req, res }: Req, ctx: Ctx): Promise<void> {
       ? { force: true }
       : parsed.missing === true
         ? { missing: true }
-        : { ...(parsed.mtimeMs !== undefined ? { mtimeMs: parsed.mtimeMs } : {}), ...(parsed.size !== undefined ? { size: parsed.size } : {}) }
+        : {
+            ...(parsed.mtimeMs !== undefined ? { mtimeMs: parsed.mtimeMs } : {}),
+            ...(parsed.size !== undefined ? { size: parsed.size } : {}),
+            ...(parsed.sha256 !== undefined ? { sha256: parsed.sha256 } : {}),
+          }
   );
   send(req, res, r.ok ? 200 : 'conflict' in r ? 409 : 400, r);
 }

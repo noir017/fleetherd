@@ -343,6 +343,11 @@ export const FilesWriteRequestSchema = z
     text: z.string().max(1_100_000),
     mtimeMs: z.number().int().min(0).optional(),
     size: z.number().int().min(0).optional(),
+    /** The content version read with the file: what a same-length edit cannot change unnoticed. */
+    sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/, 'not a sha256')
+      .optional(),
     missing: z.boolean().optional(),
     /** The person chose "overwrite" after a conflict: skip the version check, nothing else. */
     force: z.boolean().optional(),

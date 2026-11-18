@@ -2459,24 +2459,34 @@ describe('webui server: the file window', () => {
     fetch(`${base}${route}`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
 
   /** The smallest panel the routes can reach: the daemon's own is tested in daemon/file-panel.test.ts. */
-  function fakePanel(): FilesPanel {
+  function fakePanel(): { panel: FilesPanel; seen: string[] } {
     const seen: string[] = [];
     const ok = <T extends object>(v: T) => ({ ok: true as const, ...v });
-    return {
+    const panel: FilesPanel = {
       async list(_ref, p) {
         seen.push(`list ${p}`);
         return ok({ path: '/w', rel: '', entries: [{ name: 'a.txt', dir: false }] });
       },
       async read(_ref, p) {
         seen.push(`read ${p}`);
-        return ok({ path: p, rel: 'a.txt', name: 'a.txt', size: 3, mtimeMs: 5, kind: 'text' as const, text: 'abc' });
+        return ok({
+          path: p,
+          dir: '/w',
+          rel: 'a.txt',
+          name: 'a.txt',
+          size: 3,
+          mtimeMs: 5,
+          kind: 'text' as const,
+          text: 'abc',
+          sha256: 'a'.repeat(64),
+        });
       },
       async write(_ref, p, text, expect) {
         seen.push(`write ${p} ${text} ${JSON.stringify(expect)}`);
         if (p.endsWith('stale.txt')) {
           return { ok: false as const, conflict: true as const, exists: true, size: 9, mtimeMs: 10, error: 'changed' };
         }
-        return { ok: true as const, mtimeMs: 6, size: text.length };
+        return { ok: true as const, mtimeMs: 6, size: text.length, sha256: 'b'.repeat(64) };
       },
       async create(_ref, p, dir) {
         seen.push(`create ${p} ${dir}`);
@@ -2488,13 +2498,14 @@ describe('webui server: the file window', () => {
       },
       async remove(_ref, p) {
         seen.push(`remove ${p}`);
-        return { ok: true as const };
+        return { ok: true as const, removed: true };
       },
       async search(_ref, q) {
         seen.push(`search ${q}`);
         return { ok: true as const, hits: [{ path: '/w/a.txt', rel: 'a.txt', name: 'a.txt', dir: false }], truncated: false };
       },
     };
+    return { panel, seen };
   }
 
   it('answers 404 on every route when the feature is off', async () => {
@@ -2516,7 +2527,8 @@ describe('webui server: the file window', () => {
 
   it('lists, reads and writes through the injected panel when it is on', async () => {
     const { base, room, topic } = await boot({ files: { enabled: true, roots: [] } });
-    room.useFilesPanel(fakePanel());
+    const files = fakePanel();
+    room.useFilesPanel(files.panel);
     const cookie = await signIn(base);
 
     const list = await fetch(`${base}/api/files/list?topic=${topic}&path=`, { headers: { cookie } });
@@ -2524,7 +2536,7 @@ describe('webui server: the file window', () => {
     expect(await list.json()).toMatchObject({ ok: true, path: '/w', entries: [{ name: 'a.txt', dir: false }] });
 
     const read = await fetch(`${base}/api/files/read?topic=${topic}&path=/w/a.txt&preview=1`, { headers: { cookie } });
-    expect(await read.json()).toMatchObject({ ok: true, kind: 'text', text: 'abc' });
+    expect(await read.json()).toMatchObject({ ok: true, kind: 'text', text: 'abc', sha256: 'a'.repeat(64) });
 
     const save = await post(base, cookie, '/api/files/write', {
       topic,
@@ -2532,9 +2544,12 @@ describe('webui server: the file window', () => {
       text: 'hello',
       mtimeMs: 5,
       size: 3,
+      sha256: 'a'.repeat(64),
     });
     expect(save.status).toBe(200);
-    expect(await save.json()).toEqual({ ok: true, mtimeMs: 6, size: 5 });
+    expect(await save.json()).toMatchObject({ ok: true, mtimeMs: 6, size: 5 });
+    // The whole version — sha included — reaches the panel.
+    expect(files.seen.at(-1)).toBe(`write /w/a.txt hello {"mtimeMs":5,"size":3,"sha256":"${'a'.repeat(64)}"}`);
 
     // A conflict is 409, with what the file is now — the page's three-way choice hangs off it.
     const stale = await post(base, cookie, '/api/files/write', { topic, path: '/w/stale.txt', text: 'x', mtimeMs: 1, size: 1 });
@@ -2550,7 +2565,7 @@ describe('webui server: the file window', () => {
 
   it('validates the query and the body before anything reaches a machine', async () => {
     const { base, room, topic } = await boot({ files: { enabled: true, roots: [] } });
-    room.useFilesPanel(fakePanel());
+    room.useFilesPanel(fakePanel().panel);
     const cookie = await signIn(base);
 
     expect((await fetch(`${base}/api/files/list?topic=nope&path=`, { headers: { cookie } })).status).toBe(400);

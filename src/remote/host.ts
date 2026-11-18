@@ -344,7 +344,7 @@ export class RemoteHost extends EventEmitter {
   async editWrite(
     path: string,
     data: Uint8Array,
-    expect: { mtimeMs?: number; size?: number; missing?: boolean; force?: boolean },
+    expect: { mtimeMs?: number; size?: number; sha256?: string; missing?: boolean; force?: boolean },
     timeoutMs?: number
   ): Promise<
     | { ok: true; mtimeMs: number; size: number }
@@ -353,7 +353,14 @@ export class RemoteHost extends EventEmitter {
     if (data.length > FILE_CHUNK) throw new Error(`one edit takes one frame: ${data.length} bytes is over ${FILE_CHUNK}`);
     const { res } = await this.rpc(
       'editWrite',
-      { path, mtimeMs: expect.mtimeMs, size: expect.size, expectMissing: expect.missing === true, force: expect.force === true },
+      {
+        path,
+        mtimeMs: expect.mtimeMs,
+        size: expect.size,
+        sha256: expect.sha256,
+        expectMissing: expect.missing === true,
+        force: expect.force === true,
+      },
       data,
       { timeoutMs }
     );
@@ -367,9 +374,14 @@ export class RemoteHost extends EventEmitter {
     await this.rpc('rename', { path: from, target: to, owned });
   }
 
-  /** Delete one file or one empty directory within `owned` (remote/ops.go opRemoveEntry). */
-  async removeEntry(path: string, owned: string): Promise<void> {
-    await this.rpc('removeEntry', { path, owned });
+  /**
+   * Delete one file or one empty directory within `owned` (remote/ops.go opRemoveEntry). Answers
+   * whether anything was there: deleting what is already gone is an answer, not an error, so the
+   * page and the local half agree on it.
+   */
+  async removeEntry(path: string, owned: string): Promise<{ removed: boolean }> {
+    const { res } = await this.rpc('removeEntry', { path, owned });
+    return { removed: res.removed === true };
   }
 
   /**

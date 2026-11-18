@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -94,7 +95,9 @@ describe('buildFilesPanel on this machine', () => {
       expect(md.kind).toBe('text');
       expect(md.text).toBe('# Hi\n\nbody\n');
       expect(md.html).toContain('<h1>');
-      expect(md.mode).toBeTypeOf('number');
+      expect(md.eol).toBe('lf');
+      expect(md.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(md.dir).toBe(dir);
     }
     const plain = await panel().read(REF, 'notes.md');
     expect(plain.ok && plain.html).toBeUndefined();
@@ -146,6 +149,64 @@ describe('buildFilesPanel on this machine', () => {
     // A save over 1 MiB is refused before it reaches the machine.
     const huge = await panel().write(REF, 'link.txt', 'x'.repeat(MAX_EDIT_BYTES + 1), { force: true });
     expect(huge.ok).toBe(false);
+  });
+
+  it('keeps a BOM and CRLF byte for byte through a read and a write', async () => {
+    const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('a\r\nb')]);
+    fs.writeFileSync(path.join(dir, 'bom.txt'), bytes);
+    const r = await panel().read(REF, 'bom.txt', { preview: true });
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.kind !== 'text') return;
+    expect(r.bom).toBe(true);
+    expect(r.eol).toBe('crlf');
+    expect(r.text).toBe('\uFEFFa\r\nb');
+    expect(r.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
+    // The markdown renderer does not see the BOM as part of the first line.
+    expect(r.html ?? '').not.toContain('\uFEFF');
+
+    const w = await panel().write(REF, 'bom.txt', r.text ?? '', {
+      size: r.size,
+      mtimeMs: r.mtimeMs,
+      sha256: r.sha256,
+    });
+    expect(w).toMatchObject({ ok: true, size: bytes.length });
+    expect(fs.readFileSync(path.join(dir, 'bom.txt')).equals(bytes)).toBe(true);
+    // And a file with no trailing newline stays without one.
+    fs.writeFileSync(path.join(dir, 'bom.txt'), bytes);
+    await panel().write(REF, 'bom.txt', '\uFEFFa\r\nb', {
+      size: bytes.length,
+      mtimeMs: fs.statSync(path.join(dir, 'bom.txt')).mtimeMs,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    expect(fs.readFileSync(path.join(dir, 'bom.txt')).equals(bytes)).toBe(true);
+  });
+
+  it('conflicts on a same-length change the size and mtime cannot see', async () => {
+    const file = path.join(dir, 'same.txt');
+    fs.writeFileSync(file, 'aaaa\n');
+    const read = await panel().read(REF, 'same.txt');
+    expect(read.ok).toBe(true);
+    if (!read.ok || read.kind !== 'text') return;
+    const st = fs.statSync(file);
+    fs.writeFileSync(file, 'bbbb\n');
+    fs.utimesSync(file, st.atime, st.mtime);
+
+    const r = await panel().write(REF, 'same.txt', 'mine\n', {
+      size: read.size,
+      mtimeMs: read.mtimeMs,
+      sha256: read.sha256,
+    });
+    expect(r).toMatchObject({ ok: false, conflict: true, exists: true });
+    expect(fs.readFileSync(file, 'utf8')).toBe('bbbb\n');
+  });
+
+  it('deletes what is already gone as an answer, and says which it was', async () => {
+    const r = await panel().remove(REF, 'never-was.txt');
+    expect(r).toEqual({ ok: true, removed: false });
+    expect(logs.at(-1)).toMatch(/found already gone/);
+    fs.writeFileSync(path.join(dir, 'here.txt'), 'x');
+    expect(await panel().remove(REF, 'here.txt')).toEqual({ ok: true, removed: true });
+    expect(logs.at(-1)).toMatch(/ deleted /);
   });
 
   it('creates, renames and deletes single entries, and never a tree', async () => {
@@ -248,6 +309,7 @@ describe('buildFilesPanel against a remote host (a fake workspace)', () => {
       },
       async remove(p, owned) {
         calls.push(['remove', p, owned ?? '']);
+        return { removed: true };
       },
       ...over,
     };
@@ -280,7 +342,11 @@ describe('buildFilesPanel against a remote host (a fake workspace)', () => {
   it('writes and deletes through the host with the resolved root as the fence', async () => {
     const ws = fakeHost();
     const panel = buildFilesPanel({ instance: 'webui', roots: ['~/extra'], workspaceForRef: () => ws });
-    expect(await panel.write(REF, 'a.txt', 'xyz', { size: 3, mtimeMs: 7 })).toEqual({ ok: true, mtimeMs: 8, size: 3 });
+    expect(await panel.write(REF, 'a.txt', 'xyz', { size: 3, mtimeMs: 7 })).toMatchObject({
+      ok: true,
+      mtimeMs: 8,
+      size: 3,
+    });
     expect(ws.calls.at(-1)).toEqual(['writeFile', '/home/u/work/a.txt', '{"size":3,"mtimeMs":7}', 'xyz']);
     await panel.remove(REF, 'a.txt');
     expect(ws.calls.at(-1)).toEqual(['remove', '/home/u/work/a.txt', '/home/u/work']);
@@ -304,6 +370,52 @@ describe('buildFilesPanel against a remote host (a fake workspace)', () => {
       size: 9,
       mtimeMs: 10,
     });
+  });
+
+  it('does not remember a failed pwd: the next open asks the host again', async () => {
+    let asks = 0;
+    const ws = fakeHost({
+      async run(argv) {
+        if (argv[0] === 'pwd') {
+          asks++;
+          if (asks === 1) {
+            return { code: 1, output: Buffer.alloc(0), stderr: 'gone', truncated: false, timedOut: false };
+          }
+          return { code: 0, output: Buffer.from('/home/u/work\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        if (argv[0] === 'printenv') {
+          return { code: 0, output: Buffer.from('/home/u\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        return { code: 0, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: false };
+      },
+    });
+    const panel = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => ws });
+    const first = await panel.list(REF, '');
+    expect(first.ok).toBe(false);
+    if (!first.ok) expect(first.error).toMatch(/working directory/);
+    // The rejection was not kept: the second open succeeds.
+    expect((await panel.list(REF, '')).ok).toBe(true);
+  });
+
+  it('says when HOME cannot be read instead of leaving a ~/ root silently inert', async () => {
+    const ws = fakeHost({
+      async run(argv) {
+        if (argv[0] === 'pwd') {
+          return { code: 0, output: Buffer.from('/home/u/work\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        if (argv[0] === 'printenv') {
+          return { code: 1, output: Buffer.alloc(0), stderr: 'no HOME', truncated: false, timedOut: false };
+        }
+        return { code: 0, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: false };
+      },
+    });
+    const withTilde = buildFilesPanel({ instance: 'webui', roots: ['~/extra'], workspaceForRef: () => ws });
+    const r = await withTilde.list(REF, '');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/home directory is not readable on devbox/);
+    // Without a ~/ root the window still works: HOME is only needed to expand one.
+    const without = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => ws });
+    expect((await without.list(REF, '')).ok).toBe(true);
   });
 
   it('refuses when the topic has no workspace, instead of guessing one', async () => {

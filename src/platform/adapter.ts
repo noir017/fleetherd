@@ -576,14 +576,27 @@ export interface FilesPanelListing {
 /** One file's content, or what it is instead of text. */
 export interface FilesPanelFile {
   path: string;
+  /** The file's directory on that machine, so the page never has to split a path itself. */
+  dir: string;
   rel?: string;
   name: string;
   size: number;
   mtimeMs: number;
-  mode?: number;
   kind: FilesPanelKind;
-  /** Present for `text`: the whole file, decoded as UTF-8. */
+  /** Present for `text`: the whole file, decoded as UTF-8 — a BOM included, not eaten. */
   text?: string;
+  /**
+   * Present for `text`: the file's line ending. A textarea hands back LF whatever it was given,
+   * so the page puts CRLF back before saving.
+   */
+  eol?: 'crlf' | 'lf';
+  /** Present for `text` and true when the file starts with a UTF-8 BOM. */
+  bom?: boolean;
+  /**
+   * Present for `text`: the hex SHA-256 of the bytes read, sent back on save. The size and mtime
+   * alone cannot see a same-length replacement inside one timestamp tick.
+   */
+  sha256?: string;
   /** Present for `image`: a `data:` URL (CSP's `img-src` already allows those). */
   dataUrl?: string;
   /** Present for `text` when the caller asked for a preview and the name is Markdown. */
@@ -609,10 +622,14 @@ export type FilesPanelError = { ok: false; error: string };
 
 export type FilesPanelListResult = ({ ok: true } & FilesPanelListing) | FilesPanelError;
 export type FilesPanelReadResult = ({ ok: true } & FilesPanelFile) | FilesPanelError;
-export type FilesPanelWriteResult = { ok: true; mtimeMs: number; size: number } | FilesPanelConflict | FilesPanelError;
+export type FilesPanelWriteResult =
+  | { ok: true; mtimeMs: number; size: number; sha256: string }
+  | FilesPanelConflict
+  | FilesPanelError;
 export type FilesPanelCreateResult = { ok: true; path: string; dir: boolean } | FilesPanelError;
 export type FilesPanelRenameResult = { ok: true; path: string } | FilesPanelError;
-export type FilesPanelRemoveResult = { ok: true } | FilesPanelError;
+/** `removed: false` when there was nothing there — the same answer both machines give. */
+export type FilesPanelRemoveResult = { ok: true; removed: boolean } | FilesPanelError;
 
 export interface FilesPanelHit {
   path: string;
@@ -632,6 +649,8 @@ export interface FilesPanelSearchResult {
 export interface FilesPanelExpect {
   mtimeMs?: number;
   size?: number;
+  /** The hex SHA-256 of the bytes read — the check size and mtime cannot make. */
+  sha256?: string;
   missing?: boolean;
   /** Overwrite whatever is there — the person's answer to a conflict. */
   force?: boolean;

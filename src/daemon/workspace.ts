@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -74,6 +74,12 @@ export interface WorkspaceStat {
 export interface WorkspaceWriteExpect {
   mtimeMs?: number;
   size?: number;
+  /**
+   * The hex SHA-256 of the bytes the caller read. The size and mtime alone cannot see a same-length
+   * replacement inside one timestamp tick; this can. Checked before the temporary is written and
+   * again immediately before the rename.
+   */
+  sha256?: string;
   missing?: boolean;
   /** Overwrite whatever is there — the person's answer to a conflict. Skips only the version check. */
   force?: boolean;
@@ -130,8 +136,12 @@ export interface Workspace {
    * (default: this workspace's root) — the editor can be pointed at extra roots.
    */
   rename(from: string, to: string, owned?: string): Promise<void>;
-  /** Delete one file or one empty directory — never a tree. Stays inside `owned`, as `rename` does. */
-  remove(p: string, owned?: string): Promise<void>;
+  /**
+   * Delete one file or one empty directory — never a tree. Stays inside `owned`, as `rename` does.
+   * `removed: false` when there was nothing there: deleting what is already gone is an answer, not
+   * an error, and both machines say so.
+   */
+  remove(p: string, owned?: string): Promise<{ removed: boolean }>;
 }
 
 /** The workspace of an agent's conversation that works in `root`, on the agent's machine. */
@@ -235,35 +245,16 @@ export function localWorkspace(root: string): Workspace {
       const target = await resolveThroughLink(p);
       const before = await statOrNull(target);
       if (before?.isDirectory()) throw new Error(`${p} is a directory`);
-      if (expect.missing) {
-        if (before && !expect.force) {
-          throw new WorkspaceConflictError(`${p} already exists`, true, before.size, Math.trunc(before.mtimeMs));
-        }
-      } else if (!expect.force) {
-        if (!before) throw new WorkspaceConflictError(`${p} is gone`, false);
-        if (before.size !== expect.size || Math.trunc(before.mtimeMs) !== expect.mtimeMs) {
-          throw new WorkspaceConflictError(`${p} changed since it was read`, true, before.size, Math.trunc(before.mtimeMs));
-        }
-      }
+      await assertExpected(p, target, before, expect);
       const dir = path.dirname(target);
       const di = await statOrNull(dir);
       if (!di?.isDirectory()) throw new Error(`${dir} is not a directory`);
-      const tmp = path.join(dir, `.${path.basename(target)}.tmp-${randomUUID().slice(0, 12)}`);
-      // `wx` is O_CREATE|O_EXCL: a collision is an error rather than two writers sharing a temp.
-      // 0o666 rather than 0o600, so the umask decides what a new file gets, as it does for any
-      // file the person creates; an existing file's mode is put back below.
-      const fh = await fs.promises.open(tmp, 'wx', 0o666);
+      const tmp = await writeBeside(target, data, before);
       try {
-        await fh.writeFile(data);
-        if (before) await fh.chmod(before.mode & 0o777);
-        await fh.sync();
-      } catch (e) {
-        await fh.close().catch(() => {});
-        await fs.promises.rm(tmp, { force: true });
-        throw e;
-      }
-      await fh.close();
-      try {
+        // Last look before the rename, the same size, mtime and hash the check above accepted: the
+        // window is then the gap between here and the rename, not the whole write and fsync. This is
+        // an advisory check, not a CAS — nothing stops a writer landing in that gap.
+        if (!expect.force) await assertStillExpected(p, target, before, expect);
         await fs.promises.rename(tmp, target);
       } catch (e) {
         await fs.promises.rm(tmp, { force: true });
@@ -291,9 +282,16 @@ export function localWorkspace(root: string): Workspace {
     },
     async remove(p, owned = root) {
       if (!withinOwned(p, owned)) throw new Error(`refusing to remove ${p}: not under ${owned}`);
-      const st = await fs.promises.lstat(p); // lstat: a link goes, its target stays
+      let st;
+      try {
+        st = await fs.promises.lstat(p); // lstat: a link goes, its target stays
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { removed: false };
+        throw e;
+      }
       if (st.isDirectory()) await fs.promises.rmdir(p);
       else await fs.promises.unlink(p);
+      return { removed: true };
     },
   };
 }
@@ -310,6 +308,78 @@ async function resolveThroughLink(p: string): Promise<string> {
   // A link whose target is gone fails here, as it does on the host: writing through it would
   // otherwise replace the link with a regular file, which is the one thing this write must not do.
   return st.isSymbolicLink() ? fs.promises.realpath(p) : p;
+}
+
+/** Refuse a write whose expectation the file no longer meets. Throws `WorkspaceConflictError`. */
+async function assertExpected(
+  p: string,
+  target: string,
+  before: Stats | null,
+  expect: WorkspaceWriteExpect
+): Promise<void> {
+  if (expect.force) return;
+  if (expect.missing) {
+    if (before) throw new WorkspaceConflictError(`${p} already exists`, true, before.size, Math.trunc(before.mtimeMs));
+    return;
+  }
+  if (!before) throw new WorkspaceConflictError(`${p} is gone`, false);
+  if (before.size !== expect.size || Math.trunc(before.mtimeMs) !== expect.mtimeMs) {
+    throw new WorkspaceConflictError(`${p} changed since it was read`, true, before.size, Math.trunc(before.mtimeMs));
+  }
+  if (expect.sha256 && (await sha256File(target)) !== expect.sha256) {
+    throw new WorkspaceConflictError(`${p} changed since it was read`, true, before.size, Math.trunc(before.mtimeMs));
+  }
+}
+
+/** The same check repeated immediately before the rename, to shrink the advisory window. */
+async function assertStillExpected(
+  p: string,
+  target: string,
+  before: Stats | null,
+  expect: WorkspaceWriteExpect
+): Promise<void> {
+  const now = await statOrNull(target);
+  let raced: boolean;
+  if (!before) {
+    raced = Boolean(now);
+  } else {
+    raced = !now || now.size !== before.size || Math.trunc(now.mtimeMs) !== Math.trunc(before.mtimeMs);
+    if (!raced && expect.sha256) raced = (await sha256File(target)) !== expect.sha256;
+  }
+  if (!raced) return;
+  throw new WorkspaceConflictError(
+    `${p} changed since it was read`,
+    Boolean(now),
+    now?.size,
+    now ? Math.trunc(now.mtimeMs) : undefined
+  );
+}
+
+/**
+ * Write `data` beside `target` under a random name and fsync it. Returns the temporary's path; the
+ * caller renames or removes it. `wx` is O_CREATE|O_EXCL: a collision is an error rather than two
+ * writers sharing a temp. 0o666 rather than 0o600, so the umask decides what a new file gets, as it
+ * does for any file the person creates; an existing file's mode is put back.
+ */
+async function writeBeside(target: string, data: Uint8Array, before: Stats | null): Promise<string> {
+  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.tmp-${randomUUID().slice(0, 12)}`);
+  const fh = await fs.promises.open(tmp, 'wx', 0o666);
+  try {
+    await fh.writeFile(data);
+    if (before) await fh.chmod(before.mode & 0o777);
+    await fh.sync();
+  } catch (e) {
+    await fh.close().catch(() => {});
+    await fs.promises.rm(tmp, { force: true });
+    throw e;
+  }
+  await fh.close();
+  return tmp;
+}
+
+/** The hex SHA-256 of a file's bytes — the editor's content version. */
+async function sha256File(p: string): Promise<string> {
+  return createHash('sha256').update(await fs.promises.readFile(p)).digest('hex');
 }
 
 async function statOrNull(p: string): Promise<Stats | null> {

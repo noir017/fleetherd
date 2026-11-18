@@ -976,7 +976,7 @@ export class WebRoom {
     topic: string,
     path: string,
     text: string,
-    expect: { mtimeMs?: number; size?: number; missing?: boolean; force?: boolean }
+    expect: { mtimeMs?: number; size?: number; sha256?: string; missing?: boolean; force?: boolean }
   ): Promise<FilesPanelWriteResult> {
     if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
     return this.filesPanel.write(this.conversation(topic), path, text, expect);
@@ -1003,7 +1003,8 @@ export class WebRoom {
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */
-  useIdleReclaim(reclaim: (ref: ConversationRef) => boolean): void {    this.idleReclaim = reclaim;
+  useIdleReclaim(reclaim: (ref: ConversationRef) => boolean): void {
+    this.idleReclaim = reclaim;
   }
 
   /**

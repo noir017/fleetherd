@@ -9688,7 +9688,8 @@ const SCRIPT = `
       filesTreeToggle=$('files-tree-toggle'), filesQ=$('files-q'), filesToggleBtn=$('files-toggle');
   var fileTopic='', fileRoot='', fileDir='', filePath='', fileRel='', fileName='', fileKind='',
       fileBase=null, fileSaved='', fileDirty=false, fileView=null, fileSeq=0, fileNodes={},
-      fileOpenDirs={}, fileNewIsDir=false, filePreviewing=false, fileBusy=false;
+      fileOpenDirs={}, fileNewIsDir=false, filePreviewing=false, fileBusy=false,
+      fileEol='lf', fileSha='', fileSep='/';
 
   function fileMsg(r, d){
     if(d && d.error) return d.error;
@@ -9715,18 +9716,33 @@ const SCRIPT = `
     filesNote.hidden = !msg;
     filesNote.textContent = msg || '';
   }
-  /** Join as POSIX does: a remote host is POSIX whatever this page is running on. */
+  /**
+   * Join as the machine names paths. A remote host is POSIX whatever this page is running on, but
+   * a local Windows workspace answers with backslashes, so the separator comes from the root the
+   * daemon sent rather than from an assumption here.
+   */
+  function fxSepOf(root){ return root && root.indexOf('\\\\') >= 0 && root.indexOf('/') < 0 ? '\\\\' : '/'; }
   function fxAbs(dir, name){
-    if(!dir || dir === '/') return '/' + name;
-    return (dir.charAt(dir.length-1) === '/' ? dir.slice(0,-1) : dir) + '/' + name;
+    if(!dir) return name;
+    var last = dir.charAt(dir.length-1);
+    return dir + (last === '/' || last === '\\\\' ? '' : fileSep) + name;
   }
   function fxDirOf(p){
-    var at = p.lastIndexOf('/');
-    return at <= 0 ? '/' : p.slice(0, at);
+    var at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\\\'));
+    if(at < 0) return '';
+    if(at === 0) return p.charAt(0);
+    if(at === 2 && /^[A-Za-z]:$/.test(p.slice(0, 2))) return p.slice(0, 3);
+    return p.slice(0, at);
   }
   function fxBase(p){
-    var at = p.lastIndexOf('/');
+    var at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\\\'));
     return at < 0 ? p : p.slice(at+1);
+  }
+  /** The editor holds LF; a save puts back the file's own line ending. */
+  function fxToDoc(text){ return String(text || '').replace(/\\r\\n/g, '\\n'); }
+  function fxFromDoc(doc){
+    var lf = String(doc || '').replace(/\\r\\n/g, '\\n');
+    return fileEol === 'crlf' ? lf.replace(/\\n/g, '\\r\\n') : lf;
   }
   function fileShortRoot(p){
     var parts = String(p || '').split('/').filter(function(x){ return x; });
@@ -9890,9 +9906,13 @@ const SCRIPT = `
     fileRel = d.rel || '';
     fileName = d.name || fxBase(d.path);
     fileKind = d.kind;
-    fileDir = fxDirOf(d.path);
+    fileDir = d.dir || fxDirOf(d.path);
     fileBase = {mtimeMs:d.mtimeMs, size:d.size};
-    fileSaved = d.text || '';
+    // The editor is always LF; the file's own ending and content version travel with the read and
+    // go back out on save. A BOM is a character in the text, so it is kept without a flag.
+    fileEol = d.eol === 'crlf' ? 'crlf' : 'lf';
+    fileSha = d.sha256 || '';
+    fileSaved = fxToDoc(d.text || '');
     filePreviewing = false;
     fileView = null;
     filesPreview.hidden = true;
@@ -9916,7 +9936,7 @@ const SCRIPT = `
       wrap.appendChild(img);
       filesEditor.appendChild(wrap);
     } else if(d.kind === 'text'){
-      makeFileEditor(d.text || '');
+      makeFileEditor(fileSaved);
     } else {
       filesEditor.innerHTML = '<div class="skills-empty">' + text(d.note || 'This file cannot be shown here.') + '</div>';
     }
@@ -9924,9 +9944,14 @@ const SCRIPT = `
     paintTree();
   }
 
-  function openFile(path){
+  /**
+   * Open one file. skipConfirm is the conflict dialog's Reload: the person has already chosen to
+   * drop their edit, so asking twice is noise — but nothing is dropped until the new content is
+   * actually here (paintFile resets the dirty mark), so a read that fails leaves both intact.
+   */
+  function openFile(path, skipConfirm){
     if(!path || !fileTopic) return;
-    if(!fileConfirmLeave()) return;
+    if(!skipConfirm && !fileConfirmLeave()) return;
     var seq = ++fileSeq;
     filesSay('');
     filesConflict.hidden = true;
@@ -9952,16 +9977,21 @@ const SCRIPT = `
    */
   function saveFile(force){
     if(fileKind !== 'text' || !filePath || !fileView || fileBusy) return Promise.resolve(false);
-    var body = {topic:fileTopic, path:filePath, text:fileView.getDoc()};
+    var doc = fileView.getDoc();
+    var body = {topic:fileTopic, path:filePath, text:fxFromDoc(doc)};
     if(force) body.force = true;
-    else if(fileBase){ body.mtimeMs = fileBase.mtimeMs; body.size = fileBase.size; }
-    var sent = body.text;
+    else if(fileBase){
+      body.mtimeMs = fileBase.mtimeMs; body.size = fileBase.size;
+      if(fileSha) body.sha256 = fileSha;
+    }
+    var sent = doc;
     fileBusy = true;
     filesSaveBtn.disabled = true;
     return filesPost('write', body).then(function(res){
       fileBusy = false;
       if(res.ok){
         fileBase = {mtimeMs:res.body.mtimeMs, size:res.body.size};
+        if(res.body.sha256) fileSha = res.body.sha256;
         if(fileView && fileView.getDoc() === sent){ fileSaved = sent; setFileDirty(false); }
         filesConflict.hidden = true;
         filesSay('Saved ' + (fileRel || fileName) + '.');
@@ -10028,12 +10058,23 @@ const SCRIPT = `
     var to = fxAbs(fileDir, name);
     if(to === filePath){ filesRenameRow.hidden = true; return; }
     if(!confirm('Rename "' + (fileRel || fileName) + '" to "' + name + '"?')) return;
+    var oldDir = fileDir;
     filesPost('rename', {topic:fileTopic, from:filePath, to:to}).then(function(res){
       if(!res.ok) return filesSay(fileMsg(res, res.body));
       filesRenameRow.hidden = true;
-      reloadDir(fileDir);
-      fileDirty = false;
-      openFile(to);
+      // Re-point the open file instead of re-reading it: the rename moved the file on disk, and
+      // the editor's unsaved text is still the person's. Clearing the mark or reloading here would
+      // throw it away without the question a close would ask.
+      filePath = to;
+      fileName = fxBase(to);
+      fileRel = to.indexOf(fileRoot + fileSep) === 0 ? to.slice(fileRoot.length + 1) : '';
+      fileDir = fxDirOf(to);
+      filesTitle.textContent = fileName;
+      filesWhere.textContent = fileRel || filePath;
+      paintCrumbs();
+      reloadDir(oldDir);
+      if(fileDir !== oldDir) reloadDir(fileDir);
+      filesSay(fileDirty ? 'Renamed. The unsaved changes are still here.' : 'Renamed.');
     }).catch(function(){ filesSay('Could not reach the daemon.'); });
   }
 
@@ -10046,6 +10087,7 @@ const SCRIPT = `
       fileDirty = false;
       fileSeq++;
       filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileView = null;
+      fileEol = 'lf'; fileSha = '';
       setFileDirty(false);
       filesTitle.textContent = 'Files';
       filesWhere.textContent = fileRoot;
@@ -10057,7 +10099,7 @@ const SCRIPT = `
       filesPreviewBtn.hidden = true;
       filesRenameBtn.disabled = true;
       filesDeleteBtn.disabled = true;
-      filesSay('Deleted.');
+      filesSay(res.body.removed === false ? 'It was already gone.' : 'Deleted.');
       paintFileActions();
       reloadDir(dir);
     }).catch(function(){ filesSay('Could not reach the daemon.'); });
@@ -10130,6 +10172,7 @@ const SCRIPT = `
     fileOpenDirs = {'': true};
     fileDir = '';
     filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileSaved = '';
+    fileEol = 'lf'; fileSha = '';
     fileView = null;
     filePreviewing = false;
     setFileDirty(false);
@@ -10139,6 +10182,7 @@ const SCRIPT = `
       if(fileTopic !== t) return;
       if(!res.ok){ filesTreeList.innerHTML = ''; return filesSay(fileMsg(res, res.body)); }
       fileRoot = res.body.path || '';
+      fileSep = fxSepOf(fileRoot);
       fileDir = fileRoot;
       fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
       filesWhere.textContent = fileRoot;
@@ -10178,6 +10222,7 @@ const SCRIPT = `
       filesGet('list', {topic:fileTopic, path:''}).then(function(res){
         if(!res.ok) return filesSay(fileMsg(res, res.body));
         fileRoot = res.body.path || fileRoot;
+        fileSep = fxSepOf(fileRoot);
         fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
         paintTree();
         if(want) openFile(want);
@@ -10213,9 +10258,9 @@ const SCRIPT = `
     filesDeleteBtn.addEventListener('click', filesDeleteGo);
     $('files-reload').addEventListener('click', function(){
       filesConflict.hidden = true;
-      fileDirty = false;
-      var want = filePath;
-      openFile(want);
+      // Dirty stays until the read lands: a reload that fails must not leave the old text on
+      // screen with nothing left to warn about it.
+      openFile(filePath, true);
     });
     $('files-overwrite').addEventListener('click', function(){
       filesConflict.hidden = true;
