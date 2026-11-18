@@ -157,8 +157,8 @@ saved with Enter, adds one), the topics its runs opened, and its recent runs, ea
 the topic it posted into; its **Edit** changes the task in place — see
 [Scheduled tasks](scheduled-tasks.md). The row's ⋯ holds **Pause** or **Resume**, **Run now** and
 **Edit** (both greyed while a run is in flight, with the reason) and **Delete**, which asks once,
-like deleting a topic. Tasks are still registered by asking an agent in a topic — the panel
-manages and edits them, it does not create them.
+like deleting a topic. The **+** in the panel's head adds a task on the same form **Edit** uses —
+or ask an agent in a topic, which registers one the same way.
 
 **What needs you.** Every topic waiting on you moves to the top of the list, its title in green,
 with a line under the group: a question to answer first (amber dot), then a turn that failed (red

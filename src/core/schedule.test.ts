@@ -14,12 +14,16 @@ import {
   nextRunOf,
   normalizeTags,
   parseAt,
+  SHAPE_SETTINGS,
+  shapeOf,
   taskCardText,
   taskView,
   zonedToEpoch,
   type BashOutcome,
   type NewTaskContext,
   type ScheduleTask,
+  type TaskSetting,
+  type TaskShape,
 } from './schedule.js';
 
 /**
@@ -210,9 +214,19 @@ describe('buildTask', () => {
     });
   });
 
-  it('refuses --host where there is no directory to place, in each case\'s own words', () => {
+  it('refuses --host on a fixed session, which has no directory to place', () => {
     expect(refusal({ cron: '0 * * * *', prompt: 'x', host: 'box' })).toMatch(/--host names the machine a --cwd belongs to.*fixed-session task has no --cwd/);
-    expect(refusal({ cron: '0 3 * * *', bash: 'ls', host: 'box' })).toMatch(/--host is for a --prompt task on another machine/);
+  });
+
+  it('runs a bash task on the machine --host names, with nothing inferred from the caller', () => {
+    // Named: that machine, and only the --cwd given — the caller's /work is a path elsewhere.
+    expect(built({ cron: '0 3 * * *', bash: 'ls', host: 'box' }).run).toEqual({ kind: 'bash', command: 'ls', timeoutMs: 600_000, host: 'box' });
+    expect(built({ cron: '0 3 * * *', bash: 'ls', host: 'box', cwd: '/srv' }).run).toMatchObject({ host: 'box', cwd: '/srv' });
+    // null is the gateway's own machine, even when the registering agent is on another.
+    const fromBox = ctx({ from: { key: 'k', platform: 'web', agent: 'cc', cwd: '/srv/box', host: 'box' } });
+    expect(built({ cron: '0 3 * * *', bash: 'ls', host: null }, fromBox).run).toEqual({ kind: 'bash', command: 'ls', timeoutMs: 600_000 });
+    // Not named: where the registering agent runs, in its directory — as before --host applied.
+    expect(built({ cron: '0 3 * * *', bash: 'ls' }, fromBox).run).toMatchObject({ host: 'box', cwd: '/srv/box' });
   });
 
   it('a daily-session task can name its model', () => {
@@ -345,11 +359,8 @@ describe('editTask', () => {
     expect(refused(fixed, { agent: 'oc' })).toMatch(/answered by cc.*--session new to run oc/);
   });
 
-  it('refuses to change what a task is, naming rm + add', () => {
-    const bash = built({ cron: '0 3 * * *', bash: 'ls' });
+  it('refuses two kinds at once', () => {
     const prompt = built({ cron: '0 8 * * *', prompt: 'x', session: 'new' });
-    expect(refused(bash, { prompt: 'do it' })).toMatch(/#a1b2c3 is a --bash task.*schedule rm a1b2c3.*add the prompt task/);
-    expect(refused(prompt, { bash: 'ls' })).toMatch(/#a1b2c3 is a --prompt task.*schedule rm a1b2c3.*add the bash task/);
     expect(refused(prompt, { prompt: 'x', bash: 'ls' })).toMatch(/at most one of --prompt/);
   });
 
@@ -424,6 +435,194 @@ describe('editTask', () => {
     expect(edited(daily, { name: 'renamed', model: 'fast-model' }).daySession).toEqual(day);
     expect(edited(daily, { agent: 'oc' })).not.toHaveProperty('daySession');
     expect(edited(daily, { cwd: '/elsewhere' })).not.toHaveProperty('daySession');
+  });
+});
+
+/**
+ * An edit that changes what a task is, how it runs or where it posts. The rule is still buildTask's;
+ * what these pin is what the id carries across such a change and what it starts afresh — the
+ * decisions the comment on editTask names, one by one.
+ */
+describe('editTask: kind, session and target', () => {
+  const editCtx = (over: Partial<NewTaskContext> = {}): NewTaskContext =>
+    ctx({ from: { key: 'web#main#t1', platform: 'web', agent: 'cc' }, ...over });
+  const edited = (task: ScheduleTask, input: Parameters<typeof editTask>[1], c = editCtx()): ScheduleTask => {
+    const r = editTask(task, input, c);
+    if (!r.ok) throw new Error(r.error);
+    return r.task;
+  };
+  const refused = (task: ScheduleTask, input: Parameters<typeof editTask>[1], c = editCtx()): string => {
+    const r = editTask(task, input, c);
+    if (r.ok) throw new Error('expected a refusal');
+    return r.error;
+  };
+  /** A task with a past, so "kept" can be asserted rather than "still empty". */
+  const lived = (t: ScheduleTask): ScheduleTask => ({
+    ...t,
+    tags: ['ci'],
+    runs: 4,
+    lastPlannedAt: NOW - 2 * HOUR,
+    lastRun: { at: NOW - 2 * HOUR, status: 'failed', error: 'exit 1' },
+    history: [{ at: NOW - 2 * HOUR, status: 'failed', error: 'exit 1', conversation: 'web#main#r1' }],
+  });
+  const identity = (t: ScheduleTask) => ({
+    id: t.id,
+    createdAt: t.createdAt,
+    createdBy: t.createdBy,
+    state: t.state,
+    tags: t.tags,
+    runs: t.runs,
+    lastRun: t.lastRun,
+    history: t.history,
+    lastPlannedAt: t.lastPlannedAt,
+  });
+  const LATER = NOW + 6 * HOUR;
+  /** A target with a conversation of its own, as the service would find it. */
+  const elsewhere = (now = LATER): NewTaskContext =>
+    editCtx({
+      now,
+      target: { platform: 'web', address: { channel: 'main', thread: 't2' } },
+      targetConversation: { key: 'web#main#t2', agent: 'cc' },
+    });
+
+  it('the shape table agrees with buildTask, setting by setting', () => {
+    // Each setting given alone to a task of each shape: buildTask must accept exactly what the
+    // table says that shape keeps, or the form would offer a field every value of which is refused.
+    const given: Record<TaskSetting, Partial<Parameters<typeof buildTask>[0]>> = {
+      agent: { agent: 'cc' },
+      model: { model: 'm1' },
+      cwd: { cwd: '/srv' },
+      host: { host: 'box' },
+      timeout: { timeoutMs: 60_000 },
+      at: { at: '+1h', cron: undefined },
+    };
+    const base: Record<TaskShape, Parameters<typeof buildTask>[0]> = {
+      bash: { cron: '0 * * * *', bash: 'ls' },
+      fixed: { cron: '0 * * * *', prompt: 'x', session: 'fixed' },
+      new: { cron: '0 * * * *', prompt: 'x', session: 'new' },
+      daily: { cron: '0 * * * *', prompt: 'x', session: 'daily' },
+    };
+    for (const shape of Object.keys(base) as TaskShape[]) {
+      for (const setting of Object.keys(given) as TaskSetting[]) {
+        // `host` on a prompt task is only a declaration about a --cwd; it is the one setting a
+        // shape takes without keeping (new and daily accept it, store none).
+        if (setting === 'host' && (shape === 'new' || shape === 'daily')) continue;
+        const r = buildTask({ ...base[shape], ...given[setting] }, ctx());
+        expect([shape, setting, r.ok]).toEqual([shape, setting, SHAPE_SETTINGS[shape].includes(setting)]);
+      }
+    }
+    expect(shapeOf(built({ cron: '0 * * * *', bash: 'ls' }).run)).toBe('bash');
+    expect(shapeOf(built({ cron: '0 * * * *', prompt: 'x', session: 'daily' }).run)).toBe('daily');
+  });
+
+  it('a prompt task becomes a bash task: it keeps its id and its past, its directory, and runs where its agent did', () => {
+    const before = lived(built({ cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'oc', model: 'm1', cwd: '/srv/app' }));
+    const c = editCtx({ from: { key: 'web#main#t1', platform: 'web', agent: 'oc', host: 'box' } });
+    const after = edited(before, { bash: 'make check' }, c);
+    // The agent and model have no place in a bash task; the directory and the machine carry over.
+    expect(after.run).toEqual({ kind: 'bash', command: 'make check', timeoutMs: 600_000, cwd: '/srv/app', host: 'box' });
+    expect(identity(after)).toEqual(identity(before));
+    expect(after.target).toEqual(before.target);
+    expect(after.name).toBe(before.name);
+    // A setting the new shape has no place for, given anyway, is refused in add's words.
+    expect(refused(before, { bash: 'ls', model: 'm2' }, c)).toMatch(/--model is for --prompt tasks/);
+    expect(refused(before, { bash: 'ls', session: 'daily' }, c)).toMatch(/--session daily is for --prompt tasks/);
+  });
+
+  it('a fixed-session task becomes a bash task: its conversation and its window go', () => {
+    const fixed = lived(built({ cron: '*/30 * * * *', prompt: 'x' }));
+    const after = edited(fixed, { bash: 'ls', timeoutMs: 30_000 });
+    expect(after.run).toEqual({ kind: 'bash', command: 'ls', timeoutMs: 30_000 });
+    expect(after).not.toHaveProperty('conversation');
+    expect(after).not.toHaveProperty('expiresAt');
+  });
+
+  it('a bash task becomes a prompt task with add\'s defaults: a fixed session in the target conversation, 24h from the edit', () => {
+    const bash = lived(built({ cron: '0 * * * *', bash: 'du -sh /data', timeoutMs: 60_000 }));
+    const after = edited(bash, { prompt: 'check the disk' }, editCtx({ now: LATER }));
+    // The directory has no place in a fixed session (it is its topic's), and the timeout none in a prompt task.
+    expect(after.run).toEqual({ kind: 'agent', agent: 'cc', prompt: 'check the disk', session: 'fixed' });
+    expect(after.conversation).toBe('web#main#t1');
+    expect(after.expiresAt).toBe(LATER + FIXED_SESSION_WINDOW_MS);
+    expect(identity(after)).toEqual(identity(bash));
+
+    // With a session that keeps a directory, the one it had carries over; the agent is the one named.
+    const fresh = edited(bash, { prompt: 'check the disk', session: 'new', agent: 'oc' });
+    expect(fresh.run).toEqual({ kind: 'agent', agent: 'oc', prompt: 'check the disk', session: 'new', cwd: '/work' });
+    expect(fresh).not.toHaveProperty('expiresAt');
+    expect(refused(bash, { prompt: 'x', session: 'new', timeoutMs: 5_000 })).toMatch(/--timeout is for --bash/);
+  });
+
+  it('a new-session task turned fixed starts its window now and leaves its directory and model behind', () => {
+    const before = lived(built({ cron: '0 * * * *', prompt: 'x', session: 'new', model: 'm1' }));
+    const after = edited(before, { session: 'fixed' }, editCtx({ now: LATER }));
+    expect(after.run).toEqual({ kind: 'agent', agent: 'cc', prompt: 'x', session: 'fixed' });
+    expect(after.conversation).toBe('web#main#t1');
+    expect(after.expiresAt).toBe(LATER + FIXED_SESSION_WINDOW_MS);
+    expect(identity(after)).toEqual(identity(before));
+    // Named anyway, they are refused as add refuses them.
+    expect(refused(before, { session: 'fixed', model: 'm2' })).toMatch(/fixed-session.*\/model there/s);
+    expect(refused(before, { session: 'fixed', cwd: '/elsewhere' })).toMatch(/runs where its topic already works/);
+  });
+
+  it('a fixed-session task turned new has no conversation and no window; one that stays keeps its window', () => {
+    const fixed = built({ cron: '*/30 * * * *', prompt: 'x' });
+    const fresh = edited(fixed, { session: 'new' }, editCtx({ now: LATER }));
+    expect(fresh.run).toEqual({ kind: 'agent', agent: 'cc', prompt: 'x', session: 'new' });
+    expect(fresh).not.toHaveProperty('conversation');
+    expect(fresh).not.toHaveProperty('expiresAt');
+    // Naming the session it already has is not a new registration.
+    expect(edited(fixed, { session: 'fixed' }, editCtx({ now: LATER })).expiresAt).toBe(NOW + FIXED_SESSION_WINDOW_MS);
+  });
+
+  it('new ↔ daily keeps the directory and model; daily drops today\'s topic when it stops being daily', () => {
+    const fresh = built({ cron: '0 8 * * *', prompt: 'x', session: 'new', model: 'm1' });
+    expect(edited(fresh, { session: 'daily' }).run).toEqual({ kind: 'agent', agent: 'cc', prompt: 'x', session: 'daily', cwd: '/work', model: 'm1' });
+    const day = { day: '2026-09-30', conversation: 'web#main#new1', address: { channel: 'main', thread: 'new1' } };
+    const daily = { ...built({ cron: '0 8 * * *', prompt: 'x', session: 'daily' }), daySession: day };
+    expect(edited(daily, { session: 'new' })).not.toHaveProperty('daySession');
+    expect(edited(daily, { bash: 'ls' })).not.toHaveProperty('daySession');
+    expect(edited(daily, { prompt: 'y' }).daySession).toEqual(day);
+    // A one-shot task cannot become daily, as add cannot register one.
+    expect(refused(built({ at: '+2h', prompt: 'x', session: 'new' }), { session: 'daily' })).toMatch(/needs --cron/);
+  });
+
+  it('moves a task: a new target, and a fixed session there gets that conversation and a window from now', () => {
+    const fixed = lived(built({ cron: '*/30 * * * *', prompt: 'x' }));
+    const moved = edited(fixed, {}, elsewhere());
+    expect(moved.target).toEqual({ platform: 'web', channel: 'main', thread: 't2' });
+    expect(moved.conversation).toBe('web#main#t2');
+    expect(moved.expiresAt).toBe(LATER + FIXED_SESSION_WINDOW_MS);
+    // A change of place is not a change of time: the run planned at 08:00 was handled.
+    expect(identity(moved)).toEqual(identity(fixed));
+    // A topic there answered by another agent is refused, as add refuses it.
+    expect(refused(fixed, {}, editCtx({ target: { platform: 'web', address: { channel: 'main', thread: 't3' } }, targetConversation: { key: 'web#main#t3', agent: 'oc' } }))).toMatch(
+      /answered by oc/
+    );
+    // A target that names no conversation cannot hold a fixed session.
+    expect(refused(fixed, {}, editCtx({ target: { platform: 'tg', address: { channel: '-100' } }, targetConversation: undefined }))).toMatch(
+      /needs one conversation to run in/
+    );
+  });
+
+  it('a daily task moved elsewhere opens its next topic there, and refuses a target that cannot open one', () => {
+    const day = { day: '2026-09-30', conversation: 'web#main#new1', address: { channel: 'main', thread: 'new1' } };
+    const daily = { ...built({ cron: '0 8 * * *', prompt: 'x', session: 'daily' }), daySession: day };
+    const moved = edited(daily, {}, elsewhere());
+    expect(moved.target.thread).toBe('t2');
+    expect(moved).not.toHaveProperty('daySession');
+    expect(refused(daily, {}, editCtx({ canOpenTopic: false, target: { platform: 'tg', address: { channel: '-100' } } }))).toMatch(
+      /needs a target that can open a topic/
+    );
+  });
+
+  it('a bash task moves to another machine with --host, and back to the gateway\'s with null', () => {
+    const onBox = { ...built({ cron: '0 3 * * *', bash: 'ls', host: 'box', cwd: '/srv' }) };
+    const c = editCtx({ from: { key: 'web#main#t1', platform: 'web', agent: 'cc', host: 'box' } });
+    // Kept: the machine it runs on, from the context, and its directory.
+    expect(edited(onBox, { name: 'renamed' }, c).run).toMatchObject({ host: 'box', cwd: '/srv' });
+    expect(edited(onBox, { host: null }, c).run).toEqual({ kind: 'bash', command: 'ls', timeoutMs: 600_000, cwd: '/srv' });
+    expect(edited(onBox, { host: 'box2', cwd: '/data' }, c).run).toMatchObject({ host: 'box2', cwd: '/data' });
   });
 });
 

@@ -447,8 +447,15 @@ export interface NewTaskInput {
    * the machine the command ran on, which is what a task on another machine may not use. With it,
    * the directory is that machine's — and with no `--cwd` at all, the task starts in that machine's
    * own default directory rather than the caller's.
+   *
+   * For a `--bash` task it is also where the command runs: the gateway runs it, so nothing else
+   * decides the machine, and its directory has to be on the machine it runs on. Without it a bash
+   * task runs where the registering agent does.
+   *
+   * `null` names the gateway's own machine (`--host gateway`, or the web UI's machine picker):
+   * there is no `hosts:` id for it, and "not given" already means "the caller's machine".
    */
-  host?: string;
+  host?: string | null;
   model?: string;
   timeoutMs?: number;
 }
@@ -581,20 +588,20 @@ function buildBashTask(input: NewTaskInput, command: string, ctx: NewTaskContext
   if (input.agent !== undefined || input.session !== undefined) {
     return fail('--agent and --session are for --prompt tasks; a --bash task is run by the daemon, not an agent');
   }
-  if (input.host !== undefined) {
-    return fail('--host is for a --prompt task on another machine: a --bash task runs where the agent that registers it does, with that machine\'s directory');
-  }
   if (!command.trim()) return fail('--bash is empty');
   const timeoutMs = input.timeoutMs ?? DEFAULT_BASH_TIMEOUT_MS;
   if (timeoutMs < 1_000 || timeoutMs > MAX_BASH_TIMEOUT_MS) {
     return fail(`--timeout must be between 1s and ${MAX_BASH_TIMEOUT_MS / 3_600_000}h`);
   }
-  const cwd = input.cwd ?? ctx.from.cwd;
+  // The machine it runs on: the one named, else the registering agent's. Its directory follows the
+  // same rule a `new` task's does (taskCwd): named machine, nothing inferred from the caller.
+  const host = input.host !== undefined ? (input.host ?? undefined) : ctx.from.host;
+  const cwd = taskCwd(input, ctx);
   return firstRunCheck(
     {
       ...base,
       name: input.name?.trim() || defaultName(command),
-      run: { kind: 'bash', command, timeoutMs, ...(cwd ? { cwd } : {}), ...(ctx.from.host ? { host: ctx.from.host } : {}) },
+      run: { kind: 'bash', command, timeoutMs, ...(cwd ? { cwd } : {}), ...(host ? { host } : {}) },
     },
     ctx.now
   );
@@ -702,11 +709,43 @@ function firstRunCheck(task: ScheduleTask, now: number): Built {
 
 // ─────────────────────────────── changing one ───────────────────────────────
 
+/** What a task is: a bash command, or a prompt in one of the three session modes. */
+export type TaskShape = 'bash' | 'fixed' | 'new' | 'daily';
+
+/** The settings a task keeps beyond its name, time, text, target and tags. */
+export type TaskSetting = 'agent' | 'model' | 'cwd' | 'host' | 'timeout' | 'at';
+
 /**
- * What `schedule edit` may change: everything about a task except what it IS (prompt ↔ bash, the
- * session kind) and where it posts (the target). Those are refused by the command itself, with the
- * `rm` + `add` that does mean "a different task"; a type change would silently keep the id, the run
- * count and the last result of something that never ran this way.
+ * Which settings each shape keeps — `at` meaning it may be a one-shot rather than a cron.
+ *
+ * buildTask is the judge: it refuses a setting a shape has no place for, in its own words, and
+ * schedule.test.ts checks this table against it shape by shape. The table is what the refusals
+ * look like read the other way, for the two places that need the whole picture at once: an edit
+ * that changes a task's shape carries over only the settings the new shape keeps (mergedInput),
+ * and the web UI's form shows a field only where the shape it is set to keeps one.
+ *
+ * `host` is a bash task's machine. A prompt task runs on its agent's machine and stores none —
+ * `--host` there only says which machine a `--cwd` is on.
+ */
+export const SHAPE_SETTINGS: Readonly<Record<TaskShape, readonly TaskSetting[]>> = {
+  bash: ['cwd', 'host', 'timeout', 'at'],
+  fixed: ['agent', 'at'],
+  new: ['agent', 'model', 'cwd', 'at'],
+  daily: ['agent', 'model', 'cwd'],
+};
+
+export function shapeOf(run: ScheduleRun): TaskShape {
+  return run.kind === 'bash' ? 'bash' : run.session;
+}
+
+/**
+ * What `schedule edit` may change: everything a task has, including what it is and where it posts.
+ *
+ * A field left out keeps the task's own value, as long as the task's shape after the edit still
+ * has a place for it (SHAPE_SETTINGS) — turning a new-session task into a fixed one leaves its
+ * directory and model behind, because a fixed session runs in its topic's. A field that IS given
+ * goes to buildTask as it is, so one the new shape has no place for is refused in add's words.
+ * Where it posts is not here: the target is the context's (NewTaskContext.target), as for add.
  */
 export interface EditTaskInput {
   name?: string;
@@ -715,9 +754,13 @@ export interface EditTaskInput {
   cron?: string;
   at?: string;
   tz?: string;
+  /** Given to a bash task, it becomes a prompt task; see mergedInput for what it keeps. */
   prompt?: string;
+  /** Given to a prompt task, it becomes a bash task. */
   bash?: string;
   agent?: string;
+  /** A prompt task's session mode. With `prompt` it is the session of a bash task turned into one. */
+  session?: 'fixed' | 'new' | 'daily';
   /**
    * `null` drops the task's directory, so it starts in its agent's own default (or, for a bash
    * task, the gateway's). Only the web UI's form sends it: a field a person empties has to mean
@@ -725,8 +768,8 @@ export interface EditTaskInput {
    * say it — `--cwd ""` is resolved to the shell's directory before it gets here.
    */
   cwd?: string | null;
-  /** The machine the `--cwd` this edit gives belongs to; see NewTaskInput.host. */
-  host?: string;
+  /** The machine the `--cwd` this edit gives belongs to, and a bash task's machine; see NewTaskInput.host. */
+  host?: string | null;
   /** `null` drops the task's model, so its conversations start on the agent's own; see `cwd`. */
   model?: string | null;
   timeoutMs?: number;
@@ -736,10 +779,22 @@ export interface EditTaskInput {
  * Change a task in place, or say exactly what is wrong with the change.
  *
  * The merged task goes through `buildTask` unchanged, so every rule is the one `schedule add`
- * enforces — the same refusals, word for word. What edit adds is what the id means: the task keeps
- * its identity (id, createdAt, runs, lastRun), its state, its target and — for a fixed session —
- * the window it was registered with, because an edit is not a new registration and must not
- * extend how long a schedule may talk into someone's own conversation.
+ * enforces — the same refusals, word for word. What edit adds is what the id means, and that holds
+ * whatever the edit changes, its kind, session and target included:
+ *
+ * - kept: id, createdAt, createdBy, state, tags (unless given), runs, lastRun and history. They are
+ *   the record of what this id has done, and each run in the history names its own conversation,
+ *   so a task that now does something else still shows truthfully what it did before — clearing
+ *   them would erase the audit trail at the one moment someone changed what the task does. The
+ *   change itself is announced by the card the service posts.
+ * - lastPlannedAt: kept while the time rule is the same, else now (see the comment below). A change
+ *   of kind or target is not a change of time: the run planned at 08:00 was handled, whatever ran.
+ * - a fixed session's conversation and window (expiresAt): kept only while the task stays a fixed
+ *   session in the same conversation. An edit is not a new registration and must not extend how long
+ *   a schedule may talk into someone's own conversation. A task that BECOMES a fixed session — from
+ *   another mode, or pointed at another conversation — starts talking into that conversation now,
+ *   and gets the 24 hours `add` would give it there; one that stops being fixed has no window at all.
+ * - a daily task's topic for today (daySession): see withoutStaleDayTopic.
  *
  * A refusal is a value, not a throw, and nothing is written: the caller still holds the old task.
  */
@@ -776,48 +831,46 @@ export function editLockOf(task: ScheduleTask): string | undefined {
   return undefined;
 }
 
-/** What an edit refuses before `buildTask` is even asked: a task that is over, or a type change. */
+/** What an edit refuses before `buildTask` is even asked: a task that is over, or two kinds at once. */
 function editRefusal(task: ScheduleTask, input: EditTaskInput): string | undefined {
   const locked = editLockOf(task);
   if (locked) return locked;
   if (input.prompt !== undefined && input.bash !== undefined) {
     return 'give at most one of --prompt <text> or --bash <command>';
   }
-  if (task.run.kind === 'bash' && input.prompt !== undefined) {
-    return `#${task.id} is a --bash task, and edit does not change a task's kind; \`fleetherd schedule rm ${task.id}\` and add the prompt task instead`;
-  }
-  if (task.run.kind === 'agent' && input.bash !== undefined) {
-    return `#${task.id} is a --prompt task, and edit does not change a task's kind; \`fleetherd schedule rm ${task.id}\` and add the bash task instead`;
-  }
   return undefined;
 }
 
 /**
- * `buildTask` builds a NEW task: it stamps createdAt and expiresAt, starts at zero runs and has no
- * history. All of that belongs to the task being edited, not to the edit.
+ * `buildTask` builds a NEW task: it stamps createdAt, starts at zero runs and has no history. All of
+ * that belongs to the task being edited, not to the edit. What the built task says about where and
+ * how it runs — its target, its run, a fixed session's conversation — is the edit's, except a fixed
+ * session's window, which stays the one it was registered with while it runs in the same conversation.
  */
 function preserveTask(task: ScheduleTask, built: ScheduleTask): ScheduleTask {
-  const { expiresAt: _newWindow, ...fresh } = built;
+  const { expiresAt: newWindow, conversation, daySession: _none, ...fresh } = built;
+  const sameSession =
+    conversation !== undefined && task.run.kind === 'agent' && task.run.session === 'fixed' && task.conversation === conversation;
+  const window = sameSession ? task.expiresAt : newWindow;
   return {
     ...fresh,
     id: task.id,
     createdAt: task.createdAt,
     createdBy: task.createdBy,
-    target: task.target,
     state: task.state,
     runs: task.runs,
     ...(task.lastRun !== undefined ? { lastRun: task.lastRun } : {}),
     ...(task.history !== undefined ? { history: task.history } : {}),
-    ...(task.conversation !== undefined ? { conversation: task.conversation } : {}),
-    ...(task.expiresAt !== undefined ? { expiresAt: task.expiresAt } : {}),
+    ...(conversation !== undefined ? { conversation } : {}),
+    ...(window !== undefined ? { expiresAt: window } : {}),
     ...(task.lastPlannedAt !== undefined ? { lastPlannedAt: task.lastPlannedAt } : {}),
     ...(task.daySession !== undefined ? { daySession: task.daySession } : {}),
   };
 }
 
 /**
- * buildTask checked the window it would have given a NEW task (24h from now); this task keeps the
- * one it was registered with, which may be closer. Returns the refusal, or undefined.
+ * buildTask checked the window it would have given a NEW task (24h from now); a task that keeps the
+ * one it was registered with may have less left. Returns the refusal, or undefined.
  */
 function fixedWindowProblem(task: ScheduleTask, now: number): string | undefined {
   if (task.run.kind !== 'agent' || task.run.session !== 'fixed' || task.expiresAt === undefined) return undefined;
@@ -830,55 +883,107 @@ function fixedWindowProblem(task: ScheduleTask, now: number): string | undefined
 }
 
 /**
- * A daily task's topic for today is one conversation with one agent and one working directory,
- * and a topic keeps its agent. An edit that changes either cannot go on in it — the remaining runs
- * today would each be skipped ("this topic is now answered by …"). So the day's topic is left as
- * it is, like yesterday's, and the next run opens a new one for the rest of the day. Changing only
- * the prompt, name, time or model keeps the topic: the day's context survives, and a model is
- * applied per run anyway (unless a person set it by hand — see personModel).
+ * A daily task's topic for today is one conversation, opened under one target, with one agent and
+ * one working directory — and a topic keeps its agent. An edit that changes any of those cannot go
+ * on in it: the remaining runs today would each be skipped ("this topic is now answered by …"), or
+ * go on posting under a target the task no longer has. So the day's topic is left as it is, like
+ * yesterday's, and the next run opens a new one for the rest of the day. A task that stops being a
+ * daily one has no use for it at all. Changing only the prompt, name, time or model keeps the
+ * topic: the day's context survives, and a model is applied per run anyway (unless a person set it
+ * by hand — see personModel).
  */
 function withoutStaleDayTopic(task: ScheduleTask, next: ScheduleTask): ScheduleTask {
-  if (task.run.kind !== 'agent' || task.run.session !== 'daily' || next.run.kind !== 'agent') return next;
-  if (next.run.agent === task.run.agent && next.run.cwd === task.run.cwd) return next;
+  if (next.daySession === undefined) return next;
+  const stays =
+    task.run.kind === 'agent' &&
+    next.run.kind === 'agent' &&
+    next.run.session === 'daily' &&
+    next.run.agent === task.run.agent &&
+    next.run.cwd === task.run.cwd &&
+    sameTarget(task.target, next.target);
+  if (stays) return next;
   const { daySession: _oldDay, ...rest } = next;
   return rest;
+}
+
+function sameTarget(a: ScheduleTarget, b: ScheduleTarget): boolean {
+  return a.platform === b.platform && a.channel === b.channel && a.thread === b.thread;
 }
 
 /**
  * The task's own fields, with what was given laid over them — the input `buildTask` validates.
  *
- * `from` in the context deliberately carries no cwd or agent of its own: every default here is the
- * task's current value, so an edit that does not name a field cannot quietly adopt the caller's
- * directory or agent.
+ * `from` in the context deliberately carries no cwd of the caller's, and its agent and host are the
+ * task's own (the service's editContext): every default here is the task's current value, so an
+ * edit that does not name a field cannot quietly adopt the caller's directory or agent.
+ *
+ * The shape after the edit decides what is carried over (SHAPE_SETTINGS): a setting the task has
+ * is kept only if the new shape keeps one. What the edit gives is passed through either way, so
+ * buildTask refuses it in its own words when the new shape has no place for it. A bash task turned
+ * into a prompt task takes add's defaults for what it never had — the fixed session unless one is
+ * named, the target conversation's agent; a prompt task turned into a bash task runs on the machine
+ * its agent did (the context's `from.host`) with add's default timeout.
  */
 function mergedInput(task: ScheduleTask, input: EditTaskInput): NewTaskInput {
   const run = task.run;
+  const toBash = input.bash !== undefined || (run.kind === 'bash' && input.prompt === undefined);
+  const session = input.session ?? (run.kind === 'agent' && !toBash ? run.session : undefined);
+  const keeps = SHAPE_SETTINGS[toBash ? 'bash' : (session ?? 'fixed')];
+  /** The task's own value of a setting, if the shape after the edit keeps one. */
+  const carry = <V>(setting: TaskSetting, own: V | undefined): V | undefined => (keeps.includes(setting) ? own : undefined);
   const common: NewTaskInput = {
+    ...givenInput(input),
     name: input.name ?? task.name,
     ...(input.tags !== undefined ? { tags: input.tags } : task.tags !== undefined ? { tags: task.tags } : {}),
     ...mergedTime(task, input),
     tz: input.tz ?? task.when.tz,
-    ...kept('cwd', input.cwd, run.cwd),
-    // Only what the caller named: the task's machine is its agent's, and a --host that agreed with
-    // it yesterday must not be assumed to agree with a --agent this edit moves the task to.
-    ...(input.host !== undefined ? { host: input.host } : {}),
+    ...kept('cwd', input.cwd, carry('cwd', run.cwd)),
   };
-  if (run.kind === 'bash') {
-    return {
-      ...common,
-      bash: input.bash ?? run.command,
-      timeoutMs: input.timeoutMs ?? run.timeoutMs,
-      // Passed through, not merged away: buildBashTask is what refuses them, in its own words.
-      ...(input.agent !== undefined ? { agent: input.agent } : {}),
-      ...(typeof input.model === 'string' ? { model: input.model } : {}),
-    };
-  }
+  return toBash ? mergedBash(common, run, input, carry) : mergedPrompt(common, run, input, session, carry);
+}
+
+type Carry = <V>(setting: TaskSetting, own: V | undefined) => V | undefined;
+
+/** The bash half of mergedInput: a command, and a timeout it had or was given. */
+function mergedBash(common: NewTaskInput, run: ScheduleRun, input: EditTaskInput, carry: Carry): NewTaskInput {
+  const own = run.kind === 'bash' ? run : undefined;
+  const timeoutMs = input.timeoutMs ?? carry('timeout', own?.timeoutMs);
+  return { ...common, bash: input.bash ?? own?.command ?? '', ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
+}
+
+/** The prompt half of mergedInput: a prompt, its session, and the agent and model it keeps. */
+function mergedPrompt(
+  common: NewTaskInput,
+  run: ScheduleRun,
+  input: EditTaskInput,
+  session: NewTaskInput['session'],
+  carry: Carry
+): NewTaskInput {
+  const own = run.kind === 'agent' ? run : undefined;
+  const agent = input.agent ?? carry('agent', own?.agent);
   return {
     ...common,
-    prompt: input.prompt ?? run.prompt,
-    session: run.session,
-    agent: input.agent ?? run.agent,
-    ...kept('model', input.model, run.model),
+    prompt: input.prompt ?? own?.prompt ?? '',
+    ...(session !== undefined ? { session } : {}),
+    ...(agent !== undefined ? { agent } : {}),
+    ...kept('model', input.model, carry('model', own?.model)),
+  };
+}
+
+/**
+ * What an edit gives that buildTask must see as given, whatever the task had: the builder of the
+ * new shape is what refuses one it has no place for, in its own words.
+ *
+ * `host` only as the caller named it: the task's machine is its agent's, and a --host that agreed
+ * with it yesterday must not be assumed to agree with a --agent this edit moves the task to. A bash
+ * task's own machine reaches buildTask through the context instead (`from.host`).
+ */
+function givenInput(input: EditTaskInput): NewTaskInput {
+  return {
+    ...(input.host !== undefined ? { host: input.host } : {}),
+    ...(input.session !== undefined ? { session: input.session } : {}),
+    ...(input.agent !== undefined ? { agent: input.agent } : {}),
+    ...(typeof input.model === 'string' ? { model: input.model } : {}),
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
   };
 }

@@ -616,18 +616,26 @@ What each piece is shaped by, one line each:
   `daySession`, because that override is in memory and a restart would otherwise let the next run
   put the task's model back. A fixed-session task runs in a person's topic and keeps its model, so
   `--model` is refused for it.
-- **`schedule edit` changes the fields, never the task.** `ScheduleService.edit` merges the task
-  with what was given and hands it to the same `buildTask`, so every refusal is add's; only after
-  it passes does anything get written, which is why a refused edit leaves the file untouched. The
-  id, `createdAt`, `runs`, `lastRun` and the state stay, and a fixed-session task keeps the 24 h
-  window it was registered with (an edit must not extend how long a schedule may talk into
-  someone's own conversation). A changed time rule starts from the edit (`lastPlannedAt` = now),
-  so a task edited at 10:00 to "0 9 * * *" waits for tomorrow instead of firing a catch-up run
-  that never existed; a change that leaves the time alone keeps it, so a rename cannot swallow a
-  run that is already due. What a task IS — prompt ↔ bash, the session, `--channel` — is refused
-  with `rm` + `add`. A daily task whose agent or directory changed drops today's `daySession`: the
+- **`schedule edit` changes anything add takes, and keeps the id.** `ScheduleService.edit` merges
+  the task with what was given and hands it to the same `buildTask`, so every refusal is add's; only
+  after it passes does anything get written, which is why a refused edit leaves the file untouched.
+  What a task IS changes too — prompt ↔ bash, `--session`, and `--channel`, which `editContext`
+  turns into the new target (a platform that is not running is refused, as add refuses it; the
+  task's own target on a down platform still edits). The id, `createdAt`, the tags, `runs`, the
+  history, `lastRun` and the state stay, whatever changed: they are the record of what this id did,
+  each run naming its own conversation. A fixed-session task keeps the 24 h window it was registered
+  with while it stays fixed in the same conversation (an edit must not extend how long a schedule
+  may talk into someone's own conversation); one that becomes fixed there or elsewhere starts the
+  window add would give. A changed time rule starts from the edit (`lastPlannedAt` = now), so a task
+  edited at 10:00 to "0 9 * * *" waits for tomorrow instead of firing a catch-up run that never
+  existed; a change that leaves the time alone keeps it, so a rename cannot swallow a run that is
+  already due. A moved task's card goes to where it posted before as well as where it posts now.
+  A daily task whose agent, directory or target changed drops today's `daySession`: the
   day's topic keeps its agent and its directory, so the next run opens a new topic for the rest of
-  the day, and the earlier one is left as it is (like yesterday's). Editing a task whose run is in
+  the day, and the earlier one is left as it is (like yesterday's). A bash task's `--host` is the
+  machine it runs on, and `--host gateway` (`GATEWAY_MACHINE`, the word `task-agents` prints) the
+  gateway's own — `null` in the input, which has no `hosts:` id; a host configured under that name
+  keeps it. Editing a task whose run is in
   flight is refused — that run is using the old values and, for a daily task, would write the old
   day's topic back over the edit. A task whose directory belongs to one machine and whose runs
   happen on another is refused by `add` and `edit` alike (`cwdHostProblem`, against `hostOfTask`):

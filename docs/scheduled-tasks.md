@@ -54,18 +54,25 @@ daily topic, a `/model` you type during the day wins over the task's choice for 
 day, including after the gateway restarts: the task records that the topic was set by hand and
 stops applying its own model.
 
-Change a task in place with `fleetherd schedule edit <id>`: `--agent`, `--cwd`, `--host`,
-`--model`, `--cron` / `--at` / `--tz`, `--name`, `--prompt`, and `--bash` / `--timeout` for a bash
-task. A long prompt is best passed through your own shell — `--prompt "$(cat prompt.md)"` — so the
-file is read on the machine you type the command on, not by the gateway. The
-id, the run count, the run history and the last result stay, and the next run is computed from the
-edit under the
-new time rule — a task edited to a time that already passed today waits for tomorrow instead of
-firing at once. What a task *is* cannot change: prompt ↔ bash, its session and where it posts
-(`--channel`) are refused, and the way to have a different task is `rm` + `add`. A daily task
-whose agent or directory changes cannot go on in the topic it already opened today — a topic keeps
-its agent and its directory — so the next run opens a new topic for the rest of the day, and the
-earlier one is left as it is.
+Change a task in place with `fleetherd schedule edit <id>` and any option `add` takes: `--agent`,
+`--cwd`, `--host`, `--model`, `--cron` / `--at` / `--tz`, `--name`, `--tag`, `--prompt` or `--bash`,
+`--timeout`, `--session` and `--channel`. A long prompt is best passed through your own shell —
+`--prompt "$(cat prompt.md)"` — so the file is read on the machine you type the command on, not by
+the gateway. What a task *is* can change too: `--prompt` turns a bash task into a prompt task (a
+fixed session unless `--session` says otherwise, as with `add`), `--bash` turns a prompt task into a
+command, `--session` changes the mode, and `--channel` moves where it posts. The id, the tags, the
+run count, the run history and the last result stay whatever changed — the history still says what
+each earlier run did and where — and the next run is computed from the edit under the new time
+rule: a task edited to a time that already passed today waits for tomorrow instead of firing at
+once. Anything you do not give stays, where the task's new shape has a place for it: a task turned
+into a fixed session leaves its own directory and model behind (its topic's apply), one turned into
+a command leaves its agent and model, and one turned into a prompt task leaves its timeout. A
+fixed-session task keeps its 24-hour window while it stays in the same conversation; one that
+becomes a fixed session — from another mode, or moved to another conversation — gets 24 hours from
+the edit, as a new one would. A moved task's card is posted where it posted before as well as where
+it posts now. A daily task whose agent, directory or target changes cannot go on in the topic it
+already opened today — a topic keeps its agent and its directory — so the next run opens a new topic
+for the rest of the day, and the earlier one is left as it is.
 
 `fleetherd schedule run <id>` runs a task once, now, without touching its schedule. With
 `--wait` it answers when the run has ended, with the status, exit code and duration, instead of
@@ -90,9 +97,11 @@ the task keeps a directory from the old machine. `--host <id>` is the way throug
 storing anything; with no `--cwd` at all, `--host` makes the task start in that machine's own
 default directory instead of this conversation's. Without `--host`, a `--cwd` is still read as this
 machine's — run the command from a conversation on that machine if you would rather do it there
-(moving a task, add a `--cwd` there). A task with no directory is not affected, and
-neither is a bash task: it runs on the machine of the agent that registered it, where its directory
-came from, and `--host` does not apply to it.
+(moving a task, add a `--cwd` there). A task with no directory is not affected. A bash task runs on
+the machine of the agent that registered it, where its directory came from, unless `--host` names
+another — for a bash task `--host` is the machine that runs the command, on `add` and on `edit`.
+`--host gateway` is the gateway's own machine, so `edit <id> --host gateway --cwd /srv/app` brings a
+command back from a remote host.
 
 On the web UI, the clock at the right of the chat header opens the **⏰ Side tasks** panel of its
 own: the bottom has **Scheduled** and **Reviews** tabs. Under **Scheduled**, the **Tasks** sub-tab
@@ -103,7 +112,7 @@ Paused, and Ended (expired and done together) — and by **Tags**, which offers 
 ascending or descending; a task with no next run, or one that has never run, stays at the bottom
 either way. The keyword, filters and sort are kept in this browser. A task is a row like a topic's:
 its ⋯ holds Pause or Resume, Run now, Edit and Delete. Only the Tasks sub-tab has this bar —
-Sessions and Reviews do not.
+Sessions and Reviews do not — and the **+** in the panel's head, which adds a task.
 
 A tap on a task opens **its page**: the schedule and the next run, how it runs (agent, model,
 session), its directory, where it posts, the whole prompt or command, and the same actions as
@@ -112,18 +121,24 @@ adds one. Below are its **Sessions**, the topics its runs opened that the web UI
 **Runs**, the last twenty with how each ended, how long it took, and an **Open** for the topic it
 posted into. A tap on a session or an Open goes to that topic.
 
-**Edit** — on the page, or in the row's ⋯ — turns the page into a form for what `schedule edit` can
-change: the name, the time (a cron, or one run at a date and time) and its zone, the prompt or
-command, the agent, the model, the directory and a bash task's timeout. Only what you change is
-sent, and it is checked by the same rules as `schedule edit`, so a refusal says what the CLI would.
-An empty model or directory goes back to the agent's own. A directory is a path on the machine the
-task runs on — on a [remote host](remote-hosts.md), that host's — and must be absolute; it is
-checked there before anything is stored. The conversation the task posts to gets the updated card.
-The form offers only what can change: a fixed-session task has no directory or model of its own (they
-are its topic's, changed with `/cd` and `/model` there), a daily task takes only a cron, and what a
-task *is* — prompt or bash, its session, where it posts — is said under the form rather than offered
-in it. A task that is running cannot be edited until the run ends, and one that has expired or had
-its one run cannot be edited at all. Closing a form with changes asks first. On a phone the same panel is a drawer from the right, with the chat
+**+** opens an empty form for a new task, and **Edit** — on the page, or in the row's ⋯ — the same
+form filled from the task. It holds everything `schedule add` takes: what it runs (an agent prompt
+or a bash command), the session (a new topic each run, one topic a day, or a turn in the topic it
+posts to), the agent and the model, the machine a command runs on (the gateway's, or a [remote
+host](remote-hosts.md)), the directory, a command's timeout, the time (a cron, or one run at a date
+and time) and its zone, where it posts, and the tags. **Posts to** lists the web UI's topics by name;
+**Another chat…** takes any id `fleetherd channels` prints, so a task can post to Telegram or any
+other chat the gateway has answered in. The form shows only the fields the kind and session you pick
+have a place for: a fixed session has no directory or model of its own (they are its topic's,
+changed with `/cd` and `/model` there), a daily task takes only a cron, and a command has no agent.
+A new task starts on a new session, the gateway's time zone and agent, and the topic you are in.
+Saving checks it by the same rules as `schedule add` or `schedule edit`, so a refusal says what the
+CLI would, and an edit sends only what you changed. An empty model or directory goes back to the
+agent's own. A directory is a path on the machine the task runs on and must be absolute; it is
+checked there before anything is stored. The conversation the task posts to gets the card, and a
+task moved elsewhere also tells the conversation it left. A task that is running cannot be edited
+until the run ends, and one that has expired or had its one run cannot be edited at all. Closing a
+form with changes asks first. On a phone the same panel is a drawer from the right, with the chat
 still visible behind it and a tap on the dimmed area to close it. A task that runs in a new or daily
 session opens topics; the **Sessions** sub-tab lists those topics, with any sub-agents a run opened
 nested under it, and none of them appear in the ordinary topic list. The panel's second outer tab, **Reviews**, is the automatic review of quiet

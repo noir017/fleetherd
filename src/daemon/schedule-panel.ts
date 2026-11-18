@@ -1,4 +1,4 @@
-import type { ConversationAddress } from '../core/conversation.js';
+import { parseTarget, type ConversationAddress } from '../core/conversation.js';
 import {
   describeRun,
   describeWhen,
@@ -6,18 +6,22 @@ import {
   formatDuration,
   formatInZone,
   nextRunOf,
+  SHAPE_SETTINGS,
   targetId,
   type EditTaskInput,
+  type NewTaskInput,
   type ScheduleRunRecord,
   type ScheduleTask,
 } from '../core/schedule.js';
 import type {
   SchedulePanelEdit,
-  SchedulePanelEditField,
+  SchedulePanelFormContext,
+  SchedulePanelNew,
   SchedulePanelRun,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
 } from '../platform/adapter.js';
+import type { Destination } from './schedule-service.js';
 
 /**
  * The daemon's side of the web UI's scheduled-task panel: domain tasks → the flat shape the page
@@ -89,38 +93,62 @@ export function panelTasks(
     });
 }
 
-/** What a task's page needs from the daemon beyond the task: the agents, and where a run's conversation is. */
+/** What the task form offers, from the daemon's config: see SchedulePanelFormContext. */
+export interface PanelFormSource {
+  agents: ReadonlyArray<{ id: string; host?: string }>;
+  hosts: readonly string[];
+  /** `fleetherd channels`' rows: the places a task can post to. */
+  channels: ReadonlyArray<{ id: string; title: string }>;
+  /** The web UI instance showing the form; its own topics come from the page, not from here. */
+  instance: string;
+  tz: string;
+  agent: string;
+}
+
+/**
+ * The form's choices. Places on the showing instance are left out of `channels`: the page offers its
+ * own topics by title, and an id of one of them typed as text would name the same lane twice.
+ */
+export function panelForm(src: PanelFormSource): SchedulePanelFormContext {
+  const agentHosts: Record<string, string> = {};
+  for (const a of src.agents) if (a.host !== undefined) agentHosts[a.id] = a.host;
+  const shapes = Object.fromEntries(Object.entries(SHAPE_SETTINGS).map(([k, v]) => [k, [...v]])) as SchedulePanelFormContext['shapes'];
+  return {
+    agents: src.agents.map((a) => a.id),
+    agentHosts,
+    hosts: [...src.hosts],
+    channels: src.channels.filter((c) => !c.id.startsWith(`${src.instance}:`)).map((c) => ({ id: c.id, title: c.title })),
+    shapes,
+    tz: src.tz,
+    agent: src.agent,
+  };
+}
+
+/** What a task's page needs from the daemon beyond the task: the form's choices, and where a run's conversation is. */
 export interface PanelDetailContext {
   now: number;
   running: boolean;
   /** The web UI instance showing the page; only its topics can be opened from it. */
   instance: string;
-  agents: readonly string[];
+  form: SchedulePanelFormContext;
   /** `ConversationRegistry.laneFor`: a conversation key to the platform and address it lives at. */
   laneOf(conversation: string): { platformId: string; address: ConversationAddress } | undefined;
 }
 
 /**
- * One task's page: the row's facts, the raw values the form starts from, what the form may offer,
- * and every recorded run with the conversation it went to.
+ * One task's page: the row's facts, the raw values the form starts from, the form's choices, and
+ * every recorded run with the conversation it went to.
  *
- * `editable` is the shape of `buildTask`'s refusals, read the other way: a fixed-session task runs
- * in a person's topic, which keeps its own directory and model, so it offers neither; a bash task
- * is run by the gateway, so it has no agent or model; a daily task needs a cron. A field outside
- * the list is shown, not edited — the page says why with the rest of what an edit cannot change.
+ * What the form offers for the task is not decided here any more: everything a task has can be
+ * changed, its kind, session and target included, and which fields a shape keeps is the shared
+ * `shapes` table — the form follows the shape it is set to, not the one the task had.
  */
 export function panelTaskDetail(task: ScheduleTask, ctx: PanelDetailContext): SchedulePanelTaskDetail {
   const run = task.run;
   const when = 'cron' in task.when ? { cron: task.when.cron } : { at: formatInZone(task.when.at, task.when.tz) };
-  const editable: SchedulePanelEditField[] = ['name', 'cron', 'tz'];
-  if (!(run.kind === 'agent' && run.session === 'daily')) editable.push('at');
-  if (run.kind === 'bash') editable.push('command', 'timeout', 'cwd');
-  else {
-    editable.push('prompt', 'agent');
-    if (run.session !== 'fixed') editable.push('model', 'cwd');
-  }
   const locked = editLockOf(task);
   return {
+    ...ctx.form,
     task: panelTask(task, ctx.now, ctx.running, ctx.instance),
     fields: {
       name: task.name,
@@ -130,10 +158,9 @@ export function panelTaskDetail(task: ScheduleTask, ctx: PanelDetailContext): Sc
         ? { command: run.command, timeoutMs: run.timeoutMs, ...(run.host ? { host: run.host } : {}) }
         : { prompt: run.prompt, agent: run.agent, session: run.session, ...(run.model ? { model: run.model } : {}) }),
       ...(run.cwd ? { cwd: run.cwd } : {}),
+      target: targetId(task.target),
     },
-    editable,
     ...(locked ? { locked } : {}),
-    agents: [...ctx.agents],
     runs: runsOf(task).map((r) => panelRun(r, task.when.tz, ctx)),
   };
 }
@@ -168,8 +195,34 @@ function panelRun(r: ScheduleRunRecord, tz: string, ctx: PanelDetailContext): Sc
  * The page's edit as `schedule edit` takes it. The page says `command` where the CLI says `--bash`,
  * because the field is a command whatever runs it; everything else is the CLI's own name, and
  * nothing is filled in — a field the person did not change is absent, so the task keeps its own.
+ * `target` is not an input field: it is resolved by `panelTarget` and handed over as the context's.
  */
-export function panelEditInput(edit: SchedulePanelEdit): Omit<EditTaskInput, 'host'> {
-  const { command, ...rest } = edit;
+export function panelEditInput(edit: SchedulePanelEdit): EditTaskInput {
+  const { command, target: _target, ...rest } = edit;
   return { ...rest, ...(command !== undefined ? { bash: command } : {}) };
+}
+
+/**
+ * The page's new task as `schedule add` takes it. A `null` directory or model is the same as none:
+ * a new task has nothing to empty. A `null` host stays — it is the gateway's machine, named.
+ */
+export function panelNewInput(task: SchedulePanelNew): NewTaskInput {
+  const { command, target: _target, cwd, model, ...rest } = task;
+  return {
+    ...rest,
+    ...(command !== undefined ? { bash: command } : {}),
+    ...(cwd != null ? { cwd } : {}),
+    ...(model != null ? { model } : {}),
+  };
+}
+
+/**
+ * Where the page says a task posts, as add and edit take a target. The id is `fleetherd channels`'
+ * (core/conversation.ts parseTarget, the same parse `--channel` gets); one with no instance in front
+ * is a place on the page's own, as an unqualified `--channel` stays on the caller's platform.
+ * Throws parseTarget's sentence for an id that is not one.
+ */
+export function panelTarget(raw: string, instance: string, instances: ReadonlySet<string>): Destination {
+  const parsed = parseTarget(raw.trim(), instances);
+  return { platform: parsed.platform ?? instance, address: parsed.address };
 }
