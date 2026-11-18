@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-11-18
+
 ### Added
 
 - **A code file the agent sends is shown highlighted in the web UI's reader.** It used to open as
