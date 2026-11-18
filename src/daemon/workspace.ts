@@ -31,6 +31,15 @@ import { remoteHosts } from './remote-hosts.js';
 export const DEFAULT_RUN_MAX = 1 << 20;
 /** A command that has not finished by then is killed: a window waiting on it would hang with it. */
 export const DEFAULT_RUN_TIMEOUT_MS = 30_000;
+/**
+ * How long a remote call may wait for its ANSWER, beyond the command's own time. The host enforces a
+ * command's timeout, but only once the request has reached it: with the link down a request queues
+ * for the reconnect (remote/host.ts), and a window — or a turn's snapshot — would wait with it for as
+ * long as the host stays away. This bounds the whole round trip on the gateway's side instead.
+ */
+export const LINK_GRACE_MS = 5_000;
+/** The bound on a remote file operation's round trip, for the same reason. */
+export const REMOTE_OP_TIMEOUT_MS = 30_000;
 /** Stderr kept from a command, from its end — the host's own cap (ops.go). */
 const STDERR_MAX = 64 << 10;
 
@@ -162,14 +171,27 @@ export function remoteWorkspace(host: HostOps, root: string): Workspace {
     host: host.id,
     root,
     async run(argv, o = {}) {
-      const r = await host.run({
-        argv: [...argv],
-        cwd: o.cwd ?? root,
-        env: o.env,
-        stdin: o.stdin,
-        timeoutMs: o.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
-        max: o.maxBytes ?? DEFAULT_RUN_MAX,
-      });
+      const timeoutMs = o.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+      // A timer of our own rather than AbortSignal.timeout, so a test can move the clock.
+      const limit = new AbortController();
+      const timer = setTimeout(() => limit.abort(), timeoutMs + LINK_GRACE_MS);
+      let r: Awaited<ReturnType<HostOps['run']>>;
+      try {
+        r = await host.run(
+          { argv: [...argv], cwd: o.cwd ?? root, env: o.env, stdin: o.stdin, timeoutMs, max: o.maxBytes ?? DEFAULT_RUN_MAX },
+          limit.signal
+        );
+      } catch (e) {
+        // `run` never throws for a failed command, and a host that did not answer is one: no answer
+        // in time reads as a timeout (callers already treat that as "not answered"), anything else —
+        // a host never reached — as a command that could not start, with the reason.
+        const why = e instanceof Error ? e.message : String(e);
+        return limit.signal.aborted
+          ? { code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true }
+          : { code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: false, spawnError: why };
+      } finally {
+        clearTimeout(timer);
+      }
       return {
         code: r.code,
         output: r.output,
@@ -179,11 +201,11 @@ export function remoteWorkspace(host: HostOps, root: string): Workspace {
         ...(r.spawnError ? { spawnError: r.spawnError } : {}),
       };
     },
-    stat: (p) => host.stat(p),
-    listDir: (p) => host.listDir(p),
-    readFile: (p, maxBytes) => host.readFile(p, maxBytes),
+    stat: (p) => host.stat(p, REMOTE_OP_TIMEOUT_MS),
+    listDir: (p) => host.listDir(p, REMOTE_OP_TIMEOUT_MS),
+    readFile: (p, maxBytes) => host.readFile(p, maxBytes, REMOTE_OP_TIMEOUT_MS),
     async writeFile(p, data, expect) {
-      const r = await host.editWrite(p, data, expect);
+      const r = await host.editWrite(p, data, expect, REMOTE_OP_TIMEOUT_MS);
       if (r.ok) return { mtimeMs: r.mtimeMs, size: r.size };
       throw new WorkspaceConflictError(
         `${p} changed since it was read`,
@@ -192,9 +214,9 @@ export function remoteWorkspace(host: HostOps, root: string): Workspace {
         r.mtimeMs
       );
     },
-    mkdirp: (p) => host.mkdirp(p),
-    rename: (from, to, owned = root) => host.renameEntry(from, to, owned),
-    remove: (p, owned = root) => host.removeEntry(p, owned),
+    mkdirp: (p) => host.mkdirp(p, undefined, REMOTE_OP_TIMEOUT_MS),
+    rename: (from, to, owned = root) => host.renameEntry(from, to, owned, REMOTE_OP_TIMEOUT_MS),
+    remove: (p, owned = root) => host.removeEntry(p, owned, REMOTE_OP_TIMEOUT_MS),
   };
 }
 

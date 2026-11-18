@@ -13203,15 +13203,49 @@ describe('the page: a turn’s changes', () => {
     expect(opened).toHaveLength(1);
     expect(opened[0]).toMatchObject({ title: 'Turn 2 changes' });
     expect(String(opened[0]!.statusUrl)).toBe(`api/turn-changes/status?t=${A}&turn=2`);
-    expect(String(opened[0]!.fileUrl)).toBe(`api/turn-changes/file?t=${A}&turn=2&path=`);
+    expect(String(opened[0]!.fileUrl)).toBe(`api/turn-changes/file?t=${A}&turn=2`);
   });
 
   it('draws nothing at all when the page has no window to open', async () => {
     const h = await open();
+    // The page carries the git window; take it away to stand for a page served without one.
+    delete (h.window as unknown as { openGitWindow?: unknown }).openGitWindow;
     await h.emit(sync(A, [withChanges('w1', 2)], [A]));
     expect(h.el('log').textContent).toContain('done');
     expect(h.doc.querySelector('.tc')).toBeNull();
     expect(h.doc.querySelector('button[data-turns]')).toBeNull();
+  });
+
+  it('opens the real git window on the turn, and reads a file through the turn’s own route', async () => {
+    const status = `api/turn-changes/status?t=${A}&turn=2`;
+    const file = `api/turn-changes/file?t=${A}&turn=2&path=src%2Fa.ts`;
+    const h = await open({
+      replies: {
+        [status]: {
+          ok: true,
+          repo: { root: '/srv/project' },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+        },
+        [file]: {
+          ok: true,
+          path: 'src/a.ts',
+          status: 'modified',
+          original: 'one\n',
+          modified: 'two\n',
+          patch: '@@ -1 +1 @@\n-one\n+two\n',
+        },
+      },
+    });
+    await h.emit(sync(A, [withChanges('w1', 2)], [A]));
+    await h.click('button[data-turns]');
+    await until('the turn’s list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+    expect(h.el('git-title').textContent).toBe('Turn 2 changes');
+    expect(h.el('git-modes').hidden).toBe(true);
+    await h.click('[data-gpath="src/a.ts"]');
+    // One path= and the encoded name: the entry hands over the bare route, the window appends.
+    await until('the turn’s file', () => h.calls.some((c) => c.path === file));
+    await until('the patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    expect(h.el('git-diff').textContent).toContain('+two');
   });
 
   it('is still there after a reconnect, and the browser’s copy keeps it for a reload', async () => {
@@ -13978,6 +14012,43 @@ describe('webui page: the git window', () => {
     edit.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await tick();
     expect(h.calls.some((c) => c.path === filePath('working', 'src/a.ts'))).toBe(false);
+  });
+
+  it('opens the file window on the file when the daemon has files on, and offers no Edit when off', async () => {
+    const read = `api/files/read?topic=${A}&path=${encodeURIComponent('/srv/project/src/a.ts')}`;
+    const h = await open({
+      files: true,
+      replies: replies({
+        [`api/files/list?topic=${A}&path=${encodeURIComponent('/srv/project/src')}`]: {
+          ok: true,
+          path: '/srv/project/src',
+          rel: 'src',
+          entries: [{ name: 'a.ts', dir: false }],
+        },
+        [read]: {
+          ok: true,
+          path: '/srv/project/src/a.ts',
+          dir: '/srv/project/src',
+          rel: 'src/a.ts',
+          name: 'a.ts',
+          size: 4,
+          mtimeMs: 1,
+          kind: 'text',
+          text: 'one\n',
+          eol: 'lf',
+          sha256: 'a'.repeat(64),
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('.gf-edit');
+    await until('the file read', () => h.calls.some((c) => c.path === read));
+    expect(h.el('files').hidden).toBe(false);
+
+    // The same list on a daemon with the file window off: no control that would do nothing.
+    const off = await open({ replies: replies() });
+    await openWindow(off);
+    expect(off.el('git-files').querySelector('.gf-edit')).toBeNull();
   });
 
   it('drops a file answer that arrives after the comparison changed', async () => {

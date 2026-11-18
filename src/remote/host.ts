@@ -284,16 +284,16 @@ export class RemoteHost extends EventEmitter {
     return res as { removed: boolean; path: string };
   }
 
-  async mkdirp(path: string, mode?: number): Promise<void> {
-    await this.rpc('mkdirp', { path, mode });
+  async mkdirp(path: string, mode?: number, timeoutMs?: number): Promise<void> {
+    await this.rpc('mkdirp', { path, mode }, undefined, { timeoutMs });
   }
 
-  /** Read a whole file, refusing one larger than `maxBytes`. */
-  async readFile(path: string, maxBytes: number): Promise<Buffer> {
+  /** Read a whole file, refusing one larger than `maxBytes`. `timeoutMs` bounds each piece. */
+  async readFile(path: string, maxBytes: number, timeoutMs?: number): Promise<Buffer> {
     const parts: Buffer[] = [];
     let offset = 0;
     for (;;) {
-      const { res, body } = await this.rpc('readFile', { path, offset, max: FILE_CHUNK });
+      const { res, body } = await this.rpc('readFile', { path, offset, max: FILE_CHUNK }, undefined, { timeoutMs });
       const size = Number(res.size ?? 0);
       if (size > maxBytes) throw new Error(`${path} is ${size} bytes, over the ${maxBytes}-byte limit`);
       parts.push(body);
@@ -370,8 +370,8 @@ export class RemoteHost extends EventEmitter {
   }
 
   /** Move one entry within `owned` (remote/ops.go opRename). Refuses to overwrite. */
-  async renameEntry(from: string, to: string, owned: string): Promise<void> {
-    await this.rpc('rename', { path: from, target: to, owned });
+  async renameEntry(from: string, to: string, owned: string, timeoutMs?: number): Promise<void> {
+    await this.rpc('rename', { path: from, target: to, owned }, undefined, { timeoutMs });
   }
 
   /**
@@ -379,8 +379,8 @@ export class RemoteHost extends EventEmitter {
    * whether anything was there: deleting what is already gone is an answer, not an error, so the
    * page and the local half agree on it.
    */
-  async removeEntry(path: string, owned: string): Promise<{ removed: boolean; notEmpty?: boolean }> {
-    const { res } = await this.rpc('removeEntry', { path, owned });
+  async removeEntry(path: string, owned: string, timeoutMs?: number): Promise<{ removed: boolean; notEmpty?: boolean }> {
+    const { res } = await this.rpc('removeEntry', { path, owned }, undefined, { timeoutMs });
     return { removed: res.removed === true, ...(res.notEmpty === true ? { notEmpty: true } : {}) };
   }
 

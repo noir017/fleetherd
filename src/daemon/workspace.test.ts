@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { WorkspaceConflictError, localWorkspace, remoteWorkspace, sameContent } from './workspace.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LINK_GRACE_MS, WorkspaceConflictError, localWorkspace, remoteWorkspace, sameContent } from './workspace.js';
 
 describe('localWorkspace', () => {
   let dir: string;
@@ -202,6 +202,36 @@ describe('remoteWorkspace', () => {
     const r = await ws.run(['git', 'status']);
     expect(seen[0]).toMatchObject({ argv: ['git', 'status'], cwd: '~/work', timeoutMs: 30_000, max: 1 << 20 });
     expect(r).toEqual({ code: 0, output: Buffer.from('ok'), stderr: '', truncated: true, timedOut: false });
+  });
+
+  it('gives up on a host that does not answer, as a timeout, and reports one it could not reach', async () => {
+    const quiet = {
+      id: 'devbox',
+      // A link that is down: the request queues and nothing comes back until it is cancelled.
+      run: (_o: unknown, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => signal?.addEventListener('abort', () => reject(new Error('cancelled')))),
+      stat: async () => ({ exists: false }),
+      listDir: async () => [],
+      readFile: async () => Buffer.alloc(0),
+      editWrite: async () => ({ ok: true as const, mtimeMs: 1, size: 2 }),
+      mkdirp: async () => {},
+      renameEntry: async () => {},
+      removeEntry: async () => ({ removed: true }),
+    };
+    vi.useFakeTimers();
+    try {
+      const pending = remoteWorkspace(quiet, '~/w').run(['git', 'status'], { timeoutMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1000 + LINK_GRACE_MS);
+      expect(await pending).toMatchObject({ code: null, timedOut: true });
+    } finally {
+      vi.useRealTimers();
+    }
+    const unreachable = { ...quiet, run: async () => Promise.reject(new Error('could not reach devbox: no route')) };
+    expect(await remoteWorkspace(unreachable, '~/w').run(['true'])).toMatchObject({
+      code: null,
+      timedOut: false,
+      spawnError: 'could not reach devbox: no route',
+    });
   });
 
   it('answers with the new size and mtime, and turns the host conflict into the typed error', async () => {

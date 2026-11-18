@@ -947,7 +947,7 @@ matters here is the page's half:
 - **It is drawn only when the page can open a window** (`window.openGitWindow`, the git panel's).
   The check is at draw time, so a page served without that panel shows no entry at all rather than a
   button that does nothing; the two URLs it hands over are `api/turn-changes/status` and
-  `api/turn-changes/file`, and `fileUrl` is a prefix the window appends a URL-encoded path to.
+  `api/turn-changes/file`, and the window appends `&path=<the URL-encoded path>` to `fileUrl`.
 - **Only where something can show it.** The daemon snapshots for a platform that implements
   `attachTurnChanges`, which is this one; every chat platform skips the work for free.
 - **One directory, two topics, is not separated.** A turn's diff is its own "before" against its

@@ -4762,8 +4762,8 @@ const SCRIPT = `
    * Open the git panel's window on one turn's changes.
    *
    * The two URLs answer the JSON shapes turnChangesStatusForRef / turnChangesFileForRef build;
-   * fileUrl is the prefix the window appends a URL-encoded repository-relative path to, which is
-   * why it ends at a bare "path=". The topic is the page's own — a transcript row is always in it.
+   * the window appends "&path=" and a URL-encoded repository-relative path to fileUrl itself, so
+   * fileUrl stops at the turn. The topic is the page's own — a transcript row is always in it.
    */
   function openTurnChanges(turn){
     if(typeof window.openGitWindow !== 'function' || !turn) return;
@@ -4771,7 +4771,7 @@ const SCRIPT = `
     window.openGitWindow({
       title: 'Turn ' + turn + ' changes',
       statusUrl: 'api/turn-changes/status' + q,
-      fileUrl: 'api/turn-changes/file' + q + '&path=',
+      fileUrl: 'api/turn-changes/file' + q,
     });
   }
 
