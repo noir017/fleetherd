@@ -144,6 +144,7 @@ import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewL
 import { ReviewStateStore } from './review-state.js';
 import { buildReviewPanel } from './review-panel.js';
 import { buildHistoryPanel } from './history-panel.js';
+import { buildFilesPanel } from './file-panel.js';
 import { standingInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
@@ -2104,6 +2105,20 @@ export class Daemon {
       // A topic the page deleted: its records and the refs keeping their trees go with it.
       forget: (ref) => this.registry.turnChangesForgetForRef(ref),
     });
+    // The file window: off unless the operator turned it on. Writing a file on an agent's machine
+    // is running commands by another route — the same ceiling as the terminal, and the same
+    // explicit opt-in. Nothing is injected when it is off, so a route that somehow got past the
+    // server's own 404 still finds no panel to act through.
+    const platform = this.config.platforms[id];
+    if (platform?.type === 'webui' && platform.files.enabled) {
+      adapter.useFilesPanel?.(
+        buildFilesPanel({
+          instance: id,
+          roots: platform.files.roots,
+          workspaceForRef: (ref) => this.registry.workspaceForRef(ref),
+        })
+      );
+    }
   }
 
   /**

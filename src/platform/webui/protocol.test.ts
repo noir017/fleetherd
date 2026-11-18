@@ -3,6 +3,10 @@ import { describe, it, expect } from 'vitest';
 import {
   ClickRequestSchema,
   CreateTopicRequestSchema,
+  FilesCreateRequestSchema,
+  FilesRemoveRequestSchema,
+  FilesRenameRequestSchema,
+  FilesWriteRequestSchema,
   DeleteTopicRequestSchema,
   ClearTopicsRequestSchema,
   LoginRequestSchema,
@@ -164,5 +168,39 @@ describe('webui protocol: inbound validation', () => {
     ['a value too long to be one', { topic: TOPIC, messageId: 'm1', buttonId: 'stt:r:0', value: 'x'.repeat(201) }, false],
   ])('a click carrying %s', (_label, body, want) => {
     expect(parseBody(ClickRequestSchema, body).ok).toBe(want);
+  });
+});
+
+describe('webui protocol: the file window', () => {
+  it.each([
+    ['a checked save', { topic: TOPIC, path: '/w/a.txt', text: 'x', mtimeMs: 5, size: 3, sha256: 'a'.repeat(64) }, true],
+    ['a short sha', { topic: TOPIC, path: '/w/a.txt', text: 'x', size: 3, sha256: 'abc' }, false],
+    ['a sha that is not hex', { topic: TOPIC, path: '/w/a.txt', text: 'x', size: 3, sha256: 'z'.repeat(64) }, false],
+    ['a create', { topic: TOPIC, path: '/w/a.txt', text: '', missing: true }, true],
+    ['an explicit overwrite', { topic: TOPIC, path: '/w/a.txt', text: 'x', force: true }, true],
+    ['a malformed topic', { topic: 'nope', path: '/w/a.txt', text: 'x' }, false],
+    ['an empty path', { topic: TOPIC, path: '', text: 'x' }, false],
+    ['a negative mtime', { topic: TOPIC, path: '/w/a.txt', text: 'x', mtimeMs: -1 }, false],
+    // `.strict()`: the editor sends exactly this shape, and a stray key is a refused body rather
+    // than a field somebody downstream later reads.
+    ['an extra key', { topic: TOPIC, path: '/w/a.txt', text: 'x', mode: 0o777 }, false],
+  ])('a save with %s', (_label, body, want) => {
+    expect(parseBody(FilesWriteRequestSchema, body).ok).toBe(want);
+  });
+
+  it.each([
+    ['a file', { topic: TOPIC, path: '/w/a.txt', dir: false }, true],
+    ['a default dir', { topic: TOPIC, path: '/w/sub' }, true],
+    ['no path', { topic: TOPIC, dir: true }, false],
+  ])('creating %s', (_label, body, want) => {
+    expect(parseBody(FilesCreateRequestSchema, body).ok).toBe(want);
+  });
+
+  it('takes only both ends of a rename, and only one path to remove', () => {
+    expect(parseBody(FilesRenameRequestSchema, { topic: TOPIC, from: '/w/a', to: '/w/b' }).ok).toBe(true);
+    expect(parseBody(FilesRenameRequestSchema, { topic: TOPIC, from: '/w/a' }).ok).toBe(false);
+    expect(parseBody(FilesRenameRequestSchema, { topic: TOPIC, from: '/w/a', to: '/w/b', owned: '/w' }).ok).toBe(false);
+    expect(parseBody(FilesRemoveRequestSchema, { topic: TOPIC, path: '/w/a' }).ok).toBe(true);
+    expect(parseBody(FilesRemoveRequestSchema, { topic: TOPIC, path: '/w/a', recursive: true }).ok).toBe(false);
   });
 });

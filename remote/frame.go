@@ -81,6 +81,14 @@ type Header struct {
 	Merge     bool            `json:"merge,omitempty"`
 	Res       json.RawMessage `json:"res,omitempty"`
 
+	// The editor's version check (opEditWrite): the size, mtime and SHA-256 the caller last saw,
+	// and `expectMissing` for a file it is creating. A mismatch is answered as a conflict.
+	Size          int64  `json:"size,omitempty"`
+	MtimeMs       int64  `json:"mtimeMs,omitempty"`
+	Sha256        string `json:"sha256,omitempty"`
+	ExpectMissing bool   `json:"expectMissing,omitempty"`
+	Force         bool   `json:"force,omitempty"`
+
 	// reverse commands (the `fleetherd` shim)
 	Cid   string `json:"cid,omitempty"`
 	Token string `json:"token,omitempty"`

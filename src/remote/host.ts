@@ -255,9 +255,9 @@ export class RemoteHost extends EventEmitter {
     }
   }
 
-  async stat(path: string, timeoutMs?: number): Promise<{ exists: boolean; dir?: boolean; size?: number; mtimeMs?: number }> {
+  async stat(path: string, timeoutMs?: number): Promise<{ exists: boolean; dir?: boolean; size?: number; mtimeMs?: number; mode?: number }> {
     const { res } = await this.rpc('stat', { path }, undefined, { timeoutMs });
-    return res as { exists: boolean; dir?: boolean; size?: number; mtimeMs?: number };
+    return res as { exists: boolean; dir?: boolean; size?: number; mtimeMs?: number; mode?: number };
   }
 
   async listDir(path: string, timeoutMs?: number): Promise<Array<{ name: string; dir: boolean }>> {
@@ -332,6 +332,56 @@ export class RemoteHost extends EventEmitter {
     for (let off = 0; off < data.length; off += FILE_CHUNK) {
       await this.rpc('writeFile', { path, mode, append: off > 0 }, data.subarray(off, off + FILE_CHUNK));
     }
+  }
+
+  /**
+   * The editor's write (remote/ops.go opEditWrite), and the three ways it differs from
+   * `writeFile(…, {atomic: true})`: it writes through a symlink to the file it points at, keeps the
+   * file's mode (a new file gets the umask default), and refuses to replace a file whose size or
+   * mtime is not the one the caller last saw. A refusal is a conflict the caller can offer the
+   * person — reload, overwrite, cancel — not an error, so it comes back as an answer, not a throw.
+   */
+  async editWrite(
+    path: string,
+    data: Uint8Array,
+    expect: { mtimeMs?: number; size?: number; sha256?: string; missing?: boolean; force?: boolean },
+    timeoutMs?: number
+  ): Promise<
+    | { ok: true; mtimeMs: number; size: number }
+    | { ok: false; conflict: true; exists: boolean; size?: number; mtimeMs?: number }
+  > {
+    if (data.length > FILE_CHUNK) throw new Error(`one edit takes one frame: ${data.length} bytes is over ${FILE_CHUNK}`);
+    const { res } = await this.rpc(
+      'editWrite',
+      {
+        path,
+        mtimeMs: expect.mtimeMs,
+        size: expect.size,
+        sha256: expect.sha256,
+        expectMissing: expect.missing === true,
+        force: expect.force === true,
+      },
+      data,
+      { timeoutMs }
+    );
+    return res as
+      | { ok: true; mtimeMs: number; size: number }
+      | { ok: false; conflict: true; exists: boolean; size?: number; mtimeMs?: number };
+  }
+
+  /** Move one entry within `owned` (remote/ops.go opRename). Refuses to overwrite. */
+  async renameEntry(from: string, to: string, owned: string): Promise<void> {
+    await this.rpc('rename', { path: from, target: to, owned });
+  }
+
+  /**
+   * Delete one file or one empty directory within `owned` (remote/ops.go opRemoveEntry). Answers
+   * whether anything was there: deleting what is already gone is an answer, not an error, so the
+   * page and the local half agree on it.
+   */
+  async removeEntry(path: string, owned: string): Promise<{ removed: boolean; notEmpty?: boolean }> {
+    const { res } = await this.rpc('removeEntry', { path, owned });
+    return { removed: res.removed === true, ...(res.notEmpty === true ? { notEmpty: true } : {}) };
   }
 
   /**

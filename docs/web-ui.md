@@ -391,6 +391,51 @@ ttyd -i ~/.config/fleetherd/webui-term-web.sock -b /term -W -a -O \
      -T xterm-256color /usr/local/bin/aa-terminal.sh
 ```
 
+## Files
+
+Turned on, the chat header grows a folder button that opens a file browser and editor for the
+machine the topic's agent runs on — this one, or a remote host, whichever the topic uses. The left
+side is a directory tree that expands as you open it (a drawer on a phone); the right side holds
+the breadcrumbs, a filename search over the project, and the file itself. Files up to 1 MiB of
+UTF-8 text are editable; images (PNG, JPEG, GIF, WebP, up to 5 MiB) are shown, and anything else
+(binary, not UTF-8, or over the limit) is named with a sentence saying why it cannot be edited
+here. Markdown has a Preview tab.
+
+Off unless you ask for it, and the reason is the same as the terminal's: a save is a write on that
+machine, which is running commands by another route. What it can reach is each topic's working
+directory, the git repository that directory is in, plus `roots` — nothing else. Paths are normalized and must land under one of those; a
+`..` that tries to climb out is refused. **Symlinks inside those directories are followed**, so
+whatever a link points at can be edited through it; that is deliberate, because a workspace laid
+out as links into mounted volumes is normal, but it also means `roots` is as far as this is a
+boundary. The ceiling is the agent's own tool access, which is why it is opt-in like the terminal.
+
+Every save is checked: if the file changed on the machine since you opened it — its size, its
+timestamp, or the SHA-256 of its bytes — the editor offers reload, overwrite or cancel instead of
+quietly replacing someone else's work. The check happens immediately before the write and again
+just before the file is replaced, but it is a check, not a lock: two saves landing in the same
+instant can still overwrite each other. Saves keep the file's permissions, write through symlinks
+rather than replacing them, and leave a BOM and a uniform CRLF or LF as they were, so opening and
+saving a file you did not edit returns the same bytes. A file that mixes endings, or uses only CR,
+cannot be held as it is by an editor: the window says above the editor which ending a save will
+write instead of changing it quietly. Each write is logged with who, which machine and which file.
+New file, new folder, rename and delete act on the file the editor has open; a folder row also
+carries its own rename and delete buttons. A folder is deleted only when it is empty — otherwise
+the window says so and leaves it alone — and deleting the folder the open file lives in asks about
+unsaved changes first.
+
+```yaml
+platforms:
+  web:
+    type: webui
+    token: ${WEB_TOKEN}
+    files:
+      enabled: true
+      # Optional: directories reachable from every topic besides its own working
+      # directory. Absolute, or ~/… on the machine the agent runs on.
+      roots:
+        - /srv/shared
+```
+
 ## Exposing it
 
 > [!WARNING]

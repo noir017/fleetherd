@@ -144,12 +144,15 @@ Paths may start with `~/`, resolved against the host's home.
 
 | `op` | fields | result |
 |---|---|---|
-| `stat` | `path` | `{exists, dir, size, mtimeMs}` (following links) |
+| `stat` | `path` | `{exists, dir, size, mtimeMs, mode}` (following links; `mode` is the permission bits) |
 | `listDir` | `path` | `{entries: [{name, dir}]}` (following links) |
 | `mkdirp` | `path mode` | |
 | `readFile` | `path offset max` | `{size}` + body: up to `max` bytes from `offset` |
 | `readTail` | `path max grep fields` | body: the last `max` bytes as whole lines, only those containing a `grep` string, each JSON line cut down to `fields` (dotted paths) |
 | `writeFile` | `path mode append atomic` + body | written (or appended) owner-only, directories created; `atomic` replaces the file in one rename (one frame, no append) |
+| `editWrite` | `path size mtimeMs sha256 expectMissing force` + body | the gateway's editor write: through a symlink to its target, the file's own mode kept (a new file takes the umask's default), a temporary beside it fsynced and renamed. The size, mtime and SHA-256 the caller read are checked before the temporary is written and again immediately before the rename — an advisory check, not a CAS — and a mismatch answers `{ok:false, conflict:true, exists, size, mtimeMs}` (never `rpc-err`, so the page can offer reload / overwrite / cancel). `expectMissing` is the create case; `force` skips the check alone |
+| `rename` | `path target owned` | one entry moved, both ends strictly inside `owned`; refuses to overwrite |
+| `removeEntry` | `path owned` | `{removed, path}` — one file or one EMPTY directory, strictly inside `owned` (a non-empty directory is refused; a symlink is removed as the link); something already gone answers `removed:false`, a directory that still holds something answers `removed:false, notEmpty:true` (recognised by errno, never by the message), and anything else is an `rpc-err` |
 | `ensureLink` | `target path requires owned` | `{outcome, detail}` — skill-link.ts's rules; with `owned`, an existing symlink is repointed only if it points inside that directory |
 | `removeLink` | `path owned` | `{outcome, detail}` — the symlink removed only if it points inside `owned` (`removed`), else `kept` / `absent` |
 | `removePath` | `path owned` | `{removed, path}` — one file or directory tree removed only if `path` is strictly inside `owned`; the parent is resolved through symlinks first, and the path itself is not followed |

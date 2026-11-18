@@ -36,6 +36,37 @@ All notable changes to this project are documented here. The format is based on
   bring it back. Only the web UI does this — a chat reply has nowhere to put a diff — and a page
   whose git window is absent draws no entry at all. Two topics working in the same directory at the
   same time see each other's edits in their diffs.
+- **The web UI can browse and edit the files of the machine a topic's agent runs on.** A folder
+  button in the chat header opens a window with a directory tree that expands as it is opened (a
+  drawer on a phone), breadcrumbs, a filename search, and an editor — CodeMirror where the page has
+  it, a plain text box otherwise. It works the same whether the agent is here or on a remote host,
+  because both machines answer `Workspace` the same way. UTF-8 text up to 1 MiB is editable; images
+  up to 5 MiB are shown in place; Markdown gets a rendered preview. New file, new folder, rename and
+  delete are there, each confirmed — folders are renamed and deleted from their own row in the tree,
+  and a folder is deleted only when it is empty. A save is version-checked: the size, mtime and SHA-256 the
+  page read, checked before the temporary is written and again just before the rename. A file that
+  changed since it was read comes back as a conflict with reload, overwrite and cancel, rather than
+  replacing someone else's work. That check is advisory — it happens before the write, not as an
+  atomic compare-and-swap, and a writer landing between the last check and the rename is
+  overwritten. A save keeps the file's bytes otherwise: a BOM, and a uniform CRLF or LF, survive a
+  save the person did not edit; a file whose endings are mixed (or only CR) says above the editor
+  which ending a save will write. Off by default — a save writes a file where the agent runs, so it is the terminal's kind
+  of opt-in — and when off the button is absent and every route answers 404. Reach is each topic's
+  working directory, the git repository it is in, and `files.roots`; paths are normalized and `..` cannot climb out, while
+  symlinks inside those directories are followed as they always are on these workspaces.
+
+### Changed
+
+- **A remote host has a checked write, and `stat` reports a file's mode.** `fleetherd-remote`'s
+  editor-facing write (`editWrite`) writes through a symlink to its target, keeps the existing
+  file's permission bits, gives a new file the umask's default, and refuses a save whose size,
+  mtime or SHA-256 is not the one the caller last saw — checked before the temporary is written and
+  again immediately before the rename, which is still a check before the write rather than an
+  atomic compare-and-swap. A mismatch is a conflict the gateway turns into the page's dialog. It
+  writes a temporary beside the file, fsyncs, then renames. `rename` and `removeEntry` (one file or
+  one empty directory, never a tree) join it, and `stat` now carries the permission bits. Deleting
+  what is already gone answers `removed:false` on both machines. The local `Workspace` implements
+  the same rules, so the editor behaves identically on both machines.
 
 ## [3.10.0] - 2026-11-17
 

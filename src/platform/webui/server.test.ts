@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
 import type {
+  FilesPanel,
   ReviewPanelEntry,
   SchedulePanel,
   SchedulePanelEdit,
@@ -2584,6 +2585,140 @@ describe('webui server: terminal', () => {
       body: JSON.stringify({ topic }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('webui server: the file window', () => {
+  const post = (base: string, cookie: string, route: string, body: unknown) =>
+    fetch(`${base}${route}`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
+
+  /** The smallest panel the routes can reach: the daemon's own is tested in daemon/file-panel.test.ts. */
+  function fakePanel(): { panel: FilesPanel; seen: string[] } {
+    const seen: string[] = [];
+    const ok = <T extends object>(v: T) => ({ ok: true as const, ...v });
+    const panel: FilesPanel = {
+      async list(_ref, p) {
+        seen.push(`list ${p}`);
+        return ok({ path: '/w', rel: '', entries: [{ name: 'a.txt', dir: false }] });
+      },
+      async read(_ref, p) {
+        seen.push(`read ${p}`);
+        return ok({
+          path: p,
+          dir: '/w',
+          rel: 'a.txt',
+          name: 'a.txt',
+          size: 3,
+          mtimeMs: 5,
+          kind: 'text' as const,
+          text: 'abc',
+          sha256: 'a'.repeat(64),
+        });
+      },
+      async write(_ref, p, text, expect) {
+        seen.push(`write ${p} ${text} ${JSON.stringify(expect)}`);
+        if (p.endsWith('stale.txt')) {
+          return { ok: false as const, conflict: true as const, exists: true, size: 9, mtimeMs: 10, error: 'changed' };
+        }
+        return { ok: true as const, mtimeMs: 6, size: text.length, sha256: 'b'.repeat(64) };
+      },
+      async create(_ref, p, dir) {
+        seen.push(`create ${p} ${dir}`);
+        return { ok: true as const, path: p, dir };
+      },
+      async rename(_ref, from, to) {
+        seen.push(`rename ${from} ${to}`);
+        return { ok: true as const, path: to };
+      },
+      async remove(_ref, p) {
+        seen.push(`remove ${p}`);
+        return { ok: true as const, removed: true };
+      },
+      async search(_ref, q) {
+        seen.push(`search ${q}`);
+        return { ok: true as const, hits: [{ path: '/w/a.txt', rel: 'a.txt', name: 'a.txt', dir: false }], truncated: false };
+      },
+    };
+    return { panel, seen };
+  }
+
+  it('answers 404 on every route when the feature is off', async () => {
+    const { base, topic } = await boot();
+    const cookie = await signIn(base);
+    const q = `topic=${topic}&path=a.txt&q=x`;
+    for (const route of ['/api/files/list', '/api/files/read', '/api/files/search']) {
+      expect((await fetch(`${base}${route}?${q}`, { headers: { cookie } })).status, route).toBe(404);
+    }
+    for (const [route, body] of [
+      ['/api/files/write', { topic, path: 'a.txt', text: 'x' }],
+      ['/api/files/create', { topic, path: 'a.txt', dir: false }],
+      ['/api/files/rename', { topic, from: 'a.txt', to: 'b.txt' }],
+      ['/api/files/remove', { topic, path: 'a.txt' }],
+    ] as const) {
+      expect((await post(base, cookie, route, body)).status, route).toBe(404);
+    }
+  });
+
+  it('lists, reads and writes through the injected panel when it is on', async () => {
+    const { base, room, topic } = await boot({ files: { enabled: true, roots: [] } });
+    const files = fakePanel();
+    room.useFilesPanel(files.panel);
+    const cookie = await signIn(base);
+
+    const list = await fetch(`${base}/api/files/list?topic=${topic}&path=`, { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ ok: true, path: '/w', entries: [{ name: 'a.txt', dir: false }] });
+
+    const read = await fetch(`${base}/api/files/read?topic=${topic}&path=/w/a.txt&preview=1`, { headers: { cookie } });
+    expect(await read.json()).toMatchObject({ ok: true, kind: 'text', text: 'abc', sha256: 'a'.repeat(64) });
+
+    const save = await post(base, cookie, '/api/files/write', {
+      topic,
+      path: '/w/a.txt',
+      text: 'hello',
+      mtimeMs: 5,
+      size: 3,
+      sha256: 'a'.repeat(64),
+    });
+    expect(save.status).toBe(200);
+    expect(await save.json()).toMatchObject({ ok: true, mtimeMs: 6, size: 5 });
+    // The whole version — sha included — reaches the panel.
+    expect(files.seen.at(-1)).toBe(`write /w/a.txt hello {"mtimeMs":5,"size":3,"sha256":"${'a'.repeat(64)}"}`);
+
+    // A conflict is 409, with what the file is now — the page's three-way choice hangs off it.
+    const stale = await post(base, cookie, '/api/files/write', { topic, path: '/w/stale.txt', text: 'x', mtimeMs: 1, size: 1 });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ ok: false, conflict: true, exists: true, size: 9 });
+
+    expect((await post(base, cookie, '/api/files/create', { topic, path: '/w/new.txt', dir: false })).status).toBe(200);
+    expect((await post(base, cookie, '/api/files/rename', { topic, from: '/w/a.txt', to: '/w/b.txt' })).status).toBe(200);
+    expect((await post(base, cookie, '/api/files/remove', { topic, path: '/w/b.txt' })).status).toBe(200);
+    const search = await fetch(`${base}/api/files/search?topic=${topic}&q=a`, { headers: { cookie } });
+    expect(await search.json()).toMatchObject({ ok: true, hits: [{ rel: 'a.txt' }] });
+  });
+
+  it('validates the query and the body before anything reaches a machine', async () => {
+    const { base, room, topic } = await boot({ files: { enabled: true, roots: [] } });
+    room.useFilesPanel(fakePanel().panel);
+    const cookie = await signIn(base);
+
+    expect((await fetch(`${base}/api/files/list?topic=nope&path=`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/files/search?topic=${topic}&q=`, { headers: { cookie } })).status).toBe(400);
+    // .strict(): an extra key is a refused body, not an ignored one.
+    const extra = await post(base, cookie, '/api/files/write', { topic, path: 'a', text: 'x', rm: '-rf' });
+    expect(extra.status).toBe(400);
+    // The explicit overwrite is a body the schema accepts; whether it skips the check is the
+    // daemon's business, not the protocol's.
+    expect((await post(base, cookie, '/api/files/write', { topic, path: '/w/a', text: 'x', force: true })).status).toBe(200);
+  });
+
+  it('serves the page with the button revealed only when the feature is on', async () => {
+    const off = await boot();
+    const offPage = await fetch(`${off.base}/`).then((r) => r.text());
+    expect(offPage).toContain('var FILES_OK = false;');
+    const on = await boot({ files: { enabled: true, roots: [] } });
+    const onPage = await fetch(`${on.base}/`).then((r) => r.text());
+    expect(onPage).toContain('var FILES_OK = true;');
   });
 });
 

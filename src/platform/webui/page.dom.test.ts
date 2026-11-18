@@ -472,8 +472,8 @@ function installMic(w: any, mic: { types: string[]; deny?: boolean }, recorders:
  * The page a test loads. `codeview` is the built bundle's name, or absent for a daemon with no
  * assets at all — the two states `codeView()` distinguishes before it ever imports anything.
  */
-function pageOf(terminal: boolean, password: boolean, terminalEnd: boolean, codeview?: string): string {
-  return renderPage('Chat', terminal, password, terminalEnd, codeview ?? null);
+function pageOf(terminal: boolean, password: boolean, terminalEnd: boolean, codeview?: string, files = false): string {
+  return renderPage('Chat', terminal, password, terminalEnd, codeview ?? null, files);
 }
 
 async function open(
@@ -504,6 +504,8 @@ async function open(
     terminal?: boolean;
     /** Whether the daemon was given a way to END a terminal session (terminal.endCommand). */
     terminalEnd?: boolean;
+    /** Whether the daemon has the file window (platforms.<id>.files.enabled). */
+    files?: boolean;
     /** Whether the shared secret is still a way in, i.e. which of the two gates is served. */
     password?: boolean;
     /**
@@ -574,6 +576,7 @@ async function open(
     confirm = true,
     terminal = false,
     terminalEnd = false,
+    files = false,
     password = true,
     mic,
     hang = [],
@@ -603,7 +606,7 @@ async function open(
   const confirms: string[] = [];
   const longTimers: number[] = [];
 
-  const dom = new JSDOM(pageOf(terminal, password, terminalEnd, codeviewUrl), {
+  const dom = new JSDOM(pageOf(terminal, password, terminalEnd, codeviewUrl, files), {
     url,
     runScripts: 'dangerously',
     pretendToBeVisual: true,
@@ -12925,7 +12928,7 @@ describe('webui page: the History tab', () => {
     // it is up — as text, because jsdom's CSSOM is not to be trusted with this (see Testing).
     expect(renderPage('Chat', false)).toContain(
       '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,\n' +
-        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle{display:none}'
+        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}'
     );
   });
 
@@ -13230,5 +13233,492 @@ describe('the page: a turn’s changes', () => {
       if (!cached?.turnChanges) await new Promise((r) => setTimeout(r, 50));
     }
     expect(cached?.turnChanges).toMatchObject({ turn: 4 });
+  });
+});
+
+/**
+ * The file window: a topic's machine, a tree, and an editor (page.ts "the file window").
+ *
+ * The daemon's side is tested where it lives (`daemon/file-panel.test.ts`); what is asserted here
+ * is what a person would see and do — the button appearing only when the feature is on, a file
+ * opening, the editor holding what was typed, a save carrying the version it read, the conflict
+ * dialog's three answers, and the confirmation that keeps a tap from throwing an edit away.
+ *
+ * Two editor paths, because the page has two: the plain textarea it always has, and CodeMirror
+ * behind `window.__fhCodeView` (which is null in production until the asset lands).
+ */
+describe('webui page: the file window', () => {
+  const T = 'aaaaaaaa';
+  const LIST = `api/files/list?topic=${T}`;
+  const READ = `api/files/read?topic=${T}&path=${encodeURIComponent('/w/a.txt')}`;
+  const rootEntry = { name: 'a.txt', dir: false };
+  const listing = { ok: true, path: '/w', rel: '', entries: [rootEntry, { name: 'sub', dir: true }] };
+  const SHA = 'a'.repeat(64);
+  const file = {
+    ok: true,
+    path: '/w/a.txt',
+    dir: '/w',
+    rel: 'a.txt',
+    name: 'a.txt',
+    size: 3,
+    mtimeMs: 5,
+    kind: 'text',
+    text: 'abc',
+    eol: 'lf',
+    sha256: SHA,
+  };
+
+  async function openFiles(over: Record<string, unknown> = {}) {
+    const h = await open({
+      files: true,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: { [LIST]: listing, [READ]: file, ...over },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length > 0);
+    return h;
+  }
+
+  async function openA(h: Harness): Promise<void> {
+    await h.click('[data-fx-file="/w/a.txt"]');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+  }
+
+  const editorText = (h: Harness): HTMLTextAreaElement =>
+    h.el('files-editor').querySelector('textarea') as HTMLTextAreaElement;
+
+  it('hides the button and offers no openFileEditor when the daemon has the feature off', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${T}`, replies: { [LIST]: listing, [READ]: file } });
+    expect(h.el('files-toggle').hidden).toBe(true);
+    // Absent rather than inert: the git panel offers its Edit only where this is a function.
+    expect(typeof (h.window as unknown as { openFileEditor?: unknown }).openFileEditor).toBe('undefined');
+    await tick();
+    expect(h.el('files').hidden).toBe(true);
+    expect(h.calls.some((c) => c.path.startsWith('api/files/'))).toBe(false);
+  });
+
+  it('opens a file from the tree, edits it in the plain-text fallback and saves with its version', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 6, size: 4 } });
+    expect(h.el('files-toggle').hidden).toBe(false);
+    expect(typeof (h.window as unknown as { openFileEditor?: unknown }).openFileEditor).toBe('function');
+    expect(h.el('files-title').textContent).toBe('Files');
+
+    await openA(h);
+    expect(h.el('files-title').textContent).toBe('a.txt');
+    expect(editorText(h).value).toBe('abc');
+    // The fallback, not the code view: nothing put a CodeMirror node there.
+    expect(h.el('files-editor').querySelector('.fake-cm')).toBeNull();
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(true);
+
+    const ta = editorText(h);
+    ta.value = 'abcd';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(h.el('files-dirty').hidden).toBe(false);
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(false);
+
+    await h.click('#files-save');
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    const save = h.calls.find((c) => c.path === 'api/files/write')!;
+    expect(save.body).toEqual({ topic: T, path: '/w/a.txt', text: 'abcd', mtimeMs: 5, size: 3, sha256: SHA });
+    expect(h.el('files-dirty').hidden).toBe(true);
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(true);
+  });
+
+  it('saves from Ctrl+S as well as from the button', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 6, size: 5 } });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'abcde';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    ta.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the keyed save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('abcde');
+  });
+
+  it('uses the code view when it is there, and saves the document it holds', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 7, size: 6 } });
+    type Fake = { type: (v: string) => void; save: () => void };
+    let fake: Fake | null = null;
+    (h.window as unknown as { __fhCodeView: unknown }).__fhCodeView = {
+      editor(parent: HTMLElement, o: { doc: string; onChange?: (d: string) => void; onSave?: () => void }) {
+        const el = h.doc.createElement('div');
+        el.className = 'fake-cm';
+        el.textContent = o.doc;
+        parent.appendChild(el);
+        const state = { doc: o.doc };
+        fake = {
+          type: (v: string) => {
+            state.doc = v;
+            el.textContent = v;
+            o.onChange?.(v);
+          },
+          save: () => o.onSave?.(),
+        };
+        return { getDoc: () => state.doc, setDoc: (v: string) => (state.doc = v), focus: () => {}, destroy: () => {} };
+      },
+    };
+    await h.click('[data-fx-file="/w/a.txt"]');
+    await until('the code view', () => Boolean(h.el('files-editor').querySelector('.fake-cm')));
+    expect(h.el('files-editor').querySelector('textarea')).toBeNull();
+
+    (fake as Fake | null)!.type('abcdef');
+    expect(h.el('files-dirty').hidden).toBe(false);
+    (fake as Fake | null)!.save();
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('abcdef');
+  });
+
+  it('offers reload, overwrite or cancel when the file changed under the editor', async () => {
+    // One object, mutated between requests: the harness hands back whatever `replies` holds when
+    // the answer is read, and replacement would leave the page's copy pointing at the old one.
+    const writeReply: Record<string, unknown> = { ok: true, mtimeMs: 6, size: 4 };
+    const h = await openFiles({ 'api/files/write': writeReply });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'mine';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    h.status['api/files/write'] = 409;
+    writeReply.ok = false;
+    writeReply.conflict = true;
+    writeReply.exists = true;
+    writeReply.size = 9;
+    writeReply.mtimeMs = 10;
+    await h.click('#files-save');
+    await until('the conflict dialog', () => !h.el('files-conflict').hidden);
+    expect(h.el('files-conflict-text').textContent).toMatch(/changed on the machine/);
+    // Nothing was thrown away: the editor still holds the typed text.
+    expect(editorText(h).value).toBe('mine');
+
+    // Overwrite is the same write with the check skipped.
+    h.status['api/files/write'] = 200;
+    writeReply.ok = true;
+    writeReply.mtimeMs = 11;
+    writeReply.size = 4;
+    writeReply.conflict = false;
+    await h.click('#files-overwrite');
+    await until('the forced save', () => h.calls.filter((c) => c.path === 'api/files/write').length >= 2);
+    const forced = h.calls.filter((c) => c.path === 'api/files/write')[1]!;
+    expect(forced.body).toEqual({ topic: T, path: '/w/a.txt', text: 'mine', force: true });
+    expect(h.el('files-conflict').hidden).toBe(true);
+  });
+
+  it('asks before a close or another file throws unsaved changes away', async () => {
+    const h = await openFiles({ [READ.replace('/w/a.txt', '/w/a.txt')]: file });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-close');
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
+    // Answered yes (the harness's confirm does): the window is gone.
+    expect(h.el('files').hidden).toBe(true);
+  });
+
+  it('keeps the window open when the unsaved confirmation is refused', async () => {
+    const h = await open({
+      files: true,
+      confirm: false,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: { [LIST]: listing, [READ]: file },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length > 0);
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-close');
+    expect(h.el('files').hidden).toBe(false);
+    expect(editorText(h).value).toBe('unsaved');
+  });
+
+  it('puts a BOM and CRLF back on save, and keeps a file that ends without a newline', async () => {
+    const win = {
+      ...file,
+      path: '/w/win.txt',
+      rel: 'win.txt',
+      name: 'win.txt',
+      size: 7,
+      mtimeMs: 6,
+      text: '\uFEFFa\r\nb',
+      eol: 'crlf',
+      bom: true,
+      sha256: 'c'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/win.txt')}`]: win,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 7, sha256: 'd'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/win.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    // What the textarea shows: LF, with the BOM still the first character.
+    expect(editorText(h).value).toBe('\uFEFFa\nb');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    const body = h.calls.find((c) => c.path === 'api/files/write')!.body;
+    expect(body.text).toBe('\uFEFFa\r\nb');
+    expect(body.sha256).toBe('c'.repeat(64));
+    expect(body.size).toBe(7);
+    // The new version replaces the baseline, so the next save carries the hash just written.
+    expect(h.el('files-dirty').hidden).toBe(true);
+    // Uniform CRLF is byte-exact, so nothing is announced.
+    expect(h.el('files-eol').hidden).toBe(true);
+  });
+
+  it('warns what a save will do to mixed line endings, and does it', async () => {
+    const mixed = {
+      ...file,
+      path: '/w/mixed.txt',
+      rel: 'mixed.txt',
+      name: 'mixed.txt',
+      size: 6,
+      mtimeMs: 6,
+      text: 'a\r\nb\n',
+      eol: 'crlf',
+      eolWarning: 'mixed',
+      sha256: 'e'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/mixed.txt')}`]: mixed,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 8, sha256: 'f'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/mixed.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    expect(h.el('files-eol').hidden).toBe(false);
+    expect(h.el('files-eol').textContent).toBe(
+      'This file mixes line endings; saving will normalize them to CRLF.'
+    );
+    expect(editorText(h).value).toBe('a\nb\n');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('a\r\nb\r\n');
+  });
+
+  it('warns about a pure-CR file and saves it as LF', async () => {
+    const classic = {
+      ...file,
+      path: '/w/classic.txt',
+      rel: 'classic.txt',
+      name: 'classic.txt',
+      size: 4,
+      mtimeMs: 6,
+      text: 'a\rb\r',
+      eol: 'lf',
+      eolWarning: 'cr',
+      sha256: 'e'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/classic.txt')}`]: classic,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 4, sha256: 'f'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/classic.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    expect(h.el('files-eol').textContent).toBe('This file uses CR line endings; saving will normalize them to LF.');
+    expect(editorText(h).value).toBe('a\nb\n');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('a\nb\n');
+  });
+
+  it('moves the new-file directory up when the folder it named is deleted', async () => {
+    const h = await openFiles({
+      [`api/files/list?topic=${T}&path=${encodeURIComponent('/w/sub')}`]: {
+        ok: true,
+        path: '/w/sub',
+        rel: 'sub',
+        entries: [],
+      },
+      'api/files/remove': { ok: true, removed: true },
+      'api/files/create': { ok: true, path: '/w/x.txt', dir: false },
+    });
+    // Opening the folder is what puts the tree's cursor on it.
+    await h.click('[data-fx-dir="/w/sub"]');
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    await until('the delete', () => h.calls.some((c) => c.path === 'api/files/remove'));
+
+    await h.click('#files-new-file');
+    (h.el('files-new-name') as HTMLInputElement).value = 'x.txt';
+    await h.click('#files-new-go');
+    await until('the create', () => h.calls.some((c) => c.path === 'api/files/create'));
+    expect(h.calls.find((c) => c.path === 'api/files/create')!.body).toEqual({
+      topic: T,
+      path: '/w/x.txt',
+      dir: false,
+    });
+  });
+
+  it('keeps unsaved text across a successful rename instead of re-reading the file', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: true, path: '/w/b.txt' } });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'draft';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-rename-open');
+    (h.el('files-rename-name') as HTMLInputElement).value = 'b.txt';
+    await h.click('#files-rename-go');
+    await until('the rename', () => h.el('files-title').textContent === 'b.txt');
+
+    expect(editorText(h).value).toBe('draft');
+    expect(h.el('files-dirty').hidden).toBe(false);
+    // No read of the new path: the editor's text is the person's, and the disk copy is older.
+    expect(h.calls.some((c) => c.path === `api/files/read?topic=${T}&path=${encodeURIComponent('/w/b.txt')}`)).toBe(false);
+
+    await h.click('#files-save');
+    await until('the save after rename', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body).toMatchObject({ path: '/w/b.txt', text: 'draft' });
+  });
+
+  it('keeps the dirty mark when a rename fails', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: false, error: 'something is already there' } });
+    h.status['api/files/rename'] = 400;
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'draft';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-rename-open');
+    (h.el('files-rename-name') as HTMLInputElement).value = 'b.txt';
+    await h.click('#files-rename-go');
+    await until('the refusal', () => h.el('files-note').textContent!.includes('already there'));
+
+    expect(h.el('files-title').textContent).toBe('a.txt');
+    expect(editorText(h).value).toBe('draft');
+    expect(h.el('files-dirty').hidden).toBe(false);
+  });
+
+  it('keeps the dirty mark when a conflict Reload fails, so a close still asks', async () => {
+    const writeReply: Record<string, unknown> = { ok: true, mtimeMs: 6, size: 4 };
+    const h = await openFiles({ 'api/files/write': writeReply });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'mine';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    h.status['api/files/write'] = 409;
+    writeReply.ok = false;
+    writeReply.conflict = true;
+    writeReply.exists = true;
+    await h.click('#files-save');
+    await until('the conflict dialog', () => !h.el('files-conflict').hidden);
+
+    h.status[READ] = 404;
+    await h.click('#files-reload');
+    await until('the failed reload', () => !h.el('files-note').hidden);
+    expect(editorText(h).value).toBe('mine');
+    expect(h.el('files-dirty').hidden).toBe(false);
+
+    await h.click('#files-close');
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
+  });
+
+  it('renames a folder from its row, and says what it is renaming', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: true, path: '/w/renamed' } });
+    await h.click('[data-fx-dir-rename="/w/sub"]');
+    expect(h.el('files-rename-what').textContent).toBe('Rename folder');
+    expect((h.el('files-rename-name') as HTMLInputElement).value).toBe('sub');
+
+    (h.el('files-rename-name') as HTMLInputElement).value = 'renamed';
+    await h.click('#files-rename-go');
+    await until('the rename', () => h.calls.some((c) => c.path === 'api/files/rename'));
+    expect(h.calls.find((c) => c.path === 'api/files/rename')!.body).toEqual({
+      topic: T,
+      from: '/w/sub',
+      to: '/w/renamed',
+    });
+    expect(h.confirms.at(-1)).toMatch(/Rename "sub" to "renamed"/);
+    await until('the note', () => h.el('files-note').textContent === 'Renamed.');
+  });
+
+  it('deletes an empty folder only after a confirmation that says so', async () => {
+    const h = await openFiles({ 'api/files/remove': { ok: true, removed: true } });
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    expect(h.confirms.at(-1)).toMatch(/Only an empty folder can be deleted/);
+    await until('the delete', () => h.calls.some((c) => c.path === 'api/files/remove'));
+    expect(h.calls.find((c) => c.path === 'api/files/remove')!.body).toEqual({ topic: T, path: '/w/sub' });
+    await until('the note', () => h.el('files-note').textContent === 'Deleted.');
+  });
+
+  it('shows the not-empty refusal when a folder with something in it is deleted', async () => {
+    const h = await openFiles({ 'api/files/remove': { ok: false, error: 'That folder is not empty. Delete its contents first.' } });
+    h.status['api/files/remove'] = 400;
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    await until('the refusal', () => h.el('files-note').textContent!.includes('not empty'));
+    expect(h.el('files-note').textContent).toBe('That folder is not empty. Delete its contents first.');
+  });
+
+  it('asks before deleting the folder the open file lives in, and posts nothing if refused', async () => {
+    const inside = {
+      ...file,
+      path: '/w/sub/a.txt',
+      dir: '/w/sub',
+      rel: 'sub/a.txt',
+      name: 'a.txt',
+    };
+    const h = await open({
+      files: true,
+      confirm: false,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: {
+        [LIST]: listing,
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/sub/a.txt')}`]: inside,
+      },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-dir]').length > 0);
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/sub/a.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    // The unsaved question came first and was answered no: nothing was sent.
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
+    expect(h.calls.some((c) => c.path === 'api/files/remove')).toBe(false);
+    expect(editorText(h).value).toBe('unsaved');
+  });
+
+  it('opens a file named by another panel (window.openFileEditor) and shows a Markdown preview', async () => {
+    const h = await open({
+      files: true,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: {
+        [LIST]: listing,
+        [READ]: file,
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/notes.md')}&preview=1`]: {
+          ...file,
+          path: '/w/notes.md',
+          rel: 'notes.md',
+          name: 'notes.md',
+          html: '<h1>Hi</h1>',
+        },
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/notes.md')}`]: {
+          ...file,
+          path: '/w/notes.md',
+          rel: 'notes.md',
+          name: 'notes.md',
+          text: '# Hi\n',
+        },
+      },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/notes.md');
+    await until('the file from another panel', () => h.el('files-title').textContent === 'notes.md');
+    expect(h.el('files').hidden).toBe(false);
+
+    await h.click('#files-preview-toggle');
+    await until('the preview', () => h.el('files-preview').querySelector('h1') !== null);
+    expect(h.el('files-editor').hidden).toBe(true);
+    expect(h.el('files-preview-toggle').textContent).toBe('Edit');
+
+    await h.click('#files-preview-toggle');
+    expect(h.el('files-preview').hidden).toBe(true);
+    expect(h.el('files-editor').hidden).toBe(false);
   });
 });

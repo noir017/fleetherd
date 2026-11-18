@@ -53,9 +53,10 @@ export function renderPage(
   terminal: boolean,
   password = true,
   terminalEnd = false,
-  codeview: string | null = null
+  codeview: string | null = null,
+  files = false
 ): string {
-  return servePage(title, terminal, password, terminalEnd, codeview).html;
+  return servePage(title, terminal, password, terminalEnd, codeview, files).html;
 }
 
 /**
@@ -79,11 +80,13 @@ export function servePage(
    * decision, made by the same build, and a page that guessed a fixed name would cache a stale
    * bundle under the new page's ETag.
    */
-  codeview: string | null = null
+  codeview: string | null = null,
+  files = false
 ): { html: string; build: string } {
   const html = PAGE.replace(/__TITLE__/g, escapeHtml(title))
     .replace(/__TERM__/g, terminal ? 'true' : 'false')
     .replace(/__TERM_END__/g, terminalEnd ? 'true' : 'false')
+    .replace(/__FILES__/g, files ? 'true' : 'false')
     .replace(/__PASSWORD__/g, password ? 'true' : 'false')
     // A JS literal, not text: the script compares it and hands it to `import()`. The build only
     // ever writes a single path segment (assets.ts `ASSET_FILE`), so quoting it cannot be broken.
@@ -785,7 +788,7 @@ select.skill-field{appearance:auto}
 #chat.lib #lib-title{display:block}
 #chat.lib #lib-tag{display:inline-flex;align-items:center;gap:5px;flex:none}
 #chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,
-#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle{display:none}
+#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}
 .lib-head{display:flex;flex-direction:column;gap:3px;margin:0 0 18px;padding:0 0 12px;border-bottom:1px solid var(--line)}
 #lib-bar{border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
 #lib-note{margin-bottom:8px}
@@ -1370,6 +1373,76 @@ button:disabled{opacity:.5;cursor:default}
 .st.bad .st-meter i{background:#f87171}
 /* A pool the serving model is not spending from: shown only when the strip is open, and quieter. */
 .st.off{opacity:.55}
+/* ── The file window ─────────────────────────────────────────────────────────
+   A tree on the left, breadcrumbs and an editor on the right. Full height rather than a fixed
+   box: an editor is read in lines and a tree is only a way of getting to one. On a phone the
+   tree becomes a drawer (the 640px block below), which is why the header carries a toggle for
+   it that a desktop never shows. */
+#files{position:fixed;inset:0;z-index:22;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
+#files[hidden]{display:none}
+#files-box{display:flex;flex-direction:column;width:100%;height:100%;max-width:1400px;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#files-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
+#files-title{font-weight:600;white-space:nowrap}
+#files-where{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#files-tree-toggle{display:none}
+#files-close{font-size:18px;padding:6px 10px}
+#files-body{flex:1;min-height:0;display:flex;position:relative}
+#files-tree{width:250px;flex:none;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line);background:#151515}
+#files-tree-head{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
+#files-tree-head button{flex:1;font:inherit;font-size:11.5px;padding:5px 6px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
+#files-tree-head button:hover{border-color:#3a3a3a;background:#2a2a2a}
+#files-new-row{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
+#files-new-row input,#files-rename-row input{flex:1;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12.5px;padding:5px 7px}
+#files-new-row button,#files-rename-row button{flex:none;font:inherit;font-size:11.5px;padding:5px 8px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
+#files-tree-list{flex:1;min-height:0;overflow:auto;padding:4px 0 12px}
+#files-hits{border-top:1px solid var(--line);max-height:40%;overflow:auto;padding:4px 0}
+#files-hits .fx-hit-head{padding:4px 10px;font-size:11px;color:var(--dim)}
+.fx-row{display:flex;align-items:center;gap:3px;width:100%;padding:3px 8px;background:none;border:0;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
+.fx-row:hover{background:#222}
+.fx-row.on{background:#252525}
+/* A folder row is a box holding its expand button and two actions, so the actions are reachable
+   without turning the row into a second kind of selection. They stay out of the way until the
+   pointer is on the row; a finger gets them always (the 640px block below). */
+.fx-dirrow{padding:0;gap:0}
+.fx-dirrow:hover{background:#222}
+.fx-main{flex:1;min-width:0;display:flex;align-items:center;gap:3px;padding:3px 4px;background:none;border:0;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}
+.fx-act{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;background:none;border:0;border-radius:4px;color:var(--dim);cursor:pointer;opacity:0;transition:opacity .12s}
+.fx-dirrow:hover .fx-act,.fx-act:focus-visible{opacity:1}
+.fx-act:hover{background:#2c2c2c;color:var(--fg)}
+.fx-act .ic{width:12px;height:12px}
+#files-rename-what{flex:none;font-size:11px;color:var(--dim);white-space:nowrap}
+.fx-caret{flex:none;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;color:var(--dim)}
+.fx-caret .ic{width:11px;height:11px}
+.fx-caret.blank{visibility:hidden}
+.fx-row .ic{width:13px;height:13px;flex:none;color:var(--dim)}
+.fx-name{overflow:hidden;text-overflow:ellipsis}
+#files-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+#files-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:5px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
+#files-crumbs button{background:none;border:0;color:#9ecbff;font:inherit;font-size:12px;padding:2px 3px;cursor:pointer;border-radius:4px}
+#files-crumbs button:hover{background:#222}
+#files-crumbs .fx-sep{opacity:.5}
+#files-crumbs .fx-crumb-file{color:var(--fg);padding:2px 3px;overflow:hidden;text-overflow:ellipsis}
+#files-search-row{display:flex;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line)}
+#files-q{flex:1;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12.5px;padding:6px 8px}
+#files-q-go{display:inline-flex;align-items:center;justify-content:center;width:30px;flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
+#files-q-go .ic{width:14px;height:14px}
+#files-note{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);color:#fbbf24;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+#files-eol{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.25);color:#9ecbff;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+#files-editor{flex:1;min-height:0;overflow:auto;background:#141414}
+#files-editor .fx-text{display:block;width:100%;height:100%;min-height:100%;resize:none;border:0;outline:0;background:#141414;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.55;padding:12px 14px;tab-size:4}
+#files-preview{flex:1;min-height:0;overflow:auto;padding:16px 22px;max-width:860px;width:100%;margin:0 auto;font-size:14px;line-height:1.6}
+#files-preview img{max-width:100%}
+#files-image{display:flex;align-items:center;justify-content:center;flex:1;min-height:0;overflow:auto;padding:16px}
+#files-image img{max-width:100%;max-height:100%}
+#files-conflict{margin:10px 12px 0;padding:10px 12px;border-radius:6px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);font-size:12.5px;line-height:1.5;color:#f87171}
+.fx-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+#files-actions{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line)}
+#files-actions button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer}
+#files-actions button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
+#files-actions button:disabled{opacity:.45;cursor:default}
+#files-actions #files-delete{color:#f87171}
+#files-dirty{font-size:11.5px;color:#fbbf24;margin-left:auto}
+#files-rename-row{display:flex;gap:6px;padding:8px 12px;border-top:1px solid var(--line)}
 /* Phones and tablets held upright. Everything here is about the parts of a handset a desktop
    layout has no concept of: a URL bar that eats viewport height, a home indicator under the
    composer, Safari's zoom-on-focus, and a finger instead of a pointer. */
@@ -1590,6 +1663,24 @@ button:disabled{opacity:.5;cursor:default}
   /* The same 44px for taking an attachment back off. A miss lands on the thumbnail, which only
      opens it — but a 15px glyph with no padding is a target a finger finds on the third try. */
   .chip-x{min-width:44px;min-height:44px}
+  /* The file window: full screen, and its tree is a drawer. A 250px column on a 390px handset
+     leaves the editor 140px, which is not a line of code — so the tree slides over the editor
+     and the bar's toggle is the way to it. The editor keeps the whole width otherwise. */
+  #files{padding:0}
+  #files-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #files-tree-toggle{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
+  #files-tree{position:absolute;top:0;bottom:0;left:0;width:min(300px,86%);z-index:2;transform:translateX(-102%);transition:transform .18s;box-shadow:2px 0 14px rgba(0,0,0,.55)}
+  #files.tree-open #files-tree{transform:none}
+  #files-bar{min-height:49px;padding:0 4px 0 8px}
+  #files-close,#files-refresh{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
+  #files-tree-head button{min-height:44px}
+  .fx-row{min-height:40px}
+  /* A hover-revealed action does not exist on a finger. Always shown, and a 40px target. */
+  .fx-act{opacity:1;width:40px;height:40px}
+  .fx-act .ic{width:15px;height:15px}
+  #files-q{font-size:16px;min-height:44px}
+  #files-new-name,#files-rename-name{font-size:16px;min-height:44px}
+  #files-actions button{min-height:44px}
 }
 `;
 
@@ -1676,6 +1767,9 @@ const SCRIPT = `
   var IC = ${clientIcons()};
   var TERM_OK = __TERM__;
   var TERM_END = __TERM_END__;
+  // Whether this daemon has the file window (platforms.<id>.files.enabled). False hides the
+  // header button; the routes behind it answer 404, exactly as the terminal's do.
+  var FILES_OK = __FILES__;
   // Which page this is: a hash of everything it was rendered from, and the page's ETag (servePage).
   // Compared with the daemon's after a restart (checkBuild), since the script on screen is the one
   // the old process served.
@@ -8786,8 +8880,8 @@ const SCRIPT = `
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
     var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !rowMenu.hidden
-      || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !taskPage.hidden;
-    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings();
+      || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !taskPage.hidden || !filesWin.hidden;
+    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings(); closeFiles();
     // Its own confirm when a form holds changes; a refused one leaves everything as it was.
     closeTaskPage(false);
     // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
@@ -9726,6 +9820,745 @@ const SCRIPT = `
       if(cardName) openSkill(cardName);
     }
   });
+
+  // ── The file window ────────────────────────────────────────────────────────
+  // Browse and edit the files of whichever machine this topic's agent runs on
+  // (daemon/file-panel.ts). Off unless platforms.<id>.files.enabled: FILES_OK hides the header
+  // button, and every route behind it answers 404 — the terminal's arrangement.
+  //
+  // One window for the page, bound to the topic that opened it. The files belong to a
+  // conversation, and a window that followed the switcher would show one topic's files under
+  // another's name; openFileEditor re-binds it when a panel asks for a file after a switch.
+  //
+  // Every path is sent as it is: the daemon normalizes it against the topic's workspace and
+  // refuses anything outside, which is the check that matters. What this half owns is the three
+  // states a person needs — dirty, saving, in conflict — and the confirmations that keep a
+  // half-typed edit from being thrown away by a tap.
+  var filesWin=$('files'), filesTitle=$('files-title'), filesWhere=$('files-where'),
+      filesTreeEl=$('files-tree'), filesTreeList=$('files-tree-list'), filesHits=$('files-hits'),
+      filesCrumbs=$('files-crumbs'), filesEditor=$('files-editor'), filesPreview=$('files-preview'),
+      filesNote=$('files-note'), filesEol=$('files-eol'), filesConflict=$('files-conflict'), filesConflictText=$('files-conflict-text'),
+      filesSaveBtn=$('files-save'), filesPreviewBtn=$('files-preview-toggle'),
+      filesRenameBtn=$('files-rename-open'), filesDeleteBtn=$('files-delete'), filesDirtyTag=$('files-dirty'),
+      filesNewRow=$('files-new-row'), filesNewName=$('files-new-name'),
+      filesRenameRow=$('files-rename-row'), filesRenameName=$('files-rename-name'),
+      filesTreeToggle=$('files-tree-toggle'), filesQ=$('files-q'), filesToggleBtn=$('files-toggle');
+  var fileTopic='', fileRoot='', fileDir='', filePath='', fileRel='', fileName='', fileKind='',
+      fileBase=null, fileSaved='', fileDirty=false, fileView=null, fileSeq=0, fileNodes={},
+      fileOpenDirs={}, fileNewIsDir=false, filePreviewing=false, fileBusy=false,
+      fileEol='lf', fileSha='', fileSep='/',
+      /* What the rename row is about: the open file, or a folder picked in the tree. */
+      fxRename=null;
+
+  function fileMsg(r, d){
+    if(d && d.error) return d.error;
+    return r.status === 404 ? 'The file window is not enabled on this daemon.' : 'That request failed (' + r.status + ').';
+  }
+  function filesGet(route, params){
+    var qs=[];
+    for(var k in params){
+      if(!Object.prototype.hasOwnProperty.call(params, k)) continue;
+      if(params[k] === undefined || params[k] === '') continue;
+      qs.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+    }
+    return fetch('api/files/' + route + (qs.length ? '?' + qs.join('&') : ''), {credentials:'same-origin'})
+      .then(function(r){
+        return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
+      });
+  }
+  function filesPost(route, body){
+    return post('api/files/' + route, body, 1).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
+    });
+  }
+  function filesSay(msg){
+    filesNote.hidden = !msg;
+    filesNote.textContent = msg || '';
+  }
+  /**
+   * Join as the machine names paths. A remote host is POSIX whatever this page is running on, but
+   * a local Windows workspace answers with backslashes, so the separator comes from the root the
+   * daemon sent rather than from an assumption here.
+   */
+  function fxSepOf(root){ return root && root.indexOf('\\\\') >= 0 && root.indexOf('/') < 0 ? '\\\\' : '/'; }
+  function fxAbs(dir, name){
+    if(!dir) return name;
+    var last = dir.charAt(dir.length-1);
+    return dir + (last === '/' || last === '\\\\' ? '' : fileSep) + name;
+  }
+  function fxDirOf(p){
+    var at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\\\'));
+    if(at < 0) return '';
+    if(at === 0) return p.charAt(0);
+    if(at === 2 && /^[A-Za-z]:$/.test(p.slice(0, 2))) return p.slice(0, 3);
+    return p.slice(0, at);
+  }
+  function fxBase(p){
+    var at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\\\'));
+    return at < 0 ? p : p.slice(at+1);
+  }
+  /**
+   * The editor holds LF; a save puts back the ending the read reported. Lone CR is normalized too:
+   * no editor holds it, and the file panel has already said so above the editor.
+   */
+  function fxToDoc(text){ return String(text || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n'); }
+  function fxFromDoc(doc){
+    var lf = String(doc || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+    return fileEol === 'crlf' ? lf.replace(/\\n/g, '\\r\\n') : lf;
+  }
+  function fileShortRoot(p){
+    var parts = String(p || '').split('/').filter(function(x){ return x; });
+    return parts.length ? parts[parts.length-1] : p || '/';
+  }
+
+  /** Whether leaving the open file may throw away what is in the editor. */
+  function fileConfirmLeave(){
+    if(!fileDirty) return true;
+    return confirm('Discard the unsaved changes to ' + (fileRel || fileName || 'this file') + '?');
+  }
+
+  function setFileDirty(v){
+    fileDirty = Boolean(v);
+    filesDirtyTag.hidden = !fileDirty;
+    filesSaveBtn.disabled = !(fileKind === 'text' && fileDirty);
+    filesSaveBtn.textContent = fileDirty ? 'Save *' : 'Save';
+  }
+
+  function paintFileActions(){
+    filesSaveBtn.disabled = !(fileKind === 'text' && fileDirty);
+    filesPreviewBtn.hidden = !(fileKind === 'text' && /\.(md|markdown)$/i.test(fileName));
+    filesPreviewBtn.textContent = filePreviewing ? 'Edit' : 'Preview';
+    filesRenameBtn.disabled = !filePath;
+    filesDeleteBtn.disabled = !filePath;
+  }
+
+  function fileRowHtml(abs, name, dir, depth){
+    var pad = 6 + depth * 12;
+    if(dir){
+      var open = Boolean(fileOpenDirs[abs]);
+      // A div, not a button: the row carries two more buttons (rename, delete), and a button
+      // inside a button is one control to a screen reader and invalid markup besides.
+      return '<div class="fx-row fx-dirrow">'
+        + '<button type="button" class="fx-main" data-fx-dir="' + text(abs) + '" style="padding-left:' + pad + 'px">'
+        + '<span class="fx-caret">' + (open ? IC.icon.chevronDown : IC.icon.chevronRight) + '</span>'
+        + IC.icon.folder + '<span class="fx-name">' + text(name) + '</span></button>'
+        + '<button type="button" class="fx-act" data-fx-dir-rename="' + text(abs) + '" title="Rename folder" aria-label="Rename folder ' + text(name) + '">' + IC.icon.pencil + '</button>'
+        + '<button type="button" class="fx-act" data-fx-dir-delete="' + text(abs) + '" title="Delete empty folder" aria-label="Delete folder ' + text(name) + '">' + IC.icon.trash + '</button>'
+        + '</div>';
+    }
+    return '<button type="button" class="fx-row' + (filePath === abs ? ' on' : '') + '" data-fx-file="' + text(abs) + '" style="padding-left:' + pad + 'px">'
+      + '<span class="fx-caret blank"></span>' + IC.icon.note + '<span class="fx-name">' + text(name) + '</span></button>';
+  }
+
+  /** The tree as it is: every open directory's children, recursively — nothing is fetched twice. */
+  function paintTree(){
+    var h = '';
+    function walk(key, depth){
+      var node = fileNodes[key];
+      if(!node) return;
+      var entries = node.entries || [];
+      for(var i=0;i<entries.length;i++){
+        var e = entries[i], abs = fxAbs(node.path, e.name);
+        h += fileRowHtml(abs, e.name, e.dir, depth);
+        if(e.dir && fileOpenDirs[abs]) walk(abs, depth+1);
+      }
+    }
+    walk('', 0);
+    filesTreeList.innerHTML = h || '<div class="skills-empty">Empty directory.</div>';
+  }
+
+  function paintCrumbs(){
+    if(!fileRoot){ filesCrumbs.innerHTML = ''; return; }
+    var h = '<button type="button" data-fx-crumb="' + text(fileRoot) + '">' + text(fileShortRoot(fileRoot)) + '</button>';
+    // Directories are buttons that reveal themselves in the tree; the file at the end is the text
+    // this bar is about, not another way to open it.
+    var rel = fileDir && fileDir !== fileRoot && fileDir.indexOf(fileRoot + '/') === 0
+      ? fileDir.slice(fileRoot.length + 1) : '';
+    var acc = fileRoot;
+    if(rel){
+      var parts = rel.split('/');
+      for(var i=0;i<parts.length;i++){
+        acc = fxAbs(acc, parts[i]);
+        h += '<span class="fx-sep">/</span><button type="button" data-fx-crumb="' + text(acc) + '">' + text(parts[i]) + '</button>';
+      }
+    }
+    if(fileName) h += '<span class="fx-sep">/</span><span class="fx-crumb-file">' + text(fileName) + '</span>';
+    filesCrumbs.innerHTML = h;
+  }
+
+  /** Open every directory between the root and abs, so a crumb or a search hit is visible. */
+  function revealDir(abs){
+    if(!fileRoot || abs.indexOf(fileRoot) !== 0) return;
+    var rel = abs === fileRoot ? '' : abs.slice(fileRoot.length + 1);
+    var parts = rel ? rel.split('/') : [], chain = [{key:'', abs:fileRoot}], cur = fileRoot;
+    for(var i=0;i<parts.length;i++){ cur = fxAbs(cur, parts[i]); chain.push({key:cur, abs:cur}); }
+    var at = 0;
+    function next(){
+      if(at >= chain.length){
+        for(var j=0;j<chain.length;j++) fileOpenDirs[chain[j].key] = true;
+        paintTree();
+        return;
+      }
+      var c = chain[at++];
+      if(fileNodes[c.key]) return next();
+      filesGet('list', {topic:fileTopic, path:c.key}).then(function(res){
+        if(res.ok) fileNodes[c.key] = {path:res.body.path || c.abs, entries:res.body.entries || []};
+        next();
+      }, next);
+    }
+    next();
+  }
+
+  /** Reload one directory's listing in place — after a create, a rename or a delete. */
+  function reloadDir(abs){
+    var key = abs === fileRoot ? '' : abs;
+    filesGet('list', {topic:fileTopic, path:key}).then(function(res){
+      if(!res.ok) return;
+      fileNodes[key] = {path:res.body.path || abs, entries:res.body.entries || []};
+      paintTree();
+    }).catch(function(){});
+  }
+
+  function toggleDir(abs){
+    if(fileOpenDirs[abs]){ delete fileOpenDirs[abs]; paintTree(); return; }
+    fileOpenDirs[abs] = true;
+    fileDir = abs;
+    filesWin.classList.remove('tree-open');
+    if(fileNodes[abs]){ paintTree(); return; }
+    filesGet('list', {topic:fileTopic, path:abs}).then(function(res){
+      if(!res.ok){ delete fileOpenDirs[abs]; return filesSay(fileMsg(res, res.body)); }
+      fileNodes[abs] = {path:res.body.path || abs, entries:res.body.entries || []};
+      paintTree();
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function makeFileEditor(doc){
+    filesEditor.textContent = '';
+    fileView = null;
+    var seq = ++fileSeq;
+    codeView().then(function(cv){
+      if(seq !== fileSeq) return;
+      if(cv && cv.editor){
+        // The CodeMirror path: it owns the document, the caret and the keymap's save.
+        fileView = cv.editor(filesEditor, {
+          doc: doc, name: fileName,
+          onChange: function(next){ setFileDirty(next !== fileSaved); },
+          onSave: function(){ saveFile(false); }
+        });
+        if(fileView && fileView.focus) fileView.focus();
+      } else {
+        // The fallback every other caller has: a plain textarea. The page cannot ship a broken
+        // editor just because an asset did not load.
+        var ta = document.createElement('textarea');
+        ta.className = 'fx-text';
+        ta.spellcheck = false;
+        ta.value = doc;
+        ta.setAttribute('aria-label', fileName || 'File contents');
+        ta.addEventListener('input', function(){ setFileDirty(ta.value !== fileSaved); });
+        ta.addEventListener('keydown', function(e){
+          if((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')){ e.preventDefault(); saveFile(false); }
+        });
+        filesEditor.appendChild(ta);
+        fileView = {
+          getDoc: function(){ return ta.value; },
+          setDoc: function(v){ ta.value = v; },
+          focus: function(){ ta.focus(); },
+          destroy: function(){}
+        };
+      }
+    });
+  }
+
+  function paintFile(d){
+    filePath = d.path;
+    fileRel = d.rel || '';
+    fileName = d.name || fxBase(d.path);
+    fileKind = d.kind;
+    fileDir = d.dir || fxDirOf(d.path);
+    fileBase = {mtimeMs:d.mtimeMs, size:d.size};
+    // The editor is always LF; the file's own ending and content version travel with the read and
+    // go back out on save. A BOM is a character in the text, so it is kept without a flag.
+    fileEol = d.eol === 'crlf' ? 'crlf' : 'lf';
+    fileSha = d.sha256 || '';
+    // A save that would change this file's endings says so before it happens.
+    var eolWarn = d.eolWarning;
+    filesEol.hidden = !eolWarn;
+    filesEol.textContent = eolWarn === 'cr'
+      ? 'This file uses CR line endings; saving will normalize them to LF.'
+      : eolWarn === 'mixed'
+        ? 'This file mixes line endings; saving will normalize them to ' + (fileEol === 'crlf' ? 'CRLF' : 'LF') + '.'
+        : '';
+    fileSaved = fxToDoc(d.text || '');
+    filePreviewing = false;
+    fileView = null;
+    filesPreview.hidden = true;
+    filesPreview.innerHTML = '';
+    filesEditor.hidden = false;
+    filesConflict.hidden = true;
+    filesTitle.textContent = fileName;
+    filesWhere.textContent = fileRel || filePath;
+    filesNewRow.hidden = true;
+    filesRenameRow.hidden = true;
+    fxRename = null;
+    filesSay(d.note || '');
+    setFileDirty(false);
+    paintCrumbs();
+    if(d.kind === 'image'){
+      filesEditor.textContent = '';
+      var wrap = document.createElement('div');
+      wrap.id = 'files-image';
+      var img = document.createElement('img');
+      img.alt = fileName;
+      img.src = d.dataUrl || '';
+      wrap.appendChild(img);
+      filesEditor.appendChild(wrap);
+    } else if(d.kind === 'text'){
+      makeFileEditor(fileSaved);
+    } else {
+      filesEditor.innerHTML = '<div class="skills-empty">' + text(d.note || 'This file cannot be shown here.') + '</div>';
+    }
+    paintFileActions();
+    paintTree();
+  }
+
+  /**
+   * Open one file. skipConfirm is the conflict dialog's Reload: the person has already chosen to
+   * drop their edit, so asking twice is noise — but nothing is dropped until the new content is
+   * actually here (paintFile resets the dirty mark), so a read that fails leaves both intact.
+   */
+  function openFile(path, skipConfirm){
+    if(!path || !fileTopic) return;
+    if(!skipConfirm && !fileConfirmLeave()) return;
+    var seq = ++fileSeq;
+    filesSay('');
+    filesConflict.hidden = true;
+    filesWin.classList.remove('tree-open');
+    filesGet('read', {topic:fileTopic, path:path}).then(function(res){
+      if(seq !== fileSeq) return;
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      paintFile(res.body);
+    }).catch(function(){ if(seq === fileSeq) filesSay('Could not reach the daemon.'); });
+  }
+
+  function showFileConflict(d){
+    filesConflict.hidden = false;
+    filesConflictText.textContent = d && d.exists === false
+      ? 'That file was deleted on the machine since you opened it. Your changes are still here.'
+      : 'That file changed on the machine since you opened it. Reload it, overwrite it, or cancel and keep editing.';
+    paintFileActions();
+  }
+
+  /**
+   * Save the editor's text. force is the person's answer to a conflict dialog: the same write
+   * with the version check skipped, which the server treats as "overwrite whatever is there".
+   */
+  function saveFile(force){
+    if(fileKind !== 'text' || !filePath || !fileView || fileBusy) return Promise.resolve(false);
+    var doc = fileView.getDoc();
+    var body = {topic:fileTopic, path:filePath, text:fxFromDoc(doc)};
+    if(force) body.force = true;
+    else if(fileBase){
+      body.mtimeMs = fileBase.mtimeMs; body.size = fileBase.size;
+      if(fileSha) body.sha256 = fileSha;
+    }
+    var sent = doc;
+    fileBusy = true;
+    filesSaveBtn.disabled = true;
+    return filesPost('write', body).then(function(res){
+      fileBusy = false;
+      if(res.ok){
+        fileBase = {mtimeMs:res.body.mtimeMs, size:res.body.size};
+        if(res.body.sha256) fileSha = res.body.sha256;
+        if(fileView && fileView.getDoc() === sent){ fileSaved = sent; setFileDirty(false); }
+        filesConflict.hidden = true;
+        filesSay('Saved ' + (fileRel || fileName) + '.');
+        paintFileActions();
+        return true;
+      }
+      if(res.body && res.body.conflict){ showFileConflict(res.body); return false; }
+      filesSay(fileMsg(res, res.body));
+      paintFileActions();
+      return false;
+    }, function(){
+      fileBusy = false;
+      filesSay('Could not reach the daemon; the file was not saved.');
+      paintFileActions();
+      return false;
+    });
+  }
+
+  /** Where a new entry goes: the open file's directory, else the last directory opened. */
+  function fileNewDirPath(){
+    return fileDir || fileRoot;
+  }
+
+  function filesNewStart(dir){
+    if(!fileRoot) return;
+    fileNewIsDir = dir;
+    filesNewRow.hidden = false;
+    filesNewName.value = '';
+    filesNewName.focus();
+  }
+
+  function filesNewGo(){
+    var name = String(filesNewName.value || '').trim();
+    if(!name || name === '.' || name === '..' || name.indexOf('/') >= 0){
+      filesSay('A name is one path segment, with no slash.');
+      return;
+    }
+    var dir = fileNewDirPath();
+    var abs = fxAbs(dir, name);
+    var where = fileRel ? fxDirOf(fileRel) : '';
+    if(!confirm('Create the ' + (fileNewIsDir ? 'folder' : 'file') + ' "' + (where ? where + '/' : '') + name + '"?')) return;
+    filesPost('create', {topic:fileTopic, path:abs, dir:fileNewIsDir}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      filesNewRow.hidden = true;
+      reloadDir(dir);
+      if(!fileNewIsDir) openFile(abs);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function filesRenameShow(what, value){
+    filesRenameRow.hidden = false;
+    $('files-rename-what').textContent = what;
+    filesRenameName.value = value;
+    filesRenameName.focus();
+    filesRenameName.select();
+  }
+
+  function filesRenameStart(){
+    if(!filePath) return;
+    fxRename = {path:filePath, dir:false};
+    filesRenameShow('Rename file', fileName);
+  }
+
+  /** The tree's pencil: rename a folder in place, under its own parent. */
+  function filesRenameDirStart(abs){
+    fxRename = {path:abs, dir:true};
+    filesRenameShow('Rename folder', fxBase(abs));
+  }
+
+  /** Drop every cached listing below abs (or one node), so the next paint asks again. */
+  function forgetTreeBelow(abs){
+    for(var k in fileNodes){
+      if(k === abs || k.indexOf(abs + fileSep) === 0) delete fileNodes[k];
+    }
+    delete fileOpenDirs[abs];
+  }
+
+  /** Re-read the tree from the root, leaving it open where the person was. */
+  function refreshTree(keepDir){
+    fileNodes = {};
+    fileOpenDirs = {'':true};
+    fileDir = keepDir || fileRoot;
+    paintTree();
+    filesGet('list', {topic:fileTopic, path:''}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
+      paintTree();
+      if(keepDir && keepDir !== fileRoot) revealDir(keepDir);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function filesRenameGo(){
+    var target = fxRename;
+    if(!target) return;
+    var name = String(filesRenameName.value || '').trim();
+    if(!name || name === '.' || name === '..' || name.indexOf('/') >= 0){
+      filesSay('A name is one path segment, with no slash.');
+      return;
+    }
+    var to = fxAbs(fxDirOf(target.path), name);
+    if(to === target.path){ filesRenameRow.hidden = true; fxRename = null; return; }
+    var shown = target.dir ? fxBase(target.path) : (fileRel || fileName);
+    if(!confirm('Rename "' + shown + '" to "' + name + '"?')) return;
+    filesPost('rename', {topic:fileTopic, from:target.path, to:to}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      filesRenameRow.hidden = true;
+      fxRename = null;
+      if(target.dir){
+        // The open file keeps its bytes and its unsaved text; only its path moved if it was
+        // inside the folder. No re-read, and no dirty mark cleared.
+        if(filePath && filePath.indexOf(target.path + fileSep) === 0){
+          filePath = to + filePath.slice(target.path.length);
+          fileDir = fxDirOf(filePath);
+          fileRel = filePath.indexOf(fileRoot + fileSep) === 0 ? filePath.slice(fileRoot.length + 1) : '';
+          filesWhere.textContent = fileRel || filePath;
+          paintCrumbs();
+        }
+        forgetTreeBelow(target.path);
+        filesSay('Renamed.');
+        refreshTree(to);
+        return;
+      }
+      // Re-point the open file instead of re-reading it: the rename moved the file on disk, and
+      // the editor's unsaved text is still the person's. Clearing the mark or reloading here would
+      // throw it away without the question a close would ask.
+      filePath = to;
+      fileName = fxBase(to);
+      fileRel = to.indexOf(fileRoot + fileSep) === 0 ? to.slice(fileRoot.length + 1) : '';
+      fileDir = fxDirOf(to);
+      filesTitle.textContent = fileName;
+      filesWhere.textContent = fileRel || filePath;
+      paintCrumbs();
+      var oldDir = fxDirOf(target.path);
+      reloadDir(oldDir);
+      if(fileDir !== oldDir) reloadDir(fileDir);
+      filesSay(fileDirty ? 'Renamed. The unsaved changes are still here.' : 'Renamed.');
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  /** Empty the editor and forget the open file — after a delete, or a folder holding it went. */
+  function clearOpenFile(){
+    fileDirty = false;
+    fileSeq++;
+    filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileView = null;
+    fileEol = 'lf'; fileSha = '';
+    filesEol.hidden = true;
+    filesEol.textContent = '';
+    setFileDirty(false);
+    filesTitle.textContent = 'Files';
+    filesWhere.textContent = fileRoot;
+    filesCrumbs.innerHTML = '';
+    filesEditor.textContent = '';
+    filesPreview.hidden = true;
+    filesPreview.innerHTML = '';
+    filesConflict.hidden = true;
+    filesPreviewBtn.hidden = true;
+    filesRenameBtn.disabled = true;
+    filesDeleteBtn.disabled = true;
+    paintFileActions();
+  }
+
+  function filesDeleteGo(){
+    if(!filePath) return;
+    if(!confirm('Delete "' + (fileRel || fileName) + '"? This cannot be undone.')) return;
+    var dir = fileDir;
+    filesPost('remove', {topic:fileTopic, path:filePath}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      clearOpenFile();
+      filesSay(res.body.removed === false ? 'It was already gone.' : 'Deleted.');
+      reloadDir(dir);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  /**
+   * The tree's bin: a folder goes only when it is empty — the daemon refuses anything else, and
+   * says so in a sentence the page shows as it is. Deleting the folder the open file lives in
+   * first asks the same question a close would, because the file goes with it.
+   */
+  function filesDeleteDir(abs){
+    var inside = Boolean(filePath) && (filePath === abs || filePath.indexOf(abs + fileSep) === 0);
+    if(inside && !fileConfirmLeave()) return;
+    if(!confirm('Delete the folder "' + fxBase(abs) + '"? Only an empty folder can be deleted, and this cannot be undone.')) return;
+    var parent = fxDirOf(abs);
+    filesPost('remove', {topic:fileTopic, path:abs}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      if(inside) clearOpenFile();
+      // Where "New file" would land must not be the folder that just went. An empty folder cannot
+      // contain it, but the tree's own cursor may be on that folder with no file open.
+      if(fileDir === abs || fileDir.indexOf(abs + fileSep) === 0) fileDir = parent;
+      forgetTreeBelow(abs);
+      filesSay(res.body.removed === false ? 'It was already gone.' : 'Deleted.');
+      reloadDir(parent);
+      paintTree();
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function filesSearchGo(){
+    var q = String(filesQ.value || '').trim();
+    if(!q){
+      filesHits.hidden = true;
+      filesHits.innerHTML = '';
+      paintTree();
+      return;
+    }
+    filesGet('search', {topic:fileTopic, q:q}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      var hits = res.body.hits || [], h = '';
+      h += '<div class="fx-hit-head">' + (hits.length ? (res.body.truncated ? 'First ' : '') + hits.length + ' matches' : 'No matches') + '</div>';
+      for(var i=0;i<hits.length;i++){
+        var hit = hits[i];
+        h += '<button type="button" class="fx-row" data-fx-file="' + text(hit.path) + '">'
+          + (hit.dir ? IC.icon.folder : IC.icon.note) + '<span class="fx-name">' + text(hit.rel || hit.path) + '</span></button>';
+      }
+      filesHits.innerHTML = h;
+      filesHits.hidden = false;
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function filesTogglePreview(){
+    if(!filePath || fileKind !== 'text') return;
+    if(filePreviewing){
+      filePreviewing = false;
+      filesPreview.hidden = true;
+      filesEditor.hidden = false;
+      paintFileActions();
+      return;
+    }
+    var seq = ++fileSeq;
+    filesGet('read', {topic:fileTopic, path:filePath, preview:'1'}).then(function(res){
+      if(seq !== fileSeq) return;
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      filesPreview.innerHTML = res.body.html
+        ? '<div class="b">' + res.body.html + '</div>'
+        : '<div class="skills-empty">Nothing to render.</div>';
+      filesPreview.hidden = false;
+      filesEditor.hidden = true;
+      filePreviewing = true;
+      paintFileActions();
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function openFilesWindow(t, path){
+    if(!FILES_OK || !t) return;
+    if(!filesWin.hidden && fileTopic !== t && !fileConfirmLeave()) return;
+    fileTopic = t;
+    filesWin.hidden = false;
+    filesWin.classList.remove('tree-open');
+    filesTitle.textContent = 'Files';
+    filesWhere.textContent = '';
+    filesCrumbs.innerHTML = '';
+    filesSay('');
+    filesNewRow.hidden = true;
+    filesRenameRow.hidden = true;
+    fxRename = null;
+    filesConflict.hidden = true;
+    filesPreview.hidden = true;
+    filesPreview.innerHTML = '';
+    filesEol.hidden = true;
+    filesEol.textContent = '';
+    filesHits.hidden = true;
+    filesHits.innerHTML = '';
+    filesEditor.textContent = '';
+    fileNodes = {};
+    fileOpenDirs = {'': true};
+    fileDir = '';
+    filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileSaved = '';
+    fileEol = 'lf'; fileSha = '';
+    fileView = null;
+    filePreviewing = false;
+    setFileDirty(false);
+    paintFileActions();
+    filesTreeList.innerHTML = '<div class="skills-empty">Loading\\u2026</div>';
+    filesGet('list', {topic:t, path:''}).then(function(res){
+      if(fileTopic !== t) return;
+      if(!res.ok){ filesTreeList.innerHTML = ''; return filesSay(fileMsg(res, res.body)); }
+      fileRoot = res.body.path || '';
+      fileSep = fxSepOf(fileRoot);
+      fileDir = fileRoot;
+      fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
+      filesWhere.textContent = fileRoot;
+      paintTree();
+      if(path) openFile(path);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function closeFiles(){
+    if(filesWin.hidden) return;
+    if(!fileConfirmLeave()) return;
+    filesWin.hidden = true;
+    filesWin.classList.remove('tree-open');
+    fileSeq++;
+    fileView = null;
+    filePath = ''; fileKind = ''; fileDirty = false;
+    filesEditor.textContent = '';
+    filesPreview.textContent = '';
+    filesPreview.hidden = true;
+    filesHits.hidden = true;
+    filesHits.innerHTML = '';
+    filesConflict.hidden = true;
+    filesEol.hidden = true;
+    filesEol.textContent = '';
+  }
+
+  if(FILES_OK){
+    filesToggleBtn.hidden = false;
+    // Only when the feature is on: another panel (the git one) asks typeof window.openFileEditor
+    // to decide whether to offer an Edit, and a function that answers "no" by doing nothing would
+    // offer a control that silently does nothing.
+    window.openFileEditor = openFileEditor;
+    filesToggleBtn.addEventListener('click', function(){ setMenu(null, false); openFilesWindow(topic); });
+    filesTreeToggle.addEventListener('click', function(){ filesWin.classList.toggle('tree-open'); });
+    $('files-close').addEventListener('click', closeFiles);
+    filesWin.addEventListener('click', function(e){ if(e.target === filesWin) closeFiles(); });
+    $('files-refresh').addEventListener('click', function(){
+      if(!fileRoot) return;
+      fileNodes = {};
+      fileOpenDirs = {'': true};
+      fileDir = fileRoot;
+      var want = filePath;
+      filesGet('list', {topic:fileTopic, path:''}).then(function(res){
+        if(!res.ok) return filesSay(fileMsg(res, res.body));
+        fileRoot = res.body.path || fileRoot;
+        fileSep = fxSepOf(fileRoot);
+        fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
+        paintTree();
+        if(want) openFile(want);
+      }).catch(function(){ filesSay('Could not reach the daemon.'); });
+    });
+    filesTreeList.addEventListener('click', function(e){
+      var renameBtn = e.target.closest ? e.target.closest('[data-fx-dir-rename]') : null;
+      if(renameBtn) return filesRenameDirStart(renameBtn.getAttribute('data-fx-dir-rename'));
+      var deleteBtn = e.target.closest ? e.target.closest('[data-fx-dir-delete]') : null;
+      if(deleteBtn) return filesDeleteDir(deleteBtn.getAttribute('data-fx-dir-delete'));
+      var dirBtn = e.target.closest ? e.target.closest('[data-fx-dir]') : null;
+      if(dirBtn) return toggleDir(dirBtn.getAttribute('data-fx-dir'));
+      var fileBtn = e.target.closest ? e.target.closest('[data-fx-file]') : null;
+      if(fileBtn) return openFile(fileBtn.getAttribute('data-fx-file'));
+    });
+    filesHits.addEventListener('click', function(e){
+      var fileBtn = e.target.closest ? e.target.closest('[data-fx-file]') : null;
+      if(fileBtn) openFile(fileBtn.getAttribute('data-fx-file'));
+    });
+    filesCrumbs.addEventListener('click', function(e){
+      var crumb = e.target.closest ? e.target.closest('[data-fx-crumb]') : null;
+      if(crumb) revealDir(crumb.getAttribute('data-fx-crumb'));
+    });
+    $('files-q-go').addEventListener('click', filesSearchGo);
+    filesQ.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); filesSearchGo(); } });
+    $('files-new-file').addEventListener('click', function(){ filesNewStart(false); });
+    $('files-new-dir').addEventListener('click', function(){ filesNewStart(true); });
+    $('files-new-go').addEventListener('click', filesNewGo);
+    $('files-new-cancel').addEventListener('click', function(){ filesNewRow.hidden = true; });
+    filesNewName.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); filesNewGo(); } });
+    filesSaveBtn.addEventListener('click', function(){ saveFile(false); });
+    filesPreviewBtn.addEventListener('click', filesTogglePreview);
+    filesRenameBtn.addEventListener('click', filesRenameStart);
+    $('files-rename-go').addEventListener('click', filesRenameGo);
+    $('files-rename-cancel').addEventListener('click', function(){ filesRenameRow.hidden = true; fxRename = null; });
+    filesRenameName.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); filesRenameGo(); } });
+    filesDeleteBtn.addEventListener('click', filesDeleteGo);
+    $('files-reload').addEventListener('click', function(){
+      filesConflict.hidden = true;
+      // Dirty stays until the read lands: a reload that fails must not leave the old text on
+      // screen with nothing left to warn about it.
+      openFile(filePath, true);
+    });
+    $('files-overwrite').addEventListener('click', function(){
+      filesConflict.hidden = true;
+      saveFile(true);
+    });
+    $('files-cancel').addEventListener('click', function(){ filesConflict.hidden = true; paintFileActions(); });
+  }
+
+  // Ctrl/Cmd+S anywhere in the window, not only inside the editor: a person who just clicked
+  // Save, or has the tree focused, still reaches the save the title promises.
+  document.addEventListener('keydown', function(e){
+    if(filesWin.hidden) return;
+    if((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')){ e.preventDefault(); saveFile(false); }
+  });
+
+  /**
+   * Open one file, from another panel. path is relative to the topic's working directory or
+   * absolute on that machine. The git panel's file rows call this (window.openFileEditor), which
+   * is why it is on window rather than reachable only from this closure — and why it is assigned
+   * only when the feature is on.
+   */
+  function openFileEditor(path){
+    if(filesWin.hidden || fileTopic !== topic) openFilesWindow(topic, path);
+    else openFile(path);
+  }
 
   // Grow to fit, and let the max-height in the stylesheet decide where to stop — it is stated
   // in dvh there, which on a phone with the keyboard up is the viewport that is actually left.
@@ -11044,6 +11877,71 @@ __GATE__
       <div id="settings-body"></div>
     </div>
   </div>
+  <!-- The file window: a directory tree on the left (a drawer on a phone), breadcrumbs, a filename
+       search, and an editor on the right. One node for the page, bound to the topic that opened it;
+       the files it shows are that topic's machine's (daemon/file-panel.ts). Every path it sends is
+       fenced by the daemon against the topic's workspace, and every write is version-checked. -->
+  <div id="files" hidden role="dialog" aria-modal="true" aria-labelledby="files-title">
+    <div id="files-box">
+      <div id="files-bar">
+        <button type="button" class="btn-icon" id="files-tree-toggle" title="Files" aria-label="Show the file tree">${icon('menu')}</button>
+        <span id="files-title">Files</span>
+        <span id="files-where"></span>
+        <button type="button" class="btn-icon" id="files-refresh" title="Refresh" aria-label="Refresh">${icon('refresh')}</button>
+        <button type="button" class="btn-icon" id="files-close" title="Close (Esc)" aria-label="Close">&times;</button>
+      </div>
+      <div id="files-body">
+        <aside id="files-tree" aria-label="Files">
+          <div id="files-tree-head">
+            <button type="button" id="files-new-file" title="New file">New file</button>
+            <button type="button" id="files-new-dir" title="New folder">New folder</button>
+          </div>
+          <div id="files-new-row" hidden>
+            <input id="files-new-name" type="text" autocomplete="off" placeholder="name" aria-label="Name">
+            <button type="button" id="files-new-go">Create</button>
+            <button type="button" id="files-new-cancel">Cancel</button>
+          </div>
+          <div id="files-tree-list"></div>
+          <div id="files-hits" hidden></div>
+        </aside>
+        <div id="files-main">
+          <div id="files-crumbs"></div>
+          <div id="files-search-row">
+            <input id="files-q" type="search" autocomplete="off" placeholder="Search by file name" aria-label="Search by file name">
+            <button type="button" id="files-q-go" title="Search" aria-label="Search">${icon('search')}</button>
+          </div>
+          <div id="files-note" role="status" hidden></div>
+          <!-- What a save will do to this file's line endings, when that is a change: mixed
+               endings, or a file that uses only CR (which an editor cannot hold). Shown before
+               the editor rather than changing the file quietly on the first save. -->
+          <div id="files-eol" role="status" hidden></div>
+          <div id="files-editor"></div>
+          <div id="files-preview" hidden></div>
+          <div id="files-conflict" hidden>
+            <div id="files-conflict-text"></div>
+            <div class="fx-acts">
+              <button type="button" id="files-reload">Reload from disk</button>
+              <button type="button" id="files-overwrite">Overwrite</button>
+              <button type="button" id="files-cancel">Cancel</button>
+            </div>
+          </div>
+          <div id="files-actions">
+            <button type="button" id="files-save" disabled>Save</button>
+            <button type="button" id="files-preview-toggle" hidden>Preview</button>
+            <button type="button" id="files-rename-open" disabled>Rename</button>
+            <button type="button" id="files-delete" disabled>Delete</button>
+            <span id="files-dirty" hidden>Unsaved changes</span>
+          </div>
+          <div id="files-rename-row" hidden>
+            <span id="files-rename-what"></span>
+            <input id="files-rename-name" type="text" autocomplete="off" aria-label="New name">
+            <button type="button" id="files-rename-go">Rename</button>
+            <button type="button" id="files-rename-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- A list row's menu, opened by its ⋯. One box for every list on the page — topic rows,
        scheduled runs, scheduled tasks — filled by openRowMenu. At the body, not inside a list:
        every one of them is rebuilt with innerHTML on a poll or on a streaming reply, and a menu
@@ -11084,6 +11982,10 @@ __GATE__
       <!-- Present in the markup but hidden unless the daemon serves a terminal, so the script
            has one thing to reveal rather than one thing to build. -->
       <button type="button" class="btn-icon" id="term-toggle" title="Terminal" aria-label="Terminal" hidden>${icon('terminal')}</button>
+      <!-- The file window: the files of whichever machine this topic's agent runs on. Built in the
+           markup and hidden, like the terminal's button, so the script reveals one thing rather
+           than constructing one; it is revealed only when platforms.<id>.files is enabled. -->
+      <button type="button" class="btn-icon" id="files-toggle" title="Files on this topic's machine" aria-label="Files" hidden>${icon('folder')}</button>
       <!-- Always present, unlike the terminal's: the task panel is the only place on this page
            where scheduled tasks are managed. A clock rather than an emoji for the same reason
            the power button is an SVG — it has to sit on the header's text baseline. -->

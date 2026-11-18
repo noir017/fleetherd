@@ -68,6 +68,8 @@ const PACING = {
   useReviewPanel: 'unpaced',
   // Registers the history page's reads; the page asks over its own HTTP routes, not chat traffic.
   useHistoryPanel: 'unpaced',
+  // Registers the file window's operations; they go over the page's own HTTP routes.
+  useFilesPanel: 'unpaced',
   // Ends an agent process on this machine; nothing is written to the chat.
   useIdleReclaim: 'unpaced',
   // Ends a topic's agent and the agents under it; nothing is written to the chat.

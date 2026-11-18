@@ -64,6 +64,14 @@ import type {
 import type {
   ButtonSpec,
   ConversationWorkdir,
+  FilesPanel,
+  FilesPanelCreateResult,
+  FilesPanelListResult,
+  FilesPanelReadResult,
+  FilesPanelRemoveResult,
+  FilesPanelRenameResult,
+  FilesPanelSearchResult,
+  FilesPanelWriteResult,
   HistoryPanel,
   HistoryPanelHit,
   HistoryPanelPage,
@@ -477,6 +485,8 @@ export class WebRoom {
   private reviewPanel: ReviewPanel | null = null;
   /** The conversation library, for the history page — see `useHistoryPanel`. */
   private historyPanel: HistoryPanel | null = null;
+  /** The files of each topic's machine, for the file window — see `useFilesPanel`. */
+  private filesPanel: FilesPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise, but broader: ends a topic's agent and every agent under it. See `killTopic`. */
@@ -1003,6 +1013,64 @@ export class WebRoom {
       messages: historyMessages(read.messages),
       ...(read.note ? { note: read.note } : {}),
     };
+  }
+
+  /**
+   * Accept the daemon's file window: list, read, write, create, rename, delete and search, on
+   * whichever machine a topic's agent runs on (`daemon/file-panel.ts`).
+   *
+   * A facade, and the one panel here that writes: every path is resolved and fenced by the daemon
+   * against the topic's workspace, so the page cannot name a file outside it however it spells the
+   * path. The page never learns which machine it is talking to either — the daemon's Workspace
+   * answers the same way on both (`daemon/workspace.ts`).
+   */
+  useFilesPanel(panel: FilesPanel): void {
+    this.filesPanel = panel;
+  }
+
+  /** The files off, or no topic — the same sentence for both, because the page can do nothing about either. */
+  private noFiles(topic: string): { ok: false; error: string } {
+    return { ok: false, error: this.filesPanel ? `no such topic: ${topic}` : 'the file window is turned off in this daemon' };
+  }
+
+  async filesList(topic: string, path: string): Promise<FilesPanelListResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.list(this.conversation(topic), path);
+  }
+
+  async filesRead(topic: string, path: string, preview = false): Promise<FilesPanelReadResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.read(this.conversation(topic), path, { preview });
+  }
+
+  async filesWrite(
+    topic: string,
+    path: string,
+    text: string,
+    expect: { mtimeMs?: number; size?: number; sha256?: string; missing?: boolean; force?: boolean }
+  ): Promise<FilesPanelWriteResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.write(this.conversation(topic), path, text, expect);
+  }
+
+  async filesCreate(topic: string, path: string, dir: boolean): Promise<FilesPanelCreateResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.create(this.conversation(topic), path, dir);
+  }
+
+  async filesRename(topic: string, from: string, to: string): Promise<FilesPanelRenameResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.rename(this.conversation(topic), from, to);
+  }
+
+  async filesRemove(topic: string, path: string): Promise<FilesPanelRemoveResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.remove(this.conversation(topic), path);
+  }
+
+  async filesSearch(topic: string, query: string): Promise<FilesPanelSearchResult | { ok: false; error: string }> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.search(this.conversation(topic), query);
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */
