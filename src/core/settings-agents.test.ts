@@ -160,16 +160,16 @@ describe('the Agents group', () => {
     });
   });
 
-  it('says the model timing and the permission level once, under Agents', () => {
+  it('says what the agent rows are and when a change lands, in two sentences', () => {
     const { screen } = screenOf();
     expect(screen.groups[0]).toEqual({ name: 'Agents', note: expect.any(String) });
     const note = screen.groups[0]!.note!;
     expect(note).toContain('next session');
     expect(note).toContain('/model');
-    expect(note).toContain('running sessions');
-    // The levels offered follow what the harness can put to the person, not a mode table.
-    expect(note).toContain('harness');
-    expect(note).not.toContain('has a mode for');
+    expect(note).toContain('applies at once');
+    // The group note is read on a phone; the levels and what each asks belong to the value screen.
+    expect(note.split('. ')).toHaveLength(2);
+    for (const level of ['plan', 'ask', 'edits', 'auto', 'full']) expect(note).not.toContain(level);
   });
 
   it('leaves the chat menu’s text and buttons exactly as they were', () => {

@@ -729,10 +729,11 @@ function settingGroup(row: SettingRow): string {
 
 /** A sentence under a group heading, for what every row in it shares. */
 function settingGroupNote(row: SettingRow): string | undefined {
-  // The Agents group's first row is the default agent, and its note speaks for the per-agent
-  // rows below it: the model's timing and the permission level's, said once for the group.
+  // The Agents group's first row is the default agent, and its note speaks for the per-agent rows
+  // below: what each setting is and when it lands. The levels' meanings stay on the value screen —
+  // spelling them out here ran to nine lines on a phone (2026-11-18).
   if (row.id === 'agent') {
-    return 'The agent rows below carry each agent’s own settings; the Default agent row only picks who answers a new conversation. A model applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only. A permission level applies at once, to running sessions too: `plan`, `ask` and `edits` put what it wants to do to you as buttons, `auto` approves it, `full` asks nothing. Which levels are offered depends on what its harness can put to you.';
+    return 'Each agent’s own settings. A model applies from its next session (`/new`), `/model` changes one topic only; a permission level applies at once.';
   }
   if (row.id === 'review.agent') {
     return 'An agent reads a conversation that has gone quiet and writes what it learned into the skill library. The review runs with its tools switched off and every permission refused.';
