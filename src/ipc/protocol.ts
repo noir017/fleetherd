@@ -152,13 +152,16 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       timeoutMs: z.number().int().positive().optional(),
     })
     .strict(),
-  // The same fields as schedule-add minus `session` and `channelId`: an edit never changes what a
-  // task is or where it posts (the command refuses those and names `rm` + `add`), and the id is the
-  // task's. Cross-field rules are core/schedule.ts editTask's, exactly as buildTask's are for add.
+  // The same fields as schedule-add, plus the task's id. `channelId` moves the task: it is where its
+  // output goes from now on, resolved like add's (and, without it, the task keeps its own target).
+  // Cross-field rules — a prompt turning a bash task into a prompt one, a session the new shape has
+  // no place for — are core/schedule.ts editTask's, exactly as buildTask's are for add.
   z
     .object({
       kind: z.literal('schedule-edit'),
       id: z.string().min(1),
+      channelId,
+      session: z.enum(['fixed', 'new', 'daily']).optional(),
       name: z.string().min(1).max(200).optional(),
       /** An empty list clears the task's tags; absent keeps them. */
       tags: z.array(z.string().max(200)).max(50).optional(),
@@ -381,6 +384,8 @@ export type IpcAction =
   | {
       kind: 'schedule-edit';
       id: string;
+      channelId?: string;
+      session?: 'fixed' | 'new' | 'daily';
       name?: string;
       tags?: string[];
       cron?: string;

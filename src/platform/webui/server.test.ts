@@ -13,6 +13,7 @@ import type {
   ReviewPanelEntry,
   SchedulePanel,
   SchedulePanelEdit,
+  SchedulePanelFormContext,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
   SkillPanelEntry,
@@ -1702,15 +1703,25 @@ describe('webui server: traffic', () => {
       detail: 'summarise the failures',
       kind: 'agent',
     };
-    const NO_DETAIL: Pick<SchedulePanel, 'detail' | 'edit'> = {
+    const FORM: SchedulePanelFormContext = {
+      agents: ['cc'],
+      agentHosts: {},
+      hosts: ['box'],
+      channels: [{ id: 'tg:-100/7', title: 'ops chat' }],
+      shapes: { bash: ['cwd', 'host', 'timeout', 'at'], fixed: ['agent', 'at'], new: ['agent', 'model', 'cwd', 'at'], daily: ['agent', 'model', 'cwd'] },
+      tz: 'Asia/Shanghai',
+      agent: 'cc',
+    };
+    const NO_DETAIL: Pick<SchedulePanel, 'detail' | 'edit' | 'add' | 'form'> = {
       detail: () => undefined,
       edit: async () => ({ ok: false, error: 'not in this test' }),
+      add: async () => ({ ok: false, error: 'not in this test' }),
+      form: () => FORM,
     };
     const page: SchedulePanelTaskDetail = {
+      ...FORM,
       task,
-      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'summarise the failures', agent: 'cc', session: 'fixed' },
-      editable: ['name', 'cron', 'at', 'tz', 'prompt', 'agent'],
-      agents: ['cc'],
+      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'summarise the failures', agent: 'cc', session: 'fixed', target: 'webui:main/a1b2c3d4' },
       runs: [{ at: 1, atText: '2026-11-04 08:00', status: 'ok', topic: 'a1b2c3d4' }],
     };
 
@@ -1854,12 +1865,66 @@ describe('webui server: traffic', () => {
       expect(refused.status).toBe(400);
       expect(await refused.json()).toEqual({ ok: false, error: '--cron: invalid' });
 
+      // What a task is, its session, its machine and where it posts travel too; a target naming a
+      // place elsewhere goes as its id, for the daemon to read the way --channel is read.
+      refuse = false;
+      const moved = await post({ id: 'a1b2c3', edit: { command: 'df -h', host: null, session: 'new', target: { channel: 'tg:-100/7' }, tags: ['ci'] } });
+      expect(moved.status).toBe(200);
+      expect(calls.at(-1)).toEqual({ id: 'a1b2c3', edit: { command: 'df -h', host: null, session: 'new', target: 'tg:-100/7', tags: ['ci'] } });
+
       // Nothing the form cannot send reaches the daemon: an empty edit, a field it has no input
-      // for (the session and the target are what a task IS), a wrong type.
-      for (const bad of [{ id: 'a1b2c3', edit: {} }, { id: 'a1b2c3', edit: { session: 'new' } }, { id: 'a1b2c3', edit: { timeoutMs: '10m' } }, { id: 'a1b2c3', edit: { name: 'x' }, extra: 1 }]) {
+      // for, a session that is not one, a target of neither shape, a wrong type.
+      for (const bad of [
+        { id: 'a1b2c3', edit: {} },
+        { id: 'a1b2c3', edit: { kind: 'bash' } },
+        { id: 'a1b2c3', edit: { session: 'forever' } },
+        { id: 'a1b2c3', edit: { target: 'tg:-100/7' } },
+        { id: 'a1b2c3', edit: { target: { topic: '../x' } } },
+        { id: 'a1b2c3', edit: { timeoutMs: '10m' } },
+        { id: 'a1b2c3', edit: { name: 'x' }, extra: 1 },
+      ]) {
         expect((await post(bad)).status).toBe(400);
       }
-      expect(calls).toHaveLength(2);
+      expect(calls).toHaveLength(3);
+    });
+
+    it('offers the new-task form, and carries a new task through with its target, or the refusal in add\'s words', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      expect((await fetch(`${base}/api/schedules/form`, { headers: { cookie } })).status).toBe(404);
+      const adds: unknown[] = [];
+      let refuse = false;
+      room.useSchedulePanel({
+        ...NO_DETAIL,
+        list: () => [task],
+        op: () => ({ ok: true, tasks: [task] }),
+        add: async (input) => {
+          adds.push(input);
+          return refuse ? { ok: false, error: 'give exactly one of --cron <expr> or --at <time>' } : { ok: true, detail: page, tasks: [task] };
+        },
+      });
+      const form = await fetch(`${base}/api/schedules/form`, { headers: { cookie } });
+      expect(form.status).toBe(200);
+      expect(await form.json()).toEqual({ ok: true, form: FORM });
+
+      const post = (body: unknown): Promise<Response> =>
+        fetch(`${base}/api/schedules/add`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
+      const ok = await post({ task: { cron: '0 8 * * *', prompt: 'brief me', session: 'new', target: { channel: 'tg:-100/7' } } });
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toEqual({ ok: true, detail: page, tasks: [task] });
+      expect(adds).toEqual([{ cron: '0 8 * * *', prompt: 'brief me', session: 'new', target: 'tg:-100/7' }]);
+
+      refuse = true;
+      const refused = await post({ task: { prompt: 'x', target: { channel: 'tg:-100/7' } } });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ ok: false, error: 'give exactly one of --cron <expr> or --at <time>' });
+      // A topic the page does not have is refused by the room, before the daemon is asked; a body
+      // with no target, or with a field the form has no input for, never reaches either.
+      const lost = await post({ task: { prompt: 'x', cron: '0 8 * * *', target: { topic: 'ffffffff' } } });
+      expect(lost.status).toBe(400);
+      expect((await post({ task: { prompt: 'x', cron: '0 8 * * *' } })).status).toBe(400);
+      expect((await post({ task: { prompt: 'x', target: { channel: 'tg:1' }, id: 'zz' } })).status).toBe(400);
+      expect(adds).toHaveLength(2);
     });
 
     it('is behind the session like every other route', async () => {
@@ -1872,6 +1937,13 @@ describe('webui server: traffic', () => {
         body: JSON.stringify({ id: 'a1b2c3', edit: { name: 'x' } }),
       });
       expect(edit.status).toBe(401);
+      expect((await fetch(`${base}/api/schedules/form`)).status).toBe(401);
+      const add = await fetch(`${base}/api/schedules/add`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ task: { prompt: 'x', cron: '0 8 * * *', target: { channel: 'tg:1' } } }),
+      });
+      expect(add.status).toBe(401);
       const res = await fetch(`${base}/api/schedules/op`, {
         method: 'POST',
         headers: JSON_HEADERS,

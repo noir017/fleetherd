@@ -308,6 +308,10 @@ export interface SchedulePanel {
   op(id: string, action: SchedulePanelAction, tags?: string[]): SchedulePanelResult;
   /** One task's page, or undefined when there is no such task. */
   detail(id: string): SchedulePanelTaskDetail | undefined;
+  /** What the form for a new task offers: `ScheduleService`'s agents, machines, places and defaults. */
+  form(): SchedulePanelFormContext;
+  /** Register a task: `ScheduleService.addFromPanel`, so every rule is `schedule add`'s. */
+  add(task: SchedulePanelNew): Promise<SchedulePanelDetailResult>;
   /** Change a task in place: `ScheduleService.editFromPanel`, so every rule is `schedule edit`'s. */
   edit(id: string, edit: SchedulePanelEdit): Promise<SchedulePanelDetailResult>;
 }
@@ -332,23 +336,46 @@ export interface SchedulePanelRun {
   where?: string;
 }
 
+/** What a task is: a bash command, or a prompt in one of the three session modes. */
+export type SchedulePanelShape = 'bash' | 'fixed' | 'new' | 'daily';
+
+/** A setting only some shapes keep; `at` means the task may be a one-shot rather than a cron. */
+export type SchedulePanelSetting = 'agent' | 'model' | 'cwd' | 'host' | 'timeout' | 'at';
+
 /**
- * The fields a task's form can hold; which of them a given task offers is `editable`. `cron` and
- * `at` are separate because a daily-session task takes only a cron: a one-shot has no rest of the
- * day to join.
+ * What the task form offers, whichever task it is filled from — or none, for a new one.
+ *
+ * `shapes` is core/schedule.ts's SHAPE_SETTINGS, handed over rather than copied: the form shows a
+ * field only where the shape it is set to keeps one, and an edit that changes a task's shape carries
+ * over exactly those settings, so the page and the daemon read one table. The rest are the choices
+ * `schedule add` would accept — every configured agent and machine, and the places on other
+ * platforms the gateway has answered in (`fleetherd channels`); this page's own topics come from the
+ * page, which already lists them.
  */
-export type SchedulePanelEditField = 'name' | 'cron' | 'at' | 'tz' | 'prompt' | 'command' | 'agent' | 'model' | 'cwd' | 'timeout';
+export interface SchedulePanelFormContext {
+  agents: string[];
+  /** Agent id → the `hosts:` entry it runs on. An agent on the gateway's own machine is absent. */
+  agentHosts: Record<string, string>;
+  /** The configured `hosts:` ids: where a bash task can run besides the gateway's machine. */
+  hosts: string[];
+  /** Places on other platform instances a task can post to: `<instance>:<channel>[/<thread>]` ids. */
+  channels: Array<{ id: string; title: string }>;
+  shapes: Record<SchedulePanelShape, SchedulePanelSetting[]>;
+  /** The gateway's own time zone, a new task's default. */
+  tz: string;
+  /** The agent a new prompt task starts with (`routing.default`). */
+  agent: string;
+}
 
 /**
  * What a task's page shows, and what its form starts from.
  *
  * `fields` are the task's own values, raw — the cron as written, the whole prompt, the directory and
  * model only when the task has them — because a form filled from the panel's sentences would save
- * the sentences back. `editable` is decided by the daemon from the same rules `schedule edit`
- * applies (a fixed-session task has no directory or model of its own, a bash task no agent), so the
- * page offers no field whose every value would be refused.
+ * the sentences back. Which of them the form offers follows `shapes` and the shape the form is set
+ * to; what any value may be is `schedule edit`'s to say, when it is saved.
  */
-export interface SchedulePanelTaskDetail {
+export interface SchedulePanelTaskDetail extends SchedulePanelFormContext {
   task: SchedulePanelTask;
   fields: {
     name: string;
@@ -363,21 +390,22 @@ export interface SchedulePanelTaskDetail {
     model?: string;
     cwd?: string;
     timeoutMs?: number;
-    /** The machine a bash task runs on; it is the registering agent's, and no edit moves it. */
+    /** The machine a bash task runs on; absent for the gateway's own. */
     host?: string;
+    /** Where it posts, as `fleetherd channels` writes it: what the form's "Posts to" starts from. */
+    target: string;
   };
-  editable: SchedulePanelEditField[];
   /** Why no edit of this task can succeed (it expired, or a one-time task has had its run). */
   locked?: string;
-  /** The configured agents, for the agent picker. */
-  agents: string[];
   /** The task's recorded runs, newest first. */
   runs: SchedulePanelRun[];
 }
 
 /**
  * One edit from a task's page: only what the person changed. `null` empties a directory or a model
- * (see EditTaskInput); a time and a zone travel as the strings `schedule edit --at/--tz` takes.
+ * (see EditTaskInput), and is a bash task's `host` for the gateway's own machine; a time and a zone
+ * travel as the strings `schedule edit --at/--tz` take. `prompt` on a bash task, or `command` on a
+ * prompt task, changes what it is; `target` moves it, as `schedule edit --channel` does.
  */
 export interface SchedulePanelEdit {
   name?: string;
@@ -387,10 +415,19 @@ export interface SchedulePanelEdit {
   prompt?: string;
   command?: string;
   agent?: string;
+  session?: 'fixed' | 'new' | 'daily';
   model?: string | null;
   cwd?: string | null;
+  host?: string | null;
   timeoutMs?: number;
+  /** The whole set; `[]` clears it. */
+  tags?: string[];
+  /** A `<instance>:<channel>[/<thread>]` id; one with no instance is a place on this page's. */
+  target?: string;
 }
+
+/** A new task from the page: what `schedule add` takes, and where it posts — which add always knows. */
+export type SchedulePanelNew = Omit<SchedulePanelEdit, 'target'> & { target: string };
 
 /**
  * The outcome of an edit: the task's page as it now is, and the list, which the panel behind the

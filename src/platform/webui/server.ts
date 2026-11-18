@@ -65,6 +65,7 @@ import {
   SendRequestSchema,
   PushSubscribeSchema,
   PushUnsubscribeSchema,
+  ScheduleAddRequestSchema,
   ScheduleEditRequestSchema,
   ScheduleOpRequestSchema,
   ScheduleTaskId,
@@ -416,6 +417,8 @@ const GUARDED: Route[] = [
   // A task's page: its detail and runs, and an edit — `schedule edit`, with its rules, from a form.
   { method: 'GET', path: '/api/schedules/task', run: scheduleDetail },
   { method: 'POST', path: '/api/schedules/edit', run: scheduleEdit },
+  { method: 'GET', path: '/api/schedules/form', run: scheduleForm },
+  { method: 'POST', path: '/api/schedules/add', run: scheduleAdd },
   // The skills page: the gateway's managed skills, and one operation on one of them. Behind the
   // same session as everything else, and the operation is a closed union in protocol.ts — there
   // is no hard delete among the verbs, because the store has none.
@@ -1058,6 +1061,23 @@ async function scheduleEdit({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, ScheduleEditRequestSchema);
   if (!parsed) return;
   const result = await ctx.room.scheduleEdit(parsed.id, parsed.edit);
+  send(req, res, result.ok ? 200 : 400, result);
+}
+
+/** What the new-task form offers. 404 when the daemon has no scheduled tasks, as a detail would be. */
+function scheduleForm({ req, res }: Req, ctx: Ctx): void {
+  const result = ctx.room.scheduleForm();
+  send(req, res, result.ok ? 200 : 404, result);
+}
+
+/**
+ * Register a task from the panel's form. A refusal is the service's own sentence — `schedule add`'s
+ * words — and the answer carries the new task's page and the list, as an edit's does.
+ */
+async function scheduleAdd({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, ScheduleAddRequestSchema);
+  if (!parsed) return;
+  const result = await ctx.room.scheduleAdd(parsed.task);
   send(req, res, result.ok ? 200 : 400, result);
 }
 

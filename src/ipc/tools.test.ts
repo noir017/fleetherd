@@ -160,9 +160,13 @@ describe('toolAction', () => {
       id: 'k3x9',
       name: 'renamed',
     });
-    expect(() => toolAction(tool('schedule'), { action: 'edit', id: 'k3x9', session: 'new', name: 'x' })).toThrow(
-      /--session cannot be changed by edit/
-    );
+    // What a task is and where it posts change through the same call: the shell's options, the shell's action.
+    expect(toolAction(tool('schedule'), { action: 'edit', id: 'k3x9', session: 'new', channel: 'tg:-100/7' })).toMatchObject({
+      kind: 'schedule-edit',
+      id: 'k3x9',
+      session: 'new',
+      channelId: 'tg:-100/7',
+    });
   });
 
   it('treats empty strings and null as absent, the way models fill optional parameters', () => {

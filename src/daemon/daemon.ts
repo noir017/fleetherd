@@ -86,6 +86,8 @@ import type {
   PlatformAdapter,
   ReviewPanel,
   SchedulePanel,
+  SchedulePanelDetailResult,
+  SchedulePanelFormContext,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
 } from '../platform/adapter.js';
@@ -171,7 +173,7 @@ import {
 } from '../ipc/protocol.js';
 import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
-import { panelEditInput, panelTaskDetail, panelTasks } from './schedule-panel.js';
+import { panelEditInput, panelForm, panelNewInput, panelTarget, panelTaskDetail, panelTasks } from './schedule-panel.js';
 import { buildSkillsPanel } from './skills-panel.js';
 import { buildGitPanel } from './git-panel.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
@@ -241,6 +243,12 @@ const DEFAULT_ASK_TIMEOUT_MS = PROTOCOL_DEFAULT_ASK_TIMEOUT_MS;
  * handleGatewayQuery). A `satisfies`-checked table, so a kind that is not an IpcAction fails to
  * compile — and the chat switch's `never` guard catches a new action that belongs in neither.
  */
+/**
+ * How many places on other platforms the task form lists for "Posts to". The datalist is a
+ * convenience — any id `fleetherd channels` prints can be typed — so the newest topics are enough.
+ */
+const PANEL_CHANNEL_LIMIT = 50;
+
 const GATEWAY_QUERY_KINDS = {
   'voice-log': true,
   'list-channels': true,
@@ -1592,8 +1600,13 @@ export class Daemon {
       }
       case 'schedule-edit': {
         if (!caller) throw new Error('cannot tell which conversation this came from (conversation expired?)');
-        const { kind: _kind, id: taskId, ...input } = action;
-        return { task: await schedules.edit(taskId, input, caller) };
+        const { kind: _kind, id: taskId, channelId, ...input } = action;
+        // `address` is the caller's own lane unless --channel named another, and only a --channel
+        // moves the task: without one the task keeps posting where it did, not where it was edited.
+        if (channelId === undefined) return { task: await schedules.edit(taskId, input, caller) };
+        const platform = this.lastResolvedPlatform ?? this.registry.platformFor(caller);
+        if (!platform) throw new Error('cannot resolve the platform for this conversation');
+        return { task: await schedules.edit(taskId, input, caller, { platform, address }) };
       }
       case 'schedule-list':
         return schedules.list(caller, action.id);
@@ -2028,6 +2041,15 @@ export class Daemon {
     if (!schedules) return undefined;
     const list = (): SchedulePanelTask[] =>
       panelTasks(schedules.tasks(), schedules.now(), (id) => schedules.scheduler.isRunning(id), instance);
+    const form = (): SchedulePanelFormContext =>
+      panelForm({
+        agents: this.config.agents,
+        hosts: Object.keys(this.config.hosts ?? {}),
+        channels: this.registry.listChannels({ limit: PANEL_CHANNEL_LIMIT }).channels,
+        instance,
+        tz: schedules.defaultZone(),
+        agent: this.config.routing.default,
+      });
     const detail = (id: string): SchedulePanelTaskDetail | undefined => {
       const task = schedules.get(id);
       if (!task) return undefined;
@@ -2035,9 +2057,21 @@ export class Daemon {
         now: schedules.now(),
         running: schedules.scheduler.isRunning(id),
         instance,
-        agents: this.config.agents.map((a) => a.id),
+        form: form(),
         laneOf: (key) => this.registry.laneFor(key),
       });
+    };
+    const instances = new Set(Object.keys(this.config.platforms));
+    // Both writes answer with the task's page and the list, or with the service's own refusal.
+    const answer = async (write: () => Promise<{ id: string }>): Promise<SchedulePanelDetailResult> => {
+      try {
+        const { id } = await write();
+        const page = detail(id);
+        if (!page) return { ok: false, error: `#${id} was removed just after this change` };
+        return { ok: true, detail: page, tasks: list() };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
     };
     return {
       list,
@@ -2051,16 +2085,16 @@ export class Daemon {
         }
       },
       detail,
-      edit: async (id, change) => {
-        try {
-          await schedules.editFromPanel(id, panelEditInput(change));
-          const page = detail(id);
-          if (!page) return { ok: false, error: `#${id} was removed just after this edit` };
-          return { ok: true, detail: page, tasks: list() };
-        } catch (e) {
-          return { ok: false, error: e instanceof Error ? e.message : String(e) };
-        }
-      },
+      form,
+      add: (task) => answer(() => schedules.addFromPanel(panelNewInput(task), panelTarget(task.target, instance, instances))),
+      edit: (id, change) =>
+        answer(() =>
+          schedules.editFromPanel(
+            id,
+            panelEditInput(change),
+            change.target !== undefined ? panelTarget(change.target, instance, instances) : undefined
+          )
+        ),
     };
   }
 

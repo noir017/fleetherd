@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { buildTask, type NewTaskInput, type ScheduleTask } from '../core/schedule.js';
-import { panelEditInput, panelTask, panelTaskDetail, panelTasks, type PanelDetailContext } from './schedule-panel.js';
+import { buildTask, SHAPE_SETTINGS, type NewTaskInput, type ScheduleTask } from '../core/schedule.js';
+import {
+  panelEditInput,
+  panelForm,
+  panelNewInput,
+  panelTarget,
+  panelTask,
+  panelTaskDetail,
+  panelTasks,
+  type PanelDetailContext,
+} from './schedule-panel.js';
 
 /**
  * The daemon's half of the web UI's task panel. What matters here is that the page is handed
@@ -101,8 +110,8 @@ describe('the web UI task panel', () => {
 
 /**
  * A task's page. The form is filled from `fields`, so they must be the task's own raw values; what
- * it offers is `editable`, which has to agree with what editTask would refuse; and every run has
- * to say where its output went — a topic here the page can open, or a name for somewhere else.
+ * it offers follows `shapes`, which is core's table and not a copy; and every run has to say where
+ * its output went — a topic here the page can open, or a name for somewhere else.
  */
 describe("the web UI task page", () => {
   const lanes: Record<string, { platformId: string; address: { channel: string; thread?: string } }> = {
@@ -110,26 +119,61 @@ describe("the web UI task page", () => {
     'tg#-100#7': { platformId: 'tg', address: { channel: '-100', thread: '7' } },
     'web#main#': { platformId: 'web', address: { channel: 'main' } },
   };
-  const ctx: PanelDetailContext = { now: NOW, running: false, instance: 'web', agents: ['cc', 'oc'], laneOf: (k) => lanes[k] };
+  const form = panelForm({
+    agents: [{ id: 'cc' }, { id: 'oc', host: 'box' }],
+    hosts: ['box'],
+    channels: [
+      { id: 'tg:-100/7', title: 'ops chat' },
+      { id: 'web:main/t1', title: 'a topic of this page' },
+      { id: 'web2:main/t1', title: 'another web UI' },
+    ],
+    instance: 'web',
+    tz: 'Asia/Shanghai',
+    agent: 'cc',
+  });
+  const ctx: PanelDetailContext = { now: NOW, running: false, instance: 'web', form, laneOf: (k) => lanes[k] };
 
-  it('hands the form the raw values and only the fields an edit of that kind can change', () => {
+  it('hands the form the choices schedule add would accept, and core\'s shape table as it is', () => {
+    expect(form.agents).toEqual(['cc', 'oc']);
+    expect(form.agentHosts).toEqual({ oc: 'box' });
+    expect(form.hosts).toEqual(['box']);
+    // This page's own topics are offered by the page, by title; only other instances' places are here.
+    expect(form.channels).toEqual([
+      { id: 'tg:-100/7', title: 'ops chat' },
+      { id: 'web2:main/t1', title: 'another web UI' },
+    ]);
+    expect(form.shapes).toEqual(SHAPE_SETTINGS);
+    expect(form).toMatchObject({ tz: 'Asia/Shanghai', agent: 'cc' });
+  });
+
+  it('hands the form the raw values, where the task posts, and the choices', () => {
     const fixed = panelTaskDetail(task({ name: 'CI', cron: '0 8 * * *', prompt: 'summarise' }), ctx);
-    expect(fixed.fields).toEqual({ name: 'CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'summarise', agent: 'cc', session: 'fixed' });
-    // A fixed session runs in a person's topic, which keeps its own directory and model.
-    expect(fixed.editable).toEqual(['name', 'cron', 'tz', 'at', 'prompt', 'agent']);
+    expect(fixed.fields).toEqual({
+      name: 'CI',
+      cron: '0 8 * * *',
+      tz: 'Asia/Shanghai',
+      prompt: 'summarise',
+      agent: 'cc',
+      session: 'fixed',
+      target: 'web:main/t1',
+    });
     expect(fixed.agents).toEqual(['cc', 'oc']);
+    expect(fixed.shapes).toEqual(SHAPE_SETTINGS);
     expect(fixed.task.id).toBe('a1b2c3');
 
     const fresh = panelTaskDetail(task({ cron: '0 8 * * *', prompt: 'p', session: 'new', cwd: '/srv/app', model: 'm1' }), ctx);
     expect(fresh.fields).toMatchObject({ session: 'new', cwd: '/srv/app', model: 'm1' });
-    expect(fresh.editable).toEqual(['name', 'cron', 'tz', 'at', 'prompt', 'agent', 'model', 'cwd']);
 
-    // A daily session takes only a cron: a one-shot has no rest of the day to join.
-    expect(panelTaskDetail(task({ cron: '0 8 * * *', prompt: 'p', session: 'daily' }), ctx).editable).not.toContain('at');
-
-    const bash = panelTaskDetail(task({ cron: '0 2 * * *', bash: 'pg_dump app', timeoutMs: 90_000 }), ctx);
-    expect(bash.fields).toEqual({ name: 'pg_dump app', cron: '0 2 * * *', tz: 'Asia/Shanghai', command: 'pg_dump app', timeoutMs: 90_000 });
-    expect(bash.editable).toEqual(['name', 'cron', 'tz', 'at', 'command', 'timeout', 'cwd']);
+    const bash = panelTaskDetail(task({ cron: '0 2 * * *', bash: 'pg_dump app', timeoutMs: 90_000, host: 'box' }), ctx);
+    expect(bash.fields).toEqual({
+      name: 'pg_dump app',
+      cron: '0 2 * * *',
+      tz: 'Asia/Shanghai',
+      command: 'pg_dump app',
+      timeoutMs: 90_000,
+      host: 'box',
+      target: 'web:main/t1',
+    });
   });
 
   it('gives a one-shot time as the wall clock in its own zone, the form --at reads', () => {
@@ -172,8 +216,26 @@ describe("the web UI task page", () => {
     expect(panelTaskDetail({ ...t, lastRun: { at: NOW, status: 'ok' } }, ctx).runs).toEqual([{ at: NOW, atText: '2026-11-04 10:00', status: 'ok' }]);
   });
 
-  it('turns the page edit into schedule edit input: command is --bash, nulls pass through', () => {
-    expect(panelEditInput({ command: 'ls', cwd: null, model: null, name: 'n' })).toEqual({ bash: 'ls', cwd: null, model: null, name: 'n' });
-    expect(panelEditInput({ prompt: 'p' })).toEqual({ prompt: 'p' });
+  it('turns the page edit into schedule edit input: command is --bash, nulls pass through, the target is not a field', () => {
+    expect(panelEditInput({ command: 'ls', cwd: null, model: null, host: null, name: 'n' })).toEqual({ bash: 'ls', cwd: null, model: null, host: null, name: 'n' });
+    expect(panelEditInput({ prompt: 'p', session: 'daily', tags: ['ci'], target: 'tg:-100/7' })).toEqual({ prompt: 'p', session: 'daily', tags: ['ci'] });
+  });
+
+  it('turns the page new task into schedule add input: a null directory or model is none, a null host the gateway', () => {
+    expect(panelNewInput({ command: 'ls', cwd: null, model: null, host: null, target: 'web:main/t1' })).toEqual({ bash: 'ls', host: null });
+    expect(panelNewInput({ prompt: 'p', session: 'new', cwd: '/srv', model: 'm1', target: 'web:main/t1' })).toEqual({
+      prompt: 'p',
+      session: 'new',
+      cwd: '/srv',
+      model: 'm1',
+    });
+  });
+
+  it('reads "Posts to" the way --channel is read: any instance by name, this page\'s without one', () => {
+    const instances = new Set(['web', 'tg']);
+    expect(panelTarget('tg:-100/7', 'web', instances)).toEqual({ platform: 'tg', address: { channel: '-100', thread: '7' } });
+    expect(panelTarget('web:main/t1', 'web', instances)).toEqual({ platform: 'web', address: { channel: 'main', thread: 't1' } });
+    expect(panelTarget('main/t2', 'web', instances)).toEqual({ platform: 'web', address: { channel: 'main', thread: 't2' } });
+    expect(() => panelTarget('a/b/c', 'web', instances)).toThrow(/invalid channel/);
   });
 });

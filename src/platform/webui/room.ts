@@ -37,6 +37,7 @@ import {
   addressListed,
   addressOf,
   describeConversation,
+  formatTarget,
   type ConversationRef,
 } from '../../core/conversation.js';
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
@@ -92,6 +93,8 @@ import type {
   SchedulePanelAction,
   SchedulePanelDetailResult,
   SchedulePanelEdit,
+  SchedulePanelFormContext,
+  SchedulePanelNew,
   SchedulePanelResult,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
@@ -108,7 +111,7 @@ import type {
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import { toolGlyph } from './icons.js';
-import type { ClickRequest, ReviewOpRequest, SendRequest, TopicSnapshot, WebEvent, WebMessage } from './protocol.js';
+import type { ClickRequest, ReviewOpRequest, ScheduleTargetRequest, SendRequest, TopicSnapshot, WebEvent, WebMessage } from './protocol.js';
 import type { TerminalSessions } from './terminal-sessions.js';
 import { MAX_TOPICS, TopicStore, type Topic } from './topics.js';
 
@@ -954,10 +957,45 @@ export class WebRoom {
     return detail ? { ok: true, detail } : { ok: false, error: `no scheduled task #${id}` };
   }
 
-  /** Change a task in place, with its page and the list as they are after the change. */
-  async scheduleEdit(id: string, edit: SchedulePanelEdit): Promise<SchedulePanelDetailResult> {
+  /**
+   * Change a task in place, with its page and the list as they are after the change. A `target`
+   * naming one of this page's topics becomes that topic's lane here, where the lanes are known.
+   */
+  async scheduleEdit(
+    id: string,
+    edit: Omit<SchedulePanelEdit, 'target'> & { target?: ScheduleTargetRequest }
+  ): Promise<SchedulePanelDetailResult> {
     if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
-    return this.schedulePanel.edit(id, edit);
+    const { target, ...rest } = edit;
+    if (target === undefined) return this.schedulePanel.edit(id, rest);
+    const to = this.scheduleTarget(target);
+    if (!to.ok) return to;
+    return this.schedulePanel.edit(id, { ...rest, target: to.target });
+  }
+
+  /** What the task form offers: the daemon's agents, machines, places and defaults. */
+  scheduleForm(): { ok: true; form: SchedulePanelFormContext } | { ok: false; error: string } {
+    if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
+    return { ok: true, form: this.schedulePanel.form() };
+  }
+
+  /** Register a task from the form, answering with its page and the list. */
+  async scheduleAdd(task: Omit<SchedulePanelNew, 'target'> & { target: ScheduleTargetRequest }): Promise<SchedulePanelDetailResult> {
+    if (!this.schedulePanel) return { ok: false, error: 'scheduled tasks are not enabled in this daemon' };
+    const to = this.scheduleTarget(task.target);
+    if (!to.ok) return to;
+    return this.schedulePanel.add({ ...task, target: to.target });
+  }
+
+  /**
+   * The page's "Posts to" as the `<instance>:<channel>/<thread>` id `--channel` takes. A topic is a
+   * lane of this instance's one channel; one this page no longer has is refused here, by name,
+   * rather than becoming a target nobody can read.
+   */
+  private scheduleTarget(target: ScheduleTargetRequest): { ok: true; target: string } | { ok: false; error: string } {
+    if ('channel' in target) return { ok: true, target: target.channel };
+    if (!this.topics.has(target.topic)) return { ok: false, error: 'That topic is not on this page any more; pick another.' };
+    return { ok: true, target: formatTarget(this.instance.id, { channel: CHANNEL, thread: target.topic }) };
   }
 
   /**

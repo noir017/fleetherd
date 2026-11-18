@@ -9178,8 +9178,26 @@ describe('webui page: the scheduled-task panel', () => {
   });
   const listReply = (tasks: Array<Record<string, unknown>>): Record<string, unknown> => ({ enabled: true, tasks });
   const TASK_URL = 'api/schedules/task?id=a1b2c3';
+  /** core/schedule.ts SHAPE_SETTINGS, as the daemon hands it over. */
+  const SHAPES = {
+    bash: ['cwd', 'host', 'timeout', 'at'],
+    fixed: ['agent', 'at'],
+    new: ['agent', 'model', 'cwd', 'at'],
+    daily: ['agent', 'model', 'cwd'],
+  };
+  /** What the form offers whatever task it is filled from: agents, machines, places, defaults. */
+  const formContext = (): Record<string, unknown> => ({
+    agents: ['cc', 'oc'],
+    agentHosts: { oc: 'box' },
+    hosts: ['box'],
+    channels: [{ id: 'tg:-100/7', title: 'ops chat' }],
+    shapes: SHAPES,
+    tz: 'Asia/Shanghai',
+    agent: 'cc',
+  });
   /** A task's page as the daemon answers it: a new-session task with a directory and a model. */
   const detail = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    ...formContext(),
     task: task(),
     fields: {
       name: 'Morning CI',
@@ -9190,12 +9208,16 @@ describe('webui page: the scheduled-task panel', () => {
       session: 'new',
       model: 'm1',
       cwd: '/srv/app',
+      target: 'web:main/' + A,
     },
-    editable: ['name', 'cron', 'tz', 'at', 'prompt', 'agent', 'model', 'cwd'],
-    agents: ['cc', 'oc'],
     runs: [],
     ...over,
   });
+  /** Whether a form field is on screen: its group follows the shape the form is set to. */
+  const shownField = (h: Harness, id: string): boolean => {
+    const group = h.el(id).closest('[data-tp-need],[data-tp-kinded]') as HTMLElement | null;
+    return !h.el(id).hidden && !(group?.hidden ?? false);
+  };
   const pageReply = (d: Record<string, unknown>): Record<string, unknown> => ({ ok: true, detail: d });
   /** Open a task row's ⋯ menu, as a person would: one box, so the selector is inside #row-menu. */
   const taskMenu = async (h: Harness, id: string): Promise<HTMLElement> => {
@@ -9861,9 +9883,12 @@ describe('webui page: the scheduled-task panel', () => {
     expect(Array.from((h.el('tp-agent') as HTMLSelectElement).options).map((o) => o.value)).toEqual(['cc', 'oc']);
     expect((h.el('tp-model') as HTMLInputElement).value).toBe('m1');
     expect((h.el('tp-cwd') as HTMLInputElement).value).toBe('/srv/app');
-    // What a task is cannot be edited, and the form says so once rather than greying fields.
-    expect(h.el('task-view').textContent).toContain('a new topic each run');
-    expect(h.el('task-view').textContent).toContain('cannot be edited');
+    // What the task is, how it runs and where it posts are on the form too, set to the task's own.
+    expect(h.doc.querySelector('[data-tp-kind="agent"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect(h.doc.querySelector('[data-tp-session="new"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect((h.el('tp-target') as HTMLSelectElement).value).toBe('topic:' + A);
+    expect(shownField(h, 'tp-host')).toBe(false);
+    expect(shownField(h, 'tp-timeout')).toBe(false);
 
     setField(h, 'tp-text', 'summarise the failures and the flakes');
     setField(h, 'tp-cwd', '');
@@ -9905,19 +9930,20 @@ describe('webui page: the scheduled-task panel', () => {
   it('sends nothing when nothing changed, and refuses a timeout that is not a length of time', async () => {
     const bash = detail({
       task: task({ kind: 'bash', run: 'bash · 10m', detail: 'pg_dump app' }),
-      fields: { name: 'Backup', cron: '0 2 * * *', tz: 'Asia/Shanghai', command: 'pg_dump app', timeoutMs: 600_000 },
-      editable: ['name', 'cron', 'tz', 'at', 'command', 'timeout', 'cwd'],
+      fields: { name: 'Backup', cron: '0 2 * * *', tz: 'Asia/Shanghai', command: 'pg_dump app', timeoutMs: 600_000, target: 'web:main/' + A },
     });
     const h = await open({ replies: { 'api/schedules': listReply([task({ kind: 'bash' })]), [TASK_URL]: pageReply(bash) } });
     await openTaskPage(h);
     await h.click('#task-view [data-tp-act="edit"]');
 
-    // A bash task: a command and a timeout, no agent or model to choose.
+    // A bash task: a command, a machine and a timeout, no agent or model to choose.
     expect((h.el('tp-text') as HTMLTextAreaElement).value).toBe('pg_dump app');
     expect((h.el('tp-timeout') as HTMLInputElement).value).toBe('10m');
-    expect(h.doc.getElementById('tp-agent')).toBeNull();
-    expect(h.doc.getElementById('tp-model')).toBeNull();
-    expect(h.el('task-view').textContent).toContain('Command');
+    expect((h.el('tp-host') as HTMLSelectElement).value).toBe('');
+    expect(shownField(h, 'tp-host')).toBe(true);
+    expect(shownField(h, 'tp-agent')).toBe(false);
+    expect(shownField(h, 'tp-model')).toBe(false);
+    expect(h.el('tp-text-label').textContent).toBe('Command');
 
     await h.click('#task-view [data-tp-act="save"]');
     expect(h.calls.some((c) => c.path === 'api/schedules/edit')).toBe(false);
@@ -9963,23 +9989,24 @@ describe('webui page: the scheduled-task panel', () => {
     });
   });
 
-  it('offers only what an edit of that kind can change: a fixed session has no directory, model or one-shot switch for daily', async () => {
+  it('shows only what the shape keeps: a fixed session has no directory or model, a daily one no one-shot switch', async () => {
     const fixed = detail({
-      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'p', agent: 'cc', session: 'fixed' },
-      editable: ['name', 'cron', 'tz', 'at', 'prompt', 'agent'],
+      fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'p', agent: 'cc', session: 'fixed', target: 'web:main/' + A },
     });
     const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(fixed) } });
     await openTaskPage(h);
     await h.click('#task-view [data-tp-act="edit"]');
-    expect(h.doc.getElementById('tp-model')).toBeNull();
-    expect(h.doc.getElementById('tp-cwd')).toBeNull();
-    expect(h.el('task-view').textContent).toContain('/cd and /model there');
+    expect(shownField(h, 'tp-model')).toBe(false);
+    expect(shownField(h, 'tp-cwd')).toBe(false);
+    expect(shownField(h, 'tp-agent')).toBe(true);
+    expect(h.el('tp-session-hint').textContent).toContain('/cd and /model there');
 
-    const daily = detail({ fields: { ...(detail().fields as object), session: 'daily' }, editable: ['name', 'cron', 'tz', 'prompt', 'agent', 'model', 'cwd'] });
+    const daily = detail({ fields: { ...(detail().fields as object), session: 'daily' } });
     const r = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(daily) } });
     await openTaskPage(r);
     await r.click('#task-view [data-tp-act="edit"]');
-    expect(r.doc.querySelector('[data-tp-when]')).toBeNull();
+    expect((r.doc.querySelector('.tp-when') as HTMLElement).hidden).toBe(true);
+    expect(shownField(r, 'tp-model')).toBe(true);
   });
 
   it('has no Edit on a task that is over, and says why', async () => {
@@ -10015,6 +10042,239 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.el('task-page').hidden).toBe(false);
     expect((h.el('tp-name') as HTMLInputElement).value).toBe('Renamed');
     expect(h.el('app').classList.contains('sched-open')).toBe(true);
+  });
+
+  /** Pick an option of a select, as a person does: the value, then the change event the form follows. */
+  const choose = (h: Harness, id: string, value: string): void => {
+    const el = h.el(id) as HTMLSelectElement;
+    el.value = value;
+    el.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+  };
+  const lastBody = (h: Harness, path: string): unknown => h.calls.filter((c) => c.path === path).at(-1)?.body;
+  /** Open the new-task form from the Tasks tab's +, and wait for the daemon's choices to fill it. */
+  const openNewTask = async (h: Harness): Promise<void> => {
+    await h.emit(sync(A, [], [A, B]));
+    await h.click('#schedules-toggle');
+    await h.click('#sched-new');
+    await until('the new-task form', () => h.doc.getElementById('tp-form') !== null);
+  };
+
+  it('adds a task from the Tasks tab: the form starts from the daemon\'s defaults, and Add sends schedule add\'s fields', async () => {
+    const made = task({ id: 'b2c3d4', name: 'Nightly', detail: 'check the nightly build' });
+    const added = detail({ task: made, fields: { ...(detail().fields as object), name: 'Nightly', prompt: 'check the nightly build' } });
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/schedules/form': { ok: true, form: formContext() },
+      'api/schedules/add': { ok: true, detail: added, tasks: [task(), made] },
+    };
+    const h = await open({ replies });
+    await openNewTask(h);
+
+    expect(h.el('task-title').textContent).toBe('New task');
+    // The daemon's defaults: its zone, its routing agent, a new session — and the topic on screen.
+    expect((h.el('tp-tz') as HTMLInputElement).value).toBe('Asia/Shanghai');
+    expect((h.el('tp-agent') as HTMLSelectElement).value).toBe('cc');
+    expect(h.doc.querySelector('[data-tp-kind="agent"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect(h.doc.querySelector('[data-tp-session="new"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect((h.el('tp-target') as HTMLSelectElement).value).toBe('topic:' + A);
+    // This page's topics by title, and any other place by the id fleetherd channels prints.
+    expect(Array.from((h.el('tp-target') as HTMLSelectElement).options).map((o) => o.value)).toEqual(['topic:' + A, 'topic:' + B, 'other']);
+    expect(Array.from(h.doc.querySelectorAll('#tp-chans option')).map((o) => o.getAttribute('value'))).toEqual(['tg:-100/7']);
+    expect(h.el('task-view').querySelector('[data-tp-act="save"]')!.textContent).toBe('Add');
+
+    setField(h, 'tp-name', 'Nightly');
+    setField(h, 'tp-text', 'check the nightly build');
+    setField(h, 'tp-cron', '0 3 * * *');
+    setField(h, 'tp-tags', 'ci, Nightly');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the add request', () => h.calls.some((c) => c.path === 'api/schedules/add'));
+
+    expect(lastBody(h, 'api/schedules/add')).toEqual({
+      task: {
+        name: 'Nightly',
+        tz: 'Asia/Shanghai',
+        cron: '0 3 * * *',
+        prompt: 'check the nightly build',
+        session: 'new',
+        agent: 'cc',
+        target: { topic: A },
+        tags: ['ci', 'Nightly'],
+      },
+    });
+    // The answer is the new task's page, and the list behind it took the same answer.
+    await until('the task page', () => h.el('task-view').querySelector('#tp-form') === null);
+    expect(h.el('task-title').textContent).toBe('Nightly');
+    expect(h.el('task-note').className).toBe('ok');
+    expect(h.el('schedules-list').textContent).toContain('Nightly');
+  });
+
+  it('offers + on the Tasks tab only', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]) } });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#schedules-toggle');
+    expect(h.el('sched-new').hidden).toBe(false);
+    await h.click('#sched-tab-sessions');
+    expect(h.el('sched-new').hidden).toBe(true);
+    await h.click('#sched-tab-tasks');
+    await h.click('#sched-tab-reviews');
+    expect(h.el('sched-new').hidden).toBe(true);
+  });
+
+  it('a new bash task: the form turns to a command, its machine and its timeout, and keeps the refusal on screen', async () => {
+    const replies = {
+      'api/schedules': listReply([task()]),
+      'api/schedules/form': { ok: true, form: formContext() },
+      'api/schedules/add': { ok: false, error: '--cron: "0 3 * *" is not a 5-field cron expression (minute hour day month weekday)' },
+    };
+    const h = await open({ replies, status: { 'api/schedules/add': 400 } });
+    await openNewTask(h);
+
+    await h.click('#task-view [data-tp-kind="bash"]');
+    expect(h.el('tp-text-label').textContent).toBe('Command');
+    expect(shownField(h, 'tp-agent')).toBe(false);
+    expect(shownField(h, 'tp-model')).toBe(false);
+    expect(shownField(h, 'tp-host')).toBe(true);
+    expect(shownField(h, 'tp-timeout')).toBe(true);
+    expect((h.doc.querySelector('[data-tp-kinded="agent"]') as HTMLElement).hidden).toBe(true);
+    expect(h.el('tp-cwd-hint').textContent).toContain("the gateway’s machine");
+    choose(h, 'tp-host', 'box');
+    expect(h.el('tp-cwd-hint').textContent).toContain('on box');
+
+    setField(h, 'tp-text', 'df -h');
+    setField(h, 'tp-cron', '0 3 * *');
+    setField(h, 'tp-timeout', '90s');
+    setField(h, 'tp-cwd', '/srv');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the refusal', () => !h.el('task-note').hidden);
+
+    expect(lastBody(h, 'api/schedules/add')).toEqual({
+      task: { tz: 'Asia/Shanghai', cron: '0 3 * *', command: 'df -h', host: 'box', cwd: '/srv', timeoutMs: 90_000, target: { topic: A } },
+    });
+    // The daemon's sentence, and the form as it was typed.
+    expect(h.el('task-note').textContent).toContain('is not a 5-field cron expression');
+    expect(h.el('task-note').className).toBe('error');
+    expect((h.el('tp-cron') as HTMLInputElement).value).toBe('0 3 * *');
+    expect(h.el('task-title').textContent).toBe('New task');
+  });
+
+  it('a new task: Cancel closes it, and asks first only once something was typed', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), 'api/schedules/form': { ok: true, form: formContext() } }, confirm: false });
+    await openNewTask(h);
+    await h.click('#task-view [data-tp-act="cancel"]');
+    expect(h.el('task-page').hidden).toBe(true);
+    expect(h.confirms).toEqual([]);
+
+    await h.click('#sched-new');
+    await until('the new-task form', () => h.doc.getElementById('tp-form') !== null);
+    setField(h, 'tp-text', 'half a prompt');
+    await h.click('#task-view [data-tp-act="cancel"]');
+    expect(h.confirms).toEqual(['Discard this new task?']);
+    expect(h.el('task-page').hidden).toBe(false);
+  });
+
+  it('turns a prompt task into a command, on the machine its agent ran on', async () => {
+    const onBox = detail({ fields: { ...(detail().fields as object), agent: 'oc' } });
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(onBox) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect(h.el('task-view').textContent).toContain('keeps its id, tags and run history');
+
+    await h.click('#task-view [data-tp-kind="bash"]');
+    expect((h.el('tp-host') as HTMLSelectElement).value).toBe('box');
+    expect(shownField(h, 'tp-agent')).toBe(false);
+    expect(shownField(h, 'tp-cwd')).toBe(true);
+    setField(h, 'tp-text', 'make check');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    // What the new kind runs with is sent; the directory it keeps is left to the daemon.
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { command: 'make check', host: 'box' } });
+  });
+
+  it('turns a command into a prompt task, sending the agent and session it will run with', async () => {
+    const bash = detail({
+      task: task({ kind: 'bash', run: 'bash · 10m', detail: 'pg_dump app' }),
+      fields: { name: 'Backup', cron: '0 2 * * *', tz: 'Asia/Shanghai', command: 'pg_dump app', timeoutMs: 600_000, host: 'box', target: 'web:main/' + A },
+    });
+    const h = await open({ replies: { 'api/schedules': listReply([task({ kind: 'bash' })]), [TASK_URL]: pageReply(bash) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect((h.el('tp-host') as HTMLSelectElement).value).toBe('box');
+
+    await h.click('#task-view [data-tp-kind="agent"]');
+    await h.click('#task-view [data-tp-session="daily"]');
+    expect(shownField(h, 'tp-host')).toBe(false);
+    expect(shownField(h, 'tp-timeout')).toBe(false);
+    setField(h, 'tp-text', 'summarise the backup log');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({
+      id: 'a1b2c3',
+      edit: { prompt: 'summarise the backup log', session: 'daily', agent: 'cc' },
+    });
+  });
+
+  it('changes the session, and leaves what the new one does not keep to the daemon', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    await h.click('#task-view [data-tp-when="at"]');
+    setField(h, 'tp-at', '2026-11-20T09:30');
+
+    // Daily takes no one-shot: the switch goes, and the time goes back to the cron.
+    await h.click('#task-view [data-tp-session="daily"]');
+    expect((h.doc.querySelector('.tp-when') as HTMLElement).hidden).toBe(true);
+    expect(h.el('tp-at').hidden).toBe(true);
+    expect(h.el('tp-cron').hidden).toBe(false);
+
+    await h.click('#task-view [data-tp-session="fixed"]');
+    expect(shownField(h, 'tp-model')).toBe(false);
+    expect(shownField(h, 'tp-cwd')).toBe(false);
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    // The model and the directory are not sent: a fixed session keeps neither, and the daemon drops them.
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { session: 'fixed' } });
+  });
+
+  it('moves a task to another topic of the page, or to a place fleetherd channels lists, and edits its tags', async () => {
+    const h = await open({ replies: { 'api/schedules': listReply([task({ tags: ['ci'] })]), [TASK_URL]: pageReply(detail({ task: task({ tags: ['ci'] }) })) } });
+    await h.emit(sync(A, [], [A, B]));
+    await h.click('#schedules-toggle');
+    (h.doc.querySelector('.sched-item') as HTMLElement).click();
+    await until("the task's page", () => h.el('task-view').querySelector('.tp-acts') !== null);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect((h.el('tp-tags') as HTMLInputElement).value).toBe('ci');
+
+    choose(h, 'tp-target', 'topic:' + B);
+    setField(h, 'tp-tags', 'ci, ops');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { target: { topic: B }, tags: ['ci', 'ops'] } });
+
+    // Another chat: the id field appears, and an empty one is said rather than sent.
+    const before = h.calls.length;
+    choose(h, 'tp-target', 'other');
+    expect(h.el('tp-target-other').hidden).toBe(false);
+    await h.click('#task-view [data-tp-act="save"]');
+    expect(h.el('task-note').textContent).toContain('Say where it posts');
+    expect(h.calls.length).toBe(before);
+    setField(h, 'tp-target-other', 'tg:-100/7');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the second edit', () => h.calls.filter((c) => c.path === 'api/schedules/edit').length === 2);
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { target: { channel: 'tg:-100/7' }, tags: ['ci', 'ops'] } });
+  });
+
+  it('a task posting elsewhere starts on Another chat with its id, and is not moved by saving something else', async () => {
+    const elsewhere = task({ target: 'tg:-100/7', targetTopic: undefined });
+    const away = detail({ task: elsewhere, fields: { ...(detail().fields as object), target: 'tg:-100/7' } });
+    const h = await open({ replies: { 'api/schedules': listReply([elsewhere]), [TASK_URL]: pageReply(away) } });
+    await openTaskPage(h);
+    await h.click('#task-view [data-tp-act="edit"]');
+    expect((h.el('tp-target') as HTMLSelectElement).value).toBe('other');
+    expect((h.el('tp-target-other') as HTMLInputElement).value).toBe('tg:-100/7');
+    setField(h, 'tp-name', 'Renamed');
+    await h.click('#task-view [data-tp-act="save"]');
+    await until('the edit request', () => h.calls.some((c) => c.path === 'api/schedules/edit'));
+    expect(lastBody(h, 'api/schedules/edit')).toEqual({ id: 'a1b2c3', edit: { name: 'Renamed' } });
   });
 
   it('goes when its task goes, and reads the detail again when a run ends', async () => {
@@ -10930,7 +11190,7 @@ describe('webui page: the task list filter', () => {
   });
 
   /** A task's page, for the tag editor on it: the tags shown are the list row's (taskPageFollow). */
-  const tagPage = { ok: true, detail: { task: task(), fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'x', agent: 'cc', session: 'fixed' }, editable: ['name'], agents: ['cc'], runs: [] } };
+  const tagPage = { ok: true, detail: { task: task(), fields: { name: 'Morning CI', cron: '0 8 * * *', tz: 'Asia/Shanghai', prompt: 'x', agent: 'cc', session: 'fixed' }, agents: ['cc'], runs: [] } };
   const openTask = async (h: Harness): Promise<HTMLInputElement> => {
     (h.doc.querySelector('.sched-item') as HTMLElement).click();
     await until('the tag field', () => h.doc.querySelector('#task-view [data-tag-input]') !== null);
