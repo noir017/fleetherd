@@ -870,6 +870,115 @@ export interface FilesPanel {
 }
 
 /**
+ * Which instruction file a read or a write means. Never a free path: `global` names one of the
+ * gateway's own files by its name (`common.md`, `claude.md`, …), and `agent` names an agent and a
+ * path the daemon checks against the files that agent's harness reads at that moment.
+ */
+export type InstructionsTarget = { scope: 'global'; name: string } | { scope: 'agent'; agent: string; path: string };
+
+/** One of the gateway's instruction files, as the settings page lists it. */
+export interface InstructionsGlobalFile {
+  /** The file's name in `<configDir>/instructions/`. */
+  name: string;
+  /** `common` for every agent, or the harness layer it is for. */
+  layer: string;
+  exists: boolean;
+  size?: number;
+  /** The configured agents that read this file. */
+  agents: string[];
+}
+
+/** One configured agent, as the settings page lists it under "each agent's own". */
+export interface InstructionsAgent {
+  id: string;
+  harness: string;
+  /** `local`, or the remote host it runs on. */
+  host: string;
+  /** The harness's user-level file, `~`-relative, when it has one. */
+  file?: string;
+  /**
+   * What its harness reads of its own besides the delivered file — rules, references, a config's
+   * list — in one line; absent for a harness with nothing known (daemon/instruction-imports.ts).
+   */
+  own?: string;
+}
+
+export interface InstructionsPanelList {
+  /** `<configDir>/instructions` on the gateway. */
+  dir: string;
+  /** Whether that directory exists — the feature's own switch (instructions.ts). */
+  on: boolean;
+  global: InstructionsGlobalFile[];
+  agents: InstructionsAgent[];
+}
+
+/** One of an agent's own instruction files on its machine. */
+export interface InstructionsRef {
+  /** Absolute on the agent's machine — what a read or a write names. */
+  path: string;
+  /** The same path with the agent's home as `~`. */
+  shown: string;
+  exists: boolean;
+  /** How far it is indented under what led to it: 1 at the top, one more per reference followed. */
+  depth: number;
+  /**
+   * How the harness gets to it: a file it reads by itself (`file`), one in its rules directory
+   * (`rule`), a reference in another file (`reference`), or an entry of its config (`listed`).
+   */
+  kind: 'file' | 'rule' | 'reference' | 'listed';
+  /** For a reference, the file that holds it, `~`-relative. */
+  via?: string;
+  /** Why it is listed and not editable here (the gateway's own copy, a directory). */
+  note?: string;
+  editable: boolean;
+}
+
+export type InstructionsRefsResult =
+  | {
+      ok: true;
+      agent: string;
+      host: string;
+      /** The delivered user-level file on that machine, with the agent's home as `~`. */
+      root: string;
+      /** The gateway's delivered copy (`managed`), the operator's own file, or nothing there. */
+      rootState: 'managed' | 'own' | 'missing';
+      /** What this harness's own instructions are, in one line. */
+      summary: string;
+      refs: InstructionsRef[];
+    }
+  | FilesPanelError;
+
+/** A read: the file window's answer, plus `missing` for a file a save would create. */
+export type InstructionsReadResult = ({ ok: true; missing?: boolean } & FilesPanelFile) | FilesPanelError;
+
+/** Where a saved global file was placed, one line per machine and file (instructions-panel.ts). */
+export interface InstructionsDelivery {
+  host: string;
+  agents: string[];
+  link?: string;
+  outcome: string;
+  detail?: string;
+}
+
+export type InstructionsWriteResult =
+  | { ok: true; mtimeMs: number; size: number; sha256: string; delivery?: InstructionsDelivery[] }
+  | FilesPanelConflict
+  | FilesPanelError;
+
+/**
+ * What `useInstructionsPanel` hands a platform: the operator's instructions — the gateway's files
+ * every agent reads, and the files each agent's harness references on its own machine — to list,
+ * read and write. Paths are the daemon's to decide (`daemon/instructions-panel.ts`); the page names
+ * a target, never a path of its choosing.
+ */
+export interface InstructionsPanel {
+  list(): Promise<InstructionsPanelList>;
+  refs(agent: string): Promise<InstructionsRefsResult>;
+  read(target: InstructionsTarget, opts?: { preview?: boolean }): Promise<InstructionsReadResult>;
+  write(target: InstructionsTarget, text: string, expect: FilesPanelExpect): Promise<InstructionsWriteResult>;
+}
+
+/**
  * Platform capability interface. One layer above Satori so the core classes depend only on
  * capabilities, not concrete platforms; missing capabilities degrade gracefully in the
  * implementation (see capabilities).
@@ -1119,6 +1228,16 @@ export interface PlatformAdapter {
    * the page's login secret is the only thing in front of it, exactly as for the terminal.
    */
   useFilesPanel?(panel: FilesPanel): void;
+
+  /**
+   * Hand the platform the operator's instructions, for the web UI's settings page: the gateway's
+   * `instructions/` files and the files each agent's harness references on its machine.
+   *
+   * Web-UI-only for the reason the panels above are, and off unless the operator turned
+   * `platforms.<id>.instructions.enabled` on: with it, the page's login secret guards the standing
+   * instructions of every agent on every platform, not one conversation (AGENTS.md, invariant 10).
+   */
+  useInstructionsPanel?(panel: InstructionsPanel): void;
 
   /**
    * Hand the platform a way to end the agent process behind a conversation that is idle — what the

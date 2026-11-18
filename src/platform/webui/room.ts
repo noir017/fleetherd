@@ -79,6 +79,7 @@ import type {
   FilesPanelSearchResult,
   FilesPanelWriteResult,
   HistoryPanel,
+  InstructionsPanel,
   HistoryPanelHit,
   HistoryPanelPage,
   HistoryPanelRead,
@@ -497,6 +498,8 @@ export class WebRoom {
   private historyPanel: HistoryPanel | null = null;
   /** The files of each topic's machine, for the file window — see `useFilesPanel`. */
   private filesPanel: FilesPanel | null = null;
+  /** The operator's instructions, for the settings page — see `useInstructionsPanel`. */
+  private instructionsPanel: InstructionsPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise, but broader: ends a topic's agent and every agent under it. See `killTopic`. */
@@ -1146,6 +1149,20 @@ export class WebRoom {
   async filesSearch(topic: string, query: string): Promise<FilesPanelSearchResult | { ok: false; error: string }> {
     if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
     return this.filesPanel.search(this.conversation(topic), query);
+  }
+
+  /**
+   * Accept the daemon's instruction editor (`daemon/instructions-panel.ts`). Not bound to a topic:
+   * the files are the gateway's and each agent's, the same whichever topic the page has open, and
+   * every path is the daemon's to decide.
+   */
+  useInstructionsPanel(panel: InstructionsPanel): void {
+    this.instructionsPanel = panel;
+  }
+
+  /** The instruction editor, or null when the daemon did not hand one over (turned off). */
+  get instructions(): InstructionsPanel | null {
+    return this.instructionsPanel;
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */

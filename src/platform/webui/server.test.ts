@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import type {
   FilesPanel,
+  InstructionsPanel,
   ReviewPanelEntry,
   SchedulePanel,
   SchedulePanelEdit,
@@ -2892,6 +2893,105 @@ describe('webui server: the file window', () => {
     const on = await boot({ files: { enabled: true, roots: [] } });
     const onPage = await fetch(`${on.base}/`).then((r) => r.text());
     expect(onPage).toContain('var FILES_OK = true;');
+  });
+});
+
+describe('webui server: the instruction editor', () => {
+  const post = (base: string, cookie: string, route: string, body: unknown) =>
+    fetch(`${base}${route}`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
+
+  /** The routes' side only: the daemon's own panel is tested in daemon/instructions-panel.test.ts. */
+  function fakePanel(): { panel: InstructionsPanel; seen: string[] } {
+    const seen: string[] = [];
+    const panel: InstructionsPanel = {
+      async list() {
+        seen.push('list');
+        return { dir: '/c/instructions', on: true, global: [{ name: 'common.md', layer: 'common', exists: true, size: 3, agents: ['cc'] }], agents: [] };
+      },
+      async refs(agent) {
+        seen.push(`refs ${agent}`);
+        if (agent !== 'cc') return { ok: false as const, error: `there is no agent "${agent}" in the config` };
+        return { ok: true as const, agent, host: 'local', root: '~/.claude/CLAUDE.md', rootState: 'managed' as const, summary: 'refs', refs: [] };
+      },
+      async read(target, o) {
+        seen.push(`read ${JSON.stringify(target)} ${o?.preview === true}`);
+        return { ok: true as const, path: '/c/instructions/common.md', dir: '/c/instructions', name: 'common.md', size: 3, mtimeMs: 5, kind: 'text' as const, text: 'abc' };
+      },
+      async write(target, text, expect) {
+        seen.push(`write ${JSON.stringify(target)} ${text} ${JSON.stringify(expect)}`);
+        if (target.scope === 'agent' && target.path.endsWith('stale.md')) {
+          return { ok: false as const, conflict: true as const, exists: true, size: 9, mtimeMs: 10, error: 'changed' };
+        }
+        return { ok: true as const, mtimeMs: 6, size: text.length, sha256: 'b'.repeat(64), delivery: [{ host: 'local', agents: ['cc'], outcome: 'linked' }] };
+      },
+    };
+    return { panel, seen };
+  }
+
+  it('answers 404 on every route when the feature is off, panel or not', async () => {
+    const { base, room } = await boot();
+    // Handed a panel anyway: the switch is the server's to read too, not only the daemon's.
+    room.useInstructionsPanel(fakePanel().panel);
+    const cookie = await signIn(base);
+    for (const route of ['/api/instructions', '/api/instructions/refs?agent=cc', '/api/instructions/read?scope=global&name=common.md']) {
+      expect((await fetch(`${base}${route}`, { headers: { cookie } })).status, route).toBe(404);
+    }
+    expect((await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'common.md', text: 'x' })).status).toBe(404);
+    const page = await fetch(`${base}/`).then((r) => r.text());
+    expect(page).toContain('var INSTR_OK = false;');
+  });
+
+  it('answers 404 when it is on but the daemon handed over no panel', async () => {
+    const { base } = await boot({ instructions: { enabled: true } });
+    const cookie = await signIn(base);
+    expect((await fetch(`${base}/api/instructions`, { headers: { cookie } })).status).toBe(404);
+  });
+
+  it('lists, reads and writes through the panel, behind the session', async () => {
+    const { base, room } = await boot({ instructions: { enabled: true } });
+    const p = fakePanel();
+    room.useInstructionsPanel(p.panel);
+    expect((await fetch(`${base}/api/instructions`)).status).toBe(401);
+    const cookie = await signIn(base);
+    expect(await fetch(`${base}/`, { headers: { cookie } }).then((r) => r.text())).toContain('var INSTR_OK = true;');
+
+    expect(await (await fetch(`${base}/api/instructions`, { headers: { cookie } })).json()).toMatchObject({ on: true, global: [{ name: 'common.md' }] });
+    const refs = await fetch(`${base}/api/instructions/refs?agent=nope`, { headers: { cookie } });
+    expect(refs.status).toBe(400);
+    expect(await refs.json()).toMatchObject({ error: expect.stringContaining('no agent') });
+
+    const read = await fetch(`${base}/api/instructions/read?scope=agent&agent=cc&path=${encodeURIComponent('/h/r.md')}&preview=1`, { headers: { cookie } });
+    expect(read.status).toBe(200);
+    expect(p.seen.at(-1)).toBe('read {"scope":"agent","agent":"cc","path":"/h/r.md"} true');
+
+    const save = await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'common.md', text: 'hi', mtimeMs: 5, size: 3, sha256: 'a'.repeat(64) });
+    expect(save.status).toBe(200);
+    expect(await save.json()).toMatchObject({ ok: true, delivery: [{ host: 'local', outcome: 'linked' }] });
+    expect(p.seen.at(-1)).toBe(`write {"scope":"global","name":"common.md"} hi {"mtimeMs":5,"size":3,"sha256":"${'a'.repeat(64)}"}`);
+
+    // A file not written yet is created only where nothing is: `missing` reaches the panel alone.
+    await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'claude.md', text: 'x', missing: true, mtimeMs: 0 });
+    expect(p.seen.at(-1)).toBe('write {"scope":"global","name":"claude.md"} x {"missing":true}');
+
+    const stale = await post(base, cookie, '/api/instructions/write', { scope: 'agent', agent: 'cc', path: '/h/stale.md', text: 'x', mtimeMs: 1, size: 1 });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ conflict: true, exists: true });
+  });
+
+  it('refuses a malformed target before the panel sees it', async () => {
+    const { base, room } = await boot({ instructions: { enabled: true } });
+    const p = fakePanel();
+    room.useInstructionsPanel(p.panel);
+    const cookie = await signIn(base);
+    const get = (q: string) => fetch(`${base}/api/instructions/read?${q}`, { headers: { cookie } });
+    expect((await get('scope=disk&path=/etc/passwd')).status).toBe(400);
+    expect((await get('scope=agent&agent=cc')).status).toBe(400);
+    expect((await get('scope=global')).status).toBe(400);
+    // .strict() and the closed union: a global save cannot carry a path, an agent save must.
+    expect((await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'common.md', path: '/etc/x', text: 'x' })).status).toBe(400);
+    expect((await post(base, cookie, '/api/instructions/write', { scope: 'agent', agent: 'cc', text: 'x' })).status).toBe(400);
+    expect((await post(base, cookie, '/api/instructions/write', { scope: 'file', path: '/etc/x', text: 'x' })).status).toBe(400);
+    expect(p.seen.filter((s) => s.startsWith('read') || s.startsWith('write'))).toEqual([]);
   });
 });
 

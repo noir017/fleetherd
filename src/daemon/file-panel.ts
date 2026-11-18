@@ -311,37 +311,52 @@ async function panelRead(
   try {
     const ws = need(env, ref);
     const at = await locate(env, ws, input);
-    const st = await ws.stat(at.abs);
-    if (!st.exists) throw new FilesRefusal(`${where(at)} does not exist`);
-    if (st.dir) throw new FilesRefusal(`${where(at)} is a directory`);
-    const base: Omit<FilesPanelFile, 'kind'> = {
-      path: at.abs,
-      dir: sep(ws).dirname(at.abs),
-      ...(at.rel !== undefined ? { rel: at.rel } : {}),
-      name: sep(ws).basename(at.abs),
-      size: st.size ?? 0,
-      mtimeMs: st.mtimeMs ?? 0,
-    };
-    const image = IMAGE_TYPES[extOf(base.name)];
-    if (image) return await readImage(ws, at, base, image);
-    if (base.size > MAX_EDIT_BYTES) {
-      return {
-        ok: true,
-        ...base,
-        kind: 'big',
-        note: `Too large to edit here (${byteText(base.size)}, over ${byteText(MAX_EDIT_BYTES)}). It can still be read and changed on that machine.`,
-      };
-    }
-    const bytes = await ws.readFile(at.abs, MAX_EDIT_BYTES);
-    return decodeRead(base, bytes, o.preview === true);
+    return await readForEditor(ws, at.abs, { rel: at.rel, preview: o.preview, shown: where(at) });
   } catch (e) {
     return fail(e);
   }
 }
 
+/**
+ * One file as the editor gets it: text with its version, or what it is instead (image, binary, too
+ * big). The read half of the window, after the path has been allowed — exported for the other caller
+ * that decides its own paths (instructions-panel.ts) and must hand the page the same answer.
+ * `shown` is how a refusal names the file. Throws for a missing file or a directory.
+ */
+export async function readForEditor(
+  ws: Workspace,
+  abs: string,
+  o: { rel?: string; preview?: boolean; shown?: string } = {}
+): Promise<FilesPanelReadResult> {
+  const shown = o.shown ?? abs;
+  const st = await ws.stat(abs);
+  if (!st.exists) throw new FilesRefusal(`${shown} does not exist`);
+  if (st.dir) throw new FilesRefusal(`${shown} is a directory`);
+  const base: Omit<FilesPanelFile, 'kind'> = {
+    path: abs,
+    dir: sep(ws).dirname(abs),
+    ...(o.rel !== undefined ? { rel: o.rel } : {}),
+    name: sep(ws).basename(abs),
+    size: st.size ?? 0,
+    mtimeMs: st.mtimeMs ?? 0,
+  };
+  const image = IMAGE_TYPES[extOf(base.name)];
+  if (image) return await readImage(ws, abs, base, image);
+  if (base.size > MAX_EDIT_BYTES) {
+    return {
+      ok: true,
+      ...base,
+      kind: 'big',
+      note: `Too large to edit here (${byteText(base.size)}, over ${byteText(MAX_EDIT_BYTES)}). It can still be read and changed on that machine.`,
+    };
+  }
+  const bytes = await ws.readFile(abs, MAX_EDIT_BYTES);
+  return decodeRead(base, bytes, o.preview === true);
+}
+
 async function readImage(
   ws: Workspace,
-  at: Located,
+  abs: string,
   base: Omit<FilesPanelFile, 'kind'>,
   mime: string
 ): Promise<FilesPanelReadResult> {
@@ -353,7 +368,7 @@ async function readImage(
       note: `Too large to preview (${byteText(base.size)}, over ${byteText(MAX_IMAGE_BYTES)}).`,
     };
   }
-  const bytes = await ws.readFile(at.abs, MAX_IMAGE_BYTES);
+  const bytes = await ws.readFile(abs, MAX_IMAGE_BYTES);
   return { ok: true, ...base, kind: 'image', dataUrl: `data:${mime};base64,${bytes.toString('base64')}` };
 }
 

@@ -385,6 +385,22 @@ export const WebuiConfigSchema = z.object({
         .default([]),
     })
     .default({}),
+  /**
+   * The instruction editor on the settings page: the gateway's `instructions/` files every agent
+   * reads (common.md and one per harness), and the files each agent's harness references on its own
+   * machine (Claude Code's `@path`).
+   *
+   * Off by default, and the fifth security decision here. With it on, the login secret guards what
+   * every agent — on every platform and every host — reads before every conversation: a change made
+   * here is in force for sessions nobody on this page is watching, which a message to one agent never
+   * is. Reach is fixed by the daemon, not the page: the gateway's own files by name, and on an agent's
+   * machine only the files its harness references at that moment (daemon/instructions-panel.ts).
+   */
+  instructions: z
+    .object({
+      enabled: z.boolean().default(false),
+    })
+    .default({}),
   ...common,
 });
 

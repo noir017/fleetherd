@@ -1800,6 +1800,34 @@ Every one answers 404 when the feature is off, and the page is told at render ti
 so a page older than the config has no button to press. A successful write is a log line naming
 the operator, the machine and the file.
 
+## The instruction editor
+
+Off by default (`platforms.<id>.instructions.enabled`). Turned on, the settings page ends with an
+**Instructions** section: the gateway's own files (`common.md` and one per harness layer that a
+configured agent reads, `daemon/instructions.ts`), then each agent whose harness reads files of its
+own. A row opens **the file window** in a second mode — the same editor, dirty mark, conflict
+dialog and save — whose tree is a fixed list instead of a directory, and which hides what makes no
+sense for one (new, rename, delete, search, breadcrumbs). `fileSrc` is that mode; `filesGet` and
+`filesPost` hand its requests to `instrGet`/`instrPost`, which is the whole of its reach into the
+window's code. Escape closes the editor alone, over the settings page it came from, and closing it
+asks the list again so a saved file shows as written.
+
+The page never sends a path of its own. It names a target: a global file by name, or an agent and
+a path it got from that agent's list — and the daemon (`daemon/instructions-panel.ts`) walks the
+harness's own rules again on that machine for every read and write and refuses a path not among
+them now. The window's "paths" are ids into the list (`g:<name>`, `a:<path>`).
+
+Saving a global file places the composed text at once on every machine an agent that reads it is
+configured for, and the answer says where it landed — a host that does not answer gets it at the
+next agent start there, as it always did; a save that would put any agent over the 32 KiB cap is
+refused before it is written. An agent's own file is written where it is, through
+`Workspace.writeFile` with the version check; the gateway keeps no copy.
+
+Routes: `GET /api/instructions` (the list), `GET /api/instructions/refs?agent=` (one agent's files,
+which reads its machine), `GET /api/instructions/read`, `POST /api/instructions/write`. All 404
+when the feature is off, whether or not a panel was handed over, and the page is told at render
+time (`INSTR_OK`).
+
 ## Security
 
 New trust boundary, so it is spelled out. The port binds every interface by default and what
@@ -1870,6 +1898,12 @@ is behind it is an agent with full tool access.
    statement `docs/web-ui.md` makes to the operator, and the reason this is not sold as a sandbox.
    Every save is version-checked and every write is logged. Do not add a write route that skips
    that check, or a page-side path rule standing in for the daemon's.
+11. **The instruction editor writes what every agent reads, and is off unless asked for.**
+   `platforms.<id>.instructions.enabled` puts the login secret in front of the standing
+   instructions of every agent on every platform and host — a change that is in force for sessions
+   nobody on this page is watching. It reaches only the gateway's own files by name, and on an
+   agent's machine only the files that agent's harness reads at that moment, re-derived by the
+   daemon for every request (AGENTS.md, invariant 10). Do not add a route that takes a free path.
 
 **Not solved here:** TLS (put a reverse proxy in front), and DNS rebinding — a `Host`
 allowlist would break the reverse-proxy deployment this is expected to run behind, so the

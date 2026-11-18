@@ -287,16 +287,22 @@ export class RemoteHosts {
    * no round trip on the next spawn; a new remote daemon (an upgrade, a restart) places it again.
    * What is not settled — a real file in the way, a failure — is tried again at the next spawn, and
    * warned about once. Best-effort like the skill.
+   *
+   * Answers what it came to, for the web UI's editor, which places the text the moment it is saved
+   * and says where it landed (instructions-panel.ts): undefined when nothing is placed at all (no
+   * file for this harness, or placing turned off), `current` for a text already settled there.
    */
-  async placeInstructions(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<void> {
-    if (envOf('NO_SKILL_LINK')) return;
+  async placeInstructions(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<InstructionsResult | undefined> {
+    if (envOf('NO_SKILL_LINK')) return undefined;
     const where = instructionsHome(def.harness, home, def.command);
-    if (!where) return;
+    if (!where) return undefined;
     const key = `${host.id}@${w.instance}@${where.file}`;
     try {
       const composed = composeInstructions(instructionsDir(), where.name);
       const state = composed.kind === 'text' ? createHash('sha256').update(composed.text).digest('hex') : composed.kind;
-      if (this.instructionsPlaced.get(key) === state) return;
+      if (this.instructionsPlaced.get(key) === state) {
+        return { link: where.file, outcome: composed.kind === 'text' ? 'current' : composed.kind === 'none' ? 'absent' : 'too-big' };
+      }
       const owned = ownedDir(home);
       let r: InstructionsResult;
       if (composed.kind === 'none') {
@@ -310,8 +316,11 @@ export class RemoteHosts {
       }
       reportInstructions(r, host.id);
       if (SETTLED.has(r.outcome)) this.instructionsPlaced.set(key, state);
+      return r;
     } catch (e) {
-      reportInstructions({ link: where.file, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) }, host.id);
+      const r: InstructionsResult = { link: where.file, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) };
+      reportInstructions(r, host.id);
+      return r;
     }
   }
 

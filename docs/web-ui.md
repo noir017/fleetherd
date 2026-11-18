@@ -465,6 +465,10 @@ platforms:
         - /srv/shared
 ```
 
+The settings page can also edit the instructions every agent reads — the gateway's own and each
+agent's on its machine — in this same editor, with its own switch, `instructions.enabled`; see
+[Your instructions](instructions.md#editing-them-in-the-web-ui).
+
 ## Exposing it
 
 > [!WARNING]

@@ -437,6 +437,38 @@ export const FilesRemoveRequestSchema = z
 export type FilesRemoveRequest = z.infer<typeof FilesRemoveRequestSchema>;
 
 /**
+ * One save of an instruction file (daemon/instructions-panel.ts). The target is a closed union —
+ * a global file by name, or an agent and a path the daemon checks against what that agent's
+ * harness references now — and the version fields are the file window's, for the same check.
+ */
+const InstructionsVersion = {
+  /** Characters, not bytes; the daemon refuses one over 1 MiB of UTF-8. */
+  text: z.string().max(1_100_000),
+  mtimeMs: z.number().int().min(0).optional(),
+  size: z.number().int().min(0).optional(),
+  sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, 'not a sha256')
+    .optional(),
+  missing: z.boolean().optional(),
+  force: z.boolean().optional(),
+};
+export const InstructionsWriteRequestSchema = z.discriminatedUnion('scope', [
+  z
+    .object({ scope: z.literal('global'), name: z.string().min(1).max(64), ...InstructionsVersion })
+    .strict(),
+  z
+    .object({
+      scope: z.literal('agent'),
+      agent: z.string().min(1).max(128),
+      path: z.string().min(1).max(4096),
+      ...InstructionsVersion,
+    })
+    .strict(),
+]);
+export type InstructionsWriteRequest = z.infer<typeof InstructionsWriteRequestSchema>;
+
+/**
  * Validate one inbound body against a schema.
  *
  * Returns a result rather than throwing, and names the offending path, so the server answers

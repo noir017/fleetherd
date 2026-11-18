@@ -33,6 +33,20 @@ All notable changes to this project are documented here. The format is based on
   the new mode at once, and a pod's agent is written to `podPermissions`. Unset keeps what every
   agent had: everything approved, the harness's own mode untouched. agy's modes are not used: they
   could not be measured, and its `default` wrote files without asking when last measured.
+- **The web UI's settings page edits the instructions agents read.** The files in
+  `<configDir>/instructions/` had to be edited on the gateway's disk, and each agent's own rules on
+  the machine it runs on — over ssh, by hand, with nothing to say whether the edit had reached the
+  hosts. With `platforms.<id>.instructions.enabled`, the settings page ends with an Instructions
+  section: `common.md` and each harness's file open in the file window's editor, and a save places
+  the text on every machine at once and says where it went (a host that does not answer gets it at
+  its next agent start, as before), refusing a save that would put an agent over the 32 KiB cap.
+  Below them, each agent's own files on its machine — Claude Code's and CodeBuddy's `@path`
+  references and rules directories, Antigravity's standalone files, rules and `@[label](path)`
+  includes, the files OpenCode's `instructions` lists, Codex's `AGENTS.override.md` — found by each
+  harness's own rules, measured rather than read from docs, and written where they are. Off by
+  default: with it on, the web UI's login can change what every agent reads on every platform. The
+  page never names a path; the daemon works out what each harness reads again for every read and
+  write, every save is version-checked like the file window's, and every write is logged.
 
 ### Changed
 

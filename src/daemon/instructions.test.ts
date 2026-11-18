@@ -246,7 +246,11 @@ describe('RemoteHosts.placeInstructions', () => {
       '/home/u/.fleetherd/instructions'
     );
 
-    await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
+    // What the editor reports after a save (instructions-panel.ts): the settled text is "current".
+    expect(await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome)).toEqual({
+      link: '/home/u/.codex/AGENTS.md',
+      outcome: 'current',
+    });
     expect(host.writeFile).toHaveBeenCalledTimes(1);
 
     fs.writeFileSync(path.join(dir, 'codex.md'), 'changed\n');
@@ -268,8 +272,8 @@ describe('RemoteHosts.placeInstructions', () => {
     const hosts = new RemoteHosts();
     const host = fakeHost();
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
-    await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
+    expect(await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome)).toMatchObject({ outcome: 'removed' });
+    expect(await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome)).toMatchObject({ outcome: 'absent' });
     expect(host.removeLink).toHaveBeenCalledTimes(1);
     expect(host.removeLink).toHaveBeenCalledWith('/home/u/.codex/AGENTS.md', '/home/u/.fleetherd/instructions');
     expect(host.writeFile).not.toHaveBeenCalled();
