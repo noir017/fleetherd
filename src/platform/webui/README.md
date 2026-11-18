@@ -751,9 +751,10 @@ that is not in a repository is answered as `not-git` with a sentence, not as an 
 **What an empty pane says.** A comparison with nothing in it writes which comparison and what it
 was compared against in the middle of the diff pane, with a button that switches to `commits`; a
 `not-git` answer does the same with the daemon's sentence instead of the red note (an `error`
-still gets the note). A list with files but nothing selected opens its first file on a wide
-window, and asks the reader to pick one under 640px, where the two columns are stacked and an
-opened diff would push the list out of sight.
+still gets the note), and a turn's own changes say only that the turn changed nothing. A
+comparison list with files but nothing selected opens its first file on a wide window; the
+turn-changes view and a phone's list ask the reader to pick one (under 640px the two columns are
+stacked, and an opened diff would push the list out of sight).
 
 **Data.** [`useGitPanel`](../adapter.ts) hands the room `status`, `file` and `branches`;
 [`daemon/git-panel.ts`](../../daemon/git-panel.ts) implements them over

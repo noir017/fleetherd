@@ -314,8 +314,9 @@ a remark about today's file. The base picker belongs to the three comparisons an
 An empty comparison says which one is empty and what it was compared against, and offers **See
 commits** rather than leaving the right half of the window blank; a directory that is not inside a
 repository says so in the middle of the window instead of reading as a failed request. On a wide
-window the first file of a list opens by itself; a phone keeps the list and asks you to pick one,
-because its two columns are stacked there and an opened file would push the list out of sight.
+window the first file of a comparison opens by itself; a turn's own changes and a phone's list wait
+to be picked, because a phone's two columns are stacked there and an opened file would push the
+list out of sight.
 
 Clicking a file shows its diff — one column or two, from the button in the bar; a phone opens on one
 column. Selecting lines in the diff offers **Comment**; the file, the line range, which side of the

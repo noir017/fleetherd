@@ -9696,6 +9696,8 @@ const SCRIPT = `
    * gets somewhere from there.
    */
   function gitBlank(title, sub, act, actLabel){
+    // Nothing to lay out: the button would switch a diff that is not on screen.
+    gitLayoutBtn.hidden = true;
     gitDiffEl.innerHTML = '<div class="git-blank"><div class="gb-title">'+text(title)+'</div>'
       +(sub ? '<div class="gb-sub">'+text(sub)+'</div>' : '')
       +(act ? '<button type="button" data-gact="'+text(act)+'">'+text(actLabel || act)+'</button>' : '')
@@ -9704,6 +9706,12 @@ const SCRIPT = `
 
   /** Which comparison came back empty, said in its own terms — the base is the answer's, not a guess. */
   function gitPaintNoChanges(){
+    if(gitCustom()){
+      // One turn, one comparison, fixed by the URLs the window was opened with: there is no other
+      // comparison to name and none to switch to, so the sentence stands alone.
+      gitBlank('No changes in this turn.', '');
+      return;
+    }
     var base = gitState.base || 'the base branch';
     if(gitState.mode === 'working'){
       gitBlank('No changes.', 'The working tree has nothing that differs from HEAD, untracked files included.',
@@ -9722,12 +9730,19 @@ const SCRIPT = `
    * to stay blank until the reader guessed that the rows were clickable. A phone keeps the list:
    * the two columns are stacked there, so opening a file would push the list out of sight, and one
    * tap is cheap.
+   *
+   * Every list that arrives with nothing selected repaints the pane, whether or not it opens a
+   * file: a directory an agent just turned into a repository, or a comparison that emptied and
+   * filled again, must not keep the sentence of the answer before it.
    */
   function gitAutoOpen(list){
-    if(!gitState.pick || gitState.path || !list.length) return;
+    if(gitState.path || !list.length) return;
+    // Only the first list of a view opens a file by itself; a later refresh keeps the reader's
+    // choice — and once a file has been picked, the pane holds its diff and is left alone.
+    var open = gitState.pick && !narrow();
     gitState.pick = false;
-    if(narrow()){ gitBlank('Select a file to see its diff.'); return; }
-    gitOpenFile(list[0].path);
+    if(open) gitOpenFile(list[0].path);
+    else gitBlank('Select a file to see its diff.');
   }
 
   // ── Commits ────────────────────────────────────────────────────────────────
@@ -9746,8 +9761,10 @@ const SCRIPT = `
     if(!gitState.commits.length){ gitFilesEl.innerHTML = ''; return; }
     var html='';
     for(var i=0;i<gitState.commits.length;i++) html += gitCommitRow(gitState.commits[i]);
-    // The next page is asked for by skip, not by a cursor: the daemon answers what the list has
-    // already shown, so a commit landing while the window is open cannot shift the page under it.
+    // The next page is asked for by skip, which the contract defines as the commits already shown.
+    // A commit landing at the top between two pages therefore shifts the window by one and the
+    // next page repeats a row; a cursor would not, but the contract has none, a refresh clears the
+    // repetition, and the list never pages itself.
     if(gitState.commitMore) html += '<button type="button" class="git-more" data-gmore>Load more</button>';
     gitFilesEl.innerHTML = html;
   }
@@ -9794,9 +9811,17 @@ const SCRIPT = `
       if(moreBtn) moreBtn.disabled = false;
       var d = res.d;
       if(!res.ok || !d || !d.ok){
-        // A page that failed keeps the list it already had: the rows are still true, and a reader
-        // who asked for more has not lost what was on screen.
-        if(more){ gitNote((d && (d.text || d.error)) || 'Could not read more commits.', true); return; }
+        // Anything but "this is not a repository" keeps what is on screen: the rows it has are
+        // still true, and a reader who asked for more — or one looking at a commit — has not lost
+        // it. A turn's own refresh failing must not throw the commit away under them.
+        if(!(d && d.reason === 'not-git')){
+          gitNote((d && (d.text || d.error))
+            || (more ? 'Could not read more commits.' : 'Could not read the commits.'), true);
+          // The first page failing leaves "Loading…" in the column; there is no list to keep.
+          if(!gitState.commit) gitPaintCommits();
+          return;
+        }
+        gitState.notGit = true;
         gitState.commits = [];
         gitState.commitMore = false;
         gitState.repo = null;
@@ -9804,16 +9829,14 @@ const SCRIPT = `
         gitBranchEl.textContent = '';
         gitState.commit = null;
         gitState.commitFiles = [];
+        gitState.fileSeq += 1;
+        gitState.loading = false;
+        gitClearSelection();
+        gitHideComment();
+        gitDestroyView();
         gitPaintCommits();
-        if(d && d.reason === 'not-git'){
-          gitState.notGit = true;
-          gitNote('', false);
-          gitBlank('Not a git repository.', d.text || 'This directory is not inside a git repository.');
-          return;
-        }
-        gitState.notGit = false;
-        gitNote((d && (d.text || d.error)) || 'Could not read the commits.', true);
-        gitDiffEl.textContent = '';
+        gitNote('', false);
+        gitBlank('Not a git repository.', d.text || 'This directory is not inside a git repository.');
         return;
       }
       gitState.notGit = false;
@@ -9901,6 +9924,7 @@ const SCRIPT = `
     gitDestroyView();
     gitPaintCommits();
     gitNote('', false);
+    // The blank below is what takes the layout button off the bar: there is no diff to lay out.
     gitBlank('Pick a commit.', "A commit's files and their diff are shown here.");
   }
 
@@ -9921,13 +9945,13 @@ const SCRIPT = `
         // A file request still in flight would otherwise land in a pane whose path is now empty.
         gitState.fileSeq += 1;
         gitState.loading = false;
-        gitState.pick = false;
         gitFilesEl.innerHTML = '';
         gitBranchEl.textContent = '';
         gitClearSelection();
         gitHideComment();
         gitDestroyView();
         gitDiffEl.textContent = '';
+        gitLayoutBtn.hidden = true;
         if(d && d.reason === 'not-git'){
           // The window exists for a repository; outside one there is nothing to compare, and a
           // red note beside an empty list read as a request that failed rather than an answer.
@@ -9942,12 +9966,19 @@ const SCRIPT = `
         gitNote((d && (d.text || d.error)) || 'Could not read the changes.', true);
         return;
       }
+      // A not-git answer's branch refusal is about a directory that has just become a repository
+      // (an agent ran git init): the sentence is no longer true, and the picker has no branches.
+      var wasNotGit = gitState.notGit;
       gitState.notGit = false;
       gitState.repo = d.repo || null;
       gitState.root = (d.repo && d.repo.root) || '';
       gitState.files = d.files || [];
       gitBranchEl.textContent = (d.repo && d.repo.branch) || '';
       gitPaintBase(d.repo && d.repo.base);
+      if(wasNotGit){
+        gitState.branchError = '';
+        gitLoadBranches();
+      }
       gitPaintFiles();
       if(d.truncated){
         // The list itself is incomplete; any rows it did return are whole.
@@ -9968,9 +9999,7 @@ const SCRIPT = `
         gitHideComment();
         gitDestroyView();
         gitDiffEl.innerHTML = '<div class="git-empty">That file is no longer in the changes.</div>';
-      } else if(!gitState.path && gitState.files.length && gitCustom()){
-        // The turn-changes view is a list someone came to look through; nothing opens by itself.
-        gitBlank('Select a file to see its diff.');
+        gitLayoutBtn.hidden = true;
       } else {
         gitAutoOpen(gitState.files);
       }
@@ -10035,10 +10064,10 @@ const SCRIPT = `
   }
 
   function gitOpenFile(path){
-    // Clicking the row already on screen asks for nothing: the diff is there, and a wide window
-    // opens the first row by itself when a list arrives. A row whose read failed is still
-    // clickable — neither a view nor a request is in flight then.
-    if(path === gitState.path && (gitState.loading || gitState.view || gitState.kind)) return;
+    // Clicking a row whose read is still in flight asks for nothing — that answer is on its way.
+    // Clicking the row that is already open re-reads it, which is how a diff is brought up to date
+    // after the file was edited: Refresh re-reads the list and deliberately leaves the diff alone.
+    if(path === gitState.path && gitState.loading) return;
     gitState.pick = false;
     gitState.path = path;
     gitClearSelection();
@@ -10165,6 +10194,7 @@ const SCRIPT = `
     gitHideComment();
     gitDestroyView();
     gitDiffEl.innerHTML = '';
+    gitLayoutBtn.hidden = true;
     gitNote('', false);
     gitBaseEl.hidden = mode === 'working' || mode === 'commits';
     var all = gitModesEl.querySelectorAll('[data-gm]');

@@ -14405,7 +14405,7 @@ describe('webui page: the git window', () => {
     const diffs = installCodeView(h);
     await openWindow(h);
 
-    await h.click('[data-gpath="src/a.ts"]');
+    // The first row opens by itself on a wide window; the second row is the click below.
     await until('the code view', () => diffs.length === 1);
     const first = diffs[0]!;
     expect(first.options.name).toBe('src/a.ts');
@@ -14436,7 +14436,6 @@ describe('webui page: the git window', () => {
     const h = await open({ replies: replies() });
     const diffs = installCodeView(h);
     await openWindow(h);
-    await h.click('[data-gpath="src/a.ts"]');
     await until('the code view', () => diffs.length === 1);
 
     // A drag covers part of each line; the comment still quotes lines 2-3 of the new side whole.
@@ -14464,7 +14463,6 @@ describe('webui page: the git window', () => {
     const h = await open({ replies: replies() });
     const diffs = installCodeView(h);
     await openWindow(h);
-    await h.click('[data-gpath="src/a.ts"]');
     await until('the code view', () => diffs.length === 1);
     const before = h.calls.filter((c) => c.path === statusPath('working')).length;
 
@@ -14698,6 +14696,14 @@ describe('webui page: the git window', () => {
           files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
           truncated: true,
         },
+        [filePath('working', 'src/a.ts')]: {
+          ok: true,
+          path: 'src/a.ts',
+          status: 'modified',
+          original: 'one\n',
+          modified: 'two\n',
+          patch: '@@ -1 +1 @@\n-one\n+two\n',
+        },
       },
     });
     await h.emit(sync(A, [], [A]));
@@ -14705,9 +14711,15 @@ describe('webui page: the git window', () => {
     await until('the partial list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
     expect(h.el('git-note').textContent).toContain('too many changes');
     expect(h.el('git-files').textContent).toContain('src/a.ts');
-    // A row that was drawn from an incomplete list is still a real row: it opens.
+    // A row that was drawn from an incomplete list is still a real row: the first one opened by
+    // itself, and a click on it re-reads the file — how a diff is refreshed after an Edit.
+    await until('the first read', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+    await until('the plain patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    const reads = h.calls.filter((c) => c.path === filePath('working', 'src/a.ts')).length;
     await h.click('[data-gpath="src/a.ts"]');
-    await until('the file request', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+    await until('the second read', () =>
+      h.calls.filter((c) => c.path === filePath('working', 'src/a.ts')).length === reads + 1
+    );
   });
 
   it('drops a file answer when a failed refresh cleared the open file', async () => {
@@ -14790,7 +14802,7 @@ describe('webui page: the git window', () => {
     });
     await openWindow(h);
 
-    await h.click('[data-gpath="src/a.ts"]');
+    // src/a.ts is the first row, so the window opened it by itself.
     await until('the file notice', () => h.el('git-diff').textContent === 'This file is too large to show.');
     await h.click('[data-gpath="new.txt"]');
     await until('the diff notice', () => h.el('git-diff').textContent === "This file's diff is too large to show.");
@@ -14818,7 +14830,6 @@ describe('webui page: the git window', () => {
     const h = await open({ replies: replies() });
     const diffs = installCodeView(h);
     await openWindow(h);
-    await h.click('[data-gpath="src/a.ts"]');
     await until('the code view', () => diffs.length === 1);
 
     diffs[0]!.options.onSelect?.({ side: 'old', from: 2, to: 2, text: 'tw' });
@@ -14847,6 +14858,41 @@ describe('webui page: the git window', () => {
     // An answer, not a failed request: no red note, and no list of rows that do not exist.
     expect(h.el('git-note').hidden).toBe(true);
     expect(h.el('git-files').querySelectorAll('.git-file').length).toBe(0);
+  });
+
+  it('repaints the pane when a directory that was not a repository becomes one', async () => {
+    const status: Record<string, unknown> = {
+      ok: false,
+      reason: 'not-git',
+      text: '/srv/work is not inside a git repository.',
+    };
+    const branches: Record<string, unknown> = { ok: false, reason: 'not-git', text: 'not a git repository' };
+    const h = await open({
+      replies: { [`api/git/branches?t=${A}`]: branches, [statusPath('working')]: status },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the sentence', () => h.el('git-diff').textContent!.includes('not inside a git repository'));
+
+    // An agent runs `git init` in the directory; the turn ends and the window reads it again.
+    Object.assign(status, {
+      ok: true,
+      repo: { root: '/srv/work', branch: 'main', base: 'main' },
+      files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+    });
+    delete status.reason;
+    delete status.text;
+    Object.assign(branches, { ok: true, branch: 'main', base: 'main', branches: ['main'] });
+    delete branches.reason;
+    delete branches.text;
+    await h.emit({ t: 'typing', on: false });
+
+    await until('the files', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+    // The answer before it is gone from the pane, the stale branch refusal with it, and the first
+    // file opened by itself as it would on any first list.
+    expect(h.el('git-diff').textContent).not.toContain('not inside a git repository');
+    expect(h.el('git-note').hidden).toBe(true);
+    await until('the first file', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
   });
 
   it('names the comparison that came back empty, and offers the commits from it', async () => {
@@ -14894,6 +14940,23 @@ describe('webui page: the git window', () => {
     await h.click('[data-gm="branch"]');
     await until('the empty branch', () => h.el('git-diff').textContent!.includes('main'));
     expect(h.el('git-diff').textContent).toContain('No changes against main');
+  });
+
+  it('says a turn changed nothing, without a comparison it cannot switch to', async () => {
+    const statusUrl = `api/turn-changes/status?t=${A}&turn=2`;
+    const h = await open({ replies: { [statusUrl]: { ok: true, repo: { root: '/srv/project' }, files: [] } } });
+    await h.emit(sync(A, [], [A]));
+    (h.window as any).openGitWindow({
+      title: 'Turn 2 changes',
+      statusUrl,
+      fileUrl: `api/turn-changes/file?t=${A}&turn=2`,
+    });
+    await until('the empty turn', () => Boolean(h.el('git-diff').querySelector('.git-blank')));
+
+    expect(h.el('git-diff').textContent).toContain('No changes in this turn.');
+    // The view is fixed to one turn: there is no other comparison to name or offer.
+    expect(h.el('git-diff').textContent).not.toContain('HEAD');
+    expect(h.el('git-diff').querySelector('[data-gact]')).toBeNull();
   });
 
   it('opens the first file on a wide window, and asks for one on a phone', async () => {
@@ -15000,8 +15063,10 @@ describe('webui page: the git window', () => {
     await tick();
     expect(h.el('git-files').querySelectorAll('.git-commit').length).toBe(2);
     expect(h.el('git-files').querySelector('.git-file')).toBeNull();
-    // The pane asks for a commit rather than leaving the last diff under the list.
+    // The pane asks for a commit rather than leaving the last diff under the list, and the
+    // layout button went with the diff it belonged to.
     expect(h.el('git-diff').textContent).toContain('Pick a commit');
+    expect(h.el('git-layout').hidden).toBe(true);
   });
 
   it('drops a commit answer when the mode changed under it', async () => {
@@ -15042,6 +15107,113 @@ describe('webui page: the git window', () => {
     // The commit belonged to the view that was left: no header, no files, nothing of it on screen.
     expect(h.el('git-files').querySelector('.git-back')).toBeNull();
     expect(h.el('git-files').textContent).not.toContain('Add the parser');
+  });
+
+  it('re-reads the history when a turn ends, and leaves the working comparison alone', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commits: [
+            { sha: '1111111aaaa', short: '1111111', subject: 'Add the parser', author: 'Ada', at: Date.now(), parents: [] },
+          ],
+          more: false,
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the history', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+    const logs = h.calls.filter((c) => c.path === `api/git/log?t=${A}&skip=0`).length;
+    const statuses = h.calls.filter((c) => c.path === statusPath('working')).length;
+
+    await h.emit({ t: 'typing', on: false });
+    await until('the history again', () =>
+      h.calls.filter((c) => c.path === `api/git/log?t=${A}&skip=0`).length === logs + 1
+    );
+    // The comparison behind the window is not what the reader is looking at.
+    expect(h.calls.filter((c) => c.path === statusPath('working')).length).toBe(statuses);
+  });
+
+  it('says the directory is not a repository when the history cannot be read', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: {
+          ok: false,
+          reason: 'not-git',
+          text: '/srv/work is not inside a git repository.',
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the sentence', () => Boolean(h.el('git-diff').querySelector('.git-blank')));
+
+    expect(h.el('git-diff').textContent).toContain('/srv/work is not inside a git repository.');
+    expect(h.el('git-note').hidden).toBe(true);
+    expect(h.el('git-files').querySelectorAll('.git-commit').length).toBe(0);
+  });
+
+  it('keeps the commits it has when Load more fails', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commits: [
+            { sha: '1111111aaaa', short: '1111111', subject: 'Add the parser', author: 'Ada', at: Date.now(), parents: [] },
+          ],
+          more: true,
+        },
+        [`api/git/log?t=${A}&skip=1`]: { ok: false, reason: 'error', text: 'git log failed: bad object' },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the first page', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+
+    await h.click('[data-gmore]');
+    await until('the failure', () => h.el('git-note').textContent!.includes('bad object'));
+    // The rows it already had are still true, and the button is back for another try.
+    expect(h.el('git-files').querySelectorAll('.git-commit').length).toBe(1);
+    expect((h.el('git-files').querySelector('[data-gmore]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('keeps the open commit when the history refresh fails', async () => {
+    const sha = '1111111aaaa';
+    const at = Date.now();
+    const log: Record<string, unknown> = {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main' },
+      commits: [{ sha, short: '1111111', subject: 'Add the parser', author: 'Ada', at, parents: [] }],
+      more: false,
+    };
+    const h = await open({
+      replies: replies({
+        [`api/git/log?t=${A}&skip=0`]: log,
+        [`api/git/commit?t=${A}&sha=${encodeURIComponent(sha)}`]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main' },
+          commit: { sha, short: '1111111', subject: 'Add the parser', author: 'Ada', at, parents: [] },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="commits"]');
+    await until('the history', () => h.el('git-files').querySelectorAll('.git-commit').length === 1);
+    await h.click(`[data-gsha="${sha}"]`);
+    await until('the commit’s files', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+
+    // A turn ends while the commit is open and the history read fails: the commit stays put.
+    Object.assign(log, { ok: false, reason: 'error', text: 'git log failed: bad object' });
+    delete log.commits;
+    await h.emit({ t: 'typing', on: false });
+    await until('the failure', () => h.el('git-note').textContent!.includes('bad object'));
+    expect(h.el('git-files').querySelector('.git-back')).not.toBeNull();
+    expect(h.el('git-files').querySelectorAll('.git-file').length).toBe(1);
+    expect(h.el('git-files').textContent).toContain('Add the parser');
   });
 });
 
