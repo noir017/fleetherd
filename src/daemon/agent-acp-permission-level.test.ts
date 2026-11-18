@@ -237,6 +237,12 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   }
   if (msg.method === 'session/new') return send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's1' } });
   if (msg.method === 'session/load') return send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  if (msg.method === 'session/set_mode') {
+    // Logged, not just answered: the level must not move a mode here, and a silent generic reply
+    // would let that regression through the test that says so.
+    log({ set_mode: msg.params.modeId });
+    return send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  }
   if (msg.method === 'session/prompt') {
     if (msg.params.prompt[0].text === 'ask') await askPermission();
     return send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });

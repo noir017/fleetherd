@@ -566,7 +566,7 @@ function permissionRow(
 function unsetNote(from: UnsetLevelSource): string {
   switch (from) {
     case 'session':
-      return 'not set · from its session’s mode';
+      return 'not set · from a running session’s mode';
     case 'pin':
       return 'not set · from its pinned mode';
     case 'none':
@@ -2181,7 +2181,8 @@ export function buildSettingValueMenu(menu: {
   }
   buttons.push({ id: settingBackButtonId(reqId), label: '◀ Back' });
 
-  const head = `**${row.label}** — \`${row.value}\`\n${settingDescription(row)}`;
+  // The note rides along here too: a platform without a screen reads the same value the screen does.
+  const head = `**${row.label}** — \`${row.value}\`${row.valueNote ? ` (${row.valueNote})` : ''}\n${settingDescription(row)}`;
   // The hint rides along with the options rather than replacing them, for the reason
   // settingTypedOnlyHint records: "clear it" alone is a complete-looking list that is not complete.
   const parts = [
