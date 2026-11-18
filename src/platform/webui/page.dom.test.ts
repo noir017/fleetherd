@@ -472,8 +472,15 @@ function installMic(w: any, mic: { types: string[]; deny?: boolean }, recorders:
  * The page a test loads. `codeview` is the built bundle's name, or absent for a daemon with no
  * assets at all — the two states `codeView()` distinguishes before it ever imports anything.
  */
-function pageOf(terminal: boolean, password: boolean, terminalEnd: boolean, codeview?: string, files = false): string {
-  return renderPage('Chat', terminal, password, terminalEnd, codeview ?? null, files);
+function pageOf(
+  terminal: boolean,
+  password: boolean,
+  terminalEnd: boolean,
+  codeview?: string,
+  files = false,
+  instructions = false
+): string {
+  return renderPage('Chat', terminal, password, terminalEnd, codeview ?? null, files, instructions);
 }
 
 /**
@@ -529,6 +536,8 @@ async function open(
     terminalEnd?: boolean;
     /** Whether the daemon has the file window (platforms.<id>.files.enabled). */
     files?: boolean;
+    /** Whether the settings page offers the instruction editor (platforms.<id>.instructions.enabled). */
+    instructions?: boolean;
     /** Whether the shared secret is still a way in, i.e. which of the two gates is served. */
     password?: boolean;
     /**
@@ -600,6 +609,7 @@ async function open(
     terminal = false,
     terminalEnd = false,
     files = false,
+    instructions = false,
     password = true,
     mic,
     hang = [],
@@ -629,7 +639,7 @@ async function open(
   const confirms: string[] = [];
   const longTimers: number[] = [];
 
-  const dom = new JSDOM(pageOf(terminal, password, terminalEnd, codeviewUrl, files), {
+  const dom = new JSDOM(pageOf(terminal, password, terminalEnd, codeviewUrl, files, instructions), {
     url,
     runScripts: 'dangerously',
     pretendToBeVisual: true,
@@ -14320,5 +14330,216 @@ describe('webui page: the git window', () => {
     expect((h.el('input') as HTMLTextAreaElement).value).toBe(
       ['src/a.ts:L2 (old)', '```', 'two', '```', 'Removed on purpose'].join('\n')
     );
+  });
+});
+
+/**
+ * The instruction editor: the settings page's Instructions section, and the file window opened on
+ * it (page.ts "Instructions"). The daemon's side is tested in daemon/instructions-panel.test.ts;
+ * here, what a person sees and does — the section only when the feature is on, the window without
+ * the controls that make no sense for a fixed list, a save carrying its version (or "create" for a
+ * file not written yet), and where the text went said in the window.
+ */
+describe('webui page: the instruction editor', () => {
+  const A = 'a1b2c3d4';
+  const SHA = 'c'.repeat(64);
+  const settingsList = {
+    ...message('m1', '<p>Settings</p>'),
+    buttons: [{ id: 'stg:r:0', label: 'Idle reclaim · 15m' }],
+    settings: {
+      level: 'list',
+      groups: [{ name: 'Conversations' }],
+      rows: [{ buttonId: 'stg:r:0', label: 'Idle reclaim', value: '15m', group: 'Conversations', control: { kind: 'list' } }],
+    },
+  };
+  const LIST = {
+    dir: '/c/instructions',
+    on: true,
+    global: [
+      { name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc', 'cx'] },
+      { name: 'claude.md', layer: 'claude', exists: false, agents: ['cc'] },
+    ],
+    agents: [
+      { id: 'cc', harness: 'claude', host: 'box', file: '~/.claude/CLAUDE.md', own: '`@` references in `~/.claude/CLAUDE.md`, and `~/.claude/rules`' },
+      { id: 'oc', harness: 'gemini', host: 'local' },
+    ],
+  };
+  const COMMON = 'api/instructions/read?scope=global&name=common.md';
+  const CLAUDE = 'api/instructions/read?scope=global&name=claude.md';
+  const REFS = 'api/instructions/refs?agent=cc';
+  const RULE = `api/instructions/read?scope=agent&agent=cc&path=${encodeURIComponent('/h/.claude/rules/a.md')}`;
+  const commonFile = { ok: true, path: '/c/instructions/common.md', dir: '/c/instructions', name: 'common.md', size: 5, mtimeMs: 7, kind: 'text', text: 'hello', eol: 'lf', sha256: SHA };
+  const claudeFile = { ok: true, missing: true, path: '/c/instructions/claude.md', dir: '/c/instructions', name: 'claude.md', size: 0, mtimeMs: 0, kind: 'text', text: '', eol: 'lf' };
+  const ruleFile = { ok: true, path: '/h/.claude/rules/a.md', dir: '/h/.claude/rules', name: 'a.md', size: 4, mtimeMs: 9, kind: 'text', text: 'rule', eol: 'lf', sha256: SHA };
+  const refs = {
+    ok: true,
+    agent: 'cc',
+    host: 'box',
+    root: '/h/.claude/CLAUDE.md',
+    rootState: 'managed',
+    summary: '`@` references in `~/.claude/CLAUDE.md`, and `~/.claude/rules`',
+    refs: [
+      { path: '/h/.claude/rules/a.md', shown: '~/.claude/rules/a.md', exists: true, depth: 1, kind: 'rule', editable: true },
+      { path: '/h/new.md', shown: '~/new.md', exists: false, depth: 2, kind: 'reference', editable: true, via: '~/.claude/rules/a.md' },
+      {
+        path: '/h/.fleetherd/instructions/codex.md',
+        shown: '~/.fleetherd/instructions/codex.md',
+        exists: true,
+        depth: 1,
+        kind: 'reference',
+        editable: false,
+        note: "the gateway's delivered copy: edit it under Every agent",
+      },
+    ],
+  };
+
+  async function opened(over: Record<string, unknown> = {}): Promise<Harness> {
+    const h = await open({
+      instructions: true,
+      replies: { 'api/instructions': LIST, [COMMON]: commonFile, [CLAUDE]: claudeFile, [REFS]: refs, [RULE]: ruleFile, ...over },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'msg', msg: settingsList });
+    await until('the section', () => Boolean(h.doc.querySelector('.instr-sec [data-instr-global]')));
+    return h;
+  }
+
+  const editor = (h: Harness): HTMLTextAreaElement => h.el('files-editor').querySelector('textarea') as HTMLTextAreaElement;
+  const type = (h: Harness, v: string): void => {
+    const ta = editor(h);
+    ta.value = v;
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  };
+  const writes = (h: Harness) => h.calls.filter((c) => c.path === 'api/instructions/write');
+
+  it('leaves the section out, and asks for nothing, when the daemon has it off', async () => {
+    const h = await open({ replies: { 'api/instructions': LIST } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'msg', msg: settingsList });
+    await tick();
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(h.doc.querySelector('.instr-sec')).toBeNull();
+    expect(h.calls.some((c) => c.path.startsWith('api/instructions'))).toBe(false);
+  });
+
+  it('lists the gateway’s files and the agents that have files of their own, under the daemon’s rows', async () => {
+    const h = await opened();
+    const sec = h.doc.querySelector('.instr-sec') as HTMLElement;
+    // After the /setting rows, not in place of them.
+    expect(h.el('settings-body').lastElementChild).toBe(sec);
+    expect(h.doc.querySelector('#settings-body .set-item .set-label')?.textContent).toBe('Idle reclaim');
+    const globals = Array.from(sec.querySelectorAll('[data-instr-global]')).map((b) => [
+      b.getAttribute('data-instr-global'),
+      b.querySelector('.set-label')?.textContent,
+      b.querySelector('.set-hint')?.textContent,
+      b.querySelector('.set-v')?.textContent,
+    ]);
+    expect(globals).toEqual([
+      ['common.md', 'Every agent', 'cc, cx', 'common.md'],
+      ['claude.md', 'Claude Code', 'cc', 'claude.md · not written'],
+    ]);
+    // An agent whose harness has nothing of its own (here: none named) is not offered.
+    const agents = Array.from(sec.querySelectorAll('[data-instr-agent]'));
+    expect(agents.map((b) => b.getAttribute('data-instr-agent'))).toEqual(['cc']);
+    expect(agents[0]?.querySelector('.set-kind')?.textContent).toBe('box');
+    expect(agents[0]?.querySelector('.set-hint')?.innerHTML).toContain('<code>~/.claude/rules</code>');
+  });
+
+  it('opens a global file in the file window, without the controls a fixed list has no use for', async () => {
+    const h = await opened();
+    await h.click('[data-instr-global="common.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(h.el('files').hidden).toBe(false);
+    expect(h.el('files-title').textContent).toBe('common.md');
+    expect(h.el('files-where').textContent).toBe('common.md');
+    expect(editor(h).value).toBe('hello');
+    for (const id of ['files-tree-head', 'files-search-row', 'files-rename-open', 'files-delete', 'files-crumbs']) {
+      expect(h.el(id).hidden, id).toBe(true);
+    }
+    const rows = Array.from(h.el('files-tree-list').querySelectorAll('[data-fx-file]')).map((b) => b.getAttribute('data-fx-file'));
+    expect(rows).toEqual(['g:common.md', 'g:claude.md']);
+    // The page never asked the file window's routes for anything.
+    expect(h.calls.some((c) => c.path.startsWith('api/files/'))).toBe(false);
+  });
+
+  it('saves a global file with the version it read, and says where the text was placed', async () => {
+    const h = await opened({
+      'api/instructions/write': {
+        ok: true,
+        mtimeMs: 8,
+        size: 6,
+        sha256: 'd'.repeat(64),
+        delivery: [
+          { host: 'local', agents: ['cx'], outcome: 'linked', link: '/x/.codex/AGENTS.md' },
+          { host: 'box', agents: ['cc'], outcome: 'unreachable', detail: 'no answer within 10 s' },
+        ],
+      },
+    });
+    await h.click('[data-instr-global="common.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    type(h, 'hello!');
+    await h.click('#files-save');
+    await until('the save', () => writes(h).length === 1);
+    expect(writes(h)[0]!.body).toEqual({ scope: 'global', name: 'common.md', text: 'hello!', mtimeMs: 7, size: 5, sha256: SHA });
+    await until('the answer', () => /Saved/.test(h.el('files-note').textContent ?? ''));
+    expect(h.el('files-note').textContent).toBe(
+      'Saved common.md. Placed for cx; a session already running keeps what it read. box did not answer; it gets this when an agent next starts there.'
+    );
+    expect(h.el('files-dirty').hidden).toBe(true);
+  });
+
+  it('creates a file not written yet instead of sending a version it never had', async () => {
+    const h = await opened({ 'api/instructions/write': { ok: true, mtimeMs: 3, size: 2, sha256: 'e'.repeat(64), delivery: [] } });
+    await h.click('[data-instr-global="claude.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(h.el('files-note').textContent).toBe('Not written yet. Saving creates it.');
+    expect(h.el('files-tree-list').querySelector('[data-fx-file="g:claude.md"] .fx-tag')?.textContent).toBe('not written');
+    type(h, 'x\n');
+    await h.click('#files-save');
+    await until('the save', () => writes(h).length === 1);
+    expect(writes(h)[0]!.body).toEqual({ scope: 'global', name: 'claude.md', text: 'x\n', missing: true });
+    await until('the tree', () => !h.el('files-tree-list').querySelector('[data-fx-file="g:claude.md"] .fx-tag'));
+  });
+
+  it('lists an agent’s own files from its machine and saves one where it is', async () => {
+    const h = await opened({ 'api/instructions/write': { ok: true, mtimeMs: 10, size: 5, sha256: 'f'.repeat(64) } });
+    await h.click('[data-instr-agent="cc"]');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length === 2);
+    expect(h.calls.some((c) => c.path === REFS)).toBe(true);
+    expect(h.el('files-title').textContent).toBe('cc · own instructions');
+    const tree = h.el('files-tree-list');
+    expect(tree.querySelector('.fx-head')?.textContent).toBe(
+      "On box: @ references in ~/.claude/CLAUDE.md, and ~/.claude/rules. /h/.claude/CLAUDE.md is the gateway’s copy: a reference in it is added under Instructions."
+    );
+    // The gateway's own copy is listed and cannot be opened here.
+    const off = tree.querySelector('.fx-off') as HTMLElement;
+    expect(off.textContent).toContain('~/.fleetherd/instructions/codex.md');
+    expect(off.querySelector('button')).toBeNull();
+    expect(tree.querySelector('[data-fx-file="a:/h/new.md"]')?.getAttribute('title')).toBe('~/new.md ← ~/.claude/rules/a.md');
+
+    await h.click('[data-fx-file="a:/h/.claude/rules/a.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(h.el('files-where').textContent).toBe('~/.claude/rules/a.md');
+    type(h, 'rule!');
+    await h.click('#files-save');
+    await until('the save', () => writes(h).length === 1);
+    expect(writes(h)[0]!.body).toEqual({ scope: 'agent', agent: 'cc', path: '/h/.claude/rules/a.md', text: 'rule!', mtimeMs: 9, size: 4, sha256: SHA });
+    await until('the answer', () => /Saved/.test(h.el('files-note').textContent ?? ''));
+    expect(h.el('files-note').textContent).toBe('Saved ~/.claude/rules/a.md. cc reads it when its next session starts.');
+  });
+
+  it('puts the editor away alone on Escape, and asks for the list again for the page it came from', async () => {
+    const h = await opened();
+    const before = h.calls.filter((c) => c.path === 'api/instructions').length;
+    await h.click('[data-instr-global="common.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(h.el('files').hidden).toBe(true);
+    expect(h.el('settings-page').hidden).toBe(false);
+    // The tree's own "list" plus the refresh the close asks for.
+    await until('the refresh', () => h.calls.filter((c) => c.path === 'api/instructions').length >= before + 2);
+    // The window is the file window again for whoever opens it next: nothing of this mode is left.
+    expect(h.el('files-tree-head').hidden).toBe(false);
+    expect(h.el('files-search-row').hidden).toBe(false);
   });
 });

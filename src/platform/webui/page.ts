@@ -54,9 +54,10 @@ export function renderPage(
   password = true,
   terminalEnd = false,
   codeview: string | null = null,
-  files = false
+  files = false,
+  instructions = false
 ): string {
-  return servePage(title, terminal, password, terminalEnd, codeview, files).html;
+  return servePage(title, terminal, password, terminalEnd, codeview, files, instructions).html;
 }
 
 /**
@@ -81,12 +82,15 @@ export function servePage(
    * bundle under the new page's ETag.
    */
   codeview: string | null = null,
-  files = false
+  files = false,
+  /** Whether the settings page offers the instruction editor (`platforms.<id>.instructions`). */
+  instructions = false
 ): { html: string; build: string } {
   const html = PAGE.replace(/__TITLE__/g, escapeHtml(title))
     .replace(/__TERM__/g, terminal ? 'true' : 'false')
     .replace(/__TERM_END__/g, terminalEnd ? 'true' : 'false')
     .replace(/__FILES__/g, files ? 'true' : 'false')
+    .replace(/__INSTR__/g, instructions ? 'true' : 'false')
     .replace(/__PASSWORD__/g, password ? 'true' : 'false')
     // A JS literal, not text: the script compares it and hands it to `import()`. The build only
     // ever writes a single path segment (assets.ts `ASSET_FILE`), so quoting it cannot be broken.
@@ -1501,6 +1505,12 @@ button:disabled{opacity:.5;cursor:default}
 .fx-caret.blank{visibility:hidden}
 .fx-row .ic{width:13px;height:13px;flex:none;color:var(--dim)}
 .fx-name{overflow:hidden;text-overflow:ellipsis}
+/* The instruction editor's tree (page.ts instrTree): what a file is for, beside its name; a file
+   not written yet; and a referenced file that is listed but edited elsewhere. */
+.fx-sub{margin-left:6px;color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
+.fx-tag{margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:4px;color:var(--dim);font-size:10.5px}
+.fx-row.fx-off{cursor:default;color:var(--dim)}
+.fx-head{padding:8px 10px;font-size:11.5px;color:var(--dim);white-space:normal;line-height:1.4;border-bottom:1px solid var(--line)}
 #files-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 #files-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:5px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
 #files-crumbs button{background:none;border:0;color:#9ecbff;font:inherit;font-size:12px;padding:2px 3px;cursor:pointer;border-radius:4px}
@@ -1855,6 +1865,9 @@ const SCRIPT = `
   // Whether this daemon has the file window (platforms.<id>.files.enabled). False hides the
   // header button; the routes behind it answer 404, exactly as the terminal's do.
   var FILES_OK = __FILES__;
+  // Whether the settings page offers the instruction editor (platforms.<id>.instructions.enabled).
+  // False leaves the section out; its routes answer 404 like the file window's.
+  var INSTR_OK = __INSTR__;
   // Which page this is: a hash of everything it was rendered from, and the page's ETag (servePage).
   // Compared with the daemon's after a restart (checkBuild), since the script on screen is the one
   // the old process served.
@@ -5024,6 +5037,7 @@ const SCRIPT = `
     var typed = settingsBody.querySelector('.set-type');
     if(typed) settingsQuery = typed.value;
     settingsBody.innerHTML = settingsScreen(settingsMsg);
+    if(INSTR_OK && level === 'list') instrSection();
     if(level !== settingsLevel){ settingsBody.scrollTop = 0; fk = null; settingsQuery = ''; }
     settingsLevel = level;
     // What was typed survives the redraw — the list arriving after "asking" is one — and so does
@@ -8967,6 +8981,9 @@ const SCRIPT = `
     // A recording is cancelled by Escape too, and the recorder's own listener below does that.
     // The same keystroke must not also put away what is behind the composer.
     if(rec) return;
+    // The instruction editor is opened from the settings page and sits over it: put away the
+    // editor alone, and the page it came from is still there.
+    if(fileSrc && !filesWin.hidden){ closeFiles(); return; }
     // Close the topmost thing first: Escape over a picture, the reader or a menu must not also
     // put away a panel behind it. The command suggestions are the composer's own overlay.
     var hintsOpen = !hints.hidden;
@@ -10389,6 +10406,8 @@ const SCRIPT = `
       fileBase=null, fileSaved='', fileDirty=false, fileView=null, fileSeq=0, fileNodes={},
       fileOpenDirs={}, fileNewIsDir=false, filePreviewing=false, fileBusy=false,
       fileEol='lf', fileSha='', fileSep='/',
+      /* Set while the window edits instructions instead of a topic's files (instrOpen). */
+      fileSrc=null,
       /* What the rename row is about: the open file, or a folder picked in the tree. */
       fxRename=null;
 
@@ -10397,6 +10416,7 @@ const SCRIPT = `
     return r.status === 404 ? 'The file window is not enabled on this daemon.' : 'That request failed (' + r.status + ').';
   }
   function filesGet(route, params){
+    if(fileSrc) return instrGet(route, params);
     var qs=[];
     for(var k in params){
       if(!Object.prototype.hasOwnProperty.call(params, k)) continue;
@@ -10409,6 +10429,7 @@ const SCRIPT = `
       });
   }
   function filesPost(route, body){
+    if(fileSrc) return instrPost(route, body);
     return post('api/files/' + route, body, 1).then(function(r){
       return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
     });
@@ -10494,6 +10515,7 @@ const SCRIPT = `
 
   /** The tree as it is: every open directory's children, recursively — nothing is fetched twice. */
   function paintTree(){
+    if(fileSrc){ filesTreeList.innerHTML = instrTree(); return; }
     var h = '';
     function walk(key, depth){
       var node = fileNodes[key];
@@ -10713,7 +10735,7 @@ const SCRIPT = `
         if(res.body.sha256) fileSha = res.body.sha256;
         if(fileView && fileView.getDoc() === sent){ fileSaved = sent; setFileDirty(false); }
         filesConflict.hidden = true;
-        filesSay('Saved ' + (fileRel || fileName) + '.');
+        filesSay('Saved ' + (fileRel || fileName) + '.' + instrSaid());
         paintFileActions();
         return true;
       }
@@ -10952,16 +10974,18 @@ const SCRIPT = `
     }).catch(function(){ filesSay('Could not reach the daemon.'); });
   }
 
-  function openFilesWindow(t, path){
-    if(!FILES_OK || !t) return;
-    if(!filesWin.hidden && fileTopic !== t && !fileConfirmLeave()) return;
+  function openFilesWindow(t, path, src){
+    if(!(FILES_OK || src) || !t) return;
+    if(!filesWin.hidden && (fileTopic !== t || fileSrc !== (src || null)) && !fileConfirmLeave()) return;
     fileTopic = t;
+    fileSrc = src || null;
+    paintFilesMode();
     filesWin.hidden = false;
     // On a phone the tree is a drawer. Opened from the header, with no file to show yet, the
     // window would be an empty pane with the files behind a button — so the drawer starts open,
     // and picking a file closes it. Opened on a file (another panel's Edit), the file is the point.
     filesWin.classList.toggle('tree-open', !path);
-    filesTitle.textContent = 'Files';
+    filesTitle.textContent = fileSrc ? fileSrc.title : 'Files';
     filesWhere.textContent = '';
     filesCrumbs.innerHTML = '';
     filesSay('');
@@ -11003,6 +11027,8 @@ const SCRIPT = `
     if(filesWin.hidden) return;
     if(!fileConfirmLeave()) return;
     filesWin.hidden = true;
+    // What the editor saved shows on the settings page it was opened from.
+    if(fileSrc){ fileSrc = null; paintFilesMode(); instrLoad(true); }
     filesWin.classList.remove('tree-open');
     fileSeq++;
     fileView = null;
@@ -11024,6 +11050,10 @@ const SCRIPT = `
     // offer a control that silently does nothing.
     window.openFileEditor = openFileEditor;
     filesToggleBtn.addEventListener('click', function(){ setMenu(null, false); openFilesWindow(topic); });
+  }
+  // The window's own controls, for either of the two things it edits: a topic's files, and the
+  // instructions the settings page opens in it.
+  if(FILES_OK || INSTR_OK){
     filesTreeToggle.addEventListener('click', function(){ filesWin.classList.toggle('tree-open'); });
     $('files-close').addEventListener('click', closeFiles);
     filesWin.addEventListener('click', function(e){ if(e.target === filesWin) closeFiles(); });
@@ -11101,8 +11131,246 @@ const SCRIPT = `
    * only when the feature is on.
    */
   function openFileEditor(path){
-    if(filesWin.hidden || fileTopic !== topic) openFilesWindow(topic, path);
+    if(filesWin.hidden || fileTopic !== topic || fileSrc) openFilesWindow(topic, path);
     else openFile(path);
+  }
+
+  // ── Instructions ────────────────────────────────────────────────────────────
+  // The settings page's Instructions section, and the file window's second mode: the same editor,
+  // dirty mark, conflict dialog and save, pointed at the operator's instruction files instead of a
+  // topic's workspace (daemon/instructions-panel.ts). Off unless instructions.enabled: INSTR_OK
+  // leaves the section out, and its routes answer 404.
+  //
+  // In this mode the tree is a fixed list the daemon gave — the gateway's files, or the files one
+  // agent's harness references on its machine — and the window's file "paths" are ids into it
+  // (g:<name>, a:<path>). The page never sends a path of its own: a read or a save names the
+  // target, and the daemon checks it against what that harness reads now.
+  var instrData = null, instrBusy = false, instrFor = null;
+  var INSTR_LAYER = {common:'Every agent', claude:'Claude Code', codex:'Codex', opencode:'OpenCode',
+    agy:'Antigravity', codebuddy:'CodeBuddy', atomcode:'AtomCode'};
+
+  function instrFetch(url){
+    return fetch(url, {credentials:'same-origin'}).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
+    });
+  }
+
+  /** The list behind the settings section; force asks again (a new settings page, a closed editor). */
+  function instrLoad(force){
+    if(!INSTR_OK || instrBusy || (instrData && !force)) return;
+    instrBusy = true;
+    instrFetch('api/instructions').then(function(res){
+      instrBusy = false;
+      instrData = res.ok ? res.body : {error: (res.body && res.body.error) || 'The instructions could not be listed.'};
+      instrSection();
+    }, function(){
+      instrBusy = false;
+      instrData = {error:'Could not reach the daemon.'};
+      instrSection();
+    });
+  }
+
+  /**
+   * Put the section at the end of the settings list, or replace the one there. Appended rather than
+   * drawn by settingsScreen: the rows above are the daemon's /setting screen, and these are files.
+   */
+  function instrSection(){
+    if(!INSTR_OK || !settingsMsg || !settingsMsg.settings || settingsMsg.settings.level !== 'list') return;
+    if(instrFor !== settingsMsg.id){ instrFor = settingsMsg.id; instrLoad(true); }
+    var box = document.createElement('div');
+    box.innerHTML = instrHtml();
+    var sec = box.firstChild, old = settingsBody.querySelector('.instr-sec');
+    if(old) settingsBody.replaceChild(sec, old); else settingsBody.appendChild(sec);
+  }
+
+  function instrRow(attr, value, label, kind, hint, v, unset){
+    return '<button type="button" class="set-item set-open" ' + attr + '="' + text(value) + '">'
+      + '<div class="set-tx"><div class="set-label"><span>' + text(label) + '</span>'
+      + (kind ? '<span class="set-kind">' + text(kind) + '</span>' : '') + '</div>'
+      + (hint ? '<div class="set-hint">' + inl(hint) + '</div>' : '') + '</div>'
+      + (v ? '<span class="set-vv"><span class="set-v' + (unset ? ' unset' : '') + '">' + text(v) + '</span></span>' : '')
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
+  }
+
+  function instrHtml(){
+    var h = '<section class="set-sec instr-sec"><h3 class="set-group">Instructions</h3>', d = instrData;
+    if(!d) return h + '<p class="set-gnote">Loading…</p></section>';
+    if(d.error) return h + settingsNotice({tone:'error', text:d.error}) + '</section>';
+    h += '<p class="set-gnote">' + inl('What agents read before every conversation. These files are kept on the gateway, and a save places them on every machine at once.'
+      + (d.on ? '' : ' None is delivered yet: the first save creates \\x60' + d.dir + '\\x60.')) + '</p><div class="set-card">';
+    var g = d.global || [];
+    for(var i=0;i<g.length;i++){
+      var f = g[i];
+      h += instrRow('data-instr-global', f.name, INSTR_LAYER[f.layer] || f.layer, '',
+        f.agents && f.agents.length ? f.agents.join(', ') : 'No configured agent reads it', f.exists ? f.name : f.name + ' · not written', !f.exists);
+    }
+    h += '</div>';
+    var own = [], a = d.agents || [];
+    for(var j=0;j<a.length;j++) if(a[j].own) own.push(a[j]);
+    if(own.length){
+      h += '<h3 class="set-group">Each agent’s own</h3><p class="set-gnote">'
+        + inl('What an agent’s harness reads on its own machine besides these: its rules, the files they reference, what its config lists. Read and saved there; the gateway keeps no copy.')
+        + '</p><div class="set-card">';
+      for(var k=0;k<own.length;k++){
+        h += instrRow('data-instr-agent', own[k].id, own[k].id, own[k].host === 'local' ? 'this machine' : own[k].host, own[k].own, '', false);
+      }
+      h += '</div>';
+    }
+    return h + '</section>';
+  }
+
+  /** Open the file window on one list of instruction files, and on one of them when id is given. */
+  function instrOpen(src, id){
+    openFilesWindow(settingsTopic || topic, id, src);
+  }
+
+  /** The window's controls a topic's files have and instructions do not: create, rename, delete, search. */
+  function paintFilesMode(){
+    var on = Boolean(fileSrc);
+    filesWin.classList.toggle('instr', on);
+    $('files-tree-head').hidden = on;
+    $('files-search-row').hidden = on;
+    filesCrumbs.hidden = on;
+    filesRenameBtn.hidden = on;
+    filesDeleteBtn.hidden = on;
+    filesTreeToggle.title = on ? 'Instruction files' : 'Files';
+  }
+
+  /** The list one mode shows, keyed by the ids the window will name files by. */
+  function instrIndex(src, d){
+    src.files = {};
+    src.order = [];
+    var add = function(id, f){ src.files[id] = f; src.order.push(id); };
+    if(src.kind === 'global'){
+      src.root = d.dir || 'instructions';
+      src.head = d.on ? 'Saved on the gateway, and placed on every machine an agent that reads it is configured for.'
+        : 'Nothing is delivered yet. The first save creates ' + d.dir + '.';
+      var g = d.global || [];
+      for(var i=0;i<g.length;i++){
+        add('g:' + g[i].name, {q:'scope=global&name=' + encodeURIComponent(g[i].name), name:g[i].name, shown:g[i].name,
+          sub: INSTR_LAYER[g[i].layer] || g[i].layer, exists:g[i].exists, editable:true, depth:1});
+      }
+      return;
+    }
+    src.root = d.root || src.agent;
+    src.head = 'On ' + (d.host === 'local' ? 'this machine' : d.host) + ': ' + String(d.summary || '').replace(/\\x60/g, '') + '.'
+      + (d.rootState === 'managed' ? ' ' + d.root + ' is the gateway’s copy: a reference in it is added under Instructions.'
+        : d.rootState === 'missing' ? ' ' + d.root + ' does not exist there.' : '');
+    var r = d.refs || [];
+    for(var j=0;j<r.length;j++){
+      var kind = r[j].kind;
+      add('a:' + r[j].path, {q:'scope=agent&agent=' + encodeURIComponent(src.agent) + '&path=' + encodeURIComponent(r[j].path),
+        path:r[j].path, name:fxBase(r[j].shown), shown:r[j].shown, exists:r[j].exists, editable:r[j].editable,
+        note:r[j].note || '', depth:r[j].depth || 1, via:r[j].via || '',
+        sub: r[j].note || (kind === 'rule' ? 'rule' : kind === 'listed' ? 'listed in its config' : '')});
+    }
+  }
+
+  function instrTree(){
+    var src = fileSrc, h = src.head ? '<div class="fx-head">' + text(src.head) + '</div>' : '';
+    if(!src.order.length) h += '<div class="skills-empty">' + (src.kind === 'agent' ? 'No file is referenced.' : 'Nothing to list.') + '</div>';
+    for(var i=0;i<src.order.length;i++){
+      var id = src.order[i], f = src.files[id], pad = 6 + (f.depth - 1) * 12;
+      var tail = (f.sub ? '<span class="fx-sub">' + text(f.sub) + '</span>' : '') + (f.exists ? '' : '<span class="fx-tag">not written</span>');
+      if(!f.editable){
+        h += '<div class="fx-row fx-off" title="' + text(f.note) + '" style="padding-left:' + pad + 'px"><span class="fx-caret blank"></span>'
+          + IC.icon.note + '<span class="fx-name">' + text(f.shown) + '</span><span class="fx-sub">' + text(f.note) + '</span></div>';
+        continue;
+      }
+      h += '<button type="button" class="fx-row' + (filePath === id ? ' on' : '') + '" data-fx-file="' + text(id) + '" title="' + text(f.shown + (f.via ? ' ← ' + f.via : '')) + '" style="padding-left:' + pad + 'px">'
+        + '<span class="fx-caret blank"></span>' + IC.icon.note + '<span class="fx-name">' + text(src.kind === 'agent' ? f.shown : f.name) + '</span>' + tail + '</button>';
+    }
+    return h;
+  }
+
+  /** The window's reads, in this mode. list builds the tree; read answers for one id of it. */
+  function instrGet(route, params){
+    var src = fileSrc;
+    if(route === 'list'){
+      var url = src.kind === 'global' ? 'api/instructions' : 'api/instructions/refs?agent=' + encodeURIComponent(src.agent);
+      return instrFetch(url).then(function(res){
+        if(!res.ok) return res;
+        instrIndex(src, res.body);
+        return {ok:true, status:200, body:{path:src.root, entries:[]}};
+      });
+    }
+    var f = route === 'read' ? src.files[params.path] : null;
+    if(!f) return Promise.resolve({ok:false, status:400, body:{error: route === 'read' ? 'That file is not in the list any more. Refresh it.' : 'Not available for instructions.'}});
+    return instrFetch('api/instructions/read?' + f.q + (params.preview ? '&preview=1' : '')).then(function(res){
+      if(!res.ok) return res;
+      f.missing = Boolean(res.body.missing);
+      // The window keeps naming the file by its id; the path the daemon resolved is what it shows.
+      res.body.path = params.path;
+      res.body.rel = f.shown;
+      res.body.dir = '';
+      if(f.missing && !res.body.note) res.body.note = 'Not written yet. Saving creates it.';
+      else if(f.note && !res.body.note) res.body.note = f.note.charAt(0).toUpperCase() + f.note.slice(1) + '.';
+      return res;
+    });
+  }
+
+  /** The window's save, in this mode: the version it read, or "create" for a file not written yet. */
+  function instrPost(route, body){
+    var src = fileSrc, f = src && route === 'write' ? src.files[body.path] : null;
+    if(!f) return Promise.resolve({ok:false, status:400, body:{error:'Not available for instructions.'}});
+    var req = src.kind === 'global' ? {scope:'global', name:f.name} : {scope:'agent', agent:src.agent, path:f.path};
+    req.text = body.text;
+    if(body.force) req.force = true;
+    else if(f.missing) req.missing = true;
+    else {
+      if(body.mtimeMs !== undefined) req.mtimeMs = body.mtimeMs;
+      if(body.size !== undefined) req.size = body.size;
+      if(body.sha256) req.sha256 = body.sha256;
+    }
+    src.said = '';
+    return post('api/instructions/write', req, 1).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(r.ok){
+          f.missing = false;
+          f.exists = true;
+          src.said = instrDelivery(d.delivery, src);
+          if(fileSrc === src) paintTree();
+        }
+        return {ok:r.ok, status:r.status, body:d};
+      });
+    });
+  }
+
+  /** What the last save in this mode came to, appended to the window's "Saved" line. */
+  function instrSaid(){
+    return fileSrc && fileSrc.said ? ' ' + fileSrc.said : '';
+  }
+
+  /** Where a saved global file landed (InstructionsDelivery), as one or two sentences. */
+  function instrDelivery(list, src){
+    if(src.kind !== 'global') return src.agent + ' reads it when its next session starts.';
+    list = list || [];
+    if(!list.length) return 'No configured agent reads this file.';
+    var placed = [], other = [];
+    for(var i=0;i<list.length;i++){
+      var d = list[i], who = (d.agents || []).join(', ') + (d.host === 'local' ? '' : ' on ' + d.host);
+      if(d.outcome === 'linked' || d.outcome === 'relinked' || d.outcome === 'current') placed.push(who);
+      else if(d.outcome === 'removed' || d.outcome === 'absent') other.push('Nothing is left for ' + who + '.');
+      else if(d.outcome === 'occupied') other.push(who + ': ' + (d.link || 'its file') + ' is ' + (d.detail || 'its own') + ', left alone, so these do not reach it.');
+      else if(d.outcome === 'skipped') other.push(who + ': its harness has not run there yet, so nothing was placed.');
+      else if(d.outcome === 'unreachable') other.push(d.host + ' did not answer; it gets this when an agent next starts there.');
+      else if(d.outcome === 'off') other.push(who + ': this gateway places no instructions, so nothing was placed now.');
+      else other.push(who + ': ' + d.outcome + (d.detail ? ' (' + d.detail + ')' : '') + '.');
+    }
+    return (placed.length ? 'Placed for ' + placed.join('; ') + '; a session already running keeps what it read. ' : '') + other.join(' ');
+  }
+
+  if(INSTR_OK){
+    settingsBody.addEventListener('click', function(e){
+      if(!e.target.closest) return;
+      var g = e.target.closest('[data-instr-global]');
+      if(g) return instrOpen({kind:'global', title:'Instructions', files:{}, order:[]}, 'g:' + g.getAttribute('data-instr-global'));
+      var a = e.target.closest('[data-instr-agent]');
+      if(a){
+        var id = a.getAttribute('data-instr-agent');
+        instrOpen({kind:'agent', agent:id, title:id + ' · own instructions', files:{}, order:[]}, '');
+      }
+    });
   }
 
   // Grow to fit, and let the max-height in the stylesheet decide where to stop — it is stated

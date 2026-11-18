@@ -55,6 +55,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
 | `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
 | `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
+| `instruction-imports.ts` | An agent's OWN instruction files, per harness, in one table (`harnessSources`): what each reads besides the delivered file — rules directories, `@path` / `@[label](path)` references and how deep they go, opencode's `instructions` list, codex's override — with the evidence |
+| `instructions-panel.ts` | The web UI's instruction editor: the gateway's files by name, an agent's own files walked on its machine for every request, a checked write, and a save of a global file placed at once on every machine (invariant 10) |
 | `skills-store.ts` | The gateway's own skills (`<configDir>/skills/`, a git repository): names, paths and size rules, content versions, the usage file, `archive/`, and history and `revert` read from git |
 | `skills-git.ts` | The git under the store: commits with trailers, the log per skill, files at a commit — run with the machine's git config switched off |
 | `skills-repo.ts` | `skills.repo`: moving an old store into a repository, and fetch → rebase → push around every write and every five minutes |

@@ -389,6 +389,27 @@ Do not weaken these without saying so explicitly in the PR:
    with who, which machine and which file. Do not add a route that writes without that check, a
    second root rule that resolves links, or a page-side path check standing in for the daemon's.
 
+10. **The web UI's instruction editor writes what every agent reads, and is off by default.**
+   `platforms.<id>.instructions.enabled` is the fifth security decision in that schema. With it on,
+   the login secret guards the standing instructions of every agent on every platform and host:
+   a change made there is in force for sessions nobody on the page is watching, in conversations
+   that are not the page's — which a message to one agent never is. With it off there is no
+   section and every `/api/instructions…` route answers 404, whether or not the daemon handed the
+   page a panel. Reach is fixed by the daemon, never by the page (`daemon/instructions-panel.ts`):
+   the gateway's own files by name (`common.md` and the `<layer>.md` names in `HARNESS_LAYERS`), and
+   on an agent's machine only the files that agent's harness reads at that moment — its rules, the
+   files its instruction files reference, what its config lists (`instruction-imports.ts`
+   `harnessSources`) — walked again on that machine for every read and write, so a reference taken
+   out closes its file. That walk follows what the files say, so whatever a reference names is
+   readable and writable through it, as the agent's own user: the text that names it is the
+   operator's (or, for a host's own files, already the agent's to write), and the editor does
+   not go beyond it. The gateway's delivered copies on a host are listed and never written here.
+   Writes go through `Workspace.writeFile` with the same version check as the file window; a save of
+   a global file is placed on every machine at once and refused before it is written if any agent
+   would get more than the delivery cap; every write is logged with who, which machine and which
+   file. Do not add a route that takes a free path, a write that skips the check, or a harness rule
+   anywhere but `harnessSources`.
+
 ## Adding things
 
 - **A platform** → `platform/config-schemas.ts` (schema) + `platform/profiles/<name>.ts`

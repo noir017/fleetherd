@@ -314,6 +314,9 @@ platforms:
         - /srv/shared
 ```
 
+设置页还能在同一个编辑器里改所有智能体读的约束——网关上的和每个智能体在自己机器上的——用单独的开关
+`instructions.enabled`，见[写给所有智能体的工作偏好](instructions.md#在-web-ui-里编辑)。
+
 ## 对外暴露
 
 > [!WARNING]

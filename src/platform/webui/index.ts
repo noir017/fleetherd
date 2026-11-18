@@ -741,6 +741,7 @@ function lifecycle(
   | 'useReviewPanel'
   | 'useHistoryPanel'
   | 'useFilesPanel'
+  | 'useInstructionsPanel'
   | 'useIdleReclaim'
   | 'useTopicKill'
   | 'useAgentCatalog'
@@ -800,6 +801,11 @@ function lifecycle(
      * editor's write is a write on the machine the agent runs on — off unless `files.enabled`.
      */
     useFilesPanel: (panel) => room.useFilesPanel(panel),
+    /**
+     * The only implementor: the settings page is where these files are listed and opened in the
+     * file window's editor — off unless `instructions.enabled`.
+     */
+    useInstructionsPanel: (panel) => room.useInstructionsPanel(panel),
     /**
      * The only implementor because it is the only platform that lists its conversations' agents
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".
